@@ -374,6 +374,18 @@ func (q *Query) predicatesStillViable(predicates []QueryPredicate, captures []Qu
 	return true
 }
 
+func predicatesCanRejectMatch(predicates []QueryPredicate) bool {
+	for _, pred := range predicates {
+		switch pred.kind {
+		case predicateSet, predicateOffset, predicateSelectAdjacent, predicateStrip:
+			continue
+		default:
+			return true
+		}
+	}
+	return false
+}
+
 // applyDirectives applies capture-modifying directives (#select-adjacent!,
 // #strip!) to the captures list after a match has been accepted.
 func (q *Query) applyDirectives(predicates []QueryPredicate, captures []QueryCapture, source []byte) []QueryCapture {

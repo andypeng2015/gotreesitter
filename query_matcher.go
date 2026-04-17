@@ -279,6 +279,44 @@ func (q *Query) matchChildStepsRecursive(
 		return false
 	}
 
+	// Final child steps without match predicates intentionally aggregate
+	// structurally matching siblings into one match; predicate-bearing patterns
+	// need normal backtracking so invalid candidates do not leak captures or
+	// block later ones.
+	if !predicatesCanRejectMatch(predicates) && childPos == len(childSteps)-1 && minCount == 1 && maxCount == 1 && !step.anchorBefore && !step.anchorAfter {
+		any := false
+		checkpoint := len(*captures)
+		for _, childIdx := range candidateIndices {
+			child := children[childIdx]
+			childCheckpoint := len(*captures)
+			if !q.matchStepWithRollbackAtParentPredicates(steps, cs.stepIdx, child, parent, childIdx, lang, source, nil, captures) {
+				*captures = (*captures)[:childCheckpoint]
+				continue
+			}
+			hasNamed := false
+			firstNamedPos := -1
+			lastNamedPos := -1
+			if namedPos := namedPosByIndex[childIdx]; namedPos >= 0 {
+				hasNamed = true
+				firstNamedPos = namedPos
+				lastNamedPos = namedPos
+			}
+			if !q.stepAnchorsSatisfied(
+				step, childPos, hasNamed, firstNamedPos, lastNamedPos,
+				prevHasNamed, prevLastNamedPos, parentLastNamedPos,
+			) {
+				*captures = (*captures)[:childCheckpoint]
+				continue
+			}
+			any = true
+		}
+		if any {
+			return true
+		}
+		*captures = (*captures)[:checkpoint]
+		return false
+	}
+
 	// Greedy-first for consistency with prior quantifier behavior; backtrack as needed.
 	for count := maxCount; count >= minCount; count-- {
 		checkpoint := len(*captures)
