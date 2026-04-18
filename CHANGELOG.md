@@ -17,7 +17,8 @@ for tags and release notes while still in `0.x`.
 - Removed unused internal parser, reduce, incremental, and parser-result helpers
   left behind by recent recovery and normalization rewrites.
 - Removed stale internal planning/spec docs from the OSS tree.
-- Removed unused private grammar helper code found by the maintenance sweep.
+- Removed unused private grammar and grammargen helper code found by the
+  maintenance sweep.
 
 ## [0.15.1] - 2026-04-18
 

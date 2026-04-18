@@ -169,18 +169,6 @@ func (set *lrItemSet) ensurePackedCoreIndex() {
 	set.coreIndex = nil
 }
 
-func sameSortedCoreEntries(a, b []coreEntry) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i].prodIdx != b[i].prodIdx || a[i].dot != b[i].dot {
-			return false
-		}
-	}
-	return true
-}
-
 func sameSortedLR0CoreEntries(a, b []lr0CoreEntry) bool {
 	if len(a) != len(b) {
 		return false
@@ -2221,19 +2209,6 @@ func (ctx *lrContext) isBracedTemplateFamilySet(set *lrItemSet) bool {
 	return false
 }
 
-func (ctx *lrContext) isBracedTemplateFamilySetLR0(set *lr0ItemSet) bool {
-	if ctx.bracedTemplateBodySym < 0 {
-		return false
-	}
-	for _, ce := range set.cores {
-		switch ctx.ng.Productions[int(ce.prodIdx())].LHS {
-		case ctx.bracedTemplateBodySym, ctx.bracedTemplateBody1Sym, ctx.bracedTemplateBody2Sym:
-			return true
-		}
-	}
-	return false
-}
-
 func expandTemplateDefinitionCarriers(ng *NormalizedGrammar, carriers []bool, tokenCount int) {
 	if len(carriers) == 0 {
 		return
@@ -2284,29 +2259,12 @@ func (ctx *lrContext) isTemplateDefinitionCarrierSet(set *lrItemSet) bool {
 	return false
 }
 
-func (ctx *lrContext) isTemplateDefinitionCarrierSetLR0(set *lr0ItemSet) bool {
-	if len(ctx.templateDefinitionCarrierLHS) == 0 {
-		return false
-	}
-	for _, ce := range set.cores {
-		prod := ctx.ng.Productions[int(ce.prodIdx())]
-		if prod.LHS >= 0 && prod.LHS < len(ctx.templateDefinitionCarrierLHS) && ctx.templateDefinitionCarrierLHS[prod.LHS] {
-			return true
-		}
-	}
-	return false
-}
-
 func (ctx *lrContext) isCompletedRepeatWrapperForSymbol(set *lrItemSet, sym int) bool {
 	return ctx.completedRepeatWrapperLHS(set, sym) >= 0
 }
 
 func (ctx *lrContext) completedRepeatWrapperLHS(set *lrItemSet, sym int) int {
 	return ctx.completedRepeatWrapperLHSAcrossTransitions(set, sym, false)
-}
-
-func (ctx *lrContext) isCompletedRepeatWrapperForSymbolLR0(set *lr0ItemSet, sym int) bool {
-	return ctx.completedRepeatWrapperLHSAcrossTransitionsLR0(set, sym, false) >= 0
 }
 
 func (ctx *lrContext) completedRepeatWrapperLHSAcrossTransitions(set *lrItemSet, sym int, allowTerminal bool) int {
@@ -2331,26 +2289,6 @@ func (ctx *lrContext) completedRepeatWrapperLHSAcrossTransitions(set *lrItemSet,
 	return -1
 }
 
-func (ctx *lrContext) completedRepeatWrapperLHSAcrossTransitionsLR0(set *lr0ItemSet, sym int, allowTerminal bool) int {
-	ctx.ensureRepeatWrapperLHS()
-	if sym < ctx.tokenCount && !allowTerminal {
-		return -1
-	}
-	for _, ce := range set.cores {
-		prod := ctx.ng.Productions[int(ce.prodIdx())]
-		if int(ce.dot()) != len(prod.RHS) || len(prod.RHS) != 1 || prod.RHS[0] != sym {
-			continue
-		}
-		if prod.LHS < 0 || prod.LHS >= len(ctx.ng.Symbols) {
-			continue
-		}
-		if ctx.repeatWrapperLHS[prod.LHS] {
-			return prod.LHS
-		}
-	}
-	return -1
-}
-
 func (ctx *lrContext) completedRepeatWrapperStateLHS(state, sym int) int {
 	if ctx == nil || state < 0 || state >= len(ctx.itemSets) {
 		return -1
@@ -2363,22 +2301,6 @@ func (ctx *lrContext) completedRepeatWrapperStateLHS(state, sym int) int {
 		return cached - 2
 	}
 	lhs := ctx.completedRepeatWrapperLHSAcrossTransitions(&ctx.itemSets[state], sym, true)
-	ctx.repeatWrapperStateSymCache[key] = lhs + 2
-	return lhs
-}
-
-func (ctx *lrContext) completedRepeatWrapperStateLHSLR0(state, sym int) int {
-	if ctx == nil || state < 0 || state >= len(ctx.lalrLR0ItemSets) {
-		return -1
-	}
-	if ctx.repeatWrapperStateSymCache == nil {
-		ctx.repeatWrapperStateSymCache = make(map[uint64]int)
-	}
-	key := packCoreItemKey(state, sym)
-	if cached := ctx.repeatWrapperStateSymCache[key]; cached != 0 {
-		return cached - 2
-	}
-	lhs := ctx.completedRepeatWrapperLHSAcrossTransitionsLR0(&ctx.lalrLR0ItemSets[state], sym, true)
 	ctx.repeatWrapperStateSymCache[key] = lhs + 2
 	return lhs
 }
@@ -2412,24 +2334,6 @@ func (ctx *lrContext) stateHasRecursiveRepeatSource(set *lrItemSet, lhs int) boo
 	return false
 }
 
-func (ctx *lrContext) stateHasRecursiveRepeatSourceLR0(set *lr0ItemSet, lhs int) bool {
-	if set == nil || lhs < 0 {
-		return false
-	}
-	for _, ce := range set.cores {
-		prod := ctx.ng.Productions[int(ce.prodIdx())]
-		if prod.LHS != lhs || int(ce.dot()) != len(prod.RHS) {
-			continue
-		}
-		for _, sym := range prod.RHS {
-			if sym == lhs {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 func (ctx *lrContext) repeatWrapperSourceTagForTransition(sourceState, sym int, closedSet *lrItemSet) uint32 {
 	if os.Getenv("GOT_LR_DISABLE_CONTEXT_TAGS") == "1" {
 		return 0
@@ -2447,42 +2351,12 @@ func (ctx *lrContext) repeatWrapperSourceTagForTransition(sourceState, sym int, 
 	return 0
 }
 
-func (ctx *lrContext) repeatWrapperSourceTagForLR0Transition(sourceState, sym int, closedSet *lr0ItemSet) uint32 {
-	if os.Getenv("GOT_LR_DISABLE_CONTEXT_TAGS") == "1" {
-		return 0
-	}
-	if len(ctx.ng.Productions) < 2000 || sourceState < 0 || sourceState >= len(ctx.lalrLR0ItemSets) {
-		return 0
-	}
-	lhs := ctx.completedRepeatWrapperLHSAcrossTransitionsLR0(closedSet, sym, false)
-	if lhs < 0 {
-		return 0
-	}
-	if ctx.stateHasRecursiveRepeatSourceLR0(&ctx.lalrLR0ItemSets[sourceState], lhs) {
-		return 1 << 24
-	}
-	return 0
-}
-
 func (ctx *lrContext) isConditionalTypeCarrierSet(set *lrItemSet) bool {
 	if ctx == nil || len(ctx.conditionalTypeCarrierLHS) == 0 {
 		return false
 	}
 	for _, ce := range set.cores {
 		prod := ctx.ng.Productions[int(ce.prodIdx)]
-		if prod.LHS >= 0 && prod.LHS < len(ctx.conditionalTypeCarrierLHS) && ctx.conditionalTypeCarrierLHS[prod.LHS] {
-			return true
-		}
-	}
-	return false
-}
-
-func (ctx *lrContext) isConditionalTypeCarrierSetLR0(set *lr0ItemSet) bool {
-	if ctx == nil || len(ctx.conditionalTypeCarrierLHS) == 0 {
-		return false
-	}
-	for _, ce := range set.cores {
-		prod := ctx.ng.Productions[int(ce.prodIdx())]
 		if prod.LHS >= 0 && prod.LHS < len(ctx.conditionalTypeCarrierLHS) && ctx.conditionalTypeCarrierLHS[prod.LHS] {
 			return true
 		}
@@ -2515,32 +2389,6 @@ func (ctx *lrContext) stateEntersConditionalTypeRHS(state, sym int) bool {
 	return false
 }
 
-func (ctx *lrContext) stateEntersConditionalTypeRHSLR0(state, sym int) bool {
-	if ctx == nil || state < 0 || state >= len(ctx.lalrLR0ItemSets) {
-		return false
-	}
-	if ctx.conditionalTypeSym < 0 || ctx.conditionalTypeExtendsSym < 0 || ctx.conditionalTypePlainQmarkSym < 0 {
-		return false
-	}
-	if sym == ctx.conditionalTypePlainQmarkSym {
-		return false
-	}
-	for _, ce := range ctx.lalrLR0ItemSets[state].cores {
-		prod := ctx.ng.Productions[int(ce.prodIdx())]
-		if prod.LHS != ctx.conditionalTypeSym || len(prod.RHS) < 4 {
-			continue
-		}
-		if prod.RHS[1] != ctx.conditionalTypeExtendsSym || prod.RHS[3] != ctx.conditionalTypePlainQmarkSym {
-			continue
-		}
-		dot := int(ce.dot())
-		if dot == 1 && dot < len(prod.RHS) && prod.RHS[dot] == ctx.conditionalTypeExtendsSym && sym == ctx.conditionalTypeExtendsSym {
-			return true
-		}
-	}
-	return false
-}
-
 func (ctx *lrContext) conditionalTypeContextTagForTransition(sourceState, sym int, closedSet *lrItemSet) uint32 {
 	if os.Getenv("GOT_LR_DISABLE_CONTEXT_TAGS") == "1" {
 		return 0
@@ -2555,25 +2403,6 @@ func (ctx *lrContext) conditionalTypeContextTagForTransition(sourceState, sym in
 		return conditionalTypeContextTag
 	}
 	if ctx.stateEntersConditionalTypeRHS(sourceState, sym) {
-		return conditionalTypeContextTag
-	}
-	return 0
-}
-
-func (ctx *lrContext) conditionalTypeContextTagForLR0Transition(sourceState, sym int, closedSet *lr0ItemSet) uint32 {
-	if os.Getenv("GOT_LR_DISABLE_CONTEXT_TAGS") == "1" {
-		return 0
-	}
-	if len(ctx.ng.Productions) < 2000 || sourceState < 0 || sourceState >= len(ctx.lalrLR0ItemSets) {
-		return 0
-	}
-	if !ctx.isConditionalTypeCarrierSetLR0(closedSet) {
-		return 0
-	}
-	if ctx.lalrLR0ItemSets[sourceState].annotationArgTag&conditionalTypeContextTag != 0 {
-		return conditionalTypeContextTag
-	}
-	if ctx.stateEntersConditionalTypeRHSLR0(sourceState, sym) {
 		return conditionalTypeContextTag
 	}
 	return 0
@@ -2594,43 +2423,6 @@ func (ctx *lrContext) templateContextTagForTransition(sourceState, sym int, clos
 
 	srcTag := ctx.itemSets[sourceState].annotationArgTag & templateContextTagMask
 	if srcTag != 0 && ctx.isCompletedRepeatWrapperForSymbol(closedSet, sym) {
-		return srcTag
-	}
-	if !sourceCarrier && !targetCarrier {
-		return 0
-	}
-	if ctx.annotationAtSym >= 0 && sym == ctx.annotationAtSym && targetCarrier {
-		if srcTag != 0 && srcTag != templateContextPendingTag {
-			return srcTag
-		}
-		return templateContextPendingTag
-	}
-	if sym >= 0 && sym < len(ctx.definitionBoundaryTagBySym) {
-		if tag := ctx.definitionBoundaryTagBySym[sym]; tag != 0 && (sourceCarrier || srcTag != 0 || targetCarrier) {
-			return tag
-		}
-	}
-	if srcTag != 0 && targetCarrier {
-		return srcTag
-	}
-	return 0
-}
-
-func (ctx *lrContext) templateContextTagForLR0Transition(sourceState, sym int, closedSet *lr0ItemSet) uint32 {
-	if os.Getenv("GOT_LR_DISABLE_CONTEXT_TAGS") == "1" {
-		return 0
-	}
-	if len(ctx.ng.Productions) < 2000 || sourceState < 0 || sourceState >= len(ctx.lalrLR0ItemSets) {
-		return 0
-	}
-
-	sourceCarrier := ctx.isBracedTemplateFamilySetLR0(&ctx.lalrLR0ItemSets[sourceState]) ||
-		ctx.isTemplateDefinitionCarrierSetLR0(&ctx.lalrLR0ItemSets[sourceState])
-	targetCarrier := ctx.isBracedTemplateFamilySetLR0(closedSet) ||
-		ctx.isTemplateDefinitionCarrierSetLR0(closedSet)
-
-	srcTag := ctx.lalrLR0ItemSets[sourceState].annotationArgTag & templateContextTagMask
-	if srcTag != 0 && ctx.isCompletedRepeatWrapperForSymbolLR0(closedSet, sym) {
 		return srcTag
 	}
 	if !sourceCarrier && !targetCarrier {
