@@ -364,7 +364,6 @@ func (q *Query) matchChildStepsRecursive(
 
 				childCheckpoint := len(*captures)
 				if !q.matchStepWithRollbackAtParentPredicates(steps, cs.stepIdx, child, parent, childIdx, lang, source, predicates, captures) {
-					*captures = (*captures)[:childCheckpoint]
 					continue
 				}
 
