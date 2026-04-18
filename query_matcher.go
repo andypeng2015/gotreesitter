@@ -525,7 +525,7 @@ func (q *Query) matchAlternationBranch(
 ) bool {
 	if len(alt.steps) > 0 {
 		// Fast path: no alternation-level captures and no branch predicates.
-		// matchStepWithRollback already protects captures from failed branches.
+		// The predicate-aware rollback path protects captures from failed branches.
 		if !hasStepCaptures && len(alt.predicates) == 0 {
 			return q.matchStepWithRollbackPredicates(alt.steps, 0, node, lang, source, predicates, captures)
 		}
