@@ -10,6 +10,8 @@ for tags and release notes while still in `0.x`.
 ### Changed
 - Moved cgo harness sample/profile fixtures under `testdata` directories and
   updated the harness docs and scripts to use the new paths.
+- GLR stack culling now shares the keyed retention path across full and
+  incremental parses while preserving the previous incremental tie-breaks.
 
 ### Removed
 - Dropped unused query matcher rollback compatibility wrappers now that
@@ -21,6 +23,8 @@ for tags and release notes while still in `0.x`.
   maintenance sweep.
 - Moved ad-hoc grammargen diagnostic tests behind an explicit build tag and
   removed the print-only disassembly lexer probe from the normal test suite.
+- Removed the duplicate legacy GLR stack-retention selector from parser
+  internals.
 
 ## [0.15.1] - 2026-04-18
 
