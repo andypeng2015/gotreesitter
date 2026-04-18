@@ -7,11 +7,17 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+### Changed
+- Moved cgo harness sample/profile fixtures under `testdata` directories and
+  updated the harness docs and scripts to use the new paths.
+
 ### Removed
 - Dropped unused query matcher rollback compatibility wrappers now that
   predicate-aware matching is the only call path.
 - Removed unused internal parser, reduce, incremental, and parser-result helpers
   left behind by recent recovery and normalization rewrites.
+- Removed stale internal planning/spec docs from the OSS tree.
+- Removed unused private grammar helper code found by the maintenance sweep.
 
 ## [0.15.1] - 2026-04-18
 
