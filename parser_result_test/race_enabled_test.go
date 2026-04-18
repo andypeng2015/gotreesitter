@@ -1,5 +1,5 @@
 //go:build race
 
-package gotreesitter_test
+package parserresult_test
 
 const raceEnabled = true

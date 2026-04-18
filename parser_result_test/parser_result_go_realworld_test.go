@@ -1,4 +1,4 @@
-package gotreesitter_test
+package parserresult_test
 
 import (
 	"strings"
@@ -59,16 +59,6 @@ func TestGoLargeProcRecoversTopLevelDeclarations(t *testing.T) {
 				t.Fatalf("top-level %s does not start at func keyword: start=%d text=%q", child.Type(lang), child.StartByte(), text[:min(len(text), 32)])
 			}
 		}
-	}
-}
-
-func forEachNode(root *gotreesitter.Node, visit func(*gotreesitter.Node)) {
-	if root == nil {
-		return
-	}
-	visit(root)
-	for i := 0; i < root.ChildCount(); i++ {
-		forEachNode(root.Child(i), visit)
 	}
 }
 
@@ -343,31 +333,4 @@ func TestGoLargeProcHeaderOnlyCaseStopsAtColon(t *testing.T) {
 	if got, want := caseNode.EndByte(), caseNode.StartByte()+uint32(len("case _Gcopystack:")); got != want {
 		t.Fatalf("header-only expression_case endByte = %d, want %d at colon", got, want)
 	}
-}
-
-func trailingNewlineBoundary(source []byte, start, end uint32) uint32 {
-	if start >= end || int(end) > len(source) {
-		return start
-	}
-	lastNewline := -1
-	for i, b := range source[start:end] {
-		switch b {
-		case ' ', '\t', '\r':
-		case '\n':
-			lastNewline = i
-		default:
-			return start
-		}
-	}
-	if lastNewline < 0 {
-		return start
-	}
-	return start + uint32(lastNewline+1)
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

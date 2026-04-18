@@ -1,5 +1,11 @@
 package gotreesitter
 
+// Parser-result assembly owns the private handoff from GLR/parse-stack nodes to
+// the returned Tree. Runtime files named parser_result_*.go stay in this package
+// because many compatibility normalizers rewrite private Node, Language, Symbol,
+// and nodeArena state directly. Public-API parser-result regressions live in
+// parser_result_test, while source fixtures belong under testdata.
+
 // buildResultFromGLR picks the best stack and constructs the final tree.
 // Prefers accepted stacks, then highest score, then most entries. When
 // accepted stacks are otherwise tied, prefer the tree that retains an

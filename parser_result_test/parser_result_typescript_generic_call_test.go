@@ -1,4 +1,4 @@
-package gotreesitter_test
+package parserresult_test
 
 import (
 	"testing"
@@ -592,34 +592,4 @@ func TestTypeScriptCommentedLogicalOrCallChainStillKeepsBinaryExpression(t *test
 	}); bad != nil {
 		t.Fatalf("commented logical-or chain still parsed as call_expression: %s", bad.SExpr(lang))
 	}
-}
-
-func firstNode(root *gotreesitter.Node, pred func(*gotreesitter.Node) bool) *gotreesitter.Node {
-	if root == nil {
-		return nil
-	}
-	if pred(root) {
-		return root
-	}
-	for i := 0; i < root.ChildCount(); i++ {
-		child := root.Child(i)
-		if found := firstNode(child, pred); found != nil {
-			return found
-		}
-	}
-	return nil
-}
-
-func countNodes(root *gotreesitter.Node, pred func(*gotreesitter.Node) bool) int {
-	if root == nil {
-		return 0
-	}
-	total := 0
-	if pred(root) {
-		total++
-	}
-	for i := 0; i < root.ChildCount(); i++ {
-		total += countNodes(root.Child(i), pred)
-	}
-	return total
 }

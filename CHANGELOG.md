@@ -15,8 +15,9 @@ for tags and release notes while still in `0.x`.
 - Parser-result compatibility dispatch is now separated from core tree
   assembly, with mixed compatibility shims split into language-owned files and
   shared node helpers moved out of language-specific modules.
-- Parser tests are split by responsibility, and larger parser-result Python
-  source fixtures now live under `testdata/parser_result`.
+- Parser tests are split by responsibility, public parser-result regression
+  tests live under `parser_result_test`, and larger parser-result Python source
+  fixtures now live under `testdata/parser_result`.
 
 ### Removed
 - Dropped unused query matcher rollback compatibility wrappers now that
