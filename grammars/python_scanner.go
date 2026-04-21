@@ -160,6 +160,18 @@ func (PythonExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer
 		s.indents = append(s.indents, 0)
 	}
 
+	// Recompute insideInterpolatedString from the delimiter stack.
+	// The flag can become stale when the parser restores from a checkpoint
+	// taken while inside an f-string interpolation, then continues on a
+	// path where the f-string has already been closed.
+	s.insideInterpolatedString = false
+	for _, d := range s.delimiters {
+		if d.isFormat() {
+			s.insideInterpolatedString = true
+			break
+		}
+	}
+
 	isValid := func(idx int) bool {
 		return idx >= 0 && idx < len(validSymbols) && validSymbols[idx]
 	}
