@@ -141,6 +141,121 @@ func TestEncodeUTF16ToUTF8WithMapSurrogatePair(t *testing.T) {
 	}
 }
 
+func TestEncodeUTF16ToUTF8WithMapUnpairedSurrogates(t *testing.T) {
+	source := []uint16{'a', 0xD83D, 'b', 0xDE00, 'c'}
+	utf8Source, sourceMap := encodeUTF16ToUTF8WithMap(source)
+
+	if got, want := string(utf8Source), "a�b�c"; got != want {
+		t.Fatalf("UTF-8 source = %q, want %q", got, want)
+	}
+	for unitOffset := uint32(0); unitOffset <= uint32(len(source)); unitOffset++ {
+		byteOffset, ok := sourceMap.utf16UnitToByte(unitOffset)
+		if !ok {
+			t.Fatalf("utf16UnitToByte(%d) returned !ok", unitOffset)
+		}
+		roundTrip, ok := sourceMap.byteToUTF16Unit(byteOffset)
+		if !ok {
+			t.Fatalf("byteToUTF16Unit(%d) returned !ok", byteOffset)
+		}
+		if roundTrip != unitOffset {
+			t.Fatalf("round trip for unit %d = %d via byte %d", unitOffset, roundTrip, byteOffset)
+		}
+	}
+}
+
+func TestUTF16PointsAcrossSurrogateNewline(t *testing.T) {
+	source := utf16Units("😀\nβ")
+	_, sourceMap := encodeUTF16ToUTF8WithMap(source)
+
+	tests := []struct {
+		unit  uint32
+		point Point
+	}{
+		{unit: 0, point: Point{Row: 0, Column: 0}},
+		{unit: 2, point: Point{Row: 0, Column: 2}},
+		{unit: 3, point: Point{Row: 1, Column: 0}},
+		{unit: 4, point: Point{Row: 1, Column: 1}},
+	}
+	for _, tc := range tests {
+		point, ok := sourceMap.pointForUnit(tc.unit)
+		if !ok {
+			t.Fatalf("pointForUnit(%d) returned !ok", tc.unit)
+		}
+		if point != tc.point {
+			t.Fatalf("pointForUnit(%d) = %+v, want %+v", tc.unit, point, tc.point)
+		}
+	}
+}
+
+func TestIncludedRangesForUTF16ConvertsAndNormalizes(t *testing.T) {
+	source := utf16Units("a😀\nbc")
+	ranges, ok := IncludedRangesForUTF16(source, []UTF16Range{
+		{StartCodeUnit: 5, EndCodeUnit: 6},
+		{StartCodeUnit: 0, EndCodeUnit: 1},
+		{StartCodeUnit: 4, EndCodeUnit: 5},
+	})
+	if !ok {
+		t.Fatal("IncludedRangesForUTF16 returned !ok")
+	}
+	want := []Range{
+		{StartByte: 0, EndByte: 1, StartPoint: Point{Row: 0, Column: 0}, EndPoint: Point{Row: 0, Column: 1}},
+		{StartByte: 6, EndByte: 8, StartPoint: Point{Row: 1, Column: 0}, EndPoint: Point{Row: 1, Column: 2}},
+	}
+	if len(ranges) != len(want) {
+		t.Fatalf("range len = %d, want %d: got %+v", len(ranges), len(want), ranges)
+	}
+	for i := range want {
+		if ranges[i] != want[i] {
+			t.Fatalf("range[%d] = %+v, want %+v", i, ranges[i], want[i])
+		}
+	}
+}
+
+func TestIncludedRangesForUTF16RejectsInvalidBoundaries(t *testing.T) {
+	source := utf16Units("a😀b")
+	if _, ok := IncludedRangesForUTF16(source, []UTF16Range{{StartCodeUnit: 2, EndCodeUnit: 3}}); ok {
+		t.Fatal("IncludedRangesForUTF16 accepted a range starting inside a surrogate pair")
+	}
+	if _, ok := IncludedRangesForUTF16(source, []UTF16Range{{StartCodeUnit: 3, EndCodeUnit: 1}}); ok {
+		t.Fatal("IncludedRangesForUTF16 accepted an inverted range")
+	}
+	if _, err := IncludedRangesForUTF16Bytes([]byte{0x31}, UTF16LittleEndian, nil); !errors.Is(err, ErrInvalidUTF16ByteLength) {
+		t.Fatalf("IncludedRangesForUTF16Bytes odd-length error = %v, want ErrInvalidUTF16ByteLength", err)
+	}
+	if _, err := IncludedRangesForUTF16Bytes(utf16BytesForTest(t, "a😀b", UTF16LittleEndian), UTF16LittleEndian, []UTF16Range{{StartCodeUnit: 2, EndCodeUnit: 3}}); !errors.Is(err, ErrInvalidUTF16Range) {
+		t.Fatalf("IncludedRangesForUTF16Bytes invalid range error = %v, want ErrInvalidUTF16Range", err)
+	}
+}
+
+func TestParserSetIncludedUTF16Ranges(t *testing.T) {
+	lang := buildArithmeticLanguage()
+	parser := NewParser(lang)
+	source := utf16Units("1+2\n3+4")
+	if ok := parser.SetIncludedUTF16Ranges(source, []UTF16Range{{StartCodeUnit: 0, EndCodeUnit: 3}}); !ok {
+		t.Fatal("SetIncludedUTF16Ranges returned false")
+	}
+	gotRanges := parser.IncludedRanges()
+	if len(gotRanges) != 1 {
+		t.Fatalf("IncludedRanges len = %d, want 1: %+v", len(gotRanges), gotRanges)
+	}
+	if got, want := gotRanges[0], (Range{StartByte: 0, EndByte: 3, StartPoint: Point{Row: 0, Column: 0}, EndPoint: Point{Row: 0, Column: 3}}); got != want {
+		t.Fatalf("IncludedRanges[0] = %+v, want %+v", got, want)
+	}
+	tree, err := parser.ParseUTF16(source)
+	if err != nil {
+		t.Fatalf("ParseUTF16 failed: %v", err)
+	}
+	if got, want := tree.RootNode().Text(tree.Source()), "1+2"; got != want {
+		t.Fatalf("included UTF16 parse text = %q, want %q", got, want)
+	}
+	if err := parser.SetIncludedUTF16ByteRanges(utf16BytesForTest(t, "1+2", UTF16BigEndian), UTF16BigEndian, []UTF16Range{{StartCodeUnit: 0, EndCodeUnit: 3}}); err != nil {
+		t.Fatalf("SetIncludedUTF16ByteRanges failed: %v", err)
+	}
+	if ok := parser.SetIncludedUTF16Ranges(utf16Units("a😀b"), []UTF16Range{{StartCodeUnit: 2, EndCodeUnit: 3}}); ok {
+		t.Fatal("SetIncludedUTF16Ranges accepted an invalid surrogate boundary")
+	}
+}
+
 func TestParseUTF16ArithmeticPreservesUTF16Metadata(t *testing.T) {
 	lang := buildArithmeticLanguage()
 	parser := NewParser(lang)
@@ -304,6 +419,37 @@ func TestParseIncrementalUTF16WithEdit(t *testing.T) {
 	}
 	if got, want := incrTree.RootNode().Text(incrTree.Source()), "1+3"; got != want {
 		t.Fatalf("incremental UTF16 root text = %q, want %q", got, want)
+	}
+}
+
+func TestEditUTF16RejectsInvalidBoundaries(t *testing.T) {
+	parser := NewParser(buildArithmeticLanguage())
+
+	surrogateSource := utf16Units("1+😀")
+	surrogateTree, err := parser.ParseUTF16(surrogateSource)
+	if err != nil {
+		t.Fatalf("ParseUTF16 surrogate source failed: %v", err)
+	}
+	if ok := surrogateTree.EditUTF16(UTF16Edit{
+		StartCodeUnit:  3,
+		OldEndCodeUnit: 4,
+		NewEndCodeUnit: 4,
+	}, surrogateSource); ok {
+		t.Fatal("EditUTF16 accepted an old-source offset inside a surrogate pair")
+	}
+
+	oldSource := utf16Units("1+2")
+	oldTree, err := parser.ParseUTF16(oldSource)
+	if err != nil {
+		t.Fatalf("ParseUTF16 old source failed: %v", err)
+	}
+	newSource := utf16Units("1+😀")
+	if ok := oldTree.EditUTF16(UTF16Edit{
+		StartCodeUnit:  2,
+		OldEndCodeUnit: 3,
+		NewEndCodeUnit: 3,
+	}, newSource); ok {
+		t.Fatal("EditUTF16 accepted a new-source offset inside a surrogate pair")
 	}
 }
 

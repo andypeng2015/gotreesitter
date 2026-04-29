@@ -277,6 +277,29 @@ func (p *Parser) SetIncludedRanges(ranges []Range) {
 	p.included = normalizeIncludedRanges(ranges)
 }
 
+// SetIncludedUTF16Ranges configures parser include ranges from UTF-16
+// code-unit ranges. Internal parser points are derived from source as UTF-8
+// columns.
+func (p *Parser) SetIncludedUTF16Ranges(source []uint16, ranges []UTF16Range) bool {
+	converted, ok := IncludedRangesForUTF16(source, ranges)
+	if !ok {
+		return false
+	}
+	p.SetIncludedRanges(converted)
+	return true
+}
+
+// SetIncludedUTF16ByteRanges configures parser include ranges from
+// endian-specific UTF-16 bytes.
+func (p *Parser) SetIncludedUTF16ByteRanges(source []byte, order UTF16ByteOrder, ranges []UTF16Range) error {
+	converted, err := IncludedRangesForUTF16Bytes(source, order, ranges)
+	if err != nil {
+		return err
+	}
+	p.SetIncludedRanges(converted)
+	return nil
+}
+
 // IncludedRanges returns a copy of the configured include ranges.
 func (p *Parser) IncludedRanges() []Range {
 	if p == nil || len(p.included) == 0 {

@@ -139,6 +139,26 @@ func (pp *ParserPool) Parse(source []byte) (*Tree, error) {
 	return p.Parse(source)
 }
 
+// ParseUTF16 delegates to a pooled Parser.ParseUTF16 call.
+func (pp *ParserPool) ParseUTF16(source []uint16) (*Tree, error) {
+	p := pp.checkout()
+	if p == nil {
+		return nil, ErrNoLanguage
+	}
+	defer pp.release(p)
+	return p.ParseUTF16(source)
+}
+
+// ParseUTF16Bytes delegates to a pooled Parser.ParseUTF16Bytes call.
+func (pp *ParserPool) ParseUTF16Bytes(source []byte, order UTF16ByteOrder) (*Tree, error) {
+	p := pp.checkout()
+	if p == nil {
+		return nil, ErrNoLanguage
+	}
+	defer pp.release(p)
+	return p.ParseUTF16Bytes(source, order)
+}
+
 // ParseWithTokenSource delegates to a pooled Parser.ParseWithTokenSource call.
 func (pp *ParserPool) ParseWithTokenSource(source []byte, ts TokenSource) (*Tree, error) {
 	p := pp.checkout()
@@ -147,6 +167,82 @@ func (pp *ParserPool) ParseWithTokenSource(source []byte, ts TokenSource) (*Tree
 	}
 	defer pp.release(p)
 	return p.ParseWithTokenSource(source, ts)
+}
+
+// ParseWithTokenSourceFactory delegates to a pooled
+// Parser.ParseWithTokenSourceFactory call.
+func (pp *ParserPool) ParseWithTokenSourceFactory(source []byte, factory TokenSourceFactory) (*Tree, error) {
+	p := pp.checkout()
+	if p == nil {
+		return nil, ErrNoLanguage
+	}
+	defer pp.release(p)
+	return p.ParseWithTokenSourceFactory(source, factory)
+}
+
+// ParseUTF16WithTokenSourceFactory delegates to a pooled
+// Parser.ParseUTF16WithTokenSourceFactory call.
+func (pp *ParserPool) ParseUTF16WithTokenSourceFactory(source []uint16, factory TokenSourceFactory) (*Tree, error) {
+	p := pp.checkout()
+	if p == nil {
+		return nil, ErrNoLanguage
+	}
+	defer pp.release(p)
+	return p.ParseUTF16WithTokenSourceFactory(source, factory)
+}
+
+// ParseUTF16BytesWithTokenSourceFactory delegates to a pooled
+// Parser.ParseUTF16BytesWithTokenSourceFactory call.
+func (pp *ParserPool) ParseUTF16BytesWithTokenSourceFactory(source []byte, order UTF16ByteOrder, factory TokenSourceFactory) (*Tree, error) {
+	p := pp.checkout()
+	if p == nil {
+		return nil, ErrNoLanguage
+	}
+	defer pp.release(p)
+	return p.ParseUTF16BytesWithTokenSourceFactory(source, order, factory)
+}
+
+// ParseIncrementalUTF16 delegates to a pooled Parser.ParseIncrementalUTF16 call.
+func (pp *ParserPool) ParseIncrementalUTF16(source []uint16, oldTree *Tree) (*Tree, error) {
+	p := pp.checkout()
+	if p == nil {
+		return nil, ErrNoLanguage
+	}
+	defer pp.release(p)
+	return p.ParseIncrementalUTF16(source, oldTree)
+}
+
+// ParseIncrementalUTF16Bytes delegates to a pooled
+// Parser.ParseIncrementalUTF16Bytes call.
+func (pp *ParserPool) ParseIncrementalUTF16Bytes(source []byte, oldTree *Tree, order UTF16ByteOrder) (*Tree, error) {
+	p := pp.checkout()
+	if p == nil {
+		return nil, ErrNoLanguage
+	}
+	defer pp.release(p)
+	return p.ParseIncrementalUTF16Bytes(source, oldTree, order)
+}
+
+// ParseIncrementalUTF16WithTokenSourceFactory delegates to a pooled
+// Parser.ParseIncrementalUTF16WithTokenSourceFactory call.
+func (pp *ParserPool) ParseIncrementalUTF16WithTokenSourceFactory(source []uint16, oldTree *Tree, factory TokenSourceFactory) (*Tree, error) {
+	p := pp.checkout()
+	if p == nil {
+		return nil, ErrNoLanguage
+	}
+	defer pp.release(p)
+	return p.ParseIncrementalUTF16WithTokenSourceFactory(source, oldTree, factory)
+}
+
+// ParseIncrementalUTF16BytesWithTokenSourceFactory delegates to a pooled
+// Parser.ParseIncrementalUTF16BytesWithTokenSourceFactory call.
+func (pp *ParserPool) ParseIncrementalUTF16BytesWithTokenSourceFactory(source []byte, oldTree *Tree, order UTF16ByteOrder, factory TokenSourceFactory) (*Tree, error) {
+	p := pp.checkout()
+	if p == nil {
+		return nil, ErrNoLanguage
+	}
+	defer pp.release(p)
+	return p.ParseIncrementalUTF16BytesWithTokenSourceFactory(source, oldTree, order, factory)
 }
 
 // ParseWith delegates to a pooled Parser.ParseWith call.

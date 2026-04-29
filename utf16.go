@@ -53,6 +53,10 @@ var (
 
 	// ErrInvalidUTF16ByteOrder is returned for an unknown UTF-16ByteOrder.
 	ErrInvalidUTF16ByteOrder = errors.New("utf16: invalid byte order")
+
+	// ErrInvalidUTF16Range is returned when a UTF-16 range does not align to
+	// valid code-point boundaries or has an inverted span.
+	ErrInvalidUTF16Range = errors.New("utf16: invalid range")
 )
 
 // DecodeUTF16Bytes decodes an endian-specific UTF-16 byte source into Go
@@ -75,6 +79,32 @@ func DecodeUTF16Bytes(source []byte, order UTF16ByteOrder) ([]uint16, error) {
 	out := make([]uint16, len(source)/2)
 	for i := range out {
 		out[i] = byteOrder.Uint16(source[i*2:])
+	}
+	return out, nil
+}
+
+// IncludedRangesForUTF16 converts UTF-16 included ranges into the parser's
+// internal UTF-8 byte ranges. The returned Range points use UTF-8 columns.
+func IncludedRangesForUTF16(source []uint16, ranges []UTF16Range) ([]Range, bool) {
+	utf8Source, sourceMap := encodeUTF16ToUTF8WithMap(source)
+	out, ok := sourceMap.includedRangesForUTF16(utf8Source, ranges)
+	if !ok {
+		return nil, false
+	}
+	return out, true
+}
+
+// IncludedRangesForUTF16Bytes converts endian-specific UTF-16 byte ranges into
+// the parser's internal UTF-8 byte ranges. The returned Range points use UTF-8
+// columns.
+func IncludedRangesForUTF16Bytes(source []byte, order UTF16ByteOrder, ranges []UTF16Range) ([]Range, error) {
+	units, err := DecodeUTF16Bytes(source, order)
+	if err != nil {
+		return nil, err
+	}
+	out, ok := IncludedRangesForUTF16(units, ranges)
+	if !ok {
+		return nil, ErrInvalidUTF16Range
 	}
 	return out, nil
 }
@@ -253,6 +283,44 @@ func (m *utf16SourceMap) rangeForNode(n *Node) (UTF16Range, bool) {
 		StartPoint:    startPoint,
 		EndPoint:      endPoint,
 	}, true
+}
+
+func (m *utf16SourceMap) includedRangesForUTF16(utf8Source []byte, ranges []UTF16Range) ([]Range, bool) {
+	if len(ranges) == 0 {
+		return nil, true
+	}
+	if m == nil {
+		return nil, false
+	}
+	out := make([]Range, 0, len(ranges))
+	for _, r := range ranges {
+		if r.EndCodeUnit < r.StartCodeUnit {
+			return nil, false
+		}
+		startByte, ok := m.utf16UnitToByte(r.StartCodeUnit)
+		if !ok {
+			return nil, false
+		}
+		endByte, ok := m.utf16UnitToByte(r.EndCodeUnit)
+		if !ok {
+			return nil, false
+		}
+		startPoint, ok := utf8PointAtByte(utf8Source, startByte)
+		if !ok {
+			return nil, false
+		}
+		endPoint, ok := utf8PointAtByte(utf8Source, endByte)
+		if !ok {
+			return nil, false
+		}
+		out = append(out, Range{
+			StartByte:  startByte,
+			EndByte:    endByte,
+			StartPoint: startPoint,
+			EndPoint:   endPoint,
+		})
+	}
+	return normalizeIncludedRanges(out), true
 }
 
 func utf8PointAtByte(source []byte, offset uint32) (Point, bool) {
