@@ -32,12 +32,21 @@ func bindExternalScannerSymbolNames(lang *gotreesitter.Language, names []string,
 
 	// Fall back to positional binding for generated/test languages that do not
 	// carry symbol names, while preserving any name-based matches above.
-	for tokenIdx := 0; tokenIdx < len(names) && tokenIdx < len(lang.ExternalSymbols); tokenIdx++ {
-		if matched[tokenIdx] || externalToToken[tokenIdx] != -1 {
+	unmappedExternalIdx := 0
+	for tokenIdx, wasMatched := range matched {
+		if wasMatched {
 			continue
 		}
-		setSymbol(tokenIdx, lang.ExternalSymbols[tokenIdx])
-		externalToToken[tokenIdx] = tokenIdx
+		for unmappedExternalIdx < len(externalToToken) &&
+			(externalToToken[unmappedExternalIdx] != -1 ||
+				externalScannerSymbolName(lang, lang.ExternalSymbols[unmappedExternalIdx]) != "") {
+			unmappedExternalIdx++
+		}
+		if unmappedExternalIdx >= len(lang.ExternalSymbols) {
+			break
+		}
+		setSymbol(tokenIdx, lang.ExternalSymbols[unmappedExternalIdx])
+		externalToToken[unmappedExternalIdx] = tokenIdx
 	}
 
 	return externalToToken

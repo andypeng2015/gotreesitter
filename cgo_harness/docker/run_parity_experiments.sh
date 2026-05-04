@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUNNER="$SCRIPT_DIR/run_parity_in_docker.sh"
 
-IMAGE_TAG="gotreesitter/cgo-harness:go1.24-local"
+IMAGE_TAG="gotreesitter/cgo-harness:go1.25-local"
 MEMORY_LIMIT="8g"
 CPUS_LIMIT="4"
 PIDS_LIMIT="4096"

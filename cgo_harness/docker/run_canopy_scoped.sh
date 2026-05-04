@@ -31,7 +31,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 HOST_CANOPY="${HOST_CANOPY:-$HOME/go/bin/canopy}"
-IMAGE_TAG="gotreesitter/cgo-harness:go1.24-local"
+IMAGE_TAG="gotreesitter/cgo-harness:go1.25-local"
 
 PATH_ARG="."
 MODE="summary"

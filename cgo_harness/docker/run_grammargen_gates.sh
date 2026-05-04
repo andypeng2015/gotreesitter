@@ -51,7 +51,7 @@ PIDS_LIMIT="4096"
 LABEL=""
 BUILD_IMAGE=1
 FRONTIER_LANGS="bash,c,c_sharp,dart,python,scala"
-IMAGE_TAG="gotreesitter/cgo-harness:go1.24-local"
+IMAGE_TAG="gotreesitter/cgo-harness:go1.25-local"
 
 PARSER_LOCK_COMMIT="ff0bf8d"
 
