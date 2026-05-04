@@ -26,7 +26,7 @@ import (
 )
 
 const (
-	imageTag    = "gotreesitter/cgo-harness:go1.24-local"
+	imageTag    = "gotreesitter/cgo-harness:go1.25-local"
 	innerCanopy = "/usr/local/bin/canopy"
 	innerCache  = "/tmp/canopy-cache/index.json"
 )

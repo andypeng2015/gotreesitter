@@ -26,7 +26,7 @@ type dockerParityRunner struct {
 
 var defaultRunner = &dockerParityRunner{}
 
-const defaultImageTag = "gotreesitter/cgo-harness:go1.24-local"
+const defaultImageTag = "gotreesitter/cgo-harness:go1.25-local"
 
 // buildImage runs `docker build` once per test binary invocation and returns
 // the image tag. Subsequent calls return the cached result.

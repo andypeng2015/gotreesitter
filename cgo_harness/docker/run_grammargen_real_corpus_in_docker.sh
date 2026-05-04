@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUNNER="$SCRIPT_DIR/run_parity_in_docker.sh"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-IMAGE_TAG="gotreesitter/cgo-harness:go1.24-local"
+IMAGE_TAG="gotreesitter/cgo-harness:go1.25-local"
 MEMORY_LIMIT="12g"
 CPUS_LIMIT="4"
 PIDS_LIMIT="4096"
@@ -28,7 +28,7 @@ cgo_harness/docker/run_parity_in_docker.sh as the execution harness.
 
 Options:
   --repo-root <path>      Repository/worktree root mounted at /workspace
-  --image <tag>           Docker image tag (default: gotreesitter/cgo-harness:go1.24-local)
+  --image <tag>           Docker image tag (default: gotreesitter/cgo-harness:go1.25-local)
   --memory <limit>        Container memory limit (default: 8g)
   --cpus <count>          CPU limit (default: 4)
   --pids <count>          PID limit (default: 4096)
