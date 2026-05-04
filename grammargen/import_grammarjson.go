@@ -11,7 +11,7 @@ func applyImportGrammarShapeHints(g *Grammar) {
 		return
 	}
 	switch g.Name {
-	case "javascript", "typescript", "tsx", "sql":
+	case "fortran", "javascript", "typescript", "tsx", "sql":
 		// These grammars rely heavily on tree-sitter's binary repeat helper
 		// shape. Keeping the upstream lowering avoids large state blowups and
 		// preserves upstream ambiguity handling for imported grammars.
