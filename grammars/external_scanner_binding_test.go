@@ -136,6 +136,37 @@ func TestExternalScannerBindingFallbackUsesUnmappedExternalSymbols(t *testing.T)
 	}
 }
 
+func TestExternalScannerBindingFallbackKeepsSameCountAliases(t *testing.T) {
+	lang := externalBindingTestLanguage(
+		"alias_zero",
+		"named_two",
+		"alias_one",
+	)
+	names := []string{
+		"missing_zero",
+		"missing_one",
+		"named_two",
+	}
+
+	symbols := make([]gotreesitter.Symbol, len(names))
+	externalToToken := bindExternalScannerSymbolNames(lang, names, func(tokenIdx int, sym gotreesitter.Symbol) {
+		symbols[tokenIdx] = sym
+	})
+
+	if got, want := externalToToken, []int{0, 2, 1}; !slices.Equal(got, want) {
+		t.Fatalf("externalToToken = %v, want %v", got, want)
+	}
+	if got, want := symbols[0], gotreesitter.Symbol(1); got != want {
+		t.Fatalf("fallback token 0 symbol = %d, want %d", got, want)
+	}
+	if got, want := symbols[1], gotreesitter.Symbol(3); got != want {
+		t.Fatalf("fallback token 1 symbol = %d, want %d", got, want)
+	}
+	if got, want := symbols[2], gotreesitter.Symbol(2); got != want {
+		t.Fatalf("named token 2 symbol = %d, want %d", got, want)
+	}
+}
+
 func externalBindingTestLanguage(names ...string) *gotreesitter.Language {
 	symbolNames := make([]string, len(names)+1)
 	symbols := make([]gotreesitter.Symbol, len(names))
