@@ -151,6 +151,61 @@ tree2, _ := parser.ParseIncremental(src, tree)
 
 When no edit has occurred, `ParseIncremental` detects the nil-edit on a pointer check and returns in single-digit nanoseconds with zero allocations.
 
+### UTF-16 input and editor coordinates
+
+UTF-16 callers can parse Go-native code units or endian-specific byte buffers
+without converting offsets by hand. The parser core keeps its canonical UTF-8
+view internally, while the returned tree retains the original UTF-16 source and
+maps nodes, edits, included ranges, query filters, highlights, tags, and
+injections back to UTF-16 code-unit coordinates.
+
+```go
+src := utf16.Encode([]rune("1+2"))
+
+parser := gotreesitter.NewParser(lang)
+tree, _ := parser.ParseUTF16(src)
+
+rng, _ := tree.UTF16RangeForNode(tree.RootNode())
+fmt.Println(rng.StartCodeUnit, rng.EndCodeUnit)
+
+node := tree.DescendantForUTF16Range(0, uint32(len(src)))
+_ = node
+
+// Incremental edits can be described in UTF-16 code units.
+next := utf16.Encode([]rune("1+3"))
+tree.EditUTF16(gotreesitter.UTF16Edit{
+    StartCodeUnit:  2,
+    OldEndCodeUnit: 3,
+    NewEndCodeUnit: 3,
+}, next)
+tree2, _ := parser.ParseIncrementalUTF16(next, tree)
+_ = tree2
+```
+
+UTF-16 byte input is explicit about byte order:
+
+```go
+tree, _ := parser.ParseUTF16Bytes(buf, gotreesitter.UTF16LittleEndian)
+```
+
+Editor-facing APIs have UTF-16 variants:
+
+```go
+q, _ := gotreesitter.NewQuery(`(NUMBER) @number`, lang)
+cursor := q.Exec(tree.RootNode(), lang, tree.Source())
+cursor.SetUTF16Range(tree, 2, 3)
+
+hl, _ := gotreesitter.NewHighlighter(lang, `(NUMBER) @number`)
+highlightRanges := hl.HighlightUTF16(src)
+
+tagger, _ := gotreesitter.NewTagger(lang, `(NUMBER) @name @definition.number`)
+tags := tagger.TagUTF16(src)
+```
+
+Node byte APIs such as `DescendantForByteRange` still use the tree's canonical
+UTF-8 byte offsets. Use `DescendantForUTF16Range` or convert with
+`UTF8ByteForUTF16Offset` when starting from editor UTF-16 offsets.
+
 ### Tree cursor
 
 `TreeCursor` maintains an explicit `(node, childIndex)` frame stack. Parent, child, and sibling movement are O(1) with zero allocations — sibling traversal indexes directly into the parent's `children[]` slice.

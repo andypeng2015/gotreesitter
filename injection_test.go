@@ -6,24 +6,27 @@ import "testing"
 // language that wraps content between '[' and ']' markers, used for injection tests.
 //
 // Grammar:
-//   document -> LBRACKET content RBRACKET
-//   content  -> TEXT*
+//
+//	document -> LBRACKET content RBRACKET
+//	content  -> TEXT*
 //
 // Symbols:
-//   0: EOF
-//   1: LBRACKET "[" (terminal, anonymous)
-//   2: RBRACKET "]" (terminal, anonymous)
-//   3: TEXT (terminal, named) — any non-bracket character sequence
-//   4: document (nonterminal, named)
-//   5: content (nonterminal, named)
+//
+//	0: EOF
+//	1: LBRACKET "[" (terminal, anonymous)
+//	2: RBRACKET "]" (terminal, anonymous)
+//	3: TEXT (terminal, named) — any non-bracket character sequence
+//	4: document (nonterminal, named)
+//	5: content (nonterminal, named)
 //
 // LR States:
-//   State 0 (start):        LBRACKET -> shift 1, document -> goto 5
-//   State 1 (saw [):        TEXT -> shift 2, RBRACKET -> shift 4, content -> goto 3
-//   State 2 (saw text):     any -> reduce content -> TEXT (1 child)
-//   State 3 (saw content):  RBRACKET -> shift 4
-//   State 4 (saw ]):        any -> reduce document -> LBRACKET content RBRACKET (3 children)
-//   State 5 (saw document): EOF -> accept
+//
+//	State 0 (start):        LBRACKET -> shift 1, document -> goto 5
+//	State 1 (saw [):        TEXT -> shift 2, RBRACKET -> shift 4, content -> goto 3
+//	State 2 (saw text):     any -> reduce content -> TEXT (1 child)
+//	State 3 (saw content):  RBRACKET -> shift 4
+//	State 4 (saw ]):        any -> reduce document -> LBRACKET content RBRACKET (3 children)
+//	State 5 (saw document): EOF -> accept
 func buildContainerLanguage() *Language {
 	return &Language{
 		Name:               "container",
@@ -158,6 +161,149 @@ func TestInjectionParserBasic(t *testing.T) {
 	}
 	if inj.Tree == nil {
 		t.Fatal("injection tree is nil")
+	}
+}
+
+func TestInjectionParserUTF16(t *testing.T) {
+	parentLang := buildContainerLanguage()
+	childLang := buildArithmeticLanguage()
+
+	ip := NewInjectionParser()
+	ip.RegisterLanguage("container", parentLang)
+	ip.RegisterLanguage("arithmetic", childLang)
+
+	err := ip.RegisterInjectionQuery("container",
+		`(content) @injection.content (#set! injection.language "arithmetic")`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := ip.ParseUTF16(utf16Units("[1+2]"), "container")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Tree == nil || result.Tree.SourceEncoding() != InputEncodingUTF16 {
+		t.Fatalf("parent tree encoding = %v, want UTF16", result.Tree.SourceEncoding())
+	}
+	if len(result.Injections) != 1 {
+		t.Fatalf("expected 1 injection, got %d", len(result.Injections))
+	}
+	inj := result.Injections[0]
+	if inj.Language != "arithmetic" {
+		t.Fatalf("injection language = %q, want arithmetic", inj.Language)
+	}
+	if inj.Tree == nil || inj.Tree.SourceEncoding() != InputEncodingUTF16 {
+		t.Fatalf("injection tree encoding = %v, want UTF16", inj.Tree.SourceEncoding())
+	}
+	if len(inj.Ranges) != 1 {
+		t.Fatalf("expected 1 UTF16 range, got %d", len(inj.Ranges))
+	}
+	if got, want := inj.Ranges[0].StartCodeUnit, uint32(1); got != want {
+		t.Fatalf("injection start unit = %d, want %d", got, want)
+	}
+	if got, want := inj.Ranges[0].EndCodeUnit, uint32(4); got != want {
+		t.Fatalf("injection end unit = %d, want %d", got, want)
+	}
+	childRange, ok := inj.Tree.UTF16RangeForNode(inj.Tree.RootNode())
+	if !ok {
+		t.Fatal("child tree UTF16RangeForNode returned !ok")
+	}
+	if childRange.StartCodeUnit != inj.Ranges[0].StartCodeUnit || childRange.EndCodeUnit != inj.Ranges[0].EndCodeUnit {
+		t.Fatalf("child tree UTF16 range = [%d,%d), want [%d,%d)",
+			childRange.StartCodeUnit, childRange.EndCodeUnit, inj.Ranges[0].StartCodeUnit, inj.Ranges[0].EndCodeUnit)
+	}
+
+	byteResult, err := ip.ParseUTF16Bytes(utf16BytesForTest(t, "[1+2]", UTF16LittleEndian), "container", UTF16LittleEndian)
+	if err != nil {
+		t.Fatalf("ParseUTF16Bytes failed: %v", err)
+	}
+	if len(byteResult.Injections) != 1 {
+		t.Fatalf("ParseUTF16Bytes injection len = %d, want 1", len(byteResult.Injections))
+	}
+}
+
+func TestInjectionParserIncrementalUTF16(t *testing.T) {
+	parentLang := buildContainerLanguage()
+	childLang := buildArithmeticLanguage()
+
+	ip := NewInjectionParser()
+	ip.RegisterLanguage("container", parentLang)
+	ip.RegisterLanguage("arithmetic", childLang)
+
+	err := ip.RegisterInjectionQuery("container",
+		`(content) @injection.content (#set! injection.language "arithmetic")`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	oldSource := utf16Units("[1+2]")
+	oldResult, err := ip.ParseUTF16(oldSource, "container")
+	if err != nil {
+		t.Fatalf("ParseUTF16 old failed: %v", err)
+	}
+	newSource := utf16Units("[1+3]")
+	if ok := oldResult.Tree.EditUTF16(UTF16Edit{
+		StartCodeUnit:  3,
+		OldEndCodeUnit: 4,
+		NewEndCodeUnit: 4,
+	}, newSource); !ok {
+		t.Fatal("EditUTF16 returned false")
+	}
+
+	newResult, err := ip.ParseIncrementalUTF16(newSource, "container", oldResult)
+	if err != nil {
+		t.Fatalf("ParseIncrementalUTF16 failed: %v", err)
+	}
+	if len(newResult.Injections) != 1 {
+		t.Fatalf("expected 1 injection, got %d", len(newResult.Injections))
+	}
+	if got, want := newResult.Injections[0].Ranges[0].StartCodeUnit, uint32(1); got != want {
+		t.Fatalf("incremental injection start unit = %d, want %d", got, want)
+	}
+	if got, want := newResult.Injections[0].Ranges[0].EndCodeUnit, uint32(4); got != want {
+		t.Fatalf("incremental injection end unit = %d, want %d", got, want)
+	}
+}
+
+func TestInjectionParserIncrementalUTF16NoEditKeepsReusedTrees(t *testing.T) {
+	parentLang := buildContainerLanguage()
+	childLang := buildArithmeticLanguage()
+
+	ip := NewInjectionParser()
+	ip.RegisterLanguage("container", parentLang)
+	ip.RegisterLanguage("arithmetic", childLang)
+
+	err := ip.RegisterInjectionQuery("container",
+		`(content) @injection.content (#set! injection.language "arithmetic")`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	source := utf16Units("[1+2]")
+	oldResult, err := ip.ParseUTF16(source, "container")
+	if err != nil {
+		t.Fatalf("ParseUTF16 old failed: %v", err)
+	}
+
+	newResult, err := ip.ParseIncrementalUTF16(source, "container", oldResult)
+	if err != nil {
+		t.Fatalf("ParseIncrementalUTF16 no-edit failed: %v", err)
+	}
+	if newResult.Tree == nil || newResult.Tree.RootNode() == nil {
+		t.Fatal("no-edit incremental result has nil parent tree")
+	}
+	if len(newResult.Injections) != 1 {
+		t.Fatalf("expected 1 injection, got %d", len(newResult.Injections))
+	}
+	inj := newResult.Injections[0]
+	if inj.Tree == nil || inj.Tree.RootNode() == nil {
+		t.Fatal("no-edit incremental result has nil child tree")
+	}
+	if got, want := inj.Tree.SourceEncoding(), InputEncodingUTF16; got != want {
+		t.Fatalf("child tree encoding = %v, want %v", got, want)
+	}
+	if got := inj.Tree.RootNode().Text(inj.Tree.Source()); got != "1+2" {
+		t.Fatalf("child root text = %q, want %q", got, "1+2")
 	}
 }
 

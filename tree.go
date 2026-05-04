@@ -781,6 +781,9 @@ func newParentNodeInArenaNoLinksWithFieldSources(arena *nodeArena, sym Symbol, n
 type Tree struct {
 	root           *Node
 	source         []byte
+	sourceEncoding InputEncoding
+	sourceUTF16    []uint16
+	utf16Map       *utf16SourceMap
 	language       *Language
 	edits          []InputEdit  // pending edits applied to this tree
 	lastEditedLeaf *Node        // deepest leaf overlapped by the most recent edit, when tracked
@@ -799,20 +802,22 @@ var treePool = sync.Pool{
 // NewTree creates a new Tree.
 func NewTree(root *Node, source []byte, lang *Language) *Tree {
 	return &Tree{
-		root:     root,
-		source:   source,
-		language: lang,
+		root:           root,
+		source:         source,
+		sourceEncoding: InputEncodingUTF8,
+		language:       lang,
 	}
 }
 
 func newTreeWithArenas(root *Node, source []byte, lang *Language, arena *nodeArena, borrowed []*nodeArena) *Tree {
 	tree := treePool.Get().(*Tree)
 	*tree = Tree{
-		root:          root,
-		source:        source,
-		language:      lang,
-		arena:         arena,
-		borrowedArena: uniqueArenas(borrowed, arena),
+		root:           root,
+		source:         source,
+		sourceEncoding: InputEncodingUTF8,
+		language:       lang,
+		arena:          arena,
+		borrowedArena:  uniqueArenas(borrowed, arena),
 	}
 	rebuildExternalScannerCheckpoints(root, lang)
 	return tree
@@ -869,6 +874,9 @@ func (t *Tree) Release() {
 	}
 	t.root = nil
 	t.source = nil
+	t.sourceEncoding = InputEncodingUTF8
+	t.sourceUTF16 = nil
+	t.utf16Map = nil
 	t.language = nil
 	t.edits = nil
 	t.parseRuntime = ParseRuntime{}
@@ -895,6 +903,119 @@ func (t *Tree) RootNodeWithOffset(offsetBytes uint32, offsetExtent Point) *Node 
 
 // Source returns the original source text.
 func (t *Tree) Source() []byte { return t.source }
+
+// SourceEncoding returns the encoding used by the caller that produced this tree.
+//
+// For UTF-16 parses, Source still returns the parser's canonical UTF-8 copy.
+// Use SourceUTF16 and UTF16RangeForNode when caller-facing UTF-16 coordinates
+// are needed.
+func (t *Tree) SourceEncoding() InputEncoding {
+	if t == nil {
+		return InputEncodingUTF8
+	}
+	return t.sourceEncoding
+}
+
+// SourceUTF16 returns the original UTF-16 source for trees produced by ParseUTF16.
+// It returns nil for ordinary UTF-8 parses.
+func (t *Tree) SourceUTF16() []uint16 {
+	if t == nil || t.sourceEncoding != InputEncodingUTF16 {
+		return nil
+	}
+	return t.sourceUTF16
+}
+
+// UTF16OffsetForByte converts a parser UTF-8 byte offset to a UTF-16 code-unit
+// offset for trees produced by ParseUTF16.
+func (t *Tree) UTF16OffsetForByte(offset uint32) (uint32, bool) {
+	if t == nil || t.utf16Map == nil {
+		return 0, false
+	}
+	return t.utf16Map.byteToUTF16Unit(offset)
+}
+
+// UTF8ByteForUTF16Offset converts a UTF-16 code-unit offset to the parser's
+// canonical UTF-8 byte offset for trees produced by ParseUTF16.
+func (t *Tree) UTF8ByteForUTF16Offset(offset uint32) (uint32, bool) {
+	if t == nil || t.utf16Map == nil {
+		return 0, false
+	}
+	return t.utf16Map.utf16UnitToByte(offset)
+}
+
+// UTF16PointForByte converts a parser UTF-8 byte offset to a UTF-16 point.
+func (t *Tree) UTF16PointForByte(offset uint32) (Point, bool) {
+	if t == nil || t.utf16Map == nil {
+		return Point{}, false
+	}
+	return t.utf16Map.pointForByte(offset)
+}
+
+// UTF16RangeForNode returns a node range in UTF-16 code-unit coordinates.
+func (t *Tree) UTF16RangeForNode(n *Node) (UTF16Range, bool) {
+	if t == nil || t.utf16Map == nil {
+		return UTF16Range{}, false
+	}
+	return t.utf16Map.rangeForNode(n)
+}
+
+// UTF16RangeForByteRange converts a canonical UTF-8 byte range into UTF-16
+// code-unit coordinates.
+func (t *Tree) UTF16RangeForByteRange(startByte, endByte uint32) (UTF16Range, bool) {
+	if t == nil || t.utf16Map == nil {
+		return UTF16Range{}, false
+	}
+	return t.utf16Map.rangeForByteRange(startByte, endByte)
+}
+
+// UTF16RangeForRange converts a canonical UTF-8 Range into UTF-16 code-unit
+// coordinates.
+func (t *Tree) UTF16RangeForRange(r Range) (UTF16Range, bool) {
+	return t.UTF16RangeForByteRange(r.StartByte, r.EndByte)
+}
+
+func (t *Tree) descendantForUTF16Range(startCodeUnit, endCodeUnit uint32, namedOnly bool) *Node {
+	if t == nil || t.utf16Map == nil || t.root == nil || endCodeUnit < startCodeUnit {
+		return nil
+	}
+	startByte, ok := t.utf16Map.utf16UnitToByte(startCodeUnit)
+	if !ok {
+		return nil
+	}
+	endByte, ok := t.utf16Map.utf16UnitToByte(endCodeUnit)
+	if !ok {
+		return nil
+	}
+	return t.root.descendantForByteRange(startByte, endByte, namedOnly)
+}
+
+// DescendantForUTF16Range returns the smallest descendant that fully contains
+// the given UTF-16 code-unit range, or nil when no such descendant exists.
+func (t *Tree) DescendantForUTF16Range(startCodeUnit, endCodeUnit uint32) *Node {
+	return t.descendantForUTF16Range(startCodeUnit, endCodeUnit, false)
+}
+
+// NamedDescendantForUTF16Range returns the smallest named descendant that fully
+// contains the given UTF-16 code-unit range, or nil when no such descendant
+// exists.
+func (t *Tree) NamedDescendantForUTF16Range(startCodeUnit, endCodeUnit uint32) *Node {
+	return t.descendantForUTF16Range(startCodeUnit, endCodeUnit, true)
+}
+
+// UTF16SourceForNode returns the original UTF-16 code units covered by n.
+func (t *Tree) UTF16SourceForNode(n *Node) ([]uint16, bool) {
+	rng, ok := t.UTF16RangeForNode(n)
+	if !ok || rng.EndCodeUnit < rng.StartCodeUnit {
+		return nil, false
+	}
+	source := t.SourceUTF16()
+	start := int(rng.StartCodeUnit)
+	end := int(rng.EndCodeUnit)
+	if start > len(source) || end > len(source) {
+		return nil, false
+	}
+	return source[start:end], true
+}
 
 // Language returns the language used to parse this tree.
 func (t *Tree) Language() *Language { return t.language }
@@ -969,9 +1090,12 @@ func (t *Tree) Copy() *Tree {
 	}
 
 	out := &Tree{
-		source:       t.source,
-		language:     t.language,
-		parseRuntime: t.parseRuntime,
+		source:         t.source,
+		sourceEncoding: t.sourceEncoding,
+		sourceUTF16:    t.sourceUTF16,
+		utf16Map:       t.utf16Map,
+		language:       t.language,
+		parseRuntime:   t.parseRuntime,
 	}
 	if len(t.edits) > 0 {
 		out.edits = make([]InputEdit, len(t.edits))
@@ -1181,6 +1305,64 @@ type InputEdit struct {
 	StartPoint  Point
 	OldEndPoint Point
 	NewEndPoint Point
+}
+
+// InputEditForUTF16 converts a UTF-16 code-unit edit into the parser's internal
+// UTF-8 byte-coordinate edit. The tree must have been produced by ParseUTF16.
+func (t *Tree) InputEditForUTF16(edit UTF16Edit, newSource []uint16) (InputEdit, bool) {
+	if t == nil || t.utf16Map == nil {
+		return InputEdit{}, false
+	}
+	if edit.OldEndCodeUnit < edit.StartCodeUnit || edit.NewEndCodeUnit < edit.StartCodeUnit {
+		return InputEdit{}, false
+	}
+	if !utf16Boundary(newSource, edit.StartCodeUnit) || !utf16Boundary(newSource, edit.NewEndCodeUnit) {
+		return InputEdit{}, false
+	}
+
+	startByte, ok := t.utf16Map.utf16UnitToByte(edit.StartCodeUnit)
+	if !ok {
+		return InputEdit{}, false
+	}
+	oldEndByte, ok := t.utf16Map.utf16UnitToByte(edit.OldEndCodeUnit)
+	if !ok {
+		return InputEdit{}, false
+	}
+	replacementByteLen, replacementPoint := measureUTF16AsUTF8(newSource[edit.StartCodeUnit:edit.NewEndCodeUnit])
+	if replacementByteLen > ^uint32(0)-startByte {
+		return InputEdit{}, false
+	}
+	newEndByte := startByte + replacementByteLen
+	startPoint, ok := t.utf16Map.pointForUTF8Byte(startByte)
+	if !ok {
+		return InputEdit{}, false
+	}
+	oldEndPoint, ok := t.utf16Map.pointForUTF8Byte(oldEndByte)
+	if !ok {
+		return InputEdit{}, false
+	}
+	newEndPoint := addPointDelta(startPoint, replacementPoint)
+	return InputEdit{
+		StartByte:   startByte,
+		OldEndByte:  oldEndByte,
+		NewEndByte:  newEndByte,
+		StartPoint:  startPoint,
+		OldEndPoint: oldEndPoint,
+		NewEndPoint: newEndPoint,
+	}, true
+}
+
+// EditUTF16 records a UTF-16 code-unit edit on a UTF-16 tree.
+//
+// newSource is the full source after the edit; it is used to derive the
+// internal UTF-8 endpoint for NewEndCodeUnit.
+func (t *Tree) EditUTF16(edit UTF16Edit, newSource []uint16) bool {
+	inputEdit, ok := t.InputEditForUTF16(edit, newSource)
+	if !ok {
+		return false
+	}
+	t.Edit(inputEdit)
+	return true
 }
 
 // Edit adjusts this node's byte/point span for a source edit.

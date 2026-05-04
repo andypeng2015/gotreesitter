@@ -11,7 +11,10 @@ type parseConfig struct {
 	profiling   bool
 }
 
-type normalizationTokenSourceFactory func([]byte) (TokenSource, error)
+// TokenSourceFactory builds a token source for parser source bytes.
+type TokenSourceFactory func(source []byte) (TokenSource, error)
+
+type normalizationTokenSourceFactory = TokenSourceFactory
 
 // ParserLogType categorizes parser log messages.
 type ParserLogType uint8
@@ -116,6 +119,53 @@ func manageTokenSourceLifetime(ts TokenSource) func() {
 		return func() {}
 	}
 	return closer.Close
+}
+
+func (p *Parser) parseWithTokenSource(source []byte, ts TokenSource, reparseFactory normalizationTokenSourceFactory) (*Tree, error) {
+	if err := p.checkLanguageCompatible(); err != nil {
+		return nil, err
+	}
+	if ts == nil {
+		return nil, ErrNoTokenSource
+	}
+	releaseTS := manageTokenSourceLifetime(ts)
+	defer releaseTS()
+	prevFactory := p.reparseFactory
+	p.reparseFactory = reparseFactory
+	defer func() {
+		p.reparseFactory = prevFactory
+	}()
+	deterministicExternalConflicts := fullParseUsesDeterministicExternalConflicts(p.language)
+	initialMaxStacks := fullParseInitialMaxStacks(p.language, p.maxConflictWidth)
+	tree := p.parseInternal(source, p.wrapIncludedRanges(ts), nil, nil, arenaClassFull, nil, initialMaxStacks, 0, 0, deterministicExternalConflicts)
+	tree = p.retryFullParseWithTokenSource(source, ts, initialMaxStacks, deterministicExternalConflicts, tree)
+	if shouldRepeatExternalScannerFullParse(p.language, tree) {
+		tree = p.retryFullParseWithTokenSource(source, ts, initialMaxStacks, deterministicExternalConflicts, tree)
+	}
+	normalizeReturnedTree(rootOrNil(tree), source, p.language)
+	return tree, nil
+}
+
+func (p *Parser) parseIncrementalWithTokenSource(source []byte, oldTree *Tree, ts TokenSource, reparseFactory normalizationTokenSourceFactory) (*Tree, error) {
+	if err := p.checkLanguageCompatible(); err != nil {
+		return nil, err
+	}
+	if ts == nil {
+		return nil, ErrNoTokenSource
+	}
+	releaseTS := manageTokenSourceLifetime(ts)
+	defer releaseTS()
+	if canReuseUnchangedTree(source, oldTree, p.language) {
+		return oldTree, nil
+	}
+	prevFactory := p.reparseFactory
+	p.reparseFactory = reparseFactory
+	defer func() {
+		p.reparseFactory = prevFactory
+	}()
+	tree := p.parseIncrementalInternal(source, oldTree, p.wrapIncludedRanges(ts), nil)
+	normalizeReturnedIncrementalTree(tree, oldTree, source, p.language)
+	return tree, nil
 }
 
 // ParseOption configures ParseWith behavior.
@@ -227,6 +277,29 @@ func (p *Parser) SetIncludedRanges(ranges []Range) {
 	p.included = normalizeIncludedRanges(ranges)
 }
 
+// SetIncludedUTF16Ranges configures parser include ranges from UTF-16
+// code-unit ranges. Internal parser points are derived from source as UTF-8
+// columns.
+func (p *Parser) SetIncludedUTF16Ranges(source []uint16, ranges []UTF16Range) bool {
+	converted, ok := IncludedRangesForUTF16(source, ranges)
+	if !ok {
+		return false
+	}
+	p.SetIncludedRanges(converted)
+	return true
+}
+
+// SetIncludedUTF16ByteRanges configures parser include ranges from
+// endian-specific UTF-16 bytes.
+func (p *Parser) SetIncludedUTF16ByteRanges(source []byte, order UTF16ByteOrder, ranges []UTF16Range) error {
+	converted, err := IncludedRangesForUTF16Bytes(source, order, ranges)
+	if err != nil {
+		return err
+	}
+	p.SetIncludedRanges(converted)
+	return nil
+}
+
 // IncludedRanges returns a copy of the configured include ranges.
 func (p *Parser) IncludedRanges() []Range {
 	if p == nil || len(p.included) == 0 {
@@ -335,29 +408,71 @@ func (p *Parser) Parse(source []byte) (*Tree, error) {
 	return tree, nil
 }
 
+// ParseUTF16 parses UTF-16 source represented as Go UTF-16 code units.
+//
+// The parser core uses a canonical UTF-8 view internally so existing byte-based
+// APIs remain unchanged. The returned tree retains the original UTF-16 source
+// and can convert node ranges back to UTF-16 code-unit coordinates.
+func (p *Parser) ParseUTF16(source []uint16) (*Tree, error) {
+	utf8Source, sourceMap := encodeUTF16ToUTF8WithMap(source)
+	tree, err := p.Parse(utf8Source)
+	if err != nil {
+		return nil, err
+	}
+	attachUTF16Source(tree, source, sourceMap)
+	return tree, nil
+}
+
+// ParseUTF16Bytes parses UTF-16 source encoded as bytes with an explicit byte
+// order.
+func (p *Parser) ParseUTF16Bytes(source []byte, order UTF16ByteOrder) (*Tree, error) {
+	units, err := DecodeUTF16Bytes(source, order)
+	if err != nil {
+		return nil, err
+	}
+	return p.ParseUTF16(units)
+}
+
+// ParseUTF16WithTokenSourceFactory parses UTF-16 source using a token source
+// built from the parser's canonical UTF-8 source view.
+func (p *Parser) ParseUTF16WithTokenSourceFactory(source []uint16, factory TokenSourceFactory) (*Tree, error) {
+	utf8Source, sourceMap := encodeUTF16ToUTF8WithMap(source)
+	tree, err := p.ParseWithTokenSourceFactory(utf8Source, factory)
+	if err != nil {
+		return nil, err
+	}
+	attachUTF16Source(tree, source, sourceMap)
+	return tree, nil
+}
+
+// ParseUTF16BytesWithTokenSourceFactory parses UTF-16 bytes using a token
+// source built from the parser's canonical UTF-8 source view.
+func (p *Parser) ParseUTF16BytesWithTokenSourceFactory(source []byte, order UTF16ByteOrder, factory TokenSourceFactory) (*Tree, error) {
+	units, err := DecodeUTF16Bytes(source, order)
+	if err != nil {
+		return nil, err
+	}
+	return p.ParseUTF16WithTokenSourceFactory(units, factory)
+}
+
 // ParseWithTokenSource parses source using a custom token source.
 // This is used for real grammars where the lexer DFA isn't available
 // as data tables (e.g., Go grammar using go/scanner as a bridge).
 func (p *Parser) ParseWithTokenSource(source []byte, ts TokenSource) (*Tree, error) {
-	if err := p.checkLanguageCompatible(); err != nil {
+	return p.parseWithTokenSource(source, ts, p.tokenSourceReparseFactory(ts))
+}
+
+// ParseWithTokenSourceFactory parses source using a freshly built custom token
+// source. The factory is also retained for recovery reparses.
+func (p *Parser) ParseWithTokenSourceFactory(source []byte, factory TokenSourceFactory) (*Tree, error) {
+	if factory == nil {
+		return nil, ErrNoTokenSourceFactory
+	}
+	ts, err := factory(source)
+	if err != nil {
 		return nil, err
 	}
-	releaseTS := manageTokenSourceLifetime(ts)
-	defer releaseTS()
-	prevFactory := p.reparseFactory
-	p.reparseFactory = p.tokenSourceReparseFactory(ts)
-	defer func() {
-		p.reparseFactory = prevFactory
-	}()
-	deterministicExternalConflicts := fullParseUsesDeterministicExternalConflicts(p.language)
-	initialMaxStacks := fullParseInitialMaxStacks(p.language, p.maxConflictWidth)
-	tree := p.parseInternal(source, p.wrapIncludedRanges(ts), nil, nil, arenaClassFull, nil, initialMaxStacks, 0, 0, deterministicExternalConflicts)
-	tree = p.retryFullParseWithTokenSource(source, ts, initialMaxStacks, deterministicExternalConflicts, tree)
-	if shouldRepeatExternalScannerFullParse(p.language, tree) {
-		tree = p.retryFullParseWithTokenSource(source, ts, initialMaxStacks, deterministicExternalConflicts, tree)
-	}
-	normalizeReturnedTree(rootOrNil(tree), source, p.language)
-	return tree, nil
+	return p.parseWithTokenSource(source, ts, factory)
 }
 
 // ParseIncremental re-parses source after edits were applied to oldTree.
@@ -386,25 +501,77 @@ func (p *Parser) ParseIncremental(source []byte, oldTree *Tree) (*Tree, error) {
 	return tree, nil
 }
 
+// ParseIncrementalUTF16 re-parses UTF-16 source after edits were applied to
+// oldTree. oldTree should have been produced by ParseUTF16, and UTF-16 edits
+// can be recorded with Tree.EditUTF16.
+func (p *Parser) ParseIncrementalUTF16(source []uint16, oldTree *Tree) (*Tree, error) {
+	utf8Source, sourceMap := encodeUTF16ToUTF8WithMap(source)
+	tree, err := p.ParseIncremental(utf8Source, oldTree)
+	if err != nil {
+		return nil, err
+	}
+	attachUTF16Source(tree, source, sourceMap)
+	return tree, nil
+}
+
+// ParseIncrementalUTF16Bytes re-parses UTF-16 bytes after edits were applied
+// to oldTree.
+func (p *Parser) ParseIncrementalUTF16Bytes(source []byte, oldTree *Tree, order UTF16ByteOrder) (*Tree, error) {
+	units, err := DecodeUTF16Bytes(source, order)
+	if err != nil {
+		return nil, err
+	}
+	return p.ParseIncrementalUTF16(units, oldTree)
+}
+
+// ParseIncrementalUTF16WithTokenSourceFactory re-parses UTF-16 source using a
+// token source built from the parser's canonical UTF-8 source view.
+func (p *Parser) ParseIncrementalUTF16WithTokenSourceFactory(source []uint16, oldTree *Tree, factory TokenSourceFactory) (*Tree, error) {
+	utf8Source, sourceMap := encodeUTF16ToUTF8WithMap(source)
+	tree, err := p.ParseIncrementalWithTokenSourceFactory(utf8Source, oldTree, factory)
+	if err != nil {
+		return nil, err
+	}
+	attachUTF16Source(tree, source, sourceMap)
+	return tree, nil
+}
+
+// ParseIncrementalUTF16BytesWithTokenSourceFactory re-parses UTF-16 bytes using
+// a token source built from the parser's canonical UTF-8 source view.
+func (p *Parser) ParseIncrementalUTF16BytesWithTokenSourceFactory(source []byte, oldTree *Tree, order UTF16ByteOrder, factory TokenSourceFactory) (*Tree, error) {
+	units, err := DecodeUTF16Bytes(source, order)
+	if err != nil {
+		return nil, err
+	}
+	return p.ParseIncrementalUTF16WithTokenSourceFactory(units, oldTree, factory)
+}
+
 // ParseIncrementalWithTokenSource is like ParseIncremental but uses a custom
 // token source.
 func (p *Parser) ParseIncrementalWithTokenSource(source []byte, oldTree *Tree, ts TokenSource) (*Tree, error) {
-	if err := p.checkLanguageCompatible(); err != nil {
+	return p.parseIncrementalWithTokenSource(source, oldTree, ts, p.tokenSourceReparseFactory(ts))
+}
+
+// ParseIncrementalWithTokenSourceFactory is like ParseWithTokenSourceFactory
+// for an edited old tree.
+func (p *Parser) ParseIncrementalWithTokenSourceFactory(source []byte, oldTree *Tree, factory TokenSourceFactory) (*Tree, error) {
+	if factory == nil {
+		return nil, ErrNoTokenSourceFactory
+	}
+	ts, err := factory(source)
+	if err != nil {
 		return nil, err
 	}
-	releaseTS := manageTokenSourceLifetime(ts)
-	defer releaseTS()
-	if canReuseUnchangedTree(source, oldTree, p.language) {
-		return oldTree, nil
+	return p.parseIncrementalWithTokenSource(source, oldTree, ts, factory)
+}
+
+func attachUTF16Source(tree *Tree, source []uint16, sourceMap *utf16SourceMap) {
+	if tree == nil {
+		return
 	}
-	prevFactory := p.reparseFactory
-	p.reparseFactory = p.tokenSourceReparseFactory(ts)
-	defer func() {
-		p.reparseFactory = prevFactory
-	}()
-	tree := p.parseIncrementalInternal(source, oldTree, p.wrapIncludedRanges(ts), nil)
-	normalizeReturnedIncrementalTree(tree, oldTree, source, p.language)
-	return tree, nil
+	tree.sourceEncoding = InputEncodingUTF16
+	tree.sourceUTF16 = source
+	tree.utf16Map = sourceMap
 }
 
 // ParseIncrementalProfiled is like ParseIncremental and also returns runtime
@@ -501,6 +668,14 @@ func (p *Parser) ParseWith(source []byte, opts ...ParseOption) (ParseResult, err
 
 // ErrNoLanguage is returned when a Parser has no language configured.
 var ErrNoLanguage = errors.New("parser has no language configured")
+
+// ErrNoTokenSourceFactory is returned when a factory-based parse is called
+// without a token source factory.
+var ErrNoTokenSourceFactory = errors.New("parser has no token source factory")
+
+// ErrNoTokenSource is returned when a token-source parse is called without a
+// token source.
+var ErrNoTokenSource = errors.New("parser has no token source")
 
 // checkLanguageCompatible returns an error if the parser's language is nil or
 // incompatible with the runtime.
