@@ -137,8 +137,8 @@ func TestImportedKotlinSwiftGrammarConstructors(t *testing.T) {
 	if swift.Name != "swift" {
 		t.Fatalf("SwiftGrammar().Name = %q, want swift", swift.Name)
 	}
-	if len(swift.Rules) != 298 {
-		t.Fatalf("SwiftGrammar rule count = %d, want 298", len(swift.Rules))
+	if len(swift.Rules) != 299 {
+		t.Fatalf("SwiftGrammar rule count = %d, want 299", len(swift.Rules))
 	}
 	if got, want := externalRuleNames(swift), []string{
 		"multiline_comment",
