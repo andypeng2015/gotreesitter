@@ -6,7 +6,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 OUT_ROOT="$REPO_ROOT/harness_out/docker"
 LABEL=""
 
-IMAGE_TAG="gotreesitter/cgo-harness:go1.24-local"
+IMAGE_TAG="gotreesitter/cgo-harness:go1.25-local"
 MEMORY_LIMIT="8g"
 CPUS_LIMIT="4"
 PIDS_LIMIT="4096"
@@ -19,7 +19,7 @@ usage() {
 Usage: run_parity_in_docker.sh [options] [-- <custom command>]
 
 Options:
-  --image <tag>          Docker image tag (default: gotreesitter/cgo-harness:go1.24-local)
+  --image <tag>          Docker image tag (default: gotreesitter/cgo-harness:go1.25-local)
   --repo-root <path>     Repository/worktree root mounted at /workspace
   --out-root <path>      Artifact output root (default: <repo-root>/harness_out/docker)
   --label <name>         Optional run label (used in container/artifact naming)
@@ -32,6 +32,7 @@ Options:
   -h, --help             Show this help
 
 Environment passthrough (if set):
+  GOTOOLCHAIN
   GOMAXPROCS
   GOT_GLR_MAX_STACKS
   GOT_PARSE_NODE_LIMIT_SCALE
@@ -152,7 +153,7 @@ fi
 INNER_CMD="export PATH=/usr/local/go/bin:\$PATH; $INNER_CMD"
 
 ENV_ARGS=()
-for var in GOMAXPROCS GOT_GLR_MAX_STACKS GOT_PARSE_NODE_LIMIT_SCALE GOT_GLR_FORCE_CONFLICT_WIDTH GTS_PARITY_MODE GTS_PARITY_SKIP_LANGS; do
+for var in GOTOOLCHAIN GOMAXPROCS GOT_GLR_MAX_STACKS GOT_PARSE_NODE_LIMIT_SCALE GOT_GLR_FORCE_CONFLICT_WIDTH GTS_PARITY_MODE GTS_PARITY_SKIP_LANGS; do
   if [[ -n "${!var:-}" ]]; then
     ENV_ARGS+=("-e" "$var=${!var}")
   fi
