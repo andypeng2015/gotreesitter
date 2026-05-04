@@ -123,9 +123,9 @@ var swtDefaultSymTable = [swtTokenCount]gotreesitter.Symbol{
 var swiftExternalScannerSpec = ExternalScannerSpec{
 	Language:       "swift",
 	UpstreamRepo:   "https://github.com/alex-pinkus/tree-sitter-swift",
-	UpstreamCommit: "64f26c3a6e9e6cf4f77165c8283e35a26b7825a7",
+	UpstreamCommit: "41d6e5fe811ec94229ee71771174a8cce558dfee",
 	SourceFiles: []ExternalScannerSourceFile{
-		{Path: "src/grammar.json", SHA256: "4e2563022e6efde4c242e1bbbeed4da7067c3b94bffba518f6e3a33c0360b493"},
+		{Path: "src/grammar.json", SHA256: "4632eabe75a68f35641f99e9bf07bdb481b91605d5caa7fef1f0876a3e9aceb2"},
 		{Path: "src/scanner.c", SHA256: "f3d6271d64f58c39eed544104a70ca2cf9ecbf80c5d900620f1afd38836542cb"},
 	},
 	Externals: []string{
