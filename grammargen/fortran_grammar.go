@@ -9570,5 +9570,7 @@ func FortranGrammar() *Grammar {
 
 	g.BinaryRepeatMode = true
 
+	g.PreserveKeywordIdentifierConflicts = true
+
 	return g
 }

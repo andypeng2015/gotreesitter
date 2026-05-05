@@ -11,7 +11,14 @@ func applyImportGrammarShapeHints(g *Grammar) {
 		return
 	}
 	switch g.Name {
-	case "fortran", "javascript", "typescript", "tsx", "sql":
+	case "fortran":
+		// Fortran has no reserved words. Its grammar routes keyword-shaped
+		// tokens back through identifier and declares conflicts to let parser
+		// context decide whether a word like "data" is a statement keyword or
+		// a callable identifier.
+		g.BinaryRepeatMode = true
+		g.PreserveKeywordIdentifierConflicts = true
+	case "javascript", "typescript", "tsx", "sql":
 		// These grammars rely heavily on tree-sitter's binary repeat helper
 		// shape. Keeping the upstream lowering avoids large state blowups and
 		// preserves upstream ambiguity handling for imported grammars.
