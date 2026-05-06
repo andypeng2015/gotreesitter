@@ -2,6 +2,7 @@ package gotreesitter
 
 import (
 	"testing"
+	"time"
 )
 
 type parserTestUnsafeExternalScanner struct{}
@@ -129,6 +130,55 @@ func TestShouldRunInitialFullParseMergeRetry(t *testing.T) {
 	tree.parseRuntime.StopReason = ParseStopNoStacksAlive
 	if !shouldRunInitialFullParseMergeRetry(tree) {
 		t.Fatal("shouldRunInitialFullParseMergeRetry(no_stacks_alive) = false, want true")
+	}
+}
+
+func TestRetryFullParseStopsSchedulingRetriesAfterTimeout(t *testing.T) {
+	parser := &Parser{timeoutMicros: 500}
+	source := []byte("1+")
+	initial := &Tree{
+		root: &Node{
+			endByte:  1,
+			hasError: true,
+		},
+		parseRuntime: ParseRuntime{
+			StopReason:      ParseStopAccepted,
+			ExpectedEOFByte: uint32(len(source)),
+			MaxStacksSeen:   2,
+			NodesAllocated:  20,
+		},
+	}
+	retry := &Tree{
+		root: &Node{
+			endByte:  2,
+			hasError: true,
+		},
+		parseRuntime: ParseRuntime{
+			StopReason:      ParseStopAccepted,
+			ExpectedEOFByte: uint32(len(source)),
+			MaxStacksSeen:   2,
+			NodesAllocated:  10,
+		},
+	}
+	calls := 0
+
+	got := parser.retryFullParse(source, 2, initial, func(maxStacks, maxMergePerKeyOverride, maxNodes int) *Tree {
+		calls++
+		if calls != 1 {
+			t.Fatalf("runRetry called %d times, want exactly one retry before timeout cutoff", calls)
+		}
+		if maxMergePerKeyOverride == 0 {
+			t.Fatalf("first retry maxMergePerKeyOverride = 0, want initial merge retry")
+		}
+		time.Sleep(2 * time.Millisecond)
+		return retry
+	})
+
+	if got != retry {
+		t.Fatalf("retryFullParse returned %p, want retry tree %p", got, retry)
+	}
+	if calls != 1 {
+		t.Fatalf("runRetry calls = %d, want 1", calls)
 	}
 }
 
