@@ -17,6 +17,48 @@ type resultCompatibilityContext struct {
 	lang   *Language
 }
 
+var resultCompatibilityStrutLanguageNames = []string{
+	"bash",
+	"c",
+	"c_sharp",
+	"caddy",
+	"cobol",
+	"COBOL",
+	"comment",
+	"cooklang",
+	"d",
+	"dart",
+	"elixir",
+	"erlang",
+	"fortran",
+	"go",
+	"haskell",
+	"hcl",
+	"html",
+	"ini",
+	"javascript",
+	"lua",
+	"make",
+	"nginx",
+	"nim",
+	"pascal",
+	"perl",
+	"php",
+	"powershell",
+	"pug",
+	"python",
+	"rst",
+	"rust",
+	"ruby",
+	"scala",
+	"sql",
+	"svelte",
+	"tsx",
+	"typescript",
+	"yaml",
+	"zig",
+}
+
 func resultCompatibilityStrutForLanguage(name string) resultCompatibilityStrut {
 	switch name {
 	case "bash":
