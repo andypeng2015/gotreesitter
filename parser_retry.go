@@ -435,9 +435,9 @@ func (p *Parser) retryFullParse(source []byte, initialMaxStacks int, tree *Tree,
 	// iterations. Without it, a pathological input that triggers all four
 	// retry branches (initial-merge, node-limit, secondary-node-limit, final
 	// merge-per-key) can run far longer than the caller's SetTimeoutMicros
-	// budget — the parser polls timeoutMicros inside the parse loop, but
-	// between retries the budget isn't re-checked. We honor the same budget
-	// as a wall-clock deadline shared across retry attempts.
+	// budget. The parser polls timeoutMicros inside the parse loop, but between
+	// retries the budget was not re-checked. We honor the same budget as a
+	// wall-clock deadline shared across retry attempts.
 	retryStart := time.Now()
 	retryDeadlineExceeded := func() bool {
 		if p == nil || p.timeoutMicros == 0 {
@@ -536,9 +536,6 @@ func (p *Parser) retryFullParse(source []byte, initialMaxStacks int, tree *Tree,
 		return bestTree
 	}
 	if retryDeadlineExceeded() {
-		if nodeRetryTree != nil && nodeRetryTree != bestTree && nodeRetryTree != tree {
-			release(nodeRetryTree)
-		}
 		return bestTree
 	}
 	mergeRetryTree := runRetry(retryMaxStacks, maxMergePerKeyOverride, maxNodesOverride)
