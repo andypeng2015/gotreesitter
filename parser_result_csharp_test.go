@@ -25,3 +25,69 @@ func TestCSharpFindQueryAssignmentSpecs(t *testing.T) {
 		t.Fatalf("third clause kind = %v, want select", got)
 	}
 }
+
+func TestCSharpFirstStatementEndHandlesScopedLambda(t *testing.T) {
+	src := []byte("    var l = scoped => null;\n    var l = (scoped i) => null;\n")
+	got, ok := csharpFirstStatementEndInRange(src, 4, uint32(len(src)))
+	if !ok {
+		t.Fatal("expected statement span")
+	}
+	if want := uint32(len("    var l = scoped => null;")); got != want {
+		t.Fatalf("statement end = %d, want %d", got, want)
+	}
+}
+
+func TestCSharpFindTopLevelOperatorHandlesLambdaArrow(t *testing.T) {
+	src := []byte("scoped => null")
+	pos, ok := csharpFindTopLevelOperator(src, 0, uint32(len(src)), "=>")
+	if !ok {
+		t.Fatal("expected lambda arrow")
+	}
+	if want := uint32(len("scoped ")); pos != want {
+		t.Fatalf("arrow pos = %d, want %d", pos, want)
+	}
+}
+
+func TestCSharpTopLevelChunkSpansHandleAttributeCorpus(t *testing.T) {
+	src := []byte("[A(B.C)]\n" +
+		"class D {}\n\n" +
+		"[NS.A(B.C)]\n" +
+		"class D {}\n\n" +
+		"[One][Two]\n" +
+		"[Three]\n" +
+		"class A { }\n\n" +
+		"[A,B()][C]\n" +
+		"struct A { }\n\n" +
+		"class Zzz {\n" +
+		"  [A,B()][C]\n" +
+		"  public int Z;\n" +
+		"}\n\n" +
+		"class Methods {\n" +
+		"  [ValidatedContract]\n" +
+		"  int Method1() { return 0; }\n\n" +
+		"  [method: ValidatedContract]\n" +
+		"  int Method2() { return 0; }\n\n" +
+		"  [return: ValidatedContract]\n" +
+		"  int Method3() { return 0; }\n" +
+		"}\n\n" +
+		"[Single]\n" +
+		"enum A { B, C }\n\n" +
+		"class Zzz {\n" +
+		"  [A,B()][C]\n" +
+		"  public event EventHandler SomeEvent { add { } remove { } }\n" +
+		"}\n\n" +
+		"class Class<[A, B][C()]T1> {\n" +
+		"  void Method<[E] [F, G(1)] T2>() {\n" +
+		"  }\n" +
+		"}\n\n" +
+		"class Zzz {\n" +
+		"  public event EventHandler SomeEvent {\n" +
+		"    [A,B()][C] add { }\n" +
+		"    [A,B()][C] remove { }\n" +
+		"  }\n" +
+		"}\n")
+	spans := csharpTopLevelChunkSpans(src)
+	if got, want := len(spans), 10; got != want {
+		t.Fatalf("chunk span count = %d, want %d: %#v", got, want, spans)
+	}
+}

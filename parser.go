@@ -1238,8 +1238,9 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		arena.ensureNodeCapacity(target)
 		scratch.entries.ensureInitialCap(parseIncrementalEntryScratchCapacity(len(source)))
 	}
-	arena.setBudget(parseMemoryBudget(len(source)))
-	scratch.setBudget(parseMemoryBudget(len(source)))
+	memoryBudget := parseMemoryBudgetForParser(p, len(source))
+	arena.setBudget(memoryBudget)
+	scratch.setBudget(memoryBudget)
 	var reuseState parseReuseState
 	nodeCount := 0
 	iterationsUsed := 0
@@ -1539,6 +1540,12 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				return finalize(stacks, ParseStopNoStacksAlive)
 			}
 		} else {
+			if arena.budgetExhausted() {
+				return finalize(stacks, ParseStopMemoryBudget)
+			}
+			if scratch.budgetExhausted() {
+				return finalize(stacks, ParseStopMemoryBudget)
+			}
 			allDead := true
 			for i := range stacks {
 				if !stacks[i].dead {
@@ -1627,10 +1634,13 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		if stateful, ok := ts.(parserStateTokenSource); ok {
 			stateful.SetParserState(stacks[0].top().state)
 			if len(stacks) > 1 {
-				if p.language != nil && p.language.Name == "yaml" && p.language.ExternalScanner != nil {
+				if p.language != nil && (p.language.Name == "yaml" || p.language.Name == "c_sharp") && p.language.ExternalScanner != nil {
 					// External scanners are stateful. Until scanner state is
 					// tracked per GLR stack, drive tokenization from the primary
 					// stack state only to avoid over-admitting tokens from state unions.
+					// C#'s optional semicolon scanner is especially sensitive here:
+					// unioning GLR external states can make zero-width semicolons
+					// valid across too many recovery branches.
 					if len(scratch.glrStates) > 0 {
 						scratch.glrStates = scratch.glrStates[:0]
 					}

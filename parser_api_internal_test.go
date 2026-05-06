@@ -270,6 +270,18 @@ func TestParseWithSnippetParserParsesSource(t *testing.T) {
 	tree.Release()
 }
 
+func TestParserParseClearsRecoveryParserAcrossTopLevelParses(t *testing.T) {
+	parser := NewParser(buildArithmeticLanguage())
+	parser.recoveryParser = NewParser(buildArithmeticLanguage())
+
+	if _, err := parser.Parse([]byte("1+2")); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if parser.recoveryParser != nil {
+		t.Fatal("Parse retained recoveryParser after top-level parse")
+	}
+}
+
 func TestPreferRetryTreePrefersFurtherAcceptedProgress(t *testing.T) {
 	incumbent := &Tree{
 		root: &Node{

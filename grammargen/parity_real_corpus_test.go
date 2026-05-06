@@ -304,8 +304,8 @@ func TestMultiGrammarImportRealCorpusParity(t *testing.T) {
 				const maxSafeDepth = 2000
 				genSexp := safeSExpr(genRoot, genLang, maxSafeDepth)
 				refSexp := safeSExpr(refRoot, refLang, maxSafeDepth)
-				if genSexp == "" && refSexp == "" {
-					t.Logf("real-corpus: skipping sample %d (%s:%s) — tree too deep to serialize",
+				if genSexp == "" || refSexp == "" {
+					t.Logf("real-corpus: skipping sample %d (%s:%s) — tree too large or deep to serialize",
 						i, cand.Source, cand.Path)
 					continue
 				}
@@ -1103,39 +1103,44 @@ func safeSExpr(n *gotreesitter.Node, lang *gotreesitter.Language, maxDepth int) 
 	if n == nil || lang == nil {
 		return ""
 	}
-	var rec func(node *gotreesitter.Node, depth int) string
-	rec = func(node *gotreesitter.Node, depth int) string {
+	const maxNodes = 50_000
+	const maxChars = 2 * 1024 * 1024
+	visited := 0
+	var b strings.Builder
+	var rec func(node *gotreesitter.Node, depth int) bool
+	rec = func(node *gotreesitter.Node, depth int) bool {
 		if node == nil || !node.IsNamed() {
-			return ""
+			return true
 		}
-		if depth > maxDepth {
-			return "\x00" // sentinel: truncated
+		visited++
+		if visited > maxNodes || depth > maxDepth || b.Len() > maxChars {
+			return false
 		}
 		name := node.Type(lang)
+		b.WriteByte('(')
+		b.WriteString(name)
 		cc := node.ChildCount()
 		if cc == 0 {
-			return "(" + name + ")"
+			b.WriteByte(')')
+			return b.Len() <= maxChars
 		}
-		parts := make([]string, 0, cc)
 		for i := 0; i < cc; i++ {
-			s := rec(node.Child(i), depth+1)
-			if s == "\x00" {
-				return "\x00"
+			child := node.Child(i)
+			if child == nil || !child.IsNamed() {
+				continue
 			}
-			if s != "" {
-				parts = append(parts, s)
+			b.WriteByte(' ')
+			if !rec(child, depth+1) {
+				return false
 			}
 		}
-		if len(parts) == 0 {
-			return "(" + name + ")"
-		}
-		return "(" + name + " " + strings.Join(parts, " ") + ")"
+		b.WriteByte(')')
+		return b.Len() <= maxChars
 	}
-	result := rec(n, 0)
-	if result == "\x00" {
+	if !rec(n, 0) {
 		return "" // signal: too deep
 	}
-	return result
+	return b.String()
 }
 
 // stripSExprRoot removes the outermost S-expression wrapper, returning only

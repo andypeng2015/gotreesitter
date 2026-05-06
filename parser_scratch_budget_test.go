@@ -41,6 +41,34 @@ func TestParserScratchMemoryBudgetExhaustedByGSSSlabGrowth(t *testing.T) {
 	}
 }
 
+func TestParserScratchMemoryBudgetExhaustedByMergeScratchGrowth(t *testing.T) {
+	var scratch parserScratch
+	_ = ensureMergeSlotCap(&scratch.merge, 1)
+	initial := scratch.allocatedBytes()
+	scratch.setBudget(initial + 1)
+
+	_ = ensureMergeSlotCap(&scratch.merge, 2)
+	if !scratch.budgetExhausted() {
+		t.Fatal("budget not exhausted after merge-slot growth")
+	}
+}
+
+func TestMergeAliveLimitHonorsScratchBudget(t *testing.T) {
+	var scratch glrMergeScratch
+	perStack := int64(unsafe.Sizeof(glrStack{}) + unsafe.Sizeof(glrMergeSlot{}))
+	scratch.budgetBytes = perStack * 3
+
+	if got, want := mergeAliveLimitForScratch(&scratch, 100), 3; got != want {
+		t.Fatalf("mergeAliveLimitForScratch = %d, want %d", got, want)
+	}
+}
+
+func TestMergeAliveLimitAppliesEmergencyCap(t *testing.T) {
+	if got, want := mergeAliveLimitForScratch(nil, maxMergeAliveStacks+100), maxMergeAliveStacks; got != want {
+		t.Fatalf("mergeAliveLimitForScratch = %d, want emergency cap %d", got, want)
+	}
+}
+
 func TestParserScratchResetRecomputesAllocatedBytes(t *testing.T) {
 	var scratch parserScratch
 	scratch.entries.ensureInitialCap(defaultStackEntrySlabCap)
@@ -49,6 +77,9 @@ func TestParserScratchResetRecomputesAllocatedBytes(t *testing.T) {
 	for depth := 1; depth <= defaultGSSNodeSlabCap+1; depth++ {
 		_ = scratch.gss.allocNode(stackEntry{state: 1}, nil, depth)
 	}
+	_ = ensureMergeResultCap(&scratch.merge, 2)
+	_ = ensureMergeSlotCap(&scratch.merge, 2)
+	scratch.merge.beginEquivEpoch()
 
 	if scratch.allocatedBytes() <= 0 {
 		t.Fatal("allocatedBytes should be positive before reset")
@@ -56,8 +87,9 @@ func TestParserScratchResetRecomputesAllocatedBytes(t *testing.T) {
 
 	scratch.entries.reset()
 	scratch.gss.reset()
+	scratch.merge.reset()
 
-	want := scratch.entries.allocatedBytes + scratch.gss.allocatedBytes
+	want := scratch.entries.allocatedBytes + scratch.gss.allocatedBytes + scratch.merge.allocatedBytes()
 	if got := scratch.allocatedBytes(); got != want {
 		t.Fatalf("allocatedBytes after reset = %d, want %d", got, want)
 	}

@@ -638,6 +638,11 @@ func csharpRecoverExpressionNodeFromRange(source []byte, start, end uint32, p *P
 	if node, ok := csharpRecoverSimpleQueryAtomNodeFromRange(source, start, end, p.language, arena); ok {
 		return node, true
 	}
+	if _, ok := csharpFindTopLevelOperator(source, start, end, "=>"); ok {
+		if node, ok := csharpRecoverQueryExpressionNodeFromRange(source, start, end, p.language, arena); ok {
+			return node, true
+		}
+	}
 	if node, ok := csharpRecoverExpressionNodeFromRangeWithWrapper(source, start, end, p, arena); ok {
 		return node, true
 	}
@@ -714,11 +719,19 @@ func csharpRecoverQueryExpressionNodeFromRange(source []byte, start, end uint32,
 			return node, true
 		}
 	}
+	if source[start] == '[' && source[end-1] == ']' {
+		if node, ok := csharpBuildElementBindingExpressionNode(arena, source, lang, start, end); ok {
+			return node, true
+		}
+	}
 	if arrowPos, ok := csharpFindTopLevelOperator(source, start, end, "=>"); ok {
 		return csharpBuildLambdaExpressionNode(arena, source, lang, start, arrowPos, end)
 	}
 	if opPos, ok := csharpFindTopLevelOperator(source, start, end, "=="); ok {
 		return csharpBuildBinaryExpressionNode(arena, source, lang, start, opPos, opPos+2, end)
+	}
+	if isPos, ok := csharpFindTopLevelKeyword(source, start, end, "is"); ok {
+		return csharpBuildIsPatternExpressionNode(arena, source, lang, start, isPos, isPos+2, end)
 	}
 	if opPos, ok := csharpFindTopLevelOperator(source, start, end, "*"); ok {
 		return csharpBuildBinaryExpressionNode(arena, source, lang, start, opPos, opPos+1, end)
@@ -736,6 +749,9 @@ func csharpRecoverQueryExpressionNodeFromRange(source []byte, start, end uint32,
 	}
 	if source[start] == '"' && source[end-1] == '"' && end-start >= 2 {
 		return csharpBuildStringLiteralNode(arena, source, lang, start, end)
+	}
+	if bytes.Equal(source[start:end], []byte("null")) {
+		return csharpBuildLeafNodeByName(arena, source, lang, "null_literal", start, end)
 	}
 	if csharpIsIntegerLiteral(source[start:end]) {
 		return csharpBuildLeafNodeByName(arena, source, lang, "integer_literal", start, end)
@@ -798,6 +814,68 @@ func csharpBuildTupleExpressionNode(arena *nodeArena, source []byte, lang *Langu
 		}
 	}
 	children = append(children, closeTok)
+	named := int(sym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[sym].Named
+	return newParentNodeInArena(arena, sym, named, children, nil, 0), true
+}
+
+func csharpBuildElementBindingExpressionNode(arena *nodeArena, source []byte, lang *Language, start, end uint32) (*Node, bool) {
+	if lang == nil || arena == nil || start >= end || int(end) > len(source) || source[start] != '[' || source[end-1] != ']' {
+		return nil, false
+	}
+	items := csharpSplitTopLevelByComma(source, start+1, end-1)
+	if len(items) == 0 {
+		return nil, false
+	}
+	sym, ok := symbolByName(lang, "element_binding_expression")
+	if !ok {
+		return nil, false
+	}
+	argSym, ok := symbolByName(lang, "argument")
+	if !ok {
+		return nil, false
+	}
+	openTok, ok := csharpBuildLeafNodeByName(arena, source, lang, "[", start, start+1)
+	if !ok {
+		return nil, false
+	}
+	closeTok, ok := csharpBuildLeafNodeByName(arena, source, lang, "]", end-1, end)
+	if !ok {
+		return nil, false
+	}
+	argNamed := int(argSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[argSym].Named
+	children := []*Node{openTok}
+	for i, span := range items {
+		itemStart, itemEnd := csharpTrimSpaceBounds(source, span[0], span[1])
+		if itemStart < itemEnd {
+			value, ok := csharpRecoverQueryExpressionNodeFromRange(source, itemStart, itemEnd, lang, arena)
+			if !ok {
+				return nil, false
+			}
+			children = append(children, newParentNodeInArena(arena, argSym, argNamed, []*Node{value}, nil, 0))
+		}
+		commaPos := uint32(0)
+		if i < len(items)-1 {
+			commaPos = csharpFindCommaBetween(source, span[1], items[i+1][0])
+			if commaPos == 0 && span[1] < uint32(len(source)) && source[span[1]] == ',' {
+				commaPos = span[1]
+			}
+		} else if span[1] < end-1 && source[span[1]] == ',' {
+			commaPos = span[1]
+		}
+		if commaPos != 0 {
+			commaTok, ok := csharpBuildLeafNodeByName(arena, source, lang, ",", commaPos, commaPos+1)
+			if !ok {
+				return nil, false
+			}
+			children = append(children, commaTok)
+		}
+	}
+	children = append(children, closeTok)
+	if arena != nil {
+		buf := arena.allocNodeSlice(len(children))
+		copy(buf, children)
+		children = buf
+	}
 	named := int(sym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[sym].Named
 	return newParentNodeInArena(arena, sym, named, children, nil, 0), true
 }
@@ -893,6 +971,56 @@ func csharpBuildBinaryExpressionNode(arena *nodeArena, source []byte, lang *Lang
 	fields := csharpFieldIDsInArena(arena, []FieldID{leftID, operatorID, rightID})
 	named := int(sym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[sym].Named
 	return newParentNodeInArena(arena, sym, named, []*Node{left, opTok, right}, fields, 0), true
+}
+
+func csharpBuildIsPatternExpressionNode(arena *nodeArena, source []byte, lang *Language, start, isStart, isEnd, end uint32) (*Node, bool) {
+	left, ok := csharpRecoverQueryExpressionNodeFromRange(source, start, isStart, lang, arena)
+	if !ok {
+		return nil, false
+	}
+	pattern, ok := csharpBuildConstantPatternNode(arena, source, lang, isEnd, end)
+	if !ok {
+		return nil, false
+	}
+	sym, ok := symbolByName(lang, "is_pattern_expression")
+	if !ok {
+		return nil, false
+	}
+	isTok, ok := csharpBuildLeafNodeByName(arena, source, lang, "is", isStart, isEnd)
+	if !ok {
+		return nil, false
+	}
+	expressionID, _ := lang.FieldByName("expression")
+	patternID, _ := lang.FieldByName("pattern")
+	fields := csharpFieldIDsInArena(arena, []FieldID{expressionID, 0, patternID})
+	named := int(sym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[sym].Named
+	return newParentNodeInArena(arena, sym, named, []*Node{left, isTok, pattern}, fields, 0), true
+}
+
+func csharpBuildConstantPatternNode(arena *nodeArena, source []byte, lang *Language, start, end uint32) (*Node, bool) {
+	if lang == nil || arena == nil || start >= end || int(end) > len(source) {
+		return nil, false
+	}
+	start, end = csharpTrimSpaceBounds(source, start, end)
+	if start >= end {
+		return nil, false
+	}
+	var value *Node
+	var ok bool
+	if csharpIsIntegerLiteral(source[start:end]) {
+		value, ok = csharpBuildLeafNodeByName(arena, source, lang, "integer_literal", start, end)
+	} else if identStart, identEnd, identOK := csharpScanIdentifierAt(source, start); identOK && identStart == start && identEnd == end {
+		value, ok = csharpBuildIdentifierNodeFromSource(source, start, end, lang, arena)
+	}
+	if !ok || value == nil {
+		return nil, false
+	}
+	sym, ok := symbolByName(lang, "constant_pattern")
+	if !ok {
+		return nil, false
+	}
+	named := int(sym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[sym].Named
+	return newParentNodeInArena(arena, sym, named, []*Node{value}, nil, 0), true
 }
 
 func csharpBuildAssignmentExpressionNode(arena *nodeArena, source []byte, lang *Language, start, opPos, end uint32) (*Node, bool) {
@@ -1097,16 +1225,10 @@ func csharpBuildAnonymousObjectCreationNode(arena *nodeArena, source []byte, lan
 }
 
 func csharpBuildLambdaExpressionNode(arena *nodeArena, source []byte, lang *Language, start, arrowPos, end uint32) (*Node, bool) {
-	paramStart, paramEnd, ok := csharpScanIdentifierAt(source, start)
-	if !ok {
+	paramStart, paramEnd := csharpTrimSpaceBounds(source, start, arrowPos)
+	if paramStart >= paramEnd {
 		return nil, false
 	}
-	paramSym, ok := symbolByName(lang, "implicit_parameter")
-	if !ok {
-		return nil, false
-	}
-	paramNamed := int(paramSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[paramSym].Named
-	paramNode := newLeafNodeInArena(arena, paramSym, paramNamed, paramStart, paramEnd, advancePointByBytes(Point{}, source[:paramStart]), advancePointByBytes(Point{}, source[:paramEnd]))
 	bodyNode, ok := csharpRecoverQueryExpressionNodeFromRange(source, arrowPos+2, end, lang, arena)
 	if !ok {
 		return nil, false
@@ -1121,9 +1243,167 @@ func csharpBuildLambdaExpressionNode(arena *nodeArena, source []byte, lang *Lang
 	}
 	parametersID, _ := lang.FieldByName("parameters")
 	bodyID, _ := lang.FieldByName("body")
-	fields := csharpFieldIDsInArena(arena, []FieldID{parametersID, 0, bodyID})
 	named := int(sym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[sym].Named
-	return newParentNodeInArena(arena, sym, named, []*Node{paramNode, arrowTok, bodyNode}, fields, 0), true
+	if source[paramStart] == '(' && source[paramEnd-1] == ')' {
+		params, ok := csharpBuildLambdaParameterListNode(arena, source, lang, paramStart, paramEnd)
+		if !ok {
+			return nil, false
+		}
+		fields := csharpFieldIDsInArena(arena, []FieldID{parametersID, 0, bodyID})
+		return newParentNodeInArena(arena, sym, named, []*Node{params, arrowTok, bodyNode}, fields, 0), true
+	}
+	if typeStart, typeEnd, ok := csharpScanIdentifierAt(source, paramStart); ok {
+		cursor := csharpSkipSpaceBytes(source, typeEnd)
+		if cursor < paramEnd && source[cursor] == '(' {
+			if closeParen, ok := csharpFindMatchingParenByte(source, cursor, paramEnd); ok && closeParen+1 == paramEnd {
+				typeNode, ok := csharpBuildLambdaParameterTypeNode(arena, source, lang, typeStart, typeEnd)
+				if !ok {
+					return nil, false
+				}
+				params, ok := csharpBuildLambdaParameterListNode(arena, source, lang, cursor, paramEnd)
+				if !ok {
+					return nil, false
+				}
+				typeID, _ := lang.FieldByName("type")
+				fields := csharpFieldIDsInArena(arena, []FieldID{typeID, parametersID, 0, bodyID})
+				return newParentNodeInArena(arena, sym, named, []*Node{typeNode, params, arrowTok, bodyNode}, fields, 0), true
+			}
+		}
+		if typeEnd == paramEnd {
+			paramSym, ok := symbolByName(lang, "implicit_parameter")
+			if !ok {
+				return nil, false
+			}
+			paramNamed := int(paramSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[paramSym].Named
+			paramNode := newLeafNodeInArena(arena, paramSym, paramNamed, typeStart, typeEnd, advancePointByBytes(Point{}, source[:typeStart]), advancePointByBytes(Point{}, source[:typeEnd]))
+			fields := csharpFieldIDsInArena(arena, []FieldID{parametersID, 0, bodyID})
+			return newParentNodeInArena(arena, sym, named, []*Node{paramNode, arrowTok, bodyNode}, fields, 0), true
+		}
+	}
+	return nil, false
+}
+
+func csharpBuildLambdaParameterListNode(arena *nodeArena, source []byte, lang *Language, start, end uint32) (*Node, bool) {
+	if lang == nil || arena == nil || start >= end || int(end) > len(source) || source[start] != '(' || source[end-1] != ')' {
+		return nil, false
+	}
+	items := csharpSplitTopLevelByComma(source, start+1, end-1)
+	if len(items) == 0 {
+		return nil, false
+	}
+	sym, ok := symbolByName(lang, "parameter_list")
+	if !ok {
+		return nil, false
+	}
+	openTok, ok := csharpBuildLeafNodeByName(arena, source, lang, "(", start, start+1)
+	if !ok {
+		return nil, false
+	}
+	closeTok, ok := csharpBuildLeafNodeByName(arena, source, lang, ")", end-1, end)
+	if !ok {
+		return nil, false
+	}
+	children := []*Node{openTok}
+	for i, span := range items {
+		itemStart, itemEnd := csharpTrimSpaceBounds(source, span[0], span[1])
+		if itemStart >= itemEnd {
+			return nil, false
+		}
+		param, ok := csharpBuildLambdaParameterNode(arena, source, lang, itemStart, itemEnd)
+		if !ok {
+			return nil, false
+		}
+		children = append(children, param)
+		if i < len(items)-1 {
+			commaPos := csharpFindCommaBetween(source, span[1], items[i+1][0])
+			if commaPos == 0 && source[span[1]] != ',' {
+				return nil, false
+			}
+			if commaPos == 0 {
+				commaPos = span[1]
+			}
+			commaTok, ok := csharpBuildLeafNodeByName(arena, source, lang, ",", commaPos, commaPos+1)
+			if !ok {
+				return nil, false
+			}
+			children = append(children, commaTok)
+		}
+	}
+	children = append(children, closeTok)
+	if arena != nil {
+		buf := arena.allocNodeSlice(len(children))
+		copy(buf, children)
+		children = buf
+	}
+	named := int(sym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[sym].Named
+	return newParentNodeInArena(arena, sym, named, children, nil, 0), true
+}
+
+func csharpBuildLambdaParameterNode(arena *nodeArena, source []byte, lang *Language, start, end uint32) (*Node, bool) {
+	if lang == nil || arena == nil || start >= end || int(end) > len(source) {
+		return nil, false
+	}
+	firstStart, firstEnd, ok := csharpScanIdentifierAt(source, start)
+	if !ok || firstStart != start {
+		return nil, false
+	}
+	cursor := csharpSkipSpaceBytes(source, firstEnd)
+	var children []*Node
+	var fields []FieldID
+	typeID, _ := lang.FieldByName("type")
+	nameID, _ := lang.FieldByName("name")
+	if cursor < end {
+		secondStart, secondEnd, ok := csharpScanIdentifierAt(source, cursor)
+		if !ok || secondStart != cursor || csharpSkipSpaceBytes(source, secondEnd) != end {
+			return nil, false
+		}
+		typeNode, ok := csharpBuildLambdaParameterTypeNode(arena, source, lang, firstStart, firstEnd)
+		if !ok {
+			return nil, false
+		}
+		nameNode, ok := csharpBuildIdentifierNodeFromSource(source, secondStart, secondEnd, lang, arena)
+		if !ok {
+			return nil, false
+		}
+		children = []*Node{typeNode, nameNode}
+		fields = []FieldID{typeID, nameID}
+	} else {
+		nameNode, ok := csharpBuildIdentifierNodeFromSource(source, firstStart, firstEnd, lang, arena)
+		if !ok {
+			return nil, false
+		}
+		children = []*Node{nameNode}
+		fields = []FieldID{nameID}
+	}
+	if arena != nil {
+		childBuf := arena.allocNodeSlice(len(children))
+		copy(childBuf, children)
+		children = childBuf
+	}
+	sym, ok := symbolByName(lang, "parameter")
+	if !ok {
+		return nil, false
+	}
+	fieldIDs := csharpFieldIDsInArena(arena, fields)
+	named := int(sym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[sym].Named
+	return newParentNodeInArena(arena, sym, named, children, fieldIDs, 0), true
+}
+
+func csharpBuildLambdaParameterTypeNode(arena *nodeArena, source []byte, lang *Language, start, end uint32) (*Node, bool) {
+	if csharpIsPredefinedTypeName(source[start:end]) {
+		if node, ok := csharpBuildLeafNodeByName(arena, source, lang, "predefined_type", start, end); ok {
+			return node, true
+		}
+	}
+	return csharpBuildIdentifierNodeFromSource(source, start, end, lang, arena)
+}
+
+func csharpIsPredefinedTypeName(name []byte) bool {
+	switch string(name) {
+	case "bool", "byte", "char", "decimal", "double", "float", "int", "long", "object", "sbyte", "short", "string", "uint", "ulong", "ushort", "void":
+		return true
+	}
+	return false
 }
 
 func csharpBuildStringLiteralNode(arena *nodeArena, source []byte, lang *Language, start, end uint32) (*Node, bool) {

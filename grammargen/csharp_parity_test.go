@@ -28,8 +28,63 @@ func TestCSharpContextualFileInvocationParity(t *testing.T) {
 	refLang := grammars.CSharpLanguage()
 	adaptExternalScanner(refLang, genLang)
 
-	sample := "file.Method(1, 2);\n"
-	assertGeneratedAndReferenceDeepParity(t, genLang, refLang, sample)
+	cases := []struct {
+		name string
+		src  string
+	}{
+		{
+			name: "member_access",
+			src:  "file.Method(1, 2);\n",
+		},
+		{
+			name: "identifier_argument",
+			src: "void m()\n" +
+				"{\n" +
+				"    m(file);\n" +
+				"}\n",
+		},
+		{
+			name: "scoped_lambdas",
+			src: "void m()\n" +
+				"{\n" +
+				"    var l = scoped => null;\n" +
+				"    var l = (scoped i) => null;\n" +
+				"    var l = (scoped, i) => null;\n" +
+				"    var l = scoped (int i, int j) => null;\n" +
+				"}\n",
+		},
+		{
+			name: "scoped_contextual_block",
+			src: "void scoped() { }\n" +
+				"void m(scoped p) { }\n" +
+				"void m(scoped ref int p) { }\n" +
+				"void m(scoped ref scoped p) { }\n" +
+				"void m(int scoped) { }\n" +
+				"void m()\n" +
+				"{\n" +
+				"    scoped v = null;\n" +
+				"    scoped ref int v = null;\n" +
+				"    scoped ref scoped v = null;\n" +
+				"    int scoped = null;\n" +
+				"\n" +
+				"    scoped();\n" +
+				"    m(scoped);\n" +
+				"\n" +
+				"    var x = scoped + 1;\n" +
+				"    var l = scoped => null;\n" +
+				"    var l = (scoped i) => null;\n" +
+				"    var l = (scoped, i) => null;\n" +
+				"    var l = scoped (int i, int j) => null;\n" +
+				"}\n" +
+				"\n" +
+				"class scoped { }\n",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assertGeneratedAndReferenceDeepParity(t, genLang, refLang, tc.src)
+		})
+	}
 }
 
 func TestCSharpQueryJoinClauseParity(t *testing.T) {
@@ -48,6 +103,274 @@ func TestCSharpQueryJoinClauseParity(t *testing.T) {
 		"}\n"
 
 	assertGeneratedAndReferenceDeepParity(t, genLang, refLang, sample)
+}
+
+func TestCSharpConditionalStringLiteralParity(t *testing.T) {
+	genLang := loadGeneratedCSharpLanguageForParity(t)
+	refLang := grammars.CSharpLanguage()
+	adaptExternalScanner(refLang, genLang)
+
+	sample := "class C\n" +
+		"{\n" +
+		"    void M(bool x)\n" +
+		"    {\n" +
+		"        string y = x ? \"foo\" : \"bar\";\n" +
+		"    }\n" +
+		"}\n"
+
+	assertGeneratedAndReferenceDeepParity(t, genLang, refLang, sample)
+}
+
+func TestCSharpExpressionCorpusParity(t *testing.T) {
+	genLang := loadGeneratedCSharpLanguageForParity(t)
+	refLang := grammars.CSharpLanguage()
+	adaptExternalScanner(refLang, genLang)
+
+	cases := []struct {
+		name string
+		src  string
+	}{
+		{
+			name: "element_binding_expression",
+			src:  "var x = [ y, ];\n",
+		},
+		{
+			name: "logical_and_cast_dereference",
+			src:  "bool c = (a) && b;\n",
+		},
+		{
+			name: "generic_invocation_argument",
+			src:  "MyFunction<A,B>(1);\n",
+		},
+		{
+			name: "conditional_is_pattern_initializer",
+			src:  "int a = 1 is Object ? 1 : 2;\n",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assertGeneratedAndReferenceDeepParity(t, genLang, refLang, tc.src)
+		})
+	}
+}
+
+func TestCSharpStatementCorpusRecoveryNoError(t *testing.T) {
+	genLang := loadGeneratedCSharpLanguageForParity(t)
+	refLang := grammars.CSharpLanguage()
+	adaptExternalScanner(refLang, genLang)
+
+	cases := []struct {
+		name string
+		src  string
+	}{
+		{
+			name: "mixed_declarations_and_assignments",
+			src: "class A {\n" +
+				"  void Sample() {\n" +
+				"    int a;\n" +
+				"    int a = 1, b = 2;\n" +
+				"    const int a = 1;\n" +
+				"    const int a = 1, b = 2;\n" +
+				"    ref var value = ref data[i];\n" +
+				"    var g = args[0].Length;\n" +
+				"\n" +
+				"    numbers ??= new List<int>();\n" +
+				"    b = obj ?? a == 0;\n" +
+				"\n" +
+				"    person = new Person(null!, null!);\n" +
+				"\n" +
+				"    MyClass myVar = MyFunction<MyOtherClass>(\"MyArg\");\n" +
+				"  }\n" +
+				"}\n",
+		},
+		{
+			name: "using_statements",
+			src: "class A {\n" +
+				"  void Sample() {\n" +
+				"    using (var a = b) {\n" +
+				"      return;\n" +
+				"    }\n" +
+				"\n" +
+				"    using (Stream a = File.OpenRead(\"a\"), b = new BinaryReader(a)) {\n" +
+				"      return;\n" +
+				"    }\n" +
+				"\n" +
+				"    using var a = new A();\n" +
+				"\n" +
+				"    using (Object a = b) {\n" +
+				"      return;\n" +
+				"    }\n" +
+				"\n" +
+				"    using (this) {\n" +
+				"      return;\n" +
+				"    }\n" +
+				"  }\n" +
+				"}\n",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			data := []byte(tc.src)
+			refTree, err := gotreesitter.NewParser(refLang).Parse(data)
+			if err != nil {
+				t.Fatalf("reference parse: %v", err)
+			}
+			if refTree.RootNode().HasError() {
+				t.Fatalf("reference has error: %s", safeSExpr(refTree.RootNode(), refLang, 128))
+			}
+			genTree, err := gotreesitter.NewParser(genLang).Parse(data)
+			if err != nil {
+				t.Fatalf("generated parse: %v", err)
+			}
+			if genTree.RootNode().HasError() {
+				t.Fatalf("generated has error: %s", safeSExpr(genTree.RootNode(), genLang, 128))
+			}
+		})
+	}
+}
+
+func TestCSharpAttributedTopLevelDeclarationsParity(t *testing.T) {
+	genLang := loadGeneratedCSharpLanguageForParity(t)
+	refLang := grammars.CSharpLanguage()
+	adaptExternalScanner(refLang, genLang)
+
+	cases := []struct {
+		name string
+		src  string
+	}{
+		{
+			name: "top_level_classes",
+			src: "[A(B.C)]\n" +
+				"class D {}\n" +
+				"\n" +
+				"[NS.A(B.C)]\n" +
+				"class E {}\n" +
+				"\n" +
+				"[One][Two]\n" +
+				"[Three]\n" +
+				"class F { }\n",
+		},
+		{
+			name: "struct_and_field",
+			src: "[A,B()][C]\n" +
+				"struct A { }\n" +
+				"\n" +
+				"class Zzz {\n" +
+				"  [A,B()][C]\n" +
+				"  public int Z;\n" +
+				"}\n",
+		},
+		{
+			name: "method_targets",
+			src: "class Methods {\n" +
+				"  [ValidatedContract]\n" +
+				"  int Method1() { return 0; }\n" +
+				"\n" +
+				"  [method: ValidatedContract]\n" +
+				"  int Method2() { return 0; }\n" +
+				"\n" +
+				"  [return: ValidatedContract]\n" +
+				"  int Method3() { return 0; }\n" +
+				"}\n",
+		},
+		{
+			name: "enum_and_event",
+			src: "[Single]\n" +
+				"enum A { B, C }\n" +
+				"\n" +
+				"class Zzz {\n" +
+				"  [A,B()][C]\n" +
+				"  public event EventHandler SomeEvent { add { } remove { } }\n" +
+				"}\n",
+		},
+		{
+			name: "generic_type_parameter_attributes",
+			src: "class Class<[A, B][C()]T1> {\n" +
+				"  void Method<[E] [F, G(1)] T2>() {\n" +
+				"  }\n" +
+				"}\n",
+		},
+		{
+			name: "accessor_attributes",
+			src: "class Zzz {\n" +
+				"  public event EventHandler SomeEvent {\n" +
+				"    [A,B()][C] add { }\n" +
+				"    [A,B()][C] remove { }\n" +
+				"  }\n" +
+				"}\n",
+		},
+		{
+			name: "named_attribute_arguments",
+			src: "[RegularExpression(pattern: \"/.+\", ErrorMessage = \"The Callback Path Must start with a forward slash '/' followed by one or more characters\")]\n" +
+				"class Validator { }\n" +
+				"\n" +
+				"[Route(Name: \"default\", Template = \"/api/{id}\")]\n" +
+				"[Obsolete(message: \"Use NewMethod instead\", error: true)]\n" +
+				"class Example { }\n",
+		},
+		{
+			name: "non_global_attribute_targets",
+			src: "[type: Obsolete]\n" +
+				"class A<[typevar: B] TC>\n" +
+				"{\n" +
+				"  [field:JsonIgnore]\n" +
+				"  [property: JsonIgnore]\n" +
+				"  public int D { get; set; }\n" +
+				"\n" +
+				"  [method: Obsolete]\n" +
+				"  [return: MaybeNull]\n" +
+				"  public void E([param: AllowNull] int f) { }\n" +
+				"\n" +
+				"  [event: Obsolete]\n" +
+				"  public event EventHandler OnG;\n" +
+				"}\n",
+		},
+		{
+			name: "combined_attribute_corpus",
+			src: "[A(B.C)]\n" +
+				"class D {}\n\n" +
+				"[NS.A(B.C)]\n" +
+				"class D {}\n\n" +
+				"[One][Two]\n" +
+				"[Three]\n" +
+				"class A { }\n\n" +
+				"[A,B()][C]\n" +
+				"struct A { }\n\n" +
+				"class Zzz {\n" +
+				"  [A,B()][C]\n" +
+				"  public int Z;\n" +
+				"}\n\n" +
+				"class Methods {\n" +
+				"  [ValidatedContract]\n" +
+				"  int Method1() { return 0; }\n\n" +
+				"  [method: ValidatedContract]\n" +
+				"  int Method2() { return 0; }\n\n" +
+				"  [return: ValidatedContract]\n" +
+				"  int Method3() { return 0; }\n" +
+				"}\n\n" +
+				"[Single]\n" +
+				"enum A { B, C }\n\n" +
+				"class Zzz {\n" +
+				"  [A,B()][C]\n" +
+				"  public event EventHandler SomeEvent { add { } remove { } }\n" +
+				"}\n\n" +
+				"class Class<[A, B][C()]T1> {\n" +
+				"  void Method<[E] [F, G(1)] T2>() {\n" +
+				"  }\n" +
+				"}\n\n" +
+				"class Zzz {\n" +
+				"  public event EventHandler SomeEvent {\n" +
+				"    [A,B()][C] add { }\n" +
+				"    [A,B()][C] remove { }\n" +
+				"  }\n" +
+				"}\n",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assertGeneratedAndReferenceDeepParity(t, genLang, refLang, tc.src)
+		})
+	}
 }
 
 func TestCSharpQuerySyntaxClauseParity(t *testing.T) {

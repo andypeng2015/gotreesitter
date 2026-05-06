@@ -33,6 +33,7 @@ func (s *parserScratch) setBudget(bytes int64) {
 		return
 	}
 	s.budgetBytes = bytes
+	s.merge.budgetBytes = bytes
 }
 
 func (s *parserScratch) clearBudget() {
@@ -40,13 +41,14 @@ func (s *parserScratch) clearBudget() {
 		return
 	}
 	s.budgetBytes = 0
+	s.merge.budgetBytes = 0
 }
 
 func (s *parserScratch) allocatedBytes() int64 {
 	if s == nil {
 		return 0
 	}
-	return s.entries.allocatedBytes + s.gss.allocatedBytes
+	return s.entries.allocatedBytes + s.gss.allocatedBytes + s.merge.allocatedBytes()
 }
 
 func (s *parserScratch) budgetExhausted() bool {
@@ -60,15 +62,7 @@ func releaseParserScratch(s *parserScratch, skipGSSClear bool) {
 	if s == nil {
 		return
 	}
-	if len(s.merge.result) > 0 {
-		clear(s.merge.result)
-	}
-	s.merge.result = s.merge.result[:0]
-	if len(s.merge.slots) > 0 {
-		s.merge.slots = s.merge.slots[:0]
-	}
-	s.merge.perKeyCap = 0
-	s.merge.audit = nil
+	s.merge.reset()
 	if cap(s.tmpEntries) > 0 {
 		buf := s.tmpEntries[:cap(s.tmpEntries)]
 		clear(buf)

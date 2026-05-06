@@ -5,18 +5,18 @@ import (
 	"strings"
 )
 
-func csharpRecoverNonEmptyTypeDeclarationFromError(n *Node, source []byte, lang *Language, arena *nodeArena) (*Node, bool) {
+func csharpRecoverNonEmptyTypeDeclarationFromError(n *Node, source []byte, p *Parser, lang *Language, arena *nodeArena) (*Node, bool) {
 	if n == nil || lang == nil || arena == nil || n.Type(lang) != "ERROR" || len(n.children) == 0 {
 		return nil, false
 	}
-	return csharpRecoverNonEmptyTypeDeclarationFromChildSlice(n.children, 0, source, lang, arena)
+	return csharpRecoverNonEmptyTypeDeclarationFromChildSlice(n.children, 0, source, p, lang, arena)
 }
 
-func csharpRecoverNonEmptyTopLevelTypeDeclarationFromChildren(children []*Node, startIdx int, source []byte, lang *Language, arena *nodeArena) (*Node, int, bool) {
+func csharpRecoverNonEmptyTopLevelTypeDeclarationFromChildren(children []*Node, startIdx int, source []byte, p *Parser, lang *Language, arena *nodeArena) (*Node, int, bool) {
 	if startIdx < 0 || startIdx >= len(children) || lang == nil || arena == nil {
 		return nil, startIdx, false
 	}
-	recovered, ok := csharpRecoverNonEmptyTypeDeclarationFromChildSlice(children[startIdx:], 0, source, lang, arena)
+	recovered, ok := csharpRecoverNonEmptyTypeDeclarationFromChildSlice(children[startIdx:], 0, source, p, lang, arena)
 	if !ok || recovered == nil {
 		return nil, startIdx, false
 	}
@@ -35,7 +35,7 @@ func csharpRecoverNonEmptyTopLevelTypeDeclarationFromChildren(children []*Node, 
 	return recovered, nextIdx, true
 }
 
-func csharpRecoverNonEmptyTypeDeclarationFromChildSlice(children []*Node, startIdx int, source []byte, lang *Language, arena *nodeArena) (*Node, bool) {
+func csharpRecoverNonEmptyTypeDeclarationFromChildSlice(children []*Node, startIdx int, source []byte, p *Parser, lang *Language, arena *nodeArena) (*Node, bool) {
 	if startIdx < 0 || startIdx >= len(children) || lang == nil || arena == nil {
 		return nil, false
 	}
@@ -53,7 +53,7 @@ func csharpRecoverNonEmptyTypeDeclarationFromChildSlice(children []*Node, startI
 			if child == nil || child.Type(lang) != spec.initName {
 				continue
 			}
-			if recovered, ok := csharpBuildRecoveredTypeDeclarationWithBodyFromChildren(children[startIdx:], child, source, lang, arena, spec.declName); ok {
+			if recovered, ok := csharpBuildRecoveredTypeDeclarationWithBodyFromChildren(children[startIdx:], child, source, p, lang, arena, spec.declName); ok {
 				return recovered, true
 			}
 		}
@@ -61,7 +61,7 @@ func csharpRecoverNonEmptyTypeDeclarationFromChildSlice(children []*Node, startI
 	return nil, false
 }
 
-func csharpBuildRecoveredTypeDeclarationWithBodyFromChildren(children []*Node, initNode *Node, source []byte, lang *Language, arena *nodeArena, declName string) (*Node, bool) {
+func csharpBuildRecoveredTypeDeclarationWithBodyFromChildren(children []*Node, initNode *Node, source []byte, p *Parser, lang *Language, arena *nodeArena, declName string) (*Node, bool) {
 	if initNode == nil || lang == nil || arena == nil || int(initNode.endByte) > len(source) {
 		return nil, false
 	}
@@ -82,7 +82,7 @@ func csharpBuildRecoveredTypeDeclarationWithBodyFromChildren(children []*Node, i
 	if !ok {
 		return nil, false
 	}
-	members, ok := csharpRecoverTypeDeclarationBodyMembers(children, initNode, source, lang, arena, uint32(openBrace), uint32(closeBrace))
+	members, ok := csharpRecoverTypeDeclarationBodyMembers(children, initNode, source, p, lang, arena, uint32(openBrace), uint32(closeBrace))
 	if !ok || len(members) == 0 {
 		return nil, false
 	}
@@ -124,7 +124,7 @@ func csharpBuildRecoveredTypeDeclarationWithBodyFromChildren(children []*Node, i
 	return recovered, true
 }
 
-func csharpRecoverTypeDeclarationBodyMembers(children []*Node, initNode *Node, source []byte, lang *Language, arena *nodeArena, openBrace, closeBrace uint32) ([]*Node, bool) {
+func csharpRecoverTypeDeclarationBodyMembers(children []*Node, initNode *Node, source []byte, p *Parser, lang *Language, arena *nodeArena, openBrace, closeBrace uint32) ([]*Node, bool) {
 	if lang == nil || arena == nil || openBrace >= closeBrace {
 		return nil, false
 	}
@@ -135,7 +135,7 @@ func csharpRecoverTypeDeclarationBodyMembers(children []*Node, initNode *Node, s
 			i++
 			continue
 		}
-		if recovered, next, ok := csharpRecoverMethodDeclarationFromChildren(children, i, source, lang, arena, closeBrace); ok {
+		if recovered, next, ok := csharpRecoverMethodDeclarationFromChildren(children, i, source, p, lang, arena, closeBrace); ok {
 			members = append(members, recovered)
 			i = next
 			continue
@@ -187,8 +187,8 @@ func csharpRecoverTypeDeclarationBodyChild(n *Node, lang *Language, arena *nodeA
 	}
 }
 
-func csharpRecoverMethodDeclarationFromChildren(children []*Node, startIdx int, source []byte, lang *Language, arena *nodeArena, enclosingClose uint32) (*Node, int, bool) {
-	if lang == nil || arena == nil || startIdx < 0 || startIdx >= len(children) || int(enclosingClose) > len(source) {
+func csharpRecoverMethodDeclarationFromChildren(children []*Node, startIdx int, source []byte, p *Parser, lang *Language, arena *nodeArena, enclosingClose uint32) (*Node, int, bool) {
+	if p == nil || lang == nil || arena == nil || startIdx < 0 || startIdx >= len(children) || int(enclosingClose) > len(source) {
 		return nil, startIdx, false
 	}
 	i := startIdx
@@ -235,6 +235,7 @@ func csharpRecoverMethodDeclarationFromChildren(children []*Node, startIdx int, 
 	}
 	statements := make([]*Node, 0, 8)
 	nextIdx := i
+	needSourceStatementRecovery := false
 	for nextIdx < len(children) {
 		child := children[nextIdx]
 		if child == nil {
@@ -251,8 +252,18 @@ func csharpRecoverMethodDeclarationFromChildren(children []*Node, startIdx int, 
 		recovered, ok := csharpRecoverMethodBlockStatementsFromNode(child, lang, arena)
 		if ok {
 			statements = append(statements, recovered...)
+		} else if !bytesAreTrivia(source[child.startByte:child.endByte]) {
+			needSourceStatementRecovery = true
 		}
 		nextIdx++
+	}
+	if len(source) <= csharpMaxTopLevelChunkRecoverySourceBytes &&
+		(needSourceStatementRecovery || len(statements) == 0 && !bytesAreTrivia(source[openBracePos+1:closeBracePos])) {
+		recoveredStatements, ok := csharpRecoverMethodBlockStatementsFromRange(source, uint32(openBracePos+1), uint32(closeBracePos), p, arena)
+		if !ok {
+			return nil, startIdx, false
+		}
+		statements = recoveredStatements
 	}
 	if len(statements) == 0 && !bytesAreTrivia(source[openBracePos+1:closeBracePos]) {
 		return nil, startIdx, false
