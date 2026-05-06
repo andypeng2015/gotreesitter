@@ -8,6 +8,50 @@ func normalizePythonCompatibility(root *Node, source []byte, lang *Language) {
 	normalizePythonStringContinuationEscapes(root, source, lang)
 }
 
+func normalizePythonInterpolationPatterns(root *Node, lang *Language) {
+	if root == nil || lang == nil || lang.Name != "python" {
+		return
+	}
+	patternListSym, ok := symbolByName(lang, "pattern_list")
+	if !ok {
+		return
+	}
+	listSplatPatternSym, hasListSplatPattern := symbolByName(lang, "list_splat_pattern")
+	expressionListSym, hasExpressionList := symbolByName(lang, "expression_list")
+	listSplatSym, hasListSplat := symbolByName(lang, "list_splat")
+
+	patternListNamed := false
+	if int(patternListSym) < len(lang.SymbolMetadata) {
+		patternListNamed = lang.SymbolMetadata[patternListSym].Named
+	}
+	listSplatPatternNamed := false
+	if hasListSplatPattern && int(listSplatPatternSym) < len(lang.SymbolMetadata) {
+		listSplatPatternNamed = lang.SymbolMetadata[listSplatPatternSym].Named
+	}
+
+	var rewrite func(*Node, bool)
+	rewrite = func(n *Node, inInterpolation bool) {
+		if n == nil {
+			return
+		}
+		here := inInterpolation || n.Type(lang) == "interpolation"
+		if here {
+			if hasExpressionList && n.symbol == expressionListSym {
+				n.symbol = patternListSym
+				n.isNamed = patternListNamed
+			}
+			if hasListSplatPattern && hasListSplat && n.symbol == listSplatSym {
+				n.symbol = listSplatPatternSym
+				n.isNamed = listSplatPatternNamed
+			}
+		}
+		for _, child := range n.children {
+			rewrite(child, here)
+		}
+	}
+	rewrite(root, false)
+}
+
 func normalizePythonPrintStatements(root *Node, source []byte, lang *Language) {
 	if root == nil || lang == nil || lang.Name != "python" || len(source) == 0 {
 		return
