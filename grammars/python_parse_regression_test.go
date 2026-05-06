@@ -147,6 +147,35 @@ def report_status(
 	}
 }
 
+func TestPythonScannerSerializationRecomputesInterpolatedStringState(t *testing.T) {
+	scanner := PythonExternalScanner{}
+	buf := make([]byte, 256)
+
+	plain := &pythonScannerState{
+		indents:                  []uint16{0},
+		delimiters:               []pyDelimiter{pyDelimDoubleQuote},
+		insideInterpolatedString: true,
+	}
+	n := scanner.Serialize(plain, buf)
+	var restoredPlain pythonScannerState
+	scanner.Deserialize(&restoredPlain, buf[:n])
+	if restoredPlain.insideInterpolatedString {
+		t.Fatal("plain string checkpoint restored insideInterpolatedString=true, want false")
+	}
+
+	formatted := &pythonScannerState{
+		indents:                  []uint16{0},
+		delimiters:               []pyDelimiter{pyDelimDoubleQuote | pyDelimFormat},
+		insideInterpolatedString: false,
+	}
+	n = scanner.Serialize(formatted, buf)
+	var restoredFormatted pythonScannerState
+	scanner.Deserialize(&restoredFormatted, buf[:n])
+	if !restoredFormatted.insideInterpolatedString {
+		t.Fatal("f-string checkpoint restored insideInterpolatedString=false, want true")
+	}
+}
+
 func TestParseFilePythonNestedMethodDedentsReturnToModule(t *testing.T) {
 	src := []byte("import unittest\n\nclass GrammarTests(unittest.TestCase):\n    def test_case(self):\n        keywords = (1,)\n        cases = (2,)\n        for keyword in (1,):\n            for case in (2,):\n                pass\n\nif __name__ == '__main__':\n    unittest.main()\n")
 
