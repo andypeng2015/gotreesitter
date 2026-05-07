@@ -67,7 +67,7 @@ func (SvelteExternalScanner) Serialize(payload any, buf []byte) int {
 
 func (SvelteExternalScanner) Deserialize(payload any, buf []byte) {
 	s := payload.(*svelteState)
-	s.tags = htmlDeserializeTags(buf)
+	s.tags = htmlDeserializeTagsInto(s.tags, buf)
 }
 
 func (SvelteExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {

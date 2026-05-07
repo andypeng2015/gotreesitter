@@ -73,7 +73,7 @@ func (AstroExternalScanner) Serialize(payload any, buf []byte) int {
 
 func (AstroExternalScanner) Deserialize(payload any, buf []byte) {
 	s := payload.(*astroState)
-	s.tags = htmlDeserializeTags(buf)
+	s.tags = htmlDeserializeTagsInto(s.tags, buf)
 }
 
 func (AstroExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {

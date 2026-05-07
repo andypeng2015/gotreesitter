@@ -56,7 +56,7 @@ func (AngularExternalScanner) Serialize(payload any, buf []byte) int {
 
 func (AngularExternalScanner) Deserialize(payload any, buf []byte) {
 	s := payload.(*angularState)
-	s.tags = htmlDeserializeTags(buf)
+	s.tags = htmlDeserializeTagsInto(s.tags, buf)
 }
 
 func (AngularExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
