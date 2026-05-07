@@ -102,3 +102,42 @@ func TestBareLexicalChoiceBecomesNamedToken(t *testing.T) {
 		t.Fatalf("SExpr = %s, want (source_file (builtin_type))", got)
 	}
 }
+
+func TestAliasedInlinePatternWinsSameLengthNamedPatternTie(t *testing.T) {
+	g := NewGrammar("aliased_inline_pattern_precedence")
+	g.Define("source_file", Choice(
+		Sym("preproc_include"),
+		Sym("preproc_call"),
+	))
+	g.Define("preproc_include", Seq(
+		Alias(Pat(`#[ \t]*include`), "#include", false),
+		Sym("system_lib_string"),
+		ImmToken(Pat(`\r?\n`)),
+	))
+	g.Define("preproc_call", Seq(
+		Field("directive", Sym("preproc_directive")),
+		Optional(Field("argument", Sym("preproc_arg"))),
+		ImmToken(Pat(`\r?\n`)),
+	))
+	g.Define("preproc_directive", Pat(`#[ \t]*[a-zA-Z0-9]\w*`))
+	g.Define("preproc_arg", Token(Pat(`[^\r\n]+`)))
+	g.Define("system_lib_string", Token(Seq(
+		Str("<"),
+		Repeat(Pat(`[^>\n]`)),
+		Str(">"),
+	)))
+	g.Extras = []*Rule{Pat(`[ \t]+`)}
+
+	lang, err := GenerateLanguage(g)
+	if err != nil {
+		t.Fatalf("GenerateLanguage: %v", err)
+	}
+	tree, err := gotreesitter.NewParser(lang).Parse([]byte("#include <iostream>\n"))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	defer tree.Release()
+	if got := tree.RootNode().SExpr(lang); got != "(source_file (preproc_include (system_lib_string)))" {
+		t.Fatalf("SExpr = %s, want (source_file (preproc_include (system_lib_string)))", got)
+	}
+}

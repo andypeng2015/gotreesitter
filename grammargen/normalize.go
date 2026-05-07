@@ -477,7 +477,7 @@ func Normalize(g *Grammar) (*NormalizedGrammar, error) {
 	}
 
 	// Phase 6: Extract terminal patterns for DFA generation.
-	terminals, err := extractTerminals(g, st, stringLiterals, namedTokens, inlinePatterns, inlineTokens, keywordSet)
+	terminals, err := extractTerminals(g, st, stringLiterals, namedTokens, inlinePatterns, inlineTokens, keywordSet, aliasedPatterns)
 	if err != nil {
 		return nil, fmt.Errorf("extract terminals: %w", err)
 	}
@@ -1964,7 +1964,7 @@ func resolveExtras(g *Grammar, st *symbolTable) []int {
 // extractTerminals builds TerminalPattern entries for DFA generation.
 // When keywordSet is non-nil, string terminals that are keywords are excluded
 // from the main DFA (they're handled by the keyword DFA instead).
-func extractTerminals(g *Grammar, st *symbolTable, stringLits []string, namedTokens []string, inlinePatterns []string, inlineTokens []inlineTokenEntry, keywordSet map[int]bool) ([]TerminalPattern, error) {
+func extractTerminals(g *Grammar, st *symbolTable, stringLits []string, namedTokens []string, inlinePatterns []string, inlineTokens []inlineTokenEntry, keywordSet map[int]bool, aliasedPatterns map[string]aliasInfo) ([]TerminalPattern, error) {
 	var patterns []TerminalPattern
 
 	// All non-immediate terminals use prec-based priority: -prec*1000.
@@ -2027,10 +2027,10 @@ func extractTerminals(g *Grammar, st *symbolTable, stringLits []string, namedTok
 		})
 	}
 
-	var keywordInlinePatterns, broadInlinePatterns []string
+	var priorityInlinePatterns, broadInlinePatterns []string
 	for _, pat := range inlinePatterns {
-		if isKeywordLikeInlinePattern(pat) {
-			keywordInlinePatterns = append(keywordInlinePatterns, pat)
+		if _, aliased := aliasedPatterns[pat]; aliased || isKeywordLikeInlinePattern(pat) {
+			priorityInlinePatterns = append(priorityInlinePatterns, pat)
 		} else {
 			broadInlinePatterns = append(broadInlinePatterns, pat)
 		}
@@ -2038,7 +2038,10 @@ func extractTerminals(g *Grammar, st *symbolTable, stringLits []string, namedTok
 
 	// Keyword-shaped inline patterns, such as DOT's case-insensitive
 	// `[sS][uU]...` aliases, must beat identifier tokens on same-length ties.
-	for _, pat := range keywordInlinePatterns {
+	// Aliased inline patterns also need this extraction order: tree-sitter C
+	// gives alias(PATTERN, "...") terminals concrete auxiliary symbols before
+	// later broad named patterns, e.g. C++ #include before preproc_directive.
+	for _, pat := range priorityInlinePatterns {
 		id, ok := st.lookup(inlinePatternSymbolKey(pat))
 		if !ok {
 			continue

@@ -2400,7 +2400,7 @@ func init() {
 		{name: "python", blobFunc: grammars.PythonLanguage, timeout: 300 * time.Second, expectNoErrors: 1, expectParity: 1},
 		{name: "ruby", blobFunc: grammars.RubyLanguage, timeout: 90 * time.Second, expectNoErrors: 1, expectParity: 1},
 		{name: "rust", blobFunc: grammars.RustLanguage, timeout: 90 * time.Second, expectNoErrors: 1, expectParity: 1},
-		{name: "cpp", blobFunc: grammars.CppLanguage, timeout: 150 * time.Second, expectNoErrors: 1},
+		{name: "cpp", blobFunc: grammars.CppLanguage, timeout: 150 * time.Second, expectNoErrors: 1, expectParity: 1},
 		{name: "javascript", blobFunc: grammars.JavascriptLanguage, timeout: 90 * time.Second, expectNoErrors: 1, expectParity: 1},
 		{name: "typescript", blobFunc: grammars.TypescriptLanguage, timeout: 180 * time.Second, expectNoErrors: 1, expectParity: 1,
 			jsonPath: "/tmp/grammar_parity/typescript/typescript/src/grammar.json"},
