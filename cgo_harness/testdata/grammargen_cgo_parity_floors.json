@@ -13,13 +13,13 @@
       "eligible": 20,
       "no_error": 20,
       "tree_parity": 20,
-      "divergences": 2
+      "divergences": 0
     },
     "c_sharp": {
       "eligible": 20,
       "no_error": 20,
       "tree_parity": 20,
-      "divergences": 5
+      "divergences": 0
     },
     "cobol": {
       "eligible": 10,
@@ -31,7 +31,7 @@
       "eligible": 20,
       "no_error": 20,
       "tree_parity": 20,
-      "divergences": 2
+      "divergences": 0
     },
     "json": {
       "eligible": 6,
@@ -49,13 +49,13 @@
       "eligible": 20,
       "no_error": 20,
       "tree_parity": 20,
-      "divergences": 5
+      "divergences": 0
     },
     "typescript": {
       "eligible": 20,
       "no_error": 20,
       "tree_parity": 20,
-      "divergences": 6
+      "divergences": 0
     }
   }
 }
