@@ -250,6 +250,21 @@ func (st *symbolTable) fieldID(name string) int {
 	return id
 }
 
+func (st *symbolTable) uniqueInternalSymbolName(base string) string {
+	if st == nil {
+		return base
+	}
+	name := base
+	for i := 1; ; i++ {
+		if _, ok := st.lookup(name); !ok {
+			if _, ok := st.lookupNonterm(name); !ok {
+				return name
+			}
+		}
+		name = fmt.Sprintf("%s_%d", base, i)
+	}
+}
+
 // Normalize transforms a Grammar into a NormalizedGrammar.
 func Normalize(g *Grammar) (*NormalizedGrammar, error) {
 	if len(g.RuleOrder) == 0 {
@@ -494,8 +509,9 @@ func Normalize(g *Grammar) (*NormalizedGrammar, error) {
 	// Add augmented start production: S' → startRule
 	startName := g.RuleOrder[0]
 	startSym, _ := st.lookupNonterm(startName)
-	augStartSym := st.addSymbol("_start", SymbolInfo{
-		Name:    "_start",
+	augStartName := st.uniqueInternalSymbolName("__gotreesitter_augmented_start")
+	augStartSym := st.addSymbol(augStartName, SymbolInfo{
+		Name:    augStartName,
 		Visible: false,
 		Named:   false,
 		Kind:    SymbolNonterminal,

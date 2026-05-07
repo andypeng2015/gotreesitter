@@ -2499,7 +2499,7 @@ func init() {
 		{name: "pkl", blobFunc: grammars.PklLanguage, expectNoErrors: 1, expectParity: 1},
 		{name: "pug", blobFunc: grammars.PugLanguage, expectNoErrors: 1},
 		{name: "purescript", blobFunc: grammars.PurescriptLanguage, timeout: 60 * time.Second, expectNoErrors: 1},
-		{name: "r", blobFunc: grammars.RLanguage, timeout: 60 * time.Second, expectNoErrors: 1},
+		{name: "r", blobFunc: grammars.RLanguage, timeout: 60 * time.Second, expectNoErrors: 1, expectParity: 1},
 		{name: "rescript", blobFunc: grammars.RescriptLanguage, timeout: 60 * time.Second, expectNoErrors: 1, expectParity: 1},
 		{name: "rst", blobFunc: grammars.RstLanguage, expectNoErrors: 1},
 		{name: "squirrel", blobFunc: grammars.SquirrelLanguage, expectNoErrors: 1, expectParity: 1},
