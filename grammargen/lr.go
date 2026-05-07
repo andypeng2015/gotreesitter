@@ -3246,13 +3246,15 @@ func shouldPreferAssignmentExpressionShift(lookaheadSym int, shifts, reduces []l
 	if shift.lhsSym < 0 || shift.lhsSym >= len(ng.Symbols) {
 		return false
 	}
-	if ng.Symbols[shift.lhsSym].Name != "assignment_expression" {
+	shiftLHSName := ng.Symbols[shift.lhsSym].Name
+	if !isAssignmentShiftLHS(shiftLHSName) {
 		return false
 	}
 	if lookaheadSym < 0 || lookaheadSym >= len(ng.Symbols) {
 		return false
 	}
-	if !isAssignmentOperatorLookahead(ng.Symbols[lookaheadSym].Name) {
+	lookaheadName := ng.Symbols[lookaheadSym].Name
+	if !isAssignmentOperatorLookahead(lookaheadName) && !(lookaheadName == "operator" && isAssignmentShiftLHS(shiftLHSName)) {
 		return false
 	}
 	for _, reduce := range reduces {
@@ -3268,6 +3270,15 @@ func shouldPreferAssignmentExpressionShift(lookaheadSym int, shifts, reduces []l
 		}
 	}
 	return true
+}
+
+func isAssignmentShiftLHS(name string) bool {
+	switch name {
+	case "assignment_expression", "assignment", "_closed_assignment":
+		return true
+	default:
+		return false
+	}
 }
 
 func shouldPreserveKeywordIdentifierShiftReduce(lookaheadSym int, reduces []lrAction, ng *NormalizedGrammar) bool {

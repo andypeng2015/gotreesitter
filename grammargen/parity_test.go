@@ -2429,7 +2429,7 @@ func init() {
 		{name: "erlang", blobFunc: grammars.ErlangLanguage, timeout: 90 * time.Second, expectNoErrors: 1, expectParity: 1},
 		{name: "haskell", blobFunc: grammars.HaskellLanguage, timeout: 90 * time.Second, expectNoErrors: 1, expectParity: 1},
 		{name: "nim", blobFunc: grammars.NimLanguage, timeout: 120 * time.Second, expectNoErrors: 1},
-		{name: "julia", blobFunc: grammars.JuliaLanguage, timeout: 90 * time.Second, expectNoErrors: 1},
+		{name: "julia", blobFunc: grammars.JuliaLanguage, timeout: 90 * time.Second, expectNoErrors: 1, expectParity: 1},
 		{name: "gleam", blobFunc: grammars.GleamLanguage, expectNoErrors: 1, expectParity: 1},
 		{name: "elm", blobFunc: grammars.ElmLanguage, timeout: 60 * time.Second, expectNoErrors: 1, expectParity: 1},
 		{name: "d", blobFunc: grammars.DLanguage, timeout: 300 * time.Second, expectNoErrors: 1},

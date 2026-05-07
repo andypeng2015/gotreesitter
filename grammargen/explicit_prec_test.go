@@ -66,6 +66,32 @@ func TestResolveActionConflictExplicitNegativeShiftBeatsImplicitZeroReduce(t *te
 	}
 }
 
+func TestResolveActionConflictJuliaAssignmentOperatorAliasShift(t *testing.T) {
+	ng := &NormalizedGrammar{
+		Symbols: []SymbolInfo{
+			{Name: "operator", Kind: SymbolTerminal},
+			{Name: "_expression", Kind: SymbolNonterminal},
+			{Name: "assignment", Kind: SymbolNonterminal},
+		},
+		Productions: []Production{
+			{LHS: 1},
+		},
+	}
+
+	actions := []lrAction{
+		{kind: lrReduce, prodIdx: 0, lhsSym: 1},
+		{kind: lrShift, state: 7, prec: -2, hasPrec: true, assoc: AssocRight, lhsSym: 2},
+	}
+
+	got, err := resolveActionConflict(0, actions, ng)
+	if err != nil {
+		t.Fatalf("resolveActionConflict: %v", err)
+	}
+	if len(got) != 1 || got[0].kind != lrShift {
+		t.Fatalf("resolved actions = %+v, want single shift", got)
+	}
+}
+
 func TestResolveActionConflictExplicitZeroReduceStillBeatsNegativeShift(t *testing.T) {
 	ng := &NormalizedGrammar{
 		Symbols: []SymbolInfo{
