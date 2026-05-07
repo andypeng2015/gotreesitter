@@ -3,9 +3,13 @@ package grammargen
 import "testing"
 
 func TestApplyImportGrammarShapeHintsPowerShellBinaryRepeat(t *testing.T) {
-	g := NewGrammar("powershell")
-	applyImportGrammarShapeHints(g)
-	if !g.BinaryRepeatMode {
-		t.Fatal("PowerShell import should use binary repeat mode")
+	for _, name := range []string{"d", "powershell"} {
+		t.Run(name, func(t *testing.T) {
+			g := NewGrammar(name)
+			applyImportGrammarShapeHints(g)
+			if !g.BinaryRepeatMode {
+				t.Fatalf("%s import should use binary repeat mode", name)
+			}
+		})
 	}
 }

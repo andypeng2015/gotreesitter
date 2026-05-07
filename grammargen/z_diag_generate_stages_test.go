@@ -36,6 +36,9 @@ func TestDiagGenerateStages(t *testing.T) {
 	if getenvOr("DIAG_ENABLE_LR_SPLIT", "") == "1" {
 		gram.EnableLRSplitting = true
 	}
+	if getenvOr("DIAG_BINARY_REPEAT", "") == "1" {
+		gram.BinaryRepeatMode = true
+	}
 
 	timeout := pg.genTimeout
 	if timeout == 0 {
@@ -49,7 +52,7 @@ func TestDiagGenerateStages(t *testing.T) {
 		timeout = override
 	}
 
-	t.Logf("diag-generate: grammar=%s timeout=%s rules=%d extras=%d conflicts=%d externals=%d word=%q lr_split=%v broad_lex=%v",
+	t.Logf("diag-generate: grammar=%s timeout=%s rules=%d extras=%d conflicts=%d externals=%d word=%q lr_split=%v binary_repeat=%v broad_lex=%v",
 		grammarName,
 		timeout,
 		len(gram.Rules),
@@ -58,6 +61,7 @@ func TestDiagGenerateStages(t *testing.T) {
 		len(gram.Externals),
 		gram.Word,
 		gram.EnableLRSplitting,
+		gram.BinaryRepeatMode,
 		useForcedBroadLexFallback(),
 	)
 	t.Logf("diag-generate: mem[start]=%s", diagGenerateMemSnapshot())

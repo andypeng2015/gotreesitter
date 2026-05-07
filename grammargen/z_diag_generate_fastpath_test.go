@@ -32,6 +32,9 @@ func TestDiagGenerateLanguageFastPath(t *testing.T) {
 	if getenvOr("DIAG_ENABLE_LR_SPLIT", "") == "1" {
 		gram.EnableLRSplitting = true
 	}
+	if getenvOr("DIAG_BINARY_REPEAT", "") == "1" {
+		gram.BinaryRepeatMode = true
+	}
 
 	timeout := pg.genTimeout
 	if timeout == 0 {
@@ -45,7 +48,7 @@ func TestDiagGenerateLanguageFastPath(t *testing.T) {
 		timeout = override
 	}
 
-	t.Logf("diag-generate-fastpath: grammar=%s timeout=%s rules=%d extras=%d conflicts=%d externals=%d word=%q lr_split=%v",
+	t.Logf("diag-generate-fastpath: grammar=%s timeout=%s rules=%d extras=%d conflicts=%d externals=%d word=%q lr_split=%v binary_repeat=%v",
 		grammarName,
 		timeout,
 		len(gram.Rules),
@@ -54,6 +57,7 @@ func TestDiagGenerateLanguageFastPath(t *testing.T) {
 		len(gram.Externals),
 		gram.Word,
 		gram.EnableLRSplitting,
+		gram.BinaryRepeatMode,
 	)
 	t.Logf("diag-generate-fastpath: mem[start]=%s", diagGenerateMemSnapshot())
 
