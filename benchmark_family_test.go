@@ -48,6 +48,7 @@ func BenchmarkFamilyParseFullDFA(b *testing.B) {
 				source:          spec.source,
 				funcCount:       unitCount,
 				requireNoErrors: true,
+				warmupBeforeRun: true,
 			})
 		})
 	}

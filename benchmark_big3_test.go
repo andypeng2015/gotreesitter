@@ -18,6 +18,7 @@ type dfaBenchmarkSpec struct {
 	marker          string
 	funcCount       int
 	requireNoErrors bool
+	warmupBeforeRun bool
 }
 
 func makeTypeScriptBenchmarkSource(funcCount int) []byte {
@@ -60,6 +61,21 @@ func benchmarkParseFullDFA(b *testing.B, spec dfaBenchmarkSpec) {
 		gotreesitter.ResetPerfCounters()
 		gotreesitter.EnableArenaProfile(true)
 		defer gotreesitter.EnableArenaProfile(false)
+	}
+	if spec.warmupBeforeRun {
+		tree, err := parser.Parse(src)
+		if err != nil {
+			b.Fatalf("warmup parse error: %v", err)
+		}
+		root := requireCompleteParse(b, tree, src, lang, "warmup full dfa")
+		if spec.requireNoErrors && root.HasError() {
+			b.Fatalf("warmup full dfa parse produced errors: root=%q %s", root.Type(lang), tree.ParseRuntime().Summary())
+		}
+		tree.Release()
+		if statsEnabled {
+			gotreesitter.ResetArenaProfile()
+			gotreesitter.ResetPerfCounters()
+		}
 	}
 
 	b.ReportAllocs()
