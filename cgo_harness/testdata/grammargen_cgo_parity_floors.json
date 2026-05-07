@@ -1,13 +1,13 @@
 {
   "version": 1,
-  "generated_at": "2026-03-21T08:42:17Z",
+  "generated_at": "2026-05-07T02:23:13Z",
   "corpus_root": "/tmp/grammar_parity",
-  "max_cases": 10,
+  "max_cases": 20,
   "max_bytes": 262144,
   "grammar_count": 7,
-  "total_eligible": 65,
-  "total_no_error": 56,
-  "total_tree_parity": 41,
+  "total_eligible": 85,
+  "total_no_error": 77,
+  "total_tree_parity": 70,
   "metrics": {
     "c": {
       "eligible": 10,
@@ -40,15 +40,15 @@
       "divergences": 4
     },
     "tsx": {
-      "eligible": 10,
-      "no_error": 10,
-      "tree_parity": 6,
+      "eligible": 20,
+      "no_error": 20,
+      "tree_parity": 20,
       "divergences": 5
     },
     "typescript": {
-      "eligible": 10,
-      "no_error": 9,
-      "tree_parity": 5,
+      "eligible": 20,
+      "no_error": 20,
+      "tree_parity": 20,
       "divergences": 6
     }
   }
