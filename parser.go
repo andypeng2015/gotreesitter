@@ -526,7 +526,8 @@ func (p *Parser) tryRelexBroadDFA(tok Token, parserState StateID, ts TokenSource
 			break
 		}
 		if skipPos > int(tok.StartByte) {
-			if cand, ok := tryAt(skipPos, skipRow, skipCol); ok {
+			if cand, ok := tryAt(skipPos, skipRow, skipCol); ok &&
+				p.allowStringContentWhitespaceBroadRelex(cand.token.Symbol) {
 				return cand.token, true
 			}
 		}
@@ -535,6 +536,26 @@ func (p *Parser) tryRelexBroadDFA(tok Token, parserState StateID, ts TokenSource
 	// Restore lexer state
 	dts.lexer.pos, dts.lexer.row, dts.lexer.col = savedPos, savedRow, savedCol
 	return Token{}, false
+}
+
+func (p *Parser) allowStringContentWhitespaceBroadRelex(candidate Symbol) bool {
+	if p == nil || p.language == nil || int(candidate) >= len(p.language.SymbolNames) {
+		return false
+	}
+	candidateName := p.language.SymbolNames[candidate]
+	if candidateName != "b" && candidateName != "x" {
+		return false
+	}
+	hasEscBlob, hasHexBlob := false, false
+	for _, name := range p.language.SymbolNames {
+		switch name {
+		case "esc_blob":
+			hasEscBlob = true
+		case "hex_blob":
+			hasHexBlob = true
+		}
+	}
+	return hasEscBlob && hasHexBlob
 }
 
 // tryRelexCurrentStateDFA re-lexes from the current token start using the
