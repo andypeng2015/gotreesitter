@@ -2436,7 +2436,7 @@ func init() {
 
 		// Niche scanner languages
 		{name: "fish", blobFunc: grammars.FishLanguage, expectNoErrors: 1, expectParity: 1},
-		{name: "powershell", blobFunc: grammars.PowershellLanguage, timeout: 60 * time.Second, expectNoErrors: 1},
+		{name: "powershell", blobFunc: grammars.PowershellLanguage, timeout: 60 * time.Second, expectNoErrors: 1, expectParity: 1},
 		{name: "racket", blobFunc: grammars.RacketLanguage, expectNoErrors: 1, expectParity: 1},
 		{name: "jsonnet", blobFunc: grammars.JsonnetLanguage, expectNoErrors: 1, expectParity: 1},
 		{name: "starlark", blobFunc: grammars.StarlarkLanguage, expectNoErrors: 1, expectParity: 1},

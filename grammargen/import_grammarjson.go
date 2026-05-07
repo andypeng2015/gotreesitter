@@ -40,6 +40,11 @@ func applyImportGrammarShapeHints(g *Grammar) {
 			g.FlattenGeneratedRepeatAux = true
 			g.ReuseRepeatAuxForParents = []string{"jsx_opening_element", "jsx_self_closing_element"}
 		}
+	case "powershell":
+		// PowerShell's string/command repeat helpers carry broad content-token
+		// lookaheads. The upstream binary repeat shape keeps those lookaheads
+		// from leaking into plain variable assignment lex modes.
+		g.BinaryRepeatMode = true
 	}
 }
 
