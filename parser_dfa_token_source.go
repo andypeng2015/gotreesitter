@@ -187,6 +187,7 @@ func (d *dfaTokenSource) Next() Token {
 		startPos = d.lexer.pos
 	}
 	for {
+		scanStartPos := d.lexer.pos
 		var externalStartSnapshot []byte
 		if languageUsesExternalScannerCheckpoints(d.language) {
 			externalStartSnapshot = d.captureExternalScannerStateInto(&d.externalTokenStart)
@@ -209,6 +210,24 @@ func (d *dfaTokenSource) Next() Token {
 			tok = glrTok
 		} else {
 			tok = d.nextDFAToken()
+		}
+		if !tokenFromExternal && d.language != nil && d.language.ExternalScanner != nil &&
+			tok.Symbol != 0 && int(tok.StartByte) > scanStartPos {
+			dfaEndPos := d.lexer.pos
+			dfaEndRow := d.lexer.row
+			dfaEndCol := d.lexer.col
+
+			d.lexer.pos = int(tok.StartByte)
+			d.lexer.row = tok.StartPoint.Row
+			d.lexer.col = tok.StartPoint.Column
+			if extTok, ok := d.nextExternalToken(); ok && extTok.StartByte == tok.StartByte {
+				tok = extTok
+				tokenFromExternal = true
+			} else {
+				d.lexer.pos = dfaEndPos
+				d.lexer.row = dfaEndRow
+				d.lexer.col = dfaEndCol
+			}
 		}
 		if d.shouldSuppressFortranPreprocDefineNewline(tok) {
 			continue

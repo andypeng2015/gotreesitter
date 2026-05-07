@@ -9,8 +9,8 @@
   "grammar_count": 53,
   "total_eligible": 1019,
   "total_no_error": 982,
-  "total_sexpr_parity": 778,
-  "total_deep_parity": 773,
+  "total_sexpr_parity": 779,
+  "total_deep_parity": 774,
   "metrics": {
     "bash": {
       "eligible": 25,
@@ -27,8 +27,8 @@
     "comment": {
       "eligible": 3,
       "no_error": 3,
-      "sexpr_parity": 2,
-      "deep_parity": 2
+      "sexpr_parity": 3,
+      "deep_parity": 3
     },
     "cpon": {
       "eligible": 12,
