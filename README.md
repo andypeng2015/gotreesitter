@@ -8,6 +8,10 @@ go get github.com/odvcencio/gotreesitter
 
 gotreesitter loads the same parse-table format that tree-sitter's C runtime uses. Grammar tables are extracted from upstream `parser.c` files by `ts2go`, compressed into binary blobs, and deserialized on first use. 206 grammars ship in the registry.
 
+## Agent Skill
+
+Agents working with gotreesitter should use the [using-gotreesitter](https://github.com/odvcencio/m31labs-skills/blob/main/skills/using-gotreesitter/SKILL.md) skill.
+
 ## Motivation
 
 Every Go tree-sitter binding in the ecosystem depends on CGo:
