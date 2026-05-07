@@ -77,6 +77,7 @@ type Grammar struct {
 	FlattenGeneratedRepeatAux          bool          // allow generated repeat helpers to participate in hidden-choice flattening
 	ReuseRepeatAuxForParents           []string      // parent rule names whose repeat helpers may be shared by canonical body
 	PreserveKeywordIdentifierConflicts bool          // keep keyword-as-identifier S/R ambiguity for grammars like Fortran
+	ExactPrefixStates                  int           // keep this many LR(1) states exact before merge compaction
 	Precedences                        [][]PrecEntry // ordered precedence levels (each level: earlier = higher prec)
 	ChoiceLiftThreshold                int           // if >0, lift inline CHOICE nodes with more alternatives than this into auxiliary nonterminals to prevent production explosion
 }
@@ -326,6 +327,7 @@ func ExtendGrammar(name string, base *Grammar, customize func(g *Grammar)) *Gram
 		FlattenGeneratedRepeatAux:          base.FlattenGeneratedRepeatAux,
 		ReuseRepeatAuxForParents:           make([]string, len(base.ReuseRepeatAuxForParents)),
 		PreserveKeywordIdentifierConflicts: base.PreserveKeywordIdentifierConflicts,
+		ExactPrefixStates:                  base.ExactPrefixStates,
 		Precedences:                        clonePrecedenceLevels(base.Precedences),
 		ChoiceLiftThreshold:                base.ChoiceLiftThreshold,
 	}

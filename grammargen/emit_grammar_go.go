@@ -155,6 +155,10 @@ func EmitGrammarGo(g *Grammar, pkgName, funcName string) ([]byte, error) {
 		fmt.Fprintf(&buf, "\tg.PreserveKeywordIdentifierConflicts = true\n\n")
 	}
 
+	if g.ExactPrefixStates != 0 {
+		fmt.Fprintf(&buf, "\tg.ExactPrefixStates = %d\n\n", g.ExactPrefixStates)
+	}
+
 	if g.ChoiceLiftThreshold != 0 {
 		fmt.Fprintf(&buf, "\tg.ChoiceLiftThreshold = %d\n\n", g.ChoiceLiftThreshold)
 	}

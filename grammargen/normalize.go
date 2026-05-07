@@ -100,6 +100,8 @@ type NormalizedGrammar struct {
 	// External scanner support (populated when Grammar.Externals is set).
 	ExternalSymbols []int // external token index → symbol ID
 
+	ExactPrefixStates int
+
 	// PrecedenceOrder stores the symbol-level precedence ordering from the
 	// grammar's precedences table. Maps a rule name to its numeric position
 	// (higher = higher priority) and whether it's a SYMBOL or STRING entry.
@@ -638,6 +640,7 @@ func Normalize(g *Grammar) (*NormalizedGrammar, error) {
 	ng.KeywordEntries = keywordEntries
 	ng.ReservedWordSets = reservedWordSets
 	ng.ExternalSymbols = externalSymbols
+	ng.ExactPrefixStates = g.ExactPrefixStates
 	ng.PrecedenceOrder = buildPrecOrderTable(g.Precedences, buildNamedPrecMapFromLevels(g.Precedences))
 	ng.PreserveKeywordIdentifierConflicts = g.PreserveKeywordIdentifierConflicts
 
@@ -3336,6 +3339,7 @@ func flattenHiddenChoiceAlts(g *Grammar, generatedHiddenRules map[string]bool) *
 	out.BinaryRepeatMode = g.BinaryRepeatMode
 	out.EnableLRSplitting = g.EnableLRSplitting
 	out.PreserveKeywordIdentifierConflicts = g.PreserveKeywordIdentifierConflicts
+	out.ExactPrefixStates = g.ExactPrefixStates
 	out.ChoiceLiftThreshold = g.ChoiceLiftThreshold
 	return out
 }
@@ -3714,6 +3718,7 @@ func expandInlineRules(g *Grammar) *Grammar {
 	out.ReuseRepeatAuxForParents = append(out.ReuseRepeatAuxForParents, g.ReuseRepeatAuxForParents...)
 	out.EnableLRSplitting = g.EnableLRSplitting
 	out.PreserveKeywordIdentifierConflicts = g.PreserveKeywordIdentifierConflicts
+	out.ExactPrefixStates = g.ExactPrefixStates
 	out.ChoiceLiftThreshold = g.ChoiceLiftThreshold
 	// Don't propagate Inline — they've been expanded.
 

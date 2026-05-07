@@ -255,8 +255,8 @@
     "python": {
       "eligible": 25,
       "no_error": 25,
-      "sexpr_parity": 9,
-      "deep_parity": 9
+      "sexpr_parity": 25,
+      "deep_parity": 25
     },
     "regex": {
       "eligible": 25,
@@ -308,9 +308,9 @@
     },
     "swift": {
       "eligible": 25,
-      "no_error": 14,
-      "sexpr_parity": 12,
-      "deep_parity": 12
+      "no_error": 25,
+      "sexpr_parity": 25,
+      "deep_parity": 25
     },
     "todotxt": {
       "eligible": 19,

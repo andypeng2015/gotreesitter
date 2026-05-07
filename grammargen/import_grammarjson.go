@@ -18,6 +18,13 @@ func applyImportGrammarShapeHints(g *Grammar) {
 		// a callable identifier.
 		g.BinaryRepeatMode = true
 		g.PreserveKeywordIdentifierConflicts = true
+	case "python":
+		// Python benefits from tree-sitter's binary repeat helper shape for
+		// broad corpus parity, but its soft `type` alias syntax needs the early
+		// LR(1) conflict context preserved. Otherwise large-grammar merge
+		// compaction can deterministically choose the primary-expression path.
+		g.BinaryRepeatMode = true
+		g.ExactPrefixStates = 999999
 	case "javascript", "typescript", "tsx", "sql":
 		// These grammars rely heavily on tree-sitter's binary repeat helper
 		// shape. Keeping the upstream lowering avoids large state blowups and
