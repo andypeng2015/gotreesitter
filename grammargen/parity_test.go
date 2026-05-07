@@ -1757,8 +1757,7 @@ var importParityGrammars = []importParityGrammar{
 			"<div></div>",
 			"<p>hello</p>",
 		},
-		// Imports and generates, but parsing requires external scanner (9 externals).
-		expectImport: true, expectGenerate: true, expectNoErrors: 0, expectParity: 2,
+		expectImport: true, expectGenerate: true, expectNoErrors: 2, expectParity: 2,
 	},
 	{
 		name: "scala", path: "/tmp/grammar_parity/scala/grammar.js",
@@ -1768,7 +1767,7 @@ var importParityGrammars = []importParityGrammar{
 			"object Main { def main(args: Array[String]): Unit = {} }",
 		},
 		genTimeout:   120 * time.Second,
-		expectImport: true, expectGenerate: true, expectNoErrors: 0, expectParity: 2,
+		expectImport: true, expectGenerate: true, expectNoErrors: 2, expectParity: 2,
 	},
 	// ── grammar.json imports (canonical resolved form) ──
 	{
@@ -2319,7 +2318,7 @@ func init() {
 		{name: "lua", blobFunc: grammars.LuaLanguage, expectNoErrors: 1, expectParity: 1},
 		{name: "zig", blobFunc: grammars.ZigLanguage, timeout: 60 * time.Second, expectNoErrors: 1},
 		{name: "swift", blobFunc: grammars.SwiftLanguage, timeout: 90 * time.Second, expectNoErrors: 1, expectParity: 1},
-		{name: "clojure", blobFunc: grammars.ClojureLanguage, expectNoErrors: 1},
+		{name: "clojure", blobFunc: grammars.ClojureLanguage, expectNoErrors: 1, expectParity: 1},
 		{name: "groovy", blobFunc: grammars.GroovyLanguage, timeout: 60 * time.Second, expectNoErrors: 1, expectParity: 1},
 		{name: "pascal", blobFunc: grammars.PascalLanguage, timeout: 60 * time.Second, expectNoErrors: 1},
 		{name: "prolog", blobFunc: grammars.PrologLanguage, expectNoErrors: 1, expectParity: 1},
@@ -2403,9 +2402,9 @@ func init() {
 		{name: "rust", blobFunc: grammars.RustLanguage, timeout: 90 * time.Second, expectNoErrors: 1, expectParity: 1},
 		{name: "cpp", blobFunc: grammars.CppLanguage, timeout: 150 * time.Second, expectNoErrors: 1},
 		{name: "javascript", blobFunc: grammars.JavascriptLanguage, timeout: 90 * time.Second, expectNoErrors: 1, expectParity: 1},
-		{name: "typescript", blobFunc: grammars.TypescriptLanguage, timeout: 180 * time.Second, expectNoErrors: 1,
+		{name: "typescript", blobFunc: grammars.TypescriptLanguage, timeout: 180 * time.Second, expectNoErrors: 1, expectParity: 1,
 			jsonPath: "/tmp/grammar_parity/typescript/typescript/src/grammar.json"},
-		{name: "tsx", blobFunc: grammars.TsxLanguage, timeout: 180 * time.Second, expectNoErrors: 1,
+		{name: "tsx", blobFunc: grammars.TsxLanguage, timeout: 180 * time.Second, expectNoErrors: 1, expectParity: 1,
 			jsonPath: "/tmp/grammar_parity/typescript/tsx/src/grammar.json"},
 		{name: "kotlin", blobFunc: grammars.KotlinLanguage, timeout: 90 * time.Second, expectNoErrors: 1, expectParity: 1},
 		{name: "dart", blobFunc: grammars.DartLanguage, timeout: 90 * time.Second, expectNoErrors: 1, expectParity: 1},
@@ -2417,10 +2416,10 @@ func init() {
 			jsonPath: "/tmp/grammar_parity/ocaml/grammars/ocaml/src/grammar.json"},
 
 		// Config/markup scanner languages
-		{name: "yaml", blobFunc: grammars.YamlLanguage, timeout: 90 * time.Second, expectNoErrors: 1},
-		{name: "markdown", blobFunc: grammars.MarkdownLanguage, timeout: 90 * time.Second, expectNoErrors: 1,
+		{name: "yaml", blobFunc: grammars.YamlLanguage, timeout: 90 * time.Second, expectNoErrors: 1, expectParity: 1},
+		{name: "markdown", blobFunc: grammars.MarkdownLanguage, timeout: 90 * time.Second, expectNoErrors: 1, expectParity: 1,
 			jsonPath: "/tmp/grammar_parity/markdown/tree-sitter-markdown/src/grammar.json"},
-		{name: "xml", blobFunc: grammars.XmlLanguage, timeout: 60 * time.Second, expectNoErrors: 1,
+		{name: "xml", blobFunc: grammars.XmlLanguage, timeout: 60 * time.Second, expectNoErrors: 1, expectParity: 1,
 			jsonPath: "/tmp/grammar_parity/xml/xml/src/grammar.json"},
 		{name: "scss", blobFunc: grammars.ScssLanguage, timeout: 60 * time.Second, expectNoErrors: 1, expectParity: 1},
 		{name: "caddy", blobFunc: grammars.CaddyLanguage, expectNoErrors: 1, expectParity: 1},
@@ -2428,7 +2427,7 @@ func init() {
 		// Systems/tools scanner languages
 		{name: "cmake", blobFunc: grammars.CmakeLanguage, expectNoErrors: 1, expectParity: 1},
 		{name: "erlang", blobFunc: grammars.ErlangLanguage, timeout: 90 * time.Second, expectNoErrors: 1, expectParity: 1},
-		{name: "haskell", blobFunc: grammars.HaskellLanguage, timeout: 90 * time.Second, expectNoErrors: 1},
+		{name: "haskell", blobFunc: grammars.HaskellLanguage, timeout: 90 * time.Second, expectNoErrors: 1, expectParity: 1},
 		{name: "nim", blobFunc: grammars.NimLanguage, timeout: 120 * time.Second, expectNoErrors: 1},
 		{name: "julia", blobFunc: grammars.JuliaLanguage, timeout: 90 * time.Second, expectNoErrors: 1},
 		{name: "gleam", blobFunc: grammars.GleamLanguage, expectNoErrors: 1, expectParity: 1},
@@ -2640,6 +2639,16 @@ func TestMultiGrammarImportPipeline(t *testing.T) {
 				refSexp := refTree.RootNode().SExpr(refLang)
 
 				genHasError := strings.Contains(genSexp, "ERROR") || strings.Contains(genSexp, "MISSING")
+				if genHasError || genSexp != refSexp {
+					genRoot := genTree.RootNode()
+					refRoot := refTree.RootNode()
+					t.Logf("sample %q generatedError=%t referenceError=%t\n  gen: %s\n  ref: %s",
+						sample,
+						genRoot.HasError(),
+						refRoot.HasError(),
+						safeSExpr(genRoot, genLang, 96),
+						safeSExpr(refRoot, refLang, 96))
+				}
 
 				if !genHasError {
 					noErrCount++

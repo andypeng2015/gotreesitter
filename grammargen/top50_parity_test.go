@@ -9,8 +9,8 @@ import (
 )
 
 const (
-	top50MinNoErrorFloors     = 48
-	top50MinExactParityFloors = 33
+	top50MinNoErrorFloors     = 50
+	top50MinExactParityFloors = 40
 )
 
 func TestTop50GrammarImportParityCoverage(t *testing.T) {
@@ -28,6 +28,8 @@ func TestTop50GrammarImportParityCoverage(t *testing.T) {
 	}
 
 	var problems []string
+	var noErrorGaps []string
+	var exactParityGaps []string
 	noErrorFloors := 0
 	exactParityFloors := 0
 	for _, languageName := range top50 {
@@ -47,11 +49,15 @@ func TestTop50GrammarImportParityCoverage(t *testing.T) {
 			noErrorFloors++
 		} else if grammar.expectNoErrors < 0 {
 			problems = append(problems, languageName+": no-error floor is negative")
+		} else {
+			noErrorGaps = append(noErrorGaps, languageName)
 		}
 		if grammar.expectParity > 0 {
 			exactParityFloors++
 		} else if grammar.expectParity < 0 {
 			problems = append(problems, languageName+": parity floor is negative")
+		} else {
+			exactParityGaps = append(exactParityGaps, languageName)
 		}
 		if grammar.expectNoErrors == 0 && grammar.expectParity == 0 {
 			problems = append(problems, languageName+": no parse or parity floor is set")
@@ -70,6 +76,12 @@ func TestTop50GrammarImportParityCoverage(t *testing.T) {
 	}
 	t.Logf("top50 grammargen parity coverage: %d/%d import+generate, %d/%d no-error floors, %d/%d exact parity floors",
 		len(top50), len(top50), noErrorFloors, len(top50), exactParityFloors, len(top50))
+	if len(noErrorGaps) > 0 {
+		t.Logf("top50 no-error floor gaps: %s", strings.Join(noErrorGaps, ", "))
+	}
+	if len(exactParityGaps) > 0 {
+		t.Logf("top50 exact parity floor gaps: %s", strings.Join(exactParityGaps, ", "))
+	}
 }
 
 func loadTop50GrammarLockFile(t *testing.T) []string {
