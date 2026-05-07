@@ -317,6 +317,7 @@ go run ./cmd/benchmatrix --count 10
 ```
 
 Emits `bench_out/matrix.json` (machine-readable), `bench_out/matrix.md` (summary), and raw logs under `bench_out/raw/`.
+The default matrix includes a bounded language-family full-parse group, reported with `MB/s` so parser throughput can be compared across generated source sizes. Use `--only-family` to isolate that group, `--family-unit-count` to scale it, or `--no-family` for the narrower Go/editor matrix.
 
 ## Supported languages
 
