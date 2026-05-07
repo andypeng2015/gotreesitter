@@ -2446,7 +2446,7 @@ func init() {
 		{name: "teal", blobFunc: grammars.TealLanguage, expectNoErrors: 1, expectParity: 1},
 		{name: "cobol", blobFunc: grammars.CobolLanguage, timeout: 60 * time.Second, expectNoErrors: 1, expectParity: 1},
 		{name: "crystal", blobFunc: grammars.CrystalLanguage, timeout: 90 * time.Second, expectNoErrors: 1, expectParity: 1},
-		{name: "perl", blobFunc: grammars.PerlLanguage, timeout: 90 * time.Second, expectNoErrors: 1},
+		{name: "perl", blobFunc: grammars.PerlLanguage, timeout: 90 * time.Second, expectNoErrors: 1, expectParity: 1},
 
 		// ── Batch 6: remaining grammars (all have external scanners) ──
 		{name: "agda", blobFunc: grammars.AgdaLanguage, timeout: 60 * time.Second, expectNoErrors: 1},

@@ -1610,15 +1610,26 @@ func addNonterminalExtraChains(tables *LRTables, ng *NormalizedGrammar, ctx *lrC
 			terminalExtras = append(terminalExtras, e)
 		}
 	}
+	externalSymbolSet := make(map[int]struct{}, len(ng.ExternalSymbols))
+	for _, sym := range ng.ExternalSymbols {
+		externalSymbolSet[sym] = struct{}{}
+	}
 
 	extraStartsByFirstSym := make(map[int][]int)
 	var extraFirstSyms []int
+	hasExternalExtraStart := false
+	hasNonExternalExtraStart := false
 	for _, prodIdx := range extraProds {
 		prod := &ng.Productions[prodIdx]
 		if len(prod.RHS) > 0 && prod.RHS[0] < tokenCount {
 			firstSym := prod.RHS[0]
 			if _, ok := extraStartsByFirstSym[firstSym]; !ok {
 				extraFirstSyms = append(extraFirstSyms, firstSym)
+				if _, ok := externalSymbolSet[firstSym]; ok {
+					hasExternalExtraStart = true
+				} else {
+					hasNonExternalExtraStart = true
+				}
 			}
 			extraStartsByFirstSym[firstSym] = append(extraStartsByFirstSym[firstSym], prodIdx)
 		}
@@ -1643,6 +1654,16 @@ func addNonterminalExtraChains(tables *LRTables, ng *NormalizedGrammar, ctx *lrC
 			follow.add(firstSym)
 		}
 		return follow
+	}
+	var externalExtraFollow bitset
+	if hasExternalExtraStart {
+		externalExtraFollow = newBitset(tokenCount)
+		for state := 0; state < mainStateCount; state++ {
+			follow := stateFollowSet(state)
+			follow.forEach(func(sym int) {
+				externalExtraFollow.add(sym)
+			})
+		}
 	}
 	stateHasContinuation := func(state int) bool {
 		if acts, ok := tables.ActionTable[state]; ok {
@@ -1689,6 +1710,14 @@ func addNonterminalExtraChains(tables *LRTables, ng *NormalizedGrammar, ctx *lrC
 		if state < mainStateCount {
 			return true
 		}
+		if _, ok := externalSymbolSet[firstSym]; ok {
+			// External-scanner extras are context sensitive. Recursively
+			// injecting their starts into synthetic extra-chain states can make
+			// scanner-driven extras such as Perl POD/heredocs expand without a
+			// structural bound, while main LR states still receive the extra
+			// entry actions they need.
+			return false
+		}
 		extraMatcher, ok := startMatchers[firstSym]
 		if !ok {
 			return true
@@ -1733,7 +1762,10 @@ func addNonterminalExtraChains(tables *LRTables, ng *NormalizedGrammar, ctx *lrC
 		if state >= mainStateCount && stateOnlyReducesCompletedExtra(state) {
 			continue
 		}
-		follow := stateFollowSet(state)
+		var follow bitset
+		if hasNonExternalExtraStart {
+			follow = stateFollowSet(state)
+		}
 		for _, firstSym := range extraFirstSyms {
 			if !syntheticStateMayInjectExtraStart(state, firstSym) {
 				continue
@@ -1748,8 +1780,14 @@ func addNonterminalExtraChains(tables *LRTables, ng *NormalizedGrammar, ctx *lrC
 			if hasNonExtraAction {
 				continue
 			}
+			entryFollow := follow
+			if _, ok := externalSymbolSet[firstSym]; ok {
+				entryFollow = externalExtraFollow
+			} else if len(entryFollow.words) == 0 {
+				entryFollow = stateFollowSet(state)
+			}
 			prodIdxs := extraStartsByFirstSym[firstSym]
-			entryState := builder.buildEntryState(firstSym, prodIdxs, follow)
+			entryState := builder.buildEntryState(firstSym, prodIdxs, entryFollow)
 			tables.addAction(state, firstSym, lrAction{
 				kind:    lrShift,
 				state:   entryState,

@@ -31,7 +31,7 @@ func applyImportGrammarShapeHints(g *Grammar) {
 		// retract directives. LALR merge compaction otherwise gives the DFA a
 		// state that skips the close delimiter and truncates the parse.
 		g.ExactPrefixStates = 999999
-	case "javascript", "typescript", "tsx", "sql", "d", "objc":
+	case "javascript", "typescript", "tsx", "sql", "d", "objc", "perl":
 		// These grammars rely heavily on tree-sitter's binary repeat helper
 		// shape. Keeping the upstream lowering avoids large state blowups and
 		// preserves upstream ambiguity handling for imported grammars.
@@ -45,6 +45,30 @@ func applyImportGrammarShapeHints(g *Grammar) {
 		// lookaheads. The upstream binary repeat shape keeps those lookaheads
 		// from leaking into plain variable assignment lex modes.
 		g.BinaryRepeatMode = true
+	}
+}
+
+func applyImportGrammarPostShapeHints(g *Grammar) {
+	if g == nil {
+		return
+	}
+	switch g.Name {
+	case "perl":
+		if _, ok := g.Rules["heredoc_content"]; ok {
+			// Perl models heredoc bodies as grammar extras that start and end in
+			// the external scanner. Importing the full interpolation grammar into
+			// a nonterminal-extra chain makes table generation unbounded for this
+			// shape; keep the scanner-delimited body path and leave richer heredoc
+			// interpolation structure to a scanner-aware follow-up.
+			g.Rules["heredoc_content"] = Seq(
+				Sym("_heredoc_start"),
+				Repeat(Choice(
+					Sym("_heredoc_middle"),
+					Sym("escape_sequence"),
+				)),
+				Sym("heredoc_end"),
+			)
+		}
 	}
 }
 
@@ -154,6 +178,8 @@ func ImportGrammarJSON(data []byte) (*Grammar, error) {
 	if !conv.sawReservedNode {
 		g.ReservedWordSets = nil
 	}
+
+	applyImportGrammarPostShapeHints(g)
 
 	return g, nil
 }
