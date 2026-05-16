@@ -323,6 +323,15 @@ func effectiveParseMergePerKeyCap(lang *Language, mergePerKeyCap int, incrementa
 		if mergePerKeyCap > 4 {
 			return 4
 		}
+	case "java":
+		// Giant generated switch/case bodies can retain many equivalent Java GLR
+		// survivors under the default per-key budget. A single survivor per
+		// merge key matched the accepted tree on Lucene stress files while
+		// avoiding minutes of ambiguity churn. Preserve explicit env overrides
+		// for diagnosis and parity experiments.
+		if !parseMaxMergePerKeyEnvConfigured() && mergePerKeyCap > 1 {
+			return 1
+		}
 	}
 	return mergePerKeyCap
 }

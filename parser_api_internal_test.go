@@ -495,8 +495,15 @@ func TestParseMaxMergePerKeyValue(t *testing.T) {
 }
 
 func TestEffectiveParseMergePerKeyCap(t *testing.T) {
+	t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "")
+	ResetParseEnvConfigCacheForTests()
+	defer ResetParseEnvConfigCacheForTests()
+
 	if got := effectiveParseMergePerKeyCap(&Language{Name: "javascript"}, maxStacksPerMergeKey, false); got != 4 {
 		t.Fatalf("effectiveParseMergePerKeyCap(javascript, default, full) = %d, want 4", got)
+	}
+	if got := effectiveParseMergePerKeyCap(&Language{Name: "java"}, maxStacksPerMergeKey, false); got != 1 {
+		t.Fatalf("effectiveParseMergePerKeyCap(java, default, full) = %d, want 1", got)
 	}
 	if got := effectiveParseMergePerKeyCap(&Language{Name: "typescript"}, maxStacksPerMergeKey, false); got != maxStacksPerMergeKey {
 		t.Fatalf("effectiveParseMergePerKeyCap(typescript, default, full) = %d, want %d", got, maxStacksPerMergeKey)
@@ -507,8 +514,21 @@ func TestEffectiveParseMergePerKeyCap(t *testing.T) {
 	if got := effectiveParseMergePerKeyCap(&Language{Name: "javascript"}, maxStacksPerMergeKey, true); got != maxStacksPerMergeKey {
 		t.Fatalf("effectiveParseMergePerKeyCap(javascript, default, incremental) = %d, want %d", got, maxStacksPerMergeKey)
 	}
+	if got := effectiveParseMergePerKeyCap(&Language{Name: "java"}, maxStacksPerMergeKey, true); got != maxStacksPerMergeKey {
+		t.Fatalf("effectiveParseMergePerKeyCap(java, default, incremental) = %d, want %d", got, maxStacksPerMergeKey)
+	}
 	if got := effectiveParseMergePerKeyCap(&Language{Name: "tsx"}, maxStacksPerMergeKey, false); got != maxStacksPerMergeKey {
 		t.Fatalf("effectiveParseMergePerKeyCap(tsx, default, full) = %d, want %d", got, maxStacksPerMergeKey)
+	}
+}
+
+func TestEffectiveParseMergePerKeyCapJavaExplicitOverride(t *testing.T) {
+	t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "4")
+	ResetParseEnvConfigCacheForTests()
+	defer ResetParseEnvConfigCacheForTests()
+
+	if got := effectiveParseMergePerKeyCap(&Language{Name: "java"}, 4, false); got != 4 {
+		t.Fatalf("effectiveParseMergePerKeyCap(java, explicit, full) = %d, want 4", got)
 	}
 }
 
