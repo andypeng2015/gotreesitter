@@ -257,6 +257,35 @@ type javaCorpusStats struct {
 	firstIssueSummary string
 	firstIssueHasErr  bool
 	stopReasons       map[gotreesitter.ParseStopReason]int
+	runtime           javaRuntimeStats
+}
+
+type javaRuntimeStats struct {
+	tokensConsumed            uint64
+	nodesAllocated            uint64
+	parentNodesAllocated      uint64
+	parentNodesRetained       uint64
+	parentNodesDroppedSameTok uint64
+	leafNodesAllocated        uint64
+	leafNodesRetained         uint64
+	leafNodesDroppedSameTok   uint64
+	gssNodesAllocated         uint64
+	gssNodesRetained          uint64
+	gssNodesDroppedSameTok    uint64
+	singleStackGSSNodes       uint64
+	multiStackGSSNodes        uint64
+	singleStackIterations     uint64
+	multiStackIterations      uint64
+	mergeStacksIn             uint64
+	mergeStacksOut            uint64
+	mergeSlotsUsed            uint64
+	globalCullStacksIn        uint64
+	globalCullStacksOut       uint64
+	maxStacksSeen             int
+	maxArenaBytesAllocated    int64
+	maxScratchBytesAllocated  int64
+	maxGSSBytesAllocated      int64
+	maxEntryScratchBytesAlloc int64
 }
 
 type javaParseResult struct {
@@ -353,6 +382,7 @@ func runJavaCorpus(files []javaCorpusFile, mode javaParseMode, timeoutMicros uin
 		}
 		root := tree.RootNode()
 		rt := tree.ParseRuntime()
+		stats.runtime.add(rt)
 		stats.stopReasons[rt.StopReason]++
 		if root.HasError() {
 			stats.hasError++
@@ -377,6 +407,75 @@ func runJavaCorpus(files []javaCorpusFile, mode javaParseMode, timeoutMicros uin
 		tree.Release()
 	}
 	return stats, nil
+}
+
+func (s *javaRuntimeStats) add(rt gotreesitter.ParseRuntime) {
+	s.tokensConsumed += rt.TokensConsumed
+	s.nodesAllocated += uint64(rt.NodesAllocated)
+	s.parentNodesAllocated += rt.ParentNodesAllocated
+	s.parentNodesRetained += rt.ParentNodesRetained
+	s.parentNodesDroppedSameTok += rt.ParentNodesDroppedSameToken
+	s.leafNodesAllocated += rt.LeafNodesAllocated
+	s.leafNodesRetained += rt.LeafNodesRetained
+	s.leafNodesDroppedSameTok += rt.LeafNodesDroppedSameToken
+	s.gssNodesAllocated += rt.GSSNodesAllocated
+	s.gssNodesRetained += rt.GSSNodesRetained
+	s.gssNodesDroppedSameTok += rt.GSSNodesDroppedSameToken
+	s.singleStackGSSNodes += rt.SingleStackGSSNodes
+	s.multiStackGSSNodes += rt.MultiStackGSSNodes
+	s.singleStackIterations += uint64(rt.SingleStackIterations)
+	s.multiStackIterations += uint64(rt.MultiStackIterations)
+	s.mergeStacksIn += rt.MergeStacksIn
+	s.mergeStacksOut += rt.MergeStacksOut
+	s.mergeSlotsUsed += rt.MergeSlotsUsed
+	s.globalCullStacksIn += rt.GlobalCullStacksIn
+	s.globalCullStacksOut += rt.GlobalCullStacksOut
+	if rt.MaxStacksSeen > s.maxStacksSeen {
+		s.maxStacksSeen = rt.MaxStacksSeen
+	}
+	if rt.ArenaBytesAllocated > s.maxArenaBytesAllocated {
+		s.maxArenaBytesAllocated = rt.ArenaBytesAllocated
+	}
+	if rt.ScratchBytesAllocated > s.maxScratchBytesAllocated {
+		s.maxScratchBytesAllocated = rt.ScratchBytesAllocated
+	}
+	if rt.GSSBytesAllocated > s.maxGSSBytesAllocated {
+		s.maxGSSBytesAllocated = rt.GSSBytesAllocated
+	}
+	if rt.EntryScratchBytesAllocated > s.maxEntryScratchBytesAlloc {
+		s.maxEntryScratchBytesAlloc = rt.EntryScratchBytesAllocated
+	}
+}
+
+func (s javaRuntimeStats) summary() string {
+	return fmt.Sprintf(
+		"tokens=%d nodes=%d parent_alloc=%d parent_retained=%d parent_dropped_same_token=%d leaf_alloc=%d leaf_retained=%d leaf_dropped_same_token=%d gss_alloc=%d gss_retained=%d gss_dropped_same_token=%d single_gss=%d multi_gss=%d single_iters=%d multi_iters=%d merge_in=%d merge_out=%d merge_slots=%d global_cull_in=%d global_cull_out=%d max_stacks=%d max_arena_bytes=%d max_scratch_bytes=%d max_gss_bytes=%d max_entry_scratch_bytes=%d",
+		s.tokensConsumed,
+		s.nodesAllocated,
+		s.parentNodesAllocated,
+		s.parentNodesRetained,
+		s.parentNodesDroppedSameTok,
+		s.leafNodesAllocated,
+		s.leafNodesRetained,
+		s.leafNodesDroppedSameTok,
+		s.gssNodesAllocated,
+		s.gssNodesRetained,
+		s.gssNodesDroppedSameTok,
+		s.singleStackGSSNodes,
+		s.multiStackGSSNodes,
+		s.singleStackIterations,
+		s.multiStackIterations,
+		s.mergeStacksIn,
+		s.mergeStacksOut,
+		s.mergeSlotsUsed,
+		s.globalCullStacksIn,
+		s.globalCullStacksOut,
+		s.maxStacksSeen,
+		s.maxArenaBytesAllocated,
+		s.maxScratchBytesAllocated,
+		s.maxGSSBytesAllocated,
+		s.maxEntryScratchBytesAlloc,
+	)
 }
 
 func formatJavaStopReasons(counts map[gotreesitter.ParseStopReason]int) string {
@@ -414,7 +513,7 @@ func TestJavaCorpusTimeoutSweep(t *testing.T) {
 				nsPerByte = float64(stats.duration.Nanoseconds()) / float64(stats.bytes)
 			}
 			t.Logf(
-				"java-timeout-sweep timeout=%s mode=%s files=%d bytes=%d total=%s ns_per_byte=%.2f ok=%d has_error=%d incomplete=%d stopped=%d timeouts=%d fallback=%d max=%s max_file=%s stops=%s first_issue=%s first_issue_has_error=%v first_issue_runtime=%q",
+				"java-timeout-sweep timeout=%s mode=%s files=%d bytes=%d total=%s ns_per_byte=%.2f ok=%d has_error=%d incomplete=%d stopped=%d timeouts=%d fallback=%d max=%s max_file=%s stops=%s first_issue=%s first_issue_has_error=%v first_issue_runtime=%q runtime=%q",
 				formatJavaTimeout(timeoutMicros),
 				mode,
 				stats.files,
@@ -433,6 +532,7 @@ func TestJavaCorpusTimeoutSweep(t *testing.T) {
 				stats.firstIssueFile,
 				stats.firstIssueHasErr,
 				stats.firstIssueSummary,
+				stats.runtime.summary(),
 			)
 		}
 	}
