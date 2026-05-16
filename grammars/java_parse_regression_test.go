@@ -119,3 +119,51 @@ public class App {
 	}
 	assertMainStringArrayShape(t, tree, lang, src)
 }
+
+func TestJavaParseEnhancedForCompactNestedGenericRegression(t *testing.T) {
+	lang := JavaLanguage()
+	parser := gotreesitter.NewParser(lang)
+
+	src := []byte(`class T {
+  void f() {
+    for (Map.Entry<String, List<X>> ent : xs.entrySet()) {
+      String field = ent.getKey();
+    }
+  }
+}
+`)
+
+	tree, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	if tree == nil || tree.RootNode() == nil {
+		t.Fatal("parse returned nil root")
+	}
+	if root := tree.RootNode(); root.HasError() {
+		t.Fatalf("expected compact nested generic enhanced-for to parse without syntax errors, got: %s", root.SExpr(lang))
+	}
+}
+
+func TestJavaParseShiftExpressionAfterCompactAngleSplitter(t *testing.T) {
+	lang := JavaLanguage()
+	parser := gotreesitter.NewParser(lang)
+
+	src := []byte(`class T {
+  void f() {
+    int shifted = value >> 1;
+  }
+}
+`)
+
+	tree, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	if tree == nil || tree.RootNode() == nil {
+		t.Fatal("parse returned nil root")
+	}
+	if root := tree.RootNode(); root.HasError() {
+		t.Fatalf("expected Java shift expression to parse without syntax errors, got: %s", root.SExpr(lang))
+	}
+}

@@ -972,7 +972,7 @@ func (d *dfaTokenSource) splitCompactCloseAngleToken(tok Token) (Token, int, uin
 		return tok, 0, 0, 0, false
 	}
 	switch d.language.Name {
-	case "dart", "tsx", "typescript":
+	case "dart", "java", "tsx", "typescript":
 	default:
 		return tok, 0, 0, 0, false
 	}
@@ -1284,7 +1284,7 @@ func (d *dfaTokenSource) compareAngleTokenPreference(candTok, bestTok Token) int
 		return 0
 	}
 	switch d.language.Name {
-	case "dart", "tsx", "typescript":
+	case "dart", "java", "tsx", "typescript":
 	default:
 		return 0
 	}
