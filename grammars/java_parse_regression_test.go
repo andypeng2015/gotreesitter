@@ -120,6 +120,179 @@ public class App {
 	assertMainStringArrayShape(t, tree, lang, src)
 }
 
+func TestJavaParseWithTokenSourceContextualPermitsIdentifierRegression(t *testing.T) {
+	lang := JavaLanguage()
+	parser := gotreesitter.NewParser(lang)
+
+	src := []byte(`class T {
+  void f() {
+    int permits = 1;
+    permits++;
+  }
+}
+`)
+
+	tree, err := parser.ParseWithTokenSourceFactory(src, func(source []byte) (gotreesitter.TokenSource, error) {
+		return NewJavaTokenSource(source, lang)
+	})
+	if err != nil {
+		t.Fatalf("parse with token source failed: %v", err)
+	}
+	if tree == nil || tree.RootNode() == nil {
+		t.Fatal("parse returned nil root")
+	}
+	if root := tree.RootNode(); root.HasError() {
+		t.Fatalf("expected contextual permits identifier to parse without syntax errors, got: %s", root.SExpr(lang))
+	}
+}
+
+func TestJavaParseWithTokenSourceSealedPermitsClauseRegression(t *testing.T) {
+	lang := JavaLanguage()
+	parser := gotreesitter.NewParser(lang)
+
+	src := []byte(`sealed class A permits B {
+}
+
+final class B extends A {
+}
+`)
+
+	tree, err := parser.ParseWithTokenSourceFactory(src, func(source []byte) (gotreesitter.TokenSource, error) {
+		return NewJavaTokenSource(source, lang)
+	})
+	if err != nil {
+		t.Fatalf("parse with token source failed: %v", err)
+	}
+	if tree == nil || tree.RootNode() == nil {
+		t.Fatal("parse returned nil root")
+	}
+	if root := tree.RootNode(); root.HasError() {
+		t.Fatalf("expected sealed permits clause to parse without syntax errors, got: %s", root.SExpr(lang))
+	}
+}
+
+func TestJavaParseWithTokenSourceCompactNestedGenericRegression(t *testing.T) {
+	lang := JavaLanguage()
+	parser := gotreesitter.NewParser(lang)
+
+	src := []byte(`class T {
+  Queue<IOConsumer<IndexWriter>> queue = new ConcurrentLinkedQueue<>();
+}
+`)
+
+	tree, err := parser.ParseWithTokenSourceFactory(src, func(source []byte) (gotreesitter.TokenSource, error) {
+		return NewJavaTokenSource(source, lang)
+	})
+	if err != nil {
+		t.Fatalf("parse with token source failed: %v", err)
+	}
+	if tree == nil || tree.RootNode() == nil {
+		t.Fatal("parse returned nil root")
+	}
+	if root := tree.RootNode(); root.HasError() {
+		t.Fatalf("expected compact nested generic to parse without syntax errors, got: %s", root.SExpr(lang))
+	}
+}
+
+func TestJavaParseWithTokenSourceShiftExpressionRegression(t *testing.T) {
+	lang := JavaLanguage()
+	parser := gotreesitter.NewParser(lang)
+
+	src := []byte(`class T {
+  void f() {
+    int shifted = value >> 1;
+  }
+}
+`)
+
+	tree, err := parser.ParseWithTokenSourceFactory(src, func(source []byte) (gotreesitter.TokenSource, error) {
+		return NewJavaTokenSource(source, lang)
+	})
+	if err != nil {
+		t.Fatalf("parse with token source failed: %v", err)
+	}
+	if tree == nil || tree.RootNode() == nil {
+		t.Fatal("parse returned nil root")
+	}
+	if root := tree.RootNode(); root.HasError() {
+		t.Fatalf("expected shift expression to parse without syntax errors, got: %s", root.SExpr(lang))
+	}
+}
+
+func TestJavaParseWithTokenSourceUnsignedShiftExpressionRegression(t *testing.T) {
+	lang := JavaLanguage()
+	parser := gotreesitter.NewParser(lang)
+
+	src := []byte(`class T {
+  void f() {
+    int shifted = value >>> 1;
+  }
+}
+`)
+
+	tree, err := parser.ParseWithTokenSourceFactory(src, func(source []byte) (gotreesitter.TokenSource, error) {
+		return NewJavaTokenSource(source, lang)
+	})
+	if err != nil {
+		t.Fatalf("parse with token source failed: %v", err)
+	}
+	if tree == nil || tree.RootNode() == nil {
+		t.Fatal("parse returned nil root")
+	}
+	if root := tree.RootNode(); root.HasError() {
+		t.Fatalf("expected unsigned shift expression to parse without syntax errors, got: %s", root.SExpr(lang))
+	}
+}
+
+func TestJavaParseWithTokenSourceTripleCompactGenericRegression(t *testing.T) {
+	lang := JavaLanguage()
+	parser := gotreesitter.NewParser(lang)
+
+	src := []byte(`class T {
+  Map<Class<? extends TW>, List<Class<? extends X>>> entries;
+}
+`)
+
+	tree, err := parser.ParseWithTokenSourceFactory(src, func(source []byte) (gotreesitter.TokenSource, error) {
+		return NewJavaTokenSource(source, lang)
+	})
+	if err != nil {
+		t.Fatalf("parse with token source failed: %v", err)
+	}
+	if tree == nil || tree.RootNode() == nil {
+		t.Fatal("parse returned nil root")
+	}
+	if root := tree.RootNode(); root.HasError() {
+		t.Fatalf("expected triple compact generic to parse without syntax errors, got: %s", root.SExpr(lang))
+	}
+}
+
+func TestJavaParseWithTokenSourceUnderscoreResourceRegression(t *testing.T) {
+	lang := JavaLanguage()
+	parser := gotreesitter.NewParser(lang)
+
+	src := []byte(`class T {
+  void f() throws Exception {
+    try (Closeable _ = resource()) {
+    }
+  }
+}
+`)
+
+	tree, err := parser.ParseWithTokenSourceFactory(src, func(source []byte) (gotreesitter.TokenSource, error) {
+		return NewJavaTokenSource(source, lang)
+	})
+	if err != nil {
+		t.Fatalf("parse with token source failed: %v", err)
+	}
+	if tree == nil || tree.RootNode() == nil {
+		t.Fatal("parse returned nil root")
+	}
+	if root := tree.RootNode(); root.HasError() {
+		t.Fatalf("expected underscore resource to parse without syntax errors, got: %s", root.SExpr(lang))
+	}
+}
+
 func TestJavaParseEnhancedForCompactNestedGenericRegression(t *testing.T) {
 	lang := JavaLanguage()
 	parser := gotreesitter.NewParser(lang)
