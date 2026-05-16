@@ -76,6 +76,34 @@ func assertMainStringArrayShape(t *testing.T, tree *gotreesitter.Tree, lang *got
 	}
 }
 
+func assertJavaSourceParsesWithoutErrors(t *testing.T, src []byte, tokenSource bool) {
+	t.Helper()
+
+	lang := JavaLanguage()
+	parser := gotreesitter.NewParser(lang)
+
+	var (
+		tree *gotreesitter.Tree
+		err  error
+	)
+	if tokenSource {
+		tree, err = parser.ParseWithTokenSourceFactory(src, func(source []byte) (gotreesitter.TokenSource, error) {
+			return NewJavaTokenSource(source, lang)
+		})
+	} else {
+		tree, err = parser.Parse(src)
+	}
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	if tree == nil || tree.RootNode() == nil {
+		t.Fatal("parse returned nil root")
+	}
+	if root := tree.RootNode(); root.HasError() {
+		t.Fatalf("expected Java source to parse without syntax errors, got: %s", root.SExpr(lang))
+	}
+}
+
 func TestJavaParseMainStringArrayRegression(t *testing.T) {
 	lang := JavaLanguage()
 	parser := gotreesitter.NewParser(lang)
@@ -394,6 +422,38 @@ func TestJavaParseSwitchRuleThenClassLiteralArgumentRegression(t *testing.T) {
 	}
 }
 
+func TestJavaSwitchRuleLabelBeatsLambdaShiftWhenPostReduceCanConsumeArrow(t *testing.T) {
+	src := []byte(`class T {
+  enum K {
+    A,
+    B
+  }
+
+  int f(K k) {
+    return switch (k) {
+      case A -> 1;
+      case B -> 2;
+    };
+  }
+}
+`)
+
+	assertJavaSourceParsesWithoutErrors(t, src, false)
+}
+
+func TestJavaLambdaArrowStillParsesAfterSwitchDisambiguator(t *testing.T) {
+	src := []byte(`import java.util.function.Function;
+
+class T {
+  Function<Integer, Integer> f() {
+    return x -> x + 1;
+  }
+}
+`)
+
+	assertJavaSourceParsesWithoutErrors(t, src, false)
+}
+
 func TestJavaParseWithTokenSourceShiftExpressionRegression(t *testing.T) {
 	lang := JavaLanguage()
 	parser := gotreesitter.NewParser(lang)
@@ -459,6 +519,23 @@ func TestJavaParseShiftExpressionWithParenthesizedRightOperandRegression(t *test
 	})
 }
 
+func TestJavaShiftExpressionBeforeCallDoesNotSplitCompactAngles(t *testing.T) {
+	src := []byte(`class T {
+  void f(int value) {
+    consume(value >> (mask()));
+    consume(value >>> (mask()));
+  }
+}
+`)
+
+	t.Run("dfa", func(t *testing.T) {
+		assertJavaSourceParsesWithoutErrors(t, src, false)
+	})
+	t.Run("token_source", func(t *testing.T) {
+		assertJavaSourceParsesWithoutErrors(t, src, true)
+	})
+}
+
 func TestJavaParseWithTokenSourceUnsignedShiftExpressionRegression(t *testing.T) {
 	lang := JavaLanguage()
 	parser := gotreesitter.NewParser(lang)
@@ -505,6 +582,24 @@ func TestJavaParseWithTokenSourceTripleCompactGenericRegression(t *testing.T) {
 	if root := tree.RootNode(); root.HasError() {
 		t.Fatalf("expected triple compact generic to parse without syntax errors, got: %s", root.SExpr(lang))
 	}
+}
+
+func TestJavaCompactGenericAnglesSplitOnlyWithUnmatchedOpenAngle(t *testing.T) {
+	src := []byte(`class T {
+  Map<String, List<Integer>> values;
+
+  void f(int bits) {
+    int shifted = bits >> (mask());
+  }
+}
+`)
+
+	t.Run("dfa", func(t *testing.T) {
+		assertJavaSourceParsesWithoutErrors(t, src, false)
+	})
+	t.Run("token_source", func(t *testing.T) {
+		assertJavaSourceParsesWithoutErrors(t, src, true)
+	})
 }
 
 func TestJavaParseWithTokenSourceUnderscoreResourceRegression(t *testing.T) {
