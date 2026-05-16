@@ -280,6 +280,8 @@ type javaCorpusStats struct {
 	stopReasons       map[gotreesitter.ParseStopReason]int
 	runtime           javaRuntimeStats
 	ambiguity         []gotreesitter.AmbiguityStat
+	issues            []javaCorpusIssue
+	issueCount        int
 }
 
 type javaRuntimeStats struct {
@@ -308,6 +310,17 @@ type javaRuntimeStats struct {
 	maxScratchBytesAllocated  int64
 	maxGSSBytesAllocated      int64
 	maxEntryScratchBytesAlloc int64
+}
+
+type javaCorpusIssue struct {
+	path       string
+	bytes      int
+	duration   time.Duration
+	hasError   bool
+	incomplete bool
+	stopped    bool
+	rootEnd    uint32
+	runtime    gotreesitter.ParseRuntime
 }
 
 type javaParseResult struct {
@@ -384,6 +397,10 @@ func runJavaCorpus(files []javaCorpusFile, mode javaParseMode, timeoutMicros uin
 	}
 	pool := gotreesitter.NewParserPool(lang, opts...)
 	stats := javaCorpusStats{stopReasons: make(map[gotreesitter.ParseStopReason]int)}
+	maxIssues, err := javaCorpusMaxIssues()
+	if err != nil {
+		return stats, err
+	}
 
 	for _, file := range files {
 		result, err := parseJavaWithMode(pool, lang, mode, file.source)
@@ -406,6 +423,12 @@ func runJavaCorpus(files []javaCorpusFile, mode javaParseMode, timeoutMicros uin
 		}
 		if tree == nil || tree.RootNode() == nil {
 			stats.incomplete++
+			stats.addIssue(javaCorpusIssue{
+				path:       file.path,
+				bytes:      len(file.source),
+				duration:   result.duration,
+				incomplete: true,
+			}, maxIssues)
 			if tree != nil {
 				tree.Release()
 			}
@@ -427,7 +450,20 @@ func runJavaCorpus(files []javaCorpusFile, mode javaParseMode, timeoutMicros uin
 		if root.EndByte() != uint32(len(file.source)) || rt.Truncated {
 			stats.incomplete++
 		}
-		if stats.firstIssueFile == "" && (root.HasError() || tree.ParseStoppedEarly() || root.EndByte() != uint32(len(file.source)) || rt.Truncated) {
+		hasIssue := root.HasError() || tree.ParseStoppedEarly() || root.EndByte() != uint32(len(file.source)) || rt.Truncated
+		if hasIssue {
+			stats.addIssue(javaCorpusIssue{
+				path:       file.path,
+				bytes:      len(file.source),
+				duration:   result.duration,
+				hasError:   root.HasError(),
+				incomplete: root.EndByte() != uint32(len(file.source)) || rt.Truncated,
+				stopped:    tree.ParseStoppedEarly(),
+				rootEnd:    root.EndByte(),
+				runtime:    rt,
+			}, maxIssues)
+		}
+		if stats.firstIssueFile == "" && hasIssue {
 			stats.firstIssueFile = file.path
 			stats.firstIssueSummary = rt.Summary()
 			stats.firstIssueHasErr = root.HasError()
@@ -441,6 +477,26 @@ func runJavaCorpus(files []javaCorpusFile, mode javaParseMode, timeoutMicros uin
 		stats.ambiguity = ambiguity.SnapshotTop(20)
 	}
 	return stats, nil
+}
+
+func javaCorpusMaxIssues() (int, error) {
+	raw := strings.TrimSpace(os.Getenv("GOT_JAVA_CORPUS_MAX_ISSUES"))
+	if raw == "" {
+		return 10, nil
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 0 {
+		return 0, fmt.Errorf("invalid GOT_JAVA_CORPUS_MAX_ISSUES=%q", raw)
+	}
+	return n, nil
+}
+
+func (s *javaCorpusStats) addIssue(issue javaCorpusIssue, maxIssues int) {
+	s.issueCount++
+	if maxIssues <= 0 || len(s.issues) >= maxIssues {
+		return
+	}
+	s.issues = append(s.issues, issue)
 }
 
 func (s *javaRuntimeStats) add(rt gotreesitter.ParseRuntime) {
@@ -582,6 +638,46 @@ func formatJavaAmbiguityActions(actions []gotreesitter.ParseAction, lang *gotree
 	return strings.Join(parts, "|")
 }
 
+func formatJavaCorpusIssues(issues []javaCorpusIssue) string {
+	if len(issues) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	for i, issue := range issues {
+		if i > 0 {
+			sb.WriteString("; ")
+		}
+		rt := issue.runtime
+		fmt.Fprintf(
+			&sb,
+			"path=%q bytes=%d duration=%s has_error=%v incomplete=%v stopped=%v root_end=%d stop=%s tokens=%d last_token_end=%d expected_eof=%d max_stacks=%d single_iters=%d multi_iters=%d single_gss=%d multi_gss=%d arena=%d scratch=%d gss=%d entry_scratch=%d truncated=%v summary=%q",
+			issue.path,
+			issue.bytes,
+			issue.duration,
+			issue.hasError,
+			issue.incomplete,
+			issue.stopped,
+			issue.rootEnd,
+			rt.StopReason,
+			rt.TokensConsumed,
+			rt.LastTokenEndByte,
+			rt.ExpectedEOFByte,
+			rt.MaxStacksSeen,
+			rt.SingleStackIterations,
+			rt.MultiStackIterations,
+			rt.SingleStackGSSNodes,
+			rt.MultiStackGSSNodes,
+			rt.ArenaBytesAllocated,
+			rt.ScratchBytesAllocated,
+			rt.GSSBytesAllocated,
+			rt.EntryScratchBytesAllocated,
+			rt.Truncated,
+			rt.Summary(),
+		)
+	}
+	return sb.String()
+}
+
 func javaSymbolName(lang *gotreesitter.Language, sym gotreesitter.Symbol) string {
 	if lang != nil && int(sym) >= 0 && int(sym) < len(lang.SymbolNames) {
 		return lang.SymbolNames[sym]
@@ -604,7 +700,7 @@ func TestJavaCorpusTimeoutSweep(t *testing.T) {
 				nsPerByte = float64(stats.duration.Nanoseconds()) / float64(stats.bytes)
 			}
 			t.Logf(
-				"java-timeout-sweep timeout=%s mode=%s files=%d bytes=%d total=%s ns_per_byte=%.2f ok=%d has_error=%d incomplete=%d stopped=%d timeouts=%d fallback=%d max=%s max_file=%s stops=%s first_issue=%s first_issue_has_error=%v first_issue_runtime=%q runtime=%q ambiguity_top=%q",
+				"java-timeout-sweep timeout=%s mode=%s files=%d bytes=%d total=%s ns_per_byte=%.2f ok=%d has_error=%d incomplete=%d stopped=%d timeouts=%d fallback=%d max=%s max_file=%s stops=%s first_issue=%s first_issue_has_error=%v first_issue_runtime=%q issue_count=%d issues=%q runtime=%q ambiguity_top=%q",
 				formatJavaTimeout(timeoutMicros),
 				mode,
 				stats.files,
@@ -623,6 +719,8 @@ func TestJavaCorpusTimeoutSweep(t *testing.T) {
 				stats.firstIssueFile,
 				stats.firstIssueHasErr,
 				stats.firstIssueSummary,
+				stats.issueCount,
+				formatJavaCorpusIssues(stats.issues),
 				stats.runtime.summary(),
 				formatJavaAmbiguityTop(stats.ambiguity, lang),
 			)

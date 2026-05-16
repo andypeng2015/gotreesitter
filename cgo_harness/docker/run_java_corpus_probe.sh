@@ -24,6 +24,7 @@ CORPUS_MAX_BYTES="${GOT_JAVA_CORPUS_MAX_BYTES:-}"
 CORPUS_MIN_BYTES="${GOT_JAVA_CORPUS_MIN_BYTES:-}"
 CORPUS_MAX_FILE_BYTES="${GOT_JAVA_CORPUS_MAX_FILE_BYTES:-}"
 CORPUS_RANDOM_SEED="${GOT_JAVA_CORPUS_RANDOM_SEED:-}"
+CORPUS_MAX_ISSUES="${GOT_JAVA_CORPUS_MAX_ISSUES:-}"
 TIMEOUT_SWEEP="${GOT_JAVA_TIMEOUT_SWEEP:-}"
 PARSE_MODES="${GOT_JAVA_PARSE_MODES:-}"
 BENCH_TIMEOUT="${GOT_JAVA_BENCH_TIMEOUT:-}"
@@ -63,6 +64,8 @@ Java corpus knobs:
                               GOT_JAVA_CORPUS_ORDER
   --random-seed <n>           GOT_JAVA_CORPUS_RANDOM_SEED for --order random
                               (default inside the Go harness: 1)
+  --max-issues <n>            GOT_JAVA_CORPUS_MAX_ISSUES captured in timeout logs
+                              (default inside the Go harness: 10)
   --max-files <n>             GOT_JAVA_CORPUS_MAX_FILES
   --max-bytes <n>             GOT_JAVA_CORPUS_MAX_BYTES
   --min-bytes <n>             GOT_JAVA_CORPUS_MIN_BYTES
@@ -112,6 +115,7 @@ while [[ $# -gt 0 ]]; do
     --min-bytes) CORPUS_MIN_BYTES="$2"; shift 2 ;;
     --max-file-bytes) CORPUS_MAX_FILE_BYTES="$2"; shift 2 ;;
     --random-seed) CORPUS_RANDOM_SEED="$2"; shift 2 ;;
+    --max-issues) CORPUS_MAX_ISSUES="$2"; shift 2 ;;
     --timeout-sweep) TIMEOUT_SWEEP="$2"; shift 2 ;;
     --parse-modes) PARSE_MODES="$2"; shift 2 ;;
     --bench-timeout) BENCH_TIMEOUT="$2"; shift 2 ;;
@@ -182,6 +186,7 @@ require_non_negative_int "--max-bytes" "$CORPUS_MAX_BYTES"
 require_non_negative_int "--min-bytes" "$CORPUS_MIN_BYTES"
 require_non_negative_int "--max-file-bytes" "$CORPUS_MAX_FILE_BYTES"
 require_non_negative_int "--random-seed" "$CORPUS_RANDOM_SEED"
+require_non_negative_int "--max-issues" "$CORPUS_MAX_ISSUES"
 require_non_negative_int "--bench-count" "$BENCH_COUNT"
 require_non_negative_int "--gomaxprocs" "$GOMAXPROCS_VALUE"
 
@@ -219,6 +224,7 @@ ENV_ARGS=(
 [[ -n "$CORPUS_MIN_BYTES" ]] && ENV_ARGS+=(-e "GOT_JAVA_CORPUS_MIN_BYTES=$CORPUS_MIN_BYTES")
 [[ -n "$CORPUS_MAX_FILE_BYTES" ]] && ENV_ARGS+=(-e "GOT_JAVA_CORPUS_MAX_FILE_BYTES=$CORPUS_MAX_FILE_BYTES")
 [[ -n "$CORPUS_RANDOM_SEED" ]] && ENV_ARGS+=(-e "GOT_JAVA_CORPUS_RANDOM_SEED=$CORPUS_RANDOM_SEED")
+[[ -n "$CORPUS_MAX_ISSUES" ]] && ENV_ARGS+=(-e "GOT_JAVA_CORPUS_MAX_ISSUES=$CORPUS_MAX_ISSUES")
 [[ -n "$TIMEOUT_SWEEP" ]] && ENV_ARGS+=(-e "GOT_JAVA_TIMEOUT_SWEEP=$TIMEOUT_SWEEP")
 [[ -n "$PARSE_MODES" ]] && ENV_ARGS+=(-e "GOT_JAVA_PARSE_MODES=$PARSE_MODES")
 [[ -n "$BENCH_TIMEOUT" ]] && ENV_ARGS+=(-e "GOT_JAVA_BENCH_TIMEOUT=$BENCH_TIMEOUT")
