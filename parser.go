@@ -2002,6 +2002,12 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			// For multi-action entries, clone the stack for each alternative.
 			if len(actions) > 1 {
 				if reuse == nil && p.language != nil && p.language.Name == "java" {
+					if chosen, ok := p.javaSwitchArrowConflictChoice(s, tok, actions); ok {
+						p.applyAction(s, chosen, tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
+						continue
+					}
+				}
+				if reuse == nil && p.language != nil && p.language.Name == "java" {
 					if chosen, ok := javaRepetitionShiftConflictChoice(p.language, source, tok, currentState, actions); ok {
 						p.applyAction(s, chosen, tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
 						continue
@@ -2252,6 +2258,77 @@ func repetitionShiftConflictChoice(actions []ParseAction) (ParseAction, bool) {
 		return ParseAction{}, false
 	}
 	return shift, true
+}
+
+func (p *Parser) javaSwitchArrowConflictChoice(s *glrStack, tok Token, actions []ParseAction) (ParseAction, bool) {
+	if p == nil || p.language == nil || p.language.Name != "java" || s == nil || !symbolHasName(p.language, tok.Symbol, "->") {
+		return ParseAction{}, false
+	}
+	var primaryReduce ParseAction
+	var reduceFound bool
+	var shiftFound bool
+	for _, act := range actions {
+		switch act.Type {
+		case ParseActionShift:
+			shiftFound = true
+		case ParseActionReduce:
+			if act.ChildCount == 1 && symbolHasName(p.language, act.Symbol, "primary_expression") {
+				if reduceFound {
+					return ParseAction{}, false
+				}
+				primaryReduce = act
+				reduceFound = true
+			}
+		default:
+			return ParseAction{}, false
+		}
+	}
+	if !shiftFound || !reduceFound {
+		return ParseAction{}, false
+	}
+	// In switch rules, `case A ->` must reduce `A` as the label expression
+	// before the arrow. Lambda parameters use the same state but have no
+	// post-reduce goto that can consume `->`, so this keeps lambdas intact.
+	predecessor, ok := reducePredecessorStateForStack(s, int(primaryReduce.ChildCount))
+	if !ok {
+		return ParseAction{}, false
+	}
+	gotoState := p.lookupGoto(predecessor, primaryReduce.Symbol)
+	if gotoState == 0 || p.lookupActionIndex(gotoState, tok.Symbol) == 0 {
+		return ParseAction{}, false
+	}
+	return primaryReduce, true
+}
+
+func reducePredecessorStateForStack(s *glrStack, childCount int) (StateID, bool) {
+	if s == nil || childCount < 0 {
+		return 0, false
+	}
+	if childCount == 0 {
+		return s.top().state, true
+	}
+	if s.gss.head != nil {
+		nonExtraFound := 0
+		for n := s.gss.head; n != nil; n = n.prev {
+			if n.entry.node == nil || n.entry.node.isExtra {
+				continue
+			}
+			nonExtraFound++
+			if nonExtraFound != childCount {
+				continue
+			}
+			if n.prev == nil {
+				return 0, false
+			}
+			return n.prev.entry.state, true
+		}
+		return 0, false
+	}
+	rr, ok := computeReduceRange(s.entries, childCount)
+	if !ok {
+		return 0, false
+	}
+	return rr.topState, true
 }
 
 func csharpRepetitionShiftConflictChoice(lang *Language, tok Token, actions []ParseAction) (ParseAction, bool) {

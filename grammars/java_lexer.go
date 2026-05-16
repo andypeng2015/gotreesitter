@@ -827,6 +827,9 @@ func (ts *JavaTokenSource) compactCloseAngleToken(start int, startPt gotreesitte
 }
 
 func (ts *JavaTokenSource) shouldSplitCompactCloseAngleToken(start int, gtSym, shiftSym gotreesitter.Symbol) bool {
+	if !ts.hasUnclosedAngleBefore(start) {
+		return false
+	}
 	if !ts.hasActionForSymbol(gtSym) {
 		return false
 	}

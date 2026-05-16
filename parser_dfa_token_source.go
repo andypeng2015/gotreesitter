@@ -1002,6 +1002,9 @@ func (d *dfaTokenSource) splitCompactCloseAngleToken(tok Token) (Token, int, uin
 }
 
 func (d *dfaTokenSource) shouldSplitCompactCloseAngleToken(tok Token, gtSym, shiftSym Symbol, shiftOK bool) bool {
+	if d != nil && d.language != nil && d.language.Name == "java" && !d.hasJavaUnclosedAngleBefore(int(tok.StartByte)) {
+		return false
+	}
 	if !shiftOK {
 		return true
 	}
@@ -1022,6 +1025,27 @@ func (d *dfaTokenSource) shouldSplitCompactCloseAngleToken(tok Token, gtSym, shi
 			d.sharesSameReduceOnlyActions(gtSym, shiftSym) &&
 			d.hasTypeAssertionStyleOpenerBefore(int(tok.StartByte))
 	}
+}
+
+func (d *dfaTokenSource) hasJavaUnclosedAngleBefore(pos int) bool {
+	if d == nil || d.lexer == nil || pos <= 0 {
+		return false
+	}
+	depth := 0
+	for i := pos - 1; i >= 0; i-- {
+		switch d.lexer.source[i] {
+		case ';', '{', '}', '(', ')':
+			return depth > 0
+		case '>':
+			depth--
+		case '<':
+			depth++
+			if depth > 0 {
+				return true
+			}
+		}
+	}
+	return depth > 0
 }
 
 func (d *dfaTokenSource) nextNonSpaceByte(pos int) byte {
