@@ -4,6 +4,7 @@ package cgoharness
 
 import (
 	"fmt"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"sort"
@@ -56,6 +57,7 @@ func loadJavaCorpus(tb testing.TB) []javaCorpusFile {
 	if order == "" {
 		order = "path"
 	}
+	randomSeed := int64(javaEnvInt(tb, "GOT_JAVA_CORPUS_RANDOM_SEED", 1))
 
 	var files []javaCorpusFile
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
@@ -110,8 +112,16 @@ func loadJavaCorpus(tb testing.TB) []javaCorpusFile {
 			}
 			return files[i].path < files[j].path
 		})
+	case "random":
+		sort.Slice(files, func(i, j int) bool {
+			return files[i].path < files[j].path
+		})
+		rng := rand.New(rand.NewSource(randomSeed))
+		rng.Shuffle(len(files), func(i, j int) {
+			files[i], files[j] = files[j], files[i]
+		})
 	default:
-		tb.Fatalf("invalid GOT_JAVA_CORPUS_ORDER=%q; want path, largest, or smallest", order)
+		tb.Fatalf("invalid GOT_JAVA_CORPUS_ORDER=%q; want path, largest, smallest, or random", order)
 	}
 
 	availableFiles := len(files)
@@ -136,9 +146,10 @@ func loadJavaCorpus(tb testing.TB) []javaCorpusFile {
 		return selected[i].path < selected[j].path
 	})
 	tb.Logf(
-		"java corpus: root=%s order=%s files=%d/%d bytes=%d/%d min_bytes=%d max_file_bytes=%d max_files=%d max_bytes=%d",
+		"java corpus: root=%s order=%s random_seed=%d files=%d/%d bytes=%d/%d min_bytes=%d max_file_bytes=%d max_files=%d max_bytes=%d",
 		root,
 		order,
+		randomSeed,
 		len(selected),
 		availableFiles,
 		selectedBytes,
@@ -668,6 +679,134 @@ func BenchmarkJavaCorpusGoTreeSitterParseTokenSource(b *testing.B) {
 
 func BenchmarkJavaCorpusGoTreeSitterParseAspectFallback(b *testing.B) {
 	benchmarkJavaCorpusGoTreeSitter(b, javaParseModeAspectFallback)
+}
+
+type javaCorpusTreeUse func(b *testing.B, lang *gotreesitter.Language, tree *gotreesitter.Tree, file javaCorpusFile) int64
+
+var javaCorpusBenchmarkSink int64
+
+func benchmarkJavaCorpusGoTreeSitterWithUse(b *testing.B, mode javaParseMode, metric string, use javaCorpusTreeUse) {
+	files := loadJavaCorpus(b)
+	timeoutMicros := javaBenchTimeout(b)
+	totalBytes := totalJavaCorpusBytes(files)
+	lang := grammars.JavaLanguage()
+	pool := gotreesitter.NewParserPool(lang, gotreesitter.WithParserPoolTimeoutMicros(timeoutMicros))
+
+	b.ReportAllocs()
+	b.SetBytes(totalBytes)
+	b.ResetTimer()
+
+	var metricTotal int64
+	for i := 0; i < b.N; i++ {
+		for _, file := range files {
+			result, err := parseJavaWithMode(pool, lang, mode, file.source)
+			if err != nil {
+				if result.tree != nil {
+					result.tree.Release()
+				}
+				b.Fatalf("%s: %v", file.path, err)
+			}
+			tree := result.tree
+			root := requireCompleteGoTree(b, tree, file.source, file.path, mode, timeoutMicros)
+			if use != nil {
+				metricTotal += use(b, lang, tree, file)
+			}
+			if root == nil {
+				b.Fatalf("%s: parse returned nil root", file.path)
+			}
+			tree.Release()
+		}
+	}
+	javaCorpusBenchmarkSink = metricTotal
+	if metric != "" && b.N > 0 {
+		b.ReportMetric(float64(metricTotal)/float64(b.N), metric)
+	}
+}
+
+func requireCompleteGoTree(tb testing.TB, tree *gotreesitter.Tree, src []byte, phase string, mode javaParseMode, timeoutMicros uint64) *gotreesitter.Node {
+	tb.Helper()
+	if tree == nil || tree.RootNode() == nil {
+		tb.Fatalf("%s: parse returned nil root", phase)
+	}
+	root := tree.RootNode()
+	rt := tree.ParseRuntime()
+	if root.HasError() || tree.ParseStoppedEarly() || root.EndByte() != uint32(len(src)) || rt.Truncated {
+		tb.Fatalf("%s: incomplete parse mode=%s timeout=%s has_error=%v runtime=%s", phase, mode, formatJavaTimeout(timeoutMicros), root.HasError(), rt.Summary())
+	}
+	return root
+}
+
+func BenchmarkJavaCorpusGoTreeSitterParseDFAWithSExpr(b *testing.B) {
+	benchmarkJavaCorpusGoTreeSitterWithUse(b, javaParseModeDFA, "sexpr_bytes/op", func(b *testing.B, lang *gotreesitter.Language, tree *gotreesitter.Tree, file javaCorpusFile) int64 {
+		sexpr := tree.RootNode().SExpr(lang)
+		if sexpr == "" {
+			b.Fatalf("%s: SExpr returned empty string", file.path)
+		}
+		return int64(len(sexpr))
+	})
+}
+
+const javaCorpusRepresentativeQuery = `
+[
+  (class_declaration name: (identifier) @type)
+  (interface_declaration name: (identifier) @type)
+  (enum_declaration name: (identifier) @type)
+  (method_declaration name: (identifier) @function.method)
+  (constructor_declaration name: (identifier) @constructor)
+]
+`
+
+func BenchmarkJavaCorpusGoTreeSitterParseDFAWithQuery(b *testing.B) {
+	lang := grammars.JavaLanguage()
+	query, err := gotreesitter.NewQuery(javaCorpusRepresentativeQuery, lang)
+	if err != nil {
+		b.Fatalf("compile java corpus query: %v", err)
+	}
+	benchmarkJavaCorpusGoTreeSitterWithUse(b, javaParseModeDFA, "query_captures/op", func(b *testing.B, lang *gotreesitter.Language, tree *gotreesitter.Tree, file javaCorpusFile) int64 {
+		cursor := query.Exec(tree.RootNode(), lang, file.source)
+		var captures int64
+		for {
+			match, ok := cursor.NextMatch()
+			if !ok {
+				break
+			}
+			captures += int64(len(match.Captures))
+		}
+		return captures
+	})
+}
+
+func BenchmarkJavaCorpusGoTreeSitterParseDFAWithNamedTraversal(b *testing.B) {
+	var scratch []*gotreesitter.Node
+	benchmarkJavaCorpusGoTreeSitterWithUse(b, javaParseModeDFA, "named_nodes/op", func(b *testing.B, lang *gotreesitter.Language, tree *gotreesitter.Tree, file javaCorpusFile) int64 {
+		return countNamedJavaCorpusNodes(tree.RootNode(), &scratch)
+	})
+}
+
+func countNamedJavaCorpusNodes(root *gotreesitter.Node, scratch *[]*gotreesitter.Node) int64 {
+	if root == nil {
+		return 0
+	}
+	stack := append((*scratch)[:0], root)
+	var count int64
+	for len(stack) > 0 {
+		last := len(stack) - 1
+		node := stack[last]
+		stack = stack[:last]
+		if node == nil {
+			continue
+		}
+		if node.IsNamed() {
+			count++
+		}
+		for i := node.ChildCount() - 1; i >= 0; i-- {
+			if child := node.Child(i); child != nil {
+				stack = append(stack, child)
+			}
+		}
+	}
+	*scratch = stack[:0]
+	return count
 }
 
 func BenchmarkJavaCorpusCTreeSitterParseFull(b *testing.B) {
