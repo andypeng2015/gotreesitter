@@ -5,6 +5,7 @@ package grammargen
 import (
 	"context"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -35,6 +36,16 @@ func TestDiagGenerateLanguageFastPath(t *testing.T) {
 	if getenvOr("DIAG_BINARY_REPEAT", "") == "1" {
 		gram.BinaryRepeatMode = true
 	}
+	if raw := strings.TrimSpace(os.Getenv("DIAG_CHOICE_LIFT_THRESHOLD")); raw != "" {
+		threshold, err := strconv.Atoi(raw)
+		if err != nil {
+			t.Fatalf("parse DIAG_CHOICE_LIFT_THRESHOLD=%q: %v", raw, err)
+		}
+		gram.ChoiceLiftThreshold = threshold
+	}
+	if getenvOr("DIAG_CLEAR_INLINE", "") == "1" {
+		gram.Inline = nil
+	}
 
 	timeout := pg.genTimeout
 	if timeout == 0 {
@@ -48,16 +59,18 @@ func TestDiagGenerateLanguageFastPath(t *testing.T) {
 		timeout = override
 	}
 
-	t.Logf("diag-generate-fastpath: grammar=%s timeout=%s rules=%d extras=%d conflicts=%d externals=%d word=%q lr_split=%v binary_repeat=%v",
+	t.Logf("diag-generate-fastpath: grammar=%s timeout=%s rules=%d extras=%d conflicts=%d externals=%d inline=%d word=%q lr_split=%v binary_repeat=%v choice_lift=%d",
 		grammarName,
 		timeout,
 		len(gram.Rules),
 		len(gram.Extras),
 		len(gram.Conflicts),
 		len(gram.Externals),
+		len(gram.Inline),
 		gram.Word,
 		gram.EnableLRSplitting,
 		gram.BinaryRepeatMode,
+		gram.ChoiceLiftThreshold,
 	)
 	t.Logf("diag-generate-fastpath: mem[start]=%s", diagGenerateMemSnapshot())
 

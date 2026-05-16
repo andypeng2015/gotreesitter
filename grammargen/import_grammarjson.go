@@ -11,6 +11,23 @@ func applyImportGrammarShapeHints(g *Grammar) {
 		return
 	}
 	switch g.Name {
+	case "bash":
+		// Bash's external extglob token is intentionally broad. In merged LALR
+		// states, reduce-only lookaheads can otherwise ask the scanner for
+		// extglob_pattern at command-substitution delimiters and overconsume.
+		g.SuppressEquivalentExternalReduceLookaheads = true
+		// Bash's scanner also classifies whitespace-sensitive command
+		// arguments. Some of those tokens only become valid after reducing the
+		// preceding word, so expose this narrow set to the scanner through the
+		// external lex-state rows without broadening extglob_pattern.
+		g.ExternalReduceFollowLookaheads = []string{"file_descriptor", "test_operator", "$", "{", "(", "<<", "<<-"}
+		// Bash's number literals are anonymous regex leaves inside the visible
+		// number rule. They overlap the broad word token on strings like "-9";
+		// tree-sitter's lexer prefers the number pattern on equal length.
+		g.PriorityInlinePatterns = []string{
+			"-?(0x)?[0-9]+(#[0-9A-Za-z@_]+)?",
+			"-?(0x)?[0-9]+#",
+		}
 	case "fortran":
 		// Fortran has no reserved words. Its grammar routes keyword-shaped
 		// tokens back through identifier and declares conflicts to let parser

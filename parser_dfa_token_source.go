@@ -188,6 +188,8 @@ func (d *dfaTokenSource) Next() Token {
 	}
 	for {
 		scanStartPos := d.lexer.pos
+		scanStartRow := d.lexer.row
+		scanStartCol := d.lexer.col
 		var externalStartSnapshot []byte
 		if languageUsesExternalScannerCheckpoints(d.language) {
 			externalStartSnapshot = d.captureExternalScannerStateInto(&d.externalTokenStart)
@@ -206,6 +208,13 @@ func (d *dfaTokenSource) Next() Token {
 		if extTok, ok := d.nextExternalToken(); ok {
 			tok = extTok
 			tokenFromExternal = true
+			if dfaTok, ok := d.bashGeneratedTokenOverZeroWidthConcat(tok, scanStartPos, scanStartRow, scanStartCol); ok {
+				tok = dfaTok
+				tokenFromExternal = false
+				d.lexer.pos = int(tok.EndByte)
+				d.lexer.row = tok.EndPoint.Row
+				d.lexer.col = tok.EndPoint.Column
+			}
 		} else if glrTok, ok := d.nextGLRUnionDFAToken(); ok {
 			tok = glrTok
 		} else {
@@ -213,20 +222,27 @@ func (d *dfaTokenSource) Next() Token {
 		}
 		if !tokenFromExternal && d.language != nil && d.language.ExternalScanner != nil &&
 			tok.Symbol != 0 && int(tok.StartByte) > scanStartPos {
-			dfaEndPos := d.lexer.pos
-			dfaEndRow := d.lexer.row
-			dfaEndCol := d.lexer.col
-
-			d.lexer.pos = int(tok.StartByte)
-			d.lexer.row = tok.StartPoint.Row
-			d.lexer.col = tok.StartPoint.Column
-			if extTok, ok := d.nextExternalToken(); ok && extTok.StartByte == tok.StartByte {
-				tok = extTok
-				tokenFromExternal = true
+			if nlTok, ok := d.bashSkippedSignificantNewlineToken(tok, scanStartPos, scanStartRow, scanStartCol); ok {
+				tok = nlTok
+				d.lexer.pos = int(tok.EndByte)
+				d.lexer.row = tok.EndPoint.Row
+				d.lexer.col = tok.EndPoint.Column
 			} else {
-				d.lexer.pos = dfaEndPos
-				d.lexer.row = dfaEndRow
-				d.lexer.col = dfaEndCol
+				dfaEndPos := d.lexer.pos
+				dfaEndRow := d.lexer.row
+				dfaEndCol := d.lexer.col
+
+				d.lexer.pos = int(tok.StartByte)
+				d.lexer.row = tok.StartPoint.Row
+				d.lexer.col = tok.StartPoint.Column
+				if extTok, ok := d.nextExternalToken(); ok && extTok.StartByte == tok.StartByte {
+					tok = extTok
+					tokenFromExternal = true
+				} else {
+					d.lexer.pos = dfaEndPos
+					d.lexer.row = dfaEndRow
+					d.lexer.col = dfaEndCol
+				}
 			}
 		}
 		if d.shouldSuppressFortranPreprocDefineNewline(tok) {
@@ -649,10 +665,16 @@ func (d *dfaTokenSource) normalizeDFAToken(tok Token, endPos int, endRow, endCol
 	if d == nil || d.language == nil || d.lexer == nil {
 		return tok, endPos, endRow, endCol
 	}
+	if nlTok, nlEndPos, nlEndRow, nlEndCol, ok := d.bashGeneratedDFAOnlyNewlineToken(tok); ok {
+		return nlTok, nlEndPos, nlEndRow, nlEndCol
+	}
 	if splitTok, splitEndPos, splitEndRow, splitEndCol, ok := d.splitCompactCloseAngleToken(tok); ok {
 		return splitTok, splitEndPos, splitEndRow, splitEndCol
 	}
-	if d.language.Name != "bash" || tok.Symbol != 86 || tok.EndByte <= tok.StartByte+1 {
+	if splitTok, splitEndPos, splitEndRow, splitEndCol, ok := d.splitBashGeneratedDoubleCloseParenToken(tok); ok {
+		return splitTok, splitEndPos, splitEndRow, splitEndCol
+	}
+	if d.language.Name != "bash" || d.symbolName(tok.Symbol) != "\\n" || tok.EndByte <= tok.StartByte+1 {
 		return tok, endPos, endRow, endCol
 	}
 	start := int(tok.StartByte)
@@ -674,6 +696,275 @@ func (d *dfaTokenSource) normalizeDFAToken(tok Token, endPos int, endRow, endCol
 		tok.Text = tok.Text[:1]
 	}
 	return tok, start + 1, tok.StartPoint.Row + 1, 0
+}
+
+func (d *dfaTokenSource) bashGeneratedDFAOnlyNewlineToken(tok Token) (Token, int, uint32, uint32, bool) {
+	if d == nil || d.language == nil || d.lexer == nil ||
+		d.language.Name != "bash" || !d.language.GeneratedByGrammargen ||
+		d.symbolName(tok.Symbol) == "\\n" || tok.EndByte <= tok.StartByte {
+		return tok, 0, 0, 0, false
+	}
+	start := int(tok.StartByte)
+	end := int(tok.EndByte)
+	if start < 0 || end > len(d.lexer.source) {
+		return tok, 0, 0, 0, false
+	}
+	for i := start; i < end; i++ {
+		if d.lexer.source[i] != '\n' {
+			return tok, 0, 0, 0, false
+		}
+	}
+	sym, ok := d.bestActiveSymbolByName("\\n")
+	if !ok || sym == 0 {
+		if sym, ok = symbolByName(d.language, "\\n"); !ok || sym == 0 {
+			return tok, 0, 0, 0, false
+		}
+	}
+	tok.Symbol = sym
+	tok.EndByte = tok.StartByte + 1
+	tok.EndPoint = Point{Row: tok.StartPoint.Row + 1, Column: 0}
+	tok.Text = "\n"
+	return tok, start + 1, tok.StartPoint.Row + 1, 0, true
+}
+
+func (d *dfaTokenSource) splitBashGeneratedDoubleCloseParenToken(tok Token) (Token, int, uint32, uint32, bool) {
+	if d == nil || d.language == nil || d.lexer == nil ||
+		d.language.Name != "bash" || !d.language.GeneratedByGrammargen ||
+		d.symbolName(tok.Symbol) != "))" || tok.EndByte != tok.StartByte+2 {
+		return tok, 0, 0, 0, false
+	}
+	start := int(tok.StartByte)
+	if start < 0 || start+1 >= len(d.lexer.source) ||
+		d.lexer.source[start] != ')' || d.lexer.source[start+1] != ')' ||
+		d.bashGeneratedInArithmeticExpansion(start) {
+		return tok, 0, 0, 0, false
+	}
+	sym, ok := d.bestActiveSymbolByName(")")
+	if !ok || sym == 0 {
+		return tok, 0, 0, 0, false
+	}
+	tok.Symbol = sym
+	tok.EndByte = tok.StartByte + 1
+	tok.EndPoint = Point{Row: tok.StartPoint.Row, Column: tok.StartPoint.Column + 1}
+	tok.Text = ")"
+	return tok, start + 1, tok.EndPoint.Row, tok.EndPoint.Column, true
+}
+
+func (d *dfaTokenSource) bashSkippedSignificantNewlineToken(tok Token, scanStartPos int, scanStartRow, scanStartCol uint32) (Token, bool) {
+	if d == nil || d.language == nil || d.lexer == nil || d.language.Name != "bash" ||
+		!d.language.GeneratedByGrammargen {
+		return Token{}, false
+	}
+	if tok.Symbol == 0 || int(tok.StartByte) <= scanStartPos || scanStartPos < 0 || scanStartPos >= len(d.lexer.source) {
+		return Token{}, false
+	}
+	if d.lexer.source[scanStartPos] != '\n' {
+		return Token{}, false
+	}
+	sym, ok := d.bestActiveSymbolByName("\\n")
+	if !ok || sym == 0 {
+		return Token{}, false
+	}
+	return Token{
+		Symbol:     sym,
+		StartByte:  uint32(scanStartPos),
+		EndByte:    uint32(scanStartPos + 1),
+		StartPoint: Point{Row: scanStartRow, Column: scanStartCol},
+		EndPoint:   Point{Row: scanStartRow + 1, Column: 0},
+		Text:       "\n",
+	}, true
+}
+
+func (d *dfaTokenSource) bashGeneratedTokenOverZeroWidthConcat(tok Token, scanStartPos int, scanStartRow, scanStartCol uint32) (Token, bool) {
+	if d == nil || d.language == nil || d.lexer == nil || d.language.Name != "bash" ||
+		!d.language.GeneratedByGrammargen {
+		return Token{}, false
+	}
+	if d.symbolName(tok.Symbol) != "_concat" || tok.StartByte != tok.EndByte ||
+		int(tok.StartByte) != scanStartPos || scanStartPos < 0 || scanStartPos >= len(d.lexer.source) {
+		return Token{}, false
+	}
+	if d.lexer.source[scanStartPos] == '\n' {
+		sym, ok := d.bestActiveSymbolByName("\\n")
+		if !ok || sym == 0 {
+			return Token{}, false
+		}
+		return Token{
+			Symbol:     sym,
+			StartByte:  uint32(scanStartPos),
+			EndByte:    uint32(scanStartPos + 1),
+			StartPoint: Point{Row: scanStartRow, Column: scanStartCol},
+			EndPoint:   Point{Row: scanStartRow + 1, Column: 0},
+			Text:       "\n",
+		}, true
+	}
+	if opTok, ok := d.bashGeneratedOperatorTokenAt(scanStartPos, scanStartRow, scanStartCol); ok {
+		if DebugDFA.Load() {
+			fmt.Printf("  BASH CONCAT->DFA %s %d %d state=%d\n", d.symbolName(opTok.Symbol), opTok.StartByte, opTok.EndByte, d.state)
+		}
+		return opTok, true
+	}
+	dfaTok, endPos, endRow, endCol := d.scanPreferredTokenForState(d.state)
+	if dfaTok.Symbol == 0 || int(dfaTok.StartByte) != scanStartPos || endPos <= scanStartPos {
+		return Token{}, false
+	}
+	if !d.bashGeneratedShouldPreferDFATokenOverConcat(dfaTok) {
+		return Token{}, false
+	}
+	dfaTok.EndByte = uint32(endPos)
+	dfaTok.EndPoint = Point{Row: endRow, Column: endCol}
+	return dfaTok, true
+}
+
+func (d *dfaTokenSource) bashGeneratedOperatorTokenAt(pos int, row, col uint32) (Token, bool) {
+	if d == nil || d.lexer == nil || pos < 0 || pos >= len(d.lexer.source) {
+		return Token{}, false
+	}
+	for _, lit := range bashGeneratedConcatOperatorLookaheads {
+		if !bytes.HasPrefix(d.lexer.source[pos:], lit.bytes) {
+			continue
+		}
+		name := lit.name
+		if name == "" {
+			name = lit.text
+		}
+		if bashGeneratedOperatorRequiresArithmeticContext(name) && !d.bashGeneratedInArithmeticExpansion(pos) {
+			continue
+		}
+		sym, ok := d.bestActiveSymbolByName(name)
+		if !ok || sym == 0 {
+			continue
+		}
+		endCol := col + uint32(len(lit.text))
+		return Token{
+			Symbol:     sym,
+			StartByte:  uint32(pos),
+			EndByte:    uint32(pos + len(lit.text)),
+			StartPoint: Point{Row: row, Column: col},
+			EndPoint:   Point{Row: row, Column: endCol},
+			Text:       lit.text,
+		}, true
+	}
+	return Token{}, false
+}
+
+func bashGeneratedOperatorRequiresArithmeticContext(name string) bool {
+	switch name {
+	case "++", "--",
+		"+=", "-=", "*=", "/=", "%=", "**=", "<<=", ">>=", "&=", "^=", "|=",
+		"^",
+		"+", "-", "*", "/", "%", "**", "))",
+		"?", ":", ",":
+		return true
+	default:
+		return false
+	}
+}
+
+func (d *dfaTokenSource) bashGeneratedInArithmeticExpansion(pos int) bool {
+	if d == nil || d.lexer == nil || pos <= 0 || pos > len(d.lexer.source) {
+		return false
+	}
+	depth := 0
+	src := d.lexer.source[:pos]
+	for i := 0; i < len(src); {
+		switch {
+		case bytes.HasPrefix(src[i:], []byte("$((")):
+			depth++
+			i += len("$((")
+		case depth > 0 && bytes.HasPrefix(src[i:], []byte("))")):
+			depth--
+			i += len("))")
+		case src[i] == '\\':
+			i += 2
+		default:
+			_, size := utf8.DecodeRune(src[i:])
+			if size <= 0 {
+				size = 1
+			}
+			i += size
+		}
+	}
+	return depth > 0
+}
+
+type bashGeneratedConcatOperatorLookahead struct {
+	text  string
+	name  string
+	bytes []byte
+}
+
+var bashGeneratedConcatOperatorLookaheads = makeBashGeneratedConcatOperatorLookaheads(
+	bashGeneratedConcatOperatorLookahead{text: "<<<"},
+	bashGeneratedConcatOperatorLookahead{text: "&>>"},
+	bashGeneratedConcatOperatorLookahead{text: "<<-"},
+	bashGeneratedConcatOperatorLookahead{text: "<&-"},
+	bashGeneratedConcatOperatorLookahead{text: ">&-"},
+	bashGeneratedConcatOperatorLookahead{text: "**="},
+	bashGeneratedConcatOperatorLookahead{text: "<<="},
+	bashGeneratedConcatOperatorLookahead{text: ">>="},
+	bashGeneratedConcatOperatorLookahead{text: "|&"},
+	bashGeneratedConcatOperatorLookahead{text: "&>"},
+	bashGeneratedConcatOperatorLookahead{text: "<&"},
+	bashGeneratedConcatOperatorLookahead{text: ">&"},
+	bashGeneratedConcatOperatorLookahead{text: ">|"},
+	bashGeneratedConcatOperatorLookahead{text: "++"},
+	bashGeneratedConcatOperatorLookahead{text: "--"},
+	bashGeneratedConcatOperatorLookahead{text: "+="},
+	bashGeneratedConcatOperatorLookahead{text: "-="},
+	bashGeneratedConcatOperatorLookahead{text: "*="},
+	bashGeneratedConcatOperatorLookahead{text: "/="},
+	bashGeneratedConcatOperatorLookahead{text: "%="},
+	bashGeneratedConcatOperatorLookahead{text: "&="},
+	bashGeneratedConcatOperatorLookahead{text: "^="},
+	bashGeneratedConcatOperatorLookahead{text: "|="},
+	bashGeneratedConcatOperatorLookahead{text: "||"},
+	bashGeneratedConcatOperatorLookahead{text: "&&"},
+	bashGeneratedConcatOperatorLookahead{text: "=="},
+	bashGeneratedConcatOperatorLookahead{text: "!="},
+	bashGeneratedConcatOperatorLookahead{text: "<="},
+	bashGeneratedConcatOperatorLookahead{text: ">="},
+	bashGeneratedConcatOperatorLookahead{text: "<<"},
+	bashGeneratedConcatOperatorLookahead{text: ">>"},
+	bashGeneratedConcatOperatorLookahead{text: "**"},
+	bashGeneratedConcatOperatorLookahead{text: "))"},
+	bashGeneratedConcatOperatorLookahead{text: ";;"},
+	bashGeneratedConcatOperatorLookahead{text: "+"},
+	bashGeneratedConcatOperatorLookahead{text: "-"},
+	bashGeneratedConcatOperatorLookahead{text: "*"},
+	bashGeneratedConcatOperatorLookahead{text: "/"},
+	bashGeneratedConcatOperatorLookahead{text: "%"},
+	bashGeneratedConcatOperatorLookahead{text: "|"},
+	bashGeneratedConcatOperatorLookahead{text: "^"},
+	bashGeneratedConcatOperatorLookahead{text: "&"},
+	bashGeneratedConcatOperatorLookahead{text: "<"},
+	bashGeneratedConcatOperatorLookahead{text: ">"},
+	bashGeneratedConcatOperatorLookahead{text: "?", name: "\\?"},
+	bashGeneratedConcatOperatorLookahead{text: ":"},
+	bashGeneratedConcatOperatorLookahead{text: ","},
+	bashGeneratedConcatOperatorLookahead{text: ";"},
+)
+
+func makeBashGeneratedConcatOperatorLookaheads(in ...bashGeneratedConcatOperatorLookahead) []bashGeneratedConcatOperatorLookahead {
+	for i := range in {
+		in[i].bytes = []byte(in[i].text)
+	}
+	return in
+}
+
+func (d *dfaTokenSource) bashGeneratedShouldPreferDFATokenOverConcat(tok Token) bool {
+	switch d.symbolName(tok.Symbol) {
+	case "++", "--",
+		"+=", "-=", "*=", "/=", "%=", "**=", "<<=", ">>=", "&=", "^=", "|=",
+		"||", "&&", "|", "|&", "^", "&",
+		"==", "!=", "<", ">", "<=", ">=",
+		"<<", "<<-", ">>", "<<<", "&>", "&>>", "<&", ">&", "<&-", ">&-", ">|",
+		"+", "-", "*", "/", "%", "**",
+		"?", ":", ",", "))", ";", ";;":
+		return true
+	default:
+		return false
+	}
 }
 
 func (d *dfaTokenSource) splitCompactCloseAngleToken(tok Token) (Token, int, uint32, uint32, bool) {
@@ -1247,6 +1538,10 @@ func (d *dfaTokenSource) nextExternalToken() (Token, bool) {
 	if d.shouldDeferFortranExternalEndOfStatementToDFA(valid, states) {
 		return Token{}, false
 	}
+	if DebugDFA.Load() {
+		fmt.Printf("  EXT valid pos=%d state=%d glr=%v els=%s valid=%s\n",
+			d.lexer.pos, d.state, states, d.debugExternalLexStateIDs(states), d.debugExternalValidNames(valid))
+	}
 
 	if d.language.ExternalScanner == nil {
 		tok, ok := d.syntheticExternalToken(valid)
@@ -1260,6 +1555,19 @@ func (d *dfaTokenSource) nextExternalToken() (Token, bool) {
 	el := &d.externalLexer
 	el.reset(d.lexer.source, d.lexer.pos, d.lexer.row, d.lexer.col)
 	if !d.runExternalScannerWithRetry(el, valid) {
+		if tok, ok := d.bashGeneratedSyntheticExternalLiteral(valid); ok {
+			if DebugDFA.Load() {
+				fmt.Printf("  EXT synthetic %s %d %d state=%d\n", d.symbolName(tok.Symbol), tok.StartByte, tok.EndByte, d.state)
+			}
+			d.trackZeroWidthExternalToken(tok)
+			d.lexer.pos = int(tok.EndByte)
+			d.lexer.row = tok.EndPoint.Row
+			d.lexer.col = tok.EndPoint.Column
+			return tok, true
+		}
+		if DebugDFA.Load() {
+			fmt.Printf("  EXT miss pos=%d state=%d valid=%s\n", d.lexer.pos, d.state, d.debugExternalValidNames(valid))
+		}
 		return Token{}, false
 	}
 	tok, ok := el.token()
@@ -1280,6 +1588,50 @@ func (d *dfaTokenSource) nextExternalToken() (Token, bool) {
 	d.lexer.row = tok.EndPoint.Row
 	d.lexer.col = tok.EndPoint.Column
 	return tok, true
+}
+
+func (d *dfaTokenSource) bashGeneratedSyntheticExternalLiteral(valid []bool) (Token, bool) {
+	if d == nil || d.language == nil || d.lexer == nil ||
+		d.language.Name != "bash" || !d.language.GeneratedByGrammargen {
+		return Token{}, false
+	}
+	literals := []string{"<<-", "<<", "}", "]", "(", "esac"}
+	for _, lit := range literals {
+		if !bytes.HasPrefix(d.lexer.source[d.lexer.pos:], []byte(lit)) {
+			continue
+		}
+		if lit == "<<" && d.bashGeneratedLongerHeredocOperatorAt(d.lexer.pos) {
+			continue
+		}
+		for i, sym := range d.language.ExternalSymbols {
+			if i >= len(valid) || !valid[i] || d.symbolName(sym) != lit {
+				continue
+			}
+			endCol := d.lexer.col + uint32(len(lit))
+			return Token{
+				Symbol:     sym,
+				StartByte:  uint32(d.lexer.pos),
+				EndByte:    uint32(d.lexer.pos + len(lit)),
+				StartPoint: Point{Row: d.lexer.row, Column: d.lexer.col},
+				EndPoint:   Point{Row: d.lexer.row, Column: endCol},
+				Text:       lit,
+			}, true
+		}
+	}
+	return Token{}, false
+}
+
+func (d *dfaTokenSource) bashGeneratedLongerHeredocOperatorAt(pos int) bool {
+	if d == nil || d.lexer == nil || pos < 0 || pos+2 >= len(d.lexer.source) {
+		return false
+	}
+	switch d.lexer.source[pos+2] {
+	case '<', '-':
+		return bytes.HasPrefix(d.lexer.source[pos:], []byte("<<<")) ||
+			bytes.HasPrefix(d.lexer.source[pos:], []byte("<<-"))
+	default:
+		return false
+	}
 }
 
 func (d *dfaTokenSource) preferDFASemicolonOverJSXText(tok Token, states []StateID) (Token, int, uint32, uint32, bool) {
@@ -1593,6 +1945,47 @@ func tokenSymbolSpecificity(lang *Language, sym Symbol) int {
 		return 3
 	}
 	return 2
+}
+
+func (d *dfaTokenSource) debugExternalLexStateIDs(states []StateID) string {
+	if d == nil || d.language == nil || len(d.language.ExternalLexStates) == 0 {
+		return ""
+	}
+	ids := make([]string, 0, len(states))
+	seen := map[uint16]struct{}{}
+	for _, st := range states {
+		if int(st) >= len(d.language.LexModes) {
+			continue
+		}
+		id := d.language.LexModes[st].ExternalLexState
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, fmt.Sprintf("%d", id))
+	}
+	return strings.Join(ids, ",")
+}
+
+func (d *dfaTokenSource) debugExternalValidNames(valid []bool) string {
+	if d == nil || d.language == nil {
+		return ""
+	}
+	names := make([]string, 0, len(valid))
+	for i, ok := range valid {
+		if !ok {
+			continue
+		}
+		name := ""
+		if i >= 0 && i < len(d.language.ExternalSymbols) {
+			sym := d.language.ExternalSymbols[i]
+			if int(sym) >= 0 && int(sym) < len(d.language.SymbolNames) {
+				name = d.language.SymbolNames[sym]
+			}
+		}
+		names = append(names, fmt.Sprintf("%d:%s", i, name))
+	}
+	return strings.Join(names, ",")
 }
 
 func (d *dfaTokenSource) runExternalScannerWithRetry(el *ExternalLexer, valid []bool) bool {

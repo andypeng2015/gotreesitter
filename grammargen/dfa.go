@@ -481,6 +481,19 @@ func finiteLineBreakStrings(r *Rule) (map[string]bool, bool) {
 		default:
 			return nil, false
 		}
+	case RulePattern:
+		switch r.Value {
+		case "\\n", "\n":
+			return map[string]bool{"\n": true}, true
+		case "\\r", "\r":
+			return map[string]bool{"\r": true}, true
+		case "\\r?\\n":
+			return map[string]bool{"\n": true, "\r\n": true}, true
+		case "\\r\\n":
+			return map[string]bool{"\r\n": true}, true
+		default:
+			return nil, false
+		}
 	case RuleSeq:
 		out := map[string]bool{"": true}
 		for _, child := range r.Children {

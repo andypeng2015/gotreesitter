@@ -109,7 +109,9 @@ type NormalizedGrammar struct {
 	// against the named precedence of a competing shift action.
 	PrecedenceOrder *precOrderTable
 
-	PreserveKeywordIdentifierConflicts bool
+	PreserveKeywordIdentifierConflicts         bool
+	SuppressEquivalentExternalReduceLookaheads bool
+	ExternalReduceFollowLookaheads             map[string]bool
 
 	// conflictCache is built lazily by LR conflict resolution so repeated
 	// resolveActionConflict calls can reuse the same reverse indexes.
@@ -130,6 +132,7 @@ type symbolTable struct {
 	binaryRepeatMode    bool // use tree-sitter binary repeat helper shape
 	flattenRepeatAux    bool
 	choiceLiftThreshold int // if >0, lift inline CHOICE nodes exceeding this width
+	stringTokenPrecs    map[string]int
 }
 
 const inlinePatternSymbolPrefix = "\x00inline_pattern:"
@@ -145,6 +148,7 @@ func newSymbolTable() *symbolTable {
 		namedTokenByName: make(map[string]int),
 		fieldMap:         make(map[string]int),
 		repeatAuxByKey:   make(map[string]string),
+		stringTokenPrecs: make(map[string]int),
 		fields:           []string{""}, // index 0 is always ""
 	}
 	// Symbol 0 = "end" (EOF). Tree-sitter C marks this Named=true.
@@ -659,11 +663,26 @@ func Normalize(g *Grammar) (*NormalizedGrammar, error) {
 	ng.ExactPrefixStates = g.ExactPrefixStates
 	ng.PrecedenceOrder = buildPrecOrderTable(g.Precedences, buildNamedPrecMapFromLevels(g.Precedences))
 	ng.PreserveKeywordIdentifierConflicts = g.PreserveKeywordIdentifierConflicts
+	ng.SuppressEquivalentExternalReduceLookaheads = g.SuppressEquivalentExternalReduceLookaheads
+	ng.ExternalReduceFollowLookaheads = stringSetFromSlice(g.ExternalReduceFollowLookaheads)
 
 	// Set tokenCount boundary on symbols so assembly knows where terminals end.
 	_ = tokenCount
 
 	return ng, nil
+}
+
+func stringSetFromSlice(values []string) map[string]bool {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make(map[string]bool, len(values))
+	for _, value := range values {
+		if value != "" {
+			out[value] = true
+		}
+	}
+	return out
 }
 
 func resolveReservedWordSets(sets []ReservedWordSet, st *symbolTable, terminals []TerminalPattern) ([][]int, error) {
@@ -1247,6 +1266,34 @@ func liftInlineTokens(g *Grammar, st *symbolTable) []inlineTokenEntry {
 	return entries
 }
 
+func (st *symbolTable) recordStringTokenPrecedence(value string, prec int) {
+	if st == nil || prec == 0 {
+		return
+	}
+	if existing, ok := st.stringTokenPrecs[value]; !ok || prec > existing {
+		st.stringTokenPrecs[value] = prec
+	}
+}
+
+func tokenRulePrecedence(r *Rule) int {
+	if r == nil {
+		return 0
+	}
+	switch r.Kind {
+	case RuleToken, RuleImmToken:
+		if len(r.Children) > 0 {
+			return tokenRulePrecedence(r.Children[0])
+		}
+	case RulePrec, RulePrecLeft, RulePrecRight, RulePrecDynamic:
+		return r.Prec
+	case RuleField, RuleAlias:
+		if len(r.Children) > 0 {
+			return tokenRulePrecedence(r.Children[0])
+		}
+	}
+	return 0
+}
+
 // canonicalTokenKey computes a canonical string key for an inline token's
 // pattern, used to deduplicate tokens with identical matching behavior.
 // Precedence wrappers are stripped since they affect conflict resolution,
@@ -1351,6 +1398,7 @@ func liftTokensInRule(r *Rule, parentName string, st *symbolTable, entries *[]in
 		if r.Kind == RuleToken {
 			if sv := extractTokenStringValue(r); sv != "" {
 				if _, exists := st.lookup(sv); exists {
+					st.recordStringTokenPrecedence(sv, tokenRulePrecedence(r))
 					key := canonicalTokenKey(r)
 					dedup[key] = sv
 					return Sym(sv)
@@ -1907,9 +1955,15 @@ func registerExternalSymbols(g *Grammar, st *symbolTable) []int {
 			named = false
 		case RulePattern:
 			// Anonymous external patterns are emitted by tree-sitter with
-			// synthetic names like _token1. Keep them in the external-symbol
-			// table so scanner adaptation can preserve external token order.
+			// synthetic names like _token1 unless the same anonymous pattern
+			// already exists as an inline terminal. In that case, reuse the
+			// existing symbol so LR actions on the inline terminal also make the
+			// corresponding external scanner token valid.
 			anonPatternCount++
+			if id, ok := st.lookup(inlinePatternSymbolKey(ext.Value)); ok {
+				extSyms = append(extSyms, id)
+				continue
+			}
 			name = fmt.Sprintf("_token%d", anonPatternCount)
 			named = false
 		default:
@@ -2004,7 +2058,7 @@ func extractTerminals(g *Grammar, st *symbolTable, stringLits []string, namedTok
 		patterns = append(patterns, TerminalPattern{
 			SymbolID: id,
 			Rule:     Str(s),
-			Priority: 0,
+			Priority: -st.stringTokenPrecs[s] * 1000,
 		})
 	}
 
@@ -2043,9 +2097,24 @@ func extractTerminals(g *Grammar, st *symbolTable, stringLits []string, namedTok
 		})
 	}
 
+	priorityInlinePatternSet := stringSetFromSlice(g.PriorityInlinePatterns)
+	inlinePatternSet := stringSetFromSlice(inlinePatterns)
+	seenPriorityInlinePattern := make(map[string]bool, len(g.PriorityInlinePatterns))
 	var priorityInlinePatterns, broadInlinePatterns []string
+	for _, pat := range g.PriorityInlinePatterns {
+		if inlinePatternSet[pat] && !seenPriorityInlinePattern[pat] {
+			priorityInlinePatterns = append(priorityInlinePatterns, pat)
+			seenPriorityInlinePattern[pat] = true
+		}
+	}
 	for _, pat := range inlinePatterns {
-		if _, aliased := aliasedPatterns[pat]; aliased || isKeywordLikeInlinePattern(pat) {
+		if seenPriorityInlinePattern[pat] {
+			continue
+		}
+		if priorityInlinePatternSet[pat] {
+			priorityInlinePatterns = append(priorityInlinePatterns, pat)
+			seenPriorityInlinePattern[pat] = true
+		} else if _, aliased := aliasedPatterns[pat]; aliased || isKeywordLikeInlinePattern(pat) {
 			priorityInlinePatterns = append(priorityInlinePatterns, pat)
 		} else {
 			broadInlinePatterns = append(broadInlinePatterns, pat)
@@ -2793,16 +2862,20 @@ func flattenRule2(r *Rule, lhsID int, st *symbolTable, prodIDCounter *int) []Pro
 						suppressExplicitZeroWrapperAssoc = true
 					}
 				}
-				if altProds[i].Prec == 0 {
+				if altHasPrec && altPrec != 0 {
+					altProds[i].Prec = altPrec
+				} else if altProds[i].Prec == 0 {
 					altProds[i].Prec = altPrec
 				}
-				if !suppressExplicitZeroWrapperAssoc && !altProds[i].HasExplicitPrec && altHasPrec {
+				if !suppressExplicitZeroWrapperAssoc && altHasPrec && (altPrec != 0 || !altProds[i].HasExplicitPrec) {
 					altProds[i].HasExplicitPrec = true
 				}
-				if !suppressExplicitZeroWrapperAssoc && altProds[i].Assoc == AssocNone {
+				if !suppressExplicitZeroWrapperAssoc && (altProds[i].Assoc == AssocNone || altPrec != 0) {
 					altProds[i].Assoc = altAssoc
 				}
-				if altProds[i].DynPrec == 0 {
+				if altDyn != 0 {
+					altProds[i].DynPrec = altDyn
+				} else if altProds[i].DynPrec == 0 {
 					altProds[i].DynPrec = altDyn
 				}
 			}
@@ -2858,10 +2931,10 @@ func flattenRule2(r *Rule, lhsID int, st *symbolTable, prodIDCounter *int) []Pro
 		trailingAutoSemiOptional := hasTrailingAutomaticSemicolonOptional(inner)
 		var prods []Production
 		for _, alt := range alternatives {
-			// Compute per-alternative prec: use rightmost element's prec
-			// (matching tree-sitter's behavior where the rightmost prec
-			// wrapper in a production wins). Fall back to the outer prec
-			// from unwrapPrec, then scanInnerPrec as last resort.
+			// Compute per-alternative prec: an explicit wrapper on the whole
+			// production wins. Otherwise use the rightmost element's prec,
+			// matching tree-sitter's behavior where an inline prec wrapper in a
+			// production contributes that production's precedence.
 			altPrec, altAssoc, altDyn, altHasPrec := prec, assoc, dynPrec, hasPrec
 			altIncludesBlankChoice := false
 			altHasInnerPrec := false
@@ -2870,16 +2943,16 @@ func flattenRule2(r *Rule, lhsID int, st *symbolTable, prodIDCounter *int) []Pro
 					altIncludesBlankChoice = true
 					continue
 				}
-				if elem.hasPrec {
+				if elem.hasPrec && !hasPrec {
 					altPrec = elem.prec
 					altHasPrec = true
 					altHasInnerPrec = true
 				}
-				if elem.assoc != AssocNone {
+				if elem.assoc != AssocNone && !hasPrec {
 					altAssoc = elem.assoc
 					altHasInnerPrec = true
 				}
-				if elem.dynPrec != 0 {
+				if elem.dynPrec != 0 && dynPrec == 0 {
 					altDyn = elem.dynPrec
 					altHasInnerPrec = true
 				}
@@ -3443,6 +3516,9 @@ func flattenHiddenChoiceAlts(g *Grammar, generatedHiddenRules map[string]bool) *
 	out.PreserveKeywordIdentifierConflicts = g.PreserveKeywordIdentifierConflicts
 	out.ExactPrefixStates = g.ExactPrefixStates
 	out.ChoiceLiftThreshold = g.ChoiceLiftThreshold
+	out.SuppressEquivalentExternalReduceLookaheads = g.SuppressEquivalentExternalReduceLookaheads
+	out.ExternalReduceFollowLookaheads = append(out.ExternalReduceFollowLookaheads, g.ExternalReduceFollowLookaheads...)
+	out.PriorityInlinePatterns = append(out.PriorityInlinePatterns, g.PriorityInlinePatterns...)
 	return out
 }
 
@@ -3822,6 +3898,9 @@ func expandInlineRules(g *Grammar) *Grammar {
 	out.PreserveKeywordIdentifierConflicts = g.PreserveKeywordIdentifierConflicts
 	out.ExactPrefixStates = g.ExactPrefixStates
 	out.ChoiceLiftThreshold = g.ChoiceLiftThreshold
+	out.SuppressEquivalentExternalReduceLookaheads = g.SuppressEquivalentExternalReduceLookaheads
+	out.ExternalReduceFollowLookaheads = append(out.ExternalReduceFollowLookaheads, g.ExternalReduceFollowLookaheads...)
+	out.PriorityInlinePatterns = append(out.PriorityInlinePatterns, g.PriorityInlinePatterns...)
 	// Don't propagate Inline — they've been expanded.
 
 	return out

@@ -75,6 +75,96 @@ func TestNextExternalTokenPrefersCandidateUsableByPrimaryState(t *testing.T) {
 	}
 }
 
+func TestBashGeneratedShellOperatorsDoNotRequireArithmeticContext(t *testing.T) {
+	shellOps := []string{"|", "|&", "||", "&&", "<", ">", "<<", "<<-", ">>", "<<<", "&>", "&>>", "<&", ">&", "<&-", ">&-", ">|", ";", ";;"}
+	for _, op := range shellOps {
+		if bashGeneratedOperatorRequiresArithmeticContext(op) {
+			t.Fatalf("operator %q requires arithmetic context, want shell context allowed", op)
+		}
+	}
+	arithmeticOps := []string{"+", "-", "*", "/", "%", "**", "++", "--", "+=", "<<=", ">>=", "?", ":", ","}
+	for _, op := range arithmeticOps {
+		if !bashGeneratedOperatorRequiresArithmeticContext(op) {
+			t.Fatalf("operator %q does not require arithmetic context", op)
+		}
+	}
+}
+
+func TestBashGeneratedSyntheticExternalLiteralDoesNotConsumeHereStringPrefix(t *testing.T) {
+	lang := &Language{
+		Name:                  "bash",
+		GeneratedByGrammargen: true,
+		SymbolNames:           []string{"end", "<<"},
+		ExternalSymbols:       []Symbol{1},
+	}
+	ts := &dfaTokenSource{
+		lexer:    NewLexer(nil, []byte("<<< word")),
+		language: lang,
+	}
+	if tok, ok := ts.bashGeneratedSyntheticExternalLiteral([]bool{true}); ok {
+		t.Fatalf("synthetic token = %+v, want DFA to handle here-string prefix", tok)
+	}
+}
+
+func TestNormalizeBashNewlineTokenSplitsBySymbolName(t *testing.T) {
+	lang := &Language{
+		Name:                  "bash",
+		GeneratedByGrammargen: true,
+		SymbolNames:           []string{"end", "\\n"},
+	}
+	ts := &dfaTokenSource{
+		lexer:    NewLexer(nil, []byte("\n\nsed")),
+		language: lang,
+	}
+	tok := Token{
+		Symbol:     1,
+		StartByte:  0,
+		EndByte:    2,
+		StartPoint: Point{},
+		EndPoint:   Point{Row: 2, Column: 0},
+		Text:       "\n\n",
+	}
+	got, endPos, endRow, endCol := ts.normalizeDFAToken(tok, 2, 2, 0)
+	if got.EndByte != 1 || endPos != 1 || endRow != 1 || endCol != 0 || got.Text != "\n" {
+		t.Fatalf("split newline token = %+v end=(%d,%d,%d), want single newline", got, endPos, endRow, endCol)
+	}
+}
+
+func TestNormalizeBashGeneratedDFAOnlyNewlineToken(t *testing.T) {
+	lang := &Language{
+		Name:                  "bash",
+		GeneratedByGrammargen: true,
+		SymbolNames:           []string{"end", "\\n", "regex"},
+		ParseActions: []ParseActionEntry{
+			{},
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 1}}},
+		},
+	}
+	lookup := func(state StateID, sym Symbol) uint16 {
+		if sym == 1 {
+			return 1
+		}
+		return 0
+	}
+	ts := &dfaTokenSource{
+		lexer:             NewLexer(nil, []byte("\n\nsed")),
+		language:          lang,
+		lookupActionIndex: lookup,
+	}
+	tok := Token{
+		Symbol:     2,
+		StartByte:  0,
+		EndByte:    2,
+		StartPoint: Point{},
+		EndPoint:   Point{Row: 2, Column: 0},
+		Text:       "\n\n",
+	}
+	got, endPos, endRow, endCol := ts.normalizeDFAToken(tok, 2, 2, 0)
+	if got.Symbol != 1 || got.EndByte != 1 || endPos != 1 || endRow != 1 || endCol != 0 || got.Text != "\n" {
+		t.Fatalf("normalized DFA newline = %+v end=(%d,%d,%d), want active newline", got, endPos, endRow, endCol)
+	}
+}
+
 type byteStateExternalScanner struct{}
 
 func (byteStateExternalScanner) Create() any {

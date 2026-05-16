@@ -40,6 +40,58 @@ func TestFlattenRulePreservesExplicitZeroPrecedenceInsideSeq(t *testing.T) {
 	}
 }
 
+func TestFlattenRuleOuterSequencePrecedenceBeatsInlinedChildPrecedence(t *testing.T) {
+	st := newSymbolTable()
+	lhs := st.addSymbol("binary_expression", SymbolInfo{Name: "binary_expression", Kind: SymbolNonterminal})
+	st.addSymbol("left", SymbolInfo{Name: "left", Kind: SymbolNonterminal})
+	st.addSymbol("+", SymbolInfo{Name: "+", Kind: SymbolTerminal})
+	st.addSymbol("right", SymbolInfo{Name: "right", Kind: SymbolNonterminal})
+
+	prodID := 0
+	prods := flattenRule2(PrecLeft(13, Seq(
+		Prec(1, Sym("left")),
+		Str("+"),
+		Prec(1, Sym("right")),
+	)), lhs, st, &prodID)
+	if len(prods) != 1 {
+		t.Fatalf("flattenRule2 produced %d productions, want 1", len(prods))
+	}
+	if prods[0].Prec != 13 || prods[0].Assoc != AssocLeft || !prods[0].HasExplicitPrec {
+		t.Fatalf("production precedence = %+v, want outer prec.left(13)", prods[0])
+	}
+}
+
+func TestFlattenRuleChoiceAltPrecedenceBeatsInlinedChildPrecedence(t *testing.T) {
+	st := newSymbolTable()
+	lhs := st.addSymbol("expression", SymbolInfo{Name: "expression", Kind: SymbolNonterminal})
+	st.addSymbol("left", SymbolInfo{Name: "left", Kind: SymbolNonterminal})
+	st.addSymbol("+", SymbolInfo{Name: "+", Kind: SymbolTerminal})
+	st.addSymbol("right", SymbolInfo{Name: "right", Kind: SymbolNonterminal})
+	st.addSymbol("number", SymbolInfo{Name: "number", Kind: SymbolTerminal})
+
+	prodID := 0
+	prods := flattenRule2(Choice(
+		PrecLeft(13, Seq(
+			Prec(1, Sym("left")),
+			Str("+"),
+			Prec(1, Sym("right")),
+		)),
+		Str("number"),
+	), lhs, st, &prodID)
+	if len(prods) != 2 {
+		t.Fatalf("flattenRule2 produced %d productions, want 2", len(prods))
+	}
+	for _, prod := range prods {
+		if len(prod.RHS) == 3 {
+			if prod.Prec != 13 || prod.Assoc != AssocLeft || !prod.HasExplicitPrec {
+				t.Fatalf("choice-alt production precedence = %+v, want outer prec.left(13)", prod)
+			}
+			return
+		}
+	}
+	t.Fatalf("missing binary production: %+v", prods)
+}
+
 func TestResolveActionConflictExplicitNegativeShiftBeatsImplicitZeroReduce(t *testing.T) {
 	ng := &NormalizedGrammar{
 		Symbols: []SymbolInfo{

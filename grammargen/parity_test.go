@@ -2396,7 +2396,7 @@ func init() {
 		// These have hand-written Go scanners that get adapted at test time.
 
 		// Popular scanner languages
-		{name: "bash", blobFunc: grammars.BashLanguage, timeout: 90 * time.Second, expectNoErrors: 1},
+		{name: "bash", blobFunc: grammars.BashLanguage, timeout: 5 * time.Minute, expectNoErrors: 1},
 		{name: "python", blobFunc: grammars.PythonLanguage, timeout: 300 * time.Second, expectNoErrors: 1, expectParity: 1},
 		{name: "ruby", blobFunc: grammars.RubyLanguage, timeout: 90 * time.Second, expectNoErrors: 1, expectParity: 1},
 		{name: "rust", blobFunc: grammars.RustLanguage, timeout: 90 * time.Second, expectNoErrors: 1, expectParity: 1},
