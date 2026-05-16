@@ -2293,6 +2293,13 @@ func javaRepetitionShiftConflictChoice(lang *Language, tok Token, state StateID,
 		return ParseAction{}, false
 	}
 	switch state {
+	case 983:
+		switch {
+		case symbolHasName(lang, tok.Symbol, "escape_sequence"):
+		case symbolHasName(lang, tok.Symbol, "string_fragment"):
+		default:
+			return ParseAction{}, false
+		}
 	case 935:
 		if !symbolHasName(lang, tok.Symbol, "case") {
 			return ParseAction{}, false

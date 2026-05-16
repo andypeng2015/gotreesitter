@@ -99,6 +99,36 @@ func TestCSharpRepetitionShiftConflictChoiceRejectsOtherRepeats(t *testing.T) {
 	}
 }
 
+func TestJavaRepetitionShiftConflictChoiceAllowsStringLiteralContinuation(t *testing.T) {
+	lang := &Language{SymbolNames: []string{"end", "escape_sequence", "string_fragment", "_string_literal_repeat1"}}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 3, ChildCount: 1},
+		{Type: ParseActionShift, State: 983, Repetition: true},
+	}
+
+	for _, sym := range []Symbol{1, 2} {
+		chosen, ok := javaRepetitionShiftConflictChoice(lang, Token{Symbol: sym}, 983, actions)
+		if !ok {
+			t.Fatalf("javaRepetitionShiftConflictChoice(%q) = false, want true", lang.SymbolNames[sym])
+		}
+		if chosen.Type != ParseActionShift || chosen.State != 983 || !chosen.Repetition {
+			t.Fatalf("javaRepetitionShiftConflictChoice(%q) picked %+v, want string repeat shift", lang.SymbolNames[sym], chosen)
+		}
+	}
+}
+
+func TestJavaRepetitionShiftConflictChoiceRejectsOtherStringLiteralLookahead(t *testing.T) {
+	lang := &Language{SymbolNames: []string{"end", "identifier", "_string_literal_repeat1"}}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 2, ChildCount: 1},
+		{Type: ParseActionShift, State: 983, Repetition: true},
+	}
+
+	if _, ok := javaRepetitionShiftConflictChoice(lang, Token{Symbol: 1}, 983, actions); ok {
+		t.Fatal("javaRepetitionShiftConflictChoice = true, want false")
+	}
+}
+
 func TestShouldRetryNodeLimitParse(t *testing.T) {
 	tree := &Tree{
 		parseRuntime: ParseRuntime{
