@@ -975,6 +975,49 @@ func stackCompareMerge(a, b *glrStack) int {
 	return 0
 }
 
+func stackCompareMergeSmallCapOne(a, b *glrStack) int {
+	if perfCountersEnabled {
+		perfRecordStackCompare()
+	}
+	// Small merges normally preserve distinct same-key parse paths. When the
+	// caller explicitly caps a key to one survivor, prune only on parser-rank
+	// signals and avoid branch-order/hash tie-breakers that can discard the
+	// still-correct Java branch on large corpus files.
+	if a.accepted != b.accepted {
+		if a.accepted {
+			return 1
+		}
+		return -1
+	}
+	if aErr, bErr := stackErrorRank(a), stackErrorRank(b); aErr != bErr {
+		if aErr < bErr {
+			return 1
+		}
+		return -1
+	}
+	if a.score != b.score {
+		if a.score > b.score {
+			return 1
+		}
+		return -1
+	}
+	if a.shifted != b.shifted {
+		if !a.shifted {
+			return 1
+		}
+		return -1
+	}
+	aDepth := a.depth()
+	bDepth := b.depth()
+	if aDepth != bDepth {
+		if aDepth > bDepth {
+			return 1
+		}
+		return -1
+	}
+	return 0
+}
+
 func stackErrorRank(s *glrStack) int {
 	if s == nil {
 		return 2
@@ -1011,6 +1054,18 @@ func mergeStacksSmallForLanguage(alive []glrStack, scratch *glrMergeScratch, lan
 		for j := range result {
 			if mergeKeyForStack(result[j]) != key {
 				continue
+			}
+			if scratch != nil && scratch.perKeyCap == 1 {
+				cmp := stackCompareMergeSmallCapOne(&stack, &result[j])
+				if cmp > 0 {
+					result[j] = stack
+					duplicateIndex = j
+					break
+				}
+				if cmp < 0 {
+					duplicateIndex = j
+					break
+				}
 			}
 			if stackEquivalentForLanguageWithScratch(scratch, lang, result[j], stack) {
 				duplicateIndex = j
@@ -1111,6 +1166,24 @@ func mergeStacksWithScratch(stacks []glrStack, scratch *glrMergeScratch) []glrSt
 			slots[slotIndex].hashMask = 0
 		}
 		slot := &slots[slotIndex]
+
+		if perKeyCap == 1 && slot.count == 1 {
+			idx := slot.indices[0]
+			cmp := stackCompareMerge(&stack, &result[idx])
+			if cmp > 0 {
+				result[idx] = stack
+				slot.hashes[0] = hash
+				slot.hashMask = mergeHashBit(hash)
+				slot.worstIndex = idx
+				if perfCountersEnabled {
+					perfRecordMergeReplacement()
+				}
+				continue
+			}
+			if cmp < 0 {
+				continue
+			}
+		}
 
 		duplicateIndex := -1
 		hashMatched := false
