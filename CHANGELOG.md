@@ -9,6 +9,18 @@ for tags and release notes while still in `0.x`.
 
 - Nothing yet.
 
+## [0.17.1] - 2026-05-17
+
+Kotlin parser compatibility patch for downstream Gazelle consumers.
+
+### Fixed
+- Kotlin dotted package and import headers parse without errors after the
+  grammar refresh, including wildcard imports and files that combine package,
+  import, and `fun interface` declarations.
+- Kotlin import-only external tokens can relex through shared package/import
+  parser states when the winning branch needs ordinary DFA tokens such as `.`
+  or `import`.
+
 ## [0.17.0] - 2026-05-17
 
 Java corpus parity and parser-performance release.
@@ -524,7 +536,8 @@ Warm-reuse throughput ~10 % higher. 206-grammar parity green under `GTS_PARITY_M
 - Initial standalone pure-Go runtime module.
 - External scanner VM foundation and base parser/lexer/tree infrastructure.
 
-[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.17.0...HEAD
+[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.17.1...HEAD
+[0.17.1]: https://github.com/odvcencio/gotreesitter/compare/v0.17.0...v0.17.1
 [0.17.0]: https://github.com/odvcencio/gotreesitter/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/odvcencio/gotreesitter/compare/v0.15.3...v0.16.0
 [0.15.3]: https://github.com/odvcencio/gotreesitter/compare/v0.15.2...v0.15.3
