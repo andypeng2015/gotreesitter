@@ -272,13 +272,13 @@ cpu: Intel(R) Core(TM) Ultra 9 285
 |---|---:|---:|---:|
 | Native C (pure C runtime) | 1.76 ms | 102.3 μs | 101.7 μs |
 | CGo binding (C runtime via cgo) | ~2.0 ms | ~130 μs | — |
-| gotreesitter (pure Go) | 4.20 ms | 1.49 μs | 2.18 ns |
+| gotreesitter (pure Go) | 1.98 ms | 666 ns | 2.84 ns |
 
 On this workload:
 
-- Full parse is ~2.4x slower than native C.
-- Incremental single-byte edits are ~69x faster than native C (~87x faster than CGo).
-- No-edit reparses are ~46,600x faster than native C, zero allocations.
+- Full parse is roughly at CGo binding speed and ~1.1x slower than native C.
+- Incremental single-byte edits are ~154x faster than native C (~195x faster than CGo).
+- No-edit reparses are ~35,900x faster than native C, zero allocations.
 
 <details>
 <summary>Raw benchmark output</summary>
@@ -287,7 +287,7 @@ On this workload:
 # Pure Go (this repo):
 GOMAXPROCS=1 go test . -run '^$' \
   -bench 'BenchmarkGoParseFullDFA|BenchmarkGoParseIncrementalSingleByteEditDFA|BenchmarkGoParseIncrementalNoEditDFA' \
-  -benchmem -count=10 -benchtime=1s
+  -benchmem -count=10 -benchtime=750ms
 
 # CGo binding benchmarks:
 cd cgo_harness
@@ -306,9 +306,9 @@ GOMAXPROCS=1 go test . -run '^$' -tags treesitter_c_bench \
 | Native C incremental (no edit) | 101,740 | — | — |
 | `CTreeSitterGoParseFull` | ~1,990,000 | 600 | 6 |
 | `CTreeSitterGoParseIncrementalSingleByteEdit` | ~130,000 | 648 | 7 |
-| `GoParseFullDFA` | 4,197,811 | 585 | 7 |
-| `GoParseIncrementalSingleByteEditDFA` | 1,490 | 1,584 | 9 |
-| `GoParseIncrementalNoEditDFA` | 2.181 | 0 | 0 |
+| `GoParseFullDFA` | 1,975,154 | 4,281 | 5 |
+| `GoParseIncrementalSingleByteEditDFA` | 666.5 | 176 | 3 |
+| `GoParseIncrementalNoEditDFA` | 2.837 | 0 | 0 |
 
 </details>
 
@@ -551,6 +551,16 @@ Test suite covers: smoke tests (206 grammars), golden S-expression snapshots, hi
 
 ## Roadmap
 
+v0.17.x — Java corpus parity and parser-performance release. Java now has
+bounded Docker corpus lanes for Apache Lucene, including largest-file, random,
+timeout-sweep, cgo comparison, no-tree diagnostic, UAX generated-file,
+ambiguity, materialization, traversal, and query/API-shape runs. Targeted Java
+lexer and GLR fixes close the correctness/timeout cliff for the sampled Lucene
+corpora, while deferred parent-link wiring and parser scratch reuse move Java
+full parses much closer to cgo. The release also expands `grammargen` top-50
+parity coverage and fixes Bash, Python, Swift, comment, gomod, ini, CPON, D,
+PowerShell, Julia, and Java parity gaps.
+
 v0.16.x — Grammar extensibility and parser-resilience release. Adds native
 UTF-16 parser/editor APIs, `grammargen` DSL constructors and extension smoke
 coverage for Kotlin, Swift, JavaScript, TypeScript/TSX, and Fortran, and
@@ -568,7 +578,8 @@ v0.14.x — Go grammar now shipped as a grammargen-compiled blob (our own pure-G
 v0.12.x — 206 grammars (all OK), 116 external scanners, pure-Go runtime plus `grammargen`, ABI 15 support including reserved-word sets, GLR parser, incremental reparsing with external scanner checkpoints, query engine, tree cursor, highlighting, tagging, injection parser, typed query codegen, CST rewriter, parser pool, arena memory budgets, and structural parity against 100+ curated C reference grammars.
 
 Next:
-- Full-parse `grammargen` performance work that keeps the recent incremental wins without regressing the main DFA benchmark
+- Compact/lazy internal tree materialization so Java full parses keep more of
+  the no-tree diagnostic win without moving excessive cost into query/traversal
 - Retire parser-result struts by moving C#, Rust, Scala, TypeScript, and Python recovery into runtime or grammar generation paths
 - Grammar refresh automation that moves from lock-only PRs to regenerated artifacts and focused parity for allow-listed `grammargen`-backed languages
 - Table-size and codegen compaction work for Unicode-heavy grammars

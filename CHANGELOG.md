@@ -9,6 +9,69 @@ for tags and release notes while still in `0.x`.
 
 - Nothing yet.
 
+## [0.17.0] - 2026-05-17
+
+Java corpus parity and parser-performance release.
+
+### Added
+- Java corpus Docker harnesses for seeded Apache Lucene stress testing,
+  including largest/random corpus selection, timeout sweeps, cgo comparison
+  benchmarks, UAX generated-file stress runs, materialization profiles, runtime
+  diagnostics, and ambiguity profiling.
+- `Parser.ParseNoTreeBenchmarkOnly` for diagnostic parser-loop benchmarks that
+  suppress full public tree materialization while keeping lexing and parse
+  actions active.
+- Language-family full-parse benchmark matrix controls, warm parser reuse
+  benchmarks, and parser scratch/reset regression coverage.
+- Top-50 `grammargen` parity coverage checks and focused fixtures for Java,
+  Bash, Python, Swift, comment, CPON, git config, gomod, ini, and related
+  imported-grammar edge cases.
+
+### Changed
+- Java parsing now handles contextual keyword/token selection, compact generic
+  close-angle splitting, switch rule labels versus lambdas, shift expressions
+  before calls, array initializer commas, repetition shifts, and downstream
+  recovery cases much closer to the C runtime.
+- Parser hot paths cache language traits on DFA token sources, preserve scratch
+  buffers across pooled token-source resets, clear GLR/GSS scratch by written
+  range and epoch, and reduce parser clearing/lookup overhead.
+- Initial Java full parses defer parent-link wiring until the tree API needs it,
+  avoiding public tree bookkeeping during the parse-time materialization hot
+  path.
+- Edited trees now reuse the old primary arena directly where possible, and
+  borrowed arenas are deduplicated to reduce incremental parse retention churn.
+- HTML-family scanner deserialization reuses tag snapshots and shared ASCII
+  lookup construction while preserving first-match behavior.
+
+### Fixed
+- Bash generated-parser parity issues around command names, statement
+  boundaries, broad DFA relexing, and arithmetic expansion token normalization.
+- Comment tag parsing, parser compatibility normalization, parser-valid
+  zero-width token preference, broad relex candidate matching, and string
+  whitespace recovery behavior.
+- `grammargen` normalization and conflict-resolution gaps for lexical choices,
+  aliased inline precedence, long Unicode escapes, augmented start symbols,
+  terminal collisions, Python/Swift parity regressions, Julia assignment
+  conflicts, D binary repeat, PowerShell binary repeat, and gomod grouped
+  retract intervals.
+- Parser reset paths now avoid stale node-equivalence and GSS cache hits after
+  reuse.
+
+### Performance
+- Main-branch Go/editor benchmark median on the standard generated Go workload:
+  full DFA parse `~1.98 ms`, incremental single-byte edit `~666 ns`, no-edit
+  incremental reparse `~2.84 ns`, with full parse at `5 allocs/op`.
+- Java Lucene largest top-10 Docker benchmark: Go full DFA `~537 ms`, Go
+  no-tree diagnostic `~402 ms`, cgo full `~394 ms`; full/cgo is about `1.36x`.
+- Java generated UAX file Docker benchmark: Go full DFA `~306 ms`, Go no-tree
+  diagnostic `~235 ms`, cgo full `~213 ms`; full/cgo is about `1.44x`.
+
+### Testing
+- CI for the release commit includes green build, freshness, cgo parity smoke,
+  and perf-regression gates on PR #80.
+- Java real-corpus parity and large-file timeout diagnostics are now
+  reproducible through bounded Docker lanes rather than ad-hoc local runs.
+
 ## [0.16.0] - 2026-05-06
 
 Grammar extensibility, UTF-16 input, and parser-resilience release.
@@ -461,7 +524,8 @@ Warm-reuse throughput ~10 % higher. 206-grammar parity green under `GTS_PARITY_M
 - Initial standalone pure-Go runtime module.
 - External scanner VM foundation and base parser/lexer/tree infrastructure.
 
-[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.16.0...HEAD
+[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.17.0...HEAD
+[0.17.0]: https://github.com/odvcencio/gotreesitter/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/odvcencio/gotreesitter/compare/v0.15.3...v0.16.0
 [0.15.3]: https://github.com/odvcencio/gotreesitter/compare/v0.15.2...v0.15.3
 [0.15.2]: https://github.com/odvcencio/gotreesitter/compare/v0.15.1...v0.15.2
