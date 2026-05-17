@@ -881,6 +881,175 @@ func BenchmarkJavaCorpusGoTreeSitterParseDFAWithNamedTraversal(b *testing.B) {
 	})
 }
 
+func BenchmarkJavaCorpusGoTreeSitterParseDFAWithFirstParent(b *testing.B) {
+	benchmarkJavaCorpusGoTreeSitterWithUse(b, javaParseModeDFA, "parent_calls/op", func(b *testing.B, lang *gotreesitter.Language, tree *gotreesitter.Tree, file javaCorpusFile) int64 {
+		root := tree.RootNode()
+		if root == nil || root.ChildCount() == 0 {
+			return 0
+		}
+		child := root.Child(0)
+		if child == nil {
+			return 0
+		}
+		if parent := child.Parent(); parent != root {
+			b.Fatalf("%s: first child parent mismatch", file.path)
+		}
+		return 1
+	})
+}
+
+func BenchmarkJavaCorpusGoTreeSitterParseDFAWithParentTraversal(b *testing.B) {
+	var scratch []*gotreesitter.Node
+	benchmarkJavaCorpusGoTreeSitterWithUse(b, javaParseModeDFA, "parent_checks/op", func(b *testing.B, lang *gotreesitter.Language, tree *gotreesitter.Tree, file javaCorpusFile) int64 {
+		return countJavaCorpusParentChecks(b, file.path, tree.RootNode(), &scratch)
+	})
+}
+
+func BenchmarkJavaCorpusGoTreeSitterParseDFAWithSiblingWalk(b *testing.B) {
+	var scratch []*gotreesitter.Node
+	benchmarkJavaCorpusGoTreeSitterWithUse(b, javaParseModeDFA, "sibling_steps/op", func(b *testing.B, lang *gotreesitter.Language, tree *gotreesitter.Tree, file javaCorpusFile) int64 {
+		return countJavaCorpusSiblingSteps(b, file.path, tree.RootNode(), &scratch)
+	})
+}
+
+func BenchmarkJavaCorpusGoTreeSitterParseDFAWithNodeEdit(b *testing.B) {
+	benchmarkJavaCorpusGoTreeSitterWithUse(b, javaParseModeDFA, "edit_calls/op", func(b *testing.B, lang *gotreesitter.Language, tree *gotreesitter.Tree, file javaCorpusFile) int64 {
+		root := tree.RootNode()
+		if root == nil {
+			return 0
+		}
+		// Isolate the first Node.Edit API touch: this forces deferred parent
+		// links, while real edit history/reuse is covered by the incremental
+		// benchmark below.
+		root.Edit(gotreesitter.InputEdit{
+			StartByte:   uint32(len(file.source)),
+			OldEndByte:  uint32(len(file.source)),
+			NewEndByte:  uint32(len(file.source)),
+			StartPoint:  root.EndPoint(),
+			OldEndPoint: root.EndPoint(),
+			NewEndPoint: root.EndPoint(),
+		})
+		return 1
+	})
+}
+
+func BenchmarkJavaCorpusGoTreeSitterParseDFAWithIncrementalReuse(b *testing.B) {
+	files := loadJavaCorpus(b)
+	timeoutMicros := javaBenchTimeout(b)
+	totalBytes := totalJavaCorpusBytes(files)
+	lang := grammars.JavaLanguage()
+	pool := gotreesitter.NewParserPool(lang, gotreesitter.WithParserPoolTimeoutMicros(timeoutMicros))
+	edits := make([]javaCorpusSingleByteEdit, len(files))
+	for i, file := range files {
+		edits[i] = prepareJavaCorpusSingleByteEdit(b, file)
+	}
+
+	b.ReportAllocs()
+	b.SetBytes(totalBytes)
+	b.ResetTimer()
+
+	var incrementalParses int64
+	for i := 0; i < b.N; i++ {
+		for fileIndex, file := range files {
+			result, err := parseJavaWithMode(pool, lang, javaParseModeDFA, file.source)
+			if err != nil {
+				if result.tree != nil {
+					result.tree.Release()
+				}
+				b.Fatalf("%s: %v", file.path, err)
+			}
+			tree := result.tree
+			requireCompleteGoTree(b, tree, file.source, file.path, javaParseModeDFA, timeoutMicros)
+			tree.Edit(edits[fileIndex].edit)
+
+			incrementalResult, err := pool.ParseWith(edits[fileIndex].source, gotreesitter.WithOldTree(tree))
+			if err != nil {
+				if incrementalResult.Tree != nil && incrementalResult.Tree != tree {
+					incrementalResult.Tree.Release()
+				}
+				tree.Release()
+				b.Fatalf("%s: incremental parse: %v", file.path, err)
+			}
+			incrementalTree := incrementalResult.Tree
+			requireCompleteGoTree(b, incrementalTree, edits[fileIndex].source, file.path, javaParseModeDFA, timeoutMicros)
+			incrementalParses++
+			if incrementalTree != nil && incrementalTree != tree {
+				incrementalTree.Release()
+			}
+			tree.Release()
+		}
+	}
+	javaCorpusBenchmarkSink = incrementalParses
+	if b.N > 0 {
+		b.ReportMetric(float64(incrementalParses)/float64(b.N), "incremental_parses/op")
+	}
+}
+
+type javaCorpusSingleByteEdit struct {
+	source []byte
+	edit   gotreesitter.InputEdit
+}
+
+func prepareJavaCorpusSingleByteEdit(tb testing.TB, file javaCorpusFile) javaCorpusSingleByteEdit {
+	tb.Helper()
+	offset := findJavaCorpusDigitEditOffset(file.source)
+	if offset <= 0 || offset >= len(file.source) {
+		tb.Fatalf("%s: could not find interior digit edit site", file.path)
+	}
+	edited := append([]byte(nil), file.source...)
+	edited[offset] = toggleJavaCorpusDigit(edited[offset])
+	start := pointAtOffset(file.source, offset)
+	end := pointAtOffset(file.source, offset+1)
+	return javaCorpusSingleByteEdit{
+		source: edited,
+		edit: gotreesitter.InputEdit{
+			StartByte:   uint32(offset),
+			OldEndByte:  uint32(offset + 1),
+			NewEndByte:  uint32(offset + 1),
+			StartPoint:  start,
+			OldEndPoint: end,
+			NewEndPoint: end,
+		},
+	}
+}
+
+func findJavaCorpusDigitEditOffset(src []byte) int {
+	if len(src) < 2 {
+		return -1
+	}
+	mid := len(src) / 2
+	if pos := findJavaCorpusDigitEditOffsetInRange(src, mid, len(src)); pos >= 0 {
+		return pos
+	}
+	return findJavaCorpusDigitEditOffsetInRange(src, 1, mid)
+}
+
+func findJavaCorpusDigitEditOffsetInRange(src []byte, start, end int) int {
+	if start < 1 {
+		start = 1
+	}
+	if end > len(src) {
+		end = len(src)
+	}
+	for i := start; i < end; i++ {
+		if isJavaCorpusDigit(src[i]) {
+			return i
+		}
+	}
+	return -1
+}
+
+func isJavaCorpusDigit(b byte) bool {
+	return b >= '0' && b <= '9'
+}
+
+func toggleJavaCorpusDigit(b byte) byte {
+	if b == '0' {
+		return '1'
+	}
+	return '0'
+}
+
 func countNamedJavaCorpusNodes(root *gotreesitter.Node, scratch *[]*gotreesitter.Node) int64 {
 	if root == nil {
 		return 0
@@ -899,6 +1068,77 @@ func countNamedJavaCorpusNodes(root *gotreesitter.Node, scratch *[]*gotreesitter
 		}
 		for i := node.ChildCount() - 1; i >= 0; i-- {
 			if child := node.Child(i); child != nil {
+				stack = append(stack, child)
+			}
+		}
+	}
+	*scratch = stack[:0]
+	return count
+}
+
+func countJavaCorpusParentChecks(b *testing.B, path string, root *gotreesitter.Node, scratch *[]*gotreesitter.Node) int64 {
+	b.Helper()
+	if root == nil {
+		return 0
+	}
+	stack := append((*scratch)[:0], root)
+	var count int64
+	for len(stack) > 0 {
+		last := len(stack) - 1
+		node := stack[last]
+		stack = stack[:last]
+		if node == nil {
+			continue
+		}
+		for i := node.ChildCount() - 1; i >= 0; i-- {
+			child := node.Child(i)
+			if child == nil {
+				continue
+			}
+			if child.Parent() != node {
+				b.Fatalf("%s: parent mismatch for child %d", path, i)
+			}
+			count++
+			if child.IsNamed() {
+				stack = append(stack, child)
+			}
+		}
+	}
+	*scratch = stack[:0]
+	return count
+}
+
+func countJavaCorpusSiblingSteps(b *testing.B, path string, root *gotreesitter.Node, scratch *[]*gotreesitter.Node) int64 {
+	b.Helper()
+	if root == nil {
+		return 0
+	}
+	stack := append((*scratch)[:0], root)
+	var count int64
+	for len(stack) > 0 {
+		last := len(stack) - 1
+		node := stack[last]
+		stack = stack[:last]
+		if node == nil {
+			continue
+		}
+		var prev *gotreesitter.Node
+		for i := 0; i < node.ChildCount(); i++ {
+			child := node.Child(i)
+			if child == nil {
+				continue
+			}
+			if prev != nil {
+				if got := prev.NextSibling(); got != child {
+					b.Fatalf("%s: next sibling mismatch at child %d", path, i)
+				}
+				if got := child.PrevSibling(); got != prev {
+					b.Fatalf("%s: previous sibling mismatch at child %d", path, i)
+				}
+				count += 2
+			}
+			prev = child
+			if child.IsNamed() {
 				stack = append(stack, child)
 			}
 		}
