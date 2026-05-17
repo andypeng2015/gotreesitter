@@ -393,9 +393,6 @@ func (l *Language) SymbolByName(name string) (Symbol, bool) {
 // TokenSymbolsByName returns all terminal token symbols whose display name
 // matches name. The returned symbols are in grammar order.
 func (l *Language) TokenSymbolsByName(name string) []Symbol {
-	if name == "_" {
-		return []Symbol{0}
-	}
 	l.buildSymbolMaps()
 	return l.tokenSymbolNameMap[name]
 }

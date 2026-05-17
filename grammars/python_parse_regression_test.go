@@ -176,6 +176,61 @@ func TestPythonScannerSerializationRecomputesInterpolatedStringState(t *testing.
 	}
 }
 
+func TestPythonUnderscoreAssignmentDoesNotTerminateModule(t *testing.T) {
+	src := []byte(`import os
+import sys
+
+_ = os
+_ = sys
+
+
+def main():
+    import boto3
+
+    _ = boto3
+`)
+
+	lang := PythonLanguage()
+	parser := gotreesitter.NewParser(lang)
+	tree, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	root := tree.RootNode()
+	if root == nil {
+		t.Fatal("parse returned nil root")
+	}
+	if got, want := root.EndByte(), uint32(len(src)); got != want {
+		t.Fatalf("root end byte = %d, want %d: %s", got, want, root.SExpr(lang))
+	}
+	if tree.ParseRuntime().Truncated {
+		t.Fatalf("parse runtime reports truncation: %s", tree.ParseRuntime().Summary())
+	}
+	if root.HasError() {
+		t.Fatalf("expected error-free Python parse tree, got %s", root.SExpr(lang))
+	}
+
+	var foundFunction, foundBoto3 bool
+	gotreesitter.Walk(root, func(node *gotreesitter.Node, depth int) gotreesitter.WalkAction {
+		if node.IsNamed() && node.Type(lang) == "function_definition" {
+			foundFunction = true
+		}
+		if node.IsNamed() && node.Type(lang) == "dotted_name" && node.Text(src) == "boto3" {
+			foundBoto3 = true
+		}
+		if foundFunction && foundBoto3 {
+			return gotreesitter.WalkStop
+		}
+		return gotreesitter.WalkContinue
+	})
+	if !foundFunction {
+		t.Fatalf("expected function_definition in tree, got %s", root.SExpr(lang))
+	}
+	if !foundBoto3 {
+		t.Fatalf("expected nested boto3 import in tree, got %s", root.SExpr(lang))
+	}
+}
+
 func TestParseFilePythonNestedMethodDedentsReturnToModule(t *testing.T) {
 	src := []byte("import unittest\n\nclass GrammarTests(unittest.TestCase):\n    def test_case(self):\n        keywords = (1,)\n        cases = (2,)\n        for keyword in (1,):\n            for case in (2,):\n                pass\n\nif __name__ == '__main__':\n    unittest.main()\n")
 

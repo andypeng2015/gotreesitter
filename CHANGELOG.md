@@ -9,6 +9,15 @@ for tags and release notes while still in `0.x`.
 
 - Nothing yet.
 
+## [0.17.4] - 2026-05-17
+
+Python parser compatibility patch for downstream Gazelle consumers.
+
+### Fixed
+- Python `_` identifiers no longer get retokenized as EOF during contextual
+  literal repair. This prevents clean prefix parses from silently truncating
+  modules before later assignments or nested imports.
+
 ## [0.17.3] - 2026-05-17
 
 Module compatibility patch for downstream Gazelle consumers.

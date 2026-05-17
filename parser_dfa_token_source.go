@@ -2758,6 +2758,9 @@ func (d *dfaTokenSource) activeLiteralKeywordSymbol(tok Token) (Symbol, bool) {
 	candidates := d.language.TokenSymbolsByName(tok.Text)
 	visit := func(state StateID) (Symbol, bool) {
 		for _, sym := range candidates {
+			if sym == 0 {
+				continue
+			}
 			if d.lookupActionIndex(state, sym) != 0 {
 				return sym, true
 			}
