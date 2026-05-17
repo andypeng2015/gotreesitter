@@ -207,7 +207,8 @@ func htmlTagForName(name string) htmlTag {
 
 // htmlScanTagName reads a tag name from the lexer, returning it uppercased.
 func htmlScanTagName(lexer htmlLexer) string {
-	var buf []byte
+	var stack [64]byte
+	buf := stack[:0]
 	for {
 		ch := lexer.lookahead()
 		if !htmlIsTagNameChar(ch) {

@@ -315,6 +315,21 @@ func effectiveParseMergePerKeyCap(lang *Language, mergePerKeyCap int, incrementa
 		return mergePerKeyCap
 	}
 	switch lang.Name {
+	case "json":
+		// JSON recovery has a small conflict surface, but retaining many
+		// alternatives per merge key makes equivalence checks dominate full
+		// parses without changing the accepted tree in parity coverage.
+		if mergePerKeyCap > 1 {
+			return 1
+		}
+	case "kotlin":
+		// Kotlin's statement-recovery conflicts overflow the default per-key
+		// survivor budget frequently on fresh parses. Parity coverage remains
+		// stable with one survivor, while avoiding the redundant alternatives
+		// removes most merge-equivalence churn.
+		if mergePerKeyCap > 1 {
+			return 1
+		}
 	case "javascript":
 		// Plain JS can develop many near-equivalent GLR survivors on large
 		// runtime bundles. Keeping more than four alternatives per merge key
