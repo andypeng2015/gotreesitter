@@ -48,6 +48,32 @@ func TestLanguageVersionCompatibility(t *testing.T) {
 	}
 }
 
+func TestLexAsciiTableFillsRangesPreservingFirstMatch(t *testing.T) {
+	lang := &Language{
+		LexStates: []LexState{
+			{
+				Transitions: []LexTransition{
+					{Lo: 'a', Hi: 'z', NextState: 1},
+					{Lo: 'm', Hi: 'm', NextState: 2},
+					{Lo: '0', Hi: '9', NextState: 3, Skip: true},
+					{Lo: 0, Hi: 255, NextState: 4},
+				},
+			},
+		},
+	}
+
+	row := lang.LexAsciiTable()[0]
+	if got, want := row['m'], int32(1); got != want {
+		t.Fatalf("overlapping first match = %d, want %d", got, want)
+	}
+	if got, want := row['0'], int32(3)|lexAsciiSkipBit; got != want {
+		t.Fatalf("skip transition = %d, want %d", got, want)
+	}
+	if got, want := row['A'], int32(4); got != want {
+		t.Fatalf("fallback range match = %d, want %d", got, want)
+	}
+}
+
 // TestMinimalLanguage constructs a minimal 3-symbol, 2-state grammar
 // and verifies that all fields are correctly defined and accessible.
 func TestMinimalLanguage(t *testing.T) {

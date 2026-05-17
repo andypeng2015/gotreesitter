@@ -68,7 +68,7 @@ func (BladeExternalScanner) Serialize(payload any, buf []byte) int {
 
 func (BladeExternalScanner) Deserialize(payload any, buf []byte) {
 	s := payload.(*bladeState)
-	s.tags = htmlDeserializeTags(buf)
+	s.tags = htmlDeserializeTagsInto(s.tags, buf)
 }
 
 func (BladeExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
@@ -184,12 +184,17 @@ func htmlSerializeTags(tags []htmlTag, buf []byte) int {
 }
 
 func htmlDeserializeTags(buf []byte) []htmlTag {
+	return htmlDeserializeTagsInto(nil, buf)
+}
+
+func htmlDeserializeTagsInto(dst []htmlTag, buf []byte) []htmlTag {
 	if len(buf) < 4 {
 		return nil
 	}
 	serializedCount := int(buf[0]) | int(buf[1])<<8
 	size := 4
-	var tags []htmlTag
+	clear(dst)
+	tags := dst[:0]
 	for i := 0; i < serializedCount && size < len(buf); i++ {
 		tagType := htmlTagType(buf[size])
 		size++

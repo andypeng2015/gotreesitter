@@ -41,7 +41,7 @@ func (HTMLExternalScanner) Serialize(payload any, buf []byte) int {
 
 func (HTMLExternalScanner) Deserialize(payload any, buf []byte) {
 	s := payload.(*htmlScannerState)
-	s.tags = htmlDeserializeTags(buf)
+	s.tags = htmlDeserializeTagsInto(s.tags, buf)
 }
 
 func (HTMLExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {

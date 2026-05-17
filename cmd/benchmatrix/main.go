@@ -57,6 +57,7 @@ type matrixResult struct {
 	Count          int                `json:"count"`
 	Benchtime      string             `json:"benchtime"`
 	GOMAXPROCS     int                `json:"gomaxprocs"`
+	FamilyUnitN    int                `json:"family_unit_count"`
 	StressFuncN    int                `json:"stress_func_count"`
 	Groups         []benchGroupResult `json:"groups"`
 }
@@ -79,8 +80,11 @@ func main() {
 		outPath     string
 		mdPath      string
 		rawDir      string
+		familyUnitN int
 		stressFuncN int
 		noStress    bool
+		noFamily    bool
+		onlyFamily  bool
 		captureRSS  bool
 	)
 
@@ -90,8 +94,11 @@ func main() {
 	flag.StringVar(&outPath, "out", "bench_out/matrix.json", "output JSON path")
 	flag.StringVar(&mdPath, "markdown", "bench_out/matrix.md", "output markdown path")
 	flag.StringVar(&rawDir, "raw-dir", "bench_out/raw", "directory for raw benchmark outputs")
+	flag.IntVar(&familyUnitN, "family-unit-count", 25, "value for GOT_BENCH_FUNC_COUNT in family full-parse matrix")
 	flag.IntVar(&stressFuncN, "stress-func-count", 5000, "value for GOT_BENCH_FUNC_COUNT in stress class")
 	flag.BoolVar(&noStress, "no-stress", false, "skip stress class")
+	flag.BoolVar(&noFamily, "no-family", false, "skip language-family full-parse matrix")
+	flag.BoolVar(&onlyFamily, "only-family", false, "run only the language-family full-parse matrix")
 	flag.BoolVar(&captureRSS, "rss", false, "capture /usr/bin/time -v resource stats per group")
 	flag.Parse()
 
@@ -101,20 +108,39 @@ func main() {
 	if strings.TrimSpace(benchtime) == "" {
 		fatalf("--benchtime must be non-empty")
 	}
-
-	groups := []benchGroupConfig{
-		{
-			Name:    "editor_hot_path",
-			Package: ".",
-			Regex:   "^(BenchmarkGoParseIncrementalSingleByteEdit|BenchmarkGoParseIncrementalRandomSingleByteEdit|BenchmarkGoParseIncrementalNoEdit|BenchmarkHighlightIncremental|BenchmarkTaggerTagIncremental)$",
-		},
-		{
-			Name:    "indexing_path",
-			Package: ".",
-			Regex:   "^(BenchmarkGoParseFull|BenchmarkGoParseFullDFA|BenchmarkQueryExecCompiled|BenchmarkTaggerTag)$",
-		},
+	if familyUnitN <= 0 {
+		fatalf("--family-unit-count must be > 0")
 	}
-	if !noStress {
+	if onlyFamily && noFamily {
+		fatalf("--only-family cannot be combined with --no-family")
+	}
+
+	var groups []benchGroupConfig
+	if !onlyFamily {
+		groups = append(groups,
+			benchGroupConfig{
+				Name:    "editor_hot_path",
+				Package: ".",
+				Regex:   "^(BenchmarkGoParseIncrementalSingleByteEdit|BenchmarkGoParseIncrementalRandomSingleByteEdit|BenchmarkGoParseIncrementalNoEdit|BenchmarkHighlightIncremental|BenchmarkTaggerTagIncremental)$",
+			},
+			benchGroupConfig{
+				Name:    "indexing_path",
+				Package: ".",
+				Regex:   "^(BenchmarkGoParseFull|BenchmarkGoParseFullDFA|BenchmarkQueryExecCompiled|BenchmarkTaggerTag)$",
+			},
+		)
+	}
+	if !noFamily {
+		groups = append(groups, benchGroupConfig{
+			Name:    "family_full_parse",
+			Package: ".",
+			Regex:   "^BenchmarkFamilyParseFullDFA$",
+			ExtraEnv: map[string]string{
+				"GOT_BENCH_FUNC_COUNT": strconv.Itoa(familyUnitN),
+			},
+		})
+	}
+	if !noStress && !onlyFamily {
 		groups = append(groups, benchGroupConfig{
 			Name:    "stress_path",
 			Package: ".",
@@ -150,6 +176,7 @@ func main() {
 		Count:          count,
 		Benchtime:      benchtime,
 		GOMAXPROCS:     gomaxprocs,
+		FamilyUnitN:    familyUnitN,
 		StressFuncN:    stressFuncN,
 		Groups:         results,
 	}
@@ -372,6 +399,7 @@ func writeMarkdown(path string, matrix matrixResult) error {
 	b.WriteString(fmt.Sprintf("- count: `%d`\n", matrix.Count))
 	b.WriteString(fmt.Sprintf("- benchtime: `%s`\n", matrix.Benchtime))
 	b.WriteString(fmt.Sprintf("- gomaxprocs: `%d`\n", matrix.GOMAXPROCS))
+	b.WriteString(fmt.Sprintf("- family unit count: `%d`\n", matrix.FamilyUnitN))
 	b.WriteString(fmt.Sprintf("- stress func count: `%d`\n\n", matrix.StressFuncN))
 
 	for _, group := range matrix.Groups {

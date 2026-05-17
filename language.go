@@ -305,29 +305,7 @@ func (l *Language) LexAsciiTable() [][128]int32 {
 		return nil
 	}
 	l.lexAsciiOnce.Do(func() {
-		states := l.LexStates
-		tbl := make([][128]int32, len(states))
-		for si := range states {
-			for c := 0; c < 128; c++ {
-				tbl[si][c] = lexAsciiNoMatch
-			}
-			// Simulate the linear scan to find first-match for each ASCII char.
-			for c := 0; c < 128; c++ {
-				r := rune(c)
-				for ti := range states[si].Transitions {
-					tr := &states[si].Transitions[ti]
-					if r >= tr.Lo && r <= tr.Hi {
-						v := int32(tr.NextState)
-						if tr.Skip {
-							v |= lexAsciiSkipBit
-						}
-						tbl[si][c] = v
-						break
-					}
-				}
-			}
-		}
-		l.lexAsciiTable = tbl
+		l.lexAsciiTable = buildLexAsciiTable(l.LexStates)
 	})
 	return l.lexAsciiTable
 }
@@ -338,30 +316,48 @@ func (l *Language) KeywordLexAsciiTable() [][128]int32 {
 		return nil
 	}
 	l.keywordLexAsciiOnce.Do(func() {
-		states := l.KeywordLexStates
-		tbl := make([][128]int32, len(states))
-		for si := range states {
-			for c := 0; c < 128; c++ {
-				tbl[si][c] = lexAsciiNoMatch
+		l.keywordLexAsciiTable = buildLexAsciiTable(l.KeywordLexStates)
+	})
+	return l.keywordLexAsciiTable
+}
+
+func buildLexAsciiTable(states []LexState) [][128]int32 {
+	tbl := make([][128]int32, len(states))
+	for si := range states {
+		row := &tbl[si]
+		for c := 0; c < 128; c++ {
+			row[c] = lexAsciiNoMatch
+		}
+		remaining := 128
+		for ti := range states[si].Transitions {
+			if remaining == 0 {
+				break
 			}
-			for c := 0; c < 128; c++ {
-				r := rune(c)
-				for ti := range states[si].Transitions {
-					tr := &states[si].Transitions[ti]
-					if r >= tr.Lo && r <= tr.Hi {
-						v := int32(tr.NextState)
-						if tr.Skip {
-							v |= lexAsciiSkipBit
-						}
-						tbl[si][c] = v
-						break
-					}
+			tr := &states[si].Transitions[ti]
+			if tr.Hi < 0 || tr.Lo >= 128 {
+				continue
+			}
+			lo := tr.Lo
+			if lo < 0 {
+				lo = 0
+			}
+			hi := tr.Hi
+			if hi > 127 {
+				hi = 127
+			}
+			v := int32(tr.NextState)
+			if tr.Skip {
+				v |= lexAsciiSkipBit
+			}
+			for c := int(lo); c <= int(hi); c++ {
+				if row[c] == lexAsciiNoMatch {
+					row[c] = v
+					remaining--
 				}
 			}
 		}
-		l.keywordLexAsciiTable = tbl
-	})
-	return l.keywordLexAsciiTable
+	}
+	return tbl
 }
 
 // Version returns the tree-sitter language ABI version.

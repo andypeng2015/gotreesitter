@@ -12,10 +12,13 @@ import (
 )
 
 type dfaBenchmarkSpec struct {
-	name   string
-	lang   func() *gotreesitter.Language
-	source func(int) []byte
-	marker string
+	name            string
+	lang            func() *gotreesitter.Language
+	source          func(int) []byte
+	marker          string
+	funcCount       int
+	requireNoErrors bool
+	warmupBeforeRun bool
 }
 
 func makeTypeScriptBenchmarkSource(funcCount int) []byte {
@@ -47,13 +50,32 @@ func makePythonBenchmarkSource(funcCount int) []byte {
 func benchmarkParseFullDFA(b *testing.B, spec dfaBenchmarkSpec) {
 	lang := spec.lang()
 	parser := gotreesitter.NewParser(lang)
-	src := spec.source(benchmarkFuncCount(b))
+	funcCount := benchmarkFuncCount(b)
+	if spec.funcCount > 0 {
+		funcCount = spec.funcCount
+	}
+	src := spec.source(funcCount)
 	statsEnabled := strings.TrimSpace(os.Getenv("GOT_STATS")) != ""
 	if statsEnabled {
 		gotreesitter.ResetArenaProfile()
 		gotreesitter.ResetPerfCounters()
 		gotreesitter.EnableArenaProfile(true)
 		defer gotreesitter.EnableArenaProfile(false)
+	}
+	if spec.warmupBeforeRun {
+		tree, err := parser.Parse(src)
+		if err != nil {
+			b.Fatalf("warmup parse error: %v", err)
+		}
+		root := requireCompleteParse(b, tree, src, lang, "warmup full dfa")
+		if spec.requireNoErrors && root.HasError() {
+			b.Fatalf("warmup full dfa parse produced errors: root=%q %s", root.Type(lang), tree.ParseRuntime().Summary())
+		}
+		tree.Release()
+		if statsEnabled {
+			gotreesitter.ResetArenaProfile()
+			gotreesitter.ResetPerfCounters()
+		}
 	}
 
 	b.ReportAllocs()
@@ -66,7 +88,10 @@ func benchmarkParseFullDFA(b *testing.B, spec dfaBenchmarkSpec) {
 		if err != nil {
 			b.Fatalf("parse error: %v", err)
 		}
-		requireCompleteParse(b, tree, src, lang, "full dfa")
+		root := requireCompleteParse(b, tree, src, lang, "full dfa")
+		if spec.requireNoErrors && root.HasError() {
+			b.Fatalf("full dfa parse produced errors: root=%q %s", root.Type(lang), tree.ParseRuntime().Summary())
+		}
 		lastRuntime = tree.ParseRuntime()
 		tree.Release()
 	}

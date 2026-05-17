@@ -330,15 +330,21 @@ func (s *gssScratch) reset() {
 			retained = next
 		}
 		if keepFrom > 0 {
+			oldLen := len(s.slabs)
 			copy(s.slabs, s.slabs[keepFrom:])
-			s.slabs = s.slabs[:len(s.slabs)-keepFrom]
+			newLen := oldLen - keepFrom
+			for i := newLen; i < oldLen; i++ {
+				s.slabs[i] = gssNodeSlab{}
+			}
+			s.slabs = s.slabs[:newLen]
 		}
 	}
-	// Clear slots touched by this parse. Reset establishes the invariant that
-	// every unused slot is already zero, so clearing [:used] drops live node
-	// pointers without bulk-clearing retained capacity on every parse.
 	for i := range s.slabs {
-		clear(s.slabs[i].data[:s.slabs[i].used])
+		used := s.slabs[i].used
+		if used > len(s.slabs[i].data) {
+			used = len(s.slabs[i].data)
+		}
+		clear(s.slabs[i].data[:used])
 		s.slabs[i].used = 0
 	}
 	s.slabCursor = 0

@@ -254,10 +254,11 @@ func TestEvictionGuardPreventsOversizedArenaReuse(t *testing.T) {
 	}
 }
 
-// TestArenaNodeSlabClearsTouchedSlotsOnReset verifies that reset() zeros every
-// slot touched by the just-finished parse. The unused tail is kept zero by the
-// reset invariant, so reset does not need to bulk-clear retained capacity.
-func TestArenaNodeSlabClearsTouchedSlotsOnReset(t *testing.T) {
+// TestArenaNodeSlabClearsWrittenSlotsOnReset verifies that reset() zeros every
+// node slot written during the parse. Node contains pointer fields (children,
+// parent, ownerArena), and stale pointers in retained arena slabs prevent GC
+// collection.
+func TestArenaNodeSlabClearsWrittenSlotsOnReset(t *testing.T) {
 	arena := newNodeArena(arenaClassFull)
 
 	// Fill primary array and spill into at least one overflow slab.
@@ -281,7 +282,7 @@ func TestArenaNodeSlabClearsTouchedSlotsOnReset(t *testing.T) {
 	primaryUsedBeforeReset := len(arena.nodes)
 
 	// Capture a raw pointer to the first element of the first overflow slab.
-	// We will check after reset() that the slot is fully zeroed.
+	// We will check after reset() that the written slot is zeroed.
 	firstSlab := &arena.nodeSlabs[0]
 	if firstSlab.used == 0 {
 		t.Fatal("expected overflow slab to have used > 0")
