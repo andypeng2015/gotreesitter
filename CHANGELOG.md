@@ -9,6 +9,14 @@ for tags and release notes while still in `0.x`.
 
 - Nothing yet.
 
+## [0.17.2] - 2026-05-17
+
+Query predicate compatibility patch for downstream Gazelle consumers.
+
+### Fixed
+- Query compilation and evaluation now support `#has-parent?` with immediate
+  parent semantics, matching the existing `#not-has-parent?` support.
+
 ## [0.17.1] - 2026-05-17
 
 Kotlin parser compatibility patch for downstream Gazelle consumers.
@@ -536,7 +544,8 @@ Warm-reuse throughput ~10 % higher. 206-grammar parity green under `GTS_PARITY_M
 - Initial standalone pure-Go runtime module.
 - External scanner VM foundation and base parser/lexer/tree infrastructure.
 
-[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.17.1...HEAD
+[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.17.2...HEAD
+[0.17.2]: https://github.com/odvcencio/gotreesitter/compare/v0.17.1...v0.17.2
 [0.17.1]: https://github.com/odvcencio/gotreesitter/compare/v0.17.0...v0.17.1
 [0.17.0]: https://github.com/odvcencio/gotreesitter/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/odvcencio/gotreesitter/compare/v0.15.3...v0.16.0

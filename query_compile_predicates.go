@@ -399,7 +399,7 @@ func (p *queryParser) parsePredicate() (QueryPredicate, error) {
 			values:      values,
 		}, nil
 
-	case "#has-ancestor?", "#not-has-ancestor?", "#not-has-parent?":
+	case "#has-ancestor?", "#not-has-ancestor?", "#has-parent?", "#not-has-parent?":
 		p.skipWhitespaceAndComments()
 		left, leftIsCapture, err := p.readPredicateArg()
 		if err != nil {
@@ -434,6 +434,9 @@ func (p *queryParser) parsePredicate() (QueryPredicate, error) {
 		kind := predicateHasAncestor
 		if name == "#not-has-ancestor?" {
 			kind = predicateNotHasAncestor
+		}
+		if name == "#has-parent?" {
+			kind = predicateHasParent
 		}
 		if name == "#not-has-parent?" {
 			kind = predicateNotHasParent

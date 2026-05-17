@@ -74,6 +74,7 @@ const (
 	predicateLuaMatch
 	predicateHasAncestor
 	predicateNotHasAncestor
+	predicateHasParent
 	predicateNotHasParent
 	predicateIs
 	predicateIsNot
@@ -106,6 +107,7 @@ const (
 //   - (#any-not-match? @a "regex")
 //   - (#has-ancestor? @a type ...)
 //   - (#not-has-ancestor? @a type ...)
+//   - (#has-parent? @a type ...)
 //   - (#not-has-parent? @a type ...)
 //   - (#is? ...), (#is-not? ...)
 //   - (#set! key value), (#offset! @cap ...)

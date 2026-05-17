@@ -613,6 +613,20 @@ func TestParsePredicateAncestorPredicates(t *testing.T) {
 	}
 }
 
+func TestParsePredicateHasParent(t *testing.T) {
+	lang := queryTestLanguage()
+	q, err := NewQuery(`(identifier) @name (#has-parent? @name function_declaration)`, lang)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	if len(q.patterns[0].predicates) != 1 {
+		t.Fatalf("predicates: got %d, want 1", len(q.patterns[0].predicates))
+	}
+	if q.patterns[0].predicates[0].kind != predicateHasParent {
+		t.Fatalf("predicate kind: got %d, want %d", q.patterns[0].predicates[0].kind, predicateHasParent)
+	}
+}
+
 func TestParsePredicateUnsupportedErrors(t *testing.T) {
 	lang := queryTestLanguage()
 	if _, err := NewQuery(`(identifier) @name (#does-not-exist? @name)`, lang); err == nil {
@@ -1447,6 +1461,36 @@ func TestMatchPredicateNotHasAncestor(t *testing.T) {
 	tree := buildSimpleTree(lang)
 
 	q, err := NewQuery(`(identifier) @name (#not-has-ancestor? @name function_declaration)`, lang)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+
+	matches := q.Execute(tree)
+	if len(matches) != 0 {
+		t.Fatalf("matches: got %d, want 0", len(matches))
+	}
+}
+
+func TestMatchPredicateHasParent(t *testing.T) {
+	lang := queryTestLanguage()
+	tree := buildSimpleTree(lang)
+
+	q, err := NewQuery(`(identifier) @name (#has-parent? @name function_declaration)`, lang)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+
+	matches := q.Execute(tree)
+	if len(matches) != 1 {
+		t.Fatalf("matches: got %d, want 1", len(matches))
+	}
+}
+
+func TestMatchPredicateHasParentDoesNotMatchAncestor(t *testing.T) {
+	lang := queryTestLanguage()
+	tree := buildSimpleTree(lang)
+
+	q, err := NewQuery(`(identifier) @name (#has-parent? @name program)`, lang)
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
 	}

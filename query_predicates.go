@@ -214,6 +214,23 @@ func (q *Query) matchesPredicates(predicates []QueryPredicate, captures []QueryC
 				}
 			}
 
+		case predicateHasParent:
+			nodes := captureNodes(pred.leftCapture, captures)
+			if len(nodes) == 0 {
+				return false
+			}
+			hasAny := false
+			for _, n := range nodes {
+				parent := n.Parent()
+				if parent != nil && nodeTypeMatchesAny(parent, pred.values, lang) {
+					hasAny = true
+					break
+				}
+			}
+			if !hasAny {
+				return false
+			}
+
 		case predicateNotHasParent:
 			nodes := captureNodes(pred.leftCapture, captures)
 			if len(nodes) == 0 {
