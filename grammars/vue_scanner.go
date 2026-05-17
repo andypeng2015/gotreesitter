@@ -56,7 +56,7 @@ func (VueExternalScanner) Serialize(payload any, buf []byte) int {
 
 func (VueExternalScanner) Deserialize(payload any, buf []byte) {
 	s := payload.(*vueState)
-	s.tags = htmlDeserializeTags(buf)
+	s.tags = htmlDeserializeTagsInto(s.tags, buf)
 }
 
 func (VueExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {

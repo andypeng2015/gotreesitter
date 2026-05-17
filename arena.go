@@ -303,9 +303,9 @@ func (a *nodeArena) Release() {
 }
 
 func (a *nodeArena) reset() {
-	// Clear slots touched by this parse. Reset establishes the invariant that
-	// every unused slot is already zero, so clearing [:used] is enough to drop
-	// live pointers without bulk-clearing retained capacity on every parse.
+	// Clear only the high-water range that could have been written since the
+	// previous reset. Slots past the high-water mark are either fresh from
+	// make() or were cleared by an earlier reset.
 	primaryUsed := a.used
 	if primaryUsed > len(a.nodes) {
 		primaryUsed = len(a.nodes)
@@ -316,18 +316,12 @@ func (a *nodeArena) reset() {
 	a.deferredParentRoot = nil
 	a.parentLinksDeferred = false
 	a.parentLinkMu.Unlock()
-	// externalScannerCheckpointRef contains only integer fields (no pointers),
-	// so clearing it is not required for GC correctness. We clear it anyway for
-	// consistency and to avoid leaking stale slab+offset values.
-	clear(a.externalScannerNodeCheckpoints)
-	for i := range a.externalScannerNodeCheckpointSlabs {
-		clear(a.externalScannerNodeCheckpointSlabs[i].data)
+	// externalScannerCheckpointRef contains only integer fields, but stale
+	// refs must not remain visible when a node slot is reused.
+	if primaryUsed > len(a.externalScannerNodeCheckpoints) {
+		primaryUsed = len(a.externalScannerNodeCheckpoints)
 	}
-	for i := range a.nodeSlabs {
-		slab := &a.nodeSlabs[i]
-		clear(slab.data[:slab.used])
-		slab.used = 0
-	}
+	clear(a.externalScannerNodeCheckpoints[:primaryUsed])
 	if len(a.nodeSlabs) > 0 {
 		retained := 0
 		keep := 0
@@ -352,6 +346,22 @@ func (a *nodeArena) reset() {
 				a.externalScannerNodeCheckpointSlabs[i] = externalScannerCheckpointSlab{}
 			}
 			a.externalScannerNodeCheckpointSlabs = a.externalScannerNodeCheckpointSlabs[:keep]
+		}
+	}
+	for i := range a.nodeSlabs {
+		slab := &a.nodeSlabs[i]
+		used := slab.used
+		if used > len(slab.data) {
+			used = len(slab.data)
+		}
+		clear(slab.data[:used])
+		slab.used = 0
+		if i < len(a.externalScannerNodeCheckpointSlabs) {
+			cp := a.externalScannerNodeCheckpointSlabs[i].data
+			if used > len(cp) {
+				used = len(cp)
+			}
+			clear(cp[:used])
 		}
 	}
 	a.nodeSlabCursor = 0
