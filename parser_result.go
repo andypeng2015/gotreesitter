@@ -502,8 +502,19 @@ func (p *Parser) finalizeResultRoot(root *Node, source []byte, linkScratch *[]*N
 	p.normalizeRootSourceStart(root, source)
 	normalizeResultCompatibility(root, source, p)
 	if wireParentLinks {
-		wireParentLinksWithScratch(root, linkScratch)
+		if p != nil && p.shouldDeferResultParentLinks(root) {
+			root.ownerArena.deferParentLinks(root)
+		} else {
+			wireParentLinksWithScratch(root, linkScratch)
+		}
 	}
+}
+
+func (p *Parser) shouldDeferResultParentLinks(root *Node) bool {
+	if p == nil || p.language == nil || root == nil || root.ownerArena == nil {
+		return false
+	}
+	return p.language.Name == "java" && !p.noTreeBenchmarkOnly
 }
 
 func (p *Parser) normalizeRootSourceStart(root *Node, source []byte) {

@@ -1054,6 +1054,9 @@ func (p *Parser) parseIncrementalInternal(source []byte, oldTree *Tree, ts Token
 	if canReuseUnchangedTree(source, oldTree, p.language) {
 		return oldTree
 	}
+	if oldTree != nil {
+		oldTree.ensureParentLinks()
+	}
 	if tree, ok := p.tryTokenInvariantLeafEdit(source, oldTree, ts, timing); ok {
 		return tree
 	}

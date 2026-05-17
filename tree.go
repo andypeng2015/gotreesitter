@@ -209,7 +209,13 @@ func (n *Node) Range() Range {
 }
 
 // Parent returns this node's parent, or nil if it is the root.
-func (n *Node) Parent() *Node { return n.parent }
+func (n *Node) Parent() *Node {
+	if n == nil {
+		return nil
+	}
+	n.ensureParentLinks()
+	return n.parent
+}
 
 // ChildCount returns the number of children (both named and anonymous).
 func (n *Node) ChildCount() int { return len(n.children) }
@@ -225,7 +231,11 @@ func (n *Node) Child(i int) *Node {
 // NextSibling returns the next sibling node, or nil when this is the last child
 // or has no parent.
 func (n *Node) NextSibling() *Node {
-	if n == nil || n.parent == nil {
+	if n == nil {
+		return nil
+	}
+	n.ensureParentLinks()
+	if n.parent == nil {
 		return nil
 	}
 	siblings := n.parent.children
@@ -250,7 +260,11 @@ func (n *Node) NextSibling() *Node {
 // PrevSibling returns the previous sibling node, or nil when this is the first
 // child or has no parent.
 func (n *Node) PrevSibling() *Node {
-	if n == nil || n.parent == nil {
+	if n == nil {
+		return nil
+	}
+	n.ensureParentLinks()
+	if n.parent == nil {
 		return nil
 	}
 	siblings := n.parent.children
@@ -657,6 +671,46 @@ func wireParentLinksWithScratch(root *Node, scratch *[]*Node) {
 	if scratch != nil {
 		*scratch = stack[:0]
 	}
+}
+
+func (a *nodeArena) deferParentLinks(root *Node) {
+	if a == nil || root == nil {
+		return
+	}
+	a.parentLinkMu.Lock()
+	a.deferredParentRoot = root
+	a.parentLinksDeferred = true
+	root.parent = nil
+	root.childIndex = -1
+	a.parentLinkMu.Unlock()
+}
+
+func (a *nodeArena) ensureParentLinks() {
+	if a == nil {
+		return
+	}
+	a.parentLinkMu.Lock()
+	root := a.deferredParentRoot
+	if a.parentLinksDeferred && root != nil {
+		wireParentLinksWithScratch(root, nil)
+		a.parentLinksDeferred = false
+		a.deferredParentRoot = nil
+	}
+	a.parentLinkMu.Unlock()
+}
+
+func (n *Node) ensureParentLinks() {
+	if n == nil || n.ownerArena == nil {
+		return
+	}
+	n.ownerArena.ensureParentLinks()
+}
+
+func (t *Tree) ensureParentLinks() {
+	if t == nil || t.root == nil {
+		return
+	}
+	t.root.ensureParentLinks()
 }
 
 func newParentNode(arena *nodeArena, sym Symbol, named bool, children []*Node, fieldIDs []FieldID, productionID uint16) *Node {
@@ -1374,6 +1428,7 @@ func (n *Node) Edit(edit InputEdit) {
 	if n == nil {
 		return
 	}
+	n.ensureParentLinks()
 	root := n
 	for root.parent != nil {
 		root = root.parent
