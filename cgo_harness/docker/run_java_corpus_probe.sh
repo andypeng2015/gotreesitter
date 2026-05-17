@@ -15,6 +15,7 @@ PIDS_LIMIT="4096"
 WALL_TIMEOUT="90m"
 KILL_GRACE="30s"
 GO_TEST_TIMEOUT="75m"
+GO_TEST_TAGS="${GOT_JAVA_GO_TEST_TAGS:-treesitter_c_bench}"
 BUILD_IMAGE=1
 DRY_RUN=0
 
@@ -53,6 +54,7 @@ Options:
   --wall-timeout <duration>  Host-side wall deadline (default: 90m)
   --kill-grace <duration>    Grace period after wall timeout before SIGKILL (default: 30s)
   --go-timeout <duration>    go test -timeout value inside the container (default: 75m)
+  --go-tags <tags>           go test -tags value (default: treesitter_c_bench)
   --out-root <path>          Artifact output root (default: <repo-root>/harness_out/docker-java-corpus)
   --label <name>             Optional run label suffix (default: java-corpus)
   --no-build                 Skip docker build step
@@ -88,6 +90,9 @@ Environment passthrough:
   GOT_PARSE_NODE_LIMIT_SCALE
   GOT_GLR_FORCE_CONFLICT_WIDTH
   GOT_JAVA_AMBIGUITY_PROFILE
+  GOT_JAVA_RUNTIME_AUDIT
+  GOT_JAVA_TREE_SHAPE
+  GOT_JAVA_PERF_STATS
 
 Examples:
   cgo_harness/docker/run_java_corpus_probe.sh --mode timeout-sweep --max-files 50
@@ -107,6 +112,7 @@ while [[ $# -gt 0 ]]; do
     --wall-timeout) WALL_TIMEOUT="$2"; shift 2 ;;
     --kill-grace) KILL_GRACE="$2"; shift 2 ;;
     --go-timeout) GO_TEST_TIMEOUT="$2"; shift 2 ;;
+    --go-tags) GO_TEST_TAGS="$2"; shift 2 ;;
     --out-root) OUT_ROOT="$2"; shift 2 ;;
     --label) LABEL="$2"; shift 2 ;;
     --order) CORPUS_ORDER="$2"; shift 2 ;;
@@ -230,7 +236,7 @@ ENV_ARGS=(
 [[ -n "$BENCH_TIMEOUT" ]] && ENV_ARGS+=(-e "GOT_JAVA_BENCH_TIMEOUT=$BENCH_TIMEOUT")
 
 ENV_ARGS+=(-e "GOMAXPROCS=$GOMAXPROCS_VALUE")
-for var in GOTOOLCHAIN GOT_PARSE_MEMORY_BUDGET_MB GOT_GLR_MAX_MERGE_PER_KEY GOT_GLR_MAX_STACKS GOT_PARSE_NODE_LIMIT_SCALE GOT_GLR_FORCE_CONFLICT_WIDTH GOT_JAVA_AMBIGUITY_PROFILE; do
+for var in GOTOOLCHAIN GOT_PARSE_MEMORY_BUDGET_MB GOT_GLR_MAX_MERGE_PER_KEY GOT_GLR_MAX_STACKS GOT_PARSE_NODE_LIMIT_SCALE GOT_GLR_FORCE_CONFLICT_WIDTH GOT_JAVA_AMBIGUITY_PROFILE GOT_JAVA_RUNTIME_AUDIT GOT_JAVA_TREE_SHAPE GOT_JAVA_PERF_STATS; do
   if [[ -n "${!var:-}" ]]; then
     ENV_ARGS+=("-e" "$var=${!var}")
   fi
@@ -238,10 +244,10 @@ done
 
 case "$MODE" in
   timeout-sweep)
-    INNER_CMD="cd /workspace/cgo_harness && /usr/bin/time -v go test . -tags treesitter_c_bench -run '^TestJavaCorpusTimeoutSweep$' -count=1 -v -timeout '$GO_TEST_TIMEOUT'"
+    INNER_CMD="cd /workspace/cgo_harness && /usr/bin/time -v go test . -tags '$GO_TEST_TAGS' -run '^TestJavaCorpusTimeoutSweep$' -count=1 -v -timeout '$GO_TEST_TIMEOUT'"
     ;;
   benchmark)
-    INNER_CMD="cd /workspace/cgo_harness && /usr/bin/time -v go test . -tags treesitter_c_bench -run '^$' -bench '$BENCH_REGEX' -benchmem -count '$BENCH_COUNT' -benchtime '$BENCH_TIME' -timeout '$GO_TEST_TIMEOUT'"
+    INNER_CMD="cd /workspace/cgo_harness && /usr/bin/time -v go test . -tags '$GO_TEST_TAGS' -run '^$' -bench '$BENCH_REGEX' -benchmem -count '$BENCH_COUNT' -benchtime '$BENCH_TIME' -timeout '$GO_TEST_TIMEOUT'"
     ;;
 esac
 INNER_CMD="export PATH=/usr/local/go/bin:\$PATH; $INNER_CMD"
@@ -337,6 +343,7 @@ PEAK_RSS_KB="${PEAK_RSS_KB:-unknown}"
   echo "wall_timeout=$WALL_TIMEOUT"
   echo "kill_grace=$KILL_GRACE"
   echo "go_test_timeout=$GO_TEST_TIMEOUT"
+  echo "go_test_tags=$GO_TEST_TAGS"
   echo "exit_code=$EXIT_CODE"
   echo "oom_killed=$OOM_KILLED"
   echo "state_error=$STATE_ERROR"

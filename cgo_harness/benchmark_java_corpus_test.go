@@ -279,6 +279,8 @@ type javaCorpusStats struct {
 	firstIssueHasErr  bool
 	stopReasons       map[gotreesitter.ParseStopReason]int
 	runtime           javaRuntimeStats
+	shape             javaTreeShapeStats
+	perf              gotreesitter.PerfCounters
 	ambiguity         []gotreesitter.AmbiguityStat
 	issues            []javaCorpusIssue
 	issueCount        int
@@ -321,6 +323,15 @@ type javaCorpusIssue struct {
 	stopped    bool
 	rootEnd    uint32
 	runtime    gotreesitter.ParseRuntime
+}
+
+type javaTreeShapeStats struct {
+	nodes      uint64
+	parents    uint64
+	leaves     uint64
+	childEdges uint64
+	maxArity   int
+	arity      [10]uint64
 }
 
 type javaParseResult struct {
@@ -389,6 +400,15 @@ func javaParseModes(tb testing.TB) []javaParseMode {
 
 func runJavaCorpus(files []javaCorpusFile, mode javaParseMode, timeoutMicros uint64) (javaCorpusStats, error) {
 	lang := grammars.JavaLanguage()
+	if javaEnvBool("GOT_JAVA_RUNTIME_AUDIT") {
+		gotreesitter.EnableRuntimeAudit(true)
+		defer gotreesitter.EnableRuntimeAudit(false)
+	}
+	shapeEnabled := javaEnvBool("GOT_JAVA_TREE_SHAPE")
+	perfEnabled := javaEnvBool("GOT_JAVA_PERF_STATS")
+	if perfEnabled {
+		gotreesitter.ResetPerfCounters()
+	}
 	opts := []gotreesitter.ParserPoolOption{gotreesitter.WithParserPoolTimeoutMicros(timeoutMicros)}
 	var ambiguity *gotreesitter.AmbiguityProfile
 	if javaEnvBool("GOT_JAVA_AMBIGUITY_PROFILE") {
@@ -471,10 +491,16 @@ func runJavaCorpus(files []javaCorpusFile, mode javaParseMode, timeoutMicros uin
 		if !root.HasError() && !tree.ParseStoppedEarly() && root.EndByte() == uint32(len(file.source)) && !rt.Truncated {
 			stats.ok++
 		}
+		if shapeEnabled {
+			stats.shape.add(root)
+		}
 		tree.Release()
 	}
 	if ambiguity != nil {
 		stats.ambiguity = ambiguity.SnapshotTop(20)
+	}
+	if perfEnabled {
+		stats.perf = gotreesitter.PerfCountersSnapshot()
 	}
 	return stats, nil
 }
@@ -565,6 +591,99 @@ func (s javaRuntimeStats) summary() string {
 		s.maxScratchBytesAllocated,
 		s.maxGSSBytesAllocated,
 		s.maxEntryScratchBytesAlloc,
+	)
+}
+
+func (s *javaTreeShapeStats) add(root *gotreesitter.Node) {
+	if root == nil {
+		return
+	}
+	stack := []*gotreesitter.Node{root}
+	for len(stack) > 0 {
+		last := len(stack) - 1
+		n := stack[last]
+		stack = stack[:last]
+		if n == nil {
+			continue
+		}
+		s.nodes++
+		arity := n.ChildCount()
+		if arity == 0 {
+			s.leaves++
+		} else {
+			s.parents++
+		}
+		s.childEdges += uint64(arity)
+		if arity > s.maxArity {
+			s.maxArity = arity
+		}
+		bucket := arity
+		if bucket >= len(s.arity) {
+			bucket = len(s.arity) - 1
+		}
+		s.arity[bucket]++
+		for i := arity - 1; i >= 0; i-- {
+			stack = append(stack, n.Child(i))
+		}
+	}
+}
+
+func (s javaTreeShapeStats) summary() string {
+	if s.nodes == 0 {
+		return ""
+	}
+	return fmt.Sprintf(
+		"nodes=%d parents=%d leaves=%d child_edges=%d max_arity=%d arity0=%d arity1=%d arity2=%d arity3=%d arity4=%d arity5=%d arity6=%d arity7=%d arity8=%d arity9plus=%d",
+		s.nodes,
+		s.parents,
+		s.leaves,
+		s.childEdges,
+		s.maxArity,
+		s.arity[0],
+		s.arity[1],
+		s.arity[2],
+		s.arity[3],
+		s.arity[4],
+		s.arity[5],
+		s.arity[6],
+		s.arity[7],
+		s.arity[8],
+		s.arity[9],
+	)
+}
+
+func formatJavaPerfStats(p gotreesitter.PerfCounters) string {
+	if p.ParentChildPointers == 0 &&
+		p.MergeCalls == 0 &&
+		p.StackEquivalentCalls == 0 &&
+		p.LexTokens == 0 &&
+		p.ReduceChainSteps == 0 {
+		return ""
+	}
+	return fmt.Sprintf(
+		"parent_child_ptrs=%d extra_nodes=%d error_nodes=%d merge_calls=%d merge_overflow=%d merge_replacements=%d stackeq_calls=%d stackeq_true=%d stackeq_hash_miss_skips=%d stackcmp_calls=%d conflicts_rr=%d conflicts_rs=%d conflicts_other=%d reduce_chain_steps=%d reduce_chain_max_len=%d reduce_chain_break_multi=%d reduce_chain_break_shift=%d reduce_chain_break_accept=%d forks=%d max_stacks=%d lex_bytes=%d lex_tokens=%d",
+		p.ParentChildPointers,
+		p.ExtraNodes,
+		p.ErrorNodes,
+		p.MergeCalls,
+		p.MergePerKeyOverflow,
+		p.MergeReplacements,
+		p.StackEquivalentCalls,
+		p.StackEquivalentTrue,
+		p.StackEqHashMissSkips,
+		p.StackCompareCalls,
+		p.ConflictRR,
+		p.ConflictRS,
+		p.ConflictOther,
+		p.ReduceChainSteps,
+		p.ReduceChainMaxLen,
+		p.ReduceChainBreakMulti,
+		p.ReduceChainBreakShift,
+		p.ReduceChainBreakAccept,
+		p.ForkCount,
+		p.MaxConcurrentStacks,
+		p.LexBytes,
+		p.LexTokens,
 	)
 }
 
@@ -700,7 +819,7 @@ func TestJavaCorpusTimeoutSweep(t *testing.T) {
 				nsPerByte = float64(stats.duration.Nanoseconds()) / float64(stats.bytes)
 			}
 			t.Logf(
-				"java-timeout-sweep timeout=%s mode=%s files=%d bytes=%d total=%s ns_per_byte=%.2f ok=%d has_error=%d incomplete=%d stopped=%d timeouts=%d fallback=%d max=%s max_file=%s stops=%s first_issue=%s first_issue_has_error=%v first_issue_runtime=%q issue_count=%d issues=%q runtime=%q ambiguity_top=%q",
+				"java-timeout-sweep timeout=%s mode=%s files=%d bytes=%d total=%s ns_per_byte=%.2f ok=%d has_error=%d incomplete=%d stopped=%d timeouts=%d fallback=%d max=%s max_file=%s stops=%s first_issue=%s first_issue_has_error=%v first_issue_runtime=%q issue_count=%d issues=%q runtime=%q shape=%q perf=%q ambiguity_top=%q",
 				formatJavaTimeout(timeoutMicros),
 				mode,
 				stats.files,
@@ -722,6 +841,8 @@ func TestJavaCorpusTimeoutSweep(t *testing.T) {
 				stats.issueCount,
 				formatJavaCorpusIssues(stats.issues),
 				stats.runtime.summary(),
+				stats.shape.summary(),
+				formatJavaPerfStats(stats.perf),
 				formatJavaAmbiguityTop(stats.ambiguity, lang),
 			)
 		}
