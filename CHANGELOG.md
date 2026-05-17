@@ -9,6 +9,15 @@ for tags and release notes while still in `0.x`.
 
 - Nothing yet.
 
+## [0.17.3] - 2026-05-17
+
+Module compatibility patch for downstream Gazelle consumers.
+
+### Fixed
+- Lower the module `go` directive from `1.25.0` to `1.22.0` and pin
+  `golang.org/x/sync` to `v0.11.0`, avoiding accidental Go 1.25 upgrades for
+  downstream consumers that import gotreesitter only as a parser runtime.
+
 ## [0.17.2] - 2026-05-17
 
 Query predicate compatibility patch for downstream Gazelle consumers.
@@ -544,7 +553,8 @@ Warm-reuse throughput ~10 % higher. 206-grammar parity green under `GTS_PARITY_M
 - Initial standalone pure-Go runtime module.
 - External scanner VM foundation and base parser/lexer/tree infrastructure.
 
-[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.17.2...HEAD
+[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.17.3...HEAD
+[0.17.3]: https://github.com/odvcencio/gotreesitter/compare/v0.17.2...v0.17.3
 [0.17.2]: https://github.com/odvcencio/gotreesitter/compare/v0.17.1...v0.17.2
 [0.17.1]: https://github.com/odvcencio/gotreesitter/compare/v0.17.0...v0.17.1
 [0.17.0]: https://github.com/odvcencio/gotreesitter/compare/v0.16.0...v0.17.0

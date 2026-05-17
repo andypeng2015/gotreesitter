@@ -1,10 +1,10 @@
 module github.com/odvcencio/gotreesitter
 
-go 1.25.0
+go 1.22.0
 
 require (
 	go.lsp.dev/jsonrpc2 v0.10.0
-	golang.org/x/sync v0.20.0
+	golang.org/x/sync v0.11.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
