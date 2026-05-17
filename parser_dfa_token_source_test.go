@@ -98,8 +98,10 @@ func TestBashGeneratedSyntheticExternalLiteralDoesNotConsumeHereStringPrefix(t *
 		ExternalSymbols:       []Symbol{1},
 	}
 	ts := &dfaTokenSource{
-		lexer:    NewLexer(nil, []byte("<<< word")),
-		language: lang,
+		lexer:           NewLexer(nil, []byte("<<< word")),
+		language:        lang,
+		isBash:          true,
+		isBashGenerated: true,
 	}
 	if tok, ok := ts.bashGeneratedSyntheticExternalLiteral([]bool{true}); ok {
 		t.Fatalf("synthetic token = %+v, want DFA to handle here-string prefix", tok)
@@ -113,8 +115,10 @@ func TestNormalizeBashNewlineTokenSplitsBySymbolName(t *testing.T) {
 		SymbolNames:           []string{"end", "\\n"},
 	}
 	ts := &dfaTokenSource{
-		lexer:    NewLexer(nil, []byte("\n\nsed")),
-		language: lang,
+		lexer:           NewLexer(nil, []byte("\n\nsed")),
+		language:        lang,
+		isBash:          true,
+		isBashGenerated: true,
 	}
 	tok := Token{
 		Symbol:     1,
@@ -150,6 +154,8 @@ func TestNormalizeBashGeneratedDFAOnlyNewlineToken(t *testing.T) {
 		lexer:             NewLexer(nil, []byte("\n\nsed")),
 		language:          lang,
 		lookupActionIndex: lookup,
+		isBash:            true,
+		isBashGenerated:   true,
 	}
 	tok := Token{
 		Symbol:     2,
@@ -614,9 +620,11 @@ func TestNextDFATokenPrefersParserValidZeroWidthBaseToken(t *testing.T) {
 	}
 
 	d := &dfaTokenSource{
-		lexer:    NewLexer(lang.LexStates, []byte(";\n")),
-		language: lang,
-		state:    1,
+		lexer:                   NewLexer(lang.LexStates, []byte(";\n")),
+		language:                lang,
+		state:                   1,
+		hasZeroWidthTokens:      true,
+		hasZeroWidthStartAccept: true,
 		lookupActionIndex: func(_ StateID, sym Symbol) uint16 {
 			if sym == 1 || sym == 2 {
 				return 1
@@ -676,9 +684,11 @@ func TestNextDFATokenPrefersParserValidZeroWidthStartAccept(t *testing.T) {
 	}
 
 	d := &dfaTokenSource{
-		lexer:    NewLexer(lang.LexStates, []byte("\n")),
-		language: lang,
-		state:    1,
+		lexer:                   NewLexer(lang.LexStates, []byte("\n")),
+		language:                lang,
+		state:                   1,
+		hasZeroWidthTokens:      true,
+		hasZeroWidthStartAccept: true,
 		lookupActionIndex: func(_ StateID, sym Symbol) uint16 {
 			if sym == 1 || sym == 2 {
 				return 1

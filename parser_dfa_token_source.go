@@ -30,6 +30,15 @@ type dfaTokenSource struct {
 	lastExternalTokenEndByte   uint32
 	lastExternalTokenValid     bool
 	glrStates                  []StateID // all active GLR stack states
+	hasExternalScanner         bool
+	hasExternalSymbols         bool
+	usesExternalCheckpoints    bool
+	isBash                     bool
+	isBashGenerated            bool
+	isComment                  bool
+	isFortran                  bool
+	hasZeroWidthTokens         bool
+	hasZeroWidthStartAccept    bool
 
 	// maskedScratch is a reusable buffer for runExternalScannerWithRetry,
 	// avoiding a per-call heap allocation when masking already-tried symbols.
@@ -84,7 +93,18 @@ func initDFATokenSource(ts *dfaTokenSource, lexer *Lexer, language *Language, lo
 		ts.lexer.zeroWidthTokens = language.ZeroWidthTokens
 		ts.lexer.asciiTable = language.LexAsciiTable()
 	}
-	if language != nil && language.ExternalScanner != nil {
+	if language != nil {
+		ts.hasExternalScanner = language.ExternalScanner != nil
+		ts.hasExternalSymbols = len(language.ExternalSymbols) > 0
+		ts.usesExternalCheckpoints = languageUsesExternalScannerCheckpoints(language)
+		ts.isBash = language.Name == "bash"
+		ts.isBashGenerated = ts.isBash && language.GeneratedByGrammargen
+		ts.isComment = language.Name == "comment"
+		ts.isFortran = language.Name == "fortran"
+		ts.hasZeroWidthTokens = languageHasZeroWidthTokens(language)
+		ts.hasZeroWidthStartAccept = languageHasZeroWidthStartAccept(language)
+	}
+	if ts.hasExternalScanner {
 		ts.externalPayload = language.ExternalScanner.Create()
 	}
 }
@@ -132,6 +152,31 @@ func newDFATokenSourceDirect(lexer *Lexer, language *Language, lookupActionIndex
 	}
 	initDFATokenSource(ts, lexer, language, lookupActionIndex, hasKeywordState)
 	return ts
+}
+
+func languageHasZeroWidthTokens(lang *Language) bool {
+	if lang == nil {
+		return false
+	}
+	for _, ok := range lang.ZeroWidthTokens {
+		if ok {
+			return true
+		}
+	}
+	return false
+}
+
+func languageHasZeroWidthStartAccept(lang *Language) bool {
+	if lang == nil || len(lang.ZeroWidthTokens) == 0 {
+		return false
+	}
+	for _, state := range lang.LexStates {
+		sym := int(state.AcceptToken)
+		if sym >= 0 && sym < len(lang.ZeroWidthTokens) && lang.ZeroWidthTokens[sym] {
+			return true
+		}
+	}
+	return false
 }
 
 func (d *dfaTokenSource) Reset(source []byte) {
@@ -208,11 +253,14 @@ func (d *dfaTokenSource) Next() Token {
 		startPos = d.lexer.pos
 	}
 	for {
-		scanStartPos := d.lexer.pos
-		scanStartRow := d.lexer.row
-		scanStartCol := d.lexer.col
+		scanStartPos, scanStartRow, scanStartCol := 0, uint32(0), uint32(0)
+		if d.hasExternalSymbols || d.hasExternalScanner {
+			scanStartPos = d.lexer.pos
+			scanStartRow = d.lexer.row
+			scanStartCol = d.lexer.col
+		}
 		var externalStartSnapshot []byte
-		if languageUsesExternalScannerCheckpoints(d.language) {
+		if d.usesExternalCheckpoints {
 			externalStartSnapshot = d.captureExternalScannerStateInto(&d.externalTokenStart)
 		}
 		if d.shouldForceEOFLookahead() {
@@ -226,29 +274,41 @@ func (d *dfaTokenSource) Next() Token {
 
 		tok := Token{}
 		tokenFromExternal := false
-		if extTok, ok := d.nextExternalToken(); ok {
-			tok = extTok
-			tokenFromExternal = true
-			if dfaTok, ok := d.bashGeneratedTokenOverZeroWidthConcat(tok, scanStartPos, scanStartRow, scanStartCol); ok {
-				tok = dfaTok
-				tokenFromExternal = false
-				d.lexer.pos = int(tok.EndByte)
-				d.lexer.row = tok.EndPoint.Row
-				d.lexer.col = tok.EndPoint.Column
+		if d.hasExternalSymbols {
+			if extTok, ok := d.nextExternalToken(); ok {
+				tok = extTok
+				tokenFromExternal = true
+				if d.isBashGenerated {
+					if dfaTok, ok := d.bashGeneratedTokenOverZeroWidthConcat(tok, scanStartPos, scanStartRow, scanStartCol); ok {
+						tok = dfaTok
+						tokenFromExternal = false
+						d.lexer.pos = int(tok.EndByte)
+						d.lexer.row = tok.EndPoint.Row
+						d.lexer.col = tok.EndPoint.Column
+					}
+				}
 			}
-		} else if glrTok, ok := d.nextGLRUnionDFAToken(); ok {
-			tok = glrTok
-		} else {
-			tok = d.nextDFAToken()
 		}
-		if !tokenFromExternal && d.language != nil && d.language.ExternalScanner != nil &&
+		if tok.Symbol == 0 {
+			if len(d.glrStates) > 1 {
+				if glrTok, ok := d.nextGLRUnionDFAToken(); ok {
+					tok = glrTok
+				}
+			}
+			if tok.Symbol == 0 {
+				tok = d.nextDFAToken()
+			}
+		}
+		if !tokenFromExternal && d.hasExternalScanner &&
 			tok.Symbol != 0 && int(tok.StartByte) > scanStartPos {
-			if nlTok, ok := d.bashSkippedSignificantNewlineToken(tok, scanStartPos, scanStartRow, scanStartCol); ok {
-				tok = nlTok
-				d.lexer.pos = int(tok.EndByte)
-				d.lexer.row = tok.EndPoint.Row
-				d.lexer.col = tok.EndPoint.Column
-			} else if d.language.Name == "comment" {
+			if d.isBashGenerated {
+				if nlTok, ok := d.bashSkippedSignificantNewlineToken(tok, scanStartPos, scanStartRow, scanStartCol); ok {
+					tok = nlTok
+					d.lexer.pos = int(tok.EndByte)
+					d.lexer.row = tok.EndPoint.Row
+					d.lexer.col = tok.EndPoint.Column
+				}
+			} else if d.isComment {
 				// tree-sitter-comment's DFA text token can skip to a later tag.
 				// Only that grammar should retry the external scanner at the
 				// DFA token start; broader retries perturb structural scanners.
@@ -269,7 +329,7 @@ func (d *dfaTokenSource) Next() Token {
 				}
 			}
 		}
-		if d.shouldSuppressFortranPreprocDefineNewline(tok) {
+		if d.isFortran && d.shouldSuppressFortranPreprocDefineNewline(tok) {
 			continue
 		}
 
@@ -343,7 +403,7 @@ func (d *dfaTokenSource) Next() Token {
 			}
 			fmt.Printf("  %s tok %d %s %d %d %s state=%d\n", prefix, tok.Symbol, name, tok.StartByte, tok.EndByte, tok.Text, d.state)
 		}
-		if languageUsesExternalScannerCheckpoints(d.language) && tok.Symbol != 0 && !tok.NoLookahead {
+		if d.usesExternalCheckpoints && tok.Symbol != 0 && !tok.NoLookahead {
 			d.captureExternalScannerStateInto(&d.externalTokenEnd)
 			d.lastExternalTokenStartByte = tok.StartByte
 			d.lastExternalTokenEndByte = tok.EndByte
@@ -567,11 +627,13 @@ func (d *dfaTokenSource) scanDFATokenForState(state StateID, lexState uint32) (T
 
 	d.state = state
 	tok := d.nextTokenForLexState(lexState)
-	if zeroTok, ok := d.preferZeroWidthStartAcceptForState(state, lexState, tok, savedPos, savedRow, savedCol); ok {
-		tok = zeroTok
-		d.lexer.pos = savedPos
-		d.lexer.row = savedRow
-		d.lexer.col = savedCol
+	if d.hasZeroWidthStartAccept {
+		if zeroTok, ok := d.preferZeroWidthStartAcceptForState(state, lexState, tok, savedPos, savedRow, savedCol); ok {
+			tok = zeroTok
+			d.lexer.pos = savedPos
+			d.lexer.row = savedRow
+			d.lexer.col = savedCol
+		}
 	}
 	tok = d.promoteKeyword(tok)
 	tok, endPos, endRow, endCol := d.normalizeDFAToken(tok, d.lexer.pos, d.lexer.row, d.lexer.col)
@@ -591,7 +653,7 @@ func (d *dfaTokenSource) shouldPreferBaseLexStateToken(baseTok, afterTok Token) 
 	if afterTok.Symbol == 0 {
 		return true
 	}
-	if d.shouldPreferZeroWidthBaseLexStateToken(baseTok, afterTok) {
+	if d.hasZeroWidthTokens && d.shouldPreferZeroWidthBaseLexStateToken(baseTok, afterTok) {
 		return true
 	}
 	return baseTok.StartByte < afterTok.StartByte
@@ -689,16 +751,20 @@ func (d *dfaTokenSource) normalizeDFAToken(tok Token, endPos int, endRow, endCol
 	if d == nil || d.language == nil || d.lexer == nil {
 		return tok, endPos, endRow, endCol
 	}
-	if nlTok, nlEndPos, nlEndRow, nlEndCol, ok := d.bashGeneratedDFAOnlyNewlineToken(tok); ok {
-		return nlTok, nlEndPos, nlEndRow, nlEndCol
+	if d.isBashGenerated {
+		if nlTok, nlEndPos, nlEndRow, nlEndCol, ok := d.bashGeneratedDFAOnlyNewlineToken(tok); ok {
+			return nlTok, nlEndPos, nlEndRow, nlEndCol
+		}
 	}
 	if splitTok, splitEndPos, splitEndRow, splitEndCol, ok := d.splitCompactCloseAngleToken(tok); ok {
 		return splitTok, splitEndPos, splitEndRow, splitEndCol
 	}
-	if splitTok, splitEndPos, splitEndRow, splitEndCol, ok := d.splitBashGeneratedDoubleCloseParenToken(tok); ok {
-		return splitTok, splitEndPos, splitEndRow, splitEndCol
+	if d.isBashGenerated {
+		if splitTok, splitEndPos, splitEndRow, splitEndCol, ok := d.splitBashGeneratedDoubleCloseParenToken(tok); ok {
+			return splitTok, splitEndPos, splitEndRow, splitEndCol
+		}
 	}
-	if d.language.Name != "bash" || d.symbolName(tok.Symbol) != "\\n" || tok.EndByte <= tok.StartByte+1 {
+	if !d.isBash || d.symbolName(tok.Symbol) != "\\n" || tok.EndByte <= tok.StartByte+1 {
 		return tok, endPos, endRow, endCol
 	}
 	start := int(tok.StartByte)
@@ -723,8 +789,7 @@ func (d *dfaTokenSource) normalizeDFAToken(tok Token, endPos int, endRow, endCol
 }
 
 func (d *dfaTokenSource) bashGeneratedDFAOnlyNewlineToken(tok Token) (Token, int, uint32, uint32, bool) {
-	if d == nil || d.language == nil || d.lexer == nil ||
-		d.language.Name != "bash" || !d.language.GeneratedByGrammargen ||
+	if d == nil || d.language == nil || d.lexer == nil || !d.isBashGenerated ||
 		d.symbolName(tok.Symbol) == "\\n" || tok.EndByte <= tok.StartByte {
 		return tok, 0, 0, 0, false
 	}
@@ -752,8 +817,7 @@ func (d *dfaTokenSource) bashGeneratedDFAOnlyNewlineToken(tok Token) (Token, int
 }
 
 func (d *dfaTokenSource) splitBashGeneratedDoubleCloseParenToken(tok Token) (Token, int, uint32, uint32, bool) {
-	if d == nil || d.language == nil || d.lexer == nil ||
-		d.language.Name != "bash" || !d.language.GeneratedByGrammargen ||
+	if d == nil || d.language == nil || d.lexer == nil || !d.isBashGenerated ||
 		d.symbolName(tok.Symbol) != "))" || tok.EndByte != tok.StartByte+2 {
 		return tok, 0, 0, 0, false
 	}
@@ -775,8 +839,7 @@ func (d *dfaTokenSource) splitBashGeneratedDoubleCloseParenToken(tok Token) (Tok
 }
 
 func (d *dfaTokenSource) bashSkippedSignificantNewlineToken(tok Token, scanStartPos int, scanStartRow, scanStartCol uint32) (Token, bool) {
-	if d == nil || d.language == nil || d.lexer == nil || d.language.Name != "bash" ||
-		!d.language.GeneratedByGrammargen {
+	if d == nil || d.language == nil || d.lexer == nil || !d.isBashGenerated {
 		return Token{}, false
 	}
 	if tok.Symbol == 0 || int(tok.StartByte) <= scanStartPos || scanStartPos < 0 || scanStartPos >= len(d.lexer.source) {
@@ -800,8 +863,7 @@ func (d *dfaTokenSource) bashSkippedSignificantNewlineToken(tok Token, scanStart
 }
 
 func (d *dfaTokenSource) bashGeneratedTokenOverZeroWidthConcat(tok Token, scanStartPos int, scanStartRow, scanStartCol uint32) (Token, bool) {
-	if d == nil || d.language == nil || d.lexer == nil || d.language.Name != "bash" ||
-		!d.language.GeneratedByGrammargen {
+	if d == nil || d.language == nil || d.lexer == nil || !d.isBashGenerated {
 		return Token{}, false
 	}
 	if d.symbolName(tok.Symbol) != "_concat" || tok.StartByte != tok.EndByte ||
@@ -1577,15 +1639,17 @@ func (d *dfaTokenSource) nextExternalToken() (Token, bool) {
 	el := &d.externalLexer
 	el.reset(d.lexer.source, d.lexer.pos, d.lexer.row, d.lexer.col)
 	if !d.runExternalScannerWithRetry(el, valid) {
-		if tok, ok := d.bashGeneratedSyntheticExternalLiteral(valid); ok {
-			if DebugDFA.Load() {
-				fmt.Printf("  EXT synthetic %s %d %d state=%d\n", d.symbolName(tok.Symbol), tok.StartByte, tok.EndByte, d.state)
+		if d.isBashGenerated {
+			if tok, ok := d.bashGeneratedSyntheticExternalLiteral(valid); ok {
+				if DebugDFA.Load() {
+					fmt.Printf("  EXT synthetic %s %d %d state=%d\n", d.symbolName(tok.Symbol), tok.StartByte, tok.EndByte, d.state)
+				}
+				d.trackZeroWidthExternalToken(tok)
+				d.lexer.pos = int(tok.EndByte)
+				d.lexer.row = tok.EndPoint.Row
+				d.lexer.col = tok.EndPoint.Column
+				return tok, true
 			}
-			d.trackZeroWidthExternalToken(tok)
-			d.lexer.pos = int(tok.EndByte)
-			d.lexer.row = tok.EndPoint.Row
-			d.lexer.col = tok.EndPoint.Column
-			return tok, true
 		}
 		if DebugDFA.Load() {
 			fmt.Printf("  EXT miss pos=%d state=%d valid=%s\n", d.lexer.pos, d.state, d.debugExternalValidNames(valid))
@@ -1613,8 +1677,7 @@ func (d *dfaTokenSource) nextExternalToken() (Token, bool) {
 }
 
 func (d *dfaTokenSource) bashGeneratedSyntheticExternalLiteral(valid []bool) (Token, bool) {
-	if d == nil || d.language == nil || d.lexer == nil ||
-		d.language.Name != "bash" || !d.language.GeneratedByGrammargen {
+	if d == nil || d.language == nil || d.lexer == nil || !d.isBashGenerated {
 		return Token{}, false
 	}
 	literals := []string{"<<-", "<<", "}", "]", "(", "esac"}
