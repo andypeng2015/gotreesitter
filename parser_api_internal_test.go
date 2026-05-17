@@ -1,6 +1,7 @@
 package gotreesitter
 
 import (
+	"bytes"
 	"testing"
 	"time"
 )
@@ -96,6 +97,68 @@ func TestCSharpRepetitionShiftConflictChoiceRejectsOtherRepeats(t *testing.T) {
 
 	if _, ok := csharpRepetitionShiftConflictChoice(lang, Token{Symbol: 1, Text: "this"}, actions); ok {
 		t.Fatal("csharpRepetitionShiftConflictChoice = true, want false")
+	}
+}
+
+func TestJavaRepetitionShiftConflictChoiceAllowsStringLiteralContinuation(t *testing.T) {
+	lang := &Language{SymbolNames: []string{"end", "escape_sequence", "string_fragment", "_string_literal_repeat1"}}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 3, ChildCount: 1},
+		{Type: ParseActionShift, State: 983, Repetition: true},
+	}
+
+	for _, sym := range []Symbol{1, 2} {
+		chosen, ok := javaRepetitionShiftConflictChoice(lang, nil, Token{Symbol: sym}, 983, actions)
+		if !ok {
+			t.Fatalf("javaRepetitionShiftConflictChoice(%q) = false, want true", lang.SymbolNames[sym])
+		}
+		if chosen.Type != ParseActionShift || chosen.State != 983 || !chosen.Repetition {
+			t.Fatalf("javaRepetitionShiftConflictChoice(%q) picked %+v, want string repeat shift", lang.SymbolNames[sym], chosen)
+		}
+	}
+}
+
+func TestJavaRepetitionShiftConflictChoiceRejectsOtherStringLiteralLookahead(t *testing.T) {
+	lang := &Language{SymbolNames: []string{"end", "identifier", "_string_literal_repeat1"}}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 2, ChildCount: 1},
+		{Type: ParseActionShift, State: 983, Repetition: true},
+	}
+
+	if _, ok := javaRepetitionShiftConflictChoice(lang, nil, Token{Symbol: 1}, 983, actions); ok {
+		t.Fatal("javaRepetitionShiftConflictChoice = true, want false")
+	}
+}
+
+func TestJavaRepetitionShiftConflictChoiceAllowsArrayInitializerSeparator(t *testing.T) {
+	lang := &Language{SymbolNames: []string{"end", ",", "array_initializer_repeat1"}}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 2, ChildCount: 2},
+		{Type: ParseActionShift, State: 145, Repetition: true},
+	}
+	source := []byte(`class T { int[] values = { 1, /* keep going */ 2 }; }`)
+	comma := uint32(bytes.IndexByte(source, ',') + 1)
+
+	chosen, ok := javaRepetitionShiftConflictChoice(lang, source, Token{Symbol: 1, EndByte: comma}, 1104, actions)
+	if !ok {
+		t.Fatal("javaRepetitionShiftConflictChoice = false, want true")
+	}
+	if chosen.Type != ParseActionShift || chosen.State != 145 || !chosen.Repetition {
+		t.Fatalf("javaRepetitionShiftConflictChoice picked %+v, want array initializer comma shift", chosen)
+	}
+}
+
+func TestJavaRepetitionShiftConflictChoiceRejectsArrayInitializerTrailingComma(t *testing.T) {
+	lang := &Language{SymbolNames: []string{"end", ",", "array_initializer_repeat1"}}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 2, ChildCount: 2},
+		{Type: ParseActionShift, State: 145, Repetition: true},
+	}
+	source := []byte("class T { int[] values = { 1, // trailing\n}; }")
+	comma := uint32(bytes.IndexByte(source, ',') + 1)
+
+	if _, ok := javaRepetitionShiftConflictChoice(lang, source, Token{Symbol: 1, EndByte: comma}, 1104, actions); ok {
+		t.Fatal("javaRepetitionShiftConflictChoice = true, want false for trailing comma")
 	}
 }
 
@@ -495,8 +558,15 @@ func TestParseMaxMergePerKeyValue(t *testing.T) {
 }
 
 func TestEffectiveParseMergePerKeyCap(t *testing.T) {
+	t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "")
+	ResetParseEnvConfigCacheForTests()
+	defer ResetParseEnvConfigCacheForTests()
+
 	if got := effectiveParseMergePerKeyCap(&Language{Name: "javascript"}, maxStacksPerMergeKey, false); got != 4 {
 		t.Fatalf("effectiveParseMergePerKeyCap(javascript, default, full) = %d, want 4", got)
+	}
+	if got := effectiveParseMergePerKeyCap(&Language{Name: "java"}, maxStacksPerMergeKey, false); got != 1 {
+		t.Fatalf("effectiveParseMergePerKeyCap(java, default, full) = %d, want 1", got)
 	}
 	if got := effectiveParseMergePerKeyCap(&Language{Name: "json"}, maxStacksPerMergeKey, false); got != 1 {
 		t.Fatalf("effectiveParseMergePerKeyCap(json, default, full) = %d, want 1", got)
@@ -525,8 +595,21 @@ func TestEffectiveParseMergePerKeyCap(t *testing.T) {
 	if got := effectiveParseMergePerKeyCap(&Language{Name: "javascript"}, maxStacksPerMergeKey, true); got != maxStacksPerMergeKey {
 		t.Fatalf("effectiveParseMergePerKeyCap(javascript, default, incremental) = %d, want %d", got, maxStacksPerMergeKey)
 	}
+	if got := effectiveParseMergePerKeyCap(&Language{Name: "java"}, maxStacksPerMergeKey, true); got != maxStacksPerMergeKey {
+		t.Fatalf("effectiveParseMergePerKeyCap(java, default, incremental) = %d, want %d", got, maxStacksPerMergeKey)
+	}
 	if got := effectiveParseMergePerKeyCap(&Language{Name: "tsx"}, maxStacksPerMergeKey, false); got != maxStacksPerMergeKey {
 		t.Fatalf("effectiveParseMergePerKeyCap(tsx, default, full) = %d, want %d", got, maxStacksPerMergeKey)
+	}
+}
+
+func TestEffectiveParseMergePerKeyCapJavaExplicitOverride(t *testing.T) {
+	t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "4")
+	ResetParseEnvConfigCacheForTests()
+	defer ResetParseEnvConfigCacheForTests()
+
+	if got := effectiveParseMergePerKeyCap(&Language{Name: "java"}, 4, false); got != 4 {
+		t.Fatalf("effectiveParseMergePerKeyCap(java, explicit, full) = %d, want 4", got)
 	}
 }
 

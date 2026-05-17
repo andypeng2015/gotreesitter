@@ -258,6 +258,61 @@ func TestSiblingNavigation(t *testing.T) {
 	}
 }
 
+func TestDeferredParentLinksWireOnAccess(t *testing.T) {
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	first := newLeafNodeInArena(arena, Symbol(1), true, 0, 1, Point{}, Point{Row: 0, Column: 1})
+	second := newLeafNodeInArena(arena, Symbol(2), true, 2, 3, Point{Row: 0, Column: 2}, Point{Row: 0, Column: 3})
+	children := arena.allocNodeSliceNoClear(2)
+	children[0] = first
+	children[1] = second
+	parent := newParentNodeInArenaNoLinksWithFieldSources(arena, Symbol(3), true, children, nil, nil, 0, false)
+	arena.deferParentLinks(parent)
+
+	if first.parent != nil || second.parent != nil {
+		t.Fatal("expected deferred links to leave children unwired before access")
+	}
+	if got := first.Parent(); got != parent {
+		t.Fatalf("first.Parent() = %p, want %p", got, parent)
+	}
+	if got := first.NextSibling(); got != second {
+		t.Fatalf("first.NextSibling() = %p, want %p", got, second)
+	}
+	if got := second.PrevSibling(); got != first {
+		t.Fatalf("second.PrevSibling() = %p, want %p", got, first)
+	}
+	if parent.Parent() != nil {
+		t.Fatal("root parent should remain nil after deferred wiring")
+	}
+}
+
+func TestFinalizeResultRootDefersJavaParentLinks(t *testing.T) {
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	child := newLeafNodeInArena(arena, Symbol(1), true, 0, 1, Point{}, Point{Row: 0, Column: 1})
+	children := arena.allocNodeSliceNoClear(1)
+	children[0] = child
+	root := newParentNodeInArenaNoLinksWithFieldSources(arena, Symbol(2), true, children, nil, nil, 0, false)
+	parser := NewParser(&Language{Name: "java"})
+
+	parser.finalizeResultRoot(root, []byte("x"), nil, true, false)
+
+	if !arena.parentLinksDeferred {
+		t.Fatal("expected Java finalization to defer parent links")
+	}
+	if child.parent != nil {
+		t.Fatal("expected child parent link to stay unwired until access")
+	}
+	if got := child.Parent(); got != root {
+		t.Fatalf("child.Parent() = %p, want %p", got, root)
+	}
+	if arena.parentLinksDeferred {
+		t.Fatal("expected parent link access to clear deferred flag")
+	}
+}
+
 func TestChildByFieldName(t *testing.T) {
 	lang := testLanguage()
 

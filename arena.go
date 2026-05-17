@@ -67,6 +67,9 @@ type nodeArena struct {
 	budgetBytes         int64
 	budgetBaselineBytes int64
 	allocatedBytes      int64
+	parentLinkMu        sync.Mutex
+	deferredParentRoot  *Node
+	parentLinksDeferred bool
 	// skipChildClear allows reset() to skip child-slab pointer clearing when
 	// a parse did not borrow any external nodes (full parse without reuse).
 	skipChildClear bool
@@ -309,6 +312,10 @@ func (a *nodeArena) reset() {
 	}
 	clear(a.nodes[:primaryUsed])
 	a.used = 0
+	a.parentLinkMu.Lock()
+	a.deferredParentRoot = nil
+	a.parentLinksDeferred = false
+	a.parentLinkMu.Unlock()
 	// externalScannerCheckpointRef contains only integer fields, but stale
 	// refs must not remain visible when a node slot is reused.
 	if primaryUsed > len(a.externalScannerNodeCheckpoints) {

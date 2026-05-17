@@ -40,7 +40,8 @@ type Parser struct {
 	included                            []Range
 	logger                              ParserLogger
 	glrTrace                            bool // verbose GLR stack tracing
-	maxConflictWidth                    int  // widest N-way conflict in the parse table
+	ambiguityProfile                    *AmbiguityProfile
+	maxConflictWidth                    int // widest N-way conflict in the parse table
 	timeoutMicros                       uint64
 	cancellationFlag                    *uint32
 	denseLimit                          int
@@ -55,6 +56,7 @@ type Parser struct {
 	fieldInheritedScratch               []bool
 	fieldConflictedScratch              []bool
 	reduceScratch                       *reduceBuildScratch
+	noTreeBenchmarkOnly                 bool
 	currentExternalTokenCheckpoint      externalScannerCheckpoint
 	currentExternalTokenCheckpointStart uint32
 	currentExternalTokenCheckpointEnd   uint32
@@ -310,6 +312,8 @@ func resetSnippetParser(parser *Parser) {
 	parser.included = nil
 	parser.logger = nil
 	parser.glrTrace = false
+	parser.ambiguityProfile = nil
+	parser.noTreeBenchmarkOnly = false
 	parser.timeoutMicros = 0
 	parser.cancellationFlag = nil
 	// Release *Node refs so the arenas from the last incremental parse can be
@@ -1049,6 +1053,9 @@ func (p *Parser) parseIncrementalInternal(source []byte, oldTree *Tree, ts Token
 	// Fast path: unchanged source and no recorded edits.
 	if canReuseUnchangedTree(source, oldTree, p.language) {
 		return oldTree
+	}
+	if oldTree != nil {
+		oldTree.ensureParentLinks()
 	}
 	if tree, ok := p.tryTokenInvariantLeafEdit(source, oldTree, ts, timing); ok {
 		return tree
@@ -1852,6 +1859,9 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 						ai, a.Type, a.State, a.Symbol, a.ChildCount, a.DynamicPrecedence)
 				}
 			}
+			if p.ambiguityProfile != nil {
+				p.ambiguityProfile.record(currentState, tok.Symbol, actions, numStacks)
+			}
 			// --- Extra token handling (comments, whitespace) ---
 			if len(actions) > 0 &&
 				actions[0].Type == ParseActionShift && actions[0].Extra {
@@ -1994,6 +2004,18 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			// For single-action entries (the common case), no fork occurs.
 			// For multi-action entries, clone the stack for each alternative.
 			if len(actions) > 1 {
+				if reuse == nil && p.language != nil && p.language.Name == "java" {
+					if chosen, ok := p.javaSwitchArrowConflictChoice(s, tok, actions); ok {
+						p.applyAction(s, chosen, tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
+						continue
+					}
+				}
+				if reuse == nil && p.language != nil && p.language.Name == "java" {
+					if chosen, ok := javaRepetitionShiftConflictChoice(p.language, source, tok, currentState, actions); ok {
+						p.applyAction(s, chosen, tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
+						continue
+					}
+				}
 				if reuse == nil && p.language != nil && p.language.Name == "c_sharp" {
 					if chosen, ok := csharpRepetitionShiftConflictChoice(p.language, tok, actions); ok {
 						p.applyAction(s, chosen, tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
@@ -2241,6 +2263,77 @@ func repetitionShiftConflictChoice(actions []ParseAction) (ParseAction, bool) {
 	return shift, true
 }
 
+func (p *Parser) javaSwitchArrowConflictChoice(s *glrStack, tok Token, actions []ParseAction) (ParseAction, bool) {
+	if p == nil || p.language == nil || p.language.Name != "java" || s == nil || !symbolHasName(p.language, tok.Symbol, "->") {
+		return ParseAction{}, false
+	}
+	var primaryReduce ParseAction
+	var reduceFound bool
+	var shiftFound bool
+	for _, act := range actions {
+		switch act.Type {
+		case ParseActionShift:
+			shiftFound = true
+		case ParseActionReduce:
+			if act.ChildCount == 1 && symbolHasName(p.language, act.Symbol, "primary_expression") {
+				if reduceFound {
+					return ParseAction{}, false
+				}
+				primaryReduce = act
+				reduceFound = true
+			}
+		default:
+			return ParseAction{}, false
+		}
+	}
+	if !shiftFound || !reduceFound {
+		return ParseAction{}, false
+	}
+	// In switch rules, `case A ->` must reduce `A` as the label expression
+	// before the arrow. Lambda parameters use the same state but have no
+	// post-reduce goto that can consume `->`, so this keeps lambdas intact.
+	predecessor, ok := reducePredecessorStateForStack(s, int(primaryReduce.ChildCount))
+	if !ok {
+		return ParseAction{}, false
+	}
+	gotoState := p.lookupGoto(predecessor, primaryReduce.Symbol)
+	if gotoState == 0 || p.lookupActionIndex(gotoState, tok.Symbol) == 0 {
+		return ParseAction{}, false
+	}
+	return primaryReduce, true
+}
+
+func reducePredecessorStateForStack(s *glrStack, childCount int) (StateID, bool) {
+	if s == nil || childCount < 0 {
+		return 0, false
+	}
+	if childCount == 0 {
+		return s.top().state, true
+	}
+	if s.gss.head != nil {
+		nonExtraFound := 0
+		for n := s.gss.head; n != nil; n = n.prev {
+			if n.entry.node == nil || n.entry.node.isExtra {
+				continue
+			}
+			nonExtraFound++
+			if nonExtraFound != childCount {
+				continue
+			}
+			if n.prev == nil {
+				return 0, false
+			}
+			return n.prev.entry.state, true
+		}
+		return 0, false
+	}
+	rr, ok := computeReduceRange(s.entries, childCount)
+	if !ok {
+		return 0, false
+	}
+	return rr.topState, true
+}
+
 func csharpRepetitionShiftConflictChoice(lang *Language, tok Token, actions []ParseAction) (ParseAction, bool) {
 	if lang == nil {
 		return ParseAction{}, false
@@ -2273,6 +2366,97 @@ func csharpRepetitionShiftConflictChoice(lang *Language, tok Token, actions []Pa
 		return ParseAction{}, false
 	}
 	return repetitionShiftConflictChoice(actions)
+}
+
+func javaRepetitionShiftConflictChoice(lang *Language, source []byte, tok Token, state StateID, actions []ParseAction) (ParseAction, bool) {
+	if lang == nil {
+		return ParseAction{}, false
+	}
+	switch state {
+	case 1104:
+		if !symbolHasName(lang, tok.Symbol, ",") || !javaArrayInitializerCommaHasFollowingElement(source, tok.EndByte) {
+			return ParseAction{}, false
+		}
+	case 983:
+		switch {
+		case symbolHasName(lang, tok.Symbol, "escape_sequence"):
+		case symbolHasName(lang, tok.Symbol, "string_fragment"):
+		default:
+			return ParseAction{}, false
+		}
+	case 935:
+		if !symbolHasName(lang, tok.Symbol, "case") {
+			return ParseAction{}, false
+		}
+	case 7:
+		switch {
+		case symbolHasName(lang, tok.Symbol, "identifier"):
+		case symbolHasName(lang, tok.Symbol, "if"):
+		case symbolHasName(lang, tok.Symbol, "final"):
+		case symbolHasName(lang, tok.Symbol, "for"):
+		default:
+			return ParseAction{}, false
+		}
+	case 412:
+		switch {
+		case symbolHasName(lang, tok.Symbol, "public"):
+		case symbolHasName(lang, tok.Symbol, "private"):
+		case symbolHasName(lang, tok.Symbol, "protected"):
+		case symbolHasName(lang, tok.Symbol, "@"):
+		default:
+			return ParseAction{}, false
+		}
+	case 2:
+		if !symbolHasName(lang, tok.Symbol, "import") {
+			return ParseAction{}, false
+		}
+	default:
+		return ParseAction{}, false
+	}
+	return repetitionShiftConflictChoice(actions)
+}
+
+func javaArrayInitializerCommaHasFollowingElement(source []byte, offset uint32) bool {
+	i := int(offset)
+	for i < len(source) {
+		switch source[i] {
+		case ' ', '\t', '\n', '\r', '\f':
+			i++
+			continue
+		case '/':
+			if i+1 >= len(source) {
+				return true
+			}
+			switch source[i+1] {
+			case '/':
+				i += 2
+				for i < len(source) && source[i] != '\n' && source[i] != '\r' {
+					i++
+				}
+				continue
+			case '*':
+				i += 2
+				for i+1 < len(source) && !(source[i] == '*' && source[i+1] == '/') {
+					i++
+				}
+				if i+1 >= len(source) {
+					return false
+				}
+				i += 2
+				continue
+			}
+			return true
+		case '}':
+			return false
+		default:
+			return true
+		}
+	}
+	return false
+}
+
+func symbolHasName(lang *Language, sym Symbol, name string) bool {
+	return lang != nil && int(sym) >= 0 && int(sym) < len(lang.SymbolNames) && lang.SymbolNames[sym] == name
 }
 
 func csharpRepeatConflictKind(name string) string {

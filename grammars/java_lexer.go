@@ -18,6 +18,9 @@ type JavaTokenSource struct {
 	done    bool
 	pending []gotreesitter.Token
 
+	state     gotreesitter.StateID
+	glrStates []gotreesitter.StateID
+
 	eofSymbol gotreesitter.Symbol
 
 	identifierSymbol             gotreesitter.Symbol
@@ -38,6 +41,7 @@ type JavaTokenSource struct {
 	booleanTypeSymbol            gotreesitter.Symbol
 	voidTypeSymbol               gotreesitter.Symbol
 	nullLiteralSymbol            gotreesitter.Symbol
+	underscorePatternSymbol      gotreesitter.Symbol
 
 	keywordSymbols map[string]gotreesitter.Symbol
 	literalSymbols map[string]gotreesitter.Symbol
@@ -83,6 +87,7 @@ func NewJavaTokenSource(src []byte, lang *gotreesitter.Language) (*JavaTokenSour
 	ts.booleanTypeSymbol = tl.optional("boolean_type")
 	ts.voidTypeSymbol = tl.optional("void_type")
 	ts.nullLiteralSymbol = tl.optional("null_literal")
+	ts.underscorePatternSymbol = tl.optional("underscore_pattern")
 
 	if ts.eofSymbol, _ = lang.SymbolByName("end"); ts.eofSymbol == 0 {
 		ts.eofSymbol = 0
@@ -112,12 +117,34 @@ func (ts *JavaTokenSource) Reset(src []byte) {
 	ts.cur = newSourceCursor(src)
 	ts.done = false
 	ts.pending = ts.pending[:0]
+	ts.state = 0
+	ts.glrStates = ts.glrStates[:0]
 }
 
 // SupportsIncrementalReuse reports that JavaTokenSource preserves stable token
 // boundaries across edits and supports deterministic SkipToByte behavior.
 func (ts *JavaTokenSource) SupportsIncrementalReuse() bool {
 	return true
+}
+
+// SetParserState lets the parser drive contextual keyword tokenization.
+func (ts *JavaTokenSource) SetParserState(state gotreesitter.StateID) {
+	ts.state = state
+}
+
+// SetGLRStates lets the token source consider all active GLR branches when
+// deciding whether a contextual keyword is valid.
+func (ts *JavaTokenSource) SetGLRStates(states []gotreesitter.StateID) {
+	if len(states) == 0 {
+		ts.glrStates = ts.glrStates[:0]
+		return
+	}
+	if cap(ts.glrStates) < len(states) {
+		ts.glrStates = make([]gotreesitter.StateID, len(states))
+	} else {
+		ts.glrStates = ts.glrStates[:len(states)]
+	}
+	copy(ts.glrStates, states)
 }
 
 func (ts *JavaTokenSource) Next() gotreesitter.Token {
@@ -218,7 +245,7 @@ func (ts *JavaTokenSource) buildSymbolTables() {
 		sym := gotreesitter.Symbol(i)
 
 		switch name {
-		case "identifier", "decimal_integer_literal", "hex_integer_literal", "octal_integer_literal", "binary_integer_literal", "decimal_floating_point_literal", "hex_floating_point_literal", "line_comment", "block_comment", "string_fragment", "escape_sequence", "character_literal", "boolean_type", "void_type", "null_literal":
+		case "identifier", "decimal_integer_literal", "hex_integer_literal", "octal_integer_literal", "binary_integer_literal", "decimal_floating_point_literal", "hex_floating_point_literal", "line_comment", "block_comment", "string_fragment", "escape_sequence", "character_literal", "boolean_type", "void_type", "null_literal", "underscore_pattern":
 			continue
 		}
 		if isSyntheticTokenName(name) {
@@ -466,6 +493,14 @@ func (ts *JavaTokenSource) identifierOrKeywordToken() gotreesitter.Token {
 
 	text := string(ts.src[start:ts.cur.offset])
 	sym := ts.identifierSymbol
+	if text == "_" && ts.underscorePatternSymbol != 0 && ts.hasActionForSymbol(ts.underscorePatternSymbol) {
+		sym = ts.underscorePatternSymbol
+	}
+	if text == "non" {
+		if tok, ok := ts.compoundContextualKeywordToken(start, startPt); ok {
+			return tok
+		}
+	}
 
 	switch text {
 	case "boolean":
@@ -482,11 +517,153 @@ func (ts *JavaTokenSource) identifierOrKeywordToken() gotreesitter.Token {
 		}
 	default:
 		if kw, ok := ts.keywordSymbols[text]; ok {
-			sym = kw
+			if ts.shouldPromoteKeyword(text, kw, ts.identifierSymbol) {
+				sym = kw
+			}
 		}
 	}
 
 	return makeToken(sym, ts.src, start, ts.cur.offset, startPt, ts.cur.point())
+}
+
+func (ts *JavaTokenSource) compoundContextualKeywordToken(start int, startPt gotreesitter.Point) (gotreesitter.Token, bool) {
+	const nonSealed = "non-sealed"
+	if start+len(nonSealed) > len(ts.src) || string(ts.src[start:start+len(nonSealed)]) != nonSealed {
+		return gotreesitter.Token{}, false
+	}
+	if !hasWordBoundaryAfter(ts.src, start+len(nonSealed)) {
+		return gotreesitter.Token{}, false
+	}
+	kw, ok := ts.keywordSymbols[nonSealed]
+	if !ok || !ts.shouldPromoteKeyword(nonSealed, kw, ts.identifierSymbol) {
+		return gotreesitter.Token{}, false
+	}
+	ts.cur.advanceBytes(len(nonSealed) - len("non"))
+	return makeToken(kw, ts.src, start, ts.cur.offset, startPt, ts.cur.point()), true
+}
+
+func (ts *JavaTokenSource) shouldPromoteKeyword(text string, keywordSym, identifierSym gotreesitter.Symbol) bool {
+	if keywordSym == 0 {
+		return false
+	}
+	kwHasAction := ts.hasActionForSymbol(keywordSym)
+	idHasAction := ts.hasActionForSymbol(identifierSym)
+	if text == "permits" {
+		if ts.looksLikePermitsClause() {
+			return kwHasAction
+		}
+		return kwHasAction && !idHasAction
+	}
+	if !kwHasAction && idHasAction {
+		return false
+	}
+	return true
+}
+
+func (ts *JavaTokenSource) looksLikePermitsClause() bool {
+	end := ts.cur.offset - len("permits")
+	if end < 0 {
+		return false
+	}
+	start := end
+	for start > 0 {
+		switch ts.src[start-1] {
+		case '{', '}', ';':
+			goto found
+		default:
+			start--
+		}
+	}
+found:
+	seenSealed := false
+	seenDecl := false
+	for i := start; i < end; {
+		b := ts.src[i]
+		if !isJavaIdentStart(b) {
+			i++
+			continue
+		}
+		wordStart := i
+		i++
+		for i < end && isJavaIdentPart(ts.src[i]) {
+			i++
+		}
+		word := string(ts.src[wordStart:i])
+		switch word {
+		case "sealed":
+			seenSealed = true
+		case "class", "interface":
+			seenDecl = true
+		}
+	}
+	return seenSealed && seenDecl
+}
+
+func (ts *JavaTokenSource) hasActionForSymbol(sym gotreesitter.Symbol) bool {
+	if sym == 0 {
+		return false
+	}
+	if ts.lookupActionIndex(ts.state, sym) != 0 {
+		return true
+	}
+	for _, state := range ts.glrStates {
+		if ts.lookupActionIndex(state, sym) != 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func (ts *JavaTokenSource) lookupActionIndex(state gotreesitter.StateID, sym gotreesitter.Symbol) uint16 {
+	if ts == nil || ts.lang == nil {
+		return 0
+	}
+	denseLimit := len(ts.lang.ParseTable)
+	smallBase := 0
+	if ts.lang.LargeStateCount > 0 {
+		denseLimit = int(ts.lang.LargeStateCount)
+		smallBase = int(ts.lang.LargeStateCount)
+	}
+	if int(state) < denseLimit {
+		if int(state) >= len(ts.lang.ParseTable) {
+			return 0
+		}
+		row := ts.lang.ParseTable[state]
+		if int(sym) >= len(row) {
+			return 0
+		}
+		return row[sym]
+	}
+
+	smallIdx := int(state) - smallBase
+	if smallIdx < 0 || smallIdx >= len(ts.lang.SmallParseTableMap) {
+		return 0
+	}
+	offset := ts.lang.SmallParseTableMap[smallIdx]
+	table := ts.lang.SmallParseTable
+	if int(offset) >= len(table) {
+		return 0
+	}
+	groupCount := table[offset]
+	pos := int(offset) + 1
+	for i := uint16(0); i < groupCount; i++ {
+		if pos+1 >= len(table) {
+			return 0
+		}
+		sectionValue := table[pos]
+		symbolCount := table[pos+1]
+		pos += 2
+		for j := uint16(0); j < symbolCount; j++ {
+			if pos >= len(table) {
+				return 0
+			}
+			if table[pos] == uint16(sym) {
+				return sectionValue
+			}
+			pos++
+		}
+	}
+	return 0
 }
 
 func (ts *JavaTokenSource) numberToken() gotreesitter.Token {
@@ -576,6 +753,7 @@ func (ts *JavaTokenSource) numberToken() gotreesitter.Token {
 		}
 	}
 
+	digitsEnd := ts.cur.offset
 	if !ts.cur.eof() {
 		suffix := ts.cur.peekByte()
 		switch suffix {
@@ -601,7 +779,7 @@ func (ts *JavaTokenSource) numberToken() gotreesitter.Token {
 		sym = firstNonZeroSymbol(ts.hexIntegerSymbol, ts.decimalIntegerSymbol)
 	case isBinary:
 		sym = firstNonZeroSymbol(ts.binaryIntegerSymbol, ts.decimalIntegerSymbol)
-	case isOctal && ts.cur.offset-start > 1:
+	case isOctal && digitsEnd-start > 1:
 		sym = firstNonZeroSymbol(ts.octalIntegerSymbol, ts.decimalIntegerSymbol)
 	}
 
@@ -615,8 +793,145 @@ func (ts *JavaTokenSource) literalToken() (gotreesitter.Token, bool) {
 	}
 	start := ts.cur.offset
 	startPt := ts.cur.point()
+	if n >= 2 && start+n <= len(ts.src) && isJavaCompactCloseAngleLiteral(ts.src[start:start+n]) {
+		if tok, ok := ts.compactCloseAngleToken(start, startPt, sym); ok {
+			return tok, true
+		}
+	}
 	ts.cur.advanceBytes(n)
 	return makeToken(sym, ts.src, start, ts.cur.offset, startPt, ts.cur.point()), true
+}
+
+func isJavaCompactCloseAngleLiteral(lit []byte) bool {
+	if len(lit) < 2 {
+		return false
+	}
+	for _, b := range lit {
+		if b != '>' {
+			return false
+		}
+	}
+	return true
+}
+
+func (ts *JavaTokenSource) compactCloseAngleToken(start int, startPt gotreesitter.Point, compactSym gotreesitter.Symbol) (gotreesitter.Token, bool) {
+	gtSym, ok := ts.literalSymbols[">"]
+	if !ok || gtSym == 0 {
+		return gotreesitter.Token{}, false
+	}
+	if !ts.shouldSplitCompactCloseAngleToken(start, gtSym, compactSym) {
+		return gotreesitter.Token{}, false
+	}
+	ts.cur.advanceBytes(1)
+	return makeToken(gtSym, ts.src, start, ts.cur.offset, startPt, ts.cur.point()), true
+}
+
+func (ts *JavaTokenSource) shouldSplitCompactCloseAngleToken(start int, gtSym, shiftSym gotreesitter.Symbol) bool {
+	if !ts.hasUnclosedAngleBefore(start) {
+		return false
+	}
+	if !ts.hasActionForSymbol(gtSym) {
+		return false
+	}
+	if !ts.hasActionForSymbol(shiftSym) {
+		return true
+	}
+	gtSpec := ts.activeActionSpecificity(gtSym)
+	shiftSpec := ts.activeActionSpecificity(shiftSym)
+	if gtSpec > shiftSpec {
+		return true
+	}
+	if gtSpec < shiftSpec {
+		return false
+	}
+	next := ts.nextNonSpaceByte(start + 2)
+	switch next {
+	case 0, '(', ')', '[', ']', '{', '}', ',', '.', ';', ':', '?':
+		return true
+	default:
+		return isJavaIdentStart(next) && ts.hasUnclosedAngleBefore(start)
+	}
+}
+
+func (ts *JavaTokenSource) activeActionSpecificity(sym gotreesitter.Symbol) int {
+	type actionStats struct {
+		maxDyn     int
+		totalDyn   int
+		maxActions int
+		totalActs  int
+		supporting int
+	}
+	stats := actionStats{}
+	visit := func(state gotreesitter.StateID) {
+		idx := ts.lookupActionIndex(state, sym)
+		if idx == 0 || ts.lang == nil || int(idx) >= len(ts.lang.ParseActions) {
+			return
+		}
+		actions := ts.lang.ParseActions[idx].Actions
+		if len(actions) == 0 {
+			return
+		}
+		stats.supporting++
+		if len(actions) > stats.maxActions {
+			stats.maxActions = len(actions)
+		}
+		stats.totalActs += len(actions)
+		for _, act := range actions {
+			dyn := int(act.DynamicPrecedence)
+			if dyn > stats.maxDyn {
+				stats.maxDyn = dyn
+			}
+			stats.totalDyn += dyn
+		}
+	}
+	visit(ts.state)
+	for i, state := range ts.glrStates {
+		if state == ts.state || ts.priorGLRState(i, state) {
+			continue
+		}
+		visit(state)
+	}
+	return (((stats.maxDyn*1024)+stats.totalDyn)*1024 + stats.maxActions*64 + stats.totalActs*4 + stats.supporting)
+}
+
+func (ts *JavaTokenSource) priorGLRState(limit int, state gotreesitter.StateID) bool {
+	for i := 0; i < limit && i < len(ts.glrStates); i++ {
+		if ts.glrStates[i] == state {
+			return true
+		}
+	}
+	return false
+}
+
+func (ts *JavaTokenSource) nextNonSpaceByte(pos int) byte {
+	for pos < len(ts.src) {
+		switch ts.src[pos] {
+		case ' ', '\t', '\n', '\r':
+			pos++
+			continue
+		default:
+			return ts.src[pos]
+		}
+	}
+	return 0
+}
+
+func (ts *JavaTokenSource) hasUnclosedAngleBefore(pos int) bool {
+	depth := 0
+	for i := pos - 1; i >= 0; i-- {
+		switch ts.src[i] {
+		case ';', '{', '}', '(', ')':
+			return depth > 0
+		case '>':
+			depth--
+		case '<':
+			depth++
+			if depth > 0 {
+				return true
+			}
+		}
+	}
+	return depth > 0
 }
 
 func (ts *JavaTokenSource) matchLiteral() (gotreesitter.Symbol, int) {

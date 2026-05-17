@@ -144,6 +144,31 @@ func TestMergeStacksSmallPathKeepsDistinctDeepStructures(t *testing.T) {
 	}
 }
 
+func TestMergeStacksSmallPathCapOnePrunesStrongRankMismatch(t *testing.T) {
+	s1 := newGLRStack(StateID(5))
+	s1.score = 10
+	s1.push(5, NewLeafNode(1, true, 0, 3, Point{}, Point{Column: 3}), nil, nil)
+
+	s2 := newGLRStack(StateID(5))
+	s2.score = 20
+	s2.push(5, NewLeafNode(2, true, 0, 3, Point{}, Point{Column: 3}), nil, nil)
+
+	var scratch glrMergeScratch
+	scratch.perKeyCap = 1
+	scratch.beginEquivEpoch()
+
+	result := mergeStacksWithScratch([]glrStack{s1, s2}, &scratch)
+	if len(result) != 1 {
+		t.Fatalf("expected one capped survivor, got %d", len(result))
+	}
+	if result[0].score != 20 {
+		t.Fatalf("capped survivor score = %d, want 20", result[0].score)
+	}
+	if result[0].top().node.Symbol() != 2 {
+		t.Fatalf("capped survivor symbol = %d, want 2", result[0].top().node.Symbol())
+	}
+}
+
 func TestStackComparePtrPrefersEarlierBranchOrderOnExactTie(t *testing.T) {
 	a := newGLRStack(StateID(5))
 	b := newGLRStack(StateID(5))

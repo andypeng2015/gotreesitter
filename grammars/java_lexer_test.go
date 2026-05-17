@@ -56,6 +56,31 @@ func TestJavaTokenSourceSkipToByte(t *testing.T) {
 	}
 }
 
+func TestJavaTokenSourceZeroLongLiteralIsDecimal(t *testing.T) {
+	lang := JavaLanguage()
+	src := []byte("0L")
+	ts, err := NewJavaTokenSource(src, lang)
+	if err != nil {
+		t.Fatalf("NewJavaTokenSource failed: %v", err)
+	}
+	want, ok := lang.SymbolByName("decimal_integer_literal")
+	if !ok {
+		t.Fatal("missing decimal_integer_literal symbol")
+	}
+
+	tok := ts.Next()
+	if tok.Symbol != want {
+		gotName := "<unknown>"
+		if int(tok.Symbol) < len(lang.SymbolNames) {
+			gotName = lang.SymbolNames[tok.Symbol]
+		}
+		t.Fatalf("token symbol = %d (%s), want %d (decimal_integer_literal)", tok.Symbol, gotName, want)
+	}
+	if tok.Text != "0L" {
+		t.Fatalf("token text = %q, want %q", tok.Text, "0L")
+	}
+}
+
 func TestParseJavaWithTokenSource(t *testing.T) {
 	lang := JavaLanguage()
 	parser := gotreesitter.NewParser(lang)
