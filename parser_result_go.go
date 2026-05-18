@@ -24,11 +24,11 @@ func normalizeGoSourceFileRoot(root *Node, source []byte, p *Parser) {
 		return
 	}
 	root.symbol = sym
-	root.isNamed = int(sym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[sym].Named
-	root.hasError = false
+	root.setNamed(int(sym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[sym].Named)
+	root.setHasError(false)
 	for _, child := range root.children {
 		if child != nil && (child.IsError() || child.HasError()) {
-			root.hasError = true
+			root.setHasError(true)
 			break
 		}
 	}
@@ -266,7 +266,7 @@ func goRecoverWrappedFunctionChunk(source []byte, chunkStart, chunkEnd uint32, p
 	}
 	recoveredFn.children[len(recoveredFn.children)-1] = block
 	block.parent = recoveredFn
-	block.childIndex = len(recoveredFn.children) - 1
+	block.childIndex = int32(len(recoveredFn.children) - 1)
 	populateParentNode(recoveredFn, recoveredFn.children)
 	return recoveredFn, true
 }
@@ -771,7 +771,7 @@ func shiftNodeBytes(n *Node, delta int64) bool {
 				return false
 			}
 			child.parent = cur
-			child.childIndex = i
+			child.childIndex = int32(i)
 		}
 		return true
 	}
@@ -1239,7 +1239,7 @@ func flattenInvisibleRootChildren(root *Node, arena *nodeArena, lang *Language) 
 }
 
 func shouldFlattenInvisibleRootChild(child *Node, lang *Language) bool {
-	if child == nil || child.isExtra || child.isNamed || len(child.children) == 0 {
+	if child == nil || child.isExtra() || child.isNamed() || len(child.children) == 0 {
 		return false
 	}
 	if idx := int(child.symbol); idx < len(lang.SymbolMetadata) {

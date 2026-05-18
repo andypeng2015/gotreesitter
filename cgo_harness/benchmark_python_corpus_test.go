@@ -24,9 +24,10 @@ type pythonCorpusFile struct {
 type pythonCorpusParseMode string
 
 const (
-	pythonCorpusParseModeDFA         pythonCorpusParseMode = "dfa"
-	pythonCorpusParseModeDFANoCompat pythonCorpusParseMode = "dfa_no_compat"
-	pythonCorpusParseModeDFANoTree   pythonCorpusParseMode = "dfa_no_tree"
+	pythonCorpusParseModeDFA                      pythonCorpusParseMode = "dfa"
+	pythonCorpusParseModeDFANoCompat              pythonCorpusParseMode = "dfa_no_compat"
+	pythonCorpusParseModeDFANoTree                pythonCorpusParseMode = "dfa_no_tree"
+	pythonCorpusParseModeDFANoTreeWithCheckpoints pythonCorpusParseMode = "dfa_no_tree_with_checkpoints"
 )
 
 type pythonRuntimeBenchStats struct {
@@ -229,6 +230,8 @@ func benchmarkPythonCorpusGoDFA(b *testing.B, mode pythonCorpusParseMode) {
 			tree, err = pool.ParseNoResultCompatibilityBenchmarkOnly(file.source)
 		case pythonCorpusParseModeDFANoTree:
 			tree, err = pool.ParseNoTreeBenchmarkOnly(file.source)
+		case pythonCorpusParseModeDFANoTreeWithCheckpoints:
+			tree, err = pool.ParseNoTreeWithExternalCheckpointsBenchmarkOnly(file.source)
 		default:
 			b.Fatalf("unknown python corpus parse mode %q", mode)
 		}
@@ -256,6 +259,10 @@ func BenchmarkPythonCorpusGoTreeSitterParseDFANoCompat(b *testing.B) {
 
 func BenchmarkPythonCorpusGoTreeSitterParseDFANoTree(b *testing.B) {
 	benchmarkPythonCorpusGoDFA(b, pythonCorpusParseModeDFANoTree)
+}
+
+func BenchmarkPythonCorpusGoTreeSitterParseDFANoTreeWithCheckpoints(b *testing.B) {
+	benchmarkPythonCorpusGoDFA(b, pythonCorpusParseModeDFANoTreeWithCheckpoints)
 }
 
 func BenchmarkPythonCorpusCTreeSitterParseFull(b *testing.B) {

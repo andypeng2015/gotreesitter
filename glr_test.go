@@ -52,7 +52,7 @@ func TestPythonShallowEquivalentMatchesFrontierDepthZero(t *testing.T) {
 				symbol:       10,
 				startByte:    0,
 				endByte:      5,
-				isNamed:      true,
+				flags:        nodeFlagNamed,
 				parseState:   1,
 				preGotoState: 2,
 				productionID: 3,
@@ -61,7 +61,7 @@ func TestPythonShallowEquivalentMatchesFrontierDepthZero(t *testing.T) {
 					symbol:    20,
 					startByte: 0,
 					endByte:   5,
-					isNamed:   true,
+					flags:     nodeFlagNamed,
 					fieldIDs:  []FieldID{6},
 				}},
 			},
@@ -69,7 +69,7 @@ func TestPythonShallowEquivalentMatchesFrontierDepthZero(t *testing.T) {
 				symbol:       10,
 				startByte:    0,
 				endByte:      5,
-				isNamed:      true,
+				flags:        nodeFlagNamed,
 				parseState:   1,
 				preGotoState: 2,
 				productionID: 3,
@@ -78,7 +78,7 @@ func TestPythonShallowEquivalentMatchesFrontierDepthZero(t *testing.T) {
 					symbol:    20,
 					startByte: 0,
 					endByte:   5,
-					isNamed:   true,
+					flags:     nodeFlagNamed,
 					fieldIDs:  []FieldID{6},
 				}},
 			},
@@ -563,8 +563,8 @@ func TestMergeKeyGroupsEquivalentStacks(t *testing.T) {
 	}
 
 	// Case 1: identical entries → equivalent, same hash.
-	node1a := &Node{symbol: 10, startByte: 0, endByte: 5, parseState: 1, isNamed: true}
-	node1b := &Node{symbol: 10, startByte: 0, endByte: 5, parseState: 1, isNamed: true}
+	node1a := &Node{symbol: 10, startByte: 0, endByte: 5, parseState: 1, flags: nodeFlagNamed}
+	node1b := &Node{symbol: 10, startByte: 0, endByte: 5, parseState: 1, flags: nodeFlagNamed}
 	a := buildStack([]stackEntry{{state: 1}, {state: 2, node: node1a}})
 	b := buildStack([]stackEntry{{state: 1}, {state: 2, node: node1b}})
 
@@ -593,7 +593,7 @@ func TestMergeKeyGroupsEquivalentStacks(t *testing.T) {
 
 	// Case 3: isMissing differs → not equivalent (hash includes isMissing).
 	node3a := &Node{symbol: 10, startByte: 0, endByte: 5, parseState: 1}
-	node3b := &Node{symbol: 10, startByte: 0, endByte: 5, parseState: 1, isMissing: true}
+	node3b := &Node{symbol: 10, startByte: 0, endByte: 5, parseState: 1, flags: nodeFlagMissing}
 	e := buildStack([]stackEntry{{state: 1}, {state: 2, node: node3a}})
 	f := buildStack([]stackEntry{{state: 1}, {state: 2, node: node3b}})
 	if stackEquivalent(e, f) {
@@ -653,14 +653,14 @@ func TestStackEquivalentForAliasLanguageRejectsDeepAliasMismatch(t *testing.T) {
 		},
 	}
 	buildDeepNode := func(leafSym Symbol) *Node {
-		leaf := &Node{symbol: leafSym, startByte: 0, endByte: 5, isNamed: true}
+		leaf := &Node{symbol: leafSym, startByte: 0, endByte: 5, flags: nodeFlagNamed}
 		n := leaf
 		for sym := Symbol(11); sym >= 4; sym-- {
 			n = &Node{
 				symbol:    sym,
 				startByte: 0,
 				endByte:   5,
-				isNamed:   true,
+				flags:     nodeFlagNamed,
 				children:  []*Node{n},
 			}
 			if sym == 4 {
@@ -671,7 +671,7 @@ func TestStackEquivalentForAliasLanguageRejectsDeepAliasMismatch(t *testing.T) {
 			symbol:    3,
 			startByte: 0,
 			endByte:   5,
-			isNamed:   true,
+			flags:     nodeFlagNamed,
 			children:  []*Node{n},
 		}
 	}
@@ -698,31 +698,31 @@ func TestStackEquivalentForTypeScriptChecksNonFrontierChildren(t *testing.T) {
 			symbol:    2,
 			startByte: 0,
 			endByte:   5,
-			isNamed:   true,
+			flags:     nodeFlagNamed,
 			children: []*Node{{
 				symbol:    earlyLeaf,
 				startByte: 0,
 				endByte:   5,
-				isNamed:   true,
+				flags:     nodeFlagNamed,
 			}},
 		}
 		frontier := &Node{
 			symbol:    6,
 			startByte: 5,
 			endByte:   10,
-			isNamed:   true,
+			flags:     nodeFlagNamed,
 			children: []*Node{{
 				symbol:    7,
 				startByte: 5,
 				endByte:   10,
-				isNamed:   true,
+				flags:     nodeFlagNamed,
 			}},
 		}
 		return &Node{
 			symbol:    1,
 			startByte: 0,
 			endByte:   10,
-			isNamed:   true,
+			flags:     nodeFlagNamed,
 			children:  []*Node{early, frontier},
 		}
 	}

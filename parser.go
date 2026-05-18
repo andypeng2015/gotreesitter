@@ -57,6 +57,7 @@ type Parser struct {
 	fieldConflictedScratch              []bool
 	reduceScratch                       *reduceBuildScratch
 	noTreeBenchmarkOnly                 bool
+	noTreeCheckpointBenchmarkOnly       bool
 	noResultCompatibilityBenchmarkOnly  bool
 	currentExternalTokenCheckpoint      externalScannerCheckpoint
 	currentExternalTokenCheckpointStart uint32
@@ -316,6 +317,7 @@ func resetSnippetParser(parser *Parser) {
 	parser.glrTrace = false
 	parser.ambiguityProfile = nil
 	parser.noTreeBenchmarkOnly = false
+	parser.noTreeCheckpointBenchmarkOnly = false
 	parser.timeoutMicros = 0
 	parser.cancellationFlag = nil
 	// Release *Node refs so the arenas from the last incremental parse can be
@@ -651,7 +653,7 @@ func (p *Parser) canFinalizeNoActionEOF(s *glrStack) bool {
 	nonExtraCount := 0
 	onlyNonExtra := (*Node)(nil)
 	countNode := func(n *Node) bool {
-		if n == nil || n.isExtra {
+		if n == nil || n.isExtra() {
 			return false
 		}
 		nonExtraCount++
@@ -849,14 +851,14 @@ func normalizeSQLRecoveredMissingNull(root *Node, arena *nodeArena, lang *Langua
 				continue
 			}
 			walk(child)
-			if parent.Type(lang) != "select_clause_body" || !child.isMissing || child.symbol != numberSym {
+			if parent.Type(lang) != "select_clause_body" || !child.isMissing() || child.symbol != numberSym {
 				continue
 			}
 			leaf := newLeafNodeInArena(arena, nullLeafSym, false, child.startByte, child.endByte, child.startPoint, child.endPoint)
-			leaf.isMissing = true
-			leaf.hasError = true
+			leaf.setMissing(true)
+			leaf.setHasError(true)
 			repl := newParentNodeInArena(arena, nullParentSym, true, []*Node{leaf}, nil, 0)
-			repl.hasError = true
+			repl.setHasError(true)
 			parent.children[i] = repl
 		}
 	}
@@ -981,18 +983,18 @@ func (p *Parser) tryRecoverTrailingEOFSuffix(s *glrStack, tok Token, nodeCount *
 
 	for firstDrop := len(entries) - 1; firstDrop >= 0; firstDrop-- {
 		node := entries[firstDrop].node
-		if node == nil || node.isExtra {
+		if node == nil || node.isExtra() {
 			continue
 		}
 		if firstDrop == 0 {
 			continue
 		}
 		cuts := []int{firstDrop}
-		if !node.isNamed {
+		if !node.isNamed() {
 			cut := firstDrop + 1
 			for cut < len(entries) {
 				trailing := entries[cut].node
-				if trailing == nil || !trailing.isExtra {
+				if trailing == nil || !trailing.isExtra() {
 					break
 				}
 				cut++
@@ -1050,10 +1052,10 @@ func (p *Parser) tryRecoverTrailingEOFSuffix(s *glrStack, tok Token, nodeCount *
 				if trailing.symbol == errorSymbol && trailing.startByte == tok.StartByte && trailing.endByte == tok.EndByte {
 					continue
 				}
-				if !recovered && !trailing.isExtra {
+				if !recovered && !trailing.isExtra() {
 					errNode := newParentNodeInArena(arena, errorSymbol, true, []*Node{trailing}, nil, 0)
-					errNode.hasError = true
-					errNode.isExtra = true
+					errNode.setHasError(true)
+					errNode.setExtra(true)
 					nodes = append(nodes, errNode)
 					recovered = true
 					if nodeCount != nil {
@@ -1215,7 +1217,7 @@ func (p *Parser) updateCurrentExternalTokenCheckpoint(ts TokenSource, tok Token)
 		return
 	}
 	p.clearCurrentExternalTokenCheckpoint()
-	if p.noTreeBenchmarkOnly {
+	if p.noTreeBenchmarkOnly && !p.noTreeCheckpointBenchmarkOnly {
 		return
 	}
 	cp, startByte, endByte, ok := currentExternalScannerCheckpoint(ts)
@@ -1235,7 +1237,7 @@ func (p *Parser) recordCurrentExternalLeafCheckpoint(node *Node, tok Token) {
 	if p == nil || node == nil || !p.currentExternalTokenCheckpointValid {
 		return
 	}
-	if p.noTreeBenchmarkOnly {
+	if p.noTreeBenchmarkOnly && !p.noTreeCheckpointBenchmarkOnly {
 		return
 	}
 	if tok.Missing || tok.NoLookahead || tok.Symbol == 0 {
@@ -1925,10 +1927,10 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				leaf := newLeafNodeInArena(arena, tok.Symbol, named,
 					tok.StartByte, tok.EndByte, tok.StartPoint, tok.EndPoint)
 				if tok.Missing {
-					leaf.isMissing = true
-					leaf.hasError = true
+					leaf.setMissing(true)
+					leaf.setHasError(true)
 				}
-				leaf.isExtra = true
+				leaf.setExtra(true)
 				leaf.preGotoState = currentState
 				leaf.parseState = extraShiftTargetState(currentState, actions[0])
 				p.recordCurrentExternalLeafCheckpoint(leaf, tok)
@@ -2369,7 +2371,7 @@ func reducePredecessorStateForStack(s *glrStack, childCount int) (StateID, bool)
 	if s.gss.head != nil {
 		nonExtraFound := 0
 		for n := s.gss.head; n != nil; n = n.prev {
-			if n.entry.node == nil || n.entry.node.isExtra {
+			if n.entry.node == nil || n.entry.node.isExtra() {
 				continue
 			}
 			nonExtraFound++
@@ -2653,7 +2655,7 @@ func buildStackCullKeys(stacks []glrStack, lang *Language, buf *[]stackCullKey) 
 			flags |= stackCullShiftedFlag
 		}
 		errorRank := uint8(0)
-		if top.node != nil && top.node.hasError {
+		if top.node != nil && top.node.hasError() {
 			errorRank = 1
 		}
 		keys[i] = stackCullKey{

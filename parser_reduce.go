@@ -125,13 +125,13 @@ func (p *Parser) pushOrExtendErrorNode(s *glrStack, state StateID, tok Token, no
 		top := s.top().node
 		if top != nil &&
 			top.symbol == errorSymbol &&
-			!top.isMissing &&
+			!top.isMissing() &&
 			len(top.children) == 0 &&
 			top.parseState == state &&
 			tok.StartByte >= top.endByte {
 			top.endByte = tok.EndByte
 			top.endPoint = tok.EndPoint
-			top.hasError = true
+			top.setHasError(true)
 			nodeBumpEquivVersion(top)
 			if s.byteOffset < top.endByte {
 				s.byteOffset = top.endByte
@@ -145,7 +145,7 @@ func (p *Parser) pushOrExtendErrorNode(s *glrStack, state StateID, tok Token, no
 
 	errNode := newLeafNodeInArena(arena, errorSymbol, true,
 		tok.StartByte, tok.EndByte, tok.StartPoint, tok.EndPoint)
-	errNode.hasError = true
+	errNode.setHasError(true)
 	if trackChildErrors != nil {
 		*trackChildErrors = true
 	}
@@ -258,14 +258,14 @@ func (p *Parser) applyAction(s *glrStack, act ParseAction, tok Token, anyReduced
 		if tok.Missing || (p != nil && p.language != nil &&
 			(p.language.Name == "c" || p.language.Name == "cpp" || p.language.Name == "objc") &&
 			tok.Symbol != 0 && tok.StartByte == tok.EndByte && tok.Text == "") {
-			leaf.isMissing = true
-			leaf.hasError = true
+			leaf.setMissing(true)
+			leaf.setHasError(true)
 			if trackChildErrors != nil {
 				*trackChildErrors = true
 			}
 		}
-		leaf.isExtra = act.Extra
-		if leaf.isExtra && perfCountersEnabled {
+		leaf.setExtra(act.Extra)
+		if leaf.isExtra() && perfCountersEnabled {
 			perfRecordExtraNode()
 		}
 		currentState := s.top().state
@@ -362,7 +362,7 @@ func reduceWindowFromGSS(s *glrStack, childCount int, buf []stackEntry) ([]stack
 	n := s.gss.head
 	for n != nil {
 		rev = append(rev, n.entry)
-		if n.entry.node != nil && !n.entry.node.isExtra {
+		if n.entry.node != nil && !n.entry.node.isExtra() {
 			nonExtraFound++
 			if nonExtraFound == childCount {
 				break
@@ -411,7 +411,7 @@ func (p *Parser) tryFastVisibleReduceActionFromGSS(s *glrStack, act ParseAction,
 			return false
 		}
 		child := n.entry.node
-		if child == nil || child.isExtra {
+		if child == nil || child.isExtra() {
 			return false
 		}
 		visible := true
@@ -453,7 +453,7 @@ func (p *Parser) tryFastVisibleReduceActionFromGSS(s *glrStack, act ParseAction,
 		targetState = gotoState
 	}
 	if tok.NoLookahead && targetState == topState {
-		parent.isExtra = true
+		parent.setExtra(true)
 	}
 	parent.preGotoState = topState
 	parent.parseState = targetState
@@ -488,7 +488,7 @@ func (p *Parser) applyReduceActionFromGSS(s *glrStack, act ParseAction, tok Toke
 		reducedEnd := actualEnd
 		for i := actualEnd - 1; i >= 0; i-- {
 			n := windowEntries[i].node
-			if n == nil || !n.isExtra {
+			if n == nil || !n.isExtra() {
 				break
 			}
 			reducedEnd--
@@ -526,7 +526,7 @@ func (p *Parser) applyReduceActionFromGSS(s *glrStack, act ParseAction, tok Toke
 	reducedEnd := actualEnd
 	for i := actualEnd - 1; i >= 0; i-- {
 		n := windowEntries[i].node
-		if n == nil || !n.isExtra {
+		if n == nil || !n.isExtra() {
 			break
 		}
 		reducedEnd--
@@ -599,7 +599,7 @@ func (p *Parser) applyReduceActionFromGSS(s *glrStack, act ParseAction, tok Toke
 		targetState = gotoState
 	}
 	if tok.NoLookahead && targetState == topState {
-		parent.isExtra = true
+		parent.setExtra(true)
 	}
 	parent.preGotoState = topState
 	parent.parseState = targetState
@@ -640,7 +640,7 @@ func computeReduceRange(entries []stackEntry, childCount int) (reduceRange, bool
 	nonExtraFound := 0
 	for nonExtraFound < childCount && start > 1 {
 		start--
-		if entries[start].node != nil && !entries[start].node.isExtra {
+		if entries[start].node != nil && !entries[start].node.isExtra() {
 			nonExtraFound++
 		}
 	}
@@ -652,7 +652,7 @@ func computeReduceRange(entries []stackEntry, childCount int) (reduceRange, bool
 	reducedEnd := actualEnd
 	for i := actualEnd - 1; i >= start; i-- {
 		n := entries[i].node
-		if n == nil || !n.isExtra {
+		if n == nil || !n.isExtra() {
 			break
 		}
 		reducedEnd--
@@ -674,7 +674,7 @@ func computeReduceRawSpan(entries []stackEntry, start, end int) reduceRawSpan {
 	foundStart := false
 	for i := start; i < end; i++ {
 		n := entries[i].node
-		if n != nil && !n.isExtra {
+		if n != nil && !n.isExtra() {
 			span.startByte = n.startByte
 			span.startPoint = n.startPoint
 			foundStart = true
@@ -685,7 +685,7 @@ func computeReduceRawSpan(entries []stackEntry, start, end int) reduceRawSpan {
 	foundEnd := false
 	for i := end - 1; i >= start; i-- {
 		n := entries[i].node
-		if n != nil && !n.isExtra {
+		if n != nil && !n.isExtra() {
 			span.endByte = n.endByte
 			span.endPoint = n.endPoint
 			foundEnd = true
@@ -758,7 +758,7 @@ func extendParentSpanToWindow(parent *Node, entries []stackEntry, start, reduced
 		if n == nil {
 			continue
 		}
-		if !n.isExtra {
+		if !n.isExtra() {
 			break
 		}
 		if n.startByte < parent.startByte {
@@ -777,7 +777,7 @@ func extendParentSpanToWindow(parent *Node, entries []stackEntry, start, reduced
 	// contiguity checks below prevent phantom gaps from inflating the span.
 	for i := reducedEnd - 1; i >= start; i-- {
 		n := entries[i].node
-		if n == nil || n.isExtra {
+		if n == nil || n.isExtra() {
 			continue
 		}
 		visible := true
@@ -811,7 +811,7 @@ func extendParentSpanToWindow(parent *Node, entries []stackEntry, start, reduced
 	// can chain (for example interpolated multiline string middle -> string end).
 	for i := start; i < reducedEnd; i++ {
 		n := entries[i].node
-		if n == nil || n.isExtra {
+		if n == nil || n.isExtra() {
 			continue
 		}
 		visible := true
@@ -888,7 +888,7 @@ func fieldSourceAt(fieldSources []uint8, i int) uint8 {
 func countEligibleNamedFieldTargets(children []*Node, fieldIDs []FieldID, start, end int) int {
 	count := 0
 	for i := start; i < end; i++ {
-		if children[i] == nil || children[i].isExtra || children[i].isMissing || !children[i].isNamed || fieldIDs[i] != 0 {
+		if children[i] == nil || children[i].isExtra() || children[i].isMissing() || !children[i].isNamed() || fieldIDs[i] != 0 {
 			continue
 		}
 		count++
@@ -899,7 +899,7 @@ func countEligibleNamedFieldTargets(children []*Node, fieldIDs []FieldID, start,
 func countEligibleFieldTargets(children []*Node, fieldIDs []FieldID, start, end int) int {
 	count := 0
 	for i := start; i < end; i++ {
-		if children[i] == nil || children[i].isExtra || children[i].isMissing || fieldIDs[i] != 0 {
+		if children[i] == nil || children[i].isExtra() || children[i].isMissing() || fieldIDs[i] != 0 {
 			continue
 		}
 		count++
@@ -950,7 +950,7 @@ func flattenedSpanSingleDescendantFieldTarget(children []*Node, start, end int, 
 	target := -1
 	for i := start; i < end; i++ {
 		child := children[i]
-		if child == nil || child.isExtra || !nodeHasDirectFieldID(child, fid) {
+		if child == nil || child.isExtra() || !nodeHasDirectFieldID(child, fid) {
 			continue
 		}
 		if target >= 0 {
@@ -1167,7 +1167,7 @@ func (p *Parser) buildReduceChildrenAllVisible(entries []stackEntry, start, end,
 			continue
 		}
 		effectiveSymbol := n.symbol
-		if !n.isExtra {
+		if !n.isExtra() {
 			if structuralChildIndex < len(aliasSeq) {
 				if alias := aliasSeq[structuralChildIndex]; alias != 0 {
 					effectiveSymbol = alias
@@ -1208,7 +1208,7 @@ func (p *Parser) buildReduceChildrenAllVisible(entries []stackEntry, start, end,
 		}
 		var fid FieldID
 		inherited := false
-		if !n.isExtra {
+		if !n.isExtra() {
 			if structuralChildIndex < len(rawFieldIDs) {
 				fid = rawFieldIDs[structuralChildIndex]
 				if structuralChildIndex < len(rawInherited) {
@@ -1297,7 +1297,7 @@ func (p *Parser) buildReduceChildren(entries []stackEntry, start, end, childCoun
 		}
 		var fid FieldID
 		inherited := false
-		if !n.isExtra {
+		if !n.isExtra() {
 			if structuralChildIndex < len(rawFieldIDs) {
 				fid = rawFieldIDs[structuralChildIndex]
 				if structuralChildIndex < len(rawInherited) {
@@ -1367,7 +1367,7 @@ func (p *Parser) buildReduceChildren(entries []stackEntry, start, end, childCoun
 						continue
 					}
 				}
-				if inherited && n.isNamed && !flattenedSpanHasFieldID(scratch.fieldIDs, spanStart, fieldEnd, fid) && countEligibleNamedFieldTargets(scratch.nodes, scratch.fieldIDs, spanStart, fieldEnd) > 1 {
+				if inherited && n.isNamed() && !flattenedSpanHasFieldID(scratch.fieldIDs, spanStart, fieldEnd, fid) && countEligibleNamedFieldTargets(scratch.nodes, scratch.fieldIDs, spanStart, fieldEnd) > 1 {
 					continue
 				}
 				if inherited && !flattenedSpanHasFieldID(scratch.fieldIDs, spanStart, fieldEnd, fid) && flattenedSpanHasAnyDirectField(scratch.nodes, scratch.fieldIDs, scratch.fieldSources, spanStart, fieldEnd) {
@@ -1408,7 +1408,7 @@ func (p *Parser) buildReduceChildren(entries []stackEntry, start, end, childCoun
 					continue
 				}
 			}
-			if inherited && n.isNamed && !flattenedSpanHasFieldID(scratch.fieldIDs, spanStart, fieldEnd, fid) && countEligibleNamedFieldTargets(scratch.nodes, scratch.fieldIDs, spanStart, fieldEnd) > 1 {
+			if inherited && n.isNamed() && !flattenedSpanHasFieldID(scratch.fieldIDs, spanStart, fieldEnd, fid) && countEligibleNamedFieldTargets(scratch.nodes, scratch.fieldIDs, spanStart, fieldEnd) > 1 {
 				continue
 			}
 			if inherited && !flattenedSpanHasFieldID(scratch.fieldIDs, spanStart, fieldEnd, fid) && flattenedSpanHasAnyDirectField(scratch.nodes, scratch.fieldIDs, scratch.fieldSources, spanStart, fieldEnd) {
@@ -1702,7 +1702,7 @@ func applyFieldToFlattenedSpan(children []*Node, fieldIDs []FieldID, fieldSource
 	override := !multipleKinds && conflictCount >= 2
 	if override {
 		for j := start; j < end; j++ {
-			if children[j] == nil || children[j].isExtra || children[j].isMissing {
+			if children[j] == nil || children[j].isExtra() || children[j].isMissing() {
 				continue
 			}
 			if inherited && fieldIDs[j] != 0 && fieldIDs[j] != fid && fieldSourceAt(fieldSources, j) == fieldSourceDirect {
@@ -1717,7 +1717,7 @@ func applyFieldToFlattenedSpan(children []*Node, fieldIDs []FieldID, fieldSource
 	}
 	if !multipleKinds && conflictCount == 1 && preferNamed {
 		for j := start; j < end; j++ {
-			if children[j] == nil || children[j].isExtra || children[j].isMissing || !children[j].isNamed {
+			if children[j] == nil || children[j].isExtra() || children[j].isMissing() || !children[j].isNamed() {
 				continue
 			}
 			if inherited && fieldIDs[j] != 0 && fieldIDs[j] != fid && fieldSourceAt(fieldSources, j) == fieldSourceDirect {
@@ -1762,10 +1762,10 @@ func applyFieldToFlattenedSpan(children []*Node, fieldIDs []FieldID, fieldSource
 		allowAnonymousSingleDirectTarget = namedTargets == 0 && totalTargets == 1
 	}
 	for j := start; !alreadyAssigned && j < end; j++ {
-		if fieldIDs[j] != 0 || children[j] == nil || children[j].isExtra || children[j].isMissing {
+		if fieldIDs[j] != 0 || children[j] == nil || children[j].isExtra() || children[j].isMissing() {
 			continue
 		}
-		if preferNamed && !allowAnonymousSingleDirectTarget && !children[j].isNamed {
+		if preferNamed && !allowAnonymousSingleDirectTarget && !children[j].isNamed() {
 			continue
 		}
 		if inherited && nodeHasDirectFieldID(children[j], fid) && end-start != 1 {
@@ -1774,7 +1774,7 @@ func applyFieldToFlattenedSpan(children []*Node, fieldIDs []FieldID, fieldSource
 		if source == fieldSourceDirect {
 			if namedTargets == 0 && totalTargets == 1 {
 				for k := start; k < end; k++ {
-					if children[k] == nil || children[k].isExtra || children[k].isMissing || fieldIDs[k] != 0 {
+					if children[k] == nil || children[k].isExtra() || children[k].isMissing() || fieldIDs[k] != 0 {
 						continue
 					}
 					fieldIDs[k] = fid
@@ -1787,7 +1787,7 @@ func applyFieldToFlattenedSpan(children []*Node, fieldIDs []FieldID, fieldSource
 			}
 			if namedTargets > 1 {
 				for k := start; k < end; k++ {
-					if children[k] == nil || children[k].isExtra || children[k].isMissing || !children[k].isNamed || fieldIDs[k] != 0 {
+					if children[k] == nil || children[k].isExtra() || children[k].isMissing() || !children[k].isNamed() || fieldIDs[k] != 0 {
 						continue
 					}
 					fieldIDs[k] = fid
@@ -1799,7 +1799,7 @@ func applyFieldToFlattenedSpan(children []*Node, fieldIDs []FieldID, fieldSource
 			}
 			if namedTargets == 1 && totalTargets > 1 {
 				for k := start; k < end; k++ {
-					if children[k] == nil || children[k].isExtra || children[k].isMissing || fieldIDs[k] != 0 {
+					if children[k] == nil || children[k].isExtra() || children[k].isMissing() || fieldIDs[k] != 0 {
 						continue
 					}
 					fieldIDs[k] = fid
@@ -1811,7 +1811,7 @@ func applyFieldToFlattenedSpan(children []*Node, fieldIDs []FieldID, fieldSource
 			}
 			if namedTargets == 1 {
 				for k := start; k < end; k++ {
-					if children[k] == nil || children[k].isExtra || children[k].isMissing || !children[k].isNamed || fieldIDs[k] != 0 {
+					if children[k] == nil || children[k].isExtra() || children[k].isMissing() || !children[k].isNamed() || fieldIDs[k] != 0 {
 						continue
 					}
 					fieldIDs[k] = fid
@@ -1958,7 +1958,7 @@ func (p *Parser) applyReduceAction(s *glrStack, act ParseAction, tok Token, anyR
 		targetState = gotoState
 	}
 	if tok.NoLookahead && targetState == window.topState {
-		parent.isExtra = true
+		parent.setExtra(true)
 	}
 	parent.preGotoState = window.topState
 	parent.parseState = targetState
@@ -1986,7 +1986,7 @@ func (p *Parser) pushNoTreeReduceNode(s *glrStack, act ParseAction, tok Token, a
 
 	parent := newNoTreeReduceNodeInArena(arena, act.Symbol, p.isNamedSymbol(act.Symbol), act.ProductionID, entries, start, reducedEnd, tok, trackChildErrors)
 	if tok.NoLookahead && targetState == topState {
-		parent.isExtra = true
+		parent.setExtra(true)
 	}
 	parent.preGotoState = topState
 	parent.parseState = targetState
@@ -2015,7 +2015,7 @@ func newNoTreeReduceNodeInArena(arena *nodeArena, sym Symbol, named bool, produc
 		arena.noTreeReduceNodesConstructed++
 	}
 	n.symbol = sym
-	n.isNamed = named
+	n.setNamed(named)
 	n.startByte = tok.StartByte
 	n.endByte = tok.StartByte
 	n.startPoint = tok.StartPoint
@@ -2032,14 +2032,14 @@ func newNoTreeReduceNodeInArena(arena *nodeArena, sym Symbol, named bool, produc
 			if child == nil {
 				continue
 			}
-			if !child.isExtra {
+			if !child.isExtra() {
 				if firstNonExtra == nil {
 					firstNonExtra = child
 				}
 				lastNonExtra = child
 			}
-			if trackChildErrors && child.hasError {
-				n.hasError = true
+			if trackChildErrors && child.hasError() {
+				n.setHasError(true)
 			}
 		}
 		if firstNonExtra != nil {
@@ -2071,7 +2071,7 @@ func (p *Parser) pushCollapsedUnaryReduceNode(s *glrStack, act ParseAction, tok 
 		targetState = gotoState
 	}
 	if tok.NoLookahead && targetState == topState {
-		child.isExtra = true
+		child.setExtra(true)
 	}
 	child.productionID = act.ProductionID
 	child.preGotoState = topState
@@ -2332,7 +2332,7 @@ func aliasedNodeInArena(arena *nodeArena, lang *Language, n *Node, alias Symbol)
 		*cloned = *n
 		cloned.symbol = alias
 		if lang != nil && int(alias) < len(lang.SymbolMetadata) {
-			cloned.isNamed = lang.SymbolMetadata[alias].Named
+			cloned.setNamed(lang.SymbolMetadata[alias].Named)
 		}
 		return cloned
 	}
@@ -2341,7 +2341,7 @@ func aliasedNodeInArena(arena *nodeArena, lang *Language, n *Node, alias Symbol)
 	*cloned = *n
 	cloned.symbol = alias
 	if lang != nil && int(alias) < len(lang.SymbolMetadata) {
-		cloned.isNamed = lang.SymbolMetadata[alias].Named
+		cloned.setNamed(lang.SymbolMetadata[alias].Named)
 	}
 	cloned.ownerArena = arena
 	return cloned

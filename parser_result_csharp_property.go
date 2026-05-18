@@ -101,7 +101,7 @@ func csharpInsertMissingAttributedProperties(declList *Node, source []byte, lang
 	declList.children = children
 	declList.fieldIDs = nil
 	declList.fieldSources = nil
-	declList.hasError = false
+	declList.setHasError(false)
 	populateParentNode(declList, declList.children)
 	return true
 }

@@ -90,7 +90,7 @@ func collapsePythonClassFragments(nodes []*Node, arena *nodeArena, lang *Languag
 		if repairedBlock, changed := repairPythonBlock(blockNode, arena, lang, true); changed {
 			blockNode = repairedBlock
 		} else {
-			blockNode.hasError = false
+			blockNode.setHasError(false)
 		}
 
 		classChildren := make([]*Node, 0, 5)
@@ -106,7 +106,7 @@ func collapsePythonClassFragments(nodes []*Node, arena *nodeArena, lang *Languag
 		}
 		classFieldIDs := pythonSyntheticClassFieldIDs(arena, len(classChildren), argNode != nil, lang)
 		classDef := newParentNodeInArena(arena, classDefSym, true, classChildren, classFieldIDs, 0)
-		classDef.hasError = false
+		classDef.setHasError(false)
 
 		out := make([]*Node, 0, len(nodes)-(bodyEnd-i)+1)
 		out = append(out, nodes[:i]...)
@@ -166,7 +166,7 @@ func collapsePythonFunctionFragments(nodes []*Node, arena *nodeArena, lang *Lang
 		if repairedBlock, changed := repairPythonBlock(blockNode, arena, lang, false); changed {
 			blockNode = repairedBlock
 		} else {
-			blockNode.hasError = false
+			blockNode.setHasError(false)
 		}
 		fnChildren := []*Node{defNode, nameNode, paramsNode, colonNode, blockNode}
 		if arena != nil {
@@ -175,7 +175,7 @@ func collapsePythonFunctionFragments(nodes []*Node, arena *nodeArena, lang *Lang
 			fnChildren = buf
 		}
 		fn := newParentNodeInArena(arena, functionDefSym, true, fnChildren, pythonSyntheticFunctionFieldIDs(arena, len(fnChildren), lang), 0)
-		fn.hasError = false
+		fn.setHasError(false)
 
 		out := make([]*Node, 0, len(nodes)-(bodyEnd-i)+1)
 		out = append(out, nodes[:i]...)
@@ -227,7 +227,7 @@ func collapsePythonTerminalIfSuffix(nodes []*Node, arena *nodeArena, lang *Langu
 		blockChildren = buf
 	}
 	blockNode := newParentNodeInArena(arena, blockSym, true, blockChildren, nil, 0)
-	blockNode.hasError = false
+	blockNode.setHasError(false)
 
 	ifChildren := []*Node{ifNode, condNode, colonNode, blockNode}
 	if arena != nil {
@@ -237,7 +237,7 @@ func collapsePythonTerminalIfSuffix(nodes []*Node, arena *nodeArena, lang *Langu
 	}
 	ifFieldIDs := pythonSyntheticIfFieldIDs(arena, len(ifChildren), lang)
 	ifStmt := newParentNodeInArena(arena, ifSym, true, ifChildren, ifFieldIDs, 0)
-	ifStmt.hasError = false
+	ifStmt.setHasError(false)
 
 	out := make([]*Node, 0, n-5)
 	out = append(out, nodes[:n-6]...)

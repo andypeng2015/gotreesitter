@@ -425,7 +425,7 @@ func (p *Parser) Parse(source []byte) (*Tree, error) {
 	}()
 	lexer := NewLexer(p.language.LexStates, source)
 	ts := acquireDFATokenSource(lexer, p.language, p.lookupActionIndex, p.hasKeywordState)
-	if p.noTreeBenchmarkOnly {
+	if p.noTreeBenchmarkOnly && !p.noTreeCheckpointBenchmarkOnly {
 		ts.usesExternalCheckpoints = false
 	}
 	defer ts.Close()
@@ -448,9 +448,31 @@ func (p *Parser) ParseNoTreeBenchmarkOnly(source []byte) (*Tree, error) {
 		return nil, ErrNoLanguage
 	}
 	prev := p.noTreeBenchmarkOnly
+	prevCheckpoints := p.noTreeCheckpointBenchmarkOnly
 	p.noTreeBenchmarkOnly = true
+	p.noTreeCheckpointBenchmarkOnly = false
 	defer func() {
 		p.noTreeBenchmarkOnly = prev
+		p.noTreeCheckpointBenchmarkOnly = prevCheckpoints
+	}()
+	return p.Parse(source)
+}
+
+// ParseNoTreeWithExternalCheckpointsBenchmarkOnly parses source while
+// suppressing parent/child tree materialization in reduce actions but keeping
+// external-scanner checkpoint capture enabled. It is intended only for parser
+// performance attribution; the returned tree is not API-compatible.
+func (p *Parser) ParseNoTreeWithExternalCheckpointsBenchmarkOnly(source []byte) (*Tree, error) {
+	if p == nil {
+		return nil, ErrNoLanguage
+	}
+	prevNoTree := p.noTreeBenchmarkOnly
+	prevCheckpoints := p.noTreeCheckpointBenchmarkOnly
+	p.noTreeBenchmarkOnly = true
+	p.noTreeCheckpointBenchmarkOnly = true
+	defer func() {
+		p.noTreeBenchmarkOnly = prevNoTree
+		p.noTreeCheckpointBenchmarkOnly = prevCheckpoints
 	}()
 	return p.Parse(source)
 }

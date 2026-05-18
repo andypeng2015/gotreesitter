@@ -64,7 +64,7 @@ func replaceChildRangeWithSingleNode(parent *Node, start, end int, replacement *
 			continue
 		}
 		child.parent = parent
-		child.childIndex = i
+		child.childIndex = int32(i)
 	}
 }
 

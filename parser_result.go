@@ -49,7 +49,7 @@ func (p *Parser) buildNoTreeBenchmarkResult(source []byte, arena *nodeArena, roo
 	root := arena.allocNodeFast()
 	root.ownerArena = arena
 	root.symbol = sym
-	root.isNamed = named
+	root.setNamed(named)
 	root.startByte = 0
 	root.endByte = rootEndByte
 	root.childIndex = -1
@@ -201,8 +201,8 @@ func compareNodeAliasPreference(p *Parser, a, b *Node) int {
 	}
 	if a.startByte != b.startByte ||
 		a.endByte != b.endByte ||
-		a.isExtra != b.isExtra ||
-		a.isMissing != b.isMissing ||
+		a.isExtra() != b.isExtra() ||
+		a.isMissing() != b.isMissing() ||
 		len(a.children) != len(b.children) {
 		return 0
 	}
@@ -280,7 +280,7 @@ func filterZeroWidthExtras(nodes []*Node, arena *nodeArena) []*Node {
 	}
 	keep := 0
 	for _, n := range nodes {
-		if n == nil || !n.isExtra || n.endByte > n.startByte {
+		if n == nil || !n.isExtra() || n.endByte > n.startByte {
 			keep++
 		}
 	}
@@ -289,7 +289,7 @@ func filterZeroWidthExtras(nodes []*Node, arena *nodeArena) []*Node {
 	}
 	filtered := make([]*Node, 0, keep)
 	for _, n := range nodes {
-		if n != nil && n.isExtra && n.endByte == n.startByte {
+		if n != nil && n.isExtra() && n.endByte == n.startByte {
 			continue
 		}
 		filtered = append(filtered, n)
@@ -387,7 +387,7 @@ func (p *Parser) buildResultFromNodes(nodes []*Node, source []byte, arena *nodeA
 	var allExtras []*Node
 	var extras []*Node
 	for _, n := range nodes {
-		if n.isExtra {
+		if n.isExtra() {
 			allExtras = append(allExtras, n)
 			// Ignore invisible extras and zero-width extras in final-root
 			// recovery; they should not force an error wrapper or inflate root
@@ -482,7 +482,7 @@ func (p *Parser) buildResultFromNodes(nodes []*Node, source []byte, arena *nodeA
 			}
 		}
 		realRoot = repairPythonRootNode(realRoot, arena, p.language)
-		extendTrailing := returnRealRoot || !realRoot.hasError
+		extendTrailing := returnRealRoot || !realRoot.hasError()
 		p.finalizeResultRoot(realRoot, source, linkScratch, shouldWireParentLinks && returnRealRoot, extendTrailing)
 		if returnRealRoot {
 			return newTreeWithArenas(realRoot, source, p.language, arena, getBorrowed())
@@ -512,7 +512,7 @@ func (p *Parser) buildResultFromNodes(nodes []*Node, source []byte, arena *nodeA
 	}
 	root := newParentNodeInArena(arena, rootSymbol, true, rootChildren, nil, 0)
 	if rootHasError && !(p != nil && p.language != nil && p.language.Name == "python" && hasExpectedRoot && pythonModuleChildrenLookComplete(rootChildren, p.language)) {
-		root.hasError = true
+		root.setHasError(true)
 	}
 	root = repairPythonRootNode(root, arena, p.language)
 	p.finalizeResultRoot(root, source, linkScratch, shouldWireParentLinks, true)

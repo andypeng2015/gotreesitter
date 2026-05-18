@@ -276,7 +276,7 @@ func TestCanFinalizeNoActionEOFAcceptsSingleNonterminalWithExtras(t *testing.T) 
 
 	s := newGLRStack(lang.InitialState)
 	extra := NewLeafNode(0, false, 0, 0, Point{Row: 0, Column: 0}, Point{Row: 0, Column: 0})
-	extra.isExtra = true
+	extra.setExtra(true)
 	s.push(0, extra, nil, nil)
 	s.push(2, NewLeafNode(3, true, 0, 1, Point{Row: 0, Column: 0}, Point{Row: 0, Column: 1}), nil, nil)
 

@@ -19,7 +19,7 @@ func TestNormalizeSvelteTrailingExtraTriviaDropsTrailingToken(t *testing.T) {
 	script := newLeafNodeInArena(arena, 2, true, 0, 8, Point{}, Point{Column: 8})
 	style := newLeafNodeInArena(arena, 3, true, 9, 17, Point{Row: 1}, Point{Row: 1, Column: 8})
 	trailing := newLeafNodeInArena(arena, 4, false, 17, 18, Point{Row: 1, Column: 8}, Point{Row: 2})
-	trailing.isExtra = true
+	trailing.setExtra(true)
 	root := newParentNodeInArena(arena, 1, true, []*Node{script, style, trailing}, []FieldID{0, 0, 0}, 0)
 	root.fieldSources = []uint8{fieldSourceNone, fieldSourceNone, fieldSourceNone}
 	root.endByte = 18
@@ -228,10 +228,10 @@ func TestNormalizeErlangSourceFileFormsSetsFormsOnlyAndSnapsBounds(t *testing.T)
 
 	arena := newNodeArena(arenaClassFull)
 	comment := newLeafNodeInArena(arena, 2, true, 0, 10, Point{}, Point{Column: 10})
-	comment.isExtra = true
+	comment.setExtra(true)
 	clause := newLeafNodeInArena(arena, 4, true, 12, 20, Point{Row: 1}, Point{Row: 1, Column: 8})
 	innerComment := newLeafNodeInArena(arena, 2, true, 21, 30, Point{Row: 2}, Point{Row: 2, Column: 9})
-	innerComment.isExtra = true
+	innerComment.setExtra(true)
 	dot := newLeafNodeInArena(arena, 5, false, 31, 32, Point{Row: 3}, Point{Row: 3, Column: 1})
 	funDecl := newParentNodeInArena(arena, 3, true, []*Node{clause, innerComment, dot}, nil, 0)
 	funDecl.startByte = 0
@@ -269,7 +269,7 @@ func TestNormalizeErlangSourceFileFormsSkipsExprsMode(t *testing.T) {
 
 	arena := newNodeArena(arenaClassFull)
 	comment := newLeafNodeInArena(arena, 2, true, 0, 2, Point{}, Point{Column: 2})
-	comment.isExtra = true
+	comment.setExtra(true)
 	expr := newLeafNodeInArena(arena, 3, true, 3, 7, Point{Column: 3}, Point{Column: 7})
 	root := newParentNodeInArena(arena, 1, true, []*Node{comment, expr}, nil, 0)
 

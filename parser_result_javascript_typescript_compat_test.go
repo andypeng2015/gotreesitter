@@ -121,9 +121,9 @@ func TestNormalizeTypeScriptRecoveredNamespaceRootRewrapsNamespaceBody(t *testin
 	openBrace := newLeafNodeInArena(arena, 6, false, 18, 19, Point{Row: 1, Column: 13}, Point{Row: 1, Column: 14})
 	enumDecl := newLeafNodeInArena(arena, 7, true, 22, 28, Point{Row: 2, Column: 2}, Point{Row: 2, Column: 8})
 	wsErr := newLeafNodeInArena(arena, 1, true, 28, 30, Point{Row: 2, Column: 8}, Point{Row: 4})
-	wsErr.hasError = true
+	wsErr.setHasError(true)
 	root := newParentNodeInArena(arena, 1, true, []*Node{comment, namespaceTok, name, openBrace, enumDecl, wsErr}, nil, 0)
-	root.hasError = true
+	root.setHasError(true)
 
 	normalizeTypeScriptRecoveredNamespaceRoot(root, source, lang)
 

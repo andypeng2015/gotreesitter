@@ -228,7 +228,7 @@ func normalizeJavaScriptTypeScriptCallPrecedence(root *Node, lang *Language) {
 			if rewritten := rewriteJavaScriptTypeScriptCallPrecedence(child, lang); rewritten != nil {
 				n.children[i] = rewritten
 				rewritten.parent = n
-				rewritten.childIndex = i
+				rewritten.childIndex = int32(i)
 				child = rewritten
 			}
 			walk(child)
@@ -322,7 +322,7 @@ func javaScriptTypeScriptBinaryOperatorAndRight(node *Node, lang *Language) (*No
 	if rightIdx < 0 {
 		for i := len(node.children) - 1; i >= 0; i-- {
 			child := node.children[i]
-			if child == nil || child.isExtra {
+			if child == nil || child.isExtra() {
 				continue
 			}
 			if i != operatorIdx {
@@ -373,7 +373,7 @@ func normalizeJavaScriptTypeScriptUnaryPrecedence(root *Node, lang *Language) {
 				}
 				n.children[i] = rewritten
 				rewritten.parent = n
-				rewritten.childIndex = i
+				rewritten.childIndex = int32(i)
 				child = rewritten
 			}
 		}
@@ -432,7 +432,7 @@ func normalizeJavaScriptTypeScriptBinaryPrecedence(root *Node, lang *Language) {
 				}
 				n.children[i] = rewritten
 				rewritten.parent = n
-				rewritten.childIndex = i
+				rewritten.childIndex = int32(i)
 				child = rewritten
 			}
 		}

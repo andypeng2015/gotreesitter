@@ -69,16 +69,16 @@ func gssEntryHash(prev uint64, entry stackEntry) uint64 {
 	h *= gssHashPrime
 
 	var flags uint64
-	if n.isExtra {
+	if n.isExtra() {
 		flags |= 1
 	}
-	if n.isNamed {
+	if n.isNamed() {
 		flags |= 1 << 1
 	}
-	if n.hasError {
+	if n.hasError() {
 		flags |= 1 << 2
 	}
-	if n.isMissing {
+	if n.isMissing() {
 		flags |= 1 << 3
 	}
 	h ^= flags

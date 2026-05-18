@@ -81,12 +81,12 @@ func normalizeCSharpRecoveredTopLevelChunks(root *Node, source []byte, p *Parser
 		recovered = buf
 	}
 	root.symbol = compilationUnitSym
-	root.isNamed = compilationUnitNamed
+	root.setNamed(compilationUnitNamed)
 	root.children = recovered
 	root.fieldIDs = nil
 	root.fieldSources = nil
 	root.productionID = 0
-	root.hasError = false
+	root.setHasError(false)
 	populateParentNode(root, root.children)
 	extendNodeToTrailingWhitespace(root, source)
 }
@@ -334,7 +334,7 @@ func csharpRecoverTopLevelCommentNodeFromRange(source []byte, start, end uint32,
 		if !ok {
 			return nil, false
 		}
-		comment.isExtra = true
+		comment.setExtra(true)
 		return comment, true
 	case start+1 < end && source[start] == '/' && source[start+1] == '*':
 		commentEnd := csharpFindBlockCommentEnd(source, start+2, end)
@@ -348,7 +348,7 @@ func csharpRecoverTopLevelCommentNodeFromRange(source []byte, start, end uint32,
 		if !ok {
 			return nil, false
 		}
-		comment.isExtra = true
+		comment.setExtra(true)
 		return comment, true
 	default:
 		return nil, false
@@ -446,13 +446,13 @@ func normalizeCSharpRecoveredNamespaces(root *Node, source []byte, p *Parser, la
 		recoveredChildren = buf
 	}
 	root.children = recoveredChildren
-	root.hasError = false
+	root.setHasError(false)
 	populateParentNode(root, root.children)
 	if root.Type(lang) == "ERROR" && csharpCanRecoverCompilationUnitRoot(root, lang) {
 		if sym, ok := lang.SymbolByName("compilation_unit"); ok {
 			root.symbol = sym
-			root.isNamed = int(sym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[sym].Named
-			root.hasError = false
+			root.setNamed(int(sym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[sym].Named)
+			root.setHasError(false)
 			populateParentNode(root, root.children)
 		}
 	}
@@ -705,12 +705,12 @@ func normalizeCSharpRecoveredTypeDeclarations(root *Node, source []byte, p *Pars
 		recoveredChildren = buf
 	}
 	root.symbol = compilationUnitSym
-	root.isNamed = compilationUnitNamed
+	root.setNamed(compilationUnitNamed)
 	root.children = recoveredChildren
 	root.fieldIDs = nil
 	root.fieldSources = nil
 	root.productionID = 0
-	root.hasError = false
+	root.setHasError(false)
 	populateParentNode(root, root.children)
 }
 
@@ -802,7 +802,7 @@ func csharpBuildRecoveredEmptyTypeDeclaration(errNode, initNode *Node, source []
 		children = buf
 	}
 	recovered := newParentNodeInArena(arena, declSym, declNamed, children, nil, 0)
-	recovered.hasError = false
+	recovered.setHasError(false)
 	return recovered, true
 }
 
@@ -836,7 +836,7 @@ func normalizeCSharpTypeConstraintKeywords(root *Node, lang *Language) {
 			child := n.children[0]
 			if child != nil && child.Type(lang) == "identifier" && len(child.children) == 1 {
 				inner := child.children[0]
-				if inner != nil && inner.Type(lang) == "notnull" && !inner.isNamed &&
+				if inner != nil && inner.Type(lang) == "notnull" && !inner.isNamed() &&
 					child.startByte == inner.startByte && child.endByte == inner.endByte {
 					n.children[0] = inner
 					inner.parent = n

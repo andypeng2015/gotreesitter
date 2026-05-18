@@ -19,7 +19,7 @@ func TestNormalizeCTranslationUnitRootRetagsRecoveredTopLevelChildren(t *testing
 	ifdef := newLeafNodeInArena(arena, 3, true, 0, 7, Point{}, Point{Column: 7})
 	decl := newLeafNodeInArena(arena, 4, true, 8, 18, Point{Row: 1}, Point{Row: 1, Column: 10})
 	root := newParentNodeInArena(arena, 1, true, []*Node{ifdef, decl}, nil, 0)
-	root.hasError = true
+	root.setHasError(true)
 
 	normalizeCTranslationUnitRoot(root, lang)
 
@@ -48,7 +48,7 @@ func TestNormalizeGoSourceFileRootRetagsRecoveredTopLevelChildren(t *testing.T) 
 	pkg := newLeafNodeInArena(arena, 3, true, 0, 12, Point{}, Point{Column: 12})
 	fn := newLeafNodeInArena(arena, 4, true, 13, 30, Point{Row: 1}, Point{Row: 1, Column: 17})
 	root := newParentNodeInArena(arena, 1, true, []*Node{pkg, fn}, nil, 0)
-	root.hasError = true
+	root.setHasError(true)
 
 	normalizeGoSourceFileRoot(root, nil, &Parser{language: lang})
 

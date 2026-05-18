@@ -28,11 +28,11 @@ func normalizeYAMLRecoveredRoot(root *Node, source []byte, lang *Language) {
 					streamChildren = append(streamChildren, doc)
 
 					root.symbol = streamSym
-					root.isNamed = lang.SymbolMetadata[streamSym].Named
+					root.setNamed(lang.SymbolMetadata[streamSym].Named)
 					root.children = cloneNodeSliceInArena(root.ownerArena, streamChildren)
 					root.fieldIDs = nil
 					root.fieldSources = nil
-					root.hasError = false
+					root.setHasError(false)
 					populateParentNode(root, root.children)
 				}
 			}
@@ -102,7 +102,7 @@ prefixDone:
 	doc := newParentNodeInArena(arena, documentSym, lang.SymbolMetadata[documentSym].Named, children, nil, 0)
 	doc.endByte = endByte
 	doc.endPoint = endPoint
-	doc.hasError = false
+	doc.setHasError(false)
 	return doc
 }
 
@@ -148,7 +148,7 @@ decoratorsDone:
 		core = newParentNodeInArena(arena, blockScalarSym, lang.SymbolMetadata[blockScalarSym].Named, bodyNodes, nil, 0)
 		core.endByte = endByte
 		core.endPoint = endPoint
-		core.hasError = false
+		core.setHasError(false)
 	case "block_scalar":
 		core = first
 	default:
@@ -164,7 +164,7 @@ decoratorsDone:
 		}
 		core.endByte = endByte
 		core.endPoint = endPoint
-		core.hasError = false
+		core.setHasError(false)
 		return core
 	}
 
@@ -186,7 +186,7 @@ func yamlWrapYAMLNode(name string, children []*Node, endByte uint32, endPoint Po
 	node := newParentNodeInArena(arena, sym, lang.SymbolMetadata[sym].Named, children, nil, 0)
 	node.endByte = endByte
 	node.endPoint = endPoint
-	node.hasError = false
+	node.setHasError(false)
 	return node
 }
 
@@ -225,7 +225,7 @@ func yamlWrapPlainScalarFlowNodes(node *Node, lang *Language) {
 	node.children = cloneNodeSliceInArena(node.ownerArena, []*Node{plain})
 	node.fieldIDs = nil
 	node.fieldSources = nil
-	node.hasError = false
+	node.setHasError(false)
 	populateParentNode(node, node.children)
 }
 
@@ -274,7 +274,7 @@ func yamlNormalizeYAMLCollectionNode(node *Node, itemType string, lang *Language
 	node.children = cloneNodeSliceInArena(node.ownerArena, filtered)
 	node.fieldIDs = nil
 	node.fieldSources = nil
-	node.hasError = false
+	node.setHasError(false)
 	populateParentNode(node, node.children)
 }
 
@@ -317,7 +317,7 @@ func yamlNormalizeYAMLBlockNode(node *Node, lang *Language) {
 		node.children = cloneNodeSliceInArena(node.ownerArena, []*Node{recovered})
 		node.fieldIDs = nil
 		node.fieldSources = nil
-		node.hasError = false
+		node.setHasError(false)
 		populateParentNode(node, node.children)
 	}
 }
@@ -412,7 +412,7 @@ decoratorsDone:
 	node.children = cloneNodeSliceInArena(node.ownerArena, children)
 	node.fieldIDs = nil
 	node.fieldSources = nil
-	node.hasError = false
+	node.setHasError(false)
 	populateParentNode(node, node.children)
 }
 
@@ -522,7 +522,7 @@ func yamlCollapseNestedYAMLWrapper(node *Node, lang *Language) {
 		node.children = cloneNodeSliceInArena(node.ownerArena, child.children)
 		node.fieldIDs = nil
 		node.fieldSources = nil
-		node.hasError = false
+		node.setHasError(false)
 		populateParentNode(node, node.children)
 		node.startByte = startByte
 		node.startPoint = startPoint
@@ -568,7 +568,7 @@ func yamlUnwrapDocumentSequenceBlockNode(node *Node, lang *Language) {
 	node.children = cloneNodeSliceInArena(node.ownerArena, []*Node{seq})
 	node.fieldIDs = nil
 	node.fieldSources = nil
-	node.hasError = false
+	node.setHasError(false)
 	populateParentNode(node, node.children)
 	node.startByte = startByte
 	node.startPoint = startPoint

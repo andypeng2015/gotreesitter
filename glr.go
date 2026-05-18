@@ -575,16 +575,16 @@ func stackEntryNodesEquivalent(a, b *Node) bool {
 	}
 	if a.startByte != b.startByte ||
 		a.endByte != b.endByte ||
-		a.isExtra != b.isExtra ||
-		a.isNamed != b.isNamed ||
-		a.isMissing != b.isMissing ||
-		a.hasError != b.hasError ||
+		a.isExtra() != b.isExtra() ||
+		a.isNamed() != b.isNamed() ||
+		a.isMissing() != b.isMissing() ||
+		a.hasError() != b.hasError() ||
 		a.parseState != b.parseState ||
 		a.productionID != b.productionID ||
 		len(a.children) != len(b.children) {
 		return false
 	}
-	if a.hasError && b.hasError {
+	if a.hasError() && b.hasError() {
 		return true
 	}
 	if stackNodeNeedsDeepEquivalent(a) || stackNodeNeedsDeepEquivalent(b) {
@@ -602,9 +602,9 @@ func stackEntryNodesEquivalent(a, b *Node) bool {
 		if ca.symbol != cb.symbol ||
 			ca.startByte != cb.startByte ||
 			ca.endByte != cb.endByte ||
-			ca.isExtra != cb.isExtra ||
-			ca.isNamed != cb.isNamed ||
-			ca.hasError != cb.hasError ||
+			ca.isExtra() != cb.isExtra() ||
+			ca.isNamed() != cb.isNamed() ||
+			ca.hasError() != cb.hasError() ||
 			len(ca.children) != len(cb.children) {
 			return false
 		}
@@ -616,7 +616,7 @@ func stackNodeNeedsDeepEquivalent(n *Node) bool {
 	if n == nil {
 		return false
 	}
-	if n.isExtra || n.preGotoState != 0 || len(n.fieldIDs) != 0 {
+	if n.isExtra() || n.preGotoState != 0 || len(n.fieldIDs) != 0 {
 		return true
 	}
 	for i := range n.children {
@@ -624,7 +624,7 @@ func stackNodeNeedsDeepEquivalent(n *Node) bool {
 		if child == nil {
 			continue
 		}
-		if child.isExtra || child.preGotoState != 0 || len(child.fieldIDs) != 0 || len(child.children) > 0 {
+		if child.isExtra() || child.preGotoState != 0 || len(child.fieldIDs) != 0 || len(child.children) > 0 {
 			return true
 		}
 	}
@@ -660,7 +660,7 @@ func stackEntryNodesEquivalentForLanguageWithScratch(scratch *glrMergeScratch, l
 			compared := 0
 			for i := len(a.children) - 1; i >= 0 && compared < 3; i-- {
 				child := a.children[i]
-				if child == nil || child.isExtra || (!child.isNamed && len(child.children) == 0) {
+				if child == nil || child.isExtra() || (!child.isNamed() && len(child.children) == 0) {
 					continue
 				}
 				if !stackEntryNodesEquivalentFrontierWithScratch(scratch, child, b.children[i], depthLimit-1) {
@@ -673,7 +673,7 @@ func stackEntryNodesEquivalentForLanguageWithScratch(scratch *glrMergeScratch, l
 			compared := 0
 			for i := len(a.children) - 1; i >= 0 && compared < 2; i-- {
 				child := a.children[i]
-				if child == nil || child.isExtra || (!child.isNamed && len(child.children) == 0) {
+				if child == nil || child.isExtra() || (!child.isNamed() && len(child.children) == 0) {
 					continue
 				}
 				if !stackEntryNodesEquivalentFrontierWithScratch(scratch, child, b.children[i], depthLimit-1) {
@@ -698,16 +698,16 @@ func stackEntryNodesEquivalentPythonShallow(a, b *Node) bool {
 		a.startByte != b.startByte ||
 		a.endByte != b.endByte ||
 		len(a.children) != len(b.children) ||
-		a.isExtra != b.isExtra ||
-		a.isNamed != b.isNamed ||
-		a.isMissing != b.isMissing ||
-		a.hasError != b.hasError ||
+		a.isExtra() != b.isExtra() ||
+		a.isNamed() != b.isNamed() ||
+		a.isMissing() != b.isMissing() ||
+		a.hasError() != b.hasError() ||
 		a.parseState != b.parseState ||
 		a.preGotoState != b.preGotoState ||
 		a.productionID != b.productionID {
 		return false
 	}
-	if a.hasError && b.hasError {
+	if a.hasError() && b.hasError() {
 		return true
 	}
 	if len(a.fieldIDs) != len(b.fieldIDs) {
@@ -730,10 +730,10 @@ func stackEntryNodesEquivalentPythonShallow(a, b *Node) bool {
 		if ca.symbol != cb.symbol ||
 			ca.startByte != cb.startByte ||
 			ca.endByte != cb.endByte ||
-			ca.isExtra != cb.isExtra ||
-			ca.isNamed != cb.isNamed ||
-			ca.isMissing != cb.isMissing ||
-			ca.hasError != cb.hasError ||
+			ca.isExtra() != cb.isExtra() ||
+			ca.isNamed() != cb.isNamed() ||
+			ca.isMissing() != cb.isMissing() ||
+			ca.hasError() != cb.hasError() ||
 			ca.parseState != cb.parseState ||
 			ca.preGotoState != cb.preGotoState ||
 			ca.productionID != cb.productionID ||
@@ -773,10 +773,10 @@ func stackEntryNodesExactlyEquivalentWithScratch(scratch *glrMergeScratch, a, b 
 		a.startByte != b.startByte ||
 		a.endByte != b.endByte ||
 		len(a.children) != len(b.children) ||
-		a.isExtra != b.isExtra ||
-		a.isNamed != b.isNamed ||
-		a.isMissing != b.isMissing ||
-		a.hasError != b.hasError ||
+		a.isExtra() != b.isExtra() ||
+		a.isNamed() != b.isNamed() ||
+		a.isMissing() != b.isMissing() ||
+		a.hasError() != b.hasError() ||
 		a.parseState != b.parseState ||
 		a.preGotoState != b.preGotoState ||
 		a.productionID != b.productionID ||
@@ -786,7 +786,7 @@ func stackEntryNodesExactlyEquivalentWithScratch(scratch *glrMergeScratch, a, b 
 	if hit, ok := lookupNodeEquivCache(scratch, a, b, depth); ok {
 		return hit
 	}
-	if a.hasError && b.hasError {
+	if a.hasError() && b.hasError() {
 		storeNodeEquivCache(scratch, a, b, depth, true)
 		return true
 	}
@@ -818,10 +818,10 @@ func stackEntryNodesEquivalentFrontierWithScratch(scratch *glrMergeScratch, a, b
 		a.startByte != b.startByte ||
 		a.endByte != b.endByte ||
 		len(a.children) != len(b.children) ||
-		a.isExtra != b.isExtra ||
-		a.isNamed != b.isNamed ||
-		a.isMissing != b.isMissing ||
-		a.hasError != b.hasError ||
+		a.isExtra() != b.isExtra() ||
+		a.isNamed() != b.isNamed() ||
+		a.isMissing() != b.isMissing() ||
+		a.hasError() != b.hasError() ||
 		a.parseState != b.parseState ||
 		a.preGotoState != b.preGotoState ||
 		a.productionID != b.productionID {
@@ -831,7 +831,7 @@ func stackEntryNodesEquivalentFrontierWithScratch(scratch *glrMergeScratch, a, b
 	if hit, ok := lookupNodeEquivCache(scratch, a, b, depth); ok {
 		return hit
 	}
-	if a.hasError && b.hasError {
+	if a.hasError() && b.hasError() {
 		storeNodeEquivCache(scratch, a, b, depth, true)
 		return true
 	}
@@ -851,7 +851,7 @@ func stackEntryNodesEquivalentFrontierWithScratch(scratch *glrMergeScratch, a, b
 		ca := a.children[i]
 		cb := b.children[i]
 		if ca == cb {
-			if ca != nil && !ca.isExtra && (ca.isNamed || len(ca.children) > 0) {
+			if ca != nil && !ca.isExtra() && (ca.isNamed() || len(ca.children) > 0) {
 				frontier = i
 			}
 			continue
@@ -863,10 +863,10 @@ func stackEntryNodesEquivalentFrontierWithScratch(scratch *glrMergeScratch, a, b
 		if ca.symbol != cb.symbol ||
 			ca.startByte != cb.startByte ||
 			ca.endByte != cb.endByte ||
-			ca.isExtra != cb.isExtra ||
-			ca.isNamed != cb.isNamed ||
-			ca.isMissing != cb.isMissing ||
-			ca.hasError != cb.hasError ||
+			ca.isExtra() != cb.isExtra() ||
+			ca.isNamed() != cb.isNamed() ||
+			ca.isMissing() != cb.isMissing() ||
+			ca.hasError() != cb.hasError() ||
 			ca.parseState != cb.parseState ||
 			ca.preGotoState != cb.preGotoState ||
 			ca.productionID != cb.productionID ||
@@ -881,7 +881,7 @@ func stackEntryNodesEquivalentFrontierWithScratch(scratch *glrMergeScratch, a, b
 				return false
 			}
 		}
-		if !ca.isExtra && (ca.isNamed || len(ca.children) > 0) {
+		if !ca.isExtra() && (ca.isNamed() || len(ca.children) > 0) {
 			frontier = i
 		}
 	}
@@ -912,7 +912,7 @@ func stackEntryNodesEquivalentFrontierWithScratch(scratch *glrMergeScratch, a, b
 				continue
 			}
 			child := a.children[i]
-			if child == nil || child.isExtra || (!child.isNamed && len(child.children) == 0) {
+			if child == nil || child.isExtra() || (!child.isNamed() && len(child.children) == 0) {
 				continue
 			}
 			addCandidate(i)
@@ -1099,7 +1099,7 @@ func stackErrorRank(s *glrStack) int {
 	if top.node == nil {
 		return 0
 	}
-	if top.node.hasError {
+	if top.node.hasError() {
 		return 1
 	}
 	return 0

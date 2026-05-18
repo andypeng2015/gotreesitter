@@ -112,6 +112,7 @@ func (pp *ParserPool) applyDefaults(p *Parser) {
 	p.SetGLRTrace(pp.glrTrace)
 	p.SetAmbiguityProfile(pp.ambiguityProfile)
 	p.noTreeBenchmarkOnly = false
+	p.noTreeCheckpointBenchmarkOnly = false
 	p.noResultCompatibilityBenchmarkOnly = false
 }
 
@@ -163,6 +164,18 @@ func (pp *ParserPool) ParseNoTreeBenchmarkOnly(source []byte) (*Tree, error) {
 	}
 	defer pp.release(p)
 	return p.ParseNoTreeBenchmarkOnly(source)
+}
+
+// ParseNoTreeWithExternalCheckpointsBenchmarkOnly delegates to
+// Parser.ParseNoTreeWithExternalCheckpointsBenchmarkOnly. It is intended only
+// for parser performance attribution; the returned tree is not API-compatible.
+func (pp *ParserPool) ParseNoTreeWithExternalCheckpointsBenchmarkOnly(source []byte) (*Tree, error) {
+	p := pp.checkout()
+	if p == nil {
+		return nil, ErrNoLanguage
+	}
+	defer pp.release(p)
+	return p.ParseNoTreeWithExternalCheckpointsBenchmarkOnly(source)
 }
 
 // ParseNoResultCompatibilityBenchmarkOnly delegates to

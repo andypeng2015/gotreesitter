@@ -123,7 +123,7 @@ func normalizeTypeScriptCompatibility(root *Node, source []byte, lang *Language)
 				}
 				n.children[i] = rewritten
 				rewritten.parent = n
-				rewritten.childIndex = i
+				rewritten.childIndex = int32(i)
 				child = rewritten
 			}
 			walk(child)
@@ -152,7 +152,7 @@ func normalizeTypeScriptImportKeywordNamedness(node *Node, ctx *typeScriptNormal
 	if node == nil || ctx == nil || ctx.lang == nil || node.Type(ctx.lang) != "import" {
 		return
 	}
-	node.isNamed = false
+	node.setNamed(false)
 }
 
 func normalizeTypeScriptRecoveredNamespaceRoot(root *Node, source []byte, lang *Language) {
@@ -179,7 +179,7 @@ func normalizeTypeScriptRecoveredNamespaceRoot(root *Node, source []byte, lang *
 
 	namespaceIdx := -1
 	for i, child := range root.children {
-		if child == nil || child.isExtra {
+		if child == nil || child.isExtra() {
 			continue
 		}
 		if child.Type(lang) != "namespace" {
@@ -277,7 +277,7 @@ func normalizeTypeScriptRecoveredNamespaceRoot(root *Node, source []byte, lang *
 	root.fieldSources = nil
 	if hasProgramSym {
 		root.symbol = programSym
-		root.isNamed = int(programSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[programSym].Named
+		root.setNamed(int(programSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[programSym].Named)
 	}
 	populateParentNode(root, root.children)
 }
@@ -501,7 +501,7 @@ func convertTypeScriptTypeArgumentsToParameters(typeArgs *Node, ctx *typeScriptN
 	children := phpAllocChildren(arena, len(typeArgs.children))
 	convertedNamed := 0
 	for i, child := range typeArgs.children {
-		if child == nil || !child.isNamed {
+		if child == nil || !child.isNamed() {
 			children[i] = child
 			continue
 		}
@@ -536,7 +536,7 @@ func rewriteTypeScriptClassExpressionStatement(node *Node, ctx *typeScriptNormal
 	}
 	var classNode *Node
 	for _, child := range node.children {
-		if child == nil || child.isExtra {
+		if child == nil || child.isExtra() {
 			continue
 		}
 		if child.symbol == ctx.classSym {
@@ -546,7 +546,7 @@ func rewriteTypeScriptClassExpressionStatement(node *Node, ctx *typeScriptNormal
 			classNode = child
 			continue
 		}
-		if child.isNamed {
+		if child.isNamed() {
 			return nil
 		}
 	}

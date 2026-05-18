@@ -274,6 +274,8 @@ func TestArenaNodeSlabClearsWrittenSlotsOnReset(t *testing.T) {
 		}
 		// Write a non-zero pointer into the node to make stale data detectable.
 		n.parent = n
+		n.flags = nodeFlagNamed | nodeFlagExtra | nodeFlagMissing | nodeFlagHasError
+		n.dirtyFlag = true
 	}
 	if len(arena.nodeSlabs) == 0 {
 		t.Fatal("expected at least one overflow slab after allocating past primary capacity")
@@ -304,6 +306,12 @@ func TestArenaNodeSlabClearsWrittenSlotsOnReset(t *testing.T) {
 		if got.ownerArena != nil {
 			t.Fatalf("primary node[%d].ownerArena after reset is %p, want nil", i, got.ownerArena)
 		}
+		if got.flags != 0 {
+			t.Fatalf("primary node[%d].flags after reset = %d, want 0", i, got.flags)
+		}
+		if got.dirtyFlag {
+			t.Fatalf("primary node[%d].dirtyFlag after reset = true, want false", i)
+		}
 	}
 	for i := 0; i < slabUsedBeforeReset; i++ {
 		got := (*Node)(unsafe.Add(firstSlabDataPtr, uintptr(i)*unsafe.Sizeof(Node{})))
@@ -312,6 +320,12 @@ func TestArenaNodeSlabClearsWrittenSlotsOnReset(t *testing.T) {
 		}
 		if got.ownerArena != nil {
 			t.Fatalf("slab.data[%d].ownerArena after reset is %p, want nil", i, got.ownerArena)
+		}
+		if got.flags != 0 {
+			t.Fatalf("slab.data[%d].flags after reset = %d, want 0", i, got.flags)
+		}
+		if got.dirtyFlag {
+			t.Fatalf("slab.data[%d].dirtyFlag after reset = true, want false", i)
 		}
 	}
 }

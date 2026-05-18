@@ -213,7 +213,7 @@ func (c *TreeCursor) GotoFirstNamedChild() bool {
 		return false
 	}
 	for i, child := range node.children {
-		if child.isNamed {
+		if child.isNamed() {
 			c.stack = append(c.stack, cursorFrame{node: child, childIndex: i})
 			return true
 		}
@@ -229,7 +229,7 @@ func (c *TreeCursor) GotoLastNamedChild() bool {
 		return false
 	}
 	for i := len(node.children) - 1; i >= 0; i-- {
-		if node.children[i].isNamed {
+		if node.children[i].isNamed() {
 			c.stack = append(c.stack, cursorFrame{node: node.children[i], childIndex: i})
 			return true
 		}
@@ -249,7 +249,7 @@ func (c *TreeCursor) GotoNextNamedSibling() bool {
 		return false
 	}
 	for i := frame.childIndex + 1; i < len(parentNode.children); i++ {
-		if parentNode.children[i].isNamed {
+		if parentNode.children[i].isNamed() {
 			frame.childIndex = i
 			frame.node = parentNode.children[i]
 			return true
@@ -270,7 +270,7 @@ func (c *TreeCursor) GotoPrevNamedSibling() bool {
 		return false
 	}
 	for i := frame.childIndex - 1; i >= 0; i-- {
-		if parentNode.children[i].isNamed {
+		if parentNode.children[i].isNamed() {
 			frame.childIndex = i
 			frame.node = parentNode.children[i]
 			return true

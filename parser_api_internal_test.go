@@ -258,7 +258,7 @@ func TestRetryFullParseStopsSchedulingRetriesAfterTimeout(t *testing.T) {
 	initial := &Tree{
 		root: &Node{
 			endByte:  1,
-			hasError: true,
+			flags: nodeFlagHasError,
 		},
 		parseRuntime: ParseRuntime{
 			StopReason:      ParseStopAccepted,
@@ -270,7 +270,7 @@ func TestRetryFullParseStopsSchedulingRetriesAfterTimeout(t *testing.T) {
 	retry := &Tree{
 		root: &Node{
 			endByte:  2,
-			hasError: true,
+			flags: nodeFlagHasError,
 		},
 		parseRuntime: ParseRuntime{
 			StopReason:      ParseStopAccepted,
@@ -405,7 +405,7 @@ func TestPreferRetryTreePrefersFurtherAcceptedProgress(t *testing.T) {
 	incumbent := &Tree{
 		root: &Node{
 			endByte:  100,
-			hasError: true,
+			flags: nodeFlagHasError,
 			children: []*Node{{}, {}, {}},
 		},
 		parseRuntime: ParseRuntime{
@@ -417,7 +417,7 @@ func TestPreferRetryTreePrefersFurtherAcceptedProgress(t *testing.T) {
 	candidate := &Tree{
 		root: &Node{
 			endByte:  200,
-			hasError: true,
+			flags: nodeFlagHasError,
 			children: []*Node{{}, {}},
 		},
 		parseRuntime: ParseRuntime{
@@ -435,7 +435,7 @@ func TestPreferRetryTreePrefersFewerChildrenOnEqualErrorTrees(t *testing.T) {
 	incumbent := &Tree{
 		root: &Node{
 			endByte:  200,
-			hasError: true,
+			flags: nodeFlagHasError,
 			children: make([]*Node, 12),
 		},
 		parseRuntime: ParseRuntime{
@@ -447,7 +447,7 @@ func TestPreferRetryTreePrefersFewerChildrenOnEqualErrorTrees(t *testing.T) {
 	candidate := &Tree{
 		root: &Node{
 			endByte:  200,
-			hasError: true,
+			flags: nodeFlagHasError,
 			children: make([]*Node, 4),
 		},
 		parseRuntime: ParseRuntime{

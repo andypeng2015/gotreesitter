@@ -25,22 +25,53 @@ type Node struct {
 	fieldSources []uint8   // parallel to children, 0 = none, 1 = direct, 2 = inherited
 	parent       *Node
 	ownerArena   *nodeArena
-	childIndex   int
 	startPoint   Point
 	endPoint     Point
-	parseState   StateID // parser state after this node was pushed
-	preGotoState StateID // parser state before goto (state exposed after popping children)
 	startByte    uint32
 	endByte      uint32
+	parseState   StateID // parser state after this node was pushed
+	preGotoState StateID // parser state before goto (state exposed after popping children)
 	equivVersion uint32
+	childIndex   int32
 	symbol       Symbol
 	productionID uint16
-	isNamed      bool
-	isExtra      bool
-	isMissing    bool
-	hasError     bool
-	dirty        bool // set by Tree.Edit for nodes touched by edits
+	flags        nodeFlags
+	dirtyFlag    bool
 }
+
+type nodeFlags uint8
+
+const (
+	nodeFlagNamed nodeFlags = 1 << iota
+	nodeFlagExtra
+	nodeFlagMissing
+	nodeFlagHasError
+)
+
+func (n *Node) hasFlag(flag nodeFlags) bool {
+	return n.flags&flag != 0
+}
+
+func (n *Node) setFlag(flag nodeFlags, enabled bool) {
+	if enabled {
+		n.flags |= flag
+		return
+	}
+	n.flags &^= flag
+}
+
+func (n *Node) isNamed() bool     { return n.hasFlag(nodeFlagNamed) }
+func (n *Node) setNamed(v bool)   { n.setFlag(nodeFlagNamed, v) }
+func (n *Node) isExtra() bool     { return n.hasFlag(nodeFlagExtra) }
+func (n *Node) setExtra(v bool)   { n.setFlag(nodeFlagExtra, v) }
+func (n *Node) isMissing() bool   { return n.hasFlag(nodeFlagMissing) }
+func (n *Node) setMissing(v bool) { n.setFlag(nodeFlagMissing, v) }
+func (n *Node) hasError() bool    { return n.hasFlag(nodeFlagHasError) }
+func (n *Node) setHasError(v bool) {
+	n.setFlag(nodeFlagHasError, v)
+}
+func (n *Node) dirty() bool     { return n.dirtyFlag }
+func (n *Node) setDirty(v bool) { n.dirtyFlag = v }
 
 func nodeInitEquivVersion(n *Node) {
 	if n == nil {
@@ -181,23 +212,23 @@ func (n *Node) ParseState() StateID { return n.parseState }
 func (n *Node) PreGotoState() StateID { return n.preGotoState }
 
 // IsNamed reports whether this is a named node (as opposed to anonymous syntax like punctuation).
-func (n *Node) IsNamed() bool { return n.isNamed }
+func (n *Node) IsNamed() bool { return n.isNamed() }
 
 // IsExtra reports whether this node was marked as extra syntax
 // (e.g. whitespace/comments outside the core parse structure).
-func (n *Node) IsExtra() bool { return n.isExtra }
+func (n *Node) IsExtra() bool { return n.isExtra() }
 
 // IsMissing reports whether this node was inserted by error recovery.
-func (n *Node) IsMissing() bool { return n.isMissing }
+func (n *Node) IsMissing() bool { return n.isMissing() }
 
 // IsError reports whether this node is an explicit error node.
 func (n *Node) IsError() bool { return n.symbol == errorSymbol }
 
 // HasError reports whether this node or any descendant contains a parse error.
-func (n *Node) HasError() bool { return n.hasError }
+func (n *Node) HasError() bool { return n.hasError() }
 
 // HasChanges reports whether this node was marked dirty by Tree.Edit.
-func (n *Node) HasChanges() bool { return n.dirty }
+func (n *Node) HasChanges() bool { return n.dirty() }
 
 // StartByte returns the byte offset where this node begins.
 func (n *Node) StartByte() uint32 { return n.startByte }
@@ -252,7 +283,7 @@ func (n *Node) NextSibling() *Node {
 		return nil
 	}
 	siblings := n.parent.children
-	if i := n.childIndex; i >= 0 && i < len(siblings) && siblings[i] == n {
+	if i := int(n.childIndex); i >= 0 && i < len(siblings) && siblings[i] == n {
 		if i+1 < len(siblings) {
 			return siblings[i+1]
 		}
@@ -281,7 +312,7 @@ func (n *Node) PrevSibling() *Node {
 		return nil
 	}
 	siblings := n.parent.children
-	if i := n.childIndex; i >= 0 && i < len(siblings) && siblings[i] == n {
+	if i := int(n.childIndex); i >= 0 && i < len(siblings) && siblings[i] == n {
 		if i > 0 {
 			return siblings[i-1]
 		}
@@ -303,7 +334,7 @@ func (n *Node) PrevSibling() *Node {
 func (n *Node) NamedChildCount() int {
 	count := 0
 	for _, c := range n.children {
-		if c.isNamed {
+		if c.isNamed() {
 			count++
 		}
 	}
@@ -315,7 +346,7 @@ func (n *Node) NamedChildCount() int {
 func (n *Node) NamedChild(i int) *Node {
 	count := 0
 	for _, c := range n.children {
-		if c.isNamed {
+		if c.isNamed() {
 			if count == i {
 				return c
 			}
@@ -489,7 +520,7 @@ func (n *Node) descendantForByteRange(startByte, endByte uint32, namedOnly bool)
 	}
 
 	var deepest *Node
-	if !namedOnly || n.isNamed {
+	if !namedOnly || n.isNamed() {
 		deepest = n
 	}
 	for _, child := range n.children {
@@ -509,7 +540,7 @@ func (n *Node) descendantForPointRange(startPoint, endPoint Point, namedOnly boo
 	}
 
 	var deepest *Node
-	if !namedOnly || n.isNamed {
+	if !namedOnly || n.isNamed() {
 		deepest = n
 	}
 	for _, child := range n.children {
@@ -551,13 +582,13 @@ func (n *Node) NamedDescendantForPointRange(startPoint, endPoint Point) *Node {
 func NewLeafNode(sym Symbol, named bool, startByte, endByte uint32, startPoint, endPoint Point) *Node {
 	n := &Node{
 		symbol:     sym,
-		isNamed:    named,
 		startByte:  startByte,
 		endByte:    endByte,
 		startPoint: startPoint,
 		endPoint:   endPoint,
 		childIndex: -1,
 	}
+	n.setNamed(named)
 	nodeInitEquivVersion(n)
 	return n
 }
@@ -574,7 +605,7 @@ func populateParentNode(n *Node, children []*Node) {
 		n.endPoint = c0.endPoint
 		c0.parent = n
 		c0.childIndex = 0
-		n.hasError = c0.hasError
+		n.setHasError(c0.hasError())
 		return
 	case 2:
 		c0 := children[0]
@@ -587,7 +618,7 @@ func populateParentNode(n *Node, children []*Node) {
 		c0.childIndex = 0
 		c1.parent = n
 		c1.childIndex = 1
-		n.hasError = c0.hasError || c1.hasError
+		n.setHasError(c0.hasError() || c1.hasError())
 		return
 	default:
 		first := children[0]
@@ -599,9 +630,9 @@ func populateParentNode(n *Node, children []*Node) {
 
 		for i, c := range children {
 			c.parent = n
-			c.childIndex = i
-			if c.hasError {
-				n.hasError = true
+			c.childIndex = int32(i)
+			if c.hasError() {
+				n.setHasError(true)
 				break
 			}
 		}
@@ -621,7 +652,7 @@ func populateParentNodeNoLinks(n *Node, children []*Node, trackChildErrors bool)
 		n.startPoint = c0.startPoint
 		n.endPoint = c0.endPoint
 		if trackChildErrors {
-			n.hasError = c0.hasError
+			n.setHasError(c0.hasError())
 		}
 		return
 	case 2:
@@ -632,7 +663,7 @@ func populateParentNodeNoLinks(n *Node, children []*Node, trackChildErrors bool)
 		n.startPoint = c0.startPoint
 		n.endPoint = c1.endPoint
 		if trackChildErrors {
-			n.hasError = c0.hasError || c1.hasError
+			n.setHasError(c0.hasError() || c1.hasError())
 		}
 		return
 	default:
@@ -644,8 +675,8 @@ func populateParentNodeNoLinks(n *Node, children []*Node, trackChildErrors bool)
 		n.endPoint = last.endPoint
 		if trackChildErrors {
 			for i := range children {
-				if children[i].hasError {
-					n.hasError = true
+				if children[i].hasError() {
+					n.setHasError(true)
 					break
 				}
 			}
@@ -677,7 +708,7 @@ func wireParentLinksWithScratch(root *Node, scratch *[]*Node) {
 				continue
 			}
 			c.parent = n
-			c.childIndex = i
+			c.childIndex = int32(i)
 			stack = append(stack, c)
 		}
 	}
@@ -743,7 +774,7 @@ func newParentNode(arena *nodeArena, sym Symbol, named bool, children []*Node, f
 		n.ownerArena = arena
 	}
 	n.symbol = sym
-	n.isNamed = named
+	n.setNamed(named)
 	n.children = children
 	n.fieldIDs = fieldIDs
 	n.fieldSources = defaultFieldSourcesInArena(arena, fieldIDs)
@@ -764,19 +795,20 @@ func NewParentNode(sym Symbol, named bool, children []*Node, fieldIDs []FieldID,
 
 func newLeafNodeInArena(arena *nodeArena, sym Symbol, named bool, startByte, endByte uint32, startPoint, endPoint Point) *Node {
 	if arena == nil {
-		return &Node{
+		n := &Node{
 			symbol:     sym,
-			isNamed:    named,
 			startByte:  startByte,
 			endByte:    endByte,
 			startPoint: startPoint,
 			endPoint:   endPoint,
 			childIndex: -1,
 		}
+		n.setNamed(named)
+		return n
 	}
 	n := arena.allocNodeFast()
 	n.symbol = sym
-	n.isNamed = named
+	n.setNamed(named)
 	n.startByte = startByte
 	n.endByte = endByte
 	n.startPoint = startPoint
@@ -805,7 +837,7 @@ func newParentNodeInArenaWithFieldSources(arena *nodeArena, sym Symbol, named bo
 	n := arena.allocNodeFast()
 	n.ownerArena = arena
 	n.symbol = sym
-	n.isNamed = named
+	n.setNamed(named)
 	n.children = children
 	n.fieldIDs = fieldIDs
 	if fieldSources != nil {
@@ -834,7 +866,7 @@ func newParentNodeInArenaNoLinksWithFieldSources(arena *nodeArena, sym Symbol, n
 	n := arena.allocNodeFast()
 	n.ownerArena = arena
 	n.symbol = sym
-	n.isNamed = named
+	n.setNamed(named)
 	n.children = children
 	n.fieldIDs = fieldIDs
 	if fieldSources != nil {
@@ -1266,7 +1298,7 @@ func cloneTreeNodesIntoArena(root *Node, arena *nodeArena) *Node {
 				}
 				newChild := cloneNode(oldChild)
 				newChild.parent = newNode
-				newChild.childIndex = i
+				newChild.childIndex = int32(i)
 				children[i] = newChild
 				stack = append(stack, clonePair{old: oldChild, new: newChild})
 			}
@@ -1341,7 +1373,7 @@ func cloneTreeNodesWithOffset(root *Node, offsetBytes uint32, offsetExtent Point
 				}
 				newChild := cloneNode(oldChild)
 				newChild.parent = newNode
-				newChild.childIndex = i
+				newChild.childIndex = int32(i)
 				newNode.children[i] = newChild
 				stack = append(stack, clonePair{old: oldChild, new: newChild})
 			}
@@ -1608,7 +1640,7 @@ func editNodeWithDelta(n *Node, edit InputEdit, byteDelta, rowDelta, colDelta in
 	}
 
 	// The node overlaps the edit — mark it dirty and adjust its end.
-	n.dirty = true
+	n.setDirty(true)
 	if n.endByte <= edit.OldEndByte {
 		// Node is fully within the edited region.
 		n.endByte = edit.NewEndByte

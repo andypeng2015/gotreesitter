@@ -437,12 +437,12 @@ func normalizePythonInterpolationPatterns(root *Node, lang *Language) normalizat
 		if here {
 			if hasExpressionList && n.symbol == expressionListSym {
 				n.symbol = patternListSym
-				n.isNamed = patternListNamed
+				n.setNamed(patternListNamed)
 				counters.nodesRewritten++
 			}
 			if hasListSplatPattern && hasListSplat && n.symbol == listSplatSym {
 				n.symbol = listSplatPatternSym
-				n.isNamed = listSplatPatternNamed
+				n.setNamed(listSplatPatternNamed)
 				counters.nodesRewritten++
 			}
 		}
@@ -671,14 +671,14 @@ func rewriteMalformedPythonPrintStatement(node *Node, source []byte, lang *Langu
 	dest := bin.children[2]
 	printLeaf := cloneNodeInArena(node.ownerArena, left)
 	printLeaf.symbol = printSym
-	printLeaf.isNamed = printNamed
+	printLeaf.setNamed(printNamed)
 	printLeaf.children = nil
 	printLeaf.fieldIDs = nil
 	printLeaf.fieldSources = nil
 
 	chevron := cloneNodeInArena(node.ownerArena, bin)
 	chevron.symbol = chevronSym
-	chevron.isNamed = chevronNamed
+	chevron.setNamed(chevronNamed)
 	chevron.children = cloneNodeSliceInArena(chevron.ownerArena, []*Node{op, dest})
 	chevron.fieldIDs = nil
 	chevron.fieldSources = nil
@@ -690,7 +690,7 @@ func rewriteMalformedPythonPrintStatement(node *Node, source []byte, lang *Langu
 	children = append(children, printLeaf, chevron)
 	children = append(children, extras...)
 	rewritten.symbol = printStmtSym
-	rewritten.isNamed = printStmtNamed
+	rewritten.setNamed(printStmtNamed)
 	rewritten.children = cloneNodeSliceInArena(rewritten.ownerArena, children)
 	rewritten.fieldIDs = nil
 	rewritten.fieldSources = nil
@@ -836,9 +836,9 @@ func repairPythonRootNode(root *Node, arena *nodeArena, lang *Language) *Node {
 	}
 
 	if !changed {
-		if root.hasError && pythonModuleChildrenLookComplete(repaired, lang) {
+		if root.hasError() && pythonModuleChildrenLookComplete(repaired, lang) {
 			cloned := cloneNodeInArena(arena, root)
-			cloned.hasError = false
+			cloned.setHasError(false)
 			return cloned
 		}
 		return root
@@ -854,7 +854,7 @@ func repairPythonRootNode(root *Node, arena *nodeArena, lang *Language) *Node {
 	cloned.fieldIDs = nil
 	cloned.fieldSources = nil
 	if pythonModuleChildrenLookComplete(repaired, lang) {
-		cloned.hasError = false
+		cloned.setHasError(false)
 	}
 	return cloned
 }
@@ -891,7 +891,7 @@ func repairPythonKeywordErrorNode(node *Node, source []byte, arena *nodeArena, l
 	if node == nil || lang == nil || lang.Name != "python" || len(source) == 0 {
 		return node
 	}
-	if !node.hasError && node.symbol != errorSymbol {
+	if !node.hasError() && node.symbol != errorSymbol {
 		return node
 	}
 	if node.Type(lang) == "ERROR" && len(node.children) == 0 {
@@ -901,7 +901,7 @@ func repairPythonKeywordErrorNode(node *Node, source []byte, arena *nodeArena, l
 				named = lang.SymbolMetadata[keyword].Named
 			}
 			repl := newLeafNodeInArena(arena, keyword, named, node.startByte, node.endByte, node.startPoint, node.endPoint)
-			repl.isExtra = node.isExtra
+			repl.setExtra(node.isExtra())
 			return repl
 		}
 	}
@@ -1614,7 +1614,7 @@ func pythonModuleChildrenLookComplete(nodes []*Node, lang *Language) bool {
 	}
 	seen := 0
 	for _, n := range nodes {
-		if n == nil || n.isExtra {
+		if n == nil || n.isExtra() {
 			continue
 		}
 		if n.IsNamed() {

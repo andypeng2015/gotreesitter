@@ -317,7 +317,7 @@ func buildPowerShellParenthesizedExpression(arena *nodeArena, source []byte, lan
 	}
 	node := newParentNodeInArena(arena, parenthesizedSym, parenthesizedNamed, children, nil, 0)
 	if !innerIsCommand {
-		node.hasError = true
+		node.setHasError(true)
 	}
 	return node
 }
@@ -435,8 +435,8 @@ func buildPowerShellTypeLiteral(arena *nodeArena, source []byte, lang *Language,
 			errChildren = buf
 		}
 		errNode := newParentNodeInArena(arena, errorSymbol, true, errChildren, nil, 0)
-		errNode.hasError = true
-		errNode.isExtra = true
+		errNode.setHasError(true)
+		errNode.setExtra(true)
 		children = append(children, errNode)
 	}
 	children = append(children, newLeafNodeInArena(arena, closeBracketSym, closeBracketNamed, uint32(end-1), uint32(end), advancePointByBytes(Point{}, source[:end-1]), advancePointByBytes(advancePointByBytes(Point{}, source[:end-1]), source[end-1:end])))
@@ -447,7 +447,7 @@ func buildPowerShellTypeLiteral(arena *nodeArena, source []byte, lang *Language,
 	}
 	node := newParentNodeInArena(arena, typeLiteralSym, typeLiteralNamed, children, nil, 0)
 	if len(children) == 4 {
-		node.hasError = true
+		node.setHasError(true)
 	}
 	return node
 }

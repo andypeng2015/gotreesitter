@@ -997,7 +997,7 @@ func csharpWrapRecoveredStatementAsGlobal(arena *nodeArena, lang *Language, stmt
 		children = buf
 	}
 	global := newParentNodeInArena(arena, sym, named, children, nil, 0)
-	global.hasError = false
+	global.setHasError(false)
 	return global, true
 }
 
@@ -1152,8 +1152,8 @@ func csharpReplaceMethodBlock(method *Node, lang *Language, block *Node) bool {
 		}
 		method.children[i] = block
 		block.parent = method
-		block.childIndex = i
-		method.hasError = false
+		block.childIndex = int32(i)
+		method.setHasError(false)
 		populateParentNode(method, method.children)
 		return true
 	}
@@ -1173,8 +1173,8 @@ func csharpReplaceRecoveredVariableInitializer(root *Node, lang *Language, expr 
 			idx := len(n.children) - 1
 			n.children[idx] = expr
 			expr.parent = n
-			expr.childIndex = idx
-			n.hasError = false
+			expr.childIndex = int32(idx)
+			n.setHasError(false)
 			populateParentNode(n, n.children)
 			csharpExtendNodeEndIfNeeded(n, expr.endByte)
 			if n.parent != nil {
@@ -1210,9 +1210,9 @@ func csharpConvertMethodToLocalFunctionStatement(n *Node, lang *Language) bool {
 		return false
 	}
 	n.symbol = sym
-	n.isNamed = int(sym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[sym].Named
+	n.setNamed(int(sym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[sym].Named)
 	n.productionID = 0
-	n.hasError = false
+	n.setHasError(false)
 	populateParentNode(n, n.children)
 	return true
 }

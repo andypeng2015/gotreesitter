@@ -45,7 +45,7 @@ func normalizeScalaObjectTemplateBodyFragments(root *Node, source []byte, lang *
 		replacementChildren := make([]*Node, 0, len(obj.children)+1)
 		replacementChildren = append(replacementChildren, obj.children...)
 		replacementChildren = append(replacementChildren, newParentNodeInArena(arena, templateBodySym, templateBodyNamed, bodyChildren, nil, 0))
-		replacement := newParentNodeInArena(arena, obj.symbol, obj.isNamed, replacementChildren, obj.fieldIDs, obj.productionID)
+		replacement := newParentNodeInArena(arena, obj.symbol, obj.isNamed(), replacementChildren, obj.fieldIDs, obj.productionID)
 		replaceChildRangeWithSingleNode(root, i, closeIdx+1, replacement)
 		changed = true
 	}
@@ -175,9 +175,9 @@ func normalizeScalaRecoveredObjectTemplateBodies(root *Node, source []byte, lang
 				}
 				n.children[i] = rebuilt
 				rebuilt.parent = n
-				rebuilt.childIndex = i
+				rebuilt.childIndex = int32(i)
 				for cur := n; cur != nil; cur = cur.parent {
-					cur.hasError = false
+					cur.setHasError(false)
 					populateParentNode(cur, cur.children)
 				}
 				break
@@ -266,7 +266,7 @@ func scalaRebuildTemplateBodyFromSource(body *Node, source []byte, lang *Languag
 		copy(buf, children)
 		children = buf
 	}
-	return newParentNodeInArena(arena, body.symbol, body.isNamed, children, nil, body.productionID), true
+	return newParentNodeInArena(arena, body.symbol, body.isNamed(), children, nil, body.productionID), true
 }
 
 func scalaBuildTemplateBodyLeadingBlockComment(source []byte, start, limit uint32, lang *Language, arena *nodeArena) (*Node, bool) {
@@ -343,7 +343,7 @@ closeLeafDone:
 		children = buf
 	}
 	comment := newParentNodeInArena(arena, commentSym, commentNamed, children, nil, 0)
-	comment.isExtra = true
+	comment.setExtra(true)
 	return comment, true
 }
 
@@ -414,7 +414,7 @@ func scalaRecoverSplitFunctionDefinition(body *Node, source []byte, lang *Langua
 		}
 		replaceChildRangeWithSingleNode(body, startIdx, endIdx, recovered)
 		for n := body; n != nil; n = n.parent {
-			n.hasError = false
+			n.setHasError(false)
 			populateParentNode(n, n.children)
 		}
 		return
@@ -451,7 +451,7 @@ func scalaRecoverTemplateBodyMembers(body *Node, source []byte, lang *Language) 
 		return
 	}
 	for n := body; n != nil; n = n.parent {
-		n.hasError = false
+		n.setHasError(false)
 		populateParentNode(n, n.children)
 	}
 }
@@ -568,7 +568,7 @@ func scalaRecoverTemplateBodyTailMembers(body *Node, start uint32, source []byte
 			continue
 		}
 		child.parent = body
-		child.childIndex = i
+		child.childIndex = int32(i)
 	}
 }
 

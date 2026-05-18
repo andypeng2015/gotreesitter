@@ -471,8 +471,8 @@ func buildPowerShellVariableMemberAccess(arena *nodeArena, source []byte, lang *
 		errChildren = buf
 	}
 	errNode := newParentNodeInArena(arena, errorSymbol, true, errChildren, nil, 0)
-	errNode.hasError = true
-	errNode.isExtra = true
+	errNode.setHasError(true)
+	errNode.setExtra(true)
 	children := []*Node{
 		variable,
 		errNode,

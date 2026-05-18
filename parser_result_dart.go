@@ -92,7 +92,7 @@ func normalizeDartConstructorSignatureKinds(root *Node, source []byte, lang *Lan
 						continue
 					}
 					sig.symbol = constructorSym
-					sig.isNamed = constructorNamed
+					sig.setNamed(constructorNamed)
 					if len(sig.fieldIDs) != len(sig.children) {
 						ensureNodeFieldStorage(sig, len(sig.children))
 					}
@@ -261,7 +261,7 @@ func dartProgramChildrenLookComplete(nodes []*Node, lang *Language) bool {
 	}
 	seen := 0
 	for _, n := range nodes {
-		if n == nil || n.isExtra {
+		if n == nil || n.isExtra() {
 			continue
 		}
 		if n.IsNamed() {

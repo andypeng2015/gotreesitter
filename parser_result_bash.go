@@ -199,7 +199,7 @@ func rewriteBashGeneratedCommandAssignment(node *Node, source []byte, lang *Lang
 	valueChildren := make([]*Node, 0, len(parts))
 	if valueStart < first.endByte {
 		valueStartPoint := advancePointByBytes(first.startPoint, source[first.startByte:valueStart])
-		valueChildren = append(valueChildren, newLeafNodeInArena(arena, first.symbol, first.isNamed, valueStart, first.endByte, valueStartPoint, first.endPoint))
+		valueChildren = append(valueChildren, newLeafNodeInArena(arena, first.symbol, first.isNamed(), valueStart, first.endByte, valueStartPoint, first.endPoint))
 	}
 	valueChildren = append(valueChildren, parts[1:]...)
 	if len(valueChildren) == 0 {
@@ -216,11 +216,11 @@ func rewriteBashGeneratedCommandAssignment(node *Node, source []byte, lang *Lang
 		children = cloneNodeSliceInArena(arena, children)
 	}
 	node.symbol = ctx.variableAssignmentSym
-	node.isNamed = true
+	node.setNamed(true)
 	node.children = children
 	node.fieldIDs = bashGeneratedAssignmentFieldIDs(arena, ctx)
 	node.fieldSources = bashGeneratedAssignmentFieldSources(ctx)
-	node.hasError = false
+	node.setHasError(false)
 	populateParentNode(node, children)
 	return true
 }

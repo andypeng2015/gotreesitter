@@ -3,6 +3,7 @@ package gotreesitter
 import (
 	"strings"
 	"testing"
+	"unsafe"
 )
 
 // testLanguage returns a minimal Language for use in tree tests.
@@ -12,6 +13,30 @@ func testLanguage() *Language {
 		SymbolNames: []string{"", "identifier", "number", "expression", "program", "ERROR"},
 		FieldNames:  []string{"", "left", "right", "operator"},
 		FieldCount:  3,
+	}
+}
+
+func TestNodeLayoutSizeBudget(t *testing.T) {
+	var n Node
+	got := unsafe.Sizeof(n)
+	t.Logf(
+		"Node size=%d align=%d children=%d parent=%d ownerArena=%d startPoint=%d startByte=%d parseState=%d childIndex=%d symbol=%d flags=%d dirtyFlag=%d",
+		got,
+		unsafe.Alignof(n),
+		unsafe.Offsetof(n.children),
+		unsafe.Offsetof(n.parent),
+		unsafe.Offsetof(n.ownerArena),
+		unsafe.Offsetof(n.startPoint),
+		unsafe.Offsetof(n.startByte),
+		unsafe.Offsetof(n.parseState),
+		unsafe.Offsetof(n.childIndex),
+		unsafe.Offsetof(n.symbol),
+		unsafe.Offsetof(n.flags),
+		unsafe.Offsetof(n.dirtyFlag),
+	)
+	const budget = 136
+	if got > budget {
+		t.Fatalf("Node size = %d, want <= %d", got, budget)
 	}
 }
 
@@ -80,8 +105,8 @@ func TestLeafNode(t *testing.T) {
 
 func TestNodeFlagAccessors(t *testing.T) {
 	n := NewLeafNode(Symbol(1), true, 0, 1, Point{}, Point{Row: 0, Column: 1})
-	n.isExtra = true
-	n.dirty = true
+	n.setExtra(true)
+	n.setDirty(true)
 	if !n.IsExtra() {
 		t.Fatal("IsExtra should be true")
 	}
@@ -629,7 +654,7 @@ func TestDescendantForPointRange(t *testing.T) {
 func TestHasErrorPropagation(t *testing.T) {
 	// Create a child with an error.
 	errChild := NewLeafNode(Symbol(5), true, 0, 1, Point{}, Point{Row: 0, Column: 1})
-	errChild.hasError = true
+	errChild.setHasError(true)
 
 	normalChild := NewLeafNode(Symbol(1), true, 1, 2, Point{Row: 0, Column: 1}, Point{Row: 0, Column: 2})
 
@@ -766,9 +791,9 @@ func TestDiffChangedRangesSymbolChanged(t *testing.T) {
 
 	// Old tree: program -> [identifier(0-3)]
 	oldLeaf := NewLeafNode(Symbol(1), true, 0, 3, Point{Row: 0, Column: 0}, Point{Row: 0, Column: 3})
-	oldLeaf.dirty = true // simulate edit marking
+	oldLeaf.setDirty(true) // simulate edit marking
 	oldRoot := NewParentNode(Symbol(4), true, []*Node{oldLeaf}, nil, 0)
-	oldRoot.dirty = true
+	oldRoot.setDirty(true)
 	oldTree := NewTree(oldRoot, []byte("abc"), lang)
 
 	// New tree: program -> [number(0-3)] — same position, different symbol
@@ -822,9 +847,9 @@ func TestDiffChangedRangesMultipleChanges(t *testing.T) {
 	oldTree := NewTree(oldRoot, []byte("abc 123 def"), lang)
 
 	// Mark first and third children as dirty (simulating edits to non-adjacent ranges)
-	oldLeaf0.dirty = true
-	oldLeaf2.dirty = true
-	oldRoot.dirty = true
+	oldLeaf0.setDirty(true)
+	oldLeaf2.setDirty(true)
+	oldRoot.setDirty(true)
 
 	// New tree: first and third leaves have different byte ranges
 	newLeaf0 := NewLeafNode(Symbol(1), true, 0, 4, Point{Row: 0, Column: 0}, Point{Row: 0, Column: 4})
@@ -859,9 +884,9 @@ func TestDiffChangedRangesCoalescing(t *testing.T) {
 	oldLeaf0 := NewLeafNode(Symbol(1), true, 0, 3, Point{Row: 0, Column: 0}, Point{Row: 0, Column: 3})
 	oldLeaf1 := NewLeafNode(Symbol(2), true, 3, 6, Point{Row: 0, Column: 3}, Point{Row: 0, Column: 6})
 	oldRoot := NewParentNode(Symbol(4), true, []*Node{oldLeaf0, oldLeaf1}, nil, 0)
-	oldLeaf0.dirty = true
-	oldLeaf1.dirty = true
-	oldRoot.dirty = true
+	oldLeaf0.setDirty(true)
+	oldLeaf1.setDirty(true)
+	oldRoot.setDirty(true)
 	oldTree := NewTree(oldRoot, []byte("abcdef"), lang)
 
 	// New tree: same structure but different byte ranges

@@ -246,7 +246,7 @@ func TestParseIncrementalReusesRootAfterUndo(t *testing.T) {
 	if newTree.RootNode() != oldRoot {
 		t.Fatal("expected root node to be reused after undo")
 	}
-	if newTree.RootNode().dirty {
+	if newTree.RootNode().dirty() {
 		t.Fatal("expected reused root to have dirty flag cleared after undo reuse")
 	}
 }
@@ -362,7 +362,7 @@ func assertTreeHasNoDirtyNodes(t *testing.T, root *Node) {
 	for len(stack) > 0 {
 		n := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
-		if n.dirty {
+		if n.dirty() {
 			t.Fatalf("found dirty node sym=%d at [%d,%d)", n.symbol, n.startByte, n.endByte)
 		}
 		for i := len(n.children) - 1; i >= 0; i-- {

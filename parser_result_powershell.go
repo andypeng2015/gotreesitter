@@ -143,8 +143,8 @@ func normalizePowerShellProgramShape(root *Node, source []byte, lang *Language) 
 	statementList.fieldIDs = nil
 	statementList.fieldSources = nil
 	statementList.symbol = statementListSym
-	statementList.isNamed = int(statementListSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[statementListSym].Named
-	statementList.hasError = true
+	statementList.setNamed(int(statementListSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[statementListSym].Named)
+	statementList.setHasError(true)
 	extendNodeEndTo(statementList, pipelines[len(pipelines)-1].endByte, source)
 
 	out := make([]*Node, 0, statementListIdx+1)
@@ -159,8 +159,8 @@ func normalizePowerShellProgramShape(root *Node, source []byte, lang *Language) 
 	root.fieldIDs = nil
 	root.fieldSources = nil
 	root.symbol = programSym
-	root.isNamed = int(programSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[programSym].Named
-	root.hasError = true
+	root.setNamed(int(programSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[programSym].Named)
+	root.setHasError(true)
 }
 
 func powerShellLooksLikeSpilledFunction(nodes []*Node, lang *Language) bool {
@@ -236,7 +236,7 @@ trimmed:
 			}
 			statementListNamed := int(statementListSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[statementListSym].Named
 			stmtList := newParentNodeInArena(arena, statementListSym, statementListNamed, statementListChildren, nil, 0)
-			stmtList.hasError = true
+			stmtList.setHasError(true)
 			stmtList.endByte = uint32(scriptEnd)
 			stmtList.endPoint = advancePointByBytes(stmtList.startPoint, source[stmtList.startByte:uint32(scriptEnd)])
 			bodyChildren := []*Node{stmtList}
@@ -247,7 +247,7 @@ trimmed:
 			}
 			scriptBlockBodyNamed := int(scriptBlockBodySym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[scriptBlockBodySym].Named
 			body := newParentNodeInArena(arena, scriptBlockBodySym, scriptBlockBodyNamed, bodyChildren, nil, 0)
-			body.hasError = true
+			body.setHasError(true)
 			for fieldIdx, fieldName := range lang.FieldNames {
 				if fieldName != "statement_list" {
 					continue
@@ -268,7 +268,7 @@ trimmed:
 	}
 	scriptBlockNamed := int(scriptBlockSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[scriptBlockSym].Named
 	scriptBlock := newParentNodeInArena(arena, scriptBlockSym, scriptBlockNamed, scriptChildren, nil, 0)
-	scriptBlock.hasError = true
+	scriptBlock.setHasError(true)
 	for i, child := range scriptBlock.children {
 		if child == nil || child.Type(lang) != "script_block_body" {
 			continue
@@ -294,11 +294,11 @@ trimmed:
 		children = buf
 	}
 	fn := newParentNodeInArena(arena, functionStatementSym, functionStatementNamed, children, nil, 0)
-	fn.hasError = true
+	fn.setHasError(true)
 	if functionLeaf.symbol != functionSym {
 		functionLeaf = cloneNodeInArena(arena, functionLeaf)
 		functionLeaf.symbol = functionSym
-		functionLeaf.isNamed = int(functionSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[functionSym].Named
+		functionLeaf.setNamed(int(functionSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[functionSym].Named)
 		fn.children[0] = functionLeaf
 	}
 	extendNodeEndTo(fn, uint32(closeBracePos+1), source)
@@ -387,7 +387,7 @@ func buildPowerShellRecoveredStatements(arena *nodeArena, source []byte, lang *L
 			lineEnd := powerShellLineEnd(source, i, end)
 			startPoint := advancePointByBytes(Point{}, source[:i])
 			comment := newLeafNodeInArena(arena, commentSym, commentNamed, uint32(i), uint32(lineEnd), startPoint, advancePointByBytes(startPoint, source[i:lineEnd]))
-			comment.isExtra = true
+			comment.setExtra(true)
 			out = append(out, comment)
 			i = powerShellSkipTrivia(source, lineEnd, end)
 		case powerShellKeywordAt(source, i, "if"):
@@ -534,7 +534,7 @@ func buildPowerShellRecoveredIfStatement(arena *nodeArena, source []byte, lang *
 		}
 	}
 	if reusedCond || reusedThenBlock {
-		stmt.hasError = true
+		stmt.setHasError(true)
 	}
 	return stmt, next
 }

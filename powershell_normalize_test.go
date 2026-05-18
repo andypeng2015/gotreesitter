@@ -35,7 +35,7 @@ func TestBuildPowerShellVariableMemberAccessBuildsRecoveredPath(t *testing.T) {
 	if got, want := node.children[1].Type(lang), "ERROR"; got != want {
 		t.Fatalf("node.children[1].Type = %q, want %q", got, want)
 	}
-	if !node.children[1].isExtra {
+	if !node.children[1].isExtra() {
 		t.Fatalf("node.children[1].isExtra = false, want true")
 	}
 }
@@ -107,7 +107,7 @@ func TestBuildPowerShellTypeLiteralMarksRecoveredPlusTailExtra(t *testing.T) {
 	if got, want := node.children[2].Type(lang), "ERROR"; got != want {
 		t.Fatalf("node.children[2].Type = %q, want %q", got, want)
 	}
-	if !node.children[2].isExtra {
+	if !node.children[2].isExtra() {
 		t.Fatalf("node.children[2].isExtra = false, want true")
 	}
 	if !node.HasError() {

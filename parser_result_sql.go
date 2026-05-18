@@ -49,7 +49,7 @@ func normalizeSQLRecoveredSelectRoot(root *Node, lang *Language) {
 	root.children = children
 	root.fieldIDs = nil
 	root.fieldSources = nil
-	root.hasError = selectStatement.HasError()
+	root.setHasError(selectStatement.HasError())
 }
 
 func sqlLooksLikeFlatRecoveredSelect(root *Node, lang *Language) bool {
@@ -127,9 +127,9 @@ func sqlRecoveredNullNode(arena *nodeArena, anchor *Node, nullParentSym, nullLea
 		return nil
 	}
 	leaf := newLeafNodeInArena(arena, nullLeafSym, false, anchor.endByte, anchor.endByte, anchor.endPoint, anchor.endPoint)
-	leaf.isMissing = true
-	leaf.hasError = true
+	leaf.setMissing(true)
+	leaf.setHasError(true)
 	node := newParentNodeInArena(arena, nullParentSym, true, []*Node{leaf}, nil, 0)
-	node.hasError = true
+	node.setHasError(true)
 	return node
 }

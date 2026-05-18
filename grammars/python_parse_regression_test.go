@@ -204,6 +204,27 @@ func TestPythonNoTreeBenchmarkSkipsExternalScannerCheckpoints(t *testing.T) {
 	}
 }
 
+func TestPythonNoTreeBenchmarkCanKeepExternalScannerCheckpoints(t *testing.T) {
+	src := []byte("def f(x):\n    return f\"{x}\"\n")
+	parser := gotreesitter.NewParser(PythonLanguage())
+
+	tree, err := parser.ParseNoTreeWithExternalCheckpointsBenchmarkOnly(src)
+	if err != nil {
+		t.Fatalf("no-tree checkpoint parse failed: %v", err)
+	}
+	defer tree.Release()
+	rt := tree.ParseRuntime()
+	if rt.NoTreeReduceNodesConstructed == 0 {
+		t.Fatalf("no-tree reduce nodes = 0, want > 0; runtime=%s", rt.Summary())
+	}
+	if rt.ExternalScannerCheckpointRecords == 0 {
+		t.Fatalf("checkpoint records = 0, want > 0; runtime=%s", rt.Summary())
+	}
+	if rt.ExternalScannerCheckpointBytesAllocated == 0 {
+		t.Fatalf("checkpoint bytes = 0, want > 0; runtime=%s", rt.Summary())
+	}
+}
+
 func TestPythonUnderscoreAssignmentDoesNotTerminateModule(t *testing.T) {
 	src := []byte(`import os
 import sys

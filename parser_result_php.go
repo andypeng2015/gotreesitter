@@ -163,8 +163,8 @@ func rewritePHPStaticAnonymousHeaderWithTrailingArrowFragments(nodes []*Node, so
 	closeErrChildren := phpAllocChildren(arena, 1)
 	closeErrChildren[0] = closeBrace
 	closeErr := newParentNodeInArena(arena, errorSymbol, true, closeErrChildren, nil, 0)
-	closeErr.hasError = true
-	closeErr.isExtra = true
+	closeErr.setHasError(true)
+	closeErr.setExtra(true)
 
 	prefixLen := 5
 	if trailingComment != nil {
@@ -246,15 +246,15 @@ func rewritePHPStaticNamedFunctionFragments(nodes []*Node, source []byte, lang *
 	if hasPriorNonExtra {
 		errChildren = errChildren[:2]
 		errNode := newParentNodeInArena(arena, errorSymbol, true, errChildren, nil, 0)
-		errNode.hasError = true
-		errNode.isExtra = true
+		errNode.setHasError(true)
+		errNode.setExtra(true)
 
 		semiSym, ok := lang.SymbolByName(";")
 		if !ok {
 			return nil, 0, false
 		}
 		semi := newLeafNodeInArena(arena, semiSym, false, call.endByte, call.endByte, call.endPoint, call.endPoint)
-		semi.hasError = true
+		semi.setHasError(true)
 
 		exprSym, exprNamed, ok := phpSymbolMeta(lang, "expression_statement")
 		if !ok {
@@ -279,8 +279,8 @@ func rewritePHPStaticNamedFunctionFragments(nodes []*Node, source []byte, lang *
 	}
 
 	errNode := newParentNodeInArena(arena, errorSymbol, true, errChildren, nil, 0)
-	errNode.hasError = true
-	errNode.isExtra = true
+	errNode.setHasError(true)
+	errNode.setExtra(true)
 
 	repl := phpAllocChildren(arena, 2)
 	repl[0] = errNode
@@ -357,15 +357,15 @@ func rewritePHPStaticNamedFunctionFragmentsWithTrailingMalformedSibling(nodes []
 	if hasPriorNonExtra {
 		errChildren = errChildren[:2]
 		errNode := newParentNodeInArena(arena, errorSymbol, true, errChildren, nil, 0)
-		errNode.hasError = true
-		errNode.isExtra = true
+		errNode.setHasError(true)
+		errNode.setExtra(true)
 
 		semiSym, ok := lang.SymbolByName(";")
 		if !ok {
 			return nil, 0, false
 		}
 		semi := newLeafNodeInArena(arena, semiSym, false, call.endByte, call.endByte, call.endPoint, call.endPoint)
-		semi.hasError = true
+		semi.setHasError(true)
 
 		exprSym, exprNamed, ok := phpSymbolMeta(lang, "expression_statement")
 		if !ok {
@@ -382,8 +382,8 @@ func rewritePHPStaticNamedFunctionFragmentsWithTrailingMalformedSibling(nodes []
 		repl[2] = body
 	} else {
 		errNode := newParentNodeInArena(arena, errorSymbol, true, errChildren, nil, 0)
-		errNode.hasError = true
-		errNode.isExtra = true
+		errNode.setHasError(true)
+		errNode.setExtra(true)
 		repl = phpAllocChildren(arena, 2)
 		repl[0] = errNode
 		repl[1] = body
@@ -448,7 +448,7 @@ func rewritePHPStaticAnonymousFunctionFragments(nodes []*Node, source []byte, la
 	extraCount := 0
 	for 3+extraCount < len(nodes) {
 		next := nodes[3+extraCount]
-		if next == nil || !next.isExtra {
+		if next == nil || !next.isExtra() {
 			break
 		}
 		extraCount++
@@ -466,7 +466,7 @@ func rewritePHPStaticAnonymousFunctionFragments(nodes []*Node, source []byte, la
 		semiStartPoint = lastExtra.endPoint
 	}
 	semi := newLeafNodeInArena(arena, semiSym, false, semiStartByte, semiStartByte, semiStartPoint, semiStartPoint)
-	semi.hasError = true
+	semi.setHasError(true)
 
 	exprSym, exprNamed, ok := phpSymbolMeta(lang, "expression_statement")
 	if !ok {
@@ -581,7 +581,7 @@ func phpSymbolMeta(lang *Language, name string) (Symbol, bool, bool) {
 }
 
 func phpCountsAsPriorTopLevelNode(n *Node, lang *Language) bool {
-	return n != nil && !n.isExtra && (lang == nil || n.Type(lang) != "php_tag")
+	return n != nil && !n.isExtra() && (lang == nil || n.Type(lang) != "php_tag")
 }
 
 func assignPHPTopLevelFragmentFields(root *Node, lang *Language, arena *nodeArena) {

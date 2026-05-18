@@ -68,7 +68,7 @@ func csharpRewriteConditionalIsPatternExpression(n *Node, lang *Language, isPatt
 		patternChildren = buf
 	}
 	constantPattern := newParentNodeInArena(n.ownerArena, constantPatternSym, constantPatternNamed, patternChildren, nil, 0)
-	constantPattern.hasError = false
+	constantPattern.setHasError(false)
 
 	children := append([]*Node(nil), n.children...)
 	children[patternIdx] = constantPattern
@@ -87,12 +87,12 @@ func csharpRewriteConditionalIsPatternExpression(n *Node, lang *Language, isPatt
 	}
 
 	n.symbol = isPatternSym
-	n.isNamed = isPatternNamed
+	n.setNamed(isPatternNamed)
 	n.children = children
 	n.fieldIDs = fieldIDs
 	n.fieldSources = defaultFieldSourcesInArena(n.ownerArena, fieldIDs)
 	n.productionID = 0
-	n.hasError = false
+	n.setHasError(false)
 	populateParentNode(n, n.children)
 	return true
 }
@@ -229,12 +229,12 @@ func csharpRewriteLogicalAndCastExpression(n *Node, source []byte, lang *Languag
 	}
 
 	n.symbol = castSym
-	n.isNamed = castNamed
+	n.setNamed(castNamed)
 	n.children = children
 	n.fieldIDs = fieldIDs
 	n.fieldSources = defaultFieldSourcesInArena(n.ownerArena, fieldIDs)
 	n.productionID = 0
-	n.hasError = false
+	n.setHasError(false)
 	populateParentNode(n, n.children)
 	return true
 }
@@ -277,7 +277,7 @@ func csharpRewriteLogicalAndCastValue(n *Node, source []byte, lang *Language, pr
 		children = buf
 	}
 	n.children = children
-	n.hasError = false
+	n.setHasError(false)
 	populateParentNode(n, n.children)
 	return true
 }
@@ -301,7 +301,7 @@ func csharpBuildLogicalAndPrefixUnaryValue(arena *nodeArena, source []byte, lang
 		innerChildren = buf
 	}
 	inner := newParentNodeInArena(arena, prefixUnarySym, prefixUnaryNamed, innerChildren, nil, 0)
-	inner.hasError = false
+	inner.setHasError(false)
 	outerChildren := []*Node{amp0, inner}
 	if arena != nil {
 		buf := arena.allocNodeSlice(len(outerChildren))
@@ -309,6 +309,6 @@ func csharpBuildLogicalAndPrefixUnaryValue(arena *nodeArena, source []byte, lang
 		outerChildren = buf
 	}
 	outer := newParentNodeInArena(arena, prefixUnarySym, prefixUnaryNamed, outerChildren, nil, 0)
-	outer.hasError = false
+	outer.setHasError(false)
 	return outer, true
 }

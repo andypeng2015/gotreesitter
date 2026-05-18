@@ -99,7 +99,7 @@ func csharpSplitScopedLambdaStatementChildren(block *Node, source []byte, lang *
 		block.fieldIDs = nil
 		block.fieldSources = nil
 	}
-	block.hasError = false
+	block.setHasError(false)
 	populateParentNode(block, block.children)
 	return true
 }

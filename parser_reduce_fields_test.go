@@ -50,13 +50,13 @@ func TestBuildResultFoldExtrasPreservesFieldMappings(t *testing.T) {
 	source := []byte(" 42 ")
 
 	leadingExtra := NewLeafNode(2, false, 0, 1, Point{Row: 0, Column: 0}, Point{Row: 0, Column: 1})
-	leadingExtra.isExtra = true
+	leadingExtra.setExtra(true)
 
 	valueChild := NewLeafNode(1, true, 1, 3, Point{Row: 0, Column: 1}, Point{Row: 0, Column: 3})
 	realRoot := NewParentNode(3, true, []*Node{valueChild}, []FieldID{1}, 0)
 
 	trailingExtra := NewLeafNode(2, false, 3, 4, Point{Row: 0, Column: 3}, Point{Row: 0, Column: 4})
-	trailingExtra.isExtra = true
+	trailingExtra.setExtra(true)
 
 	stack := []stackEntry{
 		{state: 0, node: leadingExtra},
@@ -470,7 +470,7 @@ func TestBuildReduceChildrenDirectFieldDoesNotSpreadToLeadingExtraComment(t *tes
 	parser := NewParser(lang)
 	arena := newNodeArena(arenaClassFull)
 	comment := newLeafNodeInArena(arena, 2, true, 0, 9, Point{Row: 0, Column: 0}, Point{Row: 0, Column: 9})
-	comment.isExtra = true
+	comment.setExtra(true)
 	binding := newLeafNodeInArena(arena, 3, true, 10, 16, Point{Row: 0, Column: 10}, Point{Row: 0, Column: 16})
 	hidden := newParentNodeInArena(arena, 1, false, []*Node{comment, binding}, nil, 0)
 
@@ -1111,7 +1111,7 @@ func TestBuildResultFromNodesUsesErrorRootForMultipleFragments(t *testing.T) {
 
 	left := newLeafNodeInArena(arena, 0, true, 0, 1, Point{}, Point{Column: 1})
 	right := newLeafNodeInArena(arena, 0, true, 1, 2, Point{Column: 1}, Point{Column: 2})
-	right.hasError = true
+	right.setHasError(true)
 
 	tree := parser.buildResultFromNodes([]*Node{left, right}, source, arena, nil, nil, nil)
 	if tree == nil || tree.RootNode() == nil {
@@ -1139,9 +1139,9 @@ func TestBuildResultFromNodesFlattensLeadingRootFragment(t *testing.T) {
 	left := newLeafNodeInArena(arena, 0, true, 0, 1, Point{}, Point{Column: 1})
 	middle := newLeafNodeInArena(arena, 0, true, 1, 2, Point{Column: 1}, Point{Column: 2})
 	right := newLeafNodeInArena(arena, 0, true, 2, 3, Point{Column: 2}, Point{Column: 3})
-	right.hasError = true
+	right.setHasError(true)
 	fragment := newParentNodeInArena(arena, 1, true, []*Node{left, middle}, nil, 0)
-	fragment.hasError = true
+	fragment.setHasError(true)
 
 	tree := parser.buildResultFromNodes([]*Node{fragment, right}, source, arena, nil, nil, nil)
 	if tree == nil || tree.RootNode() == nil {
@@ -1202,7 +1202,7 @@ func TestBuildResultFromNodesKeepsDartProgramRootWhenOnlyChildNodesHaveErrors(t 
 	source := []byte("library;\nclass A {}\n")
 
 	library := newLeafNodeInArena(arena, 0, true, 0, 8, Point{}, Point{Column: 8})
-	library.hasError = true
+	library.setHasError(true)
 	classDef := newLeafNodeInArena(arena, 1, true, 9, 19, Point{Row: 1}, Point{Row: 1, Column: 10})
 
 	tree := parser.buildResultFromNodes([]*Node{library, classDef}, source, arena, nil, nil, nil)
@@ -1337,7 +1337,7 @@ func TestFieldIDsAlignAfterExtrasFold(t *testing.T) {
 
 	// Simulate what buildResult's extras fold does: prepend a leading extra.
 	extra := NewLeafNode(Symbol(0), false, 0, 3, Point{}, Point{})
-	extra.isExtra = true
+	extra.setExtra(true)
 
 	leadingCount := 1
 	merged := make([]*Node, 0, 1+len(root.children))

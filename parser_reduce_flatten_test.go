@@ -9,8 +9,8 @@ func buildDeepHiddenChain(depth, leaves int) *Node {
 	}
 	for i := 0; i < leaves; i++ {
 		leafParent.children[i] = &Node{
-			symbol:  2,
-			isNamed: true,
+			symbol: 2,
+			flags:  nodeFlagNamed,
 		}
 	}
 	root := leafParent

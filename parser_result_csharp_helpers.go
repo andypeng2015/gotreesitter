@@ -558,7 +558,7 @@ func csharpReplaceRecoveredQueryExpression(root *Node, lang *Language, queryStar
 			if expr != nil && expr.startByte <= queryStart && expr.endByte > queryStart && n.startByte <= queryStart {
 				n.children[len(n.children)-1] = queryExpr
 				queryExpr.parent = n
-				queryExpr.childIndex = len(n.children) - 1
+				queryExpr.childIndex = int32(len(n.children) - 1)
 				for cur := n; cur != nil; cur = cur.parent {
 					populateParentNode(cur, cur.children)
 				}
@@ -567,7 +567,7 @@ func csharpReplaceRecoveredQueryExpression(root *Node, lang *Language, queryStar
 		}
 		for _, child := range n.children {
 			if walk(child) {
-				n.hasError = false
+				n.setHasError(false)
 				return true
 			}
 		}
@@ -806,7 +806,7 @@ func csharpBuildIdentifierNodeFromSource(source []byte, start, end uint32, lang 
 		children = buf
 	}
 	node := newParentNodeInArena(arena, identSym, identNamed, children, nil, 0)
-	node.hasError = false
+	node.setHasError(false)
 	return node, true
 }
 

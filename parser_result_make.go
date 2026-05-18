@@ -29,7 +29,7 @@ func normalizeMakeConditionalConsequenceFields(root *Node, lang *Language) {
 			if start >= 0 && end >= start {
 				for start > 0 {
 					prev := n.children[start-1]
-					if prev == nil || prev.isNamed || prev.isExtra || prev.Type(lang) != "\t" {
+					if prev == nil || prev.isNamed() || prev.isExtra() || prev.Type(lang) != "\t" {
 						break
 					}
 					start--

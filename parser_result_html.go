@@ -70,8 +70,8 @@ func normalizeHTMLRecoveredNestedCustomTags(root *Node, lang *Language) {
 	root.fieldIDs = nil
 	root.fieldSources = nil
 	root.symbol = documentSym
-	root.isNamed = lang.SymbolMetadata[documentSym].Named
-	root.hasError = outer.HasError()
+	root.setNamed(lang.SymbolMetadata[documentSym].Named)
+	root.setHasError(outer.HasError())
 }
 
 func collectHTMLRecoveredStartTags(children []*Node, lang *Language) ([]*Node, int, bool) {

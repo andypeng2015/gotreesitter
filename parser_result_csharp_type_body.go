@@ -119,7 +119,7 @@ func csharpRecoverSourceTopLevelTypeDeclarationFromRange(source []byte, start, e
 	named := int(declSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[declSym].Named
 	decl := newParentNodeInArena(arena, declSym, named, buf, nil, 0)
 	extendNodeEndTo(decl, end, source)
-	decl.hasError = false
+	decl.setHasError(false)
 	return decl, true
 }
 
@@ -451,7 +451,7 @@ func csharpBuildRecoveredTypeDeclarationWithBodyFromChildren(children []*Node, i
 		declChildren = buf
 	}
 	recovered := newParentNodeInArena(arena, declSym, declNamed, declChildren, nil, 0)
-	recovered.hasError = false
+	recovered.setHasError(false)
 	extendNodeEndTo(recovered, uint32(closeBrace+1), source)
 	return recovered, true
 }
@@ -625,7 +625,7 @@ func csharpRecoverMethodDeclarationFromChildren(children []*Node, startIdx int, 
 		methodChildren = buf
 	}
 	method := newParentNodeInArena(arena, methodSym, methodNamed, methodChildren, nil, 0)
-	method.hasError = false
+	method.setHasError(false)
 	extendNodeEndTo(method, uint32(closeBracePos+1), source)
 	for nextIdx < len(children) {
 		child := children[nextIdx]
@@ -697,6 +697,6 @@ func csharpBuildRecoveredMethodBlockNode(source []byte, lang *Language, arena *n
 		children = buf
 	}
 	block := newParentNodeInArena(arena, blockSym, blockNamed, children, nil, 0)
-	block.hasError = false
+	block.setHasError(false)
 	return block, true
 }

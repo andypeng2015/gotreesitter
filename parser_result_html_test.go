@@ -36,7 +36,7 @@ func TestNormalizeHTMLRecoveredNestedCustomTagsWrapsStartTagPrefix(t *testing.T)
 	root := newParentNodeInArena(arena, 1, true, []*Node{start0, wrapped, leafElem, closeTok, tagName, closeAngle}, nil, 0)
 	root.endByte = 28
 	root.endPoint = Point{Row: 5}
-	root.hasError = true
+	root.setHasError(true)
 
 	normalizeHTMLRecoveredNestedCustomTags(root, lang)
 
@@ -141,7 +141,7 @@ func TestNormalizeHTMLRecoveredNestedCustomTagsExtendsContinuationRange(t *testi
 	tagName := newLeafNodeInArena(arena, 7, true, 23, 26, Point{Row: 4, Column: 2}, Point{Row: 4, Column: 5})
 	closeAngle := newLeafNodeInArena(arena, 8, false, 26, 27, Point{Row: 4, Column: 5}, Point{Row: 4, Column: 6})
 	root := newParentNodeInArena(arena, 1, true, []*Node{start0, continuation, closeTok, tagName, closeAngle}, nil, 0)
-	root.hasError = true
+	root.setHasError(true)
 
 	normalizeHTMLRecoveredNestedCustomTags(root, lang)
 

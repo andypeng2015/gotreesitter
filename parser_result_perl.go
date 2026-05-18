@@ -60,7 +60,7 @@ func rewritePerlJoinAssignmentList(arena *nodeArena, assign *Node, source []byte
 	if len(callFieldIDs) > 2 {
 		callFieldIDs = callFieldIDs[:2]
 	}
-	rewrittenCall := newParentNodeInArena(arena, call.symbol, call.isNamed, []*Node{fn, firstArg}, callFieldIDs, call.productionID)
+	rewrittenCall := newParentNodeInArena(arena, call.symbol, call.isNamed(), []*Node{fn, firstArg}, callFieldIDs, call.productionID)
 	if len(call.fieldSources) > 0 {
 		rewrittenCall.fieldSources = append([]uint8(nil), call.fieldSources...)
 		if len(rewrittenCall.fieldSources) > 2 {
@@ -69,7 +69,7 @@ func rewritePerlJoinAssignmentList(arena *nodeArena, assign *Node, source []byte
 	}
 
 	assignFieldIDs := append([]FieldID(nil), assign.fieldIDs...)
-	rewrittenAssign := newParentNodeInArena(arena, assign.symbol, assign.isNamed, []*Node{assign.children[0], assign.children[1], rewrittenCall}, assignFieldIDs, assign.productionID)
+	rewrittenAssign := newParentNodeInArena(arena, assign.symbol, assign.isNamed(), []*Node{assign.children[0], assign.children[1], rewrittenCall}, assignFieldIDs, assign.productionID)
 	if len(assign.fieldSources) > 0 {
 		rewrittenAssign.fieldSources = append([]uint8(nil), assign.fieldSources...)
 	}
@@ -134,7 +134,7 @@ func rewritePerlPushExpressionList(arena *nodeArena, list *Node, source []byte, 
 	if len(callFieldIDs) > 2 {
 		callFieldIDs = callFieldIDs[:2]
 	}
-	rewrittenCall := newParentNodeInArena(arena, call.symbol, call.isNamed, []*Node{fn, rewrittenArgs}, callFieldIDs, call.productionID)
+	rewrittenCall := newParentNodeInArena(arena, call.symbol, call.isNamed(), []*Node{fn, rewrittenArgs}, callFieldIDs, call.productionID)
 	if len(call.fieldSources) > 0 {
 		rewrittenCall.fieldSources = append([]uint8(nil), call.fieldSources...)
 		if len(rewrittenCall.fieldSources) > 2 {
@@ -193,7 +193,7 @@ func rewritePerlReturnExpressionList(arena *nodeArena, ret *Node, lang *Language
 	if len(retFieldIDs) > 2 {
 		retFieldIDs = retFieldIDs[:2]
 	}
-	rewrittenReturn := newParentNodeInArena(arena, ret.symbol, ret.isNamed, []*Node{ret.children[0], firstItem}, retFieldIDs, ret.productionID)
+	rewrittenReturn := newParentNodeInArena(arena, ret.symbol, ret.isNamed(), []*Node{ret.children[0], firstItem}, retFieldIDs, ret.productionID)
 	if len(ret.fieldSources) > 0 {
 		rewrittenReturn.fieldSources = append([]uint8(nil), ret.fieldSources...)
 		if len(rewrittenReturn.fieldSources) > 2 {

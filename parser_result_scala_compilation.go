@@ -34,16 +34,16 @@ func normalizeScalaCompilationUnitRoot(root *Node, source []byte, lang *Language
 		root.fieldIDs = nil
 		root.fieldSources = nil
 		root.symbol = sym
-		root.isNamed = int(sym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[sym].Named
+		root.setNamed(int(sym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[sym].Named)
 		populateParentNode(root, root.children)
-		root.hasError = false
+		root.setHasError(false)
 		for _, child := range root.children {
 			if child != nil && (child.IsError() || child.HasError()) {
-				root.hasError = true
+				root.setHasError(true)
 				break
 			}
 		}
-		if !root.hasError {
+		if !root.hasError() {
 			return
 		}
 	}
@@ -51,11 +51,11 @@ func normalizeScalaCompilationUnitRoot(root *Node, source []byte, lang *Language
 		return
 	}
 	root.symbol = sym
-	root.isNamed = int(sym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[sym].Named
-	root.hasError = false
+	root.setNamed(int(sym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[sym].Named)
+	root.setHasError(false)
 	for _, child := range root.children {
 		if child != nil && (child.IsError() || child.HasError()) {
-			root.hasError = true
+			root.setHasError(true)
 			break
 		}
 	}
@@ -449,9 +449,9 @@ func normalizeScalaDefinitionFields(root *Node, source []byte, lang *Language) {
 					want = nameID
 				case child.Type(lang) == "parameters":
 					want = parametersID
-				case i > 0 && n.children[i-1] != nil && n.children[i-1].Type(lang) == ":" && child.isNamed:
+				case i > 0 && n.children[i-1] != nil && n.children[i-1].Type(lang) == ":" && child.isNamed():
 					want = returnTypeID
-				case i > 0 && n.children[i-1] != nil && (n.children[i-1].Type(lang) == "=" || n.children[i-1].Type(lang) == "=>") && child.isNamed:
+				case i > 0 && n.children[i-1] != nil && (n.children[i-1].Type(lang) == "=" || n.children[i-1].Type(lang) == "=>") && child.isNamed():
 					want = bodyID
 				}
 				if want == 0 {
@@ -482,7 +482,7 @@ func normalizeScalaDefinitionFields(root *Node, source []byte, lang *Language) {
 				case "modifiers":
 					continue
 				}
-				if !child.isNamed {
+				if !child.isNamed() {
 					continue
 				}
 				var want FieldID
@@ -518,7 +518,7 @@ func normalizeScalaDefinitionFields(root *Node, source []byte, lang *Language) {
 					afterElse = true
 					continue
 				}
-				if !child.isNamed {
+				if !child.isNamed() {
 					continue
 				}
 				var want FieldID
@@ -793,7 +793,7 @@ func normalizeScalaTrailingCommentSiblings(parent *Node, source []byte, lang *La
 			continue
 		}
 		next := parent.children[j]
-		if next == nil || next.isExtra {
+		if next == nil || next.isExtra() {
 			i++
 			continue
 		}

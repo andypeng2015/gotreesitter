@@ -21,9 +21,9 @@ func normalizeRustRecoveredStructExpressionRoot(root *Node, source []byte, lang 
 	root.fieldIDs = nil
 	root.fieldSources = nil
 	root.symbol = sourceFileSym
-	root.isNamed = rustNamedForSymbol(lang, sourceFileSym)
+	root.setNamed(rustNamedForSymbol(lang, sourceFileSym))
 	populateParentNode(root, root.children)
-	root.hasError = false
+	root.setHasError(false)
 	if root.endByte < uint32(len(source)) && bytesAreTrivia(source[root.endByte:]) {
 		extendNodeEndTo(root, uint32(len(source)), source)
 	}
@@ -744,7 +744,7 @@ func rustBuildRecoveredTokenTree(arena *nodeArena, source []byte, lang *Language
 	node.endByte = end
 	node.startPoint = advancePointByBytes(Point{}, source[:start])
 	node.endPoint = advancePointByBytes(Point{}, source[:end])
-	node.hasError = false
+	node.setHasError(false)
 	populateParentNode(node, node.children)
 	return node, true
 }
@@ -930,8 +930,8 @@ func rustRefreshRecoveredErrorFlags(node *Node) bool {
 			hasError = true
 		}
 	}
-	node.hasError = hasError
-	return node.IsError() || node.hasError
+	node.setHasError(hasError)
+	return node.IsError() || node.hasError()
 }
 
 func rustFindBlockCommentEnd(source []byte, start, end uint32) uint32 {
@@ -1087,15 +1087,15 @@ func normalizeRustSourceFileRoot(root *Node, source []byte, lang *Language) {
 		return
 	}
 	root.symbol = sourceFileSym
-	root.isNamed = rustNamedForSymbol(lang, sourceFileSym)
-	root.hasError = false
+	root.setNamed(rustNamedForSymbol(lang, sourceFileSym))
+	root.setHasError(false)
 	for _, child := range root.children {
 		if child != nil && (child.IsError() || child.HasError()) {
-			root.hasError = true
+			root.setHasError(true)
 			break
 		}
 	}
-	if !root.hasError && root.endByte < uint32(len(source)) && bytesAreTrivia(source[root.endByte:]) {
+	if !root.hasError() && root.endByte < uint32(len(source)) && bytesAreTrivia(source[root.endByte:]) {
 		extendNodeEndTo(root, uint32(len(source)), source)
 	}
 }

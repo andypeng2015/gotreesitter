@@ -72,7 +72,7 @@ func normalizeCSharpInvocationStatements(root *Node, source []byte, lang *Langua
 						invocation := newParentNodeInArena(n.ownerArena, invocationSym, invocationNamed, []*Node{function, arguments}, invocationFields, 0)
 						invocation.fieldSources = defaultFieldSourcesInArena(n.ownerArena, invocationFields)
 						n.symbol = exprStmtSym
-						n.isNamed = exprStmtNamed
+						n.setNamed(exprStmtNamed)
 						n.children = []*Node{invocation, semi}
 						if n.ownerArena != nil {
 							buf := n.ownerArena.allocNodeSlice(len(n.children))
@@ -82,7 +82,7 @@ func normalizeCSharpInvocationStatements(root *Node, source []byte, lang *Langua
 						n.fieldIDs = nil
 						n.fieldSources = nil
 						n.productionID = 0
-						n.hasError = false
+						n.setHasError(false)
 						populateParentNode(n, n.children)
 					}
 				}
@@ -164,7 +164,7 @@ func csharpRecoverTopLevelInvocationStatementFromRange(source []byte, start, end
 	}
 	exprFieldIDs := csharpFieldIDsInArena(arena, []FieldID{expressionFieldID, 0})
 	exprStmt := newParentNodeInArena(arena, exprStmtSym, exprStmtNamed, exprChildren, exprFieldIDs, 0)
-	exprStmt.hasError = false
+	exprStmt.setHasError(false)
 	globalChildren := []*Node{exprStmt}
 	if arena != nil {
 		buf := arena.allocNodeSlice(len(globalChildren))
@@ -172,7 +172,7 @@ func csharpRecoverTopLevelInvocationStatementFromRange(source []byte, start, end
 		globalChildren = buf
 	}
 	global := newParentNodeInArena(arena, globalSym, globalNamed, globalChildren, nil, 0)
-	global.hasError = false
+	global.setHasError(false)
 	return global, true
 }
 
@@ -194,11 +194,11 @@ func csharpRewriteQualifiedNameAsMemberAccess(node *Node, lang *Language, member
 		fieldIDs[2] = nameFieldID
 	}
 	node.symbol = memberAccessSym
-	node.isNamed = memberAccessNamed
+	node.setNamed(memberAccessNamed)
 	node.fieldIDs = fieldIDs
 	node.fieldSources = defaultFieldSourcesInArena(node.ownerArena, fieldIDs)
 	node.productionID = 0
-	node.hasError = false
+	node.setHasError(false)
 	populateParentNode(node, node.children)
 	return node
 }
@@ -222,7 +222,7 @@ func csharpBuildArgumentListFromTuplePattern(tuple *Node, lang *Language, argume
 				argChildren = buf
 			}
 			arg := newParentNodeInArena(tuple.ownerArena, argumentSym, argumentNamed, argChildren, nil, 0)
-			arg.hasError = false
+			arg.setHasError(false)
 			children = append(children, arg)
 			continue
 		}
@@ -235,7 +235,7 @@ func csharpBuildArgumentListFromTuplePattern(tuple *Node, lang *Language, argume
 		children = buf
 	}
 	args := newParentNodeInArena(tuple.ownerArena, argumentListSym, argumentListNamed, children, nil, 0)
-	args.hasError = false
+	args.setHasError(false)
 	return args, true
 }
 
@@ -361,7 +361,7 @@ func csharpRewriteSwitchTupleLiteralPatternArguments(tuple *Node, lang *Language
 				patternChildren = buf
 			}
 			patternChild = newParentNodeInArena(tuple.ownerArena, constantPatternSym, constantPatternNamed, patternChildren, nil, 0)
-			patternChild.hasError = false
+			patternChild.setHasError(false)
 		}
 		subChildren := []*Node{patternChild}
 		if tuple.ownerArena != nil {
@@ -370,7 +370,7 @@ func csharpRewriteSwitchTupleLiteralPatternArguments(tuple *Node, lang *Language
 			subChildren = buf
 		}
 		sub := newParentNodeInArena(tuple.ownerArena, subpatternSym, subpatternNamed, subChildren, nil, 0)
-		sub.hasError = false
+		sub.setHasError(false)
 		clauseChildren = append(clauseChildren, sub)
 	}
 	if len(clauseChildren) == 0 {
@@ -382,7 +382,7 @@ func csharpRewriteSwitchTupleLiteralPatternArguments(tuple *Node, lang *Language
 		clauseChildren = buf
 	}
 	clause := newParentNodeInArena(tuple.ownerArena, positionalSym, positionalNamed, clauseChildren, nil, 0)
-	clause.hasError = false
+	clause.setHasError(false)
 	children := []*Node{tuple.children[0], clause, tuple.children[len(tuple.children)-1]}
 	if tuple.ownerArena != nil {
 		buf := tuple.ownerArena.allocNodeSlice(len(children))
@@ -393,7 +393,7 @@ func csharpRewriteSwitchTupleLiteralPatternArguments(tuple *Node, lang *Language
 	tuple.fieldIDs = nil
 	tuple.fieldSources = nil
 	tuple.productionID = 0
-	tuple.hasError = false
+	tuple.setHasError(false)
 	populateParentNode(tuple, tuple.children)
 	return true
 }

@@ -27,7 +27,7 @@ func normalizeCTranslationUnitRoot(root *Node, lang *Language) {
 		return
 	}
 	root.symbol = sym
-	root.isNamed = int(sym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[sym].Named
+	root.setNamed(int(sym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[sym].Named)
 }
 
 func rootLooksLikeCTopLevel(root *Node, lang *Language) bool {
@@ -192,7 +192,7 @@ func normalizeCWhitespaceSeparatedFunctionMacro(node *Node, source []byte, lang 
 		children = buf
 	}
 	node.symbol = preprocDefSym
-	node.isNamed = int(preprocDefSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[preprocDefSym].Named
+	node.setNamed(int(preprocDefSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[preprocDefSym].Named)
 	node.children = children
 	ensureNodeFieldStorage(node, len(children))
 	for i := range node.fieldIDs {
@@ -441,7 +441,7 @@ func normalizeCBuiltinPrimitiveTypeIdentifiers(root *Node, source []byte, lang *
 		}
 		if n.Type(lang) == "type_identifier" && isCBuiltinPrimitiveTypeName(canonicalCTypeName(n.Text(source))) {
 			n.symbol = primitiveTypeSym
-			n.isNamed = primitiveTypeNamed
+			n.setNamed(primitiveTypeNamed)
 		}
 		for _, child := range n.children {
 			rewrite(child)
@@ -672,7 +672,7 @@ func normalizeCCastUnknownTypeIdentifiers(root *Node, source []byte, lang *Langu
 							fieldIDs = buf
 						}
 						n.symbol = callSym
-						n.isNamed = callNamed
+						n.setNamed(callNamed)
 						n.children = children
 						n.fieldIDs = fieldIDs
 						n.fieldSources = make([]uint8, len(children))
@@ -684,7 +684,7 @@ func normalizeCCastUnknownTypeIdentifiers(root *Node, source []byte, lang *Langu
 								continue
 							}
 							child.parent = n
-							child.childIndex = i
+							child.childIndex = int32(i)
 						}
 					}
 				}
@@ -722,7 +722,7 @@ func normalizeCCastUnknownTypeIdentifiers(root *Node, source []byte, lang *Langu
 						typeDescriptor := newParentNodeInArena(n.ownerArena, typeDescriptorSym, typeDescriptorNamed, []*Node{typeIdent}, nil, 0)
 						var valueNode *Node
 						for _, child := range arguments.children {
-							if child != nil && child.isNamed {
+							if child != nil && child.isNamed() {
 								valueNode = child
 								break
 							}
@@ -743,7 +743,7 @@ func normalizeCCastUnknownTypeIdentifiers(root *Node, source []byte, lang *Langu
 								fieldIDs = buf
 							}
 							n.symbol = castSym
-							n.isNamed = castNamed
+							n.setNamed(castNamed)
 							n.children = children
 							n.fieldIDs = fieldIDs
 							n.fieldSources = make([]uint8, len(children))
@@ -755,7 +755,7 @@ func normalizeCCastUnknownTypeIdentifiers(root *Node, source []byte, lang *Langu
 									continue
 								}
 								child.parent = n
-								child.childIndex = i
+								child.childIndex = int32(i)
 							}
 						}
 					}
@@ -791,7 +791,7 @@ func normalizeCPointerAssignmentPrecedence(root *Node, lang *Language) {
 				}
 				n.children[i] = rewritten
 				rewritten.parent = n
-				rewritten.childIndex = i
+				rewritten.childIndex = int32(i)
 				child = rewritten
 			}
 		}

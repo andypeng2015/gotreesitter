@@ -227,12 +227,12 @@ func (c *reuseCursor) reusableIndexedNode(cur *Node) bool {
 		c.rejectDirty++
 		return false
 	}
-	dirtyHere := cur.dirty
+	dirtyHere := cur.dirty()
 	if dirtyHere && nodeBytesEqual(cur.startByte, cur.endByte, c.oldSource, c.newSource) {
-		cur.dirty = false
+		cur.setDirty(false)
 		dirtyHere = false
 	}
-	if cur.hasError {
+	if cur.hasError() {
 		c.rejectHasError++
 		return false
 	}
@@ -281,11 +281,11 @@ func (c *reuseCursor) advance() *Node {
 			perfRecordReuseVisited()
 		}
 
-		dirtyHere := cur.dirty
+		dirtyHere := cur.dirty()
 		if dirtyHere {
 			if nodeBytesEqual(cur.startByte, cur.endByte, c.oldSource, c.newSource) {
 				// Undo edit path: unchanged bytes can be reused safely.
-				cur.dirty = false
+				cur.setDirty(false)
 				dirtyHere = false
 			}
 		}
@@ -308,7 +308,7 @@ func (c *reuseCursor) advance() *Node {
 			c.rejectAncestorDirtyBeforeEdit++
 			continue
 		}
-		if cur.hasError {
+		if cur.hasError() {
 			c.rejectHasError++
 			continue
 		}

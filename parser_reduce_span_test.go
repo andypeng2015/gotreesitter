@@ -12,7 +12,7 @@ func TestExtendParentSpanCoversInvisibleLeafChild(t *testing.T) {
 	parent.endPoint = Point{Row: 1, Column: 20}
 
 	leadingExtra := NewLeafNode(1, false, 8, 9, Point{Row: 1, Column: 8}, Point{Row: 1, Column: 9})
-	leadingExtra.isExtra = true
+	leadingExtra.setExtra(true)
 	core := NewLeafNode(2, true, 10, 20, Point{Row: 1, Column: 10}, Point{Row: 1, Column: 20})
 	invisible := NewLeafNode(4, false, 20, 22, Point{Row: 1, Column: 20}, Point{Row: 1, Column: 22})
 

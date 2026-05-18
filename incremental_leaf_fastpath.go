@@ -24,7 +24,7 @@ func (p *Parser) tryTokenInvariantLeafEdit(source []byte, oldTree *Tree, ts Toke
 	if leaf == nil || !leaf.containsByteRange(edit.StartByte, edit.OldEndByte) {
 		leaf = root.DescendantForByteRange(edit.StartByte, edit.OldEndByte)
 	}
-	if leaf == nil || leaf.ChildCount() != 0 || leaf.hasError || leaf.isMissing || leaf.isExtra {
+	if leaf == nil || leaf.ChildCount() != 0 || leaf.hasError() || leaf.isMissing() || leaf.isExtra() {
 		return nil, false
 	}
 	start := time.Time{}
@@ -337,7 +337,7 @@ func reuseTreeWithNewSource(oldTree *Tree, source []byte, dirtyLeaf *Node) *Tree
 
 func clearDirtyPathToRoot(n *Node) {
 	for n != nil {
-		n.dirty = false
+		n.setDirty(false)
 		n = n.parent
 	}
 }
