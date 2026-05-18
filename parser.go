@@ -57,6 +57,7 @@ type Parser struct {
 	fieldConflictedScratch              []bool
 	reduceScratch                       *reduceBuildScratch
 	noTreeBenchmarkOnly                 bool
+	noResultCompatibilityBenchmarkOnly  bool
 	currentExternalTokenCheckpoint      externalScannerCheckpoint
 	currentExternalTokenCheckpointStart uint32
 	currentExternalTokenCheckpointEnd   uint32

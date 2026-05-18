@@ -455,6 +455,21 @@ func (p *Parser) ParseNoTreeBenchmarkOnly(source []byte) (*Tree, error) {
 	return p.Parse(source)
 }
 
+// ParseNoResultCompatibilityBenchmarkOnly parses source while suppressing
+// language-specific result compatibility rewrites. It is intended only for
+// performance attribution; the returned tree is not API-compatible.
+func (p *Parser) ParseNoResultCompatibilityBenchmarkOnly(source []byte) (*Tree, error) {
+	if p == nil {
+		return nil, ErrNoLanguage
+	}
+	prev := p.noResultCompatibilityBenchmarkOnly
+	p.noResultCompatibilityBenchmarkOnly = true
+	defer func() {
+		p.noResultCompatibilityBenchmarkOnly = prev
+	}()
+	return p.Parse(source)
+}
+
 // ParseUTF16 parses UTF-16 source represented as Go UTF-16 code units.
 //
 // The parser core uses a canonical UTF-8 view internally so existing byte-based

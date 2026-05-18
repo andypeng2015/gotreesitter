@@ -112,6 +112,7 @@ func (pp *ParserPool) applyDefaults(p *Parser) {
 	p.SetGLRTrace(pp.glrTrace)
 	p.SetAmbiguityProfile(pp.ambiguityProfile)
 	p.noTreeBenchmarkOnly = false
+	p.noResultCompatibilityBenchmarkOnly = false
 }
 
 func (pp *ParserPool) checkout() *Parser {
@@ -162,6 +163,19 @@ func (pp *ParserPool) ParseNoTreeBenchmarkOnly(source []byte) (*Tree, error) {
 	}
 	defer pp.release(p)
 	return p.ParseNoTreeBenchmarkOnly(source)
+}
+
+// ParseNoResultCompatibilityBenchmarkOnly delegates to
+// Parser.ParseNoResultCompatibilityBenchmarkOnly. It is intended only for
+// performance attribution of parser/tree construction versus compatibility
+// rewrites; the returned tree is not API-compatible.
+func (pp *ParserPool) ParseNoResultCompatibilityBenchmarkOnly(source []byte) (*Tree, error) {
+	p := pp.checkout()
+	if p == nil {
+		return nil, ErrNoLanguage
+	}
+	defer pp.release(p)
+	return p.ParseNoResultCompatibilityBenchmarkOnly(source)
 }
 
 // ParseUTF16 delegates to a pooled Parser.ParseUTF16 call.

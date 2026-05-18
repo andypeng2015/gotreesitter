@@ -24,8 +24,9 @@ type pythonCorpusFile struct {
 type pythonCorpusParseMode string
 
 const (
-	pythonCorpusParseModeDFA       pythonCorpusParseMode = "dfa"
-	pythonCorpusParseModeDFANoTree pythonCorpusParseMode = "dfa_no_tree"
+	pythonCorpusParseModeDFA         pythonCorpusParseMode = "dfa"
+	pythonCorpusParseModeDFANoCompat pythonCorpusParseMode = "dfa_no_compat"
+	pythonCorpusParseModeDFANoTree   pythonCorpusParseMode = "dfa_no_tree"
 )
 
 type pythonRuntimeBenchStats struct {
@@ -224,6 +225,8 @@ func benchmarkPythonCorpusGoDFA(b *testing.B, mode pythonCorpusParseMode) {
 		switch mode {
 		case pythonCorpusParseModeDFA:
 			tree, err = pool.Parse(file.source)
+		case pythonCorpusParseModeDFANoCompat:
+			tree, err = pool.ParseNoResultCompatibilityBenchmarkOnly(file.source)
 		case pythonCorpusParseModeDFANoTree:
 			tree, err = pool.ParseNoTreeBenchmarkOnly(file.source)
 		default:
@@ -245,6 +248,10 @@ func benchmarkPythonCorpusGoDFA(b *testing.B, mode pythonCorpusParseMode) {
 
 func BenchmarkPythonCorpusGoTreeSitterParseDFA(b *testing.B) {
 	benchmarkPythonCorpusGoDFA(b, pythonCorpusParseModeDFA)
+}
+
+func BenchmarkPythonCorpusGoTreeSitterParseDFANoCompat(b *testing.B) {
+	benchmarkPythonCorpusGoDFA(b, pythonCorpusParseModeDFANoCompat)
 }
 
 func BenchmarkPythonCorpusGoTreeSitterParseDFANoTree(b *testing.B) {

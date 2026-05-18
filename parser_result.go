@@ -527,7 +527,9 @@ func (p *Parser) finalizeResultRoot(root *Node, source []byte, linkScratch *[]*N
 		extendNodeToTrailingWhitespace(root, source)
 	}
 	p.normalizeRootSourceStart(root, source)
-	normalizeResultCompatibility(root, source, p)
+	if p == nil || !p.noResultCompatibilityBenchmarkOnly {
+		normalizeResultCompatibility(root, source, p)
+	}
 	if wireParentLinks {
 		if p != nil && p.shouldDeferResultParentLinks(root) {
 			root.ownerArena.deferParentLinks(root)
