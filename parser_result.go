@@ -10,14 +10,14 @@ package gotreesitter
 // Prefers accepted stacks, then highest score, then most entries. When
 // accepted stacks are otherwise tied, prefer the tree that retains an
 // alias-target symbol before falling back to branch order.
-func (p *Parser) buildResultFromGLR(stacks []glrStack, source []byte, arena *nodeArena, oldTree *Tree, reuseState *parseReuseState, linkScratch *[]*Node) *Tree {
+func (p *Parser) buildResultFromGLR(stacks []glrStack, source []byte, arena *nodeArena, oldTree *Tree, reuseState *parseReuseState, linkScratch *[]*Node, skipErrorRank bool) *Tree {
 	if len(stacks) == 0 {
 		arena.Release()
 		return parseErrorTree(source, p.language)
 	}
 	best := 0
 	for i := 1; i < len(stacks); i++ {
-		if stackCompareForResultSelection(p, &stacks[i], &stacks[best]) > 0 {
+		if stackCompareForResultSelection(p, &stacks[i], &stacks[best], skipErrorRank) > 0 {
 			best = i
 		}
 	}
@@ -57,7 +57,7 @@ func (p *Parser) buildNoTreeBenchmarkResult(source []byte, arena *nodeArena, roo
 	return newTreeWithArenas(root, source, p.language, arena, nil)
 }
 
-func stackCompareForResultSelection(p *Parser, a, b *glrStack) int {
+func stackCompareForResultSelection(p *Parser, a, b *glrStack, skipErrorRank bool) int {
 	if a.dead != b.dead {
 		if a.dead {
 			return -1
@@ -70,11 +70,13 @@ func stackCompareForResultSelection(p *Parser, a, b *glrStack) int {
 		}
 		return -1
 	}
-	if aErr, bErr := stackResultErrorRank(a), stackResultErrorRank(b); aErr != bErr {
-		if aErr < bErr {
-			return 1
+	if !skipErrorRank {
+		if aErr, bErr := stackResultErrorRank(a), stackResultErrorRank(b); aErr != bErr {
+			if aErr < bErr {
+				return 1
+			}
+			return -1
 		}
-		return -1
 	}
 	if cmp := compareAcceptedStackAliasPreference(p, *a, *b); cmp != 0 {
 		return cmp

@@ -1521,7 +1521,10 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			tree := p.buildNoTreeBenchmarkResult(source, arena, rootEndByte)
 			return finalizeTree(tree, stopReason)
 		}
-		tree := p.buildResultFromGLR(stacks, source, arena, oldTree, &reuseState, &scratch.nodeLinks)
+		// trackChildErrors flips true whenever parsing creates a missing/error
+		// node. If it stayed false, every final stack has error rank zero, so
+		// the expensive tree walk in stackResultErrorRank cannot affect choice.
+		tree := p.buildResultFromGLR(stacks, source, arena, oldTree, &reuseState, &scratch.nodeLinks, !trackChildErrors)
 		return finalizeTree(tree, stopReason)
 	}
 	finalizeErrorTree := func(stopReason ParseStopReason) *Tree {

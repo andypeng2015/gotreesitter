@@ -1242,6 +1242,12 @@ func (p *Parser) buildReduceChildren(entries []stackEntry, start, end, childCoun
 	symbolMeta := lang.SymbolMetadata
 
 	aliasSeq := p.reduceAliasSequence(productionID)
+	productionHasFields := p.reduceProductionHasFields(productionID)
+	if len(aliasSeq) == 0 && !productionHasFields {
+		if children, _, _, ok := p.buildReduceChildrenAllVisible(entries, start, end, childCount, nil, nil, nil, symbolMeta, arena); ok {
+			return children, nil, nil
+		}
+	}
 	parentVisible := true
 	if idx := int(parentSymbol); idx < len(symbolMeta) {
 		parentVisible = symbolMeta[parentSymbol].Visible
@@ -1263,7 +1269,7 @@ func (p *Parser) buildReduceChildren(entries []stackEntry, start, end, childCoun
 			}
 		}
 	}
-	if len(aliasSeq) == 0 && !p.reduceProductionHasFields(productionID) && !preserveHiddenFields {
+	if len(aliasSeq) == 0 && !productionHasFields && !preserveHiddenFields {
 		return p.buildReduceChildrenNoAliasNoFieldsStreaming(entries, start, end, parentSymbol, symbolMeta, arena)
 	}
 
