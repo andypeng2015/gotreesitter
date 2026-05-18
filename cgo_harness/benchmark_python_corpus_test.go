@@ -49,6 +49,11 @@ type pythonRuntimeBenchStats struct {
 	leafNodesConstructed            uint64
 	parentNodesConstructed          uint64
 	noTreeReduceNodesConstructed    uint64
+	normalizationPassesChecked      uint64
+	normalizationPassesRun          uint64
+	normalizationNodesVisited       uint64
+	normalizationNodesRewritten     uint64
+	normalizationNanos              int64
 	maxStacksSeen                   int
 }
 
@@ -73,6 +78,11 @@ func (s *pythonRuntimeBenchStats) add(rt gotreesitter.ParseRuntime) {
 	s.leafNodesConstructed += rt.LeafNodesConstructed
 	s.parentNodesConstructed += rt.ParentNodesConstructed
 	s.noTreeReduceNodesConstructed += rt.NoTreeReduceNodesConstructed
+	s.normalizationPassesChecked += rt.NormalizationPassesChecked
+	s.normalizationPassesRun += rt.NormalizationPassesRun
+	s.normalizationNodesVisited += rt.NormalizationNodesVisited
+	s.normalizationNodesRewritten += rt.NormalizationNodesRewritten
+	s.normalizationNanos += rt.NormalizationNanos
 	if rt.MaxStacksSeen > s.maxStacksSeen {
 		s.maxStacksSeen = rt.MaxStacksSeen
 	}
@@ -84,6 +94,9 @@ func (s pythonRuntimeBenchStats) report(b *testing.B) {
 	}
 	b.ReportMetric(float64(s.tokensConsumed)/float64(s.ops), "tokens/op")
 	b.ReportMetric(float64(s.maxStacksSeen), "max_stacks")
+	b.ReportMetric(float64(s.normalizationNanos)/float64(s.ops), "norm_ns/op")
+	b.ReportMetric(float64(s.normalizationPassesChecked)/float64(s.ops), "norm_checked/op")
+	b.ReportMetric(float64(s.normalizationPassesRun)/float64(s.ops), "norm_runs/op")
 	if s.tokensConsumed == 0 {
 		return
 	}
@@ -112,6 +125,8 @@ func (s pythonRuntimeBenchStats) report(b *testing.B) {
 	b.ReportMetric(float64(s.externalCheckpointSlots)/tokens, "chk_slots/token")
 	b.ReportMetric(float64(s.externalCheckpointBytes)/tokens, "chk_B/token")
 	b.ReportMetric(float64(s.externalCheckpointSnapshotBytes)/tokens, "chk_snap_B/token")
+	b.ReportMetric(float64(s.normalizationNodesVisited)/tokens, "norm_visited/token")
+	b.ReportMetric(float64(s.normalizationNodesRewritten)/tokens, "norm_rewritten/token")
 }
 
 func loadPythonCorpusFile(tb testing.TB) pythonCorpusFile {

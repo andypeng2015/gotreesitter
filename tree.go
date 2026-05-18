@@ -145,6 +145,11 @@ type ParseRuntime struct {
 	LeafNodesConstructed                    uint64
 	ParentNodesConstructed                  uint64
 	NoTreeReduceNodesConstructed            uint64
+	NormalizationPassesChecked              uint64
+	NormalizationPassesRun                  uint64
+	NormalizationNodesVisited               uint64
+	NormalizationNodesRewritten             uint64
+	NormalizationNanos                      int64
 }
 
 // Summary returns a stable one-line diagnostic string for parse-runtime stats.

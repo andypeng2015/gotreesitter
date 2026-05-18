@@ -477,6 +477,81 @@ func TestNormalizePythonTrailingSelfCallsFoldsIntoNestedFunctionBlock(t *testing
 	}
 }
 
+func TestPythonSourceMayContainFStringPatternNormalization(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+		want bool
+	}{
+		{name: "simple interpolation", src: `f"{name}"`, want: false},
+		{name: "debug interpolation", src: `f"{value=}"`, want: false},
+		{name: "tuple interpolation", src: `f"{a, b}"`, want: true},
+		{name: "splat interpolation", src: `f"{*items}"`, want: true},
+		{name: "literal braces", src: `f"{{a, b}}"`, want: false},
+		{name: "non f string", src: `"regular {a, b}"`, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := pythonSourceMayContainFStringPatternNormalization([]byte(tt.src)); got != tt.want {
+				t.Fatalf("pythonSourceMayContainFStringPatternNormalization(%q) = %v, want %v", tt.src, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNormalizePythonCompatibilityRecordsRuntimeStats(t *testing.T) {
+	lang := &Language{
+		Name: "python",
+		SymbolNames: []string{
+			"",
+			"module",
+		},
+		SymbolMetadata: []SymbolMetadata{
+			{},
+			{Name: "module", Visible: true, Named: true},
+		},
+	}
+	parser := &Parser{}
+	root := newParentNodeInArena(nil, 1, true, nil, nil, 0)
+
+	normalizePythonCompatibilityWithParser(root, []byte(";"), parser, lang)
+
+	stats := parser.normalizationStats
+	if got, want := stats.passesChecked, uint64(5); got != want {
+		t.Fatalf("passesChecked = %d, want %d", got, want)
+	}
+	if got, want := stats.passesRun, uint64(1); got != want {
+		t.Fatalf("passesRun = %d, want %d", got, want)
+	}
+	if got, want := stats.nodesVisited, uint64(1); got != want {
+		t.Fatalf("nodesVisited = %d, want %d", got, want)
+	}
+	if stats.nodesRewritten != 0 {
+		t.Fatalf("nodesRewritten = %d, want 0", stats.nodesRewritten)
+	}
+}
+
+func TestPythonCompatibilitySourceGatesPreferCodeTokens(t *testing.T) {
+	if pythonSourceMayContainCodeByte([]byte(`x = ";"; y = 1`), ';') != true {
+		t.Fatal("expected code semicolon after string literal")
+	}
+	if pythonSourceMayContainCodeByte([]byte("\";\"\n# ;\n"), ';') {
+		t.Fatal("did not expect semicolon inside string/comment to pass code gate")
+	}
+	if !pythonSourceMayContainPrintChevron([]byte(`print >>sys.stderr, "x"`)) {
+		t.Fatal("expected print-chevron statement gate")
+	}
+	if pythonSourceMayContainPrintChevron([]byte("\"print >> x\"\nprint_value = 1\nx >> 1")) {
+		t.Fatal("did not expect split print/chevron occurrences to pass gate")
+	}
+	if !pythonSourceMayContainCodeWord([]byte("if ok:\n    pass\n"), "pass") {
+		t.Fatal("expected pass statement code word")
+	}
+	if pythonSourceMayContainCodeWord([]byte("\"may pass NULL\"\npassword = 1\n# pass\n"), "pass") {
+		t.Fatal("did not expect pass inside string/comment or identifier to pass code gate")
+	}
+}
+
 func TestBuildResultFromNodesUnwrapsPythonModuleSimpleStatements(t *testing.T) {
 	lang := &Language{
 		Name: "python",

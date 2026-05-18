@@ -274,7 +274,7 @@ func normalizePugResultStrut(ctx resultCompatibilityContext) {
 }
 
 func normalizePythonResultStrut(ctx resultCompatibilityContext) {
-	normalizePythonCompatibility(ctx.root, ctx.source, ctx.lang)
+	normalizePythonCompatibilityWithParser(ctx.root, ctx.source, ctx.parser, ctx.lang)
 }
 
 func normalizeRSTResultStrut(ctx resultCompatibilityContext) {

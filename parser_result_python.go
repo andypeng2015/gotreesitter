@@ -1,26 +1,50 @@
 package gotreesitter
 
-import "bytes"
+import (
+	"bytes"
+	"time"
+)
 
 func normalizePythonCompatibility(root *Node, source []byte, lang *Language) {
+	normalizePythonCompatibilityWithParser(root, source, nil, lang)
+}
+
+func normalizePythonCompatibilityWithParser(root *Node, source []byte, parser *Parser, lang *Language) {
 	if len(source) == 0 {
 		return
 	}
-	if bytes.IndexByte(source, ';') >= 0 {
-		normalizePythonTrailingSelfCalls(root, source, lang)
+	var start time.Time
+	if parser != nil {
+		start = time.Now()
+		defer func() {
+			parser.normalizationStats.nanos += time.Since(start).Nanoseconds()
+		}()
 	}
-	if bytes.Contains(source, []byte("print")) && bytes.Contains(source, []byte(">>")) {
-		normalizePythonPrintStatements(root, source, lang)
-	}
-	if bytes.IndexByte(source, '{') >= 0 && pythonSourceMayContainFString(source) {
-		normalizePythonInterpolationPatterns(root, lang)
-	}
-	if bytes.Contains(source, []byte("pass")) {
-		normalizeCollapsedNamedLeafChildren(root, lang, "pass_statement", "pass")
-	}
-	if bytes.Contains(source, []byte("\\\n")) || bytes.Contains(source, []byte("\\\r\n")) {
-		normalizePythonStringContinuationEscapes(root, source, lang)
-	}
+	parser.runNormalizationPass(func() bool {
+		return pythonSourceMayContainCodeByte(source, ';')
+	}, func() normalizationPassCounters {
+		return normalizePythonTrailingSelfCalls(root, source, lang)
+	})
+	parser.runNormalizationPass(func() bool {
+		return pythonSourceMayContainPrintChevron(source)
+	}, func() normalizationPassCounters {
+		return normalizePythonPrintStatements(root, source, lang)
+	})
+	parser.runNormalizationPass(func() bool {
+		return bytes.IndexByte(source, '{') >= 0 && pythonSourceMayContainFStringPatternNormalization(source)
+	}, func() normalizationPassCounters {
+		return normalizePythonInterpolationPatterns(root, lang)
+	})
+	parser.runNormalizationPass(func() bool {
+		return pythonSourceMayContainCodeWord(source, "pass")
+	}, func() normalizationPassCounters {
+		return normalizeCollapsedNamedLeafChildrenWithStats(root, lang, "pass_statement", "pass")
+	})
+	parser.runNormalizationPass(func() bool {
+		return bytes.Contains(source, []byte("\\\n")) || bytes.Contains(source, []byte("\\\r\n"))
+	}, func() normalizationPassCounters {
+		return normalizePythonStringContinuationEscapes(root, source, lang)
+	})
 }
 
 func pythonSourceMayContainFString(source []byte) bool {
@@ -47,6 +71,231 @@ func pythonSourceMayContainFString(source []byte) bool {
 	return false
 }
 
+func pythonSourceMayContainFStringPatternNormalization(source []byte) bool {
+	for i := 0; i < len(source); {
+		switch source[i] {
+		case '#':
+			i = pythonSkipLineComment(source, i+1)
+			continue
+		case '\'', '"':
+		default:
+			i++
+			continue
+		}
+		start := pythonStringPrefixStart(source, i)
+		validPrefix := start < i && (start == 0 || !pythonIdentifierByte(source[start-1]))
+		hasFPrefix := false
+		if validPrefix {
+			for _, p := range source[start:i] {
+				if p == 'f' || p == 'F' {
+					hasFPrefix = true
+					break
+				}
+			}
+		}
+		end, ok := pythonSkipQuotedLiteral(source, i)
+		if !ok {
+			return true
+		}
+		if hasFPrefix {
+			contentStart, contentEnd := pythonQuotedLiteralContentRange(source, i, end)
+			if contentStart < contentEnd && pythonFStringContentMayNeedPatternNormalization(source[contentStart:contentEnd]) {
+				return true
+			}
+		}
+		i = end
+	}
+	return false
+}
+
+func pythonStringPrefixStart(source []byte, quoteIndex int) int {
+	start := quoteIndex
+	for start > 0 && quoteIndex-start < 3 && pythonStringPrefixByte(source[start-1]) {
+		start--
+	}
+	return start
+}
+
+func pythonQuotedLiteralContentRange(source []byte, quoteIndex, end int) (int, int) {
+	if quoteIndex < 0 || quoteIndex >= len(source) || end <= quoteIndex {
+		return quoteIndex, quoteIndex
+	}
+	if quoteIndex+2 < end && source[quoteIndex+1] == source[quoteIndex] && source[quoteIndex+2] == source[quoteIndex] {
+		return quoteIndex + 3, end - 3
+	}
+	return quoteIndex + 1, end - 1
+}
+
+func pythonFStringContentMayNeedPatternNormalization(content []byte) bool {
+	for i := 0; i < len(content); i++ {
+		if content[i] != '{' {
+			continue
+		}
+		if i+1 < len(content) && content[i+1] == '{' {
+			i++
+			continue
+		}
+		depth := 1
+		for j := i + 1; j < len(content); j++ {
+			switch content[j] {
+			case '\'', '"':
+				next, ok := pythonSkipQuotedLiteral(content, j)
+				if !ok {
+					return true
+				}
+				j = next - 1
+			case '{':
+				depth++
+			case '}':
+				depth--
+				if depth == 0 {
+					i = j
+					goto nextInterpolation
+				}
+			case ',', '*':
+				return true
+			}
+		}
+		return true
+	nextInterpolation:
+	}
+	return false
+}
+
+func pythonSourceMayContainCodeByte(source []byte, want byte) bool {
+	for i := 0; i < len(source); {
+		switch source[i] {
+		case '#':
+			i = pythonSkipLineComment(source, i+1)
+			continue
+		case '\'', '"':
+			next, ok := pythonSkipQuotedLiteral(source, i)
+			if !ok {
+				return true
+			}
+			i = next
+			continue
+		}
+		if source[i] == want {
+			return true
+		}
+		i++
+	}
+	return false
+}
+
+func pythonSourceMayContainCodeWord(source []byte, word string) bool {
+	if word == "" {
+		return false
+	}
+	for i := 0; i < len(source); {
+		switch source[i] {
+		case '#':
+			i = pythonSkipLineComment(source, i+1)
+			continue
+		case '\'', '"':
+			next, ok := pythonSkipQuotedLiteral(source, i)
+			if !ok {
+				return true
+			}
+			i = next
+			continue
+		}
+		if pythonSourceWordAt(source, i, word) {
+			return true
+		}
+		i++
+	}
+	return false
+}
+
+func pythonSourceMayContainPrintChevron(source []byte) bool {
+	for i := 0; i < len(source); {
+		switch source[i] {
+		case '#':
+			i = pythonSkipLineComment(source, i+1)
+			continue
+		case '\'', '"':
+			next, ok := pythonSkipQuotedLiteral(source, i)
+			if !ok {
+				return true
+			}
+			i = next
+			continue
+		}
+		if !pythonSourceWordAt(source, i, "print") {
+			i++
+			continue
+		}
+		j := i + len("print")
+		for j < len(source) && (source[j] == ' ' || source[j] == '\t' || source[j] == '\f') {
+			j++
+		}
+		if j+1 < len(source) && source[j] == '>' && source[j+1] == '>' {
+			return true
+		}
+		i += len("print")
+	}
+	return false
+}
+
+func pythonSourceWordAt(source []byte, i int, word string) bool {
+	if i < 0 || i+len(word) > len(source) {
+		return false
+	}
+	for j := 0; j < len(word); j++ {
+		if source[i+j] != word[j] {
+			return false
+		}
+	}
+	if i > 0 && pythonIdentifierByte(source[i-1]) {
+		return false
+	}
+	end := i + len(word)
+	return end >= len(source) || !pythonIdentifierByte(source[end])
+}
+
+func pythonSkipLineComment(source []byte, i int) int {
+	for i < len(source) && source[i] != '\n' && source[i] != '\r' {
+		i++
+	}
+	return i
+}
+
+func pythonSkipQuotedLiteral(source []byte, i int) (int, bool) {
+	if i < 0 || i >= len(source) || (source[i] != '\'' && source[i] != '"') {
+		return i, false
+	}
+	quote := source[i]
+	if i+2 < len(source) && source[i+1] == quote && source[i+2] == quote {
+		for j := i + 3; j+2 < len(source); j++ {
+			if source[j] == quote && source[j+1] == quote && source[j+2] == quote {
+				return j + 3, true
+			}
+		}
+		return len(source), false
+	}
+	escaped := false
+	for j := i + 1; j < len(source); j++ {
+		c := source[j]
+		if escaped {
+			escaped = false
+			continue
+		}
+		if c == '\\' {
+			escaped = true
+			continue
+		}
+		if c == quote {
+			return j + 1, true
+		}
+		if c == '\n' || c == '\r' {
+			return j, false
+		}
+	}
+	return len(source), false
+}
+
 func pythonStringPrefixByte(c byte) bool {
 	switch c {
 	case 'b', 'B', 'f', 'F', 'r', 'R', 'u', 'U':
@@ -60,13 +309,14 @@ func pythonIdentifierByte(c byte) bool {
 	return c == '_' || ('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z') || ('0' <= c && c <= '9')
 }
 
-func normalizePythonInterpolationPatterns(root *Node, lang *Language) {
+func normalizePythonInterpolationPatterns(root *Node, lang *Language) normalizationPassCounters {
+	var counters normalizationPassCounters
 	if root == nil || lang == nil || lang.Name != "python" {
-		return
+		return counters
 	}
 	patternListSym, ok := symbolByName(lang, "pattern_list")
 	if !ok {
-		return
+		return counters
 	}
 	listSplatPatternSym, hasListSplatPattern := symbolByName(lang, "list_splat_pattern")
 	expressionListSym, hasExpressionList := symbolByName(lang, "expression_list")
@@ -86,15 +336,18 @@ func normalizePythonInterpolationPatterns(root *Node, lang *Language) {
 		if n == nil {
 			return
 		}
+		counters.nodesVisited++
 		here := inInterpolation || n.Type(lang) == "interpolation"
 		if here {
 			if hasExpressionList && n.symbol == expressionListSym {
 				n.symbol = patternListSym
 				n.isNamed = patternListNamed
+				counters.nodesRewritten++
 			}
 			if hasListSplatPattern && hasListSplat && n.symbol == listSplatSym {
 				n.symbol = listSplatPatternSym
 				n.isNamed = listSplatPatternNamed
+				counters.nodesRewritten++
 			}
 		}
 		for _, child := range n.children {
@@ -102,17 +355,20 @@ func normalizePythonInterpolationPatterns(root *Node, lang *Language) {
 		}
 	}
 	rewrite(root, false)
+	return counters
 }
 
-func normalizePythonPrintStatements(root *Node, source []byte, lang *Language) {
+func normalizePythonPrintStatements(root *Node, source []byte, lang *Language) normalizationPassCounters {
+	var counters normalizationPassCounters
 	if root == nil || lang == nil || lang.Name != "python" || len(source) == 0 {
-		return
+		return counters
 	}
 	var walk func(*Node)
 	walk = func(node *Node) {
 		if node == nil {
 			return
 		}
+		counters.nodesVisited++
 		for _, child := range node.children {
 			walk(child)
 		}
@@ -126,20 +382,24 @@ func normalizePythonPrintStatements(root *Node, source []byte, lang *Language) {
 			node.fieldIDs = nil
 			node.fieldSources = nil
 			populateParentNode(node, node.children)
+			counters.nodesRewritten++
 		}
 	}
 	walk(root)
+	return counters
 }
 
-func normalizePythonTrailingSelfCalls(root *Node, source []byte, lang *Language) {
+func normalizePythonTrailingSelfCalls(root *Node, source []byte, lang *Language) normalizationPassCounters {
+	var counters normalizationPassCounters
 	if root == nil || lang == nil || lang.Name != "python" || len(source) == 0 {
-		return
+		return counters
 	}
 	var walk func(*Node)
 	walk = func(node *Node) {
 		if node == nil {
 			return
 		}
+		counters.nodesVisited++
 		for _, child := range node.children {
 			walk(child)
 		}
@@ -154,8 +414,10 @@ func normalizePythonTrailingSelfCalls(root *Node, source []byte, lang *Language)
 		node.fieldIDs = nil
 		node.fieldSources = nil
 		populateParentNode(node, node.children)
+		counters.nodesRewritten++
 	}
 	walk(root)
+	return counters
 }
 
 func foldPythonTrailingSelfCallsInBlock(children []*Node, source []byte, lang *Language) ([]*Node, bool) {
@@ -1109,32 +1371,39 @@ func flattenPythonSimpleStatements(node *Node, out []*Node, lang *Language) []*N
 	return out
 }
 
-func normalizePythonStringContinuationEscapes(root *Node, source []byte, lang *Language) {
+func normalizePythonStringContinuationEscapes(root *Node, source []byte, lang *Language) normalizationPassCounters {
+	var counters normalizationPassCounters
 	if root == nil || lang == nil || lang.Name != "python" || len(source) == 0 {
-		return
+		return counters
 	}
 	escapeSym, ok := symbolByName(lang, "escape_sequence")
 	if !ok {
-		return
+		return counters
 	}
 	var walk func(*Node)
 	walk = func(n *Node) {
 		if n == nil {
 			return
 		}
+		counters.nodesVisited++
 		if n.Type(lang) == "string_content" && n.startByte < n.endByte && int(n.endByte) <= len(source) {
-			n.children = addPythonContinuationEscapes(n, source, escapeSym)
+			children, changed := addPythonContinuationEscapes(n, source, escapeSym)
+			if changed {
+				n.children = children
+				counters.nodesRewritten++
+			}
 		}
 		for _, child := range n.children {
 			walk(child)
 		}
 	}
 	walk(root)
+	return counters
 }
 
-func addPythonContinuationEscapes(node *Node, source []byte, escapeSym Symbol) []*Node {
+func addPythonContinuationEscapes(node *Node, source []byte, escapeSym Symbol) ([]*Node, bool) {
 	if node == nil || node.startByte >= node.endByte || int(node.endByte) > len(source) {
-		return node.children
+		return node.children, false
 	}
 	children := node.children
 	changed := false
@@ -1182,9 +1451,9 @@ func addPythonContinuationEscapes(node *Node, source []byte, escapeSym Symbol) [
 		i = end - 1
 	}
 	if !changed {
-		return node.children
+		return node.children, false
 	}
-	return children
+	return children, true
 }
 
 func pythonSyntheticClassFieldIDs(arena *nodeArena, childCount int, hasArgList bool, lang *Language) []FieldID {

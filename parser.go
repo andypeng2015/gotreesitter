@@ -61,6 +61,7 @@ type Parser struct {
 	currentExternalTokenCheckpointStart uint32
 	currentExternalTokenCheckpointEnd   uint32
 	currentExternalTokenCheckpointValid bool
+	normalizationStats                  normalizationStats
 }
 
 var snippetParserPools sync.Map
@@ -1301,6 +1302,7 @@ func resolveParseMaxStacks(configuredMaxStacks, maxStacksOverride, conflictWidth
 func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor, oldTree *Tree, arenaClass arenaClass, timing *incrementalParseTiming, maxStacksOverride int, maxNodesOverride int, maxMergePerKeyOverride int, deterministicExternalConflicts bool) *Tree {
 	parseStart := time.Now()
 	p.clearCurrentExternalTokenCheckpoint()
+	p.resetNormalizationStats()
 	if p.logger != nil {
 		p.logf(ParserLogParse, "start len=%d incremental=%t", len(source), reuse != nil || oldTree != nil)
 	}
@@ -1466,6 +1468,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			parseRuntime.RootEndByte = tree.RootNode().EndByte()
 			parseRuntime.Truncated = parseRuntime.RootEndByte < expectedEOFByte
 		}
+		p.copyNormalizationStats(&parseRuntime)
 		if tree != nil {
 			tree.setParseRuntime(parseRuntime)
 		}
