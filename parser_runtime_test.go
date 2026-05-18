@@ -81,6 +81,9 @@ func TestParseRuntimeReportsNoTreeNodeVolume(t *testing.T) {
 	if got := breakdown.NoTreePlaceholderNodesConstructed; got != 1 {
 		t.Fatalf("NoTreePlaceholderNodesConstructed = %d, want 1", got)
 	}
+	if breakdown.NoTreeNodeBytesAllocated == 0 {
+		t.Fatal("NoTreeNodeBytesAllocated = 0, want > 0")
+	}
 }
 
 func assertParseRuntimeArenaBreakdown(t *testing.T, tree *Tree, rt ParseRuntime) ArenaBreakdown {
@@ -90,6 +93,7 @@ func assertParseRuntimeArenaBreakdown(t *testing.T, tree *Tree, rt ParseRuntime)
 		t.Fatal("ArenaBreakdown = nil, want populated")
 	}
 	breakdown := arenaBreakdown.NodeStructBytesAllocated +
+		arenaBreakdown.NoTreeNodeBytesAllocated +
 		arenaBreakdown.ChildSliceBytesAllocated +
 		arenaBreakdown.FieldIDBytesAllocated +
 		arenaBreakdown.FieldSourceBytesAllocated +
@@ -111,7 +115,6 @@ func assertParseRuntimeArenaBreakdown(t *testing.T, tree *Tree, rt ParseRuntime)
 	}
 	knownNodes := rt.LeafNodesConstructed +
 		rt.ParentNodesConstructed +
-		rt.NoTreeReduceNodesConstructed +
 		arenaBreakdown.NoTreePlaceholderNodesConstructed +
 		arenaBreakdown.OtherNodesConstructed
 	if arenaBreakdown.ArenaNodesConstructed != knownNodes {

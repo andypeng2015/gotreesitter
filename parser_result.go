@@ -175,7 +175,7 @@ func resultNodesFromStack(s glrStack) []*Node {
 	if len(s.entries) > 0 {
 		count := 0
 		for i := range s.entries {
-			if s.entries[i].node != nil {
+			if stackEntryNode(s.entries[i]) != nil {
 				count++
 			}
 		}
@@ -184,8 +184,8 @@ func resultNodesFromStack(s glrStack) []*Node {
 		}
 		nodes := make([]*Node, 0, count)
 		for i := range s.entries {
-			if s.entries[i].node != nil {
-				nodes = append(nodes, s.entries[i].node)
+			if node := stackEntryNode(s.entries[i]); node != nil {
+				nodes = append(nodes, node)
 			}
 		}
 		return nodes
@@ -257,7 +257,7 @@ func nodesFromGSS(stack gssStack) []*Node {
 	}
 	count := 0
 	for n := stack.head; n != nil; n = n.prev {
-		if n.entry.node != nil {
+		if stackEntryNode(n.entry) != nil {
 			count++
 		}
 	}
@@ -267,8 +267,8 @@ func nodesFromGSS(stack gssStack) []*Node {
 	nodes := make([]*Node, count)
 	i := count - 1
 	for n := stack.head; n != nil; n = n.prev {
-		if n.entry.node != nil {
-			nodes[i] = n.entry.node
+		if node := stackEntryNode(n.entry); node != nil {
+			nodes[i] = node
 			i--
 		}
 	}
@@ -307,8 +307,8 @@ func filterZeroWidthExtras(nodes []*Node, arena *nodeArena) []*Node {
 func (p *Parser) buildResult(stack []stackEntry, source []byte, arena *nodeArena, oldTree *Tree, reuseState *parseReuseState, linkScratch *[]*Node) *Tree {
 	var nodes []*Node
 	for _, entry := range stack {
-		if entry.node != nil {
-			nodes = append(nodes, entry.node)
+		if node := stackEntryNode(entry); node != nil {
+			nodes = append(nodes, node)
 		}
 	}
 	return p.buildResultFromNodes(nodes, source, arena, oldTree, reuseState, linkScratch)

@@ -552,7 +552,7 @@ func reuseStackDepthForPreGoto(entries []stackEntry, startByte uint32, preGoto S
 			continue
 		}
 		frontier := uint32(0)
-		if n := entries[i].node; n != nil {
+		if n := stackEntryNode(entries[i]); n != nil {
 			frontier = n.endByte
 		}
 		if frontier <= startByte {

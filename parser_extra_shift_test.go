@@ -26,10 +26,10 @@ func TestApplyActionTerminalExtraShiftPreservesCurrentState(t *testing.T) {
 	if got, want := s.top().state, lang.InitialState; got != want {
 		t.Fatalf("top state = %d, want %d", got, want)
 	}
-	if got, want := s.top().node.parseState, lang.InitialState; got != want {
+	if got, want := stackEntryNode(s.top()).parseState, lang.InitialState; got != want {
 		t.Fatalf("extra leaf parseState = %d, want %d", got, want)
 	}
-	if got, want := s.top().node.preGotoState, lang.InitialState; got != want {
+	if got, want := stackEntryNode(s.top()).preGotoState, lang.InitialState; got != want {
 		t.Fatalf("extra leaf preGotoState = %d, want %d", got, want)
 	}
 }
@@ -59,10 +59,10 @@ func TestApplyActionNonterminalExtraShiftUsesActionState(t *testing.T) {
 	if got := s.top().state; got != targetState {
 		t.Fatalf("top state = %d, want %d", got, targetState)
 	}
-	if got := s.top().node.parseState; got != targetState {
+	if got := stackEntryNode(s.top()).parseState; got != targetState {
 		t.Fatalf("extra leaf parseState = %d, want %d", got, targetState)
 	}
-	if got, want := s.top().node.preGotoState, lang.InitialState; got != want {
+	if got, want := stackEntryNode(s.top()).preGotoState, lang.InitialState; got != want {
 		t.Fatalf("extra leaf preGotoState = %d, want %d", got, want)
 	}
 }
@@ -91,7 +91,7 @@ func TestApplyActionNonExtraShiftUsesActionState(t *testing.T) {
 	if got := s.top().state; got != targetState {
 		t.Fatalf("top state = %d, want %d", got, targetState)
 	}
-	if got := s.top().node.parseState; got != targetState {
+	if got := stackEntryNode(s.top()).parseState; got != targetState {
 		t.Fatalf("leaf parseState = %d, want %d", got, targetState)
 	}
 }

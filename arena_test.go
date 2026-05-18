@@ -267,6 +267,7 @@ func TestArenaByteBreakdownMatchesAllocatedBytes(t *testing.T) {
 	_ = arena.allocNodeSlice(4)
 	_ = arena.allocFieldIDSlice(5)
 	_ = arena.allocFieldSourceSlice(6)
+	_ = arena.allocNoTreeNode()
 	left := newLeafNodeInArena(arena, Symbol(1), true, 0, 0, Point{}, Point{})
 	right := newLeafNodeInArena(arena, Symbol(2), true, 0, 0, Point{}, Point{})
 	children := arena.allocNodeSlice(2)
@@ -275,6 +276,7 @@ func TestArenaByteBreakdownMatchesAllocatedBytes(t *testing.T) {
 	_ = newParentNodeInArenaNoLinksWithFieldSources(arena, Symbol(3), true, children, nil, nil, 0, false)
 
 	want := arena.nodeStructBytesAllocated() +
+		arena.noTreeNodeBytesAllocated() +
 		arena.childSliceBytesAllocated() +
 		arena.fieldIDBytesAllocated() +
 		arena.fieldSourceBytesAllocated() +

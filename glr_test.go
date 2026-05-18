@@ -1,6 +1,34 @@
 package gotreesitter
 
-import "testing"
+import (
+	"testing"
+	"unsafe"
+)
+
+func TestStackEntrySizeBudget(t *testing.T) {
+	if got := unsafe.Sizeof(stackEntry{}); got != 16 {
+		t.Fatalf("stackEntry size = %d, want 16", got)
+	}
+}
+
+func TestRetargetStackEntryPayloadHandlesNoTreeNode(t *testing.T) {
+	node := &noTreeNode{parseState: 3}
+	entry := newStackEntryNoTreeNode(2, node)
+
+	got, ok := retargetStackEntryPayload(entry, 7)
+	if !ok {
+		t.Fatal("retarget compact no-tree payload failed")
+	}
+	if got.state != 7 {
+		t.Fatalf("entry state = %d, want 7", got.state)
+	}
+	if node.parseState != 7 {
+		t.Fatalf("compact parseState = %d, want 7", node.parseState)
+	}
+	if stackEntryNoTreeNode(got) != node {
+		t.Fatal("retarget changed compact payload pointer")
+	}
+}
 
 func TestMergeStacksRemovesDead(t *testing.T) {
 	s1 := newGLRStack(StateID(1))
@@ -241,8 +269,8 @@ func TestMergeStacksSmallPathCapOnePrunesStrongRankMismatch(t *testing.T) {
 	if result[0].score != 20 {
 		t.Fatalf("capped survivor score = %d, want 20", result[0].score)
 	}
-	if result[0].top().node.Symbol() != 2 {
-		t.Fatalf("capped survivor symbol = %d, want 2", result[0].top().node.Symbol())
+	if stackEntryNode(result[0].top()).Symbol() != 2 {
+		t.Fatalf("capped survivor symbol = %d, want 2", stackEntryNode(result[0].top()).Symbol())
 	}
 }
 
@@ -565,8 +593,8 @@ func TestMergeKeyGroupsEquivalentStacks(t *testing.T) {
 	// Case 1: identical entries → equivalent, same hash.
 	node1a := &Node{symbol: 10, startByte: 0, endByte: 5, parseState: 1, flags: nodeFlagNamed}
 	node1b := &Node{symbol: 10, startByte: 0, endByte: 5, parseState: 1, flags: nodeFlagNamed}
-	a := buildStack([]stackEntry{{state: 1}, {state: 2, node: node1a}})
-	b := buildStack([]stackEntry{{state: 1}, {state: 2, node: node1b}})
+	a := buildStack([]stackEntry{{state: 1}, newStackEntryNode(2, node1a)})
+	b := buildStack([]stackEntry{{state: 1}, newStackEntryNode(2, node1b)})
 
 	if !stackEquivalent(a, b) {
 		t.Fatal("case 1: expected equivalent stacks")
@@ -580,8 +608,8 @@ func TestMergeKeyGroupsEquivalentStacks(t *testing.T) {
 	// Case 2: different symbol → not equivalent.
 	node2a := &Node{symbol: 10, startByte: 0, endByte: 5, parseState: 1}
 	node2b := &Node{symbol: 11, startByte: 0, endByte: 5, parseState: 1}
-	c := buildStack([]stackEntry{{state: 1}, {state: 2, node: node2a}})
-	d := buildStack([]stackEntry{{state: 1}, {state: 2, node: node2b}})
+	c := buildStack([]stackEntry{{state: 1}, newStackEntryNode(2, node2a)})
+	d := buildStack([]stackEntry{{state: 1}, newStackEntryNode(2, node2b)})
 	if stackEquivalent(c, d) {
 		t.Fatal("case 2: expected non-equivalent stacks")
 	}
@@ -594,8 +622,8 @@ func TestMergeKeyGroupsEquivalentStacks(t *testing.T) {
 	// Case 3: isMissing differs → not equivalent (hash includes isMissing).
 	node3a := &Node{symbol: 10, startByte: 0, endByte: 5, parseState: 1}
 	node3b := &Node{symbol: 10, startByte: 0, endByte: 5, parseState: 1, flags: nodeFlagMissing}
-	e := buildStack([]stackEntry{{state: 1}, {state: 2, node: node3a}})
-	f := buildStack([]stackEntry{{state: 1}, {state: 2, node: node3b}})
+	e := buildStack([]stackEntry{{state: 1}, newStackEntryNode(2, node3a)})
+	f := buildStack([]stackEntry{{state: 1}, newStackEntryNode(2, node3b)})
 	if stackEquivalent(e, f) {
 		t.Fatal("case 3: isMissing differs, stacks should not be equivalent")
 	}
@@ -617,8 +645,8 @@ func TestMergeKeyGroupsEquivalentStacks(t *testing.T) {
 	child2 := &Node{symbol: 20, startByte: 0, endByte: 3}
 	node5a := &Node{symbol: 10, startByte: 0, endByte: 5, parseState: 1, children: []*Node{child1}}
 	node5b := &Node{symbol: 10, startByte: 0, endByte: 5, parseState: 1, children: []*Node{child2}}
-	i := buildStack([]stackEntry{{state: 1}, {state: 2, node: node5a}})
-	j := buildStack([]stackEntry{{state: 1}, {state: 2, node: node5b}})
+	i := buildStack([]stackEntry{{state: 1}, newStackEntryNode(2, node5a)})
+	j := buildStack([]stackEntry{{state: 1}, newStackEntryNode(2, node5b)})
 	if !stackEquivalent(i, j) {
 		t.Fatal("case 5: expected equivalent stacks with same children")
 	}
@@ -634,8 +662,8 @@ func TestMergeKeyGroupsEquivalentStacks(t *testing.T) {
 	child4 := &Node{symbol: 21, startByte: 0, endByte: 3}
 	node6a := &Node{symbol: 10, startByte: 0, endByte: 5, parseState: 1, children: []*Node{child3}}
 	node6b := &Node{symbol: 10, startByte: 0, endByte: 5, parseState: 1, children: []*Node{child4}}
-	k := buildStack([]stackEntry{{state: 1}, {state: 2, node: node6a}})
-	l := buildStack([]stackEntry{{state: 1}, {state: 2, node: node6b}})
+	k := buildStack([]stackEntry{{state: 1}, newStackEntryNode(2, node6a)})
+	l := buildStack([]stackEntry{{state: 1}, newStackEntryNode(2, node6b)})
 	if stackEquivalent(k, l) {
 		t.Fatal("case 6: expected non-equivalent stacks with different children")
 	}
@@ -676,8 +704,8 @@ func TestStackEquivalentForAliasLanguageRejectsDeepAliasMismatch(t *testing.T) {
 		}
 	}
 
-	a := glrStack{entries: []stackEntry{{state: 1}, {state: 2, node: buildDeepNode(10)}}, byteOffset: 5}
-	b := glrStack{entries: []stackEntry{{state: 1}, {state: 2, node: buildDeepNode(12)}}, byteOffset: 5}
+	a := glrStack{entries: []stackEntry{{state: 1}, newStackEntryNode(2, buildDeepNode(10))}, byteOffset: 5}
+	b := glrStack{entries: []stackEntry{{state: 1}, newStackEntryNode(2, buildDeepNode(12))}, byteOffset: 5}
 
 	if stackEquivalentForLanguage(lang, a, b) {
 		t.Fatal("expected deep alias mismatch to remain distinct for alias language")
@@ -733,8 +761,8 @@ func TestStackEquivalentForTypeScriptChecksNonFrontierChildren(t *testing.T) {
 		t.Fatal("test setup expected frontier equivalence to miss the earlier-child mismatch")
 	}
 
-	a := glrStack{entries: []stackEntry{{state: 1}, {state: 2, node: aNode}}, byteOffset: 10}
-	b := glrStack{entries: []stackEntry{{state: 1}, {state: 2, node: bNode}}, byteOffset: 10}
+	a := glrStack{entries: []stackEntry{{state: 1}, newStackEntryNode(2, aNode)}, byteOffset: 10}
+	b := glrStack{entries: []stackEntry{{state: 1}, newStackEntryNode(2, bNode)}, byteOffset: 10}
 	if stackEquivalentForLanguage(lang, a, b) {
 		t.Fatal("expected TypeScript stack equivalence to compare non-frontier children")
 	}

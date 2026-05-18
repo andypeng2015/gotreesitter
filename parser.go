@@ -635,7 +635,7 @@ func (p *Parser) canFinalizeNoActionEOF(s *glrStack) bool {
 		return false
 	}
 	top := s.top()
-	if top.node == nil {
+	if !stackEntryHasNode(top) {
 		return true
 	}
 
@@ -647,29 +647,29 @@ func (p *Parser) canFinalizeNoActionEOF(s *glrStack) bool {
 	// Without an inferred root, the legacy behavior is still appropriate:
 	// a single nonterminal at the top can serve as the final tree root.
 	if p == nil || !p.hasRootSymbol {
-		return p != nil && p.language != nil && uint32(top.node.symbol) >= tokenCount
+		return p != nil && p.language != nil && uint32(stackEntryNodeSymbol(top)) >= tokenCount
 	}
 
 	nonExtraCount := 0
-	onlyNonExtra := (*Node)(nil)
-	countNode := func(n *Node) bool {
-		if n == nil || n.isExtra() {
+	onlyNonExtraSymbol := Symbol(0)
+	countEntry := func(e stackEntry) bool {
+		if !stackEntryHasNode(e) || stackEntryNodeIsExtra(e) {
 			return false
 		}
 		nonExtraCount++
-		onlyNonExtra = n
+		onlyNonExtraSymbol = stackEntryNodeSymbol(e)
 		return nonExtraCount > 1
 	}
 
 	if len(s.entries) > 0 {
 		for i := range s.entries {
-			if countNode(s.entries[i].node) {
+			if countEntry(s.entries[i]) {
 				return false
 			}
 		}
 	} else {
 		for n := s.gss.head; n != nil; n = n.prev {
-			if countNode(n.entry.node) {
+			if countEntry(n.entry) {
 				return false
 			}
 		}
@@ -678,10 +678,10 @@ func (p *Parser) canFinalizeNoActionEOF(s *glrStack) bool {
 	if nonExtraCount == 0 {
 		return true
 	}
-	if onlyNonExtra == nil || onlyNonExtra.symbol == errorSymbol {
+	if onlyNonExtraSymbol == errorSymbol {
 		return false
 	}
-	return uint32(onlyNonExtra.symbol) >= tokenCount
+	return uint32(onlyNonExtraSymbol) >= tokenCount
 }
 
 func (p *Parser) tryInsertMissingSingleShift(s *glrStack, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) bool {
@@ -740,11 +740,11 @@ func (p *Parser) tryInsertMissingSingleShift(s *glrStack, tok Token, nodeCount *
 		EndPoint:   tok.StartPoint,
 		Missing:    true,
 	}
-	if top := s.top().node; top != nil && top.endByte <= tok.StartByte {
-		missingTok.StartByte = top.endByte
-		missingTok.EndByte = top.endByte
-		missingTok.StartPoint = top.endPoint
-		missingTok.EndPoint = top.endPoint
+	if top := s.top(); stackEntryHasNode(top) && stackEntryNodeEndByte(top) <= tok.StartByte {
+		missingTok.StartByte = stackEntryNodeEndByte(top)
+		missingTok.EndByte = stackEntryNodeEndByte(top)
+		missingTok.StartPoint = stackEntryNodeEndPoint(top)
+		missingTok.EndPoint = stackEntryNodeEndPoint(top)
 	}
 	p.applyAction(s, candidateAct, missingTok, new(bool), nodeCount, arena, entryScratch, gssScratch, nil, false, trackChildErrors)
 	s.shifted = false
@@ -755,8 +755,8 @@ func nodesFromStack(stack glrStack) []*Node {
 	if len(stack.entries) > 0 {
 		nodes := make([]*Node, 0, len(stack.entries))
 		for _, entry := range stack.entries {
-			if entry.node != nil {
-				nodes = append(nodes, entry.node)
+			if node := stackEntryNode(entry); node != nil {
+				nodes = append(nodes, node)
 			}
 		}
 		return nodes
@@ -982,7 +982,7 @@ func (p *Parser) tryRecoverTrailingEOFSuffix(s *glrStack, tok Token, nodeCount *
 	}
 
 	for firstDrop := len(entries) - 1; firstDrop >= 0; firstDrop-- {
-		node := entries[firstDrop].node
+		node := stackEntryNode(entries[firstDrop])
 		if node == nil || node.isExtra() {
 			continue
 		}
@@ -993,7 +993,7 @@ func (p *Parser) tryRecoverTrailingEOFSuffix(s *glrStack, tok Token, nodeCount *
 		if !node.isNamed() {
 			cut := firstDrop + 1
 			for cut < len(entries) {
-				trailing := entries[cut].node
+				trailing := stackEntryNode(entries[cut])
 				if trailing == nil || !trailing.isExtra() {
 					break
 				}
@@ -1010,8 +1010,8 @@ func (p *Parser) tryRecoverTrailingEOFSuffix(s *glrStack, tok Token, nodeCount *
 			}
 			prefixEOF := tok
 			switch {
-			case cut > 0 && entries[cut-1].node != nil:
-				last := entries[cut-1].node
+			case cut > 0 && stackEntryNode(entries[cut-1]) != nil:
+				last := stackEntryNode(entries[cut-1])
 				prefixEOF.StartByte = last.endByte
 				prefixEOF.EndByte = last.endByte
 				prefixEOF.StartPoint = last.endPoint
@@ -1045,7 +1045,7 @@ func (p *Parser) tryRecoverTrailingEOFSuffix(s *glrStack, tok Token, nodeCount *
 			}
 			recovered := false
 			for i := cut; i < len(entries); i++ {
-				trailing := entries[i].node
+				trailing := stackEntryNode(entries[i])
 				if trailing == nil {
 					continue
 				}
@@ -1355,7 +1355,9 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	}
 	if arenaClass == arenaClassFull {
 		defer func() {
-			p.recordFullArenaUsage(arena.used)
+			if !p.noTreeBenchmarkOnly {
+				p.recordFullArenaUsage(arena.used)
+			}
 			p.recordFullGSSUsage(scratch.gss.usedTotal)
 		}()
 	} else {
@@ -1367,6 +1369,9 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	switch arenaClass {
 	case arenaClassFull:
 		target := parseFullArenaNodeCapacity(len(source), p.fullArenaHintCapacity())
+		if p.noTreeBenchmarkOnly {
+			target = parseNoTreeArenaNodeCapacity(len(source))
+		}
 		arena.ensureNodeCapacity(target)
 		scratch.entries.ensureInitialCap(parseFullEntryScratchCapacity(len(source)))
 	case arenaClassIncremental:
@@ -1566,6 +1571,9 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		return finalizeTree(tree, ParseStopAccepted)
 	}
 	tryFinalizeTrailingEOFSuffix := func(s *glrStack, tok Token) (*Tree, bool) {
+		if p.noTreeBenchmarkOnly {
+			return nil, false
+		}
 		if nodes, ok := p.tryRecoverTrailingEOFSuffix(s, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, source); ok {
 			return finalizeRecoveredNodes(nodes), true
 		}
@@ -1875,7 +1883,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				if ok {
 					timing.reusedSubtrees++
 					timing.reusedBytes += uint64(reusedBytes)
-					reuseState.markReused(stacks[0].top().node, arena)
+					reuseState.markReused(stackEntryNode(stacks[0].top()), arena)
 					tok = nextTok
 					needToken = false
 					consecutiveReduces = 0
@@ -1883,7 +1891,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				}
 			} else {
 				if nextTok, _, ok := p.tryReuseSubtree(&stacks[0], tok, ts, reuse, &scratch.entries, &scratch.gss); ok {
-					reuseState.markReused(stacks[0].top().node, arena)
+					reuseState.markReused(stackEntryNode(stacks[0].top()), arena)
 					tok = nextTok
 					needToken = false
 					consecutiveReduces = 0
@@ -2386,7 +2394,7 @@ func reducePredecessorStateForStack(s *glrStack, childCount int) (StateID, bool)
 	if s.gss.head != nil {
 		nonExtraFound := 0
 		for n := s.gss.head; n != nil; n = n.prev {
-			if n.entry.node == nil || n.entry.node.isExtra() {
+			if !stackEntryHasNode(n.entry) || stackEntryNodeIsExtra(n.entry) {
 				continue
 			}
 			nonExtraFound++
@@ -2400,7 +2408,7 @@ func reducePredecessorStateForStack(s *glrStack, childCount int) (StateID, bool)
 		}
 		return 0, false
 	}
-	rr, ok := computeReduceRange(s.entries, childCount)
+	rr, ok := computeReduceRangePayload(s.entries, childCount)
 	if !ok {
 		return 0, false
 	}
@@ -2670,7 +2678,7 @@ func buildStackCullKeys(stacks []glrStack, lang *Language, buf *[]stackCullKey) 
 			flags |= stackCullShiftedFlag
 		}
 		errorRank := uint8(0)
-		if top.node != nil && top.node.hasError() {
+		if stackEntryNodeHasError(top) {
 			errorRank = 1
 		}
 		keys[i] = stackCullKey{

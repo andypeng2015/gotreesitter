@@ -393,11 +393,13 @@ type parserStateTokenSource interface {
 	SetGLRStates(states []StateID)
 }
 
-// stackEntry is a single entry on the parser's LR stack, pairing a parser
-// state with the syntax tree node that was shifted or reduced into that state.
+// stackEntry is a single parser LR-stack entry. The hot path stores real
+// public tree nodes directly; no-tree benchmark reductions can tag the same
+// 16-byte slot as a compact noTreeNode payload.
 type stackEntry struct {
-	state StateID
 	node  *Node
+	state StateID
+	kind  uint32
 }
 
 // errorSymbol is the well-known symbol ID used for error nodes.

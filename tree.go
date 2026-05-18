@@ -187,6 +187,7 @@ type ParseRuntime struct {
 // populated only when EnableArenaBreakdown(true) is set before parsing.
 type ArenaBreakdown struct {
 	NodeStructBytesAllocated   int64
+	NoTreeNodeBytesAllocated   int64
 	ChildSliceBytesAllocated   int64
 	FieldIDBytesAllocated      int64
 	FieldSourceBytesAllocated  int64

@@ -27,7 +27,7 @@ func TestApplyReduceActionCollapsesUnarySelfReductionOnPrimaryStack(t *testing.T
 	child.preGotoState = 3
 
 	s := newGLRStack(0)
-	s.entries = append(s.entries, stackEntry{state: 5, node: child})
+	s.entries = append(s.entries, newStackEntryNode(5, child))
 
 	act := ParseAction{Type: ParseActionReduce, Symbol: 1, ChildCount: 1, ProductionID: 23}
 	tok := Token{Symbol: 0, StartByte: 2, EndByte: 3, StartPoint: Point{Column: 2}, EndPoint: Point{Column: 3}}
@@ -47,7 +47,7 @@ func TestApplyReduceActionCollapsesUnarySelfReductionOnPrimaryStack(t *testing.T
 	if got, want := len(s.entries), 2; got != want {
 		t.Fatalf("stack len = %d, want %d", got, want)
 	}
-	top := s.top().node
+	top := stackEntryNode(s.top())
 	if top != child {
 		t.Fatal("expected reduced stack to reuse child node")
 	}
@@ -109,7 +109,7 @@ func TestApplyReduceActionCollapsesUnarySelfReductionOnGSSStack(t *testing.T) {
 	if got, want := s.depth(), 2; got != want {
 		t.Fatalf("stack depth = %d, want %d", got, want)
 	}
-	top := s.top().node
+	top := stackEntryNode(s.top())
 	if top != child {
 		t.Fatal("expected reduced stack to reuse child node")
 	}

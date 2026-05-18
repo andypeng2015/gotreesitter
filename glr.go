@@ -259,25 +259,29 @@ func (s *glrStack) entriesForRead(tmp []stackEntry) ([]stackEntry, bool) {
 }
 
 func (s *glrStack) push(state StateID, node *Node, entryScratch *glrEntryScratch, gssScratch *gssScratch) {
+	s.pushEntry(newStackEntryNode(state, node), entryScratch, gssScratch)
+}
+
+func (s *glrStack) pushEntry(entry stackEntry, entryScratch *glrEntryScratch, gssScratch *gssScratch) {
 	if s.gss.head != nil {
-		s.gss.push(state, node, gssScratch)
+		s.gss.pushEntry(entry, gssScratch)
 	}
 	if s.entries != nil {
 		if entryScratch == nil {
-			s.entries = append(s.entries, stackEntry{state: state, node: node})
+			s.entries = append(s.entries, entry)
 		} else {
 			if len(s.entries) == cap(s.entries) {
 				s.entries = entryScratch.grow(s.entries, len(s.entries)+1)
 			}
 			idx := len(s.entries)
 			s.entries = s.entries[:idx+1]
-			s.entries[idx] = stackEntry{state: state, node: node}
+			s.entries[idx] = entry
 		}
 	} else if s.gss.head == nil {
-		s.entries = []stackEntry{{state: state, node: node}}
+		s.entries = []stackEntry{entry}
 	}
-	if node != nil {
-		s.byteOffset = node.endByte
+	if stackEntryHasNode(entry) {
+		s.byteOffset = stackEntryNodeEndByte(entry)
 	}
 }
 
@@ -317,8 +321,8 @@ func mergeStacks(stacks []glrStack) []glrStack {
 
 func stackByteOffset(entries []stackEntry) uint32 {
 	for i := len(entries) - 1; i >= 0; i-- {
-		if entries[i].node != nil {
-			return entries[i].node.endByte
+		if stackEntryHasNode(entries[i]) {
+			return stackEntryNodeEndByte(entries[i])
 		}
 		if i == 0 {
 			break
@@ -455,7 +459,7 @@ func stackEntriesEqualForLanguageWithScratch(scratch *glrMergeScratch, lang *Lan
 		return false
 	}
 	for i := range a {
-		if a[i].state != b[i].state || !stackEntryNodesEquivalentForLanguageWithScratch(scratch, lang, a[i].node, b[i].node) {
+		if a[i].state != b[i].state || !stackEntryPayloadsEquivalentForLanguageWithScratch(scratch, lang, a[i], b[i]) {
 			return false
 		}
 	}
@@ -487,7 +491,7 @@ func gssStacksEqualForLanguageWithScratch(scratch *glrMergeScratch, lang *Langua
 		if an == bn {
 			return true
 		}
-		if an.entry.state != bn.entry.state || !stackEntryNodesEquivalentForLanguageWithScratch(scratch, lang, an.entry.node, bn.entry.node) {
+		if an.entry.state != bn.entry.state || !stackEntryPayloadsEquivalentForLanguageWithScratch(scratch, lang, an.entry, bn.entry) {
 			return false
 		}
 	}
@@ -550,7 +554,7 @@ func gssStackEntriesEqualForLanguageWithScratch(scratch *glrMergeScratch, lang *
 			return false
 		}
 		e := entries[i]
-		if n.entry.state != e.state || !stackEntryNodesEquivalentForLanguageWithScratch(scratch, lang, n.entry.node, e.node) {
+		if n.entry.state != e.state || !stackEntryPayloadsEquivalentForLanguageWithScratch(scratch, lang, n.entry, e) {
 			return false
 		}
 		i--
@@ -562,6 +566,32 @@ const (
 	stackEquivalentFrontierDepthLimit        = 8
 	stackEquivalentGenericFrontierDepthLimit = 4
 )
+
+func stackEntryPayloadsEquivalentForLanguageWithScratch(scratch *glrMergeScratch, lang *Language, a, b stackEntry) bool {
+	an := stackEntryNode(a)
+	bn := stackEntryNode(b)
+	if an != nil && bn != nil {
+		return stackEntryNodesEquivalentForLanguageWithScratch(scratch, lang, an, bn)
+	}
+	if !stackEntryHasNode(a) || !stackEntryHasNode(b) {
+		return !stackEntryHasNode(a) && !stackEntryHasNode(b)
+	}
+	if stackEntryNodeSymbol(a) != stackEntryNodeSymbol(b) ||
+		stackEntryNodeStartByte(a) != stackEntryNodeStartByte(b) ||
+		stackEntryNodeEndByte(a) != stackEntryNodeEndByte(b) ||
+		stackEntryNodeChildCount(a) != stackEntryNodeChildCount(b) ||
+		stackEntryNodeFieldIDCount(a) != stackEntryNodeFieldIDCount(b) ||
+		stackEntryNodeIsExtra(a) != stackEntryNodeIsExtra(b) ||
+		stackEntryNodeIsNamed(a) != stackEntryNodeIsNamed(b) ||
+		stackEntryNodeIsMissing(a) != stackEntryNodeIsMissing(b) ||
+		stackEntryNodeHasError(a) != stackEntryNodeHasError(b) ||
+		stackEntryNodeParseState(a) != stackEntryNodeParseState(b) ||
+		stackEntryNodePreGotoState(a) != stackEntryNodePreGotoState(b) ||
+		stackEntryNodeProductionID(a) != stackEntryNodeProductionID(b) {
+		return false
+	}
+	return true
+}
 
 func stackEntryNodesEquivalent(a, b *Node) bool {
 	if a == b {
@@ -1096,10 +1126,10 @@ func stackErrorRank(s *glrStack) int {
 		return 2
 	}
 	top := s.top()
-	if top.node == nil {
+	if !stackEntryHasNode(top) {
 		return 0
 	}
-	if top.node.hasError() {
+	if stackEntryNodeHasError(top) {
 		return 1
 	}
 	return 0

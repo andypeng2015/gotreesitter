@@ -267,7 +267,7 @@ func (a *runtimeAudit) observeGSSChain(head *gssNode, gssRetained, parentRetaine
 			a.seenGSS[n] = struct{}{}
 			*gssRetained = *gssRetained + 1
 		}
-		a.observeNode(n.entry.node, parentRetained, leafRetained)
+		a.observeNode(stackEntryNode(n.entry), parentRetained, leafRetained)
 	}
 }
 
@@ -276,7 +276,10 @@ func (a *runtimeAudit) observeEntries(entries []stackEntry, parentRetained, leaf
 		return
 	}
 	for i := len(entries) - 1; i >= 0; i-- {
-		node := entries[i].node
+		node := stackEntryNode(entries[i])
+		if node == nil && stackEntryNoTreeNode(entries[i]) != nil {
+			continue
+		}
 		info, ok := a.nodeInfo[node]
 		if !ok || info.gen != a.currentTokenGen {
 			break

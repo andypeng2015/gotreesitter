@@ -69,7 +69,7 @@ func TestCollapsibleUnarySelfReductionAliasesSingleAnonymousLeaf(t *testing.T) {
 	}
 	arena := newNodeArena(arenaClassFull)
 	child := newLeafNodeInArena(arena, 2, false, 1, 3, Point{Column: 1}, Point{Column: 3})
-	entries := []stackEntry{{node: child}}
+	entries := []stackEntry{newStackEntryNode(0, child)}
 	act := ParseAction{Symbol: 1, ChildCount: 1}
 
 	got := p.collapsibleUnarySelfReduction(act, Token{}, arena, entries, 0, 1, []*Node{child}, nil)
@@ -104,7 +104,7 @@ func TestCollapsibleRawUnarySelfReductionAliasesSingleAnonymousLeaf(t *testing.T
 	}
 	arena := newNodeArena(arenaClassFull)
 	child := newLeafNodeInArena(arena, 2, false, 1, 3, Point{Column: 1}, Point{Column: 3})
-	entries := []stackEntry{{node: child}}
+	entries := []stackEntry{newStackEntryNode(0, child)}
 	act := ParseAction{Symbol: 1, ChildCount: 1}
 
 	got := p.collapsibleRawUnarySelfReduction(act, Token{}, arena, entries, 0, 1)
@@ -136,7 +136,7 @@ func TestCollapsibleRawUnarySelfReductionRejectsInvisibleChild(t *testing.T) {
 	}
 	arena := newNodeArena(arenaClassFull)
 	child := newLeafNodeInArena(arena, 2, false, 1, 3, Point{Column: 1}, Point{Column: 3})
-	entries := []stackEntry{{node: child}}
+	entries := []stackEntry{newStackEntryNode(0, child)}
 	act := ParseAction{Symbol: 1, ChildCount: 1}
 
 	if got := p.collapsibleRawUnarySelfReduction(act, Token{}, arena, entries, 0, 1); got != nil {

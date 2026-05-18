@@ -50,35 +50,34 @@ func gssEntryHash(prev uint64, entry stackEntry) uint64 {
 	h := prev ^ uint64(entry.state)
 	h *= gssHashPrime
 
-	n := entry.node
-	if n == nil {
+	if !stackEntryHasNode(entry) {
 		h ^= gssNilNodeSentinel
 		h *= gssHashPrime
 		return h
 	}
 
-	h ^= uint64(n.symbol)
+	h ^= uint64(stackEntryNodeSymbol(entry))
 	h *= gssHashPrime
-	h ^= (uint64(n.startByte) << 32) | uint64(n.endByte)
+	h ^= (uint64(stackEntryNodeStartByte(entry)) << 32) | uint64(stackEntryNodeEndByte(entry))
 	h *= gssHashPrime
-	h ^= uint64(n.parseState)
+	h ^= uint64(stackEntryNodeParseState(entry))
 	h *= gssHashPrime
-	h ^= uint64(n.productionID)
+	h ^= uint64(stackEntryNodeProductionID(entry))
 	h *= gssHashPrime
-	h ^= uint64(len(n.children))
+	h ^= uint64(stackEntryNodeChildCount(entry))
 	h *= gssHashPrime
 
 	var flags uint64
-	if n.isExtra() {
+	if stackEntryNodeIsExtra(entry) {
 		flags |= 1
 	}
-	if n.isNamed() {
+	if stackEntryNodeIsNamed(entry) {
 		flags |= 1 << 1
 	}
-	if n.hasError() {
+	if stackEntryNodeHasError(entry) {
 		flags |= 1 << 2
 	}
-	if n.isMissing() {
+	if stackEntryNodeIsMissing(entry) {
 		flags |= 1 << 3
 	}
 	h ^= flags
@@ -124,7 +123,7 @@ func newGSSStack(initial StateID, scratch *gssScratch) gssStack {
 func buildGSSStack(entries []stackEntry, scratch *gssScratch) gssStack {
 	var s gssStack
 	for i := range entries {
-		s.push(entries[i].state, entries[i].node, scratch)
+		s.pushEntry(entries[i], scratch)
 	}
 	return s
 }
@@ -149,15 +148,18 @@ func (s gssStack) top() stackEntry {
 
 func (s gssStack) byteOffset() uint32 {
 	for n := s.head; n != nil; n = n.prev {
-		if n.entry.node != nil {
-			return n.entry.node.endByte
+		if stackEntryHasNode(n.entry) {
+			return stackEntryNodeEndByte(n.entry)
 		}
 	}
 	return 0
 }
 
 func (s *gssStack) push(state StateID, node *Node, scratch *gssScratch) {
-	entry := stackEntry{state: state, node: node}
+	s.pushEntry(newStackEntryNode(state, node), scratch)
+}
+
+func (s *gssStack) pushEntry(entry stackEntry, scratch *gssScratch) {
 	var depth int
 	if s.head != nil {
 		depth = s.head.depth + 1

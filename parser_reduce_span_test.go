@@ -17,9 +17,9 @@ func TestExtendParentSpanCoversInvisibleLeafChild(t *testing.T) {
 	invisible := NewLeafNode(4, false, 20, 22, Point{Row: 1, Column: 20}, Point{Row: 1, Column: 22})
 
 	entries := []stackEntry{
-		{state: 0, node: leadingExtra},
-		{state: 0, node: core},
-		{state: 0, node: invisible},
+		newStackEntryNode(0, leadingExtra),
+		newStackEntryNode(0, core),
+		newStackEntryNode(0, invisible),
 	}
 	meta := []SymbolMetadata{
 		{}, {}, {Visible: true}, {}, {Visible: false},
@@ -47,10 +47,10 @@ func TestExtendParentSpanChainsInvisiblePrefixLeaves(t *testing.T) {
 	core := NewLeafNode(4, true, 25, 30, Point{Row: 1, Column: 25}, Point{Row: 1, Column: 30})
 
 	entries := []stackEntry{
-		{state: 0, node: prefix1},
-		{state: 0, node: prefix2},
-		{state: 0, node: prefix3},
-		{state: 0, node: core},
+		newStackEntryNode(0, prefix1),
+		newStackEntryNode(0, prefix2),
+		newStackEntryNode(0, prefix3),
+		newStackEntryNode(0, core),
 	}
 	meta := []SymbolMetadata{
 		{},
@@ -83,8 +83,8 @@ func TestExtendParentSpanSkipsDiscontiguousPhantom(t *testing.T) {
 	phantom := NewLeafNode(4, false, 27, 27, Point{Row: 1, Column: 27}, Point{Row: 1, Column: 27})
 
 	entries := []stackEntry{
-		{state: 0, node: core},
-		{state: 0, node: phantom},
+		newStackEntryNode(0, core),
+		newStackEntryNode(0, phantom),
 	}
 	meta := []SymbolMetadata{
 		{}, {}, {Visible: true}, {}, {Visible: false},
@@ -114,7 +114,7 @@ func TestExtendParentSpanCoversInvisibleWithChildren(t *testing.T) {
 	invisibleWithKids.endPoint = Point{Row: 1, Column: 15}
 
 	entries := []stackEntry{
-		{state: 0, node: invisibleWithKids},
+		newStackEntryNode(0, invisibleWithKids),
 	}
 	meta := []SymbolMetadata{
 		{}, {}, {}, {}, {Visible: false}, {Visible: true},
@@ -134,7 +134,7 @@ func TestExtendParentSpanNoOp(t *testing.T) {
 	parent.endPoint = Point{Row: 2, Column: 20}
 
 	core := NewLeafNode(2, true, 10, 20, Point{Row: 2, Column: 10}, Point{Row: 2, Column: 20})
-	entries := []stackEntry{{state: 0, node: core}}
+	entries := []stackEntry{newStackEntryNode(0, core)}
 	meta := []SymbolMetadata{{}, {}, {Visible: true}}
 	extendParentSpanToWindow(parent, entries, 0, len(entries), meta, nil)
 
@@ -157,8 +157,8 @@ func TestExtendParentSpanAllowsImplicitEndTagGap(t *testing.T) {
 	implicitEnd := NewLeafNode(4, false, 21, 21, Point{Row: 1, Column: 21}, Point{Row: 1, Column: 21})
 
 	entries := []stackEntry{
-		{state: 0, node: core},
-		{state: 0, node: implicitEnd},
+		newStackEntryNode(0, core),
+		newStackEntryNode(0, implicitEnd),
 	}
 	meta := []SymbolMetadata{
 		{}, {}, {Visible: true}, {}, {Visible: false},
@@ -185,8 +185,8 @@ func TestExtendParentSpanAllowsOutdentGap(t *testing.T) {
 	outdent := NewLeafNode(4, false, 3250, 3250, Point{Row: 100, Column: 6}, Point{Row: 100, Column: 6})
 
 	entries := []stackEntry{
-		{state: 0, node: core},
-		{state: 0, node: outdent},
+		newStackEntryNode(0, core),
+		newStackEntryNode(0, outdent),
 	}
 	meta := []SymbolMetadata{
 		{}, {}, {Visible: true}, {}, {Visible: false},
@@ -210,8 +210,8 @@ func TestExtendParentSpanAllowsMultilineStringEndGap(t *testing.T) {
 	stringEnd := NewLeafNode(4, false, 2759, 2759, Point{Row: 75, Column: 11}, Point{Row: 75, Column: 11})
 
 	entries := []stackEntry{
-		{state: 0, node: core},
-		{state: 0, node: stringEnd},
+		newStackEntryNode(0, core),
+		newStackEntryNode(0, stringEnd),
 	}
 	meta := []SymbolMetadata{
 		{}, {}, {Visible: true}, {}, {Visible: false},
@@ -236,9 +236,9 @@ func TestExtendParentSpanChainsInterpolatedMultilineStringTail(t *testing.T) {
 	stringEnd := NewLeafNode(5, false, 2756, 2759, Point{Row: 75, Column: 9}, Point{Row: 75, Column: 12})
 
 	entries := []stackEntry{
-		{state: 0, node: core},
-		{state: 0, node: middle},
-		{state: 0, node: stringEnd},
+		newStackEntryNode(0, core),
+		newStackEntryNode(0, middle),
+		newStackEntryNode(0, stringEnd),
 	}
 	meta := []SymbolMetadata{
 		{}, {}, {Visible: true}, {}, {Visible: false}, {Visible: false},
@@ -262,8 +262,8 @@ func TestExtendParentSpanSkipsInvisibleLineEnding(t *testing.T) {
 	lineEnd := NewLeafNode(4, false, 20, 21, Point{Row: 1, Column: 20}, Point{Row: 2, Column: 0})
 
 	entries := []stackEntry{
-		{state: 0, node: core},
-		{state: 0, node: lineEnd},
+		newStackEntryNode(0, core),
+		newStackEntryNode(0, lineEnd),
 	}
 	meta := []SymbolMetadata{
 		{}, {}, {Visible: true}, {}, {Visible: false},
@@ -305,7 +305,7 @@ func TestComputeReduceRawSpanKeepsDroppedInvisiblePrefix(t *testing.T) {
 	invisibleReduced.startPoint = Point{Row: 0, Column: 16}
 	invisibleReduced.endPoint = Point{Row: 0, Column: 45}
 
-	entries := []stackEntry{{state: 0, node: invisibleReduced}}
+	entries := []stackEntry{newStackEntryNode(0, invisibleReduced)}
 	span := computeReduceRawSpan(entries, 0, len(entries))
 	if got, want := span.startByte, uint32(16); got != want {
 		t.Fatalf("span.startByte = %d, want %d", got, want)

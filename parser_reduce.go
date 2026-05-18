@@ -122,7 +122,7 @@ func (p *Parser) applyActionWithReduceChain(s *glrStack, act ParseAction, tok To
 
 func (p *Parser) pushOrExtendErrorNode(s *glrStack, state StateID, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) {
 	if s != nil {
-		top := s.top().node
+		top := stackEntryNode(s.top())
 		if top != nil &&
 			top.symbol == errorSymbol &&
 			!top.isMissing() &&
@@ -349,6 +349,16 @@ func (p *Parser) pushStackNode(s *glrStack, state StateID, node *Node, entryScra
 	}
 }
 
+func (p *Parser) pushStackEntry(s *glrStack, entry stackEntry, entryScratch *glrEntryScratch, gssScratch *gssScratch) {
+	s.pushEntry(entry, entryScratch, gssScratch)
+	if !s.recoverabilityKnown {
+		return
+	}
+	if !s.mayRecover && p.stateCanRecover(entry.state) {
+		s.mayRecover = true
+	}
+}
+
 func reduceWindowFromGSS(s *glrStack, childCount int, buf []stackEntry) ([]stackEntry, StateID, bool) {
 	if s == nil || s.gss.head == nil || s.depth() == 0 {
 		return nil, 0, false
@@ -362,7 +372,7 @@ func reduceWindowFromGSS(s *glrStack, childCount int, buf []stackEntry) ([]stack
 	n := s.gss.head
 	for n != nil {
 		rev = append(rev, n.entry)
-		if n.entry.node != nil && !n.entry.node.isExtra() {
+		if stackEntryHasNode(n.entry) && !stackEntryNodeIsExtra(n.entry) {
 			nonExtraFound++
 			if nonExtraFound == childCount {
 				break
@@ -410,7 +420,7 @@ func (p *Parser) tryFastVisibleReduceActionFromGSS(s *glrStack, act ParseAction,
 		if n == nil {
 			return false
 		}
-		child := n.entry.node
+		child := stackEntryNode(n.entry)
 		if child == nil || child.isExtra() {
 			return false
 		}
@@ -487,8 +497,7 @@ func (p *Parser) applyReduceActionFromGSS(s *glrStack, act ParseAction, tok Toke
 		actualEnd := len(windowEntries)
 		reducedEnd := actualEnd
 		for i := actualEnd - 1; i >= 0; i-- {
-			n := windowEntries[i].node
-			if n == nil || !n.isExtra() {
+			if !stackEntryHasNode(windowEntries[i]) || !stackEntryNodeIsExtra(windowEntries[i]) {
 				break
 			}
 			reducedEnd--
@@ -525,8 +534,7 @@ func (p *Parser) applyReduceActionFromGSS(s *glrStack, act ParseAction, tok Toke
 	actualEnd := len(windowEntries)
 	reducedEnd := actualEnd
 	for i := actualEnd - 1; i >= 0; i-- {
-		n := windowEntries[i].node
-		if n == nil || !n.isExtra() {
+		if !stackEntryHasNode(windowEntries[i]) || !stackEntryNodeIsExtra(windowEntries[i]) {
 			break
 		}
 		reducedEnd--
@@ -605,7 +613,7 @@ func (p *Parser) applyReduceActionFromGSS(s *glrStack, act ParseAction, tok Toke
 	parent.parseState = targetState
 	p.pushStackNode(s, targetState, parent, entryScratch, gssScratch)
 	for i := reducedEnd; i < actualEnd; i++ {
-		extra := windowEntries[i].node
+		extra := stackEntryNode(windowEntries[i])
 		if extra == nil {
 			continue
 		}
@@ -653,6 +661,35 @@ func computeReduceRange(entries []stackEntry, childCount int) (reduceRange, bool
 	for i := actualEnd - 1; i >= start; i-- {
 		n := entries[i].node
 		if n == nil || !n.isExtra() {
+			break
+		}
+		reducedEnd--
+	}
+	return reduceRange{
+		start:      start,
+		reducedEnd: reducedEnd,
+		actualEnd:  actualEnd,
+		topState:   entries[start-1].state,
+	}, true
+}
+
+func computeReduceRangePayload(entries []stackEntry, childCount int) (reduceRange, bool) {
+	start := len(entries)
+	nonExtraFound := 0
+	for nonExtraFound < childCount && start > 1 {
+		start--
+		if stackEntryHasNode(entries[start]) && !stackEntryNodeIsExtra(entries[start]) {
+			nonExtraFound++
+		}
+	}
+	if nonExtraFound < childCount {
+		return reduceRange{}, false
+	}
+
+	actualEnd := len(entries)
+	reducedEnd := actualEnd
+	for i := actualEnd - 1; i >= start; i-- {
+		if !stackEntryHasNode(entries[i]) || !stackEntryNodeIsExtra(entries[i]) {
 			break
 		}
 		reducedEnd--
@@ -1883,7 +1920,15 @@ func nodeHasAnyDirectField(n *Node) bool {
 
 func (p *Parser) applyReduceAction(s *glrStack, act ParseAction, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, entries []stackEntry, deferParentLinks bool, trackChildErrors bool) {
 	childCount := int(act.ChildCount)
-	window, ok := computeReduceRange(entries, childCount)
+	var (
+		window reduceRange
+		ok     bool
+	)
+	if p != nil && p.noTreeBenchmarkOnly {
+		window, ok = computeReduceRangePayload(entries, childCount)
+	} else {
+		window, ok = computeReduceRange(entries, childCount)
+	}
 	if !ok {
 		// Not enough stack entries — kill this stack version.
 		s.dead = true
@@ -1990,28 +2035,36 @@ func (p *Parser) pushNoTreeReduceNode(s *glrStack, act ParseAction, tok Token, a
 	}
 	parent.preGotoState = topState
 	parent.parseState = targetState
-	p.pushStackNode(s, targetState, parent, entryScratch, gssScratch)
+	p.pushStackNoTreeNode(s, targetState, parent, entryScratch, gssScratch)
 	for i := trailingStart; i < trailingEnd; i++ {
-		extra := entries[i].node
-		if extra == nil {
+		extra, ok := retargetStackEntryPayload(entries[i], targetState)
+		if !ok {
 			continue
 		}
-		extra.parseState = targetState
-		nodeBumpEquivVersion(extra)
-		p.pushStackNode(s, targetState, extra, entryScratch, gssScratch)
+		p.pushStackEntry(s, extra, entryScratch, gssScratch)
 	}
 	if nodeCount != nil {
 		*nodeCount = *nodeCount + 1
 	}
 }
 
-func newNoTreeReduceNodeInArena(arena *nodeArena, sym Symbol, named bool, productionID uint16, entries []stackEntry, start, reducedEnd int, tok Token, trackChildErrors bool) *Node {
-	var n *Node
+func (p *Parser) pushStackNoTreeNode(s *glrStack, state StateID, node *noTreeNode, entryScratch *glrEntryScratch, gssScratch *gssScratch) {
+	entry := newStackEntryNoTreeNode(state, node)
+	s.pushEntry(entry, entryScratch, gssScratch)
+	if !s.recoverabilityKnown {
+		return
+	}
+	if !s.mayRecover && p.stateCanRecover(state) {
+		s.mayRecover = true
+	}
+}
+
+func newNoTreeReduceNodeInArena(arena *nodeArena, sym Symbol, named bool, productionID uint16, entries []stackEntry, start, reducedEnd int, tok Token, trackChildErrors bool) *noTreeNode {
+	var n *noTreeNode
 	if arena == nil {
-		n = &Node{}
+		n = &noTreeNode{}
 	} else {
-		n = arena.allocNodeFast()
-		n.ownerArena = arena
+		n = arena.allocNoTreeNode()
 		arena.noTreeReduceNodesConstructed++
 	}
 	n.symbol = sym
@@ -2020,46 +2073,41 @@ func newNoTreeReduceNodeInArena(arena *nodeArena, sym Symbol, named bool, produc
 	n.endByte = tok.StartByte
 	n.startPoint = tok.StartPoint
 	n.endPoint = tok.StartPoint
-	n.childIndex = -1
 	n.productionID = productionID
 	if reducedEnd > start {
-		firstRaw := entries[start].node
-		lastRaw := entries[reducedEnd-1].node
-		var firstNonExtra *Node
-		var lastNonExtra *Node
+		firstRaw := entries[start]
+		lastRaw := entries[reducedEnd-1]
+		var firstNonExtra stackEntry
+		var lastNonExtra stackEntry
 		for i := start; i < reducedEnd; i++ {
-			child := entries[i].node
-			if child == nil {
+			child := entries[i]
+			if !stackEntryHasNode(child) {
 				continue
 			}
-			if !child.isExtra() {
-				if firstNonExtra == nil {
+			if !stackEntryNodeIsExtra(child) {
+				if !stackEntryHasNode(firstNonExtra) {
 					firstNonExtra = child
 				}
 				lastNonExtra = child
 			}
-			if trackChildErrors && child.hasError() {
+			if trackChildErrors && stackEntryNodeHasError(child) {
 				n.setHasError(true)
 			}
 		}
-		if firstNonExtra != nil {
-			n.startByte = firstNonExtra.startByte
-			n.startPoint = firstNonExtra.startPoint
-		} else if firstRaw != nil {
-			n.startByte = firstRaw.startByte
-			n.startPoint = firstRaw.startPoint
+		if stackEntryHasNode(firstNonExtra) {
+			n.startByte = stackEntryNodeStartByte(firstNonExtra)
+			n.startPoint = stackEntryNodeStartPoint(firstNonExtra)
+		} else if stackEntryHasNode(firstRaw) {
+			n.startByte = stackEntryNodeStartByte(firstRaw)
+			n.startPoint = stackEntryNodeStartPoint(firstRaw)
 		}
-		if lastNonExtra != nil {
-			n.endByte = lastNonExtra.endByte
-			n.endPoint = lastNonExtra.endPoint
-		} else if lastRaw != nil {
-			n.endByte = lastRaw.endByte
-			n.endPoint = lastRaw.endPoint
+		if stackEntryHasNode(lastNonExtra) {
+			n.endByte = stackEntryNodeEndByte(lastNonExtra)
+			n.endPoint = stackEntryNodeEndPoint(lastNonExtra)
+		} else if stackEntryHasNode(lastRaw) {
+			n.endByte = stackEntryNodeEndByte(lastRaw)
+			n.endPoint = stackEntryNodeEndPoint(lastRaw)
 		}
-	}
-	nodeInitEquivVersion(n)
-	if arena != nil && arena.audit != nil {
-		arena.audit.recordNodeAlloc(n, runtimeAuditNodeKindParent)
 	}
 	return n
 }

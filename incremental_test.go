@@ -432,8 +432,12 @@ func TestTryReuseSubtreeReusesFirstEligibleNonLeafCandidate(t *testing.T) {
 	if !ok {
 		t.Fatal("expected non-leaf fallback reuse to succeed")
 	}
-	if stack.top().node != expected {
-		t.Fatalf("reused wrong non-leaf candidate: got span=%d want span=%d", stack.top().node.EndByte()-stack.top().node.StartByte(), expectedSpan)
+	if stackEntryNode(stack.top()) != expected {
+		got := stackEntryNode(stack.top())
+		if got == nil {
+			t.Fatalf("reused wrong non-leaf candidate: got nil want span=%d", expectedSpan)
+		}
+		t.Fatalf("reused wrong non-leaf candidate: got span=%d want span=%d", got.EndByte()-got.StartByte(), expectedSpan)
 	}
 	if stack.top().state != expectedState {
 		t.Fatalf("stack top state = %d, want %d", stack.top().state, expectedState)
@@ -487,7 +491,7 @@ func TestTryReuseSubtreeSkipsLargeNonLeafCandidate(t *testing.T) {
 	if ok {
 		t.Fatalf("expected large non-leaf candidate to be rejected by span cutoff, reusedBytes=%d nextTok=%+v", reusedBytes, nextTok)
 	}
-	if stack.top().node != nil {
+	if stackEntryNode(stack.top()) != nil {
 		t.Fatal("stack should remain unchanged when reuse fails")
 	}
 }
@@ -522,10 +526,10 @@ func TestReuseTargetStateAmbiguousShiftMustMatchNodeState(t *testing.T) {
 
 func TestReuseStackDepthForPreGoto(t *testing.T) {
 	entries := []stackEntry{
-		{state: 1, node: nil},
-		{state: 10, node: &Node{endByte: 4}},
-		{state: 20, node: &Node{endByte: 8}},
-		{state: 10, node: &Node{endByte: 12}},
+		{state: 1},
+		newStackEntryNode(10, &Node{endByte: 4}),
+		newStackEntryNode(20, &Node{endByte: 8}),
+		newStackEntryNode(10, &Node{endByte: 12}),
 	}
 	if got := reuseStackDepthForPreGoto(entries, 8, 10); got != 2 {
 		t.Fatalf("depth at start=8/pre=10 = %d, want 2", got)
@@ -571,8 +575,8 @@ func TestReuseNonLeafTargetStateOnStackUsesPreGoto(t *testing.T) {
 	stackWithPre := glrStack{
 		entries: []stackEntry{
 			{state: lang.InitialState},
-			{state: pre, node: &Node{endByte: start}},
-			{state: pre + 1, node: &Node{endByte: start}},
+			newStackEntryNode(pre, &Node{endByte: start}),
+			newStackEntryNode(pre+1, &Node{endByte: start}),
 		},
 	}
 	nextState, depth, ok := parser.reuseNonLeafTargetStateOnStack(&stackWithPre, target, start, nil)
@@ -588,8 +592,8 @@ func TestReuseNonLeafTargetStateOnStackUsesPreGoto(t *testing.T) {
 
 	stackMissingPre := glrStack{
 		entries: []stackEntry{
-			{state: pre + 1, node: &Node{endByte: start}},
-			{state: pre + 2, node: &Node{endByte: start}},
+			newStackEntryNode(pre+1, &Node{endByte: start}),
+			newStackEntryNode(pre+2, &Node{endByte: start}),
 		},
 	}
 	if _, _, ok := parser.reuseNonLeafTargetStateOnStack(&stackMissingPre, target, start, nil); ok {

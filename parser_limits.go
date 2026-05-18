@@ -135,6 +135,24 @@ func parseFullArenaInitialNodeCapacity(sourceLen int) int {
 	return max(base, estimate)
 }
 
+func parseNoTreeArenaNodeCapacity(sourceLen int) int {
+	base := nodeCapacityForClass(arenaClassFull)
+	if sourceLen <= 0 {
+		return base
+	}
+	// No-tree still allocates shifted leaves and recovery nodes as public Nodes,
+	// but compact reduce placeholders no longer need full Node capacity.
+	estimate := sourceLen / 2
+	if sourceLen >= 1024*1024 {
+		estimate = sourceLen / 3
+	}
+	const maxPreallocNodes = 1_000_000
+	if estimate > maxPreallocNodes {
+		estimate = maxPreallocNodes
+	}
+	return max(base, estimate)
+}
+
 func (p *Parser) fullArenaHintCapacity() int {
 	if p == nil {
 		return 0

@@ -76,8 +76,10 @@ type nodeArena struct {
 	skipChildClear bool
 	audit          *runtimeAudit
 
-	nodeSlabs      []nodeSlab
-	nodeSlabCursor int
+	nodeSlabs            []nodeSlab
+	nodeSlabCursor       int
+	noTreeNodeSlabs      []noTreeNodeSlab
+	noTreeNodeSlabCursor int
 
 	childSlabs                         []childSliceSlab
 	fieldSlabs                         []fieldSliceSlab
@@ -379,6 +381,30 @@ func (a *nodeArena) reset() {
 		}
 	}
 	a.nodeSlabCursor = 0
+	if len(a.noTreeNodeSlabs) > 0 {
+		retained := 0
+		keep := 0
+		limit := maxRetainedNoTreeNodeCapacityForClass(a.class)
+		for i := 0; i < len(a.noTreeNodeSlabs); i++ {
+			capacity := len(a.noTreeNodeSlabs[i].data)
+			if capacity <= 0 {
+				break
+			}
+			if retained+capacity > limit {
+				break
+			}
+			retained += capacity
+			keep = i + 1
+		}
+		for i := keep; i < len(a.noTreeNodeSlabs); i++ {
+			a.noTreeNodeSlabs[i] = noTreeNodeSlab{}
+		}
+		a.noTreeNodeSlabs = a.noTreeNodeSlabs[:keep]
+	}
+	for i := range a.noTreeNodeSlabs {
+		a.noTreeNodeSlabs[i].used = 0
+	}
+	a.noTreeNodeSlabCursor = 0
 
 	if len(a.childSlabs) > 0 {
 		retained := 0
@@ -539,6 +565,40 @@ func (a *nodeArena) allocNodeSlow() *Node {
 		a.used++
 		n := &slab.data[idx]
 		// Node is already zeroed: fresh slabs by make(), reused slabs by reset().
+		return n
+	}
+}
+
+func (a *nodeArena) allocNoTreeNode() *noTreeNode {
+	if a == nil {
+		return &noTreeNode{}
+	}
+	if len(a.noTreeNodeSlabs) == 0 {
+		capacity := max(defaultNoTreeNodeSlabCap(a.class), minArenaNodeCap)
+		a.noTreeNodeSlabs = append(a.noTreeNodeSlabs, noTreeNodeSlab{data: make([]noTreeNode, capacity)})
+		a.allocatedBytes += noTreeNodeBytesForCap(capacity)
+		a.noTreeNodeSlabCursor = 0
+	}
+	if a.noTreeNodeSlabCursor < 0 || a.noTreeNodeSlabCursor >= len(a.noTreeNodeSlabs) {
+		a.noTreeNodeSlabCursor = 0
+	}
+	for i := a.noTreeNodeSlabCursor; ; i++ {
+		if i >= len(a.noTreeNodeSlabs) {
+			lastCap := len(a.noTreeNodeSlabs[len(a.noTreeNodeSlabs)-1].data)
+			capacity := max(lastCap*2, minArenaNodeCap)
+			a.noTreeNodeSlabs = append(a.noTreeNodeSlabs, noTreeNodeSlab{data: make([]noTreeNode, capacity)})
+			a.allocatedBytes += noTreeNodeBytesForCap(capacity)
+		}
+
+		slab := &a.noTreeNodeSlabs[i]
+		if slab.used >= len(slab.data) {
+			continue
+		}
+		idx := slab.used
+		slab.used++
+		a.noTreeNodeSlabCursor = i
+		n := &slab.data[idx]
+		*n = noTreeNode{}
 		return n
 	}
 }
@@ -794,11 +854,23 @@ func (a *nodeArena) fieldSourceBytesAllocated() int64 {
 	return total
 }
 
+func (a *nodeArena) noTreeNodeBytesAllocated() int64 {
+	if a == nil {
+		return 0
+	}
+	var total int64
+	for i := range a.noTreeNodeSlabs {
+		total += noTreeNodeBytesForCap(len(a.noTreeNodeSlabs[i].data))
+	}
+	return total
+}
+
 func (a *nodeArena) recomputeAllocatedBytes() {
 	if a == nil {
 		return
 	}
 	total := a.nodeStructBytesAllocated() +
+		a.noTreeNodeBytesAllocated() +
 		a.childSliceBytesAllocated() +
 		a.fieldIDBytesAllocated() +
 		a.fieldSourceBytesAllocated()
@@ -844,6 +916,7 @@ func (a *nodeArena) collectArenaBreakdown() *ArenaBreakdown {
 	}
 	breakdown := &ArenaBreakdown{
 		NodeStructBytesAllocated:          a.nodeStructBytesAllocated(),
+		NoTreeNodeBytesAllocated:          a.noTreeNodeBytesAllocated(),
 		ChildSliceBytesAllocated:          a.childSliceBytesAllocated(),
 		FieldIDBytesAllocated:             a.fieldIDBytesAllocated(),
 		FieldSourceBytesAllocated:         a.fieldSourceBytesAllocated(),
@@ -867,7 +940,7 @@ func (a *nodeArena) collectArenaBreakdown() *ArenaBreakdown {
 	}
 	a.scanConstructedNodes(breakdown)
 	knownNodes := a.leafNodesConstructed + a.parentNodesConstructed +
-		a.noTreeReduceNodesConstructed + a.noTreePlaceholderNodesConstructed
+		a.noTreePlaceholderNodesConstructed
 	if breakdown.ArenaNodesConstructed >= knownNodes {
 		breakdown.OtherNodesConstructed = breakdown.ArenaNodesConstructed - knownNodes
 	}
@@ -1141,6 +1214,18 @@ func maxRetainedOverflowNodeCapacityForClass(class arenaClass) int {
 		return max(nodeCapacityForBytes(maxRetainedFullOverflowNodeBytes), nodeCapacityForClass(class))
 	}
 	return max(maxRetainedNodeCapacityForClass(class)/2, nodeCapacityForClass(class))
+}
+
+func maxRetainedNoTreeNodeCapacityForClass(class arenaClass) int {
+	nodeSize := int(unsafe.Sizeof(noTreeNode{}))
+	if nodeSize <= 0 {
+		nodeSize = 1
+	}
+	if class == arenaClassFull {
+		return max(maxRetainedFullNodeBytes/nodeSize, defaultNoTreeNodeSlabCap(class))
+	}
+	floor := maxRetainedIncrementalNodeBytes / nodeSize
+	return max(defaultNoTreeNodeSlabCap(class)*maxRetainedArenaFactor, floor)
 }
 
 func maxRetainedChildSliceCapacityForClass(class arenaClass) int {

@@ -173,8 +173,8 @@ func TestGSSScratchResetClearsTouchedSlots(t *testing.T) {
 		t.Fatalf("slab.used after reset = %d, want 0", slab.used)
 	}
 	for i := 0; i < 2; i++ {
-		if slab.data[i].entry.node != nil {
-			t.Fatalf("slab.data[%d].entry.node after reset = %p, want nil", i, slab.data[i].entry.node)
+		if stackEntryNode(slab.data[i].entry) != nil {
+			t.Fatalf("slab.data[%d].entry node after reset = %p, want nil", i, stackEntryNode(slab.data[i].entry))
 		}
 		if slab.data[i].prev != nil {
 			t.Fatalf("slab.data[%d].prev after reset = %p, want nil", i, slab.data[i].prev)

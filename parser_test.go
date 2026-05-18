@@ -318,7 +318,7 @@ func TestPushOrExtendErrorNodeCoalescesConsecutiveTokens(t *testing.T) {
 	if got, want := nodeCount, 1; got != want {
 		t.Fatalf("nodeCount = %d, want %d", got, want)
 	}
-	top := s.top().node
+	top := stackEntryNode(s.top())
 	if top == nil {
 		t.Fatal("top node is nil")
 	}

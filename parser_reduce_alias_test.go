@@ -64,7 +64,7 @@ func TestApplyReduceActionCollapsesNamedLeafWrapper(t *testing.T) {
 	child.preGotoState = 3
 
 	s := newGLRStack(0)
-	s.entries = append(s.entries, stackEntry{state: 5, node: child})
+	s.entries = append(s.entries, newStackEntryNode(5, child))
 
 	act := ParseAction{Type: ParseActionReduce, Symbol: 1, ChildCount: 1, ProductionID: 23}
 	tok := Token{Symbol: 0, StartByte: 8, EndByte: 9, StartPoint: Point{Column: 8}, EndPoint: Point{Column: 9}}
@@ -78,7 +78,7 @@ func TestApplyReduceActionCollapsesNamedLeafWrapper(t *testing.T) {
 	if !anyReduced {
 		t.Fatal("expected reduce to succeed")
 	}
-	top := s.top().node
+	top := stackEntryNode(s.top())
 	if top == nil {
 		t.Fatal("expected top node")
 	}
