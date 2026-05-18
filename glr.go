@@ -79,6 +79,7 @@ type glrMergeScratch struct {
 	audit           *runtimeAudit
 	equivEpoch      uint32
 	equivCache      []glrNodeEquivCacheEntry
+	pythonShallow   bool
 	budgetBytes     int64
 	resultBytes     int64
 	slotBytes       int64
@@ -633,6 +634,9 @@ func stackNodeNeedsDeepEquivalent(n *Node) bool {
 func stackEntryNodesEquivalentForLanguageWithScratch(scratch *glrMergeScratch, lang *Language, a, b *Node) bool {
 	if languageNeedsExactStackNodeEquivalence(lang) {
 		return stackEntryNodesExactlyEquivalentWithScratch(scratch, a, b, 0)
+	}
+	if lang != nil && lang.Name == "python" && scratch != nil && scratch.pythonShallow {
+		return stackEntryNodesEquivalentFrontierWithScratch(scratch, a, b, 0)
 	}
 	if lang != nil && (lang.Name == "c_sharp" || lang.Name == "bash" || len(lang.AliasSequences) > 0) {
 		depthLimit := stackEquivalentFrontierDepthLimit

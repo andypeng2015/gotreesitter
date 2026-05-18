@@ -1298,6 +1298,11 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	deferParentLinks := reuse == nil && oldTree == nil
 	scratch := acquireParserScratch()
 	scratch.merge.beginEquivEpoch()
+	// Python's generated grammar-test style files can spend most parse time
+	// recursively comparing near-equivalent GLR survivors. Limit the shallower
+	// merge equivalence to bounded inputs; very large generated wrappers have a
+	// different failure mode and regress with this path.
+	scratch.merge.pythonShallow = p != nil && p.language != nil && p.language.Name == "python" && len(source) <= 512*1024
 	if deferParentLinks {
 		scratch.gss.initialCap = p.fullGSSHintCapacity()
 	} else {

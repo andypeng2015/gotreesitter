@@ -1,11 +1,26 @@
 package gotreesitter
 
+import "bytes"
+
 func normalizePythonCompatibility(root *Node, source []byte, lang *Language) {
-	normalizePythonTrailingSelfCalls(root, source, lang)
-	normalizePythonPrintStatements(root, source, lang)
-	normalizePythonInterpolationPatterns(root, lang)
-	normalizeCollapsedNamedLeafChildren(root, lang, "pass_statement", "pass")
-	normalizePythonStringContinuationEscapes(root, source, lang)
+	if len(source) == 0 {
+		return
+	}
+	if bytes.IndexByte(source, ';') >= 0 {
+		normalizePythonTrailingSelfCalls(root, source, lang)
+	}
+	if bytes.Contains(source, []byte("print")) && bytes.Contains(source, []byte(">>")) {
+		normalizePythonPrintStatements(root, source, lang)
+	}
+	if bytes.IndexByte(source, '{') >= 0 {
+		normalizePythonInterpolationPatterns(root, lang)
+	}
+	if bytes.Contains(source, []byte("pass")) {
+		normalizeCollapsedNamedLeafChildren(root, lang, "pass_statement", "pass")
+	}
+	if bytes.Contains(source, []byte("\\\n")) || bytes.Contains(source, []byte("\\\r\n")) {
+		normalizePythonStringContinuationEscapes(root, source, lang)
+	}
 }
 
 func normalizePythonInterpolationPatterns(root *Node, lang *Language) {
@@ -110,25 +125,31 @@ func foldPythonTrailingSelfCallsInBlock(children []*Node, source []byte, lang *L
 	if len(children) < 2 || lang == nil || lang.Name != "python" || len(source) == 0 {
 		return children, false
 	}
-	out := make([]*Node, 0, len(children))
-	changed := false
+	var out []*Node
 	for i := 0; i < len(children); i++ {
 		cur := children[i]
 		if i+1 >= len(children) {
-			out = append(out, cur)
+			if out != nil {
+				out = append(out, cur)
+			}
 			continue
 		}
 		next := children[i+1]
 		rewritten, ok := foldPythonTrailingSelfCallIntoNestedFunction(cur, next, source, lang)
 		if !ok {
-			out = append(out, cur)
+			if out != nil {
+				out = append(out, cur)
+			}
 			continue
 		}
+		if out == nil {
+			out = make([]*Node, 0, len(children))
+			out = append(out, children[:i]...)
+		}
 		out = append(out, rewritten)
-		changed = true
 		i++
 	}
-	if !changed {
+	if out == nil {
 		return children, false
 	}
 	return out, true
@@ -190,21 +211,27 @@ func rewritePythonStatementList(children []*Node, source []byte, lang *Language)
 	if len(children) == 0 || lang == nil || lang.Name != "python" {
 		return children, false
 	}
-	out := make([]*Node, 0, len(children))
-	changed := false
-	for _, child := range children {
+	var out []*Node
+	for i, child := range children {
 		if child == nil {
-			out = append(out, nil)
+			if out != nil {
+				out = append(out, nil)
+			}
 			continue
 		}
 		if rewritten, ok := rewriteMalformedPythonPrintStatement(child, source, lang); ok {
+			if out == nil {
+				out = make([]*Node, 0, len(children))
+				out = append(out, children[:i]...)
+			}
 			out = append(out, rewritten)
-			changed = true
 			continue
 		}
-		out = append(out, child)
+		if out != nil {
+			out = append(out, child)
+		}
 	}
-	if !changed {
+	if out == nil {
 		return children, false
 	}
 	return out, true
@@ -395,13 +422,22 @@ func repairPythonRootNode(root *Node, arena *nodeArena, lang *Language) *Node {
 		}
 	}
 
-	repaired := make([]*Node, 0, len(children))
-	for _, child := range children {
+	var repaired []*Node
+	for i, child := range children {
 		fixed := repairPythonTopLevelNode(child, arena, lang)
 		if fixed != child {
 			changed = true
+			if repaired == nil {
+				repaired = make([]*Node, 0, len(children))
+				repaired = append(repaired, children[:i]...)
+			}
 		}
-		repaired = append(repaired, fixed)
+		if repaired != nil {
+			repaired = append(repaired, fixed)
+		}
+	}
+	if repaired == nil {
+		repaired = children
 	}
 
 	if !changed {
@@ -432,16 +468,20 @@ func repairPythonKeywordErrorNodes(nodes []*Node, source []byte, arena *nodeAren
 	if len(nodes) == 0 || lang == nil || lang.Name != "python" || len(source) == 0 {
 		return nodes, false
 	}
-	out := make([]*Node, len(nodes))
-	changed := false
+	var out []*Node
 	for i, node := range nodes {
 		repaired := repairPythonKeywordErrorNode(node, source, arena, lang)
 		if repaired != node {
-			changed = true
+			if out == nil {
+				out = make([]*Node, 0, len(nodes))
+				out = append(out, nodes[:i]...)
+			}
 		}
-		out[i] = repaired
+		if out != nil {
+			out = append(out, repaired)
+		}
 	}
-	if !changed {
+	if out == nil {
 		return nodes, false
 	}
 	if arena != nil {
@@ -470,17 +510,25 @@ func repairPythonKeywordErrorNode(node *Node, source []byte, arena *nodeArena, l
 	if len(node.children) == 0 {
 		return node
 	}
-	children := make([]*Node, len(node.children))
-	changed := false
+	var children []*Node
 	for i, child := range node.children {
 		repaired := repairPythonKeywordErrorNode(child, source, arena, lang)
 		if repaired != child {
-			changed = true
+			if children == nil {
+				children = make([]*Node, 0, len(node.children))
+				children = append(children, node.children[:i]...)
+			}
 		}
-		children[i] = repaired
+		if children != nil {
+			children = append(children, repaired)
+		}
 	}
-	if node.Type(lang) == "ERROR" && len(children) == 1 {
-		child := children[0]
+	finalChildren := node.children
+	if children != nil {
+		finalChildren = children
+	}
+	if node.Type(lang) == "ERROR" && len(finalChildren) == 1 {
+		child := finalChildren[0]
 		if child != nil &&
 			!child.IsError() &&
 			!child.HasError() &&
@@ -489,16 +537,16 @@ func repairPythonKeywordErrorNode(node *Node, source []byte, arena *nodeArena, l
 			return child
 		}
 	}
-	if !changed {
+	if children == nil {
 		return node
 	}
 	cloned := cloneNodeInArena(arena, node)
 	if arena != nil {
-		buf := arena.allocNodeSlice(len(children))
-		copy(buf, children)
-		children = buf
+		buf := arena.allocNodeSlice(len(finalChildren))
+		copy(buf, finalChildren)
+		finalChildren = buf
 	}
-	cloned.children = children
+	cloned.children = finalChildren
 	return cloned
 }
 
@@ -630,16 +678,20 @@ func repairPythonIfStatement(node *Node, arena *nodeArena, lang *Language) *Node
 	if node == nil || node.Type(lang) != "if_statement" || len(node.children) == 0 {
 		return node
 	}
-	children := make([]*Node, len(node.children))
-	changed := false
+	var children []*Node
 	for i, child := range node.children {
 		repaired := repairPythonNode(child, arena, lang)
 		if repaired != child {
-			changed = true
+			if children == nil {
+				children = make([]*Node, 0, len(node.children))
+				children = append(children, node.children[:i]...)
+			}
 		}
-		children[i] = repaired
+		if children != nil {
+			children = append(children, repaired)
+		}
 	}
-	if !changed {
+	if children == nil {
 		return node
 	}
 
@@ -839,7 +891,7 @@ func pythonNodeTextEqual(a, b *Node, source []byte) bool {
 	if a.endByte-a.startByte != b.endByte-b.startByte {
 		return false
 	}
-	return string(source[a.startByte:a.endByte]) == string(source[b.startByte:b.endByte])
+	return bytes.Equal(source[a.startByte:a.endByte], source[b.startByte:b.endByte])
 }
 
 func splitPythonOvernestedFunction(node *Node, arena *nodeArena, lang *Language) (*Node, []*Node, bool) {
