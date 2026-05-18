@@ -322,8 +322,11 @@ func parseIncrementalArenaNodeCapacity(sourceLen, hint int) int {
 	base := nodeCapacityForClass(arenaClassIncremental)
 	target := base
 	if sourceLen > 0 {
-		estimate := sourceLen * 4
-		const maxPreallocNodes = 512 * 1024
+		// Incremental reparses should rebuild only the dirty frontier. Keep the
+		// cold-start arena modest and let observed parser hints or overflow slabs
+		// handle the rarer wide invalidation case.
+		estimate := sourceLen / 8
+		const maxPreallocNodes = 64 * 1024
 		if estimate > maxPreallocNodes {
 			estimate = maxPreallocNodes
 		}

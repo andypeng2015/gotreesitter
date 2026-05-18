@@ -6,7 +6,7 @@ func (p *Parser) tryTokenInvariantLeafEdit(source []byte, oldTree *Tree, ts Toke
 	if p == nil || oldTree == nil || oldTree.RootNode() == nil || oldTree.language != p.language {
 		return nil, false
 	}
-	if len(oldTree.edits) != 1 || languageUsesExternalScannerCheckpoints(p.language) {
+	if len(oldTree.edits) != 1 {
 		return nil, false
 	}
 	edit := oldTree.edits[0]
@@ -114,12 +114,42 @@ func scanLeafTokenWithoutMutatingSource(ts TokenSource, leaf *Node) (Token, bool
 }
 
 func scanDFALeafTokenWithoutMutatingSource(dts *dfaTokenSource, leaf *Node) (Token, bool) {
+	if dts != nil && languageUsesExternalScannerCheckpoints(dts.language) {
+		return scanDFALeafTokenWithExternalCheckpoint(dts, leaf)
+	}
 	snapshot, ok := prepareDFALeafScan(dts, leaf)
 	if !ok {
 		return Token{}, false
 	}
 	tok := dts.SkipToByteWithPoint(leaf.startByte, leaf.startPoint)
 	restoreDFALeafScan(dts, snapshot)
+	return tok, true
+}
+
+func scanDFALeafTokenWithExternalCheckpoint(dts *dfaTokenSource, leaf *Node) (Token, bool) {
+	if dts == nil || dts.lexer == nil || leaf == nil {
+		return Token{}, false
+	}
+	cp, ok := externalScannerCheckpointForNode(leaf)
+	if !ok {
+		return Token{}, false
+	}
+	snapshot, ok := snapshotDFATokenSourceState(dts)
+	if !ok {
+		return Token{}, false
+	}
+	defer restoreDFATokenSourceState(dts, snapshot)
+
+	dts.state = leaf.preGotoState
+	dts.glrStates = nil
+	dts.restoreExternalScannerState(cp.start)
+	tok := dts.SkipToByteWithPoint(leaf.startByte, leaf.startPoint)
+	if tok.Symbol != leaf.symbol || tok.StartByte != leaf.startByte || tok.EndByte != leaf.endByte {
+		return Token{}, false
+	}
+	if !dts.externalScannerStateMatches(cp.end) {
+		return Token{}, false
+	}
 	return tok, true
 }
 

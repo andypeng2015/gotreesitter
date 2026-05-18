@@ -16,6 +16,7 @@ func TestExternalScannerIncrementalReusePolicy(t *testing.T) {
 		wantReuse      bool
 		wantReason     string
 		wantSubtreeMin uint64
+		wantNoReparse  bool
 	}{
 		{
 			name:           "typescript",
@@ -24,14 +25,16 @@ func TestExternalScannerIncrementalReusePolicy(t *testing.T) {
 			marker:         "const v = ",
 			wantReuse:      true,
 			wantSubtreeMin: 1,
+			wantNoReparse:  true,
 		},
 		{
-			name:       "python",
-			lang:       grammars.PythonLanguage,
-			source:     makePythonBenchmarkSource,
-			marker:     "v = ",
-			wantReuse:  false,
-			wantReason: "external_scanner_unsupported",
+			name:           "python",
+			lang:           grammars.PythonLanguage,
+			source:         makePythonBenchmarkSource,
+			marker:         "v = ",
+			wantReuse:      true,
+			wantSubtreeMin: 1,
+			wantNoReparse:  true,
 		},
 	}
 
@@ -80,6 +83,9 @@ func TestExternalScannerIncrementalReusePolicy(t *testing.T) {
 				}
 				if prof.ReusedSubtrees < tc.wantSubtreeMin {
 					t.Fatalf("ReusedSubtrees = %d, want >= %d", prof.ReusedSubtrees, tc.wantSubtreeMin)
+				}
+				if tc.wantNoReparse && prof.ReparseNanos != 0 {
+					t.Fatalf("ReparseNanos = %d, want 0 for token-invariant leaf edit", prof.ReparseNanos)
 				}
 				return
 			}

@@ -164,7 +164,7 @@ func (PythonExternalScanner) Deserialize(payload any, buf []byte) {
 	}
 }
 
-func (PythonExternalScanner) SupportsIncrementalReuse() bool { return false }
+func (PythonExternalScanner) SupportsIncrementalReuse() bool { return true }
 
 func (PythonExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
 	s := payload.(*pythonScannerState)
