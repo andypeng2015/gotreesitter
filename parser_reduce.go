@@ -2091,12 +2091,12 @@ func newNoTreeReduceNodeInArena(arena *nodeArena, sym Symbol, named bool, produc
 		arena.noTreeReduceNodesConstructed++
 	}
 	n.symbol = sym
-	n.setNamed(named)
 	n.startByte = tok.StartByte
 	n.endByte = tok.StartByte
-	n.startPoint = tok.StartPoint
-	n.endPoint = tok.StartPoint
+	n.parseState = 0
+	n.preGotoState = 0
 	n.productionID = productionID
+	n.flags = noTreeNodeInitialFlags(named)
 	if reducedEnd > start {
 		firstRaw := entries[start]
 		lastRaw := entries[reducedEnd-1]
@@ -2119,17 +2119,13 @@ func newNoTreeReduceNodeInArena(arena *nodeArena, sym Symbol, named bool, produc
 		}
 		if stackEntryHasNode(firstNonExtra) {
 			n.startByte = stackEntryNodeStartByte(firstNonExtra)
-			n.startPoint = stackEntryNodeStartPoint(firstNonExtra)
 		} else if stackEntryHasNode(firstRaw) {
 			n.startByte = stackEntryNodeStartByte(firstRaw)
-			n.startPoint = stackEntryNodeStartPoint(firstRaw)
 		}
 		if stackEntryHasNode(lastNonExtra) {
 			n.endByte = stackEntryNodeEndByte(lastNonExtra)
-			n.endPoint = stackEntryNodeEndPoint(lastNonExtra)
 		} else if stackEntryHasNode(lastRaw) {
 			n.endByte = stackEntryNodeEndByte(lastRaw)
-			n.endPoint = stackEntryNodeEndPoint(lastRaw)
 		}
 	}
 	return n

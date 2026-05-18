@@ -11,6 +11,65 @@ func TestStackEntrySizeBudget(t *testing.T) {
 	}
 }
 
+func TestNoTreeNodeSizeBudget(t *testing.T) {
+	if got := unsafe.Sizeof(noTreeNode{}); got != 24 {
+		t.Fatalf("noTreeNode size = %d, want 24", got)
+	}
+}
+
+func TestNoTreeNodeStackEntryKeepsBytesAndDropsPoints(t *testing.T) {
+	leaf := newNoTreeLeafNodeInArena(nil, 7, true, 11, 19, Point{Row: 3, Column: 5}, Point{Row: 3, Column: 13})
+	entry := newStackEntryNoTreeNode(2, leaf)
+
+	if got := stackEntryNodeStartByte(entry); got != 11 {
+		t.Fatalf("start byte = %d, want 11", got)
+	}
+	if got := stackEntryNodeEndByte(entry); got != 19 {
+		t.Fatalf("end byte = %d, want 19", got)
+	}
+	if got := stackEntryNodeStartPoint(entry); got != (Point{}) {
+		t.Fatalf("start point = %#v, want zero point", got)
+	}
+	if got := stackEntryNodeEndPoint(entry); got != (Point{}) {
+		t.Fatalf("end point = %#v, want zero point", got)
+	}
+}
+
+func TestNoTreeNodeConstructorsResetReusedSlots(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+
+	stale := newNoTreeLeafNodeInArena(arena, 7, true, 11, 19, Point{}, Point{})
+	stale.parseState = 99
+	stale.preGotoState = 88
+	stale.productionID = 77
+	stale.setExtra(true)
+	stale.setMissing(true)
+	stale.setHasError(true)
+
+	arena.reset()
+
+	leaf := newNoTreeLeafNodeInArena(arena, 8, false, 23, 29, Point{}, Point{})
+	if leaf.parseState != 0 || leaf.preGotoState != 0 || leaf.productionID != 0 {
+		t.Fatalf("leaf reused state = (%d,%d,%d), want zeroes", leaf.parseState, leaf.preGotoState, leaf.productionID)
+	}
+	if leaf.isNamed() || leaf.isExtra() || leaf.isMissing() || leaf.hasError() {
+		t.Fatalf("leaf reused flags = %08b, want zero", leaf.flags)
+	}
+
+	leaf.setExtra(true)
+	leaf.setMissing(true)
+	leaf.setHasError(true)
+	arena.reset()
+
+	reduced := newNoTreeReduceNodeInArena(arena, 9, true, 13, nil, 0, 0, Token{StartByte: 31}, false)
+	if reduced.parseState != 0 || reduced.preGotoState != 0 || reduced.productionID != 13 {
+		t.Fatalf("reduce reused state = (%d,%d,%d), want production only", reduced.parseState, reduced.preGotoState, reduced.productionID)
+	}
+	if !reduced.isNamed() || reduced.isExtra() || reduced.isMissing() || reduced.hasError() {
+		t.Fatalf("reduce reused flags = %08b, want named only", reduced.flags)
+	}
+}
+
 func TestRetargetStackEntryPayloadHandlesNoTreeNode(t *testing.T) {
 	node := &noTreeNode{parseState: 3}
 	entry := newStackEntryNoTreeNode(2, node)

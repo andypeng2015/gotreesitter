@@ -600,7 +600,8 @@ func (a *nodeArena) allocNoTreeNode() *noTreeNode {
 		slab.used++
 		a.noTreeNodeSlabCursor = i
 		n := &slab.data[idx]
-		*n = noTreeNode{}
+		// Callers must initialize every field. noTreeNode has no pointer fields,
+		// so avoiding per-slot clearing cuts large no-tree allocation CPU.
 		return n
 	}
 }

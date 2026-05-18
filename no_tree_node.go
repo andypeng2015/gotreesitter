@@ -3,8 +3,6 @@ package gotreesitter
 import "unsafe"
 
 type noTreeNode struct {
-	startPoint   Point
-	endPoint     Point
 	startByte    uint32
 	endByte      uint32
 	parseState   StateID
@@ -135,9 +133,9 @@ func stackEntryNodeStartPoint(e stackEntry) Point {
 	if n := stackEntryNode(e); n != nil {
 		return n.startPoint
 	}
-	if n := stackEntryNoTreeNode(e); n != nil {
-		return n.startPoint
-	}
+	// Compact no-tree payloads are byte-span only. No-tree benchmark results
+	// suppress the parse tree, so carrying row/column points here is wasted
+	// write/read traffic on large diagnostic parses.
 	return Point{}
 }
 
@@ -145,9 +143,7 @@ func stackEntryNodeEndPoint(e stackEntry) Point {
 	if n := stackEntryNode(e); n != nil {
 		return n.endPoint
 	}
-	if n := stackEntryNoTreeNode(e); n != nil {
-		return n.endPoint
-	}
+	// See stackEntryNodeStartPoint.
 	return Point{}
 }
 
@@ -246,6 +242,13 @@ func stackEntryNodeFieldIDCount(e stackEntry) int {
 	return 0
 }
 
+func noTreeNodeInitialFlags(named bool) nodeFlags {
+	if named {
+		return nodeFlagNamed
+	}
+	return 0
+}
+
 func newNoTreeLeafNodeInArena(arena *nodeArena, sym Symbol, named bool, startByte, endByte uint32, startPoint, endPoint Point) *noTreeNode {
 	var n *noTreeNode
 	if arena == nil {
@@ -255,10 +258,11 @@ func newNoTreeLeafNodeInArena(arena *nodeArena, sym Symbol, named bool, startByt
 		arena.noTreeLeafNodesConstructed++
 	}
 	n.symbol = sym
-	n.setNamed(named)
 	n.startByte = startByte
 	n.endByte = endByte
-	n.startPoint = startPoint
-	n.endPoint = endPoint
+	n.parseState = 0
+	n.preGotoState = 0
+	n.productionID = 0
+	n.flags = noTreeNodeInitialFlags(named)
 	return n
 }
