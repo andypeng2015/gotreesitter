@@ -81,7 +81,7 @@ type nodeArena struct {
 	childSlabs                         []childSliceSlab
 	fieldSlabs                         []fieldSliceSlab
 	fieldSourceSlabs                   []fieldSourceSliceSlab
-	externalScannerNodeCheckpoints     []externalScannerCheckpointRef
+	externalScannerNodeCheckpoints     externalScannerCheckpointSet
 	externalScannerNodeCheckpointSlabs []externalScannerCheckpointSlab
 	childSlabCursor                    int
 	fieldSlabCursor                    int
@@ -116,7 +116,7 @@ type fieldSourceSliceSlab struct {
 }
 
 type externalScannerCheckpointSlab struct {
-	data []externalScannerCheckpointRef
+	checkpoints externalScannerCheckpointSet
 }
 
 var (
@@ -323,12 +323,9 @@ func (a *nodeArena) reset() {
 	a.deferredParentRoot = nil
 	a.parentLinksDeferred = false
 	a.parentLinkMu.Unlock()
-	// externalScannerCheckpointRef contains only integer fields, but stale
-	// refs must not remain visible when a node slot is reused.
-	if primaryUsed > len(a.externalScannerNodeCheckpoints) {
-		primaryUsed = len(a.externalScannerNodeCheckpoints)
-	}
-	clear(a.externalScannerNodeCheckpoints[:primaryUsed])
+	// Checkpoint refs contain only integer fields, but stale refs must not
+	// remain visible when a node slot is reused.
+	a.externalScannerNodeCheckpoints.reset()
 	if len(a.nodeSlabs) > 0 {
 		retained := 0
 		keep := 0
@@ -364,11 +361,7 @@ func (a *nodeArena) reset() {
 		clear(slab.data[:used])
 		slab.used = 0
 		if i < len(a.externalScannerNodeCheckpointSlabs) {
-			cp := a.externalScannerNodeCheckpointSlabs[i].data
-			if used > len(cp) {
-				used = len(cp)
-			}
-			clear(cp[:used])
+			a.externalScannerNodeCheckpointSlabs[i].checkpoints.reset()
 		}
 	}
 	a.nodeSlabCursor = 0
@@ -472,7 +465,7 @@ func (a *nodeArena) reset() {
 		// collect it and the next parse will allocate a fresh slab of default
 		// size via allocNodeSlow -> ensureNodeCapacity.
 		a.nodes = nil
-		a.externalScannerNodeCheckpoints = nil
+		a.externalScannerNodeCheckpoints = externalScannerCheckpointSet{}
 	}
 	if len(a.childSlabs) == 0 {
 		a.childSlabs = []childSliceSlab{{data: make([]*Node, defaultChildSliceCap(a.class))}}
@@ -552,7 +545,7 @@ func (a *nodeArena) ensureNodeCapacity(min int) {
 	a.used = 0
 	a.nodeSlabs = nil
 	a.nodeSlabCursor = 0
-	a.externalScannerNodeCheckpoints = nil
+	a.externalScannerNodeCheckpoints = externalScannerCheckpointSet{}
 	a.externalScannerNodeCheckpointSlabs = nil
 	a.recomputeAllocatedBytes()
 }
@@ -735,6 +728,13 @@ func externalScannerCheckpointBytesForCap(n int) int64 {
 	return int64(n) * int64(unsafe.Sizeof(externalScannerCheckpointRef{}))
 }
 
+func externalScannerCheckpointIndexBytesForCap(n int) int64 {
+	if n <= 0 {
+		return 0
+	}
+	return int64(n) * int64(unsafe.Sizeof(uint32(0)))
+}
+
 func (a *nodeArena) recomputeAllocatedBytes() {
 	if a == nil {
 		return
@@ -752,9 +752,9 @@ func (a *nodeArena) recomputeAllocatedBytes() {
 	for i := range a.fieldSourceSlabs {
 		total += fieldSourceSliceBytesForCap(len(a.fieldSourceSlabs[i].data))
 	}
-	total += externalScannerCheckpointBytesForCap(len(a.externalScannerNodeCheckpoints))
+	total += a.externalScannerNodeCheckpoints.bytesAllocated()
 	for i := range a.externalScannerNodeCheckpointSlabs {
-		total += externalScannerCheckpointBytesForCap(len(a.externalScannerNodeCheckpointSlabs[i].data))
+		total += a.externalScannerNodeCheckpointSlabs[i].checkpoints.bytesAllocated()
 	}
 	a.allocatedBytes = total
 }
@@ -763,20 +763,20 @@ func (a *nodeArena) externalScannerCheckpointSlotsAllocated() uint64 {
 	if a == nil {
 		return 0
 	}
-	total := len(a.externalScannerNodeCheckpoints)
+	total := a.externalScannerNodeCheckpoints.slotsAllocated()
 	for i := range a.externalScannerNodeCheckpointSlabs {
-		total += len(a.externalScannerNodeCheckpointSlabs[i].data)
+		total += a.externalScannerNodeCheckpointSlabs[i].checkpoints.slotsAllocated()
 	}
-	return uint64(total)
+	return total
 }
 
 func (a *nodeArena) externalScannerCheckpointBytesAllocated() int64 {
 	if a == nil {
 		return 0
 	}
-	total := externalScannerCheckpointBytesForCap(len(a.externalScannerNodeCheckpoints))
+	total := a.externalScannerNodeCheckpoints.bytesAllocated()
 	for i := range a.externalScannerNodeCheckpointSlabs {
-		total += externalScannerCheckpointBytesForCap(len(a.externalScannerNodeCheckpointSlabs[i].data))
+		total += a.externalScannerNodeCheckpointSlabs[i].checkpoints.bytesAllocated()
 	}
 	return total
 }

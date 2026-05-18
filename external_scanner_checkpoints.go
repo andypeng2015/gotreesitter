@@ -2,6 +2,7 @@ package gotreesitter
 
 import (
 	"bytes"
+	"sort"
 	"unsafe"
 )
 
@@ -19,6 +20,11 @@ type externalScannerSnapshotRef struct {
 type externalScannerCheckpointRef struct {
 	start externalScannerSnapshotRef
 	end   externalScannerSnapshotRef
+}
+
+type externalScannerCheckpointSet struct {
+	indexes []uint32
+	refs    []externalScannerCheckpointRef
 }
 
 func languageUsesExternalScannerCheckpoints(lang *Language) bool {
@@ -48,19 +54,16 @@ func (a *nodeArena) recordExternalScannerLeafCheckpoint(node *Node, start, end [
 	if a == nil || node == nil {
 		return
 	}
-	slot := a.externalScannerCheckpointSlot(node, true)
-	if slot == nil {
-		return
-	}
-	a.externalScannerCheckpointRecords++
 	startRef := a.copyExternalScannerSnapshotRef(start)
 	endRef := startRef
 	if !bytes.Equal(start, end) {
 		endRef = a.copyExternalScannerSnapshotRef(end)
 	}
-	*slot = externalScannerCheckpointRef{
+	if a.setExternalScannerCheckpoint(node, externalScannerCheckpointRef{
 		start: startRef,
 		end:   endRef,
+	}) {
+		a.externalScannerCheckpointRecords++
 	}
 }
 
@@ -76,15 +79,16 @@ func (a *nodeArena) copyExternalScannerSnapshotRef(src []byte) externalScannerSn
 	return ref
 }
 
-func (a *nodeArena) setExternalScannerCheckpoint(node *Node, cp externalScannerCheckpointRef) {
+func (a *nodeArena) setExternalScannerCheckpoint(node *Node, cp externalScannerCheckpointRef) bool {
 	if a == nil || node == nil {
-		return
+		return false
 	}
-	slot := a.externalScannerCheckpointSlot(node, true)
-	if slot == nil {
-		return
+	set, idx, ok := a.externalScannerCheckpointSetForNode(node, true)
+	if !ok {
+		return false
 	}
-	*slot = cp
+	a.allocatedBytes += set.upsert(idx, cp)
+	return true
 }
 
 func externalScannerCheckpointForNode(node *Node) (externalScannerCheckpoint, bool) {
@@ -102,11 +106,15 @@ func externalScannerCheckpointRefForNode(node *Node) (externalScannerCheckpointR
 	if node == nil || node.ownerArena == nil {
 		return externalScannerCheckpointRef{}, false
 	}
-	slot := node.ownerArena.externalScannerCheckpointSlot(node, false)
-	if slot == nil || (slot.start.len == 0 && slot.end.len == 0) {
+	set, idx, ok := node.ownerArena.externalScannerCheckpointSetForNode(node, false)
+	if !ok {
 		return externalScannerCheckpointRef{}, false
 	}
-	return *slot, true
+	cp, ok := set.lookup(idx)
+	if !ok || (cp.start.len == 0 && cp.end.len == 0) {
+		return externalScannerCheckpointRef{}, false
+	}
+	return cp, true
 }
 
 func rebuildExternalScannerCheckpoints(root *Node, lang *Language) {
@@ -217,18 +225,12 @@ func fastForwardWithExternalScannerCheckpoint(ts TokenSource, node *Node, cp ext
 	}, node.EndByte()), true
 }
 
-func (a *nodeArena) externalScannerCheckpointSlot(node *Node, create bool) *externalScannerCheckpointRef {
+func (a *nodeArena) externalScannerCheckpointSetForNode(node *Node, create bool) (*externalScannerCheckpointSet, int, bool) {
 	if a == nil || node == nil {
-		return nil
+		return nil, 0, false
 	}
 	if idx, ok := nodeIndexInStorage(node, a.nodes); ok {
-		if create {
-			a.ensureExternalScannerPrimaryCheckpoints()
-		}
-		if idx >= len(a.externalScannerNodeCheckpoints) {
-			return nil
-		}
-		return &a.externalScannerNodeCheckpoints[idx]
+		return &a.externalScannerNodeCheckpoints, idx, true
 	}
 	for i := range a.nodeSlabs {
 		idx, ok := nodeIndexInStorage(node, a.nodeSlabs[i].data)
@@ -236,36 +238,74 @@ func (a *nodeArena) externalScannerCheckpointSlot(node *Node, create bool) *exte
 			continue
 		}
 		if create {
-			a.ensureExternalScannerCheckpointSlab(i)
+			for len(a.externalScannerNodeCheckpointSlabs) <= i {
+				a.externalScannerNodeCheckpointSlabs = append(a.externalScannerNodeCheckpointSlabs, externalScannerCheckpointSlab{})
+			}
+		} else if i >= len(a.externalScannerNodeCheckpointSlabs) {
+			return nil, 0, false
 		}
-		if i >= len(a.externalScannerNodeCheckpointSlabs) || idx >= len(a.externalScannerNodeCheckpointSlabs[i].data) {
-			return nil
-		}
-		return &a.externalScannerNodeCheckpointSlabs[i].data[idx]
+		return &a.externalScannerNodeCheckpointSlabs[i].checkpoints, idx, true
 	}
-	return nil
+	return nil, 0, false
 }
 
-func (a *nodeArena) ensureExternalScannerPrimaryCheckpoints() {
-	if a == nil || len(a.nodes) == 0 || len(a.externalScannerNodeCheckpoints) == len(a.nodes) {
-		return
+func (s *externalScannerCheckpointSet) lookup(idx int) (externalScannerCheckpointRef, bool) {
+	if s == nil || len(s.indexes) == 0 || idx < 0 {
+		return externalScannerCheckpointRef{}, false
 	}
-	a.externalScannerNodeCheckpoints = make([]externalScannerCheckpointRef, len(a.nodes))
-	a.allocatedBytes += externalScannerCheckpointBytesForCap(len(a.externalScannerNodeCheckpoints))
+	key := uint32(idx)
+	pos := sort.Search(len(s.indexes), func(i int) bool {
+		return s.indexes[i] >= key
+	})
+	if pos >= len(s.indexes) || s.indexes[pos] != key {
+		return externalScannerCheckpointRef{}, false
+	}
+	return s.refs[pos], true
 }
 
-func (a *nodeArena) ensureExternalScannerCheckpointSlab(idx int) {
-	if a == nil || idx < 0 || idx >= len(a.nodeSlabs) {
+func (s *externalScannerCheckpointSet) upsert(idx int, cp externalScannerCheckpointRef) int64 {
+	if s == nil || idx < 0 {
+		return 0
+	}
+	before := s.bytesAllocated()
+	key := uint32(idx)
+	n := len(s.indexes)
+	if n == 0 || s.indexes[n-1] < key {
+		s.indexes = append(s.indexes, key)
+		s.refs = append(s.refs, cp)
+		return s.bytesAllocated() - before
+	}
+	pos := sort.Search(n, func(i int) bool {
+		return s.indexes[i] >= key
+	})
+	if pos < n && s.indexes[pos] == key {
+		s.refs[pos] = cp
+		return 0
+	}
+	s.indexes = append(s.indexes, 0)
+	copy(s.indexes[pos+1:], s.indexes[pos:])
+	s.indexes[pos] = key
+	s.refs = append(s.refs, externalScannerCheckpointRef{})
+	copy(s.refs[pos+1:], s.refs[pos:])
+	s.refs[pos] = cp
+	return s.bytesAllocated() - before
+}
+
+func (s *externalScannerCheckpointSet) reset() {
+	if s == nil {
 		return
 	}
-	for len(a.externalScannerNodeCheckpointSlabs) <= idx {
-		a.externalScannerNodeCheckpointSlabs = append(a.externalScannerNodeCheckpointSlabs, externalScannerCheckpointSlab{})
-	}
-	if len(a.externalScannerNodeCheckpointSlabs[idx].data) == len(a.nodeSlabs[idx].data) {
-		return
-	}
-	a.externalScannerNodeCheckpointSlabs[idx].data = make([]externalScannerCheckpointRef, len(a.nodeSlabs[idx].data))
-	a.allocatedBytes += externalScannerCheckpointBytesForCap(len(a.externalScannerNodeCheckpointSlabs[idx].data))
+	clear(s.refs)
+	s.indexes = s.indexes[:0]
+	s.refs = s.refs[:0]
+}
+
+func (s externalScannerCheckpointSet) bytesAllocated() int64 {
+	return externalScannerCheckpointIndexBytesForCap(cap(s.indexes)) + externalScannerCheckpointBytesForCap(cap(s.refs))
+}
+
+func (s externalScannerCheckpointSet) slotsAllocated() uint64 {
+	return uint64(cap(s.refs))
 }
 
 func nodeIndexInStorage(node *Node, storage []Node) (int, bool) {

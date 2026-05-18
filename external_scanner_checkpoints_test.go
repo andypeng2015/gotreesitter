@@ -144,3 +144,25 @@ func TestExternalScannerCheckpointReusesConsecutiveSnapshots(t *testing.T) {
 		t.Fatalf("second checkpoint = (%v, %v, %v), want snapshot", got.start, got.end, ok)
 	}
 }
+
+func TestExternalScannerCheckpointSparseLookupHandlesOutOfOrderWrites(t *testing.T) {
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	first := arena.allocNode()
+	first.ownerArena = arena
+	second := arena.allocNode()
+	second.ownerArena = arena
+
+	arena.recordExternalScannerLeafCheckpoint(second, []byte{2}, []byte{3})
+	arena.recordExternalScannerLeafCheckpoint(first, []byte{1}, []byte{4})
+
+	gotFirst, ok := externalScannerCheckpointForNode(first)
+	if !ok || !bytes.Equal(gotFirst.start, []byte{1}) || !bytes.Equal(gotFirst.end, []byte{4}) {
+		t.Fatalf("first checkpoint = (%v, %v, %v), want ([1], [4], true)", gotFirst.start, gotFirst.end, ok)
+	}
+	gotSecond, ok := externalScannerCheckpointForNode(second)
+	if !ok || !bytes.Equal(gotSecond.start, []byte{2}) || !bytes.Equal(gotSecond.end, []byte{3}) {
+		t.Fatalf("second checkpoint = (%v, %v, %v), want ([2], [3], true)", gotSecond.start, gotSecond.end, ok)
+	}
+}
