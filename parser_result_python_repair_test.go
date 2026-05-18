@@ -120,6 +120,62 @@ func TestRepairPythonBlockFlattensSimpleStatements(t *testing.T) {
 	}
 }
 
+func TestRepairPythonBlockNoOpAvoidsSliceAllocation(t *testing.T) {
+	lang := &Language{
+		Name: "python",
+		SymbolNames: []string{
+			"EOF",
+			"block",
+			"function_definition",
+			"def",
+			"identifier",
+			"parameters",
+			":",
+			"call",
+		},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF", Visible: false, Named: false},
+			{Name: "block", Visible: true, Named: true},
+			{Name: "function_definition", Visible: true, Named: true},
+			{Name: "def", Visible: true, Named: false},
+			{Name: "identifier", Visible: true, Named: true},
+			{Name: "parameters", Visible: true, Named: true},
+			{Name: ":", Visible: true, Named: false},
+			{Name: "call", Visible: true, Named: true},
+		},
+	}
+
+	arena := newNodeArena(arenaClassFull)
+	call := newLeafNodeInArena(arena, 7, true, 13, 16, Point{Row: 1, Column: 4}, Point{Row: 1, Column: 7})
+	fnBody := newParentNodeInArena(arena, 1, true, []*Node{call}, nil, 0)
+	fn := newParentNodeInArena(arena, 2, true, []*Node{
+		newLeafNodeInArena(arena, 3, false, 0, 3, Point{}, Point{Column: 3}),
+		newLeafNodeInArena(arena, 4, true, 4, 5, Point{Column: 4}, Point{Column: 5}),
+		newLeafNodeInArena(arena, 5, true, 5, 7, Point{Column: 5}, Point{Column: 7}),
+		newLeafNodeInArena(arena, 6, false, 7, 8, Point{Column: 7}, Point{Column: 8}),
+		fnBody,
+	}, nil, 0)
+	block := newParentNodeInArena(arena, 1, true, []*Node{fn}, nil, 0)
+
+	repaired, changed := repairPythonBlock(block, arena, lang, false)
+	if changed {
+		t.Fatalf("repairPythonBlock changed = true, want false")
+	}
+	if repaired != block {
+		t.Fatalf("repairPythonBlock returned a new block for an unchanged input")
+	}
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		repaired, changed := repairPythonBlock(block, arena, lang, false)
+		if changed || repaired != block {
+			t.Fatalf("repairPythonBlock changed an unchanged block")
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("repairPythonBlock allocations = %.1f, want 0", allocs)
+	}
+}
+
 func TestNormalizePythonStringContinuationEscapesAddsMissingChildren(t *testing.T) {
 	lang := &Language{
 		Name:        "python",

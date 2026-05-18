@@ -714,44 +714,62 @@ func repairPythonBlock(node *Node, arena *nodeArena, lang *Language, allowHoist 
 	if node == nil || node.Type(lang) != "block" {
 		return node, false
 	}
-	pending := append([]*Node(nil), node.children...)
-	out := make([]*Node, 0, len(node.children))
+	var out []*Node
 	changed := false
+	processedPending := false
 
-	for len(pending) > 0 {
-		cur := pending[0]
-		pending = pending[1:]
+	for i, cur := range node.children {
 		if cur == nil {
 			continue
 		}
 		norm, normChanged := normalizePythonModuleNode(cur, lang)
 		if normChanged {
 			changed = true
+			if out == nil {
+				out = pythonBlockOutputPrefix(node.children, i)
+			}
 		}
 		cur = norm
 		if cur != nil {
 			switch cur.Type(lang) {
 			case "_indent", "_dedent":
 				changed = true
+				if out == nil {
+					out = pythonBlockOutputPrefix(node.children, i)
+				}
 				continue
 			case "_simple_statements":
 				flat := flattenPythonSimpleStatements(cur, nil, lang)
 				if len(flat) > 0 {
 					changed = true
-					pending = append(append([]*Node{}, flat...), pending...)
-					continue
+					if out == nil {
+						out = pythonBlockOutputPrefix(node.children, i)
+					}
+					pending := prependPythonBlockPending(flat, node.children[i+1:])
+					out = repairPythonBlockPending(pending, out, arena, lang, allowHoist)
+					processedPending = true
+					break
 				}
 			}
+		}
+		if processedPending {
+			break
 		}
 
 		if allowHoist && cur != nil && cur.Type(lang) == "function_definition" {
 			repairedFn, hoisted, split := splitPythonOvernestedFunction(cur, arena, lang)
 			if split {
 				changed = true
+				if out == nil {
+					out = pythonBlockOutputPrefix(node.children, i)
+				}
 				repairedFn = repairPythonNode(repairedFn, arena, lang)
 				out = append(out, repairedFn)
 				if len(hoisted) > 0 {
-					pending = append(append([]*Node{}, hoisted...), pending...)
+					pending := prependPythonBlockPending(hoisted, node.children[i+1:])
+					out = repairPythonBlockPending(pending, out, arena, lang, allowHoist)
+					processedPending = true
+					break
 				}
 				continue
 			}
@@ -760,18 +778,23 @@ func repairPythonBlock(node *Node, arena *nodeArena, lang *Language, allowHoist 
 		repaired := repairPythonNode(cur, arena, lang)
 		if repaired != cur {
 			changed = true
+			if out == nil {
+				out = pythonBlockOutputPrefix(node.children, i)
+			}
 		}
-		out = append(out, repaired)
+		if out != nil {
+			out = append(out, repaired)
+		}
 	}
 
 	if !changed {
-		firstNamed := pythonBlockStartAnchor(out, lang)
-		lastSpan := pythonBlockEndAnchor(out)
+		firstNamed := pythonBlockStartAnchor(node.children, lang)
+		lastSpan := pythonBlockEndAnchor(node.children)
 		if firstNamed == nil || lastSpan == nil {
 			return node, false
 		}
 		wantEndByte, wantEndPoint := lastSpan.endByte, lastSpan.endPoint
-		if pythonBlockShouldPreserveOriginalEnd(node, out, lang) {
+		if pythonBlockShouldPreserveOriginalEnd(node, node.children, lang) {
 			wantEndByte, wantEndPoint = node.endByte, node.endPoint
 		}
 		if node.startByte == firstNamed.startByte &&
@@ -781,6 +804,7 @@ func repairPythonBlock(node *Node, arena *nodeArena, lang *Language, allowHoist 
 			return node, false
 		}
 		changed = true
+		out = pythonBlockOutputPrefix(node.children, len(node.children))
 	}
 
 	cloned := cloneNodeInArena(arena, node)
@@ -807,6 +831,64 @@ func repairPythonBlock(node *Node, arena *nodeArena, lang *Language, allowHoist 
 		}
 	}
 	return cloned, true
+}
+
+func repairPythonBlockPending(pending []*Node, out []*Node, arena *nodeArena, lang *Language, allowHoist bool) []*Node {
+	for len(pending) > 0 {
+		cur := pending[0]
+		pending = pending[1:]
+		if cur == nil {
+			continue
+		}
+		norm, normChanged := normalizePythonModuleNode(cur, lang)
+		if normChanged {
+			cur = norm
+		}
+		if cur != nil {
+			switch cur.Type(lang) {
+			case "_indent", "_dedent":
+				continue
+			case "_simple_statements":
+				flat := flattenPythonSimpleStatements(cur, nil, lang)
+				if len(flat) > 0 {
+					pending = prependPythonBlockPending(flat, pending)
+					continue
+				}
+			}
+		}
+
+		if allowHoist && cur != nil && cur.Type(lang) == "function_definition" {
+			repairedFn, hoisted, split := splitPythonOvernestedFunction(cur, arena, lang)
+			if split {
+				repairedFn = repairPythonNode(repairedFn, arena, lang)
+				out = append(out, repairedFn)
+				if len(hoisted) > 0 {
+					pending = prependPythonBlockPending(hoisted, pending)
+				}
+				continue
+			}
+		}
+
+		out = append(out, repairPythonNode(cur, arena, lang))
+	}
+	return out
+}
+
+func pythonBlockOutputPrefix(children []*Node, end int) []*Node {
+	out := make([]*Node, 0, len(children))
+	for _, child := range children[:end] {
+		if child != nil {
+			out = append(out, child)
+		}
+	}
+	return out
+}
+
+func prependPythonBlockPending(prefix, pending []*Node) []*Node {
+	next := make([]*Node, 0, len(prefix)+len(pending))
+	next = append(next, prefix...)
+	next = append(next, pending...)
+	return next
 }
 
 func pythonBlockStartAnchor(children []*Node, lang *Language) *Node {
@@ -843,8 +925,17 @@ func pythonBlockShouldPreserveOriginalEnd(node *Node, children []*Node, lang *La
 	if lastSpan == nil || node.endByte <= lastSpan.endByte {
 		return false
 	}
-	lastChild := children[len(children)-1]
+	lastChild := pythonBlockLastChild(children)
 	return lastChild != nil && lastChild.Type(lang) == ";"
+}
+
+func pythonBlockLastChild(children []*Node) *Node {
+	for i := len(children) - 1; i >= 0; i-- {
+		if children[i] != nil {
+			return children[i]
+		}
+	}
+	return nil
 }
 
 func pythonBlockEndsWithSemicolon(node *Node, lang *Language) bool {
