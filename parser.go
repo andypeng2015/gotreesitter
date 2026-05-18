@@ -1213,6 +1213,9 @@ func (p *Parser) updateCurrentExternalTokenCheckpoint(ts TokenSource, tok Token)
 		return
 	}
 	p.clearCurrentExternalTokenCheckpoint()
+	if p.noTreeBenchmarkOnly {
+		return
+	}
 	cp, startByte, endByte, ok := currentExternalScannerCheckpoint(ts)
 	if !ok || tok.Missing || tok.NoLookahead || tok.Symbol == 0 {
 		return

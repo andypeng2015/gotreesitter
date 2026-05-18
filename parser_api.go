@@ -425,6 +425,9 @@ func (p *Parser) Parse(source []byte) (*Tree, error) {
 	}()
 	lexer := NewLexer(p.language.LexStates, source)
 	ts := acquireDFATokenSource(lexer, p.language, p.lookupActionIndex, p.hasKeywordState)
+	if p.noTreeBenchmarkOnly {
+		ts.usesExternalCheckpoints = false
+	}
 	defer ts.Close()
 	deterministicExternalConflicts := fullParseUsesDeterministicExternalConflicts(p.language)
 	initialMaxStacks := fullParseInitialMaxStacks(p.language, p.maxConflictWidth)
