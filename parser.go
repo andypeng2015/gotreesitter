@@ -2685,7 +2685,7 @@ func compareStackCullKeys(lang *Language, a, b stackCullKey) int {
 		}
 	}
 	if a.depth != b.depth {
-		if lang != nil && lang.Name == "bash" {
+		if lang != nil && (lang.Name == "bash" || lang.Name == "python") {
 			if a.depth < b.depth {
 				return 1
 			}

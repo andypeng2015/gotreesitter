@@ -40,6 +40,33 @@ func TestRetainTopStacksKeepsUnshiftedCurrentTokenBranch(t *testing.T) {
 	}
 }
 
+func TestRetainTopStacksForPythonKeepsShallowerBranch(t *testing.T) {
+	deeper := makeRetentionTestStack(1805, 6, false, 10)
+	shallower := makeRetentionTestStack(1650, 3, false, 10)
+	var (
+		selected []int
+		chosen   []bool
+		keys     []stackCullKey
+		states   []StateID
+	)
+
+	kept := retainTopStacksForLanguageWithScratch(
+		[]glrStack{deeper, shallower},
+		1,
+		&Language{Name: "python"},
+		&selected,
+		&chosen,
+		&keys,
+		&states,
+	)
+	if len(kept) != 1 {
+		t.Fatalf("len(kept) = %d, want 1", len(kept))
+	}
+	if got, want := kept[0].top().state, StateID(1650); got != want {
+		t.Fatalf("kept state = %d, want shallower Python branch state %d", got, want)
+	}
+}
+
 func TestRetainTopStacksKeepsDistinctTopStateRepresentative(t *testing.T) {
 	stacks := []glrStack{
 		makeRetentionTestStack(507, 7, true, 6),
