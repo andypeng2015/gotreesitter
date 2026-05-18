@@ -137,6 +137,11 @@ type ParseRuntime struct {
 	MergeSlotsUsed              uint64
 	GlobalCullStacksIn          uint64
 	GlobalCullStacksOut         uint64
+
+	ExternalScannerCheckpointRecords        uint64
+	ExternalScannerCheckpointSlotsAllocated uint64
+	ExternalScannerCheckpointBytesAllocated int64
+	ExternalScannerSnapshotBytesAllocated   uint64
 }
 
 // Summary returns a stable one-line diagnostic string for parse-runtime stats.

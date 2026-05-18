@@ -73,3 +73,33 @@ func TestExternalScannerCheckpointResetClearsSlot(t *testing.T) {
 		t.Fatal("stale checkpoint remained visible after arena reset")
 	}
 }
+
+func TestExternalScannerCheckpointStats(t *testing.T) {
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	node := arena.allocNode()
+	node.ownerArena = arena
+	arena.recordExternalScannerLeafCheckpoint(node, []byte{1, 2, 3}, []byte{4, 5})
+
+	if got, want := arena.externalScannerCheckpointRecords, uint64(1); got != want {
+		t.Fatalf("checkpoint records = %d, want %d", got, want)
+	}
+	if got, want := arena.externalScannerSnapshotPayloadBytes, uint64(5); got != want {
+		t.Fatalf("snapshot bytes = %d, want %d", got, want)
+	}
+	if got := arena.externalScannerCheckpointSlotsAllocated(); got == 0 {
+		t.Fatal("checkpoint slots allocated = 0, want non-zero")
+	}
+	if got := arena.externalScannerCheckpointBytesAllocated(); got == 0 {
+		t.Fatal("checkpoint bytes allocated = 0, want non-zero")
+	}
+
+	arena.reset()
+	if got := arena.externalScannerCheckpointRecords; got != 0 {
+		t.Fatalf("checkpoint records after reset = %d, want 0", got)
+	}
+	if got := arena.externalScannerSnapshotPayloadBytes; got != 0 {
+		t.Fatalf("snapshot bytes after reset = %d, want 0", got)
+	}
+}

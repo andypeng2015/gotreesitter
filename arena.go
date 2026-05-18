@@ -86,6 +86,9 @@ type nodeArena struct {
 	childSlabCursor                    int
 	fieldSlabCursor                    int
 	fieldSourceSlabCursor              int
+
+	externalScannerCheckpointRecords    uint64
+	externalScannerSnapshotPayloadBytes uint64
 }
 
 type nodeSlab struct {
@@ -398,6 +401,8 @@ func (a *nodeArena) reset() {
 	}
 	a.skipChildClear = false
 	a.audit = nil
+	a.externalScannerCheckpointRecords = 0
+	a.externalScannerSnapshotPayloadBytes = 0
 	if len(a.fieldSlabs) > 0 {
 		retained := 0
 		keep := 0
@@ -746,6 +751,28 @@ func (a *nodeArena) recomputeAllocatedBytes() {
 	a.allocatedBytes = total
 }
 
+func (a *nodeArena) externalScannerCheckpointSlotsAllocated() uint64 {
+	if a == nil {
+		return 0
+	}
+	total := len(a.externalScannerNodeCheckpoints)
+	for i := range a.externalScannerNodeCheckpointSlabs {
+		total += len(a.externalScannerNodeCheckpointSlabs[i].data)
+	}
+	return uint64(total)
+}
+
+func (a *nodeArena) externalScannerCheckpointBytesAllocated() int64 {
+	if a == nil {
+		return 0
+	}
+	total := externalScannerCheckpointBytesForCap(len(a.externalScannerNodeCheckpoints))
+	for i := range a.externalScannerNodeCheckpointSlabs {
+		total += externalScannerCheckpointBytesForCap(len(a.externalScannerNodeCheckpointSlabs[i].data))
+	}
+	return total
+}
+
 func (a *nodeArena) allocExternalScannerSnapshotRef(src []byte) externalScannerSnapshotRef {
 	n := len(src)
 	if a == nil || n == 0 {
@@ -776,6 +803,7 @@ func (a *nodeArena) allocExternalScannerSnapshotRef(src []byte) externalScannerS
 		slab.used += n
 		a.fieldSourceSlabCursor = i
 		copy(slab.data[start:slab.used], src)
+		a.externalScannerSnapshotPayloadBytes += uint64(n)
 		return externalScannerSnapshotRef{
 			slab: uint16(i),
 			off:  uint32(start),

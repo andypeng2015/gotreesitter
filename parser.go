@@ -1398,6 +1398,10 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		}
 		parseRuntime.ArenaBytesAllocated = arena.allocatedBytes
 		parseRuntime.MemoryBudgetBytes = arena.budgetBytes
+		parseRuntime.ExternalScannerCheckpointRecords = arena.externalScannerCheckpointRecords
+		parseRuntime.ExternalScannerCheckpointSlotsAllocated = arena.externalScannerCheckpointSlotsAllocated()
+		parseRuntime.ExternalScannerCheckpointBytesAllocated = arena.externalScannerCheckpointBytesAllocated()
+		parseRuntime.ExternalScannerSnapshotBytesAllocated = arena.externalScannerSnapshotPayloadBytes
 		arenaStatsCaptured = true
 	}
 	scratchStatsCaptured := false

@@ -28,6 +28,83 @@ const (
 	pythonCorpusParseModeDFANoTree pythonCorpusParseMode = "dfa_no_tree"
 )
 
+type pythonRuntimeBenchStats struct {
+	ops                             int
+	tokensConsumed                  uint64
+	iterations                      uint64
+	nodesAllocated                  uint64
+	parentNodesAllocated            uint64
+	leafNodesAllocated              uint64
+	gssNodesAllocated               uint64
+	singleStackGSSNodes             uint64
+	multiStackGSSNodes              uint64
+	arenaBytesAllocated             int64
+	scratchBytesAllocated           int64
+	entryScratchBytesAllocated      int64
+	gssBytesAllocated               int64
+	externalCheckpointRecords       uint64
+	externalCheckpointSlots         uint64
+	externalCheckpointBytes         int64
+	externalCheckpointSnapshotBytes uint64
+	maxStacksSeen                   int
+}
+
+func (s *pythonRuntimeBenchStats) add(rt gotreesitter.ParseRuntime) {
+	s.ops++
+	s.tokensConsumed += rt.TokensConsumed
+	s.iterations += uint64(rt.Iterations)
+	s.nodesAllocated += uint64(rt.NodesAllocated)
+	s.parentNodesAllocated += rt.ParentNodesAllocated
+	s.leafNodesAllocated += rt.LeafNodesAllocated
+	s.gssNodesAllocated += rt.GSSNodesAllocated
+	s.singleStackGSSNodes += rt.SingleStackGSSNodes
+	s.multiStackGSSNodes += rt.MultiStackGSSNodes
+	s.arenaBytesAllocated += rt.ArenaBytesAllocated
+	s.scratchBytesAllocated += rt.ScratchBytesAllocated
+	s.entryScratchBytesAllocated += rt.EntryScratchBytesAllocated
+	s.gssBytesAllocated += rt.GSSBytesAllocated
+	s.externalCheckpointRecords += rt.ExternalScannerCheckpointRecords
+	s.externalCheckpointSlots += rt.ExternalScannerCheckpointSlotsAllocated
+	s.externalCheckpointBytes += rt.ExternalScannerCheckpointBytesAllocated
+	s.externalCheckpointSnapshotBytes += rt.ExternalScannerSnapshotBytesAllocated
+	if rt.MaxStacksSeen > s.maxStacksSeen {
+		s.maxStacksSeen = rt.MaxStacksSeen
+	}
+}
+
+func (s pythonRuntimeBenchStats) report(b *testing.B) {
+	if s.ops == 0 {
+		return
+	}
+	b.ReportMetric(float64(s.tokensConsumed)/float64(s.ops), "tokens/op")
+	b.ReportMetric(float64(s.maxStacksSeen), "max_stacks")
+	if s.tokensConsumed == 0 {
+		return
+	}
+	tokens := float64(s.tokensConsumed)
+	gssNodes := s.gssNodesAllocated
+	if gssNodes == 0 {
+		gssNodes = s.singleStackGSSNodes + s.multiStackGSSNodes
+	}
+	b.ReportMetric(float64(s.iterations)/tokens, "iters/token")
+	b.ReportMetric(float64(s.nodesAllocated)/tokens, "nodes/token")
+	if s.parentNodesAllocated != 0 || s.leafNodesAllocated != 0 {
+		b.ReportMetric(float64(s.parentNodesAllocated)/tokens, "parent_nodes/token")
+		b.ReportMetric(float64(s.leafNodesAllocated)/tokens, "leaf_nodes/token")
+	}
+	b.ReportMetric(float64(gssNodes)/tokens, "gss_nodes/token")
+	b.ReportMetric(float64(s.singleStackGSSNodes)/tokens, "single_gss/token")
+	b.ReportMetric(float64(s.multiStackGSSNodes)/tokens, "multi_gss/token")
+	b.ReportMetric(float64(s.arenaBytesAllocated)/tokens, "arena_B/token")
+	b.ReportMetric(float64(s.scratchBytesAllocated)/tokens, "scratch_B/token")
+	b.ReportMetric(float64(s.entryScratchBytesAllocated)/tokens, "entry_B/token")
+	b.ReportMetric(float64(s.gssBytesAllocated)/tokens, "gss_B/token")
+	b.ReportMetric(float64(s.externalCheckpointRecords)/tokens, "chk_records/token")
+	b.ReportMetric(float64(s.externalCheckpointSlots)/tokens, "chk_slots/token")
+	b.ReportMetric(float64(s.externalCheckpointBytes)/tokens, "chk_B/token")
+	b.ReportMetric(float64(s.externalCheckpointSnapshotBytes)/tokens, "chk_snap_B/token")
+}
+
 func loadPythonCorpusFile(tb testing.TB) pythonCorpusFile {
 	tb.Helper()
 
@@ -114,6 +191,7 @@ func benchmarkPythonCorpusGoDFA(b *testing.B, mode pythonCorpusParseMode) {
 	b.SetBytes(int64(len(file.source)))
 	b.ResetTimer()
 
+	var stats pythonRuntimeBenchStats
 	for i := 0; i < b.N; i++ {
 		var (
 			tree *gotreesitter.Tree
@@ -134,8 +212,11 @@ func benchmarkPythonCorpusGoDFA(b *testing.B, mode pythonCorpusParseMode) {
 			b.Fatalf("%s: %v", file.path, err)
 		}
 		requireCompletePythonCorpusTree(b, lang, file, tree, string(mode))
+		stats.add(tree.ParseRuntime())
 		tree.Release()
 	}
+	b.StopTimer()
+	stats.report(b)
 }
 
 func BenchmarkPythonCorpusGoTreeSitterParseDFA(b *testing.B) {

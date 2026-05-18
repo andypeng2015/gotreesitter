@@ -49,6 +49,7 @@ func (a *nodeArena) recordExternalScannerLeafCheckpoint(node *Node, start, end [
 	if slot == nil {
 		return
 	}
+	a.externalScannerCheckpointRecords++
 	*slot = externalScannerCheckpointRef{
 		start: a.copyExternalScannerSnapshotRef(start),
 		end:   a.copyExternalScannerSnapshotRef(end),
