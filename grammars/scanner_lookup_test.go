@@ -21,8 +21,8 @@ func TestLookupExternalScanner(t *testing.T) {
 }
 
 func TestLookupExternalLexStates(t *testing.T) {
-	// scss and yaml have registered external lex states.
-	for _, name := range []string{"scss", "yaml"} {
+	// scss, yaml, and python have registered external lex states.
+	for _, name := range []string{"python", "scss", "yaml"} {
 		if els := LookupExternalLexStates(name); els == nil {
 			t.Errorf("LookupExternalLexStates(%q) = nil, want non-nil", name)
 		}
@@ -44,8 +44,8 @@ func TestAdaptScannerForLanguagePreservesExistingExternalLexStates(t *testing.T)
 	target := &gotreesitter.Language{
 		ExternalSymbols: append([]gotreesitter.Symbol(nil), ref.ExternalSymbols...),
 		ExternalLexStates: [][]bool{
-		{false, false},
-		{true, false},
+			{false, false},
+			{true, false},
 		},
 	}
 

@@ -149,6 +149,8 @@ func init() {
 		},
 		// YAML: generated from tree-sitter-yaml ts_external_scanner_states.
 		"yaml": yamlExternalLexStates,
+		// Python: generated from tree-sitter-python ts_external_scanner_states.
+		"python": pythonExternalLexStates,
 	}
 
 	// Register scanners in the embedded loader's registry so direct calls like
