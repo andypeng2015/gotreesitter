@@ -541,7 +541,7 @@ func (p *Parser) shouldDeferResultParentLinks(root *Node) bool {
 	if p == nil || p.language == nil || root == nil || root.ownerArena == nil {
 		return false
 	}
-	return p.language.Name == "java" && !p.noTreeBenchmarkOnly
+	return (p.language.Name == "java" || p.language.Name == "python") && !p.noTreeBenchmarkOnly
 }
 
 func (p *Parser) normalizeRootSourceStart(root *Node, source []byte) {
