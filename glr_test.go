@@ -40,6 +40,83 @@ func TestNodeEquivCacheDepthKeyDoesNotAlias(t *testing.T) {
 	}
 }
 
+func TestPythonShallowEquivalentMatchesFrontierDepthZero(t *testing.T) {
+	cases := []struct {
+		name string
+		a    *Node
+		b    *Node
+	}{
+		{
+			name: "same immediate child",
+			a: &Node{
+				symbol:       10,
+				startByte:    0,
+				endByte:      5,
+				isNamed:      true,
+				parseState:   1,
+				preGotoState: 2,
+				productionID: 3,
+				fieldIDs:     []FieldID{4},
+				children: []*Node{{
+					symbol:    20,
+					startByte: 0,
+					endByte:   5,
+					isNamed:   true,
+					fieldIDs:  []FieldID{6},
+				}},
+			},
+			b: &Node{
+				symbol:       10,
+				startByte:    0,
+				endByte:      5,
+				isNamed:      true,
+				parseState:   1,
+				preGotoState: 2,
+				productionID: 3,
+				fieldIDs:     []FieldID{4},
+				children: []*Node{{
+					symbol:    20,
+					startByte: 0,
+					endByte:   5,
+					isNamed:   true,
+					fieldIDs:  []FieldID{6},
+				}},
+			},
+		},
+		{
+			name: "parent field mismatch",
+			a:    &Node{symbol: 10, startByte: 0, endByte: 5, fieldIDs: []FieldID{4}},
+			b:    &Node{symbol: 10, startByte: 0, endByte: 5, fieldIDs: []FieldID{5}},
+		},
+		{
+			name: "child symbol mismatch",
+			a:    &Node{symbol: 10, startByte: 0, endByte: 5, children: []*Node{{symbol: 20, startByte: 0, endByte: 5}}},
+			b:    &Node{symbol: 10, startByte: 0, endByte: 5, children: []*Node{{symbol: 21, startByte: 0, endByte: 5}}},
+		},
+		{
+			name: "depth zero ignores grandchild content",
+			a: &Node{symbol: 10, startByte: 0, endByte: 5, children: []*Node{{
+				symbol: 20, startByte: 0, endByte: 5, children: []*Node{{symbol: 30}},
+			}}},
+			b: &Node{symbol: 10, startByte: 0, endByte: 5, children: []*Node{{
+				symbol: 20, startByte: 0, endByte: 5, children: []*Node{{symbol: 31}},
+			}}},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var scratch glrMergeScratch
+			scratch.beginEquivEpoch()
+			got := stackEntryNodesEquivalentPythonShallow(tc.a, tc.b)
+			want := stackEntryNodesEquivalentFrontierWithScratch(&scratch, tc.a, tc.b, 0)
+			if got != want {
+				t.Fatalf("python shallow equivalence = %v, want %v", got, want)
+			}
+		})
+	}
+}
+
 func TestMergeStacksSameTopState(t *testing.T) {
 	s1 := newGLRStack(StateID(5))
 	s1.score = 10

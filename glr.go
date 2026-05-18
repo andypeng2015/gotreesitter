@@ -636,7 +636,7 @@ func stackEntryNodesEquivalentForLanguageWithScratch(scratch *glrMergeScratch, l
 		return stackEntryNodesExactlyEquivalentWithScratch(scratch, a, b, 0)
 	}
 	if lang != nil && lang.Name == "python" && scratch != nil && scratch.pythonShallow {
-		return stackEntryNodesEquivalentFrontierWithScratch(scratch, a, b, 0)
+		return stackEntryNodesEquivalentPythonShallow(a, b)
 	}
 	if lang != nil && (lang.Name == "c_sharp" || lang.Name == "bash" || len(lang.AliasSequences) > 0) {
 		depthLimit := stackEquivalentFrontierDepthLimit
@@ -685,6 +685,69 @@ func stackEntryNodesEquivalentForLanguageWithScratch(scratch *glrMergeScratch, l
 		return true
 	}
 	return stackEntryNodesEquivalent(a, b)
+}
+
+func stackEntryNodesEquivalentPythonShallow(a, b *Node) bool {
+	if a == b {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	if a.symbol != b.symbol ||
+		a.startByte != b.startByte ||
+		a.endByte != b.endByte ||
+		len(a.children) != len(b.children) ||
+		a.isExtra != b.isExtra ||
+		a.isNamed != b.isNamed ||
+		a.isMissing != b.isMissing ||
+		a.hasError != b.hasError ||
+		a.parseState != b.parseState ||
+		a.preGotoState != b.preGotoState ||
+		a.productionID != b.productionID {
+		return false
+	}
+	if a.hasError && b.hasError {
+		return true
+	}
+	if len(a.fieldIDs) != len(b.fieldIDs) {
+		return false
+	}
+	for i := range a.fieldIDs {
+		if a.fieldIDs[i] != b.fieldIDs[i] {
+			return false
+		}
+	}
+	for i := range a.children {
+		ca := a.children[i]
+		cb := b.children[i]
+		if ca == cb {
+			continue
+		}
+		if ca == nil || cb == nil {
+			return false
+		}
+		if ca.symbol != cb.symbol ||
+			ca.startByte != cb.startByte ||
+			ca.endByte != cb.endByte ||
+			ca.isExtra != cb.isExtra ||
+			ca.isNamed != cb.isNamed ||
+			ca.isMissing != cb.isMissing ||
+			ca.hasError != cb.hasError ||
+			ca.parseState != cb.parseState ||
+			ca.preGotoState != cb.preGotoState ||
+			ca.productionID != cb.productionID ||
+			len(ca.children) != len(cb.children) ||
+			len(ca.fieldIDs) != len(cb.fieldIDs) {
+			return false
+		}
+		for j := range ca.fieldIDs {
+			if ca.fieldIDs[j] != cb.fieldIDs[j] {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func languageNeedsExactStackNodeEquivalence(lang *Language) bool {
