@@ -89,6 +89,7 @@ type nodeArena struct {
 
 	externalScannerCheckpointRecords    uint64
 	externalScannerSnapshotPayloadBytes uint64
+	externalScannerLastSnapshotRef      externalScannerSnapshotRef
 	leafNodesConstructed                uint64
 	parentNodesConstructed              uint64
 	noTreeReduceNodesConstructed        uint64
@@ -406,6 +407,7 @@ func (a *nodeArena) reset() {
 	a.audit = nil
 	a.externalScannerCheckpointRecords = 0
 	a.externalScannerSnapshotPayloadBytes = 0
+	a.externalScannerLastSnapshotRef = externalScannerSnapshotRef{}
 	a.leafNodesConstructed = 0
 	a.parentNodesConstructed = 0
 	a.noTreeReduceNodesConstructed = 0

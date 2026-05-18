@@ -68,7 +68,12 @@ func (a *nodeArena) copyExternalScannerSnapshotRef(src []byte) externalScannerSn
 	if a == nil || len(src) == 0 {
 		return externalScannerSnapshotRef{}
 	}
-	return a.allocExternalScannerSnapshotRef(src)
+	if bytes.Equal(src, a.externalScannerSnapshotBytes(a.externalScannerLastSnapshotRef)) {
+		return a.externalScannerLastSnapshotRef
+	}
+	ref := a.allocExternalScannerSnapshotRef(src)
+	a.externalScannerLastSnapshotRef = ref
+	return ref
 }
 
 func (a *nodeArena) setExternalScannerCheckpoint(node *Node, cp externalScannerCheckpointRef) {
