@@ -11,8 +11,8 @@ type externalScannerCheckpoint struct {
 }
 
 type externalScannerSnapshotRef struct {
-	slab uint16
 	off  uint32
+	slab uint16
 	len  uint16
 }
 
