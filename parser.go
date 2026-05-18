@@ -1507,6 +1507,14 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	}
 	finalize := func(stacks []glrStack, stopReason ParseStopReason) *Tree {
 		captureArenaStats()
+		if p.noTreeBenchmarkOnly {
+			rootEndByte := expectedEOFByte
+			if stopReason != ParseStopAccepted && stopReason != ParseStopNone {
+				rootEndByte = lastTokenEndByte
+			}
+			tree := p.buildNoTreeBenchmarkResult(source, arena, rootEndByte)
+			return finalizeTree(tree, stopReason)
+		}
 		tree := p.buildResultFromGLR(stacks, source, arena, oldTree, &reuseState, &scratch.nodeLinks)
 		return finalizeTree(tree, stopReason)
 	}

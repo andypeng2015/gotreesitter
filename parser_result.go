@@ -32,6 +32,31 @@ func (p *Parser) buildResultFromGLR(stacks []glrStack, source []byte, arena *nod
 	return p.buildResultFromNodes(nodesFromGSS(selected.gss), source, arena, oldTree, reuseState, linkScratch)
 }
 
+func (p *Parser) buildNoTreeBenchmarkResult(source []byte, arena *nodeArena, rootEndByte uint32) *Tree {
+	if arena == nil {
+		return NewTree(nil, source, p.language)
+	}
+	sym := Symbol(0)
+	if p != nil && p.hasRootSymbol {
+		sym = p.rootSymbol
+	}
+	named := true
+	if p != nil && p.language != nil {
+		if idx := int(sym); idx >= 0 && idx < len(p.language.SymbolMetadata) {
+			named = p.language.SymbolMetadata[sym].Named
+		}
+	}
+	root := arena.allocNodeFast()
+	root.ownerArena = arena
+	root.symbol = sym
+	root.isNamed = named
+	root.startByte = 0
+	root.endByte = rootEndByte
+	root.childIndex = -1
+	nodeInitEquivVersion(root)
+	return newTreeWithArenas(root, source, p.language, arena, nil)
+}
+
 func stackCompareForResultSelection(p *Parser, a, b *glrStack) int {
 	if a.dead != b.dead {
 		if a.dead {

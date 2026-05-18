@@ -2017,19 +2017,38 @@ func newNoTreeReduceNodeInArena(arena *nodeArena, sym Symbol, named bool, produc
 	n.childIndex = -1
 	n.productionID = productionID
 	if reducedEnd > start {
-		span := computeReduceRawSpan(entries, start, reducedEnd)
-		n.startByte = span.startByte
-		n.endByte = span.endByte
-		n.startPoint = span.startPoint
-		n.endPoint = span.endPoint
-	}
-	if trackChildErrors {
+		firstRaw := entries[start].node
+		lastRaw := entries[reducedEnd-1].node
+		var firstNonExtra *Node
+		var lastNonExtra *Node
 		for i := start; i < reducedEnd; i++ {
 			child := entries[i].node
-			if child != nil && child.hasError {
-				n.hasError = true
-				break
+			if child == nil {
+				continue
 			}
+			if !child.isExtra {
+				if firstNonExtra == nil {
+					firstNonExtra = child
+				}
+				lastNonExtra = child
+			}
+			if trackChildErrors && child.hasError {
+				n.hasError = true
+			}
+		}
+		if firstNonExtra != nil {
+			n.startByte = firstNonExtra.startByte
+			n.startPoint = firstNonExtra.startPoint
+		} else if firstRaw != nil {
+			n.startByte = firstRaw.startByte
+			n.startPoint = firstRaw.startPoint
+		}
+		if lastNonExtra != nil {
+			n.endByte = lastNonExtra.endByte
+			n.endPoint = lastNonExtra.endPoint
+		} else if lastRaw != nil {
+			n.endByte = lastRaw.endByte
+			n.endPoint = lastRaw.endPoint
 		}
 	}
 	nodeInitEquivVersion(n)
