@@ -835,6 +835,7 @@ func (a *nodeArena) collectArenaBreakdown() *ArenaBreakdown {
 	if a == nil {
 		return nil
 	}
+	nodeUsage := a.nodeUsageStats()
 	fieldSourceElements := a.fieldSourceElementsUsed()
 	if payload := a.externalScannerSnapshotPayloadBytes; fieldSourceElements >= payload {
 		fieldSourceElements -= payload
@@ -846,7 +847,16 @@ func (a *nodeArena) collectArenaBreakdown() *ArenaBreakdown {
 		ChildSliceBytesAllocated:          a.childSliceBytesAllocated(),
 		FieldIDBytesAllocated:             a.fieldIDBytesAllocated(),
 		FieldSourceBytesAllocated:         a.fieldSourceBytesAllocated(),
-		ArenaNodesConstructed:             uint64(a.used),
+		ArenaNodesConstructed:             nodeUsage.live,
+		NodeLiveCount:                     nodeUsage.live,
+		NodeCapacityCount:                 nodeUsage.capacity,
+		NodeCapacityWaste:                 nodeUsage.waste,
+		PrimaryNodeCapacity:               nodeUsage.primaryCapacity,
+		PrimaryNodeUsed:                   nodeUsage.primaryUsed,
+		OverflowNodeCapacity:              nodeUsage.overflowCapacity,
+		OverflowNodeUsed:                  nodeUsage.overflowUsed,
+		OverflowNodeSlabs:                 nodeUsage.overflowSlabs,
+		LargestNodeSlabUsedFraction:       nodeUsage.largestSlabUsedFraction,
 		LeafNodesConstructed:              a.leafNodesConstructed,
 		ParentNodesConstructed:            a.parentNodesConstructed,
 		NoTreeReduceNodesConstructed:      a.noTreeReduceNodesConstructed,
@@ -867,6 +877,63 @@ func (a *nodeArena) collectArenaBreakdown() *ArenaBreakdown {
 		breakdown.ParentChildrenLen0 = breakdown.ParentNodesConstructed - parentsWithChildren
 	}
 	return breakdown
+}
+
+type nodeArenaUsageStats struct {
+	live                    uint64
+	capacity                uint64
+	waste                   uint64
+	primaryUsed             uint64
+	primaryCapacity         uint64
+	overflowUsed            uint64
+	overflowCapacity        uint64
+	overflowSlabs           uint64
+	largestSlabUsedFraction float64
+}
+
+func (a *nodeArena) nodeUsageStats() nodeArenaUsageStats {
+	var stats nodeArenaUsageStats
+	if a == nil {
+		return stats
+	}
+	primaryUsed := a.used
+	if primaryUsed > len(a.nodes) {
+		primaryUsed = len(a.nodes)
+	}
+	stats.primaryUsed = uint64(primaryUsed)
+	stats.primaryCapacity = uint64(len(a.nodes))
+	stats.live = stats.primaryUsed
+	stats.capacity = stats.primaryCapacity
+	largestSlabCapacity := len(a.nodes)
+	stats.largestSlabUsedFraction = nodeSlabUsedFraction(primaryUsed, largestSlabCapacity)
+	for i := range a.nodeSlabs {
+		slab := &a.nodeSlabs[i]
+		capacity := len(slab.data)
+		used := slab.used
+		if used > capacity {
+			used = capacity
+		}
+		stats.overflowUsed += uint64(used)
+		stats.overflowCapacity += uint64(capacity)
+		stats.overflowSlabs++
+		if capacity > largestSlabCapacity {
+			largestSlabCapacity = capacity
+			stats.largestSlabUsedFraction = nodeSlabUsedFraction(used, capacity)
+		}
+	}
+	stats.live += stats.overflowUsed
+	stats.capacity += stats.overflowCapacity
+	if stats.capacity >= stats.live {
+		stats.waste = stats.capacity - stats.live
+	}
+	return stats
+}
+
+func nodeSlabUsedFraction(used, capacity int) float64 {
+	if capacity <= 0 {
+		return 0
+	}
+	return float64(used) / float64(capacity)
 }
 
 func (a *nodeArena) childPointersUsed() uint64 {

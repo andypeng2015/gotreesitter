@@ -100,6 +100,15 @@ func assertParseRuntimeArenaBreakdown(t *testing.T, tree *Tree, rt ParseRuntime)
 	if arenaBreakdown.NodeStructBytesAllocated == 0 {
 		t.Fatal("ArenaBreakdown.NodeStructBytesAllocated = 0, want > 0")
 	}
+	if arenaBreakdown.NodeLiveCount == 0 {
+		t.Fatal("ArenaBreakdown.NodeLiveCount = 0, want > 0")
+	}
+	if arenaBreakdown.NodeCapacityCount < arenaBreakdown.NodeLiveCount {
+		t.Fatalf("NodeCapacityCount = %d, NodeLiveCount = %d", arenaBreakdown.NodeCapacityCount, arenaBreakdown.NodeLiveCount)
+	}
+	if got, want := arenaBreakdown.NodeCapacityWaste, arenaBreakdown.NodeCapacityCount-arenaBreakdown.NodeLiveCount; got != want {
+		t.Fatalf("NodeCapacityWaste = %d, want %d", got, want)
+	}
 	knownNodes := rt.LeafNodesConstructed +
 		rt.ParentNodesConstructed +
 		rt.NoTreeReduceNodesConstructed +

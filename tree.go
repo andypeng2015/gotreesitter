@@ -192,7 +192,19 @@ type ArenaBreakdown struct {
 	FieldSourceBytesAllocated  int64
 	MergeScratchBytesAllocated int64
 
-	ArenaNodesConstructed             uint64
+	ArenaNodesConstructed uint64
+	// NodeLiveCount is arena allocation-slot usage, not root-reachable tree
+	// liveness. It includes parser alternatives and recovery nodes allocated
+	// during the parse.
+	NodeLiveCount                     uint64
+	NodeCapacityCount                 uint64
+	NodeCapacityWaste                 uint64
+	PrimaryNodeCapacity               uint64
+	PrimaryNodeUsed                   uint64
+	OverflowNodeCapacity              uint64
+	OverflowNodeUsed                  uint64
+	OverflowNodeSlabs                 uint64
+	LargestNodeSlabUsedFraction       float64
 	LeafNodesConstructed              uint64
 	ParentNodesConstructed            uint64
 	NoTreeReduceNodesConstructed      uint64

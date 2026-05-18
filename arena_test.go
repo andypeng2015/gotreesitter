@@ -283,6 +283,28 @@ func TestArenaByteBreakdownMatchesAllocatedBytes(t *testing.T) {
 		t.Fatalf("allocatedBytes = %d, breakdown sum = %d", got, want)
 	}
 	breakdown := arena.collectArenaBreakdown()
+	if got, want := breakdown.NodeLiveCount, uint64(arena.used); got != want {
+		t.Fatalf("NodeLiveCount = %d, want %d", got, want)
+	}
+	if got, want := breakdown.NodeCapacityCount, uint64(len(arena.nodes)); got != want {
+		t.Fatalf("NodeCapacityCount = %d, want %d", got, want)
+	}
+	if got, want := breakdown.NodeCapacityWaste, breakdown.NodeCapacityCount-breakdown.NodeLiveCount; got != want {
+		t.Fatalf("NodeCapacityWaste = %d, want %d", got, want)
+	}
+	if got, want := breakdown.PrimaryNodeCapacity, uint64(len(arena.nodes)); got != want {
+		t.Fatalf("PrimaryNodeCapacity = %d, want %d", got, want)
+	}
+	if got, want := breakdown.PrimaryNodeUsed, uint64(arena.used); got != want {
+		t.Fatalf("PrimaryNodeUsed = %d, want %d", got, want)
+	}
+	if breakdown.OverflowNodeCapacity != 0 || breakdown.OverflowNodeUsed != 0 || breakdown.OverflowNodeSlabs != 0 {
+		t.Fatalf("overflow node stats = cap=%d used=%d slabs=%d, want all zero",
+			breakdown.OverflowNodeCapacity, breakdown.OverflowNodeUsed, breakdown.OverflowNodeSlabs)
+	}
+	if breakdown.LargestNodeSlabUsedFraction <= 0 || breakdown.LargestNodeSlabUsedFraction > 1 {
+		t.Fatalf("LargestNodeSlabUsedFraction = %g, want within (0,1]", breakdown.LargestNodeSlabUsedFraction)
+	}
 	if got, want := breakdown.ChildSlicesConstructed, uint64(1); got != want {
 		t.Fatalf("childSlicesConstructed = %d, want %d", got, want)
 	}

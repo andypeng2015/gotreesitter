@@ -55,6 +55,15 @@ type pythonRuntimeBenchStats struct {
 	externalCheckpointBytes           int64
 	externalCheckpointSnapshotBytes   uint64
 	arenaNodesConstructed             uint64
+	nodeLiveCount                     uint64
+	nodeCapacityCount                 uint64
+	nodeCapacityWaste                 uint64
+	primaryNodeCapacity               uint64
+	primaryNodeUsed                   uint64
+	overflowNodeCapacity              uint64
+	overflowNodeUsed                  uint64
+	overflowNodeSlabs                 uint64
+	largestNodeSlabUsedFractionSum    float64
 	leafNodesConstructed              uint64
 	parentNodesConstructed            uint64
 	noTreeReduceNodesConstructed      uint64
@@ -114,6 +123,15 @@ func (s *pythonRuntimeBenchStats) add(rt gotreesitter.ParseRuntime, breakdown go
 		s.arenaFieldSourceBytesAllocated += breakdown.FieldSourceBytesAllocated
 		s.mergeScratchBytesAllocated += breakdown.MergeScratchBytesAllocated
 		s.arenaNodesConstructed += breakdown.ArenaNodesConstructed
+		s.nodeLiveCount += breakdown.NodeLiveCount
+		s.nodeCapacityCount += breakdown.NodeCapacityCount
+		s.nodeCapacityWaste += breakdown.NodeCapacityWaste
+		s.primaryNodeCapacity += breakdown.PrimaryNodeCapacity
+		s.primaryNodeUsed += breakdown.PrimaryNodeUsed
+		s.overflowNodeCapacity += breakdown.OverflowNodeCapacity
+		s.overflowNodeUsed += breakdown.OverflowNodeUsed
+		s.overflowNodeSlabs += breakdown.OverflowNodeSlabs
+		s.largestNodeSlabUsedFractionSum += breakdown.LargestNodeSlabUsedFraction
 		s.noTreePlaceholderNodesConstructed += breakdown.NoTreePlaceholderNodesConstructed
 		s.otherNodesConstructed += breakdown.OtherNodesConstructed
 		s.extraNodesConstructed += breakdown.ExtraNodesConstructed
@@ -179,6 +197,15 @@ func (s pythonRuntimeBenchStats) report(b *testing.B) {
 	b.ReportMetric(float64(s.gssBytesAllocated)/tokens, "gss_B/token")
 	if s.arenaBreakdownSamples != 0 {
 		b.ReportMetric(float64(s.arenaNodesConstructed)/tokens, "arena_nodes/token")
+		b.ReportMetric(float64(s.nodeLiveCount)/tokens, "node_live/token")
+		b.ReportMetric(float64(s.nodeCapacityCount)/tokens, "node_capacity/token")
+		b.ReportMetric(float64(s.nodeCapacityWaste)/tokens, "node_capacity_waste/token")
+		b.ReportMetric(float64(s.primaryNodeCapacity)/float64(s.arenaBreakdownSamples), "primary_node_capacity")
+		b.ReportMetric(float64(s.primaryNodeUsed)/float64(s.arenaBreakdownSamples), "primary_node_used")
+		b.ReportMetric(float64(s.overflowNodeCapacity)/float64(s.arenaBreakdownSamples), "overflow_node_capacity")
+		b.ReportMetric(float64(s.overflowNodeUsed)/float64(s.arenaBreakdownSamples), "overflow_node_used")
+		b.ReportMetric(float64(s.overflowNodeSlabs)/float64(s.arenaBreakdownSamples), "overflow_slabs")
+		b.ReportMetric(s.largestNodeSlabUsedFractionSum/float64(s.arenaBreakdownSamples), "largest_slab_used_fraction")
 		b.ReportMetric(float64(s.noTreePlaceholderNodesConstructed)/tokens, "notree_placeholder_nodes/token")
 		b.ReportMetric(float64(s.otherNodesConstructed)/tokens, "other_nodes/token")
 		b.ReportMetric(float64(s.extraNodesConstructed)/tokens, "extra_nodes/token")
