@@ -361,6 +361,9 @@ func shouldRepeatExternalScannerFullParse(lang *Language, tree *Tree) bool {
 	if lang == nil || lang.ExternalScanner == nil || tree == nil {
 		return false
 	}
+	if lang.Name == "python" {
+		return false
+	}
 	// Skip the redundant re-parse when the first attempt already produced a
 	// clean tree — retrying a clean parse wastes significant time and memory
 	// for grammars with large state tables (e.g. Ruby).
