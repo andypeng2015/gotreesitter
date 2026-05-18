@@ -1403,6 +1403,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		MemoryBudgetBytes: arena.budgetBytes,
 	}
 	arenaStatsCaptured := false
+	var arenaBreakdown *ArenaBreakdown
 	captureArenaStats := func() {
 		if arenaStatsCaptured || arena == nil {
 			return
@@ -1416,6 +1417,9 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		parseRuntime.LeafNodesConstructed = arena.leafNodesConstructed
 		parseRuntime.ParentNodesConstructed = arena.parentNodesConstructed
 		parseRuntime.NoTreeReduceNodesConstructed = arena.noTreeReduceNodesConstructed
+		if arena.breakdownEnabled {
+			arenaBreakdown = arena.collectArenaBreakdown()
+		}
 		arenaStatsCaptured = true
 	}
 	scratchStatsCaptured := false
@@ -1426,6 +1430,12 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		parseRuntime.ScratchBytesAllocated = scratch.allocatedBytes()
 		parseRuntime.EntryScratchBytesAllocated = scratch.entries.allocatedBytes
 		parseRuntime.GSSBytesAllocated = scratch.gss.allocatedBytes
+		if arena != nil && arena.breakdownEnabled {
+			if arenaBreakdown == nil {
+				arenaBreakdown = &ArenaBreakdown{}
+			}
+			arenaBreakdown.MergeScratchBytesAllocated = scratch.merge.allocatedBytes()
+		}
 		scratchStatsCaptured = true
 	}
 	finalizeTree := func(tree *Tree, stopReason ParseStopReason) *Tree {
@@ -1474,6 +1484,9 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		p.copyNormalizationStats(&parseRuntime)
 		if tree != nil {
 			tree.setParseRuntime(parseRuntime)
+			if arenaBreakdown != nil {
+				tree.setArenaBreakdown(arenaBreakdown)
+			}
 		}
 		if timing != nil {
 			timing.stopReason = parseRuntime.StopReason
@@ -1518,7 +1531,6 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		return tree
 	}
 	finalize := func(stacks []glrStack, stopReason ParseStopReason) *Tree {
-		captureArenaStats()
 		if p.noTreeBenchmarkOnly {
 			rootEndByte := expectedEOFByte
 			if stopReason != ParseStopAccepted && stopReason != ParseStopNone {
@@ -1530,6 +1542,9 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		// trackChildErrors flips true whenever parsing creates a missing/error
 		// node. If it stayed false, every final stack has error rank zero, so
 		// the expensive tree walk in stackResultErrorRank cannot affect choice.
+		if len(stacks) == 0 {
+			captureArenaStats()
+		}
 		tree := p.buildResultFromGLR(stacks, source, arena, oldTree, &reuseState, &scratch.nodeLinks, !trackChildErrors)
 		return finalizeTree(tree, stopReason)
 	}

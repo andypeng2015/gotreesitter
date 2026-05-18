@@ -20,6 +20,8 @@ type Range struct {
 
 // Node is a syntax tree node.
 type Node struct {
+	// Layout is performance-sensitive. Keep TestNodeLayoutSizeBudget updated
+	// when changing field order or adding fields.
 	children     []*Node
 	fieldIDs     []FieldID // parallel to children, 0 = no field
 	fieldSources []uint8   // parallel to children, 0 = none, 1 = direct, 2 = inherited
@@ -60,18 +62,16 @@ func (n *Node) setFlag(flag nodeFlags, enabled bool) {
 	n.flags &^= flag
 }
 
-func (n *Node) isNamed() bool     { return n.hasFlag(nodeFlagNamed) }
-func (n *Node) setNamed(v bool)   { n.setFlag(nodeFlagNamed, v) }
-func (n *Node) isExtra() bool     { return n.hasFlag(nodeFlagExtra) }
-func (n *Node) setExtra(v bool)   { n.setFlag(nodeFlagExtra, v) }
-func (n *Node) isMissing() bool   { return n.hasFlag(nodeFlagMissing) }
-func (n *Node) setMissing(v bool) { n.setFlag(nodeFlagMissing, v) }
-func (n *Node) hasError() bool    { return n.hasFlag(nodeFlagHasError) }
-func (n *Node) setHasError(v bool) {
-	n.setFlag(nodeFlagHasError, v)
-}
-func (n *Node) dirty() bool     { return n.dirtyFlag }
-func (n *Node) setDirty(v bool) { n.dirtyFlag = v }
+func (n *Node) isNamed() bool      { return n.hasFlag(nodeFlagNamed) }
+func (n *Node) setNamed(v bool)    { n.setFlag(nodeFlagNamed, v) }
+func (n *Node) isExtra() bool      { return n.hasFlag(nodeFlagExtra) }
+func (n *Node) setExtra(v bool)    { n.setFlag(nodeFlagExtra, v) }
+func (n *Node) isMissing() bool    { return n.hasFlag(nodeFlagMissing) }
+func (n *Node) setMissing(v bool)  { n.setFlag(nodeFlagMissing, v) }
+func (n *Node) hasError() bool     { return n.hasFlag(nodeFlagHasError) }
+func (n *Node) setHasError(v bool) { n.setFlag(nodeFlagHasError, v) }
+func (n *Node) dirty() bool        { return n.dirtyFlag }
+func (n *Node) setDirty(v bool)    { n.dirtyFlag = v }
 
 func nodeInitEquivVersion(n *Node) {
 	if n == nil {
@@ -181,6 +181,40 @@ type ParseRuntime struct {
 	NormalizationNodesVisited               uint64
 	NormalizationNodesRewritten             uint64
 	NormalizationNanos                      int64
+}
+
+// ArenaBreakdown captures optional arena/materialization attribution. It is
+// populated only when EnableArenaBreakdown(true) is set before parsing.
+type ArenaBreakdown struct {
+	NodeStructBytesAllocated   int64
+	ChildSliceBytesAllocated   int64
+	FieldIDBytesAllocated      int64
+	FieldSourceBytesAllocated  int64
+	MergeScratchBytesAllocated int64
+
+	ArenaNodesConstructed             uint64
+	LeafNodesConstructed              uint64
+	ParentNodesConstructed            uint64
+	NoTreeReduceNodesConstructed      uint64
+	NoTreePlaceholderNodesConstructed uint64
+	OtherNodesConstructed             uint64
+	ExtraNodesConstructed             uint64
+	ErrorSymbolNodesConstructed       uint64
+	HasErrorNodesConstructed          uint64
+	ChildSlicesConstructed            uint64
+	ChildPointersConstructed          uint64
+	ChildSlicesLen1                   uint64
+	ChildSlicesLen2                   uint64
+	ChildSlicesLen3                   uint64
+	ChildSlicesLen4Plus               uint64
+	ParentChildPointersConstructed    uint64
+	ParentChildrenLen0                uint64
+	ParentChildrenLen1                uint64
+	ParentChildrenLen2                uint64
+	ParentChildrenLen3                uint64
+	ParentChildrenLen4Plus            uint64
+	FieldIDElementsConstructed        uint64
+	FieldSourceElementsConstructed    uint64
 }
 
 // Summary returns a stable one-line diagnostic string for parse-runtime stats.
@@ -900,6 +934,7 @@ type Tree struct {
 	arena                              *nodeArena   // primary arena that owns newly-built nodes
 	borrowedArena                      []*nodeArena // arenas borrowed via subtree reuse
 	parseRuntime                       ParseRuntime
+	arenaBreakdown                     *ArenaBreakdown
 	externalScannerCheckpointsDeferred bool
 	released                           bool
 }
@@ -1011,6 +1046,7 @@ func (t *Tree) Release() {
 	t.language = nil
 	t.edits = edits
 	t.parseRuntime = ParseRuntime{}
+	t.arenaBreakdown = nil
 	treePool.Put(t)
 }
 
@@ -1416,6 +1452,15 @@ func (t *Tree) ParseRuntime() ParseRuntime {
 	return out
 }
 
+// ArenaBreakdown returns optional arena/materialization attribution captured
+// when EnableArenaBreakdown(true) was set before parsing.
+func (t *Tree) ArenaBreakdown() (ArenaBreakdown, bool) {
+	if t == nil || t.arenaBreakdown == nil {
+		return ArenaBreakdown{}, false
+	}
+	return *t.arenaBreakdown, true
+}
+
 func (t *Tree) setParseRuntime(rt ParseRuntime) {
 	if t == nil {
 		return
@@ -1424,6 +1469,13 @@ func (t *Tree) setParseRuntime(rt ParseRuntime) {
 		rt.StopReason = ParseStopNone
 	}
 	t.parseRuntime = rt
+}
+
+func (t *Tree) setArenaBreakdown(breakdown *ArenaBreakdown) {
+	if t == nil {
+		return
+	}
+	t.arenaBreakdown = breakdown
 }
 
 // InputEdit describes a single edit to the source text. It tells the parser

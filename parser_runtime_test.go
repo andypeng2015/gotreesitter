@@ -6,6 +6,9 @@ import (
 )
 
 func TestParseRuntimeReportsAcceptedOnCompleteParse(t *testing.T) {
+	EnableArenaBreakdown(true)
+	defer EnableArenaBreakdown(false)
+
 	lang := buildArithmeticLanguage()
 	parser := NewParser(lang)
 
@@ -45,9 +48,16 @@ func TestParseRuntimeReportsAcceptedOnCompleteParse(t *testing.T) {
 	if rt.NoTreeReduceNodesConstructed != 0 {
 		t.Fatalf("NoTreeReduceNodesConstructed = %d, want 0", rt.NoTreeReduceNodesConstructed)
 	}
+	breakdown := assertParseRuntimeArenaBreakdown(t, tree, rt)
+	if got := breakdown.NoTreePlaceholderNodesConstructed; got != 0 {
+		t.Fatalf("NoTreePlaceholderNodesConstructed = %d, want 0", got)
+	}
 }
 
 func TestParseRuntimeReportsNoTreeNodeVolume(t *testing.T) {
+	EnableArenaBreakdown(true)
+	defer EnableArenaBreakdown(false)
+
 	lang := buildArithmeticLanguage()
 	parser := NewParser(lang)
 
@@ -67,6 +77,38 @@ func TestParseRuntimeReportsNoTreeNodeVolume(t *testing.T) {
 	if rt.NoTreeReduceNodesConstructed == 0 {
 		t.Fatal("NoTreeReduceNodesConstructed = 0, want > 0")
 	}
+	breakdown := assertParseRuntimeArenaBreakdown(t, tree, rt)
+	if got := breakdown.NoTreePlaceholderNodesConstructed; got != 1 {
+		t.Fatalf("NoTreePlaceholderNodesConstructed = %d, want 1", got)
+	}
+}
+
+func assertParseRuntimeArenaBreakdown(t *testing.T, tree *Tree, rt ParseRuntime) ArenaBreakdown {
+	t.Helper()
+	arenaBreakdown, ok := tree.ArenaBreakdown()
+	if !ok {
+		t.Fatal("ArenaBreakdown = nil, want populated")
+	}
+	breakdown := arenaBreakdown.NodeStructBytesAllocated +
+		arenaBreakdown.ChildSliceBytesAllocated +
+		arenaBreakdown.FieldIDBytesAllocated +
+		arenaBreakdown.FieldSourceBytesAllocated +
+		rt.ExternalScannerCheckpointBytesAllocated
+	if rt.ArenaBytesAllocated != breakdown {
+		t.Fatalf("arena bytes = %d, breakdown sum = %d", rt.ArenaBytesAllocated, breakdown)
+	}
+	if arenaBreakdown.NodeStructBytesAllocated == 0 {
+		t.Fatal("ArenaBreakdown.NodeStructBytesAllocated = 0, want > 0")
+	}
+	knownNodes := rt.LeafNodesConstructed +
+		rt.ParentNodesConstructed +
+		rt.NoTreeReduceNodesConstructed +
+		arenaBreakdown.NoTreePlaceholderNodesConstructed +
+		arenaBreakdown.OtherNodesConstructed
+	if arenaBreakdown.ArenaNodesConstructed != knownNodes {
+		t.Fatalf("ArenaNodesConstructed = %d, known node sum = %d", arenaBreakdown.ArenaNodesConstructed, knownNodes)
+	}
+	return arenaBreakdown
 }
 
 type eofAtZeroTokenSource struct{}

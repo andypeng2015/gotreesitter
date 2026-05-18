@@ -254,6 +254,53 @@ func TestEvictionGuardPreventsOversizedArenaReuse(t *testing.T) {
 	}
 }
 
+func TestArenaByteBreakdownMatchesAllocatedBytes(t *testing.T) {
+	EnableArenaBreakdown(true)
+	defer EnableArenaBreakdown(false)
+
+	arena := newNodeArena(arenaClassFull)
+
+	_ = arena.allocNode()
+	_ = arena.allocNodeSlice(1)
+	_ = arena.allocNodeSlice(2)
+	_ = arena.allocNodeSlice(3)
+	_ = arena.allocNodeSlice(4)
+	_ = arena.allocFieldIDSlice(5)
+	_ = arena.allocFieldSourceSlice(6)
+	left := newLeafNodeInArena(arena, Symbol(1), true, 0, 0, Point{}, Point{})
+	right := newLeafNodeInArena(arena, Symbol(2), true, 0, 0, Point{}, Point{})
+	children := arena.allocNodeSlice(2)
+	children[0] = left
+	children[1] = right
+	_ = newParentNodeInArenaNoLinksWithFieldSources(arena, Symbol(3), true, children, nil, nil, 0, false)
+
+	want := arena.nodeStructBytesAllocated() +
+		arena.childSliceBytesAllocated() +
+		arena.fieldIDBytesAllocated() +
+		arena.fieldSourceBytesAllocated() +
+		arena.externalScannerCheckpointBytesAllocated()
+	if got := arena.allocatedBytes; got != want {
+		t.Fatalf("allocatedBytes = %d, breakdown sum = %d", got, want)
+	}
+	breakdown := arena.collectArenaBreakdown()
+	if got, want := breakdown.ChildSlicesConstructed, uint64(1); got != want {
+		t.Fatalf("childSlicesConstructed = %d, want %d", got, want)
+	}
+	if got, want := breakdown.ChildPointersConstructed, uint64(12); got != want {
+		t.Fatalf("childPointersConstructed = %d, want %d", got, want)
+	}
+	if breakdown.ChildSlicesLen1 != 0 || breakdown.ChildSlicesLen2 != 1 || breakdown.ChildSlicesLen3 != 0 || breakdown.ChildSlicesLen4Plus != 0 {
+		t.Fatalf("child slice histogram = (%d,%d,%d,%d), want (0,1,0,0)",
+			breakdown.ChildSlicesLen1, breakdown.ChildSlicesLen2, breakdown.ChildSlicesLen3, breakdown.ChildSlicesLen4Plus)
+	}
+	if got, want := breakdown.FieldIDElementsConstructed, uint64(5); got != want {
+		t.Fatalf("fieldIDElementsConstructed = %d, want %d", got, want)
+	}
+	if got, want := breakdown.FieldSourceElementsConstructed, uint64(6); got != want {
+		t.Fatalf("fieldSourceElementsConstructed = %d, want %d", got, want)
+	}
+}
+
 // TestArenaNodeSlabClearsWrittenSlotsOnReset verifies that reset() zeros every
 // node slot written during the parse. Node contains pointer fields (children,
 // parent, ownerArena), and stale pointers in retained arena slabs prevent GC

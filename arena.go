@@ -58,10 +58,11 @@ const (
 // It uses ref counting so trees that borrow reused subtrees can keep arena
 // memory alive safely until all dependent trees are released.
 type nodeArena struct {
-	class arenaClass
-	nodes []Node
-	used  int
-	refs  atomic.Int32
+	class            arenaClass
+	nodes            []Node
+	used             int
+	refs             atomic.Int32
+	breakdownEnabled bool
 	// budgetBytes is a soft per-parse cap for arena backing-storage growth.
 	// A value of 0 disables budget checks.
 	budgetBytes         int64
@@ -93,6 +94,7 @@ type nodeArena struct {
 	leafNodesConstructed                uint64
 	parentNodesConstructed              uint64
 	noTreeReduceNodesConstructed        uint64
+	noTreePlaceholderNodesConstructed   uint64
 }
 
 type nodeSlab struct {
@@ -120,6 +122,8 @@ type externalScannerCheckpointSlab struct {
 }
 
 var (
+	arenaBreakdownEnabled atomic.Bool
+
 	incrementalArenaPool = nodeArenaPool{
 		class:   arenaClassIncremental,
 		maxSize: 8,
@@ -129,6 +133,14 @@ var (
 		maxSize: 4,
 	}
 )
+
+// EnableArenaBreakdown toggles detailed arena accounting for subsequently
+// acquired arenas. It is intended for diagnostics and benchmark attribution;
+// normal parser paths leave it disabled to avoid perturbing hot allocation
+// paths.
+func EnableArenaBreakdown(enabled bool) {
+	arenaBreakdownEnabled.Store(enabled)
+}
 
 type nodeArenaPool struct {
 	mu      sync.Mutex
@@ -257,6 +269,7 @@ func newNodeArena(class arenaClass) *nodeArena {
 	a := &nodeArena{
 		class:            class,
 		nodes:            make([]Node, nodeCapacityForClass(class)),
+		breakdownEnabled: arenaBreakdownEnabled.Load(),
 		childSlabs:       []childSliceSlab{{data: make([]*Node, childCap)}},
 		fieldSlabs:       []fieldSliceSlab{{data: make([]FieldID, fieldCap)}},
 		fieldSourceSlabs: []fieldSourceSliceSlab{{data: make([]uint8, fieldSourceCap)}},
@@ -274,6 +287,7 @@ func acquireNodeArena(class arenaClass) *nodeArena {
 		a = fullArenaPool.acquire()
 	}
 	a.refs.Store(1)
+	a.breakdownEnabled = arenaBreakdownEnabled.Load()
 	a.clearBudget()
 	a.audit = nil
 	return a
@@ -404,6 +418,7 @@ func (a *nodeArena) reset() {
 	a.leafNodesConstructed = 0
 	a.parentNodesConstructed = 0
 	a.noTreeReduceNodesConstructed = 0
+	a.noTreePlaceholderNodesConstructed = 0
 	if len(a.fieldSlabs) > 0 {
 		retained := 0
 		keep := 0
@@ -735,23 +750,58 @@ func externalScannerCheckpointIndexBytesForCap(n int) int64 {
 	return int64(n) * int64(unsafe.Sizeof(uint32(0)))
 }
 
-func (a *nodeArena) recomputeAllocatedBytes() {
+func (a *nodeArena) nodeStructBytesAllocated() int64 {
 	if a == nil {
-		return
+		return 0
 	}
 	total := nodeBytesForCap(len(a.nodes))
 	for i := range a.nodeSlabs {
 		total += nodeBytesForCap(len(a.nodeSlabs[i].data))
 	}
+	return total
+}
+
+func (a *nodeArena) childSliceBytesAllocated() int64 {
+	if a == nil {
+		return 0
+	}
+	var total int64
 	for i := range a.childSlabs {
 		total += childSliceBytesForCap(len(a.childSlabs[i].data))
 	}
+	return total
+}
+
+func (a *nodeArena) fieldIDBytesAllocated() int64 {
+	if a == nil {
+		return 0
+	}
+	var total int64
 	for i := range a.fieldSlabs {
 		total += fieldSliceBytesForCap(len(a.fieldSlabs[i].data))
 	}
+	return total
+}
+
+func (a *nodeArena) fieldSourceBytesAllocated() int64 {
+	if a == nil {
+		return 0
+	}
+	var total int64
 	for i := range a.fieldSourceSlabs {
 		total += fieldSourceSliceBytesForCap(len(a.fieldSourceSlabs[i].data))
 	}
+	return total
+}
+
+func (a *nodeArena) recomputeAllocatedBytes() {
+	if a == nil {
+		return
+	}
+	total := a.nodeStructBytesAllocated() +
+		a.childSliceBytesAllocated() +
+		a.fieldIDBytesAllocated() +
+		a.fieldSourceBytesAllocated()
 	total += a.externalScannerNodeCheckpoints.bytesAllocated()
 	for i := range a.externalScannerNodeCheckpointSlabs {
 		total += a.externalScannerNodeCheckpointSlabs[i].checkpoints.bytesAllocated()
@@ -779,6 +829,143 @@ func (a *nodeArena) externalScannerCheckpointBytesAllocated() int64 {
 		total += a.externalScannerNodeCheckpointSlabs[i].checkpoints.bytesAllocated()
 	}
 	return total
+}
+
+func (a *nodeArena) collectArenaBreakdown() *ArenaBreakdown {
+	if a == nil {
+		return nil
+	}
+	fieldSourceElements := a.fieldSourceElementsUsed()
+	if payload := a.externalScannerSnapshotPayloadBytes; fieldSourceElements >= payload {
+		fieldSourceElements -= payload
+	} else {
+		fieldSourceElements = 0
+	}
+	breakdown := &ArenaBreakdown{
+		NodeStructBytesAllocated:          a.nodeStructBytesAllocated(),
+		ChildSliceBytesAllocated:          a.childSliceBytesAllocated(),
+		FieldIDBytesAllocated:             a.fieldIDBytesAllocated(),
+		FieldSourceBytesAllocated:         a.fieldSourceBytesAllocated(),
+		ArenaNodesConstructed:             uint64(a.used),
+		LeafNodesConstructed:              a.leafNodesConstructed,
+		ParentNodesConstructed:            a.parentNodesConstructed,
+		NoTreeReduceNodesConstructed:      a.noTreeReduceNodesConstructed,
+		NoTreePlaceholderNodesConstructed: a.noTreePlaceholderNodesConstructed,
+		ChildPointersConstructed:          a.childPointersUsed(),
+		FieldIDElementsConstructed:        a.fieldIDElementsUsed(),
+		FieldSourceElementsConstructed:    fieldSourceElements,
+	}
+	a.scanConstructedNodes(breakdown)
+	knownNodes := a.leafNodesConstructed + a.parentNodesConstructed +
+		a.noTreeReduceNodesConstructed + a.noTreePlaceholderNodesConstructed
+	if breakdown.ArenaNodesConstructed >= knownNodes {
+		breakdown.OtherNodesConstructed = breakdown.ArenaNodesConstructed - knownNodes
+	}
+	parentsWithChildren := breakdown.ParentChildrenLen1 + breakdown.ParentChildrenLen2 +
+		breakdown.ParentChildrenLen3 + breakdown.ParentChildrenLen4Plus
+	if breakdown.ParentNodesConstructed >= parentsWithChildren {
+		breakdown.ParentChildrenLen0 = breakdown.ParentNodesConstructed - parentsWithChildren
+	}
+	return breakdown
+}
+
+func (a *nodeArena) childPointersUsed() uint64 {
+	if a == nil {
+		return 0
+	}
+	var total uint64
+	for i := range a.childSlabs {
+		used := a.childSlabs[i].used
+		if used > len(a.childSlabs[i].data) {
+			used = len(a.childSlabs[i].data)
+		}
+		total += uint64(used)
+	}
+	return total
+}
+
+func (a *nodeArena) fieldIDElementsUsed() uint64 {
+	if a == nil {
+		return 0
+	}
+	var total uint64
+	for i := range a.fieldSlabs {
+		used := a.fieldSlabs[i].used
+		if used > len(a.fieldSlabs[i].data) {
+			used = len(a.fieldSlabs[i].data)
+		}
+		total += uint64(used)
+	}
+	return total
+}
+
+func (a *nodeArena) fieldSourceElementsUsed() uint64 {
+	if a == nil {
+		return 0
+	}
+	var total uint64
+	for i := range a.fieldSourceSlabs {
+		used := a.fieldSourceSlabs[i].used
+		if used > len(a.fieldSourceSlabs[i].data) {
+			used = len(a.fieldSourceSlabs[i].data)
+		}
+		total += uint64(used)
+	}
+	return total
+}
+
+func (a *nodeArena) scanConstructedNodes(breakdown *ArenaBreakdown) {
+	if a == nil || breakdown == nil {
+		return
+	}
+	primaryUsed := a.used
+	if primaryUsed > len(a.nodes) {
+		primaryUsed = len(a.nodes)
+	}
+	a.scanNodeRange(a.nodes[:primaryUsed], breakdown)
+	for i := range a.nodeSlabs {
+		slab := &a.nodeSlabs[i]
+		used := slab.used
+		if used > len(slab.data) {
+			used = len(slab.data)
+		}
+		a.scanNodeRange(slab.data[:used], breakdown)
+	}
+}
+
+func (a *nodeArena) scanNodeRange(nodes []Node, breakdown *ArenaBreakdown) {
+	for i := range nodes {
+		n := &nodes[i]
+		if n.symbol == errorSymbol {
+			breakdown.ErrorSymbolNodesConstructed++
+		}
+		if n.isExtra() {
+			breakdown.ExtraNodesConstructed++
+		}
+		if n.hasError() {
+			breakdown.HasErrorNodesConstructed++
+		}
+		childCount := len(n.children)
+		if childCount <= 0 {
+			continue
+		}
+		breakdown.ChildSlicesConstructed++
+		breakdown.ParentChildPointersConstructed += uint64(childCount)
+		switch childCount {
+		case 1:
+			breakdown.ChildSlicesLen1++
+			breakdown.ParentChildrenLen1++
+		case 2:
+			breakdown.ChildSlicesLen2++
+			breakdown.ParentChildrenLen2++
+		case 3:
+			breakdown.ChildSlicesLen3++
+			breakdown.ParentChildrenLen3++
+		default:
+			breakdown.ChildSlicesLen4Plus++
+			breakdown.ParentChildrenLen4Plus++
+		}
+	}
 }
 
 func (a *nodeArena) allocExternalScannerSnapshotRef(src []byte) externalScannerSnapshotRef {

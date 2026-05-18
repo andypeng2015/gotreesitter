@@ -48,6 +48,7 @@ func (p *Parser) buildNoTreeBenchmarkResult(source []byte, arena *nodeArena, roo
 	}
 	root := arena.allocNodeFast()
 	root.ownerArena = arena
+	arena.noTreePlaceholderNodesConstructed++
 	root.symbol = sym
 	root.setNamed(named)
 	root.startByte = 0

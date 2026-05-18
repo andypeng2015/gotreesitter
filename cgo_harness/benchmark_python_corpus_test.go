@@ -31,35 +31,61 @@ const (
 )
 
 type pythonRuntimeBenchStats struct {
-	ops                             int
-	tokensConsumed                  uint64
-	iterations                      uint64
-	nodesAllocated                  uint64
-	parentNodesAllocated            uint64
-	leafNodesAllocated              uint64
-	gssNodesAllocated               uint64
-	singleStackGSSNodes             uint64
-	multiStackGSSNodes              uint64
-	arenaBytesAllocated             int64
-	scratchBytesAllocated           int64
-	entryScratchBytesAllocated      int64
-	gssBytesAllocated               int64
-	externalCheckpointRecords       uint64
-	externalCheckpointSlots         uint64
-	externalCheckpointBytes         int64
-	externalCheckpointSnapshotBytes uint64
-	leafNodesConstructed            uint64
-	parentNodesConstructed          uint64
-	noTreeReduceNodesConstructed    uint64
-	normalizationPassesChecked      uint64
-	normalizationPassesRun          uint64
-	normalizationNodesVisited       uint64
-	normalizationNodesRewritten     uint64
-	normalizationNanos              int64
-	maxStacksSeen                   int
+	ops                               int
+	arenaBreakdownSamples             int
+	tokensConsumed                    uint64
+	iterations                        uint64
+	nodesAllocated                    uint64
+	parentNodesAllocated              uint64
+	leafNodesAllocated                uint64
+	gssNodesAllocated                 uint64
+	singleStackGSSNodes               uint64
+	multiStackGSSNodes                uint64
+	arenaBytesAllocated               int64
+	arenaNodeStructBytesAllocated     int64
+	arenaChildSliceBytesAllocated     int64
+	arenaFieldIDBytesAllocated        int64
+	arenaFieldSourceBytesAllocated    int64
+	scratchBytesAllocated             int64
+	entryScratchBytesAllocated        int64
+	gssBytesAllocated                 int64
+	mergeScratchBytesAllocated        int64
+	externalCheckpointRecords         uint64
+	externalCheckpointSlots           uint64
+	externalCheckpointBytes           int64
+	externalCheckpointSnapshotBytes   uint64
+	arenaNodesConstructed             uint64
+	leafNodesConstructed              uint64
+	parentNodesConstructed            uint64
+	noTreeReduceNodesConstructed      uint64
+	noTreePlaceholderNodesConstructed uint64
+	otherNodesConstructed             uint64
+	extraNodesConstructed             uint64
+	errorSymbolNodesConstructed       uint64
+	hasErrorNodesConstructed          uint64
+	childSlicesConstructed            uint64
+	childPointersConstructed          uint64
+	childSlicesLen1                   uint64
+	childSlicesLen2                   uint64
+	childSlicesLen3                   uint64
+	childSlicesLen4Plus               uint64
+	parentChildPointersConstructed    uint64
+	parentChildrenLen0                uint64
+	parentChildrenLen1                uint64
+	parentChildrenLen2                uint64
+	parentChildrenLen3                uint64
+	parentChildrenLen4Plus            uint64
+	fieldIDElementsConstructed        uint64
+	fieldSourceElementsConstructed    uint64
+	normalizationPassesChecked        uint64
+	normalizationPassesRun            uint64
+	normalizationNodesVisited         uint64
+	normalizationNodesRewritten       uint64
+	normalizationNanos                int64
+	maxStacksSeen                     int
 }
 
-func (s *pythonRuntimeBenchStats) add(rt gotreesitter.ParseRuntime) {
+func (s *pythonRuntimeBenchStats) add(rt gotreesitter.ParseRuntime, breakdown gotreesitter.ArenaBreakdown, hasBreakdown bool) {
 	s.ops++
 	s.tokensConsumed += rt.TokensConsumed
 	s.iterations += uint64(rt.Iterations)
@@ -80,6 +106,34 @@ func (s *pythonRuntimeBenchStats) add(rt gotreesitter.ParseRuntime) {
 	s.leafNodesConstructed += rt.LeafNodesConstructed
 	s.parentNodesConstructed += rt.ParentNodesConstructed
 	s.noTreeReduceNodesConstructed += rt.NoTreeReduceNodesConstructed
+	if hasBreakdown {
+		s.arenaBreakdownSamples++
+		s.arenaNodeStructBytesAllocated += breakdown.NodeStructBytesAllocated
+		s.arenaChildSliceBytesAllocated += breakdown.ChildSliceBytesAllocated
+		s.arenaFieldIDBytesAllocated += breakdown.FieldIDBytesAllocated
+		s.arenaFieldSourceBytesAllocated += breakdown.FieldSourceBytesAllocated
+		s.mergeScratchBytesAllocated += breakdown.MergeScratchBytesAllocated
+		s.arenaNodesConstructed += breakdown.ArenaNodesConstructed
+		s.noTreePlaceholderNodesConstructed += breakdown.NoTreePlaceholderNodesConstructed
+		s.otherNodesConstructed += breakdown.OtherNodesConstructed
+		s.extraNodesConstructed += breakdown.ExtraNodesConstructed
+		s.errorSymbolNodesConstructed += breakdown.ErrorSymbolNodesConstructed
+		s.hasErrorNodesConstructed += breakdown.HasErrorNodesConstructed
+		s.childSlicesConstructed += breakdown.ChildSlicesConstructed
+		s.childPointersConstructed += breakdown.ChildPointersConstructed
+		s.childSlicesLen1 += breakdown.ChildSlicesLen1
+		s.childSlicesLen2 += breakdown.ChildSlicesLen2
+		s.childSlicesLen3 += breakdown.ChildSlicesLen3
+		s.childSlicesLen4Plus += breakdown.ChildSlicesLen4Plus
+		s.parentChildPointersConstructed += breakdown.ParentChildPointersConstructed
+		s.parentChildrenLen0 += breakdown.ParentChildrenLen0
+		s.parentChildrenLen1 += breakdown.ParentChildrenLen1
+		s.parentChildrenLen2 += breakdown.ParentChildrenLen2
+		s.parentChildrenLen3 += breakdown.ParentChildrenLen3
+		s.parentChildrenLen4Plus += breakdown.ParentChildrenLen4Plus
+		s.fieldIDElementsConstructed += breakdown.FieldIDElementsConstructed
+		s.fieldSourceElementsConstructed += breakdown.FieldSourceElementsConstructed
+	}
 	s.normalizationPassesChecked += rt.NormalizationPassesChecked
 	s.normalizationPassesRun += rt.NormalizationPassesRun
 	s.normalizationNodesVisited += rt.NormalizationNodesVisited
@@ -123,6 +177,33 @@ func (s pythonRuntimeBenchStats) report(b *testing.B) {
 	b.ReportMetric(float64(s.scratchBytesAllocated)/tokens, "scratch_B/token")
 	b.ReportMetric(float64(s.entryScratchBytesAllocated)/tokens, "entry_B/token")
 	b.ReportMetric(float64(s.gssBytesAllocated)/tokens, "gss_B/token")
+	if s.arenaBreakdownSamples != 0 {
+		b.ReportMetric(float64(s.arenaNodesConstructed)/tokens, "arena_nodes/token")
+		b.ReportMetric(float64(s.noTreePlaceholderNodesConstructed)/tokens, "notree_placeholder_nodes/token")
+		b.ReportMetric(float64(s.otherNodesConstructed)/tokens, "other_nodes/token")
+		b.ReportMetric(float64(s.extraNodesConstructed)/tokens, "extra_nodes/token")
+		b.ReportMetric(float64(s.errorSymbolNodesConstructed)/tokens, "error_symbol_nodes/token")
+		b.ReportMetric(float64(s.hasErrorNodesConstructed)/tokens, "has_error_nodes/token")
+		b.ReportMetric(float64(s.arenaNodeStructBytesAllocated)/tokens, "arena_node_B/token")
+		b.ReportMetric(float64(s.arenaChildSliceBytesAllocated)/tokens, "arena_child_B/token")
+		b.ReportMetric(float64(s.arenaFieldIDBytesAllocated)/tokens, "arena_field_id_B/token")
+		b.ReportMetric(float64(s.arenaFieldSourceBytesAllocated)/tokens, "arena_field_src_B/token")
+		b.ReportMetric(float64(s.mergeScratchBytesAllocated)/tokens, "merge_B/token")
+		b.ReportMetric(float64(s.childSlicesConstructed)/tokens, "child_slices/token")
+		b.ReportMetric(float64(s.childPointersConstructed)/tokens, "child_ptrs/token")
+		b.ReportMetric(float64(s.childSlicesLen1)/tokens, "child_slices_len1/token")
+		b.ReportMetric(float64(s.childSlicesLen2)/tokens, "child_slices_len2/token")
+		b.ReportMetric(float64(s.childSlicesLen3)/tokens, "child_slices_len3/token")
+		b.ReportMetric(float64(s.childSlicesLen4Plus)/tokens, "child_slices_len4plus/token")
+		b.ReportMetric(float64(s.parentChildPointersConstructed)/tokens, "parent_child_ptrs/token")
+		b.ReportMetric(float64(s.parentChildrenLen0)/tokens, "parent_len0/token")
+		b.ReportMetric(float64(s.parentChildrenLen1)/tokens, "parent_len1/token")
+		b.ReportMetric(float64(s.parentChildrenLen2)/tokens, "parent_len2/token")
+		b.ReportMetric(float64(s.parentChildrenLen3)/tokens, "parent_len3/token")
+		b.ReportMetric(float64(s.parentChildrenLen4Plus)/tokens, "parent_len4plus/token")
+		b.ReportMetric(float64(s.fieldIDElementsConstructed)/tokens, "field_ids/token")
+		b.ReportMetric(float64(s.fieldSourceElementsConstructed)/tokens, "field_sources/token")
+	}
 	b.ReportMetric(float64(s.externalCheckpointRecords)/tokens, "chk_records/token")
 	b.ReportMetric(float64(s.externalCheckpointSlots)/tokens, "chk_slots/token")
 	b.ReportMetric(float64(s.externalCheckpointBytes)/tokens, "chk_B/token")
@@ -179,6 +260,20 @@ func pythonCorpusBenchTimeoutMicros(tb testing.TB) uint64 {
 	return timeoutMicros
 }
 
+func pythonCorpusArenaBreakdownEnabled(tb testing.TB) bool {
+	tb.Helper()
+
+	raw := strings.TrimSpace(os.Getenv("GOT_PYTHON_CORPUS_ARENA_BREAKDOWN"))
+	if raw == "" {
+		return false
+	}
+	enabled, err := strconv.ParseBool(raw)
+	if err != nil {
+		tb.Fatalf("invalid GOT_PYTHON_CORPUS_ARENA_BREAKDOWN=%q", raw)
+	}
+	return enabled
+}
+
 func requireCompletePythonCorpusTree(tb testing.TB, lang *gotreesitter.Language, file pythonCorpusFile, tree *gotreesitter.Tree, phase string) {
 	tb.Helper()
 
@@ -208,6 +303,10 @@ func requireCompletePythonCorpusTree(tb testing.TB, lang *gotreesitter.Language,
 func benchmarkPythonCorpusGoDFA(b *testing.B, mode pythonCorpusParseMode) {
 	file := loadPythonCorpusFile(b)
 	lang := grammars.PythonLanguage()
+	if pythonCorpusArenaBreakdownEnabled(b) {
+		gotreesitter.EnableArenaBreakdown(true)
+		defer gotreesitter.EnableArenaBreakdown(false)
+	}
 	pool := gotreesitter.NewParserPool(
 		lang,
 		gotreesitter.WithParserPoolTimeoutMicros(pythonCorpusBenchTimeoutMicros(b)),
@@ -242,7 +341,9 @@ func benchmarkPythonCorpusGoDFA(b *testing.B, mode pythonCorpusParseMode) {
 			b.Fatalf("%s: %v", file.path, err)
 		}
 		requireCompletePythonCorpusTree(b, lang, file, tree, string(mode))
-		stats.add(tree.ParseRuntime())
+		rt := tree.ParseRuntime()
+		breakdown, hasBreakdown := tree.ArenaBreakdown()
+		stats.add(rt, breakdown, hasBreakdown)
 		tree.Release()
 	}
 	b.StopTimer()
