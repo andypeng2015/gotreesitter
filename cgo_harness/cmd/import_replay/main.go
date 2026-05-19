@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,6 +22,7 @@ import (
 
 const (
 	modeCGOTreeParse          = "cgo_tree_parse"
+	modeCGOTreeExtract        = "cgo_tree_extract"
 	modeGoTreeExtract         = "go_tree_extract"
 	modeGoSourceExtractHybrid = "go_source_extract_hybrid"
 )
@@ -39,6 +41,7 @@ type replayReport struct {
 	Bytes        int64                  `json:"bytes"`
 	Modes        map[string]*modeReport `json:"modes"`
 	OutputDiff   *outputDiffReport      `json:"output_diff,omitempty"`
+	OutputDiffs  []*outputDiffReport    `json:"output_diffs,omitempty"`
 	Unsupported  map[string]int         `json:"unsupported,omitempty"`
 	Errors       []string               `json:"errors,omitempty"`
 	Options      map[string]string      `json:"options,omitempty"`
@@ -96,7 +99,7 @@ func main() {
 		root       = flag.String("root", ".", "repository root to scan")
 		outPath    = flag.String("out", "", "optional JSON report path")
 		outputDir  = flag.String("output-dir", "", "optional directory for normalized dependency outputs and diff")
-		modesFlag  = flag.String("modes", strings.Join([]string{modeCGOTreeParse, modeGoTreeExtract, modeGoSourceExtractHybrid}, ","), "comma-separated replay modes")
+		modesFlag  = flag.String("modes", strings.Join([]string{modeCGOTreeParse, modeCGOTreeExtract, modeGoTreeExtract, modeGoSourceExtractHybrid}, ","), "comma-separated replay modes")
 		langsFlag  = flag.String("langs", strings.Join(supportedReplayLanguages(), ","), "comma-separated languages to scan")
 		maxFiles   = flag.Int("max-files", 0, "optional maximum files to scan")
 		maxBytes   = flag.Int64("max-bytes", 0, "optional maximum total bytes to scan")
@@ -135,13 +138,21 @@ func main() {
 		runs[mode] = run
 	}
 
-	if base, ok := runs[modeGoTreeExtract]; ok {
-		if compare, ok := runs[modeGoSourceExtractHybrid]; ok {
-			report.OutputDiff = compareOutputs(modeGoTreeExtract, base.output, modeGoSourceExtractHybrid, compare.output, *sampleDiff)
+	if compare, ok := runs[modeGoSourceExtractHybrid]; ok {
+		for _, baseMode := range []string{modeCGOTreeExtract, modeGoTreeExtract} {
+			base, ok := runs[baseMode]
+			if !ok {
+				continue
+			}
+			diff := compareOutputs(baseMode, base.output, modeGoSourceExtractHybrid, compare.output, *sampleDiff)
+			report.OutputDiffs = append(report.OutputDiffs, diff)
+			if baseMode == modeGoTreeExtract {
+				report.OutputDiff = diff
+			}
 		}
 	}
 	if *outputDir != "" {
-		if err := writeReplayOutputs(*outputDir, runs, report.OutputDiff); err != nil {
+		if err := writeReplayOutputs(*outputDir, runs, report.OutputDiffs); err != nil {
 			report.Errors = append(report.Errors, err.Error())
 		}
 	}
@@ -232,7 +243,7 @@ func parseModes(raw string) []string {
 			continue
 		}
 		switch mode {
-		case modeCGOTreeParse, modeGoTreeExtract, modeGoSourceExtractHybrid:
+		case modeCGOTreeParse, modeCGOTreeExtract, modeGoTreeExtract, modeGoSourceExtractHybrid:
 		default:
 			fatalf("unknown mode %q", mode)
 		}
@@ -308,6 +319,19 @@ func runMode(mode string, files []replayFile) modeRun {
 			if err != nil {
 				recordModeError(mr, ls, file, err)
 			}
+		case modeCGOTreeExtract:
+			result := parseAndExtractWithCGo(file)
+			mr.ParseNanos += result.parseNanos
+			ls.ParseNanos += result.parseNanos
+			mr.ExtractNanos += result.extractNanos
+			ls.ExtractNanos += result.extractNanos
+			if result.err != nil {
+				recordModeError(mr, ls, file, result.err)
+				break
+			}
+			mr.Imports += len(result.refs)
+			ls.Imports += len(result.refs)
+			output[file.RelPath] = result.refs
 		case modeGoTreeExtract:
 			parseStart := time.Now()
 			refs, err := parseWithGoTree(file)
@@ -406,6 +430,13 @@ func recordModeError(mr *modeReport, ls *languageStats, file replayFile, err err
 	}
 }
 
+type cgoExtractResult struct {
+	refs         []gotreesitter.ImportRef
+	parseNanos   int64
+	extractNanos int64
+	err          error
+}
+
 func parseWithGoTree(file replayFile) ([]gotreesitter.ImportRef, error) {
 	lang := languageForName(file.Language)
 	if lang == nil {
@@ -446,6 +477,32 @@ func parseWithCGo(file replayFile) error {
 	return nil
 }
 
+func parseAndExtractWithCGo(file replayFile) cgoExtractResult {
+	parser, err := newCGoParser(file.Language)
+	if err != nil {
+		return cgoExtractResult{err: err}
+	}
+	defer parser.Close()
+	parseStart := time.Now()
+	tree := parser.Parse(nil, file.Source)
+	parseNanos := time.Since(parseStart).Nanoseconds()
+	if tree == nil {
+		return cgoExtractResult{parseNanos: parseNanos, err: fmt.Errorf("cgo parse returned nil tree")}
+	}
+	defer tree.Close()
+	root := tree.RootNode()
+	if root == nil || root.HasError() || root.EndByte() != uint32(len(file.Source)) {
+		return cgoExtractResult{
+			parseNanos: parseNanos,
+			err:        fmt.Errorf("cgo incomplete parse has_root=%v has_error=%v root_end=%d want=%d", root != nil, root != nil && root.HasError(), rootEndByte(root), len(file.Source)),
+		}
+	}
+	extractStart := time.Now()
+	refs := extractCGoImports(root, file.Language, file.Source)
+	extractNanos := time.Since(extractStart).Nanoseconds()
+	return cgoExtractResult{refs: refs, parseNanos: parseNanos, extractNanos: extractNanos}
+}
+
 func newCGoParser(lang string) (*sitter.Parser, error) {
 	parser := sitter.NewParser()
 	switch lang {
@@ -467,6 +524,247 @@ func rootEndByte(root *sitter.Node) uint32 {
 		return 0
 	}
 	return root.EndByte()
+}
+
+func extractCGoImports(root *sitter.Node, langName string, source []byte) []gotreesitter.ImportRef {
+	lang := languageForName(langName)
+	if root == nil || lang == nil {
+		return nil
+	}
+	var refs []gotreesitter.ImportRef
+	walkCGoImportTree(root, func(n *sitter.Node) bool {
+		switch langName {
+		case "go":
+			return extractCGoGoImportNode(n, source, &refs)
+		case "java":
+			return extractCGoJavaImportNode(n, source, &refs)
+		case "python":
+			return extractCGoPythonImportNode(n, lang, source, &refs)
+		default:
+			return true
+		}
+	})
+	return refs
+}
+
+func walkCGoImportTree(n *sitter.Node, visit func(*sitter.Node) bool) {
+	if n == nil {
+		return
+	}
+	if !visit(n) {
+		return
+	}
+	for i := 0; i < int(n.ChildCount()); i++ {
+		walkCGoImportTree(n.Child(i), visit)
+	}
+}
+
+func extractCGoGoImportNode(n *sitter.Node, source []byte, refs *[]gotreesitter.ImportRef) bool {
+	switch n.Type() {
+	case "package_clause":
+		if name := firstCGoDescendantText(n, source, "package_identifier", "identifier"); name != "" {
+			*refs = append(*refs, gotreesitter.ImportRef{
+				Lang:      "go",
+				Kind:      "package",
+				Name:      name,
+				StartByte: n.StartByte(),
+				EndByte:   n.EndByte(),
+			})
+		}
+		return false
+	case "import_declaration":
+		specs := collectCGoDescendantsByType(n, "import_spec")
+		if len(specs) == 0 {
+			specs = []*sitter.Node{n}
+		}
+		for _, spec := range specs {
+			pathNode := firstCGoDescendantByType(spec, "interpreted_string_literal", "raw_string_literal")
+			if pathNode == nil {
+				continue
+			}
+			path := importStringLiteralText(pathNode.Content(source))
+			if path == "" {
+				continue
+			}
+			*refs = append(*refs, gotreesitter.ImportRef{
+				Lang:      "go",
+				Kind:      "import",
+				Path:      path,
+				Name:      lastDottedName(path),
+				Alias:     cgoGoImportAlias(spec, pathNode, source),
+				StartByte: spec.StartByte(),
+				EndByte:   spec.EndByte(),
+			})
+		}
+		return false
+	}
+	return true
+}
+
+func cgoGoImportAlias(spec, pathNode *sitter.Node, source []byte) string {
+	for i := 0; i < int(spec.ChildCount()); i++ {
+		child := spec.Child(i)
+		if child == nil || child.StartByte() >= pathNode.StartByte() {
+			break
+		}
+		switch child.Type() {
+		case "package_identifier", "identifier":
+			return child.Content(source)
+		}
+		text := strings.TrimSpace(child.Content(source))
+		if text == "." || text == "_" {
+			return text
+		}
+	}
+	return ""
+}
+
+func extractCGoJavaImportNode(n *sitter.Node, source []byte, refs *[]gotreesitter.ImportRef) bool {
+	switch n.Type() {
+	case "package_declaration":
+		text := strings.TrimSpace(n.Content(source))
+		text = strings.TrimPrefix(text, "package")
+		text = strings.TrimSuffix(strings.TrimSpace(text), ";")
+		if text != "" {
+			*refs = append(*refs, gotreesitter.ImportRef{
+				Lang:      "java",
+				Kind:      "package",
+				Path:      text,
+				Name:      lastDottedName(text),
+				StartByte: n.StartByte(),
+				EndByte:   n.EndByte(),
+			})
+		}
+		return false
+	case "import_declaration":
+		text := strings.TrimSpace(n.Content(source))
+		text = strings.TrimPrefix(text, "import")
+		text = strings.TrimSuffix(strings.TrimSpace(text), ";")
+		ref := gotreesitter.ImportRef{
+			Lang:      "java",
+			Kind:      "import",
+			StartByte: n.StartByte(),
+			EndByte:   n.EndByte(),
+		}
+		if strings.HasPrefix(text, "static ") {
+			ref.Static = true
+			text = strings.TrimSpace(strings.TrimPrefix(text, "static"))
+		}
+		if strings.HasSuffix(text, ".*") {
+			ref.Wildcard = true
+			text = strings.TrimSuffix(text, ".*")
+		}
+		ref.Path = text
+		ref.Name = lastDottedName(text)
+		*refs = append(*refs, ref)
+		return false
+	}
+	return true
+}
+
+func extractCGoPythonImportNode(n *sitter.Node, lang *gotreesitter.Language, source []byte, refs *[]gotreesitter.ImportRef) bool {
+	switch n.Type() {
+	case "import_statement", "import_from_statement", "future_import_statement":
+		start := n.StartByte()
+		result := gotreesitter.ExtractImportsFromSourceWithReport(lang, []byte(n.Content(source)))
+		for _, ref := range result.Imports {
+			ref.StartByte += start
+			ref.EndByte += start
+			*refs = append(*refs, ref)
+		}
+		return false
+	}
+	return true
+}
+
+func firstCGoDescendantText(n *sitter.Node, source []byte, types ...string) string {
+	if child := firstCGoDescendantByType(n, types...); child != nil {
+		return child.Content(source)
+	}
+	return ""
+}
+
+func firstCGoDescendantByType(n *sitter.Node, types ...string) *sitter.Node {
+	if n == nil {
+		return nil
+	}
+	typ := n.Type()
+	for _, want := range types {
+		if typ == want {
+			return n
+		}
+	}
+	for i := 0; i < int(n.ChildCount()); i++ {
+		if found := firstCGoDescendantByType(n.Child(i), types...); found != nil {
+			return found
+		}
+	}
+	return nil
+}
+
+func collectCGoDescendantsByType(n *sitter.Node, typ string) []*sitter.Node {
+	var out []*sitter.Node
+	var walk func(*sitter.Node)
+	walk = func(cur *sitter.Node) {
+		if cur == nil {
+			return
+		}
+		if cur.Type() == typ {
+			out = append(out, cur)
+			return
+		}
+		for i := 0; i < int(cur.ChildCount()); i++ {
+			walk(cur.Child(i))
+		}
+	}
+	walk(n)
+	return out
+}
+
+func importStringLiteralText(text string) string {
+	value, ok := importStringLiteralValue(text)
+	if ok {
+		return value
+	}
+	return strings.Trim(strings.TrimSpace(text), "`\"'")
+}
+
+func importStringLiteralValue(text string) (string, bool) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return "", false
+	}
+	if unquoted, err := strconv.Unquote(text); err == nil {
+		return unquoted, true
+	}
+	if len(text) >= 2 && text[0] == '\'' && text[len(text)-1] == '\'' {
+		var b strings.Builder
+		for s := text[1 : len(text)-1]; len(s) > 0; {
+			r, _, tail, err := strconv.UnquoteChar(s, '\'')
+			if err != nil {
+				return "", false
+			}
+			b.WriteRune(r)
+			s = tail
+		}
+		return b.String(), true
+	}
+	return "", false
+}
+
+func lastDottedName(path string) string {
+	path = strings.TrimSpace(path)
+	path = strings.TrimSuffix(path, ".*")
+	if path == "" {
+		return ""
+	}
+	if idx := strings.LastIndex(path, "/"); idx >= 0 && idx+1 < len(path) {
+		path = path[idx+1:]
+	}
+	if idx := strings.LastIndex(path, "."); idx >= 0 && idx+1 < len(path) {
+		return path[idx+1:]
+	}
+	return path
 }
 
 func languageForName(name string) *gotreesitter.Language {
@@ -544,7 +842,7 @@ func importRefKey(ref gotreesitter.ImportRef) string {
 		ref.Lang, ref.Kind, ref.Path, ref.From, ref.Name, ref.Alias, ref.Static, ref.Wildcard, ref.Relative)
 }
 
-func writeReplayOutputs(dir string, runs map[string]modeRun, diff *outputDiffReport) error {
+func writeReplayOutputs(dir string, runs map[string]modeRun, diffs []*outputDiffReport) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
@@ -562,7 +860,20 @@ func writeReplayOutputs(dir string, runs map[string]modeRun, diff *outputDiffRep
 			return err
 		}
 	}
-	if diff != nil {
+	for _, diff := range diffs {
+		var buf bytes.Buffer
+		fmt.Fprintf(&buf, "base=%s compare=%s equal=%t missing=%d extra=%d\n", diff.BaseMode, diff.CompareMode, diff.Equal, diff.MissingLines, diff.ExtraLines)
+		for _, line := range diff.Sample {
+			buf.WriteString(line)
+			buf.WriteByte('\n')
+		}
+		name := diff.BaseMode + "_vs_" + diff.CompareMode + ".BUILD.imports.diff"
+		if err := os.WriteFile(filepath.Join(dir, name), buf.Bytes(), 0o644); err != nil {
+			return err
+		}
+	}
+	if len(diffs) == 1 {
+		diff := diffs[0]
 		var buf bytes.Buffer
 		fmt.Fprintf(&buf, "base=%s compare=%s equal=%t missing=%d extra=%d\n", diff.BaseMode, diff.CompareMode, diff.Equal, diff.MissingLines, diff.ExtraLines)
 		for _, line := range diff.Sample {
@@ -606,8 +917,7 @@ func printSummary(report replayReport) {
 			time.Duration(mr.ExtractNanos),
 		)
 	}
-	if report.OutputDiff != nil {
-		diff := report.OutputDiff
+	for _, diff := range report.OutputDiffs {
 		fmt.Printf("output diff %s vs %s: equal=%t missing=%d extra=%d\n", diff.BaseMode, diff.CompareMode, diff.Equal, diff.MissingLines, diff.ExtraLines)
 		for _, line := range diff.Sample {
 			fmt.Println(line)
