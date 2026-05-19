@@ -134,6 +134,22 @@ type nodeArena struct {
 	reduceChildPointersScratchGeneral   uint64
 	reduceChildSlicesScratchNoAlias     uint64
 	reduceChildPointersScratchNoAlias   uint64
+	collapseRawUnaryAttempts            uint64
+	collapseRawUnarySuccesses           uint64
+	collapseRawUnaryMissShape           uint64
+	collapseRawUnaryMissGrammar         uint64
+	collapseRawUnaryMissChild           uint64
+	collapseRawUnaryMissRule            uint64
+	collapseUnaryAttempts               uint64
+	collapseUnarySuccesses              uint64
+	collapseUnaryMissShape              uint64
+	collapseUnaryMissGrammar            uint64
+	collapseUnaryMissFielded            uint64
+	collapseUnaryMissChild              uint64
+	collapseUnaryMissRule               uint64
+	collapseRuleSameSymbol              uint64
+	collapseRuleInvisibleWrapper        uint64
+	collapseRuleNamedLeafAlias          uint64
 	noTreeReduceNodesConstructed        uint64
 	noTreeLeafNodesConstructed          uint64
 	noTreePlaceholderNodesConstructed   uint64
@@ -522,6 +538,22 @@ func (a *nodeArena) reset() {
 	a.reduceChildPointersScratchGeneral = 0
 	a.reduceChildSlicesScratchNoAlias = 0
 	a.reduceChildPointersScratchNoAlias = 0
+	a.collapseRawUnaryAttempts = 0
+	a.collapseRawUnarySuccesses = 0
+	a.collapseRawUnaryMissShape = 0
+	a.collapseRawUnaryMissGrammar = 0
+	a.collapseRawUnaryMissChild = 0
+	a.collapseRawUnaryMissRule = 0
+	a.collapseUnaryAttempts = 0
+	a.collapseUnarySuccesses = 0
+	a.collapseUnaryMissShape = 0
+	a.collapseUnaryMissGrammar = 0
+	a.collapseUnaryMissFielded = 0
+	a.collapseUnaryMissChild = 0
+	a.collapseUnaryMissRule = 0
+	a.collapseRuleSameSymbol = 0
+	a.collapseRuleInvisibleWrapper = 0
+	a.collapseRuleNamedLeafAlias = 0
 	a.noTreeReduceNodesConstructed = 0
 	a.noTreeLeafNodesConstructed = 0
 	a.noTreePlaceholderNodesConstructed = 0
@@ -1052,6 +1084,22 @@ func (a *nodeArena) collectArenaBreakdown() *ArenaBreakdown {
 		ReduceChildPointersScratchGeneral: a.reduceChildPointersScratchGeneral,
 		ReduceChildSlicesScratchNoAlias:   a.reduceChildSlicesScratchNoAlias,
 		ReduceChildPointersScratchNoAlias: a.reduceChildPointersScratchNoAlias,
+		CollapseRawUnaryAttempts:          a.collapseRawUnaryAttempts,
+		CollapseRawUnarySuccesses:         a.collapseRawUnarySuccesses,
+		CollapseRawUnaryMissShape:         a.collapseRawUnaryMissShape,
+		CollapseRawUnaryMissGrammar:       a.collapseRawUnaryMissGrammar,
+		CollapseRawUnaryMissChild:         a.collapseRawUnaryMissChild,
+		CollapseRawUnaryMissRule:          a.collapseRawUnaryMissRule,
+		CollapseUnaryAttempts:             a.collapseUnaryAttempts,
+		CollapseUnarySuccesses:            a.collapseUnarySuccesses,
+		CollapseUnaryMissShape:            a.collapseUnaryMissShape,
+		CollapseUnaryMissGrammar:          a.collapseUnaryMissGrammar,
+		CollapseUnaryMissFielded:          a.collapseUnaryMissFielded,
+		CollapseUnaryMissChild:            a.collapseUnaryMissChild,
+		CollapseUnaryMissRule:             a.collapseUnaryMissRule,
+		CollapseRuleSameSymbol:            a.collapseRuleSameSymbol,
+		CollapseRuleInvisibleWrapper:      a.collapseRuleInvisibleWrapper,
+		CollapseRuleNamedLeafAlias:        a.collapseRuleNamedLeafAlias,
 		NoTreeReduceNodesConstructed:      a.noTreeReduceNodesConstructed,
 		NoTreeLeafNodesConstructed:        a.noTreeLeafNodesConstructed,
 		NoTreePlaceholderNodesConstructed: a.noTreePlaceholderNodesConstructed,

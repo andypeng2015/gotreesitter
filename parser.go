@@ -1459,6 +1459,10 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		parseRuntime.ScratchBytesAllocated = scratch.allocatedBytes()
 		parseRuntime.EntryScratchBytesAllocated = scratch.entries.allocatedBytes
 		parseRuntime.GSSBytesAllocated = scratch.gss.allocatedBytes
+		parseRuntime.TransientChildSlicesAllocated = scratch.transientChildren.slicesAllocated
+		parseRuntime.TransientChildPointersAllocated = scratch.transientChildren.pointersAllocated
+		parseRuntime.TransientChildSlicesMaterialized = scratch.transientChildren.slicesMaterialized
+		parseRuntime.TransientChildPointersMaterialized = scratch.transientChildren.pointersMaterialized
 		if arena != nil && arena.breakdownEnabled {
 			if arenaBreakdown == nil {
 				arenaBreakdown = &ArenaBreakdown{}

@@ -58,134 +58,154 @@ func (s pythonReduceChildPathStats) report(b *testing.B, tokens float64, name st
 }
 
 type pythonRuntimeBenchStats struct {
-	ops                               int
-	arenaBreakdownSamples             int
-	tokensConsumed                    uint64
-	iterations                        uint64
-	nodesAllocated                    uint64
-	parentNodesAllocated              uint64
-	parentNodesRetained               uint64
-	parentNodesDropped                uint64
-	leafNodesAllocated                uint64
-	leafNodesRetained                 uint64
-	leafNodesDropped                  uint64
-	childSlicesAllocated              uint64
-	childSlicesRetained               uint64
-	childSlicesDropped                uint64
-	childPointersAllocated            uint64
-	childPointersRetained             uint64
-	childPointersDropped              uint64
-	reduceChildFastGSS                pythonReduceChildPathStats
-	reduceChildAllVisible             pythonReduceChildPathStats
-	reduceChildNoAlias                pythonReduceChildPathStats
-	reduceChildScratchGeneral         pythonReduceChildPathStats
-	reduceChildScratchNoAlias         pythonReduceChildPathStats
-	finalNodes                        uint64
-	finalParentNodes                  uint64
-	finalLeafNodes                    uint64
-	finalFieldedParentNodes           uint64
-	finalUnfieldedParentNodes         uint64
-	finalChildSlices                  uint64
-	finalChildPointers                uint64
-	finalFieldIDElements              uint64
-	finalFieldSourceElements          uint64
-	gssNodesAllocated                 uint64
-	gssNodesRetained                  uint64
-	gssNodesDropped                   uint64
-	singleStackGSSNodes               uint64
-	multiStackGSSNodes                uint64
-	arenaBytesAllocated               int64
-	arenaNodeStructBytesAllocated     int64
-	arenaNoTreeNodeBytesAllocated     int64
-	arenaChildSliceBytesAllocated     int64
-	arenaFieldIDBytesAllocated        int64
-	arenaFieldSourceBytesAllocated    int64
-	scratchBytesAllocated             int64
-	entryScratchBytesAllocated        int64
-	gssBytesAllocated                 int64
-	mergeScratchBytesAllocated        int64
-	externalCheckpointRecords         uint64
-	externalCheckpointSlots           uint64
-	externalCheckpointBytes           int64
-	externalCheckpointSnapshotBytes   uint64
-	arenaNodesConstructed             uint64
-	nodeLiveCount                     uint64
-	nodeCapacityCount                 uint64
-	nodeCapacityWaste                 uint64
-	primaryNodeCapacity               uint64
-	primaryNodeUsed                   uint64
-	overflowNodeCapacity              uint64
-	overflowNodeUsed                  uint64
-	overflowNodeSlabs                 uint64
-	largestNodeSlabUsedFractionSum    float64
-	leafNodesConstructed              uint64
-	parentNodesConstructed            uint64
-	fieldedParentNodesConstructed     uint64
-	unfieldedParentNodesConstructed   uint64
-	parentConstructedChildLen0        uint64
-	parentConstructedChildLen1        uint64
-	parentConstructedChildLen2        uint64
-	parentConstructedChildLen3        uint64
-	parentConstructedChildLen4Plus    uint64
-	parentConstructedNoLinks          uint64
-	parentConstructedWithLinks        uint64
-	parentConstructedTrackErrors      uint64
-	parentConstructedFieldSources     uint64
-	parentReductionVisible            uint64
-	parentReductionInvisible          uint64
-	parentReductionVisibleFielded     uint64
-	parentReductionVisibleUnfielded   uint64
-	parentReductionInvisibleFielded   uint64
-	parentReductionInvisibleUnfielded uint64
-	parentReductionVisibleChildPtrs   uint64
-	parentReductionInvisibleChildPtrs uint64
-	parentReductionVisibleLen0        uint64
-	parentReductionVisibleLen1        uint64
-	parentReductionVisibleLen2        uint64
-	parentReductionVisibleLen3        uint64
-	parentReductionVisibleLen4Plus    uint64
-	parentReductionInvisibleLen0      uint64
-	parentReductionInvisibleLen1      uint64
-	parentReductionInvisibleLen2      uint64
-	parentReductionInvisibleLen3      uint64
-	parentReductionInvisibleLen4Plus  uint64
-	reduceChildSlicesFastGSS          uint64
-	reduceChildPointersFastGSS        uint64
-	reduceChildSlicesAllVisible       uint64
-	reduceChildPointersAllVisible     uint64
-	reduceChildSlicesNoAlias          uint64
-	reduceChildPointersNoAlias        uint64
-	reduceChildSlicesScratchGeneral   uint64
-	reduceChildPointersScratchGeneral uint64
-	reduceChildSlicesScratchNoAlias   uint64
-	reduceChildPointersScratchNoAlias uint64
-	noTreeReduceNodesConstructed      uint64
-	noTreeLeafNodesConstructed        uint64
-	noTreePlaceholderNodesConstructed uint64
-	otherNodesConstructed             uint64
-	extraNodesConstructed             uint64
-	errorSymbolNodesConstructed       uint64
-	hasErrorNodesConstructed          uint64
-	childSlicesConstructed            uint64
-	childPointersConstructed          uint64
-	childSlicesLen1                   uint64
-	childSlicesLen2                   uint64
-	childSlicesLen3                   uint64
-	childSlicesLen4Plus               uint64
-	parentChildPointersConstructed    uint64
-	parentChildrenLen0                uint64
-	parentChildrenLen1                uint64
-	parentChildrenLen2                uint64
-	parentChildrenLen3                uint64
-	parentChildrenLen4Plus            uint64
-	fieldIDElementsConstructed        uint64
-	fieldSourceElementsConstructed    uint64
-	normalizationPassesChecked        uint64
-	normalizationPassesRun            uint64
-	normalizationNodesVisited         uint64
-	normalizationNodesRewritten       uint64
-	normalizationNanos                int64
-	maxStacksSeen                     int
+	ops                                int
+	arenaBreakdownSamples              int
+	tokensConsumed                     uint64
+	iterations                         uint64
+	nodesAllocated                     uint64
+	parentNodesAllocated               uint64
+	parentNodesRetained                uint64
+	parentNodesDropped                 uint64
+	leafNodesAllocated                 uint64
+	leafNodesRetained                  uint64
+	leafNodesDropped                   uint64
+	childSlicesAllocated               uint64
+	childSlicesRetained                uint64
+	childSlicesDropped                 uint64
+	childPointersAllocated             uint64
+	childPointersRetained              uint64
+	childPointersDropped               uint64
+	reduceChildFastGSS                 pythonReduceChildPathStats
+	reduceChildAllVisible              pythonReduceChildPathStats
+	reduceChildNoAlias                 pythonReduceChildPathStats
+	reduceChildScratchGeneral          pythonReduceChildPathStats
+	reduceChildScratchNoAlias          pythonReduceChildPathStats
+	transientChildSlicesAllocated      uint64
+	transientChildPointersAllocated    uint64
+	transientChildSlicesMaterialized   uint64
+	transientChildPointersMaterialized uint64
+	finalNodes                         uint64
+	finalParentNodes                   uint64
+	finalLeafNodes                     uint64
+	finalFieldedParentNodes            uint64
+	finalUnfieldedParentNodes          uint64
+	finalChildSlices                   uint64
+	finalChildPointers                 uint64
+	finalFieldIDElements               uint64
+	finalFieldSourceElements           uint64
+	gssNodesAllocated                  uint64
+	gssNodesRetained                   uint64
+	gssNodesDropped                    uint64
+	singleStackGSSNodes                uint64
+	multiStackGSSNodes                 uint64
+	arenaBytesAllocated                int64
+	arenaNodeStructBytesAllocated      int64
+	arenaNoTreeNodeBytesAllocated      int64
+	arenaChildSliceBytesAllocated      int64
+	arenaFieldIDBytesAllocated         int64
+	arenaFieldSourceBytesAllocated     int64
+	scratchBytesAllocated              int64
+	entryScratchBytesAllocated         int64
+	gssBytesAllocated                  int64
+	mergeScratchBytesAllocated         int64
+	externalCheckpointRecords          uint64
+	externalCheckpointSlots            uint64
+	externalCheckpointBytes            int64
+	externalCheckpointSnapshotBytes    uint64
+	arenaNodesConstructed              uint64
+	nodeLiveCount                      uint64
+	nodeCapacityCount                  uint64
+	nodeCapacityWaste                  uint64
+	primaryNodeCapacity                uint64
+	primaryNodeUsed                    uint64
+	overflowNodeCapacity               uint64
+	overflowNodeUsed                   uint64
+	overflowNodeSlabs                  uint64
+	largestNodeSlabUsedFractionSum     float64
+	leafNodesConstructed               uint64
+	parentNodesConstructed             uint64
+	fieldedParentNodesConstructed      uint64
+	unfieldedParentNodesConstructed    uint64
+	parentConstructedChildLen0         uint64
+	parentConstructedChildLen1         uint64
+	parentConstructedChildLen2         uint64
+	parentConstructedChildLen3         uint64
+	parentConstructedChildLen4Plus     uint64
+	parentConstructedNoLinks           uint64
+	parentConstructedWithLinks         uint64
+	parentConstructedTrackErrors       uint64
+	parentConstructedFieldSources      uint64
+	parentReductionVisible             uint64
+	parentReductionInvisible           uint64
+	parentReductionVisibleFielded      uint64
+	parentReductionVisibleUnfielded    uint64
+	parentReductionInvisibleFielded    uint64
+	parentReductionInvisibleUnfielded  uint64
+	parentReductionVisibleChildPtrs    uint64
+	parentReductionInvisibleChildPtrs  uint64
+	parentReductionVisibleLen0         uint64
+	parentReductionVisibleLen1         uint64
+	parentReductionVisibleLen2         uint64
+	parentReductionVisibleLen3         uint64
+	parentReductionVisibleLen4Plus     uint64
+	parentReductionInvisibleLen0       uint64
+	parentReductionInvisibleLen1       uint64
+	parentReductionInvisibleLen2       uint64
+	parentReductionInvisibleLen3       uint64
+	parentReductionInvisibleLen4Plus   uint64
+	reduceChildSlicesFastGSS           uint64
+	reduceChildPointersFastGSS         uint64
+	reduceChildSlicesAllVisible        uint64
+	reduceChildPointersAllVisible      uint64
+	reduceChildSlicesNoAlias           uint64
+	reduceChildPointersNoAlias         uint64
+	reduceChildSlicesScratchGeneral    uint64
+	reduceChildPointersScratchGeneral  uint64
+	reduceChildSlicesScratchNoAlias    uint64
+	reduceChildPointersScratchNoAlias  uint64
+	collapseRawUnaryAttempts           uint64
+	collapseRawUnarySuccesses          uint64
+	collapseRawUnaryMissShape          uint64
+	collapseRawUnaryMissGrammar        uint64
+	collapseRawUnaryMissChild          uint64
+	collapseRawUnaryMissRule           uint64
+	collapseUnaryAttempts              uint64
+	collapseUnarySuccesses             uint64
+	collapseUnaryMissShape             uint64
+	collapseUnaryMissGrammar           uint64
+	collapseUnaryMissFielded           uint64
+	collapseUnaryMissChild             uint64
+	collapseUnaryMissRule              uint64
+	collapseRuleSameSymbol             uint64
+	collapseRuleInvisibleWrapper       uint64
+	collapseRuleNamedLeafAlias         uint64
+	noTreeReduceNodesConstructed       uint64
+	noTreeLeafNodesConstructed         uint64
+	noTreePlaceholderNodesConstructed  uint64
+	otherNodesConstructed              uint64
+	extraNodesConstructed              uint64
+	errorSymbolNodesConstructed        uint64
+	hasErrorNodesConstructed           uint64
+	childSlicesConstructed             uint64
+	childPointersConstructed           uint64
+	childSlicesLen1                    uint64
+	childSlicesLen2                    uint64
+	childSlicesLen3                    uint64
+	childSlicesLen4Plus                uint64
+	parentChildPointersConstructed     uint64
+	parentChildrenLen0                 uint64
+	parentChildrenLen1                 uint64
+	parentChildrenLen2                 uint64
+	parentChildrenLen3                 uint64
+	parentChildrenLen4Plus             uint64
+	fieldIDElementsConstructed         uint64
+	fieldSourceElementsConstructed     uint64
+	normalizationPassesChecked         uint64
+	normalizationPassesRun             uint64
+	normalizationNodesVisited          uint64
+	normalizationNodesRewritten        uint64
+	normalizationNanos                 int64
+	maxStacksSeen                      int
 }
 
 func (s *pythonRuntimeBenchStats) add(rt gotreesitter.ParseRuntime, breakdown gotreesitter.ArenaBreakdown, hasBreakdown bool) {
@@ -210,6 +230,10 @@ func (s *pythonRuntimeBenchStats) add(rt gotreesitter.ParseRuntime, breakdown go
 	s.reduceChildNoAlias.add(rt.ReduceChildNoAlias)
 	s.reduceChildScratchGeneral.add(rt.ReduceChildScratchGeneral)
 	s.reduceChildScratchNoAlias.add(rt.ReduceChildScratchNoAlias)
+	s.transientChildSlicesAllocated += rt.TransientChildSlicesAllocated
+	s.transientChildPointersAllocated += rt.TransientChildPointersAllocated
+	s.transientChildSlicesMaterialized += rt.TransientChildSlicesMaterialized
+	s.transientChildPointersMaterialized += rt.TransientChildPointersMaterialized
 	s.finalNodes += rt.FinalNodes
 	s.finalParentNodes += rt.FinalParentNodes
 	s.finalLeafNodes += rt.FinalLeafNodes
@@ -293,6 +317,22 @@ func (s *pythonRuntimeBenchStats) add(rt gotreesitter.ParseRuntime, breakdown go
 		s.reduceChildPointersScratchGeneral += breakdown.ReduceChildPointersScratchGeneral
 		s.reduceChildSlicesScratchNoAlias += breakdown.ReduceChildSlicesScratchNoAlias
 		s.reduceChildPointersScratchNoAlias += breakdown.ReduceChildPointersScratchNoAlias
+		s.collapseRawUnaryAttempts += breakdown.CollapseRawUnaryAttempts
+		s.collapseRawUnarySuccesses += breakdown.CollapseRawUnarySuccesses
+		s.collapseRawUnaryMissShape += breakdown.CollapseRawUnaryMissShape
+		s.collapseRawUnaryMissGrammar += breakdown.CollapseRawUnaryMissGrammar
+		s.collapseRawUnaryMissChild += breakdown.CollapseRawUnaryMissChild
+		s.collapseRawUnaryMissRule += breakdown.CollapseRawUnaryMissRule
+		s.collapseUnaryAttempts += breakdown.CollapseUnaryAttempts
+		s.collapseUnarySuccesses += breakdown.CollapseUnarySuccesses
+		s.collapseUnaryMissShape += breakdown.CollapseUnaryMissShape
+		s.collapseUnaryMissGrammar += breakdown.CollapseUnaryMissGrammar
+		s.collapseUnaryMissFielded += breakdown.CollapseUnaryMissFielded
+		s.collapseUnaryMissChild += breakdown.CollapseUnaryMissChild
+		s.collapseUnaryMissRule += breakdown.CollapseUnaryMissRule
+		s.collapseRuleSameSymbol += breakdown.CollapseRuleSameSymbol
+		s.collapseRuleInvisibleWrapper += breakdown.CollapseRuleInvisibleWrapper
+		s.collapseRuleNamedLeafAlias += breakdown.CollapseRuleNamedLeafAlias
 		s.noTreePlaceholderNodesConstructed += breakdown.NoTreePlaceholderNodesConstructed
 		s.otherNodesConstructed += breakdown.OtherNodesConstructed
 		s.extraNodesConstructed += breakdown.ExtraNodesConstructed
@@ -388,6 +428,12 @@ func (s pythonRuntimeBenchStats) report(b *testing.B) {
 		s.reduceChildScratchGeneral.report(b, tokens, "scratch_general")
 		s.reduceChildScratchNoAlias.report(b, tokens, "scratch_no_alias")
 	}
+	if s.transientChildSlicesAllocated != 0 || s.transientChildSlicesMaterialized != 0 {
+		b.ReportMetric(float64(s.transientChildSlicesAllocated)/tokens, "transient_child_slices_alloc/token")
+		b.ReportMetric(float64(s.transientChildPointersAllocated)/tokens, "transient_child_ptrs_alloc/token")
+		b.ReportMetric(float64(s.transientChildSlicesMaterialized)/tokens, "transient_child_slices_materialized/token")
+		b.ReportMetric(float64(s.transientChildPointersMaterialized)/tokens, "transient_child_ptrs_materialized/token")
+	}
 	if s.gssNodesRetained != 0 || s.gssNodesDropped != 0 {
 		b.ReportMetric(float64(s.gssNodesRetained)/tokens, "gss_retained/token")
 		b.ReportMetric(float64(s.gssNodesDropped)/tokens, "gss_dropped/token")
@@ -449,6 +495,22 @@ func (s pythonRuntimeBenchStats) report(b *testing.B) {
 		b.ReportMetric(float64(s.reduceChildPointersScratchGeneral)/tokens, "reduce_child_ptrs_scratch_general/token")
 		b.ReportMetric(float64(s.reduceChildSlicesScratchNoAlias)/tokens, "reduce_child_slices_scratch_no_alias/token")
 		b.ReportMetric(float64(s.reduceChildPointersScratchNoAlias)/tokens, "reduce_child_ptrs_scratch_no_alias/token")
+		b.ReportMetric(float64(s.collapseRawUnaryAttempts)/tokens, "collapse_raw_attempts/token")
+		b.ReportMetric(float64(s.collapseRawUnarySuccesses)/tokens, "collapse_raw_success/token")
+		b.ReportMetric(float64(s.collapseRawUnaryMissShape)/tokens, "collapse_raw_miss_shape/token")
+		b.ReportMetric(float64(s.collapseRawUnaryMissGrammar)/tokens, "collapse_raw_miss_grammar/token")
+		b.ReportMetric(float64(s.collapseRawUnaryMissChild)/tokens, "collapse_raw_miss_child/token")
+		b.ReportMetric(float64(s.collapseRawUnaryMissRule)/tokens, "collapse_raw_miss_rule/token")
+		b.ReportMetric(float64(s.collapseUnaryAttempts)/tokens, "collapse_post_attempts/token")
+		b.ReportMetric(float64(s.collapseUnarySuccesses)/tokens, "collapse_post_success/token")
+		b.ReportMetric(float64(s.collapseUnaryMissShape)/tokens, "collapse_post_miss_shape/token")
+		b.ReportMetric(float64(s.collapseUnaryMissGrammar)/tokens, "collapse_post_miss_grammar/token")
+		b.ReportMetric(float64(s.collapseUnaryMissFielded)/tokens, "collapse_post_miss_fielded/token")
+		b.ReportMetric(float64(s.collapseUnaryMissChild)/tokens, "collapse_post_miss_child/token")
+		b.ReportMetric(float64(s.collapseUnaryMissRule)/tokens, "collapse_post_miss_rule/token")
+		b.ReportMetric(float64(s.collapseRuleSameSymbol)/tokens, "collapse_rule_same_symbol/token")
+		b.ReportMetric(float64(s.collapseRuleInvisibleWrapper)/tokens, "collapse_rule_invisible_wrapper/token")
+		b.ReportMetric(float64(s.collapseRuleNamedLeafAlias)/tokens, "collapse_rule_named_leaf_alias/token")
 		b.ReportMetric(float64(s.noTreePlaceholderNodesConstructed)/tokens, "notree_placeholder_nodes/token")
 		b.ReportMetric(float64(s.otherNodesConstructed)/tokens, "other_nodes/token")
 		b.ReportMetric(float64(s.extraNodesConstructed)/tokens, "extra_nodes/token")

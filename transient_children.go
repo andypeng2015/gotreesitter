@@ -3,10 +3,14 @@ package gotreesitter
 import "unsafe"
 
 type transientChildScratch struct {
-	slabs          []childSliceSlab
-	slabCursor     int
-	allocatedBytes int64
-	seen           map[*Node]struct{}
+	slabs                []childSliceSlab
+	slabCursor           int
+	allocatedBytes       int64
+	slicesAllocated      uint64
+	pointersAllocated    uint64
+	slicesMaterialized   uint64
+	pointersMaterialized uint64
+	seen                 map[*Node]struct{}
 }
 
 func (s *transientChildScratch) alloc(n int) []*Node {
@@ -16,6 +20,8 @@ func (s *transientChildScratch) alloc(n int) []*Node {
 	if s == nil {
 		return make([]*Node, n)
 	}
+	s.slicesAllocated++
+	s.pointersAllocated += uint64(n)
 	if len(s.slabs) == 0 {
 		capacity := max(defaultChildSliceCap(arenaClassFull), n)
 		s.slabs = append(s.slabs, childSliceSlab{data: make([]*Node, capacity)})
@@ -97,6 +103,8 @@ func (s *transientChildScratch) materializeNode(root *Node, arena *nodeArena, sc
 			copy(out, children)
 			n.children = out
 			children = out
+			s.slicesMaterialized++
+			s.pointersMaterialized += uint64(len(children))
 		}
 		for i := len(children) - 1; i >= 0; i-- {
 			stack = append(stack, children[i])
@@ -119,6 +127,10 @@ func (s *transientChildScratch) reset() {
 		}
 	}
 	s.slabCursor = 0
+	s.slicesAllocated = 0
+	s.pointersAllocated = 0
+	s.slicesMaterialized = 0
+	s.pointersMaterialized = 0
 	s.clearSeen()
 }
 

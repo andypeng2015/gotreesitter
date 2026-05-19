@@ -1998,6 +1998,26 @@ func (p *Parser) recordReductionParentConstructed(arena *nodeArena, parent *Node
 	}
 }
 
+type collapseUnaryRule uint8
+
+const (
+	collapseUnaryRuleNone collapseUnaryRule = iota
+	collapseUnaryRuleSameSymbol
+	collapseUnaryRuleInvisibleWrapper
+	collapseUnaryRuleNamedLeafAlias
+)
+
+func recordCollapseRule(arena *nodeArena, rule collapseUnaryRule) {
+	switch rule {
+	case collapseUnaryRuleSameSymbol:
+		arena.collapseRuleSameSymbol++
+	case collapseUnaryRuleInvisibleWrapper:
+		arena.collapseRuleInvisibleWrapper++
+	case collapseUnaryRuleNamedLeafAlias:
+		arena.collapseRuleNamedLeafAlias++
+	}
+}
+
 func (p *Parser) applyReduceAction(s *glrStack, act ParseAction, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, entries []stackEntry, deferParentLinks bool, trackChildErrors bool) {
 	childCount := int(act.ChildCount)
 	var (
@@ -2215,59 +2235,136 @@ func (p *Parser) pushCollapsedUnaryReduceNode(s *glrStack, act ParseAction, tok 
 }
 
 func (p *Parser) collapsibleRawUnarySelfReduction(act ParseAction, tok Token, arena *nodeArena, entries []stackEntry, start, reducedEnd int) *Node {
-	if p == nil || arena == nil || tok.NoLookahead {
+	if p == nil || arena == nil {
+		return nil
+	}
+	diag := arena.breakdownEnabled
+	if diag {
+		arena.collapseRawUnaryAttempts++
+	}
+	if tok.NoLookahead {
+		if diag {
+			arena.collapseRawUnaryMissShape++
+		}
 		return nil
 	}
 	if reducedEnd-start != 1 || start < 0 || reducedEnd > len(entries) {
+		if diag {
+			arena.collapseRawUnaryMissShape++
+		}
 		return nil
 	}
 	if p.reduceProductionHasFields(act.ProductionID) || len(p.reduceAliasSequence(act.ProductionID)) != 0 {
+		if diag {
+			arena.collapseRawUnaryMissGrammar++
+		}
 		return nil
 	}
 	child := entries[start].node
 	if child == nil || child.ownerArena != arena || child.parent != nil {
+		if diag {
+			arena.collapseRawUnaryMissChild++
+		}
 		return nil
 	}
 	if !p.isVisibleSymbol(child.symbol) {
+		if diag {
+			arena.collapseRawUnaryMissChild++
+		}
 		return nil
 	}
-	return p.collapseUnaryChildForReduction(act, arena, child)
+	collapsed, rule := p.collapseUnaryChildForReductionWithRule(act, arena, child)
+	if collapsed == nil {
+		if diag {
+			arena.collapseRawUnaryMissRule++
+		}
+		return nil
+	}
+	if diag {
+		arena.collapseRawUnarySuccesses++
+		recordCollapseRule(arena, rule)
+	}
+	return collapsed
 }
 
 func (p *Parser) collapsibleUnarySelfReduction(act ParseAction, tok Token, arena *nodeArena, entries []stackEntry, start, reducedEnd int, children []*Node, fieldIDs []FieldID) *Node {
-	if p == nil || arena == nil || tok.NoLookahead {
+	if p == nil || arena == nil {
 		return nil
 	}
-	if reducedEnd-start != 1 || len(children) != 1 || len(fieldIDs) != 0 {
+	diag := arena.breakdownEnabled
+	if diag {
+		arena.collapseUnaryAttempts++
+	}
+	if tok.NoLookahead {
+		if diag {
+			arena.collapseUnaryMissShape++
+		}
+		return nil
+	}
+	if reducedEnd-start != 1 || len(children) != 1 {
+		if diag {
+			arena.collapseUnaryMissShape++
+		}
+		return nil
+	}
+	if len(fieldIDs) != 0 {
+		if diag {
+			arena.collapseUnaryMissFielded++
+		}
 		return nil
 	}
 	child := children[0]
 	if child == nil || child.ownerArena != arena || child.parent != nil {
+		if diag {
+			arena.collapseUnaryMissChild++
+		}
 		return nil
 	}
 	if start < 0 || start >= len(entries) || entries[start].node != child {
+		if diag {
+			arena.collapseUnaryMissChild++
+		}
 		return nil
 	}
 	if p.reduceProductionHasFields(act.ProductionID) || len(p.reduceAliasSequence(act.ProductionID)) != 0 {
+		if diag {
+			arena.collapseUnaryMissGrammar++
+		}
 		return nil
 	}
-	return p.collapseUnaryChildForReduction(act, arena, child)
+	collapsed, rule := p.collapseUnaryChildForReductionWithRule(act, arena, child)
+	if collapsed == nil {
+		if diag {
+			arena.collapseUnaryMissRule++
+		}
+		return nil
+	}
+	if diag {
+		arena.collapseUnarySuccesses++
+		recordCollapseRule(arena, rule)
+	}
+	return collapsed
 }
 
 func (p *Parser) collapseUnaryChildForReduction(act ParseAction, arena *nodeArena, child *Node) *Node {
+	collapsed, _ := p.collapseUnaryChildForReductionWithRule(act, arena, child)
+	return collapsed
+}
+
+func (p *Parser) collapseUnaryChildForReductionWithRule(act ParseAction, arena *nodeArena, child *Node) (*Node, collapseUnaryRule) {
 	if child.symbol != act.Symbol {
 		if p.canCollapseInvisibleUnaryWrapper(act.Symbol, child) {
-			return child
+			return child, collapseUnaryRuleInvisibleWrapper
 		}
 		if child.ChildCount() != 0 || !p.canCollapseNamedLeafWrapper(act.Symbol, child.symbol) {
-			return nil
+			return nil, collapseUnaryRuleNone
 		}
 		if !p.isSingleTokenWrapperSymbol(act.Symbol) && !p.sameSymbolName(act.Symbol, child.symbol) {
-			return nil
+			return nil, collapseUnaryRuleNone
 		}
-		return aliasedNodeInArena(arena, p.language, child, act.Symbol)
+		return aliasedNodeInArena(arena, p.language, child, act.Symbol), collapseUnaryRuleNamedLeafAlias
 	}
-	return child
+	return child, collapseUnaryRuleSameSymbol
 }
 
 func (p *Parser) canCollapseInvisibleUnaryWrapper(parentSym Symbol, child *Node) bool {
