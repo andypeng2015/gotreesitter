@@ -751,3 +751,25 @@ func TestParseFullArenaHintHeadroomIsBoundedForLargeSources(t *testing.T) {
 		t.Fatalf("parseFullArenaHintHeadroom(%d) = %d, want %d", used, got, want)
 	}
 }
+
+func TestParseShouldSkipInvisibleFullLeafCheckpointsIsNarrow(t *testing.T) {
+	parser := &Parser{
+		language:                           &Language{Name: "python"},
+		noResultCompatibilityBenchmarkOnly: true,
+	}
+	largeSource := make([]byte, 256*1024)
+	if !parseShouldSkipInvisibleFullLeafCheckpoints(parser, largeSource, nil, nil, arenaClassFull) {
+		t.Fatal("parseShouldSkipInvisibleFullLeafCheckpoints = false, want true for large Python no-compat full parse")
+	}
+	parser.noResultCompatibilityBenchmarkOnly = false
+	if parseShouldSkipInvisibleFullLeafCheckpoints(parser, largeSource, nil, nil, arenaClassFull) {
+		t.Fatal("parseShouldSkipInvisibleFullLeafCheckpoints = true for normal parse")
+	}
+	parser.noResultCompatibilityBenchmarkOnly = true
+	if parseShouldSkipInvisibleFullLeafCheckpoints(parser, largeSource[:len(largeSource)-1], nil, nil, arenaClassFull) {
+		t.Fatal("parseShouldSkipInvisibleFullLeafCheckpoints = true for sub-threshold source")
+	}
+	if parseShouldSkipInvisibleFullLeafCheckpoints(parser, largeSource, nil, nil, arenaClassIncremental) {
+		t.Fatal("parseShouldSkipInvisibleFullLeafCheckpoints = true for incremental arena")
+	}
+}

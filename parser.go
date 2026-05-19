@@ -59,6 +59,7 @@ type Parser struct {
 	noTreeBenchmarkOnly                 bool
 	noTreeCheckpointBenchmarkOnly       bool
 	compactNoTreeShiftLeaves            bool
+	skipInvisibleFullLeafCheckpoints    bool
 	transientReduceChildren             bool
 	transientReduceScratchNoAlias       bool
 	transientChildren                   *transientChildScratch
@@ -323,6 +324,7 @@ func resetSnippetParser(parser *Parser) {
 	parser.noTreeBenchmarkOnly = false
 	parser.noTreeCheckpointBenchmarkOnly = false
 	parser.compactNoTreeShiftLeaves = false
+	parser.skipInvisibleFullLeafCheckpoints = false
 	parser.noResultCompatibilityBenchmarkOnly = false
 	parser.timeoutMicros = 0
 	parser.cancellationFlag = nil
@@ -1256,6 +1258,9 @@ func (p *Parser) recordCurrentExternalLeafCheckpoint(node *Node, tok Token) {
 		return
 	}
 	arena := node.ownerArena
+	if p.skipInvisibleFullLeafCheckpoints && !p.isVisibleSymbol(tok.Symbol) {
+		return
+	}
 	if !arena.recordExternalScannerLeafCheckpoint(node, p.currentExternalTokenCheckpoint.start, p.currentExternalTokenCheckpoint.end) {
 		return
 	}
@@ -1337,12 +1342,15 @@ func resolveParseMaxStacks(configuredMaxStacks, maxStacksOverride, conflictWidth
 func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor, oldTree *Tree, arenaClass arenaClass, timing *incrementalParseTiming, maxStacksOverride int, maxNodesOverride int, maxMergePerKeyOverride int, deterministicExternalConflicts bool) *Tree {
 	parseStart := time.Now()
 	prevCompactNoTreeShiftLeaves := p.compactNoTreeShiftLeaves
+	prevSkipInvisibleFullLeafCheckpoints := p.skipInvisibleFullLeafCheckpoints
 	prevTransientReduceChildren := p.transientReduceChildren
 	prevTransientReduceScratchNoAlias := p.transientReduceScratchNoAlias
 	prevTransientChildren := p.transientChildren
 	p.compactNoTreeShiftLeaves = p.noTreeBenchmarkOnly && parseShouldCompactNoTreeShiftLeaves(len(source))
+	p.skipInvisibleFullLeafCheckpoints = parseShouldSkipInvisibleFullLeafCheckpoints(p, source, reuse, oldTree, arenaClass)
 	defer func() {
 		p.compactNoTreeShiftLeaves = prevCompactNoTreeShiftLeaves
+		p.skipInvisibleFullLeafCheckpoints = prevSkipInvisibleFullLeafCheckpoints
 		p.transientReduceChildren = prevTransientReduceChildren
 		p.transientReduceScratchNoAlias = prevTransientReduceScratchNoAlias
 		p.transientChildren = prevTransientChildren

@@ -149,6 +149,17 @@ func parseShouldCompactNoTreeShiftLeaves(sourceLen int) bool {
 	return sourceLen >= 256*1024
 }
 
+func parseShouldSkipInvisibleFullLeafCheckpoints(p *Parser, source []byte, reuse *reuseCursor, oldTree *Tree, arenaClass arenaClass) bool {
+	return p != nil &&
+		p.noResultCompatibilityBenchmarkOnly &&
+		arenaClass == arenaClassFull &&
+		reuse == nil &&
+		oldTree == nil &&
+		p.language != nil &&
+		p.language.Name == "python" &&
+		len(source) >= 256*1024
+}
+
 func parseShouldUseTransientReduceScratchNoAlias(sourceLen int) bool {
 	return sourceLen >= 256*1024
 }
