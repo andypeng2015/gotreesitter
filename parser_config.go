@@ -83,11 +83,63 @@ func parseMaxMergePerKeyEnvConfigured() bool {
 }
 
 func parseTransientReduceChildrenEnabled() bool {
-	raw := strings.TrimSpace(os.Getenv("GOT_PYTHON_TRANSIENT_REDUCE_CHILDREN"))
+	return parseTransientReduceEnabled("GOT_TRANSIENT_REDUCE_CHILDREN")
+}
+
+func parseTransientReduceParentsEnabled() bool {
+	return parseTransientReduceEnabled("GOT_TRANSIENT_REDUCE_PARENTS")
+}
+
+func parseTransientReduceEnabled(envName string) bool {
+	raw := strings.TrimSpace(os.Getenv(envName))
+	if raw == "" {
+		raw = strings.TrimSpace(os.Getenv("GOT_PYTHON_TRANSIENT_REDUCE_CHILDREN"))
+	}
 	if raw == "" {
 		return true
 	}
 	return raw != "0" && !strings.EqualFold(raw, "false")
+}
+
+func parseTransientReduceChildrenLanguageEnabled(lang *Language) bool {
+	return parseTransientReduceLanguageEnabled(lang, "GOT_TRANSIENT_REDUCE_CHILDREN_LANGS")
+}
+
+func parseTransientReduceParentsLanguageEnabled(lang *Language) bool {
+	return parseTransientReduceLanguageEnabled(lang, "GOT_TRANSIENT_REDUCE_PARENTS_LANGS")
+}
+
+func parseTransientReduceLanguageEnabled(lang *Language, envName string) bool {
+	if lang == nil {
+		return false
+	}
+	raw := strings.TrimSpace(os.Getenv(envName))
+	if raw == "" {
+		raw = strings.TrimSpace(os.Getenv("GOT_TRANSIENT_REDUCE_LANGS"))
+	}
+	if raw == "" {
+		return strings.EqualFold(lang.Name, "python")
+	}
+	return transientReduceLanguageListMatches(raw, lang.Name)
+}
+
+func transientReduceLanguageListMatches(raw, name string) bool {
+	name = strings.ToLower(strings.TrimSpace(name))
+	if name == "" {
+		return false
+	}
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.ToLower(strings.TrimSpace(part))
+		switch part {
+		case "", "0", "false", "off", "none":
+			continue
+		case "1", "true", "on", "all", "*":
+			return true
+		case name:
+			return true
+		}
+	}
+	return false
 }
 
 func parseMemoryBudgetMB() int {

@@ -295,6 +295,12 @@ type javaRuntimeStats struct {
 	leafNodesAllocated        uint64
 	leafNodesRetained         uint64
 	leafNodesDroppedSameTok   uint64
+	transientChildSlicesAlloc uint64
+	transientChildPtrsAlloc   uint64
+	transientChildSlicesMat   uint64
+	transientChildPtrsMat     uint64
+	transientParentNodesAlloc uint64
+	transientParentNodesMat   uint64
 	gssNodesAllocated         uint64
 	gssNodesRetained          uint64
 	gssNodesDroppedSameTok    uint64
@@ -534,6 +540,12 @@ func (s *javaRuntimeStats) add(rt gotreesitter.ParseRuntime) {
 	s.leafNodesAllocated += rt.LeafNodesAllocated
 	s.leafNodesRetained += rt.LeafNodesRetained
 	s.leafNodesDroppedSameTok += rt.LeafNodesDroppedSameToken
+	s.transientChildSlicesAlloc += rt.TransientChildSlicesAllocated
+	s.transientChildPtrsAlloc += rt.TransientChildPointersAllocated
+	s.transientChildSlicesMat += rt.TransientChildSlicesMaterialized
+	s.transientChildPtrsMat += rt.TransientChildPointersMaterialized
+	s.transientParentNodesAlloc += rt.TransientParentNodesAllocated
+	s.transientParentNodesMat += rt.TransientParentNodesMaterialized
 	s.gssNodesAllocated += rt.GSSNodesAllocated
 	s.gssNodesRetained += rt.GSSNodesRetained
 	s.gssNodesDroppedSameTok += rt.GSSNodesDroppedSameToken
@@ -565,7 +577,7 @@ func (s *javaRuntimeStats) add(rt gotreesitter.ParseRuntime) {
 
 func (s javaRuntimeStats) summary() string {
 	return fmt.Sprintf(
-		"tokens=%d nodes=%d parent_alloc=%d parent_retained=%d parent_dropped_same_token=%d leaf_alloc=%d leaf_retained=%d leaf_dropped_same_token=%d gss_alloc=%d gss_retained=%d gss_dropped_same_token=%d single_gss=%d multi_gss=%d single_iters=%d multi_iters=%d merge_in=%d merge_out=%d merge_slots=%d global_cull_in=%d global_cull_out=%d max_stacks=%d max_arena_bytes=%d max_scratch_bytes=%d max_gss_bytes=%d max_entry_scratch_bytes=%d",
+		"tokens=%d nodes=%d parent_alloc=%d parent_retained=%d parent_dropped_same_token=%d leaf_alloc=%d leaf_retained=%d leaf_dropped_same_token=%d transient_child_slices_alloc=%d transient_child_slices_materialized=%d transient_child_ptrs_alloc=%d transient_child_ptrs_materialized=%d transient_parent_alloc=%d transient_parent_materialized=%d transient_parent_dropped=%d gss_alloc=%d gss_retained=%d gss_dropped_same_token=%d single_gss=%d multi_gss=%d single_iters=%d multi_iters=%d merge_in=%d merge_out=%d merge_slots=%d global_cull_in=%d global_cull_out=%d max_stacks=%d max_arena_bytes=%d max_scratch_bytes=%d max_gss_bytes=%d max_entry_scratch_bytes=%d",
 		s.tokensConsumed,
 		s.nodesAllocated,
 		s.parentNodesAllocated,
@@ -574,6 +586,13 @@ func (s javaRuntimeStats) summary() string {
 		s.leafNodesAllocated,
 		s.leafNodesRetained,
 		s.leafNodesDroppedSameTok,
+		s.transientChildSlicesAlloc,
+		s.transientChildSlicesMat,
+		s.transientChildPtrsAlloc,
+		s.transientChildPtrsMat,
+		s.transientParentNodesAlloc,
+		s.transientParentNodesMat,
+		s.transientParentNodesAlloc-s.transientParentNodesMat,
 		s.gssNodesAllocated,
 		s.gssNodesRetained,
 		s.gssNodesDroppedSameTok,

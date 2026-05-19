@@ -115,6 +115,30 @@ func benchmarkParseFullDFA(b *testing.B, spec dfaBenchmarkSpec) {
 			lastRuntime.NodesAllocated, p.ParentChildPointers, p.ExtraNodes, p.ErrorNodes, p.ReuseNonLeafBytes, lastRuntime.MaxStacksSeen,
 		)
 	}
+	reportTransientReduceMetrics(b, lastRuntime)
+}
+
+func reportTransientReduceMetrics(b *testing.B, rt gotreesitter.ParseRuntime) {
+	if rt.TokensConsumed == 0 {
+		return
+	}
+	if rt.TransientChildSlicesAllocated == 0 &&
+		rt.TransientChildSlicesMaterialized == 0 &&
+		rt.TransientParentNodesAllocated == 0 &&
+		rt.TransientParentNodesMaterialized == 0 {
+		return
+	}
+	tokens := float64(rt.TokensConsumed)
+	b.ReportMetric(float64(rt.TransientChildSlicesAllocated)/tokens, "transient_child_slices_alloc/token")
+	b.ReportMetric(float64(rt.TransientChildPointersAllocated)/tokens, "transient_child_ptrs_alloc/token")
+	b.ReportMetric(float64(rt.TransientChildSlicesMaterialized)/tokens, "transient_child_slices_materialized/token")
+	b.ReportMetric(float64(rt.TransientChildPointersMaterialized)/tokens, "transient_child_ptrs_materialized/token")
+	b.ReportMetric(float64(rt.TransientParentNodesAllocated)/tokens, "transient_parent_nodes_alloc/token")
+	b.ReportMetric(float64(rt.TransientParentNodesMaterialized)/tokens, "transient_parent_nodes_materialized/token")
+	if rt.TransientParentNodesAllocated >= rt.TransientParentNodesMaterialized {
+		dropped := rt.TransientParentNodesAllocated - rt.TransientParentNodesMaterialized
+		b.ReportMetric(float64(dropped)/tokens, "transient_parent_nodes_dropped/token")
+	}
 }
 
 func benchmarkParseIncrementalSingleByteEditDFA(b *testing.B, spec dfaBenchmarkSpec) {

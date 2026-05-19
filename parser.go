@@ -2392,7 +2392,7 @@ func (p *Parser) shouldUseTransientReduceChildren(source []byte, reuse *reuseCur
 	return parseTransientReduceChildrenEnabled() &&
 		p != nil &&
 		p.language != nil &&
-		p.language.Name == "python" &&
+		parseTransientReduceChildrenLanguageEnabled(p.language) &&
 		arenaClass == arenaClassFull &&
 		reuse == nil &&
 		oldTree == nil &&
@@ -2402,10 +2402,10 @@ func (p *Parser) shouldUseTransientReduceChildren(source []byte, reuse *reuseCur
 }
 
 func (p *Parser) shouldUseTransientReduceParents(source []byte, reuse *reuseCursor, oldTree *Tree, arenaClass arenaClass) bool {
-	return parseTransientReduceChildrenEnabled() &&
+	return parseTransientReduceParentsEnabled() &&
 		p != nil &&
 		p.language != nil &&
-		p.language.Name == "python" &&
+		parseTransientReduceParentsLanguageEnabled(p.language) &&
 		arenaClass == arenaClassFull &&
 		reuse == nil &&
 		oldTree == nil &&
