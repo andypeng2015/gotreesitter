@@ -1344,6 +1344,10 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	}
 	defer releaseParserScratch(scratch, deferParentLinks)
 	p.reduceScratch = &scratch.reduce
+	if p.shouldUseTransientReduceParents(source, reuse, oldTree, arenaClass) {
+		p.reduceScratch.transientParents = &scratch.transientParents
+		p.reduceScratch.transientChildren = &scratch.transientChildren
+	}
 	defer func() {
 		p.reduceScratch = nil
 	}()
@@ -1463,6 +1467,8 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		parseRuntime.TransientChildPointersAllocated = scratch.transientChildren.pointersAllocated
 		parseRuntime.TransientChildSlicesMaterialized = scratch.transientChildren.slicesMaterialized
 		parseRuntime.TransientChildPointersMaterialized = scratch.transientChildren.pointersMaterialized
+		parseRuntime.TransientParentNodesAllocated = scratch.transientParents.nodesAllocated
+		parseRuntime.TransientParentNodesMaterialized = scratch.transientParents.nodesMaterialized
 		if arena != nil && arena.breakdownEnabled {
 			if arenaBreakdown == nil {
 				arenaBreakdown = &ArenaBreakdown{}
@@ -1605,7 +1611,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		if len(stacks) == 0 {
 			captureArenaStats()
 		}
-		tree := p.buildResultFromGLR(stacks, source, arena, oldTree, &reuseState, &scratch.nodeLinks, !trackChildErrors)
+		tree := p.buildResultFromGLR(stacks, source, arena, oldTree, &reuseState, &scratch.nodeLinks, scratch.reduce.transientParents, scratch.reduce.transientChildren, !trackChildErrors)
 		return finalizeTree(tree, stopReason)
 	}
 	finalizeErrorTree := func(stopReason ParseStopReason) *Tree {
@@ -2383,6 +2389,19 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 }
 
 func (p *Parser) shouldUseTransientReduceChildren(source []byte, reuse *reuseCursor, oldTree *Tree, arenaClass arenaClass) bool {
+	return parseTransientReduceChildrenEnabled() &&
+		p != nil &&
+		p.language != nil &&
+		p.language.Name == "python" &&
+		arenaClass == arenaClassFull &&
+		reuse == nil &&
+		oldTree == nil &&
+		!p.noTreeBenchmarkOnly &&
+		!p.noTreeCheckpointBenchmarkOnly &&
+		len(source) > 0
+}
+
+func (p *Parser) shouldUseTransientReduceParents(source []byte, reuse *reuseCursor, oldTree *Tree, arenaClass arenaClass) bool {
 	return parseTransientReduceChildrenEnabled() &&
 		p != nil &&
 		p.language != nil &&

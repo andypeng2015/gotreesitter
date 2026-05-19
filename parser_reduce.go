@@ -312,7 +312,11 @@ func (p *Parser) applyAction(s *glrStack, act ParseAction, tok Token, anyReduced
 				if tmpEntries != nil {
 					tmp = *tmpEntries
 				}
-				p.applyReduceActionFromGSS(s, act, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, tmp, deferParentLinks, trackChildErrors != nil && *trackChildErrors)
+				if p != nil && p.reduceScratch != nil && p.reduceScratch.transientParents != nil {
+					p.applyReduceActionFromGSSTransientParents(s, act, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, tmp, deferParentLinks, trackChildErrors != nil && *trackChildErrors)
+				} else {
+					p.applyReduceActionFromGSS(s, act, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, tmp, deferParentLinks, trackChildErrors != nil && *trackChildErrors)
+				}
 				return
 			}
 			if s.cacheEntries {
@@ -325,7 +329,11 @@ func (p *Parser) applyAction(s *glrStack, act ParseAction, tok Token, anyReduced
 				entries, borrowed = s.entriesForRead(tmp)
 			}
 		}
-		p.applyReduceAction(s, act, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, entries, deferParentLinks, trackChildErrors != nil && *trackChildErrors)
+		if p != nil && p.reduceScratch != nil && p.reduceScratch.transientParents != nil {
+			p.applyReduceActionTransientParents(s, act, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, entries, deferParentLinks, trackChildErrors != nil && *trackChildErrors)
+		} else {
+			p.applyReduceAction(s, act, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, entries, deferParentLinks, trackChildErrors != nil && *trackChildErrors)
+		}
 		if borrowed && tmpEntries != nil {
 			*tmpEntries = entries[:0]
 		}
@@ -624,6 +632,202 @@ func (p *Parser) applyReduceActionFromGSS(s *glrStack, act ParseAction, tok Toke
 		parent.endPoint = span.endPoint
 	}
 	// Extend parent span to cover invisible children dropped by buildReduceChildren.
+	extendParentSpanToWindow(parent, windowEntries, 0, reducedEnd, p.language.SymbolMetadata, p.language.SymbolNames)
+	*nodeCount++
+
+	gotoState := p.lookupGoto(topState, act.Symbol)
+	targetState := topState
+	if gotoState != 0 {
+		targetState = gotoState
+	}
+	if tok.NoLookahead && targetState == topState {
+		parent.setExtra(true)
+	}
+	parent.preGotoState = topState
+	parent.parseState = targetState
+	p.pushStackNode(s, targetState, parent, entryScratch, gssScratch)
+	for i := reducedEnd; i < actualEnd; i++ {
+		extra := stackEntryNode(windowEntries[i])
+		if extra == nil {
+			continue
+		}
+		extra.parseState = targetState
+		nodeBumpEquivVersion(extra)
+		p.pushStackNode(s, targetState, extra, entryScratch, gssScratch)
+	}
+
+	s.score += int(act.DynamicPrecedence)
+	*anyReduced = true
+	if tmpEntries != nil {
+		*tmpEntries = windowEntries[:0]
+	}
+}
+
+func (p *Parser) tryFastVisibleReduceActionFromGSSTransientParents(s *glrStack, act ParseAction, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, deferParentLinks bool, trackChildErrors bool) bool {
+	if p == nil || s == nil || s.gss.head == nil || p.language == nil {
+		return false
+	}
+	childCount := int(act.ChildCount)
+	if childCount <= 1 || childCount > 8 {
+		return false
+	}
+	if len(p.reduceAliasSequence(act.ProductionID)) != 0 || p.reduceProductionHasFields(act.ProductionID) {
+		return false
+	}
+	if p.forceRawSpanAll || (int(act.Symbol) < len(p.forceRawSpanTable) && p.forceRawSpanTable[act.Symbol]) {
+		return false
+	}
+	parentVisible := true
+	if idx := int(act.Symbol); idx < len(p.language.SymbolMetadata) {
+		parentVisible = p.language.SymbolMetadata[act.Symbol].Visible
+	}
+	if !parentVisible {
+		return false
+	}
+
+	var childBuf [8]*Node
+	symbolMeta := p.language.SymbolMetadata
+	n := s.gss.head
+	for i := childCount - 1; i >= 0; i-- {
+		if n == nil {
+			return false
+		}
+		child := stackEntryNode(n.entry)
+		if child == nil || child.isExtra() {
+			return false
+		}
+		visible := true
+		if idx := int(child.symbol); idx < len(symbolMeta) {
+			visible = symbolMeta[child.symbol].Visible
+		}
+		if !visible {
+			return false
+		}
+		childBuf[i] = child
+		n = n.prev
+	}
+	if n == nil {
+		return false
+	}
+	topState := n.entry.state
+	targetDepth := s.depth() - childCount
+	if targetDepth < 0 {
+		return false
+	}
+
+	children := arena.allocNodeSliceNoClear(childCount)
+	arena.recordReduceChildSliceFastGSS(childCount)
+	if perfCountersEnabled {
+		perfRecordReduceChildrenFastGSS(childCount)
+	}
+	copy(children, childBuf[:childCount])
+	named := p.isNamedSymbol(act.Symbol)
+	parent := p.newReduceParentNode(arena, act.Symbol, named, children, nil, nil, act.ProductionID, deferParentLinks, trackChildErrors)
+	p.recordReductionParentConstructed(arena, parent, act.Symbol, len(children), nil, nil, reduceChildPathFastGSS)
+	*nodeCount++
+
+	gotoState := p.lookupGoto(topState, act.Symbol)
+	targetState := topState
+	if gotoState != 0 {
+		targetState = gotoState
+	}
+	if tok.NoLookahead && targetState == topState {
+		parent.setExtra(true)
+	}
+	parent.preGotoState = topState
+	parent.parseState = targetState
+	if !s.truncate(targetDepth) {
+		s.dead = true
+		if tmpEntries != nil {
+			*tmpEntries = (*tmpEntries)[:0]
+		}
+		return true
+	}
+	p.pushStackNode(s, targetState, parent, entryScratch, gssScratch)
+	s.score += int(act.DynamicPrecedence)
+	*anyReduced = true
+	if tmpEntries != nil {
+		*tmpEntries = (*tmpEntries)[:0]
+	}
+	return true
+}
+
+func (p *Parser) applyReduceActionFromGSSTransientParents(s *glrStack, act ParseAction, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, tmp []stackEntry, deferParentLinks bool, trackChildErrors bool) {
+	if p.tryFastVisibleReduceActionFromGSSTransientParents(s, act, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors) {
+		return
+	}
+	childCount := int(act.ChildCount)
+	windowEntries, topState, ok := reduceWindowFromGSS(s, childCount, tmp)
+	if !ok {
+		s.dead = true
+		if tmpEntries != nil {
+			*tmpEntries = windowEntries[:0]
+		}
+		return
+	}
+
+	actualEnd := len(windowEntries)
+	reducedEnd := actualEnd
+	for i := actualEnd - 1; i >= 0; i-- {
+		if !stackEntryHasNode(windowEntries[i]) || !stackEntryNodeIsExtra(windowEntries[i]) {
+			break
+		}
+		reducedEnd--
+	}
+
+	if child := p.collapsibleRawUnarySelfReduction(act, tok, arena, windowEntries, 0, reducedEnd); child != nil {
+		targetDepth := s.depth() - actualEnd
+		if targetDepth < 0 || !s.truncate(targetDepth) {
+			s.dead = true
+			if tmpEntries != nil {
+				*tmpEntries = windowEntries[:0]
+			}
+			return
+		}
+		p.pushCollapsedUnaryReduceNode(s, act, tok, child, entryScratch, gssScratch, windowEntries, reducedEnd, actualEnd, topState)
+		s.score += int(act.DynamicPrecedence)
+		*anyReduced = true
+		if tmpEntries != nil {
+			*tmpEntries = windowEntries[:0]
+		}
+		return
+	}
+
+	children, fieldIDs, fieldSources, childPath := p.buildReduceChildrenWithPath(windowEntries, 0, reducedEnd, childCount, act.Symbol, act.ProductionID, arena)
+
+	targetDepth := s.depth() - actualEnd
+	if targetDepth < 0 || !s.truncate(targetDepth) {
+		s.dead = true
+		if tmpEntries != nil {
+			*tmpEntries = windowEntries[:0]
+		}
+		return
+	}
+
+	if child := p.collapsibleUnarySelfReduction(act, tok, arena, windowEntries, 0, reducedEnd, children, fieldIDs); child != nil {
+		p.pushCollapsedUnaryReduceNode(s, act, tok, child, entryScratch, gssScratch, windowEntries, reducedEnd, actualEnd, topState)
+		s.score += int(act.DynamicPrecedence)
+		*anyReduced = true
+		if tmpEntries != nil {
+			*tmpEntries = windowEntries[:0]
+		}
+		return
+	}
+
+	named := p.isNamedSymbol(act.Symbol)
+	parent := p.newReduceParentNode(arena, act.Symbol, named, children, fieldIDs, fieldSources, act.ProductionID, deferParentLinks, trackChildErrors)
+	p.recordReductionParentConstructed(arena, parent, act.Symbol, len(children), fieldIDs, fieldSources, childPath)
+	shouldUseRawSpan := shouldUseRawSpanForReduction(act.Symbol, children, p.language.SymbolMetadata, p.forceRawSpanAll, p.forceRawSpanTable)
+	if shouldUseRawSpan && reducedEnd > 0 {
+		span := computeReduceRawSpan(windowEntries, 0, reducedEnd)
+		if int(act.Symbol) < len(p.forceRawSpanTable) && p.forceRawSpanTable[act.Symbol] && actualEnd > reducedEnd {
+			extendRawSpanToTrailingEntries(&span, windowEntries, reducedEnd, actualEnd)
+		}
+		parent.startByte = span.startByte
+		parent.endByte = span.endByte
+		parent.startPoint = span.startPoint
+		parent.endPoint = span.endPoint
+	}
 	extendParentSpanToWindow(parent, windowEntries, 0, reducedEnd, p.language.SymbolMetadata, p.language.SymbolNames)
 	*nodeCount++
 
@@ -1025,15 +1229,17 @@ func flattenedSpanSingleDescendantFieldTarget(children []*Node, start, end int, 
 }
 
 type reduceBuildScratch struct {
-	nodes         []*Node
-	fieldIDs      []FieldID
-	fieldSources  []uint8
-	trackFields   bool
-	repeatStamp   []uint32
-	repeatCount   []uint16
-	repeatSource  []uint8
-	repeatTouched []FieldID
-	repeatEpoch   uint32
+	nodes             []*Node
+	fieldIDs          []FieldID
+	fieldSources      []uint8
+	trackFields       bool
+	repeatStamp       []uint32
+	repeatCount       []uint16
+	repeatSource      []uint8
+	repeatTouched     []FieldID
+	repeatEpoch       uint32
+	transientParents  *transientParentScratch
+	transientChildren *transientChildScratch
 }
 
 func (s *reduceBuildScratch) reset() {
@@ -1998,6 +2204,27 @@ func (p *Parser) recordReductionParentConstructed(arena *nodeArena, parent *Node
 	}
 }
 
+func (p *Parser) newReduceParentNode(arena *nodeArena, sym Symbol, named bool, children []*Node, fieldIDs []FieldID, fieldSources []uint8, productionID uint16, deferParentLinks bool, trackChildErrors bool) *Node {
+	var transientParents *transientParentScratch
+	var transientChildren *transientChildScratch
+	if p != nil && p.reduceScratch != nil {
+		transientParents = p.reduceScratch.transientParents
+		transientChildren = p.reduceScratch.transientChildren
+	}
+	if deferParentLinks &&
+		transientChildren != nil &&
+		transientParents != nil &&
+		len(fieldIDs) == 0 &&
+		len(fieldSources) == 0 &&
+		transientChildren.owns(children) {
+		return transientParents.allocParent(arena, sym, named, children, productionID, trackChildErrors)
+	}
+	if deferParentLinks {
+		return newParentNodeInArenaNoLinksWithFieldSources(arena, sym, named, children, fieldIDs, fieldSources, productionID, trackChildErrors)
+	}
+	return newParentNodeInArenaWithFieldSources(arena, sym, named, children, fieldIDs, fieldSources, productionID)
+}
+
 type collapseUnaryRule uint8
 
 const (
@@ -2095,6 +2322,103 @@ func (p *Parser) applyReduceAction(s *glrStack, act ParseAction, tok Token, anyR
 		parent.endPoint = span.endPoint
 	}
 	// Extend parent span to cover invisible children dropped by buildReduceChildren.
+	extendParentSpanToWindow(parent, entries, window.start, window.reducedEnd, p.language.SymbolMetadata, p.language.SymbolNames)
+	*nodeCount++
+
+	gotoState := p.lookupGoto(window.topState, act.Symbol)
+	targetState := window.topState
+	if gotoState != 0 {
+		targetState = gotoState
+	}
+	if tok.NoLookahead && targetState == window.topState {
+		parent.setExtra(true)
+	}
+	parent.preGotoState = window.topState
+	parent.parseState = targetState
+	p.pushStackNode(s, targetState, parent, entryScratch, gssScratch)
+	for i := trailingStart; i < trailingEnd; i++ {
+		extra := entries[i].node
+		if extra == nil {
+			continue
+		}
+		extra.parseState = targetState
+		nodeBumpEquivVersion(extra)
+		p.pushStackNode(s, targetState, extra, entryScratch, gssScratch)
+	}
+
+	s.score += int(act.DynamicPrecedence)
+	*anyReduced = true
+}
+
+func (p *Parser) applyReduceActionTransientParents(s *glrStack, act ParseAction, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, entries []stackEntry, deferParentLinks bool, trackChildErrors bool) {
+	childCount := int(act.ChildCount)
+	var (
+		window reduceRange
+		ok     bool
+	)
+	if p != nil && p.noTreeBenchmarkOnly {
+		window, ok = computeReduceRangePayload(entries, childCount)
+	} else {
+		window, ok = computeReduceRange(entries, childCount)
+	}
+	if !ok {
+		s.dead = true
+		return
+	}
+
+	if p != nil && p.noTreeBenchmarkOnly {
+		if !s.truncate(window.start) {
+			s.dead = true
+			return
+		}
+		p.pushNoTreeReduceNode(s, act, tok, arena, entryScratch, gssScratch, entries, window.start, window.reducedEnd, window.reducedEnd, window.actualEnd, window.topState, nodeCount, trackChildErrors)
+		s.score += int(act.DynamicPrecedence)
+		*anyReduced = true
+		return
+	}
+
+	if child := p.collapsibleRawUnarySelfReduction(act, tok, arena, entries, window.start, window.reducedEnd); child != nil {
+		if !s.truncate(window.start) {
+			s.dead = true
+			return
+		}
+		p.pushCollapsedUnaryReduceNode(s, act, tok, child, entryScratch, gssScratch, entries, window.reducedEnd, window.actualEnd, window.topState)
+		s.score += int(act.DynamicPrecedence)
+		*anyReduced = true
+		return
+	}
+
+	children, fieldIDs, fieldSources, childPath := p.buildReduceChildrenWithPath(entries, window.start, window.reducedEnd, childCount, act.Symbol, act.ProductionID, arena)
+
+	trailingStart := window.reducedEnd
+	trailingEnd := window.actualEnd
+
+	if !s.truncate(window.start) {
+		s.dead = true
+		return
+	}
+
+	if child := p.collapsibleUnarySelfReduction(act, tok, arena, entries, window.start, window.reducedEnd, children, fieldIDs); child != nil {
+		p.pushCollapsedUnaryReduceNode(s, act, tok, child, entryScratch, gssScratch, entries, trailingStart, trailingEnd, window.topState)
+		s.score += int(act.DynamicPrecedence)
+		*anyReduced = true
+		return
+	}
+
+	named := p.isNamedSymbol(act.Symbol)
+	parent := p.newReduceParentNode(arena, act.Symbol, named, children, fieldIDs, fieldSources, act.ProductionID, deferParentLinks, trackChildErrors)
+	p.recordReductionParentConstructed(arena, parent, act.Symbol, len(children), fieldIDs, fieldSources, childPath)
+	shouldUseRawSpan := shouldUseRawSpanForReduction(act.Symbol, children, p.language.SymbolMetadata, p.forceRawSpanAll, p.forceRawSpanTable)
+	if shouldUseRawSpan && window.reducedEnd > window.start {
+		span := computeReduceRawSpan(entries, window.start, window.reducedEnd)
+		if int(act.Symbol) < len(p.forceRawSpanTable) && p.forceRawSpanTable[act.Symbol] && window.actualEnd > window.reducedEnd {
+			extendRawSpanToTrailingEntries(&span, entries, window.reducedEnd, window.actualEnd)
+		}
+		parent.startByte = span.startByte
+		parent.endByte = span.endByte
+		parent.startPoint = span.startPoint
+		parent.endPoint = span.endPoint
+	}
 	extendParentSpanToWindow(parent, entries, window.start, window.reducedEnd, p.language.SymbolMetadata, p.language.SymbolNames)
 	*nodeCount++
 

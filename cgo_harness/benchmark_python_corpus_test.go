@@ -84,6 +84,8 @@ type pythonRuntimeBenchStats struct {
 	transientChildPointersAllocated    uint64
 	transientChildSlicesMaterialized   uint64
 	transientChildPointersMaterialized uint64
+	transientParentNodesAllocated      uint64
+	transientParentNodesMaterialized   uint64
 	finalNodes                         uint64
 	finalParentNodes                   uint64
 	finalLeafNodes                     uint64
@@ -234,6 +236,8 @@ func (s *pythonRuntimeBenchStats) add(rt gotreesitter.ParseRuntime, breakdown go
 	s.transientChildPointersAllocated += rt.TransientChildPointersAllocated
 	s.transientChildSlicesMaterialized += rt.TransientChildSlicesMaterialized
 	s.transientChildPointersMaterialized += rt.TransientChildPointersMaterialized
+	s.transientParentNodesAllocated += rt.TransientParentNodesAllocated
+	s.transientParentNodesMaterialized += rt.TransientParentNodesMaterialized
 	s.finalNodes += rt.FinalNodes
 	s.finalParentNodes += rt.FinalParentNodes
 	s.finalLeafNodes += rt.FinalLeafNodes
@@ -433,6 +437,11 @@ func (s pythonRuntimeBenchStats) report(b *testing.B) {
 		b.ReportMetric(float64(s.transientChildPointersAllocated)/tokens, "transient_child_ptrs_alloc/token")
 		b.ReportMetric(float64(s.transientChildSlicesMaterialized)/tokens, "transient_child_slices_materialized/token")
 		b.ReportMetric(float64(s.transientChildPointersMaterialized)/tokens, "transient_child_ptrs_materialized/token")
+		b.ReportMetric(float64(s.transientParentNodesAllocated)/tokens, "transient_parent_nodes_alloc/token")
+		b.ReportMetric(float64(s.transientParentNodesMaterialized)/tokens, "transient_parent_nodes_materialized/token")
+		if s.transientParentNodesAllocated >= s.transientParentNodesMaterialized {
+			b.ReportMetric(float64(s.transientParentNodesAllocated-s.transientParentNodesMaterialized)/tokens, "transient_parent_nodes_dropped/token")
+		}
 	}
 	if s.gssNodesRetained != 0 || s.gssNodesDropped != 0 {
 		b.ReportMetric(float64(s.gssNodesRetained)/tokens, "gss_retained/token")

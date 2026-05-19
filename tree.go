@@ -178,6 +178,8 @@ type ParseRuntime struct {
 	TransientChildPointersAllocated    uint64
 	TransientChildSlicesMaterialized   uint64
 	TransientChildPointersMaterialized uint64
+	TransientParentNodesAllocated      uint64
+	TransientParentNodesMaterialized   uint64
 	FinalNodes                         uint64
 	FinalParentNodes                   uint64
 	FinalLeafNodes                     uint64

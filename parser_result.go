@@ -10,7 +10,7 @@ package gotreesitter
 // Prefers accepted stacks, then highest score, then most entries. When
 // accepted stacks are otherwise tied, prefer the tree that retains an
 // alias-target symbol before falling back to branch order.
-func (p *Parser) buildResultFromGLR(stacks []glrStack, source []byte, arena *nodeArena, oldTree *Tree, reuseState *parseReuseState, linkScratch *[]*Node, skipErrorRank bool) *Tree {
+func (p *Parser) buildResultFromGLR(stacks []glrStack, source []byte, arena *nodeArena, oldTree *Tree, reuseState *parseReuseState, linkScratch *[]*Node, transientParents *transientParentScratch, transientChildren *transientChildScratch, skipErrorRank bool) *Tree {
 	if len(stacks) == 0 {
 		arena.Release()
 		return parseErrorTree(source, p.language)
@@ -24,12 +24,29 @@ func (p *Parser) buildResultFromGLR(stacks []glrStack, source []byte, arena *nod
 
 	selected := stacks[best]
 	if len(selected.entries) > 0 {
+		materializeTransientParentEntries(selected.entries, arena, transientParents, transientChildren)
 		return p.buildResult(selected.entries, source, arena, oldTree, reuseState, linkScratch)
 	}
 	if selected.gss.head == nil {
 		return p.buildResult(nil, source, arena, oldTree, reuseState, linkScratch)
 	}
-	return p.buildResultFromNodes(nodesFromGSS(selected.gss), source, arena, oldTree, reuseState, linkScratch)
+	nodes := nodesFromGSS(selected.gss)
+	materializeTransientParentNodes(nodes, arena, transientParents, transientChildren)
+	return p.buildResultFromNodes(nodes, source, arena, oldTree, reuseState, linkScratch)
+}
+
+func materializeTransientParentEntries(entries []stackEntry, arena *nodeArena, transientParents *transientParentScratch, transientChildren *transientChildScratch) {
+	if transientParents == nil {
+		return
+	}
+	transientParents.materializeEntries(entries, arena, transientChildren)
+}
+
+func materializeTransientParentNodes(nodes []*Node, arena *nodeArena, transientParents *transientParentScratch, transientChildren *transientChildScratch) {
+	if transientParents == nil {
+		return
+	}
+	transientParents.materializeNodeSlice(nodes, arena, transientChildren)
 }
 
 func (p *Parser) buildNoTreeBenchmarkResult(source []byte, arena *nodeArena, rootEndByte uint32) *Tree {
