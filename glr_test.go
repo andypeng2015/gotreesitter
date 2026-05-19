@@ -148,6 +148,23 @@ func TestNodeEquivCacheDepthKeyDoesNotAlias(t *testing.T) {
 	}
 }
 
+func TestNodeEquivCacheZeroVersionInvalidatesAfterBump(t *testing.T) {
+	var scratch glrMergeScratch
+	scratch.beginEquivEpoch()
+
+	a := &Node{symbol: 1}
+	b := &Node{symbol: 1}
+	storeNodeEquivCache(&scratch, a, b, 0, true)
+	if hit, ok := lookupNodeEquivCache(&scratch, a, b, 0); !ok || !hit {
+		t.Fatalf("lookup with zero versions = (%v, %v), want (true, true)", hit, ok)
+	}
+
+	nodeBumpEquivVersion(a)
+	if hit, ok := lookupNodeEquivCache(&scratch, a, b, 0); ok || hit {
+		t.Fatalf("lookup after version bump = (%v, %v), want (false, false)", hit, ok)
+	}
+}
+
 func TestPythonShallowEquivalentMatchesFrontierDepthZero(t *testing.T) {
 	cases := []struct {
 		name string

@@ -73,6 +73,8 @@ func (n *Node) setHasError(v bool) { n.setFlag(nodeFlagHasError, v) }
 func (n *Node) dirty() bool        { return n.dirtyFlag }
 func (n *Node) setDirty(v bool)    { n.dirtyFlag = v }
 
+// Version 0 is valid for fresh immutable arena nodes; initialized public nodes
+// use 1 so later mutations can still invalidate equivalence-cache entries.
 func nodeInitEquivVersion(n *Node) {
 	if n == nil {
 		return
@@ -1065,7 +1067,6 @@ func newLeafNodeInArena(arena *nodeArena, sym Symbol, named bool, startByte, end
 	n.childIndex = -1
 	n.ownerArena = arena
 	arena.leafNodesConstructed++
-	nodeInitEquivVersion(n)
 	if arena.audit != nil {
 		arena.audit.recordNodeAlloc(n, runtimeAuditNodeKindLeaf)
 	}
