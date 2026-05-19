@@ -83,6 +83,30 @@ func TestCompactFullLeafStackEntryKeepsPointsAndMaterializes(t *testing.T) {
 	}
 }
 
+func TestMaterializationReasonCountersClassifyNonParentReasons(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+
+	leaf := newCompactFullLeafInArena(arena, 9, true, 13, 21, Point{Row: 2, Column: 3}, Point{Row: 2, Column: 11})
+	leafEntry := newStackEntryCompactFullLeaf(4, leaf)
+	_ = materializeStackEntryCompactFullLeaf(arena, &leafEntry, compactFullLeafMaterializeForNormalization)
+	if got := arena.compactFullLeafMaterializedForNormalization; got != 1 {
+		t.Fatalf("compactFullLeafMaterializedForNormalization = %d, want 1", got)
+	}
+	if got := arena.compactFullLeafMaterializedForParentReduce; got != 0 {
+		t.Fatalf("compactFullLeafMaterializedForParentReduce = %d, want 0", got)
+	}
+
+	parent := newPendingParentInArena(arena, 10, true, 7, nil, 0, 0, Point{}, Point{}, false)
+	parentEntry := newStackEntryPendingParent(5, parent)
+	_ = materializeStackEntryPendingParent(arena, &parentEntry, pendingParentMaterializeForQuery)
+	if got := arena.pendingParentMaterializedForQuery; got != 1 {
+		t.Fatalf("pendingParentMaterializedForQuery = %d, want 1", got)
+	}
+	if got := arena.pendingParentMaterializedForParentReduce; got != 0 {
+		t.Fatalf("pendingParentMaterializedForParentReduce = %d, want 0", got)
+	}
+}
+
 func TestCompactCheckpointLeafStackEntryUsesNoTreePrefix(t *testing.T) {
 	leaf := newCompactCheckpointLeafInArena(nil, 9, true, 13, 21, externalScannerCheckpointRef{})
 	entry := newStackEntryCompactCheckpointLeaf(4, leaf)

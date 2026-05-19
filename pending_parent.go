@@ -20,11 +20,18 @@ type pendingChildEntrySlab struct {
 	used int
 }
 
-type pendingParentMaterializeReason uint8
+type pendingParentMaterializeReason = materializeReason
 
 const (
-	pendingParentMaterializeForParentReduce pendingParentMaterializeReason = iota
-	pendingParentMaterializeForFinalTree
+	pendingParentMaterializeForParentReduce      pendingParentMaterializeReason = materializeForParentReduce
+	pendingParentMaterializeForFinalTree         pendingParentMaterializeReason = materializeForFinalTree
+	pendingParentMaterializeForNormalization     pendingParentMaterializeReason = materializeForNormalization
+	pendingParentMaterializeForRecovery          pendingParentMaterializeReason = materializeForRecovery
+	pendingParentMaterializeForQuery             pendingParentMaterializeReason = materializeForQuery
+	pendingParentMaterializeForCursor            pendingParentMaterializeReason = materializeForCursor
+	pendingParentMaterializeForParentAPI         pendingParentMaterializeReason = materializeForParentAPI
+	pendingParentMaterializeForEdit              pendingParentMaterializeReason = materializeForEdit
+	pendingParentMaterializeForCheckpointRebuild pendingParentMaterializeReason = materializeForCheckpointRebuild
 )
 
 func pendingParentBytesForCap(n int) int64 {
@@ -145,15 +152,7 @@ func materializeStackEntryPendingParent(arena *nodeArena, entry *stackEntry, rea
 	entry.node = node
 	entry.kind = stackEntryKindNode
 	entry.state = node.parseState
-	if arena != nil {
-		arena.pendingParentMaterialized++
-		switch reason {
-		case pendingParentMaterializeForParentReduce:
-			arena.pendingParentMaterializedForParentReduce++
-		case pendingParentMaterializeForFinalTree:
-			arena.pendingParentMaterializedForFinalTree++
-		}
-	}
+	arena.recordPendingParentMaterialized(reason)
 	return node
 }
 

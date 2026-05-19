@@ -98,83 +98,97 @@ type nodeArena struct {
 	fieldSlabCursor                    int
 	fieldSourceSlabCursor              int
 
-	externalScannerCheckpointRecords           uint64
-	externalScannerSnapshotPayloadBytes        uint64
-	externalScannerLastSnapshotRef             externalScannerSnapshotRef
-	externalScannerCheckpointLeafNodes         uint64
-	compactFullLeafCreated                     uint64
-	compactFullLeafMaterialized                uint64
-	compactFullLeafMaterializedForParentReduce uint64
-	compactFullLeafMaterializedForFinalTree    uint64
-	compactFullLeafDropped                     uint64
-	pendingParentCreated                       uint64
-	pendingParentMaterialized                  uint64
-	pendingParentMaterializedForParentReduce   uint64
-	pendingParentMaterializedForFinalTree      uint64
-	pendingParentDropped                       uint64
-	pendingParentsFlattened                    uint64
-	pendingChildRefsFlattened                  uint64
-	checkpointLeafFullNodesAvoided             uint64
-	leafNodesConstructed                       uint64
-	parentNodesConstructed                     uint64
-	fieldedParentNodesConstructed              uint64
-	unfieldedParentNodesConstructed            uint64
-	parentConstructedChildLen0                 uint64
-	parentConstructedChildLen1                 uint64
-	parentConstructedChildLen2                 uint64
-	parentConstructedChildLen3                 uint64
-	parentConstructedChildLen4Plus             uint64
-	parentConstructedNoLinks                   uint64
-	parentConstructedWithLinks                 uint64
-	parentConstructedTrackErrors               uint64
-	parentConstructedFieldSources              uint64
-	parentReductionVisible                     uint64
-	parentReductionInvisible                   uint64
-	parentReductionVisibleFielded              uint64
-	parentReductionVisibleUnfielded            uint64
-	parentReductionInvisibleFielded            uint64
-	parentReductionInvisibleUnfielded          uint64
-	parentReductionVisibleChildPointers        uint64
-	parentReductionInvisibleChildPtrs          uint64
-	parentReductionVisibleChildLen0            uint64
-	parentReductionVisibleChildLen1            uint64
-	parentReductionVisibleChildLen2            uint64
-	parentReductionVisibleChildLen3            uint64
-	parentReductionVisibleChildLen4Plus        uint64
-	parentReductionInvisibleChildLen0          uint64
-	parentReductionInvisibleChildLen1          uint64
-	parentReductionInvisibleChildLen2          uint64
-	parentReductionInvisibleChildLen3          uint64
-	parentReductionInvisibleChildLen4P         uint64
-	reduceChildSlicesFastGSS                   uint64
-	reduceChildPointersFastGSS                 uint64
-	reduceChildSlicesAllVisible                uint64
-	reduceChildPointersAllVisible              uint64
-	reduceChildSlicesNoAlias                   uint64
-	reduceChildPointersNoAlias                 uint64
-	reduceChildSlicesScratchGeneral            uint64
-	reduceChildPointersScratchGeneral          uint64
-	reduceChildSlicesScratchNoAlias            uint64
-	reduceChildPointersScratchNoAlias          uint64
-	collapseRawUnaryAttempts                   uint64
-	collapseRawUnarySuccesses                  uint64
-	collapseRawUnaryMissShape                  uint64
-	collapseRawUnaryMissGrammar                uint64
-	collapseRawUnaryMissChild                  uint64
-	collapseRawUnaryMissRule                   uint64
-	collapseUnaryAttempts                      uint64
-	collapseUnarySuccesses                     uint64
-	collapseUnaryMissShape                     uint64
-	collapseUnaryMissGrammar                   uint64
-	collapseUnaryMissFielded                   uint64
-	collapseUnaryMissChild                     uint64
-	collapseUnaryMissRule                      uint64
-	collapseRuleSameSymbol                     uint64
-	collapseRuleInvisibleWrapper               uint64
-	collapseRuleNamedLeafAlias                 uint64
-	noTreeReduceNodesConstructed               uint64
-	noTreeLeafNodesConstructed                 uint64
-	noTreePlaceholderNodesConstructed          uint64
+	externalScannerCheckpointRecords                uint64
+	externalScannerSnapshotPayloadBytes             uint64
+	externalScannerLastSnapshotRef                  externalScannerSnapshotRef
+	externalScannerCheckpointLeafNodes              uint64
+	compactFullLeafCreated                          uint64
+	compactFullLeafMaterialized                     uint64
+	compactFullLeafMaterializedForParentReduce      uint64
+	compactFullLeafMaterializedForFinalTree         uint64
+	compactFullLeafMaterializedForNormalization     uint64
+	compactFullLeafMaterializedForRecovery          uint64
+	compactFullLeafMaterializedForQuery             uint64
+	compactFullLeafMaterializedForCursor            uint64
+	compactFullLeafMaterializedForParentAPI         uint64
+	compactFullLeafMaterializedForEdit              uint64
+	compactFullLeafMaterializedForCheckpointRebuild uint64
+	compactFullLeafDropped                          uint64
+	pendingParentCreated                            uint64
+	pendingParentMaterialized                       uint64
+	pendingParentMaterializedForParentReduce        uint64
+	pendingParentMaterializedForFinalTree           uint64
+	pendingParentMaterializedForNormalization       uint64
+	pendingParentMaterializedForRecovery            uint64
+	pendingParentMaterializedForQuery               uint64
+	pendingParentMaterializedForCursor              uint64
+	pendingParentMaterializedForParentAPI           uint64
+	pendingParentMaterializedForEdit                uint64
+	pendingParentMaterializedForCheckpointRebuild   uint64
+	pendingParentDropped                            uint64
+	pendingParentsFlattened                         uint64
+	pendingChildRefsFlattened                       uint64
+	checkpointLeafFullNodesAvoided                  uint64
+	leafNodesConstructed                            uint64
+	parentNodesConstructed                          uint64
+	fieldedParentNodesConstructed                   uint64
+	unfieldedParentNodesConstructed                 uint64
+	parentConstructedChildLen0                      uint64
+	parentConstructedChildLen1                      uint64
+	parentConstructedChildLen2                      uint64
+	parentConstructedChildLen3                      uint64
+	parentConstructedChildLen4Plus                  uint64
+	parentConstructedNoLinks                        uint64
+	parentConstructedWithLinks                      uint64
+	parentConstructedTrackErrors                    uint64
+	parentConstructedFieldSources                   uint64
+	parentReductionVisible                          uint64
+	parentReductionInvisible                        uint64
+	parentReductionVisibleFielded                   uint64
+	parentReductionVisibleUnfielded                 uint64
+	parentReductionInvisibleFielded                 uint64
+	parentReductionInvisibleUnfielded               uint64
+	parentReductionVisibleChildPointers             uint64
+	parentReductionInvisibleChildPtrs               uint64
+	parentReductionVisibleChildLen0                 uint64
+	parentReductionVisibleChildLen1                 uint64
+	parentReductionVisibleChildLen2                 uint64
+	parentReductionVisibleChildLen3                 uint64
+	parentReductionVisibleChildLen4Plus             uint64
+	parentReductionInvisibleChildLen0               uint64
+	parentReductionInvisibleChildLen1               uint64
+	parentReductionInvisibleChildLen2               uint64
+	parentReductionInvisibleChildLen3               uint64
+	parentReductionInvisibleChildLen4P              uint64
+	reduceChildSlicesFastGSS                        uint64
+	reduceChildPointersFastGSS                      uint64
+	reduceChildSlicesAllVisible                     uint64
+	reduceChildPointersAllVisible                   uint64
+	reduceChildSlicesNoAlias                        uint64
+	reduceChildPointersNoAlias                      uint64
+	reduceChildSlicesScratchGeneral                 uint64
+	reduceChildPointersScratchGeneral               uint64
+	reduceChildSlicesScratchNoAlias                 uint64
+	reduceChildPointersScratchNoAlias               uint64
+	collapseRawUnaryAttempts                        uint64
+	collapseRawUnarySuccesses                       uint64
+	collapseRawUnaryMissShape                       uint64
+	collapseRawUnaryMissGrammar                     uint64
+	collapseRawUnaryMissChild                       uint64
+	collapseRawUnaryMissRule                        uint64
+	collapseUnaryAttempts                           uint64
+	collapseUnarySuccesses                          uint64
+	collapseUnaryMissShape                          uint64
+	collapseUnaryMissGrammar                        uint64
+	collapseUnaryMissFielded                        uint64
+	collapseUnaryMissChild                          uint64
+	collapseUnaryMissRule                           uint64
+	collapseRuleSameSymbol                          uint64
+	collapseRuleInvisibleWrapper                    uint64
+	collapseRuleNamedLeafAlias                      uint64
+	noTreeReduceNodesConstructed                    uint64
+	noTreeLeafNodesConstructed                      uint64
+	noTreePlaceholderNodesConstructed               uint64
 }
 
 type nodeSlab struct {
@@ -630,11 +644,25 @@ func (a *nodeArena) reset() {
 	a.compactFullLeafMaterialized = 0
 	a.compactFullLeafMaterializedForParentReduce = 0
 	a.compactFullLeafMaterializedForFinalTree = 0
+	a.compactFullLeafMaterializedForNormalization = 0
+	a.compactFullLeafMaterializedForRecovery = 0
+	a.compactFullLeafMaterializedForQuery = 0
+	a.compactFullLeafMaterializedForCursor = 0
+	a.compactFullLeafMaterializedForParentAPI = 0
+	a.compactFullLeafMaterializedForEdit = 0
+	a.compactFullLeafMaterializedForCheckpointRebuild = 0
 	a.compactFullLeafDropped = 0
 	a.pendingParentCreated = 0
 	a.pendingParentMaterialized = 0
 	a.pendingParentMaterializedForParentReduce = 0
 	a.pendingParentMaterializedForFinalTree = 0
+	a.pendingParentMaterializedForNormalization = 0
+	a.pendingParentMaterializedForRecovery = 0
+	a.pendingParentMaterializedForQuery = 0
+	a.pendingParentMaterializedForCursor = 0
+	a.pendingParentMaterializedForParentAPI = 0
+	a.pendingParentMaterializedForEdit = 0
+	a.pendingParentMaterializedForCheckpointRebuild = 0
 	a.pendingParentDropped = 0
 	a.pendingParentsFlattened = 0
 	a.pendingChildRefsFlattened = 0
@@ -1336,6 +1364,60 @@ func (a *nodeArena) recomputeAllocatedBytes() {
 		total += a.externalScannerNodeCheckpointSlabs[i].checkpoints.bytesAllocated()
 	}
 	a.allocatedBytes = total
+}
+
+func (a *nodeArena) recordCompactFullLeafMaterialized(reason materializeReason) {
+	if a == nil {
+		return
+	}
+	a.compactFullLeafMaterialized++
+	switch reason {
+	case materializeForParentReduce:
+		a.compactFullLeafMaterializedForParentReduce++
+	case materializeForFinalTree:
+		a.compactFullLeafMaterializedForFinalTree++
+	case materializeForNormalization:
+		a.compactFullLeafMaterializedForNormalization++
+	case materializeForRecovery:
+		a.compactFullLeafMaterializedForRecovery++
+	case materializeForQuery:
+		a.compactFullLeafMaterializedForQuery++
+	case materializeForCursor:
+		a.compactFullLeafMaterializedForCursor++
+	case materializeForParentAPI:
+		a.compactFullLeafMaterializedForParentAPI++
+	case materializeForEdit:
+		a.compactFullLeafMaterializedForEdit++
+	case materializeForCheckpointRebuild:
+		a.compactFullLeafMaterializedForCheckpointRebuild++
+	}
+}
+
+func (a *nodeArena) recordPendingParentMaterialized(reason materializeReason) {
+	if a == nil {
+		return
+	}
+	a.pendingParentMaterialized++
+	switch reason {
+	case materializeForParentReduce:
+		a.pendingParentMaterializedForParentReduce++
+	case materializeForFinalTree:
+		a.pendingParentMaterializedForFinalTree++
+	case materializeForNormalization:
+		a.pendingParentMaterializedForNormalization++
+	case materializeForRecovery:
+		a.pendingParentMaterializedForRecovery++
+	case materializeForQuery:
+		a.pendingParentMaterializedForQuery++
+	case materializeForCursor:
+		a.pendingParentMaterializedForCursor++
+	case materializeForParentAPI:
+		a.pendingParentMaterializedForParentAPI++
+	case materializeForEdit:
+		a.pendingParentMaterializedForEdit++
+	case materializeForCheckpointRebuild:
+		a.pendingParentMaterializedForCheckpointRebuild++
+	}
 }
 
 func (a *nodeArena) finalizeCompactFullLeafDropped() {

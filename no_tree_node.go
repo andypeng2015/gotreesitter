@@ -40,11 +40,18 @@ type compactFullLeafSlab struct {
 	used int
 }
 
-type compactFullLeafMaterializeReason uint8
+type compactFullLeafMaterializeReason = materializeReason
 
 const (
-	compactFullLeafMaterializeForParentReduce compactFullLeafMaterializeReason = iota
-	compactFullLeafMaterializeForFinalTree
+	compactFullLeafMaterializeForParentReduce      compactFullLeafMaterializeReason = materializeForParentReduce
+	compactFullLeafMaterializeForFinalTree         compactFullLeafMaterializeReason = materializeForFinalTree
+	compactFullLeafMaterializeForNormalization     compactFullLeafMaterializeReason = materializeForNormalization
+	compactFullLeafMaterializeForRecovery          compactFullLeafMaterializeReason = materializeForRecovery
+	compactFullLeafMaterializeForQuery             compactFullLeafMaterializeReason = materializeForQuery
+	compactFullLeafMaterializeForCursor            compactFullLeafMaterializeReason = materializeForCursor
+	compactFullLeafMaterializeForParentAPI         compactFullLeafMaterializeReason = materializeForParentAPI
+	compactFullLeafMaterializeForEdit              compactFullLeafMaterializeReason = materializeForEdit
+	compactFullLeafMaterializeForCheckpointRebuild compactFullLeafMaterializeReason = materializeForCheckpointRebuild
 )
 
 const (
@@ -544,14 +551,6 @@ func materializeStackEntryCompactFullLeaf(arena *nodeArena, entry *stackEntry, r
 	entry.node = node
 	entry.kind = stackEntryKindNode
 	entry.state = node.parseState
-	if arena != nil {
-		arena.compactFullLeafMaterialized++
-		switch reason {
-		case compactFullLeafMaterializeForParentReduce:
-			arena.compactFullLeafMaterializedForParentReduce++
-		case compactFullLeafMaterializeForFinalTree:
-			arena.compactFullLeafMaterializedForFinalTree++
-		}
-	}
+	arena.recordCompactFullLeafMaterialized(reason)
 	return node
 }
