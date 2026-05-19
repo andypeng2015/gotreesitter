@@ -773,3 +773,21 @@ func TestParseShouldSkipInvisibleFullLeafCheckpointsIsNarrow(t *testing.T) {
 		t.Fatal("parseShouldSkipInvisibleFullLeafCheckpoints = true for incremental arena")
 	}
 }
+
+func TestParseShouldCaptureFullMaterializationTimingIsNarrow(t *testing.T) {
+	parser := &Parser{language: &Language{Name: "python"}}
+	largeSource := make([]byte, 256*1024)
+	if !parseShouldCaptureFullMaterializationTiming(parser, largeSource, nil, nil, arenaClassFull) {
+		t.Fatal("parseShouldCaptureFullMaterializationTiming = false, want true for large Python full parse")
+	}
+	if parseShouldCaptureFullMaterializationTiming(parser, largeSource[:len(largeSource)-1], nil, nil, arenaClassFull) {
+		t.Fatal("parseShouldCaptureFullMaterializationTiming = true for sub-threshold source")
+	}
+	if parseShouldCaptureFullMaterializationTiming(parser, largeSource, nil, nil, arenaClassIncremental) {
+		t.Fatal("parseShouldCaptureFullMaterializationTiming = true for incremental arena")
+	}
+	parser.language.Name = "go"
+	if parseShouldCaptureFullMaterializationTiming(parser, largeSource, nil, nil, arenaClassFull) {
+		t.Fatal("parseShouldCaptureFullMaterializationTiming = true for non-Python language")
+	}
+}

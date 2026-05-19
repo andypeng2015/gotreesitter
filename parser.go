@@ -1416,6 +1416,11 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			}
 		}()
 	}
+	var materializationTiming parseMaterializationTiming
+	var materializationTimingRef *parseMaterializationTiming
+	if parseShouldCaptureFullMaterializationTiming(p, source, reuse, oldTree, arenaClass) {
+		materializationTimingRef = &materializationTiming
+	}
 	if arenaClass == arenaClassFull {
 		defer func() {
 			if !p.noTreeBenchmarkOnly {
@@ -1520,7 +1525,14 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	}
 	finalizeTree := func(tree *Tree, stopReason ParseStopReason) *Tree {
 		if p.transientReduceChildren && tree != nil {
+			materializeStart := time.Time{}
+			if materializationTimingRef != nil {
+				materializeStart = time.Now()
+			}
 			scratch.transientChildren.materializeNode(tree.RootNode(), arena, &scratch.nodeLinks)
+			if materializationTimingRef != nil {
+				materializationTimingRef.transientChildMaterializationNanos += time.Since(materializeStart).Nanoseconds()
+			}
 		}
 		scratch.audit.finishParse(stacks)
 		captureArenaStats()
@@ -1564,6 +1576,12 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		parseRuntime.MergeSlotsUsed = scratch.audit.mergeSlotsUsed
 		parseRuntime.GlobalCullStacksIn = scratch.audit.globalCullStacksIn
 		parseRuntime.GlobalCullStacksOut = scratch.audit.globalCullStacksOut
+		if materializationTimingRef != nil {
+			parseRuntime.ResultSelectionNanos = materializationTiming.resultSelectionNanos
+			parseRuntime.TransientParentMaterializationNanos = materializationTiming.transientParentMaterializeNanos
+			parseRuntime.ResultTreeBuildNanos = materializationTiming.resultTreeBuildNanos
+			parseRuntime.TransientChildMaterializationNanos = materializationTiming.transientChildMaterializationNanos
+		}
 		parseRuntime.TokensConsumed = perfTokensConsumed
 		parseRuntime.LastTokenEndByte = lastTokenEndByte
 		parseRuntime.LastTokenSymbol = lastTokenSymbol
@@ -1652,7 +1670,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		if len(stacks) == 0 {
 			captureArenaStats()
 		}
-		tree := p.buildResultFromGLR(stacks, source, arena, oldTree, &reuseState, &scratch.nodeLinks, scratch.reduce.transientParents, scratch.reduce.transientChildren, !trackChildErrors)
+		tree := p.buildResultFromGLR(stacks, source, arena, oldTree, &reuseState, &scratch.nodeLinks, scratch.reduce.transientParents, scratch.reduce.transientChildren, !trackChildErrors, materializationTimingRef)
 		return finalizeTree(tree, stopReason)
 	}
 	finalizeErrorTree := func(stopReason ParseStopReason) *Tree {

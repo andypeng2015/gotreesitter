@@ -10,7 +10,6 @@ type transientChildScratch struct {
 	pointersAllocated    uint64
 	slicesMaterialized   uint64
 	pointersMaterialized uint64
-	seen                 map[*Node]struct{}
 }
 
 func (s *transientChildScratch) alloc(n int) []*Node {
@@ -72,7 +71,6 @@ func (s *transientChildScratch) materializeNode(root *Node, arena *nodeArena, sc
 	if s == nil || root == nil || arena == nil {
 		return
 	}
-	defer s.clearSeen()
 	var stack []*Node
 	if scratch != nil {
 		stack = (*scratch)[:0]
@@ -87,13 +85,6 @@ func (s *transientChildScratch) materializeNode(root *Node, arena *nodeArena, sc
 		if n == nil {
 			continue
 		}
-		if s.seen == nil {
-			s.seen = make(map[*Node]struct{})
-		}
-		if _, ok := s.seen[n]; ok {
-			continue
-		}
-		s.seen[n] = struct{}{}
 		children := n.children
 		if len(children) == 0 {
 			continue
@@ -131,7 +122,6 @@ func (s *transientChildScratch) reset() {
 	s.pointersAllocated = 0
 	s.slicesMaterialized = 0
 	s.pointersMaterialized = 0
-	s.clearSeen()
 }
 
 func (s *transientChildScratch) resetForRelease() {
@@ -149,14 +139,5 @@ func (s *transientChildScratch) resetForRelease() {
 		}
 		s.slabs = nil
 		s.allocatedBytes = 0
-	}
-}
-
-func (s *transientChildScratch) clearSeen() {
-	if s == nil || s.seen == nil {
-		return
-	}
-	for n := range s.seen {
-		delete(s.seen, n)
 	}
 }

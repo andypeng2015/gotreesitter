@@ -120,6 +120,10 @@ func (s *transientParentScratch) materializeEntries(entries []stackEntry, arena 
 		if node == nil {
 			continue
 		}
+		if replacement := s.transientReplacement(node); replacement != nil {
+			entries[i].node = replacement
+			continue
+		}
 		if replacement, ok := s.seen[node]; ok {
 			entries[i].node = replacement
 		}
@@ -133,6 +137,10 @@ func (s *transientParentScratch) materializeNodeSlice(nodes []*Node, arena *node
 	}
 	s.materializeNodes(nodes, arena, childScratch)
 	for i := range nodes {
+		if replacement := s.transientReplacement(nodes[i]); replacement != nil {
+			nodes[i] = replacement
+			continue
+		}
 		if replacement, ok := s.seen[nodes[i]]; ok {
 			nodes[i] = replacement
 		}
@@ -143,9 +151,6 @@ func (s *transientParentScratch) materializeNodeSlice(nodes []*Node, arena *node
 func (s *transientParentScratch) materializeNodes(nodes []*Node, arena *nodeArena, childScratch *transientChildScratch) {
 	if s == nil || len(nodes) == 0 || arena == nil {
 		return
-	}
-	if s.seen == nil {
-		s.seen = make(map[*Node]*Node)
 	}
 	frames := s.frames[:0]
 	for i := range nodes {
@@ -164,8 +169,21 @@ func (s *transientParentScratch) materializeNodes(nodes []*Node, arena *nodeAren
 			s.materializeVisitedNode(n, arena, childScratch)
 			continue
 		}
-		if _, ok := s.seen[n]; ok {
-			continue
+		if s.owns(n) {
+			if n.parent != nil {
+				continue
+			}
+			n.parent = n
+		} else {
+			if len(n.children) == 0 {
+				continue
+			}
+			if s.seen == nil {
+				s.seen = make(map[*Node]*Node)
+			}
+			if _, ok := s.seen[n]; ok {
+				continue
+			}
 		}
 		frames = append(frames, transientParentFrame{node: n, visited: true})
 		for i := len(n.children) - 1; i >= 0; i-- {
@@ -193,6 +211,10 @@ func (s *transientParentScratch) materializeVisitedNode(n *Node, arena *nodeAren
 			childScratch.pointersMaterialized += uint64(len(children))
 		}
 		for i, child := range out {
+			if replacement := s.transientReplacement(child); replacement != nil {
+				out[i] = replacement
+				continue
+			}
 			if replacement, ok := s.seen[child]; ok {
 				out[i] = replacement
 			}
@@ -222,7 +244,14 @@ func (s *transientParentScratch) materializeVisitedNode(n *Node, arena *nodeAren
 	nodeInitEquivVersion(clone)
 	arena.recordParentNodeConstructed(len(clone.children), clone.fieldIDs, clone.fieldSources, len(clone.fieldSources) > 0, true, false)
 	s.nodesMaterialized++
-	s.seen[n] = clone
+	n.parent = clone
+}
+
+func (s *transientParentScratch) transientReplacement(n *Node) *Node {
+	if s == nil || n == nil || n.parent == nil || n.parent == n || !s.owns(n) {
+		return nil
+	}
+	return n.parent
 }
 
 func (s *transientParentScratch) reset() {

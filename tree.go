@@ -208,6 +208,10 @@ type ParseRuntime struct {
 	ParentNodesConstructed                  uint64
 	NoTreeReduceNodesConstructed            uint64
 	NoTreeLeafNodesConstructed              uint64
+	ResultSelectionNanos                    int64
+	TransientParentMaterializationNanos     int64
+	ResultTreeBuildNanos                    int64
+	TransientChildMaterializationNanos      int64
 	NormalizationPassesChecked              uint64
 	NormalizationPassesRun                  uint64
 	NormalizationNodesVisited               uint64

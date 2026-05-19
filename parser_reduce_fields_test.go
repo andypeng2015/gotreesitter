@@ -1086,7 +1086,7 @@ func TestBuildResultFromGLRWithGSSOnlyStack(t *testing.T) {
 	gss.push(expr.parseState, expr, &gScratch)
 	stack := glrStack{gss: gss}
 
-	tree := parser.buildResultFromGLR([]glrStack{stack}, source, arena, nil, nil, nil, nil, nil, false)
+	tree := parser.buildResultFromGLR([]glrStack{stack}, source, arena, nil, nil, nil, nil, nil, false, nil)
 	if tree == nil || tree.RootNode() == nil {
 		t.Fatal("buildResultFromGLR returned nil tree/root")
 	}
@@ -1247,7 +1247,7 @@ func TestCompactAcceptedStacksPreservesAllAcceptedForFinalChoice(t *testing.T) {
 		t.Fatalf("accepted scores = [%d %d], want [0 5]", accepted[0].score, accepted[1].score)
 	}
 
-	tree := parser.buildResultFromGLR(accepted, source, arena, nil, nil, nil, nil, nil, false)
+	tree := parser.buildResultFromGLR(accepted, source, arena, nil, nil, nil, nil, nil, false, nil)
 	if tree == nil || tree.RootNode() == nil {
 		t.Fatal("buildResultFromGLR returned nil tree/root")
 	}
@@ -1301,7 +1301,7 @@ func TestBuildResultFromGLRPrefersAliasTargetTreeOnFinalTie(t *testing.T) {
 		},
 	}
 
-	tree := parser.buildResultFromGLR(stacks, source, arena, nil, nil, nil, nil, nil, false)
+	tree := parser.buildResultFromGLR(stacks, source, arena, nil, nil, nil, nil, nil, false, nil)
 	if tree == nil || tree.RootNode() == nil {
 		t.Fatal("buildResultFromGLR returned nil tree/root")
 	}

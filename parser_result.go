@@ -1,19 +1,32 @@
 package gotreesitter
 
+import "time"
+
 // Parser-result assembly owns the private handoff from GLR/parse-stack nodes to
 // the returned Tree. Runtime files named parser_result_*.go stay in this package
 // because many compatibility normalizers rewrite private Node, Language, Symbol,
 // and nodeArena state directly. Public-API parser-result regressions live in
 // parser_result_test, while source fixtures belong under testdata.
 
+type parseMaterializationTiming struct {
+	resultSelectionNanos               int64
+	transientParentMaterializeNanos    int64
+	resultTreeBuildNanos               int64
+	transientChildMaterializationNanos int64
+}
+
 // buildResultFromGLR picks the best stack and constructs the final tree.
 // Prefers accepted stacks, then highest score, then most entries. When
 // accepted stacks are otherwise tied, prefer the tree that retains an
 // alias-target symbol before falling back to branch order.
-func (p *Parser) buildResultFromGLR(stacks []glrStack, source []byte, arena *nodeArena, oldTree *Tree, reuseState *parseReuseState, linkScratch *[]*Node, transientParents *transientParentScratch, transientChildren *transientChildScratch, skipErrorRank bool) *Tree {
+func (p *Parser) buildResultFromGLR(stacks []glrStack, source []byte, arena *nodeArena, oldTree *Tree, reuseState *parseReuseState, linkScratch *[]*Node, transientParents *transientParentScratch, transientChildren *transientChildScratch, skipErrorRank bool, materializationTiming *parseMaterializationTiming) *Tree {
 	if len(stacks) == 0 {
 		arena.Release()
 		return parseErrorTree(source, p.language)
+	}
+	selectionStart := time.Time{}
+	if materializationTiming != nil {
+		selectionStart = time.Now()
 	}
 	best := 0
 	for i := 1; i < len(stacks); i++ {
@@ -21,18 +34,59 @@ func (p *Parser) buildResultFromGLR(stacks []glrStack, source []byte, arena *nod
 			best = i
 		}
 	}
+	if materializationTiming != nil {
+		materializationTiming.resultSelectionNanos += time.Since(selectionStart).Nanoseconds()
+	}
 
 	selected := stacks[best]
 	if len(selected.entries) > 0 {
+		materializeStart := time.Time{}
+		if materializationTiming != nil {
+			materializeStart = time.Now()
+		}
 		materializeTransientParentEntries(selected.entries, arena, transientParents, transientChildren)
-		return p.buildResult(selected.entries, source, arena, oldTree, reuseState, linkScratch)
+		if materializationTiming != nil {
+			materializationTiming.transientParentMaterializeNanos += time.Since(materializeStart).Nanoseconds()
+		}
+		buildStart := time.Time{}
+		if materializationTiming != nil {
+			buildStart = time.Now()
+		}
+		tree := p.buildResult(selected.entries, source, arena, oldTree, reuseState, linkScratch)
+		if materializationTiming != nil {
+			materializationTiming.resultTreeBuildNanos += time.Since(buildStart).Nanoseconds()
+		}
+		return tree
 	}
 	if selected.gss.head == nil {
-		return p.buildResult(nil, source, arena, oldTree, reuseState, linkScratch)
+		buildStart := time.Time{}
+		if materializationTiming != nil {
+			buildStart = time.Now()
+		}
+		tree := p.buildResult(nil, source, arena, oldTree, reuseState, linkScratch)
+		if materializationTiming != nil {
+			materializationTiming.resultTreeBuildNanos += time.Since(buildStart).Nanoseconds()
+		}
+		return tree
 	}
 	nodes := nodesFromGSS(selected.gss)
+	materializeStart := time.Time{}
+	if materializationTiming != nil {
+		materializeStart = time.Now()
+	}
 	materializeTransientParentNodes(nodes, arena, transientParents, transientChildren)
-	return p.buildResultFromNodes(nodes, source, arena, oldTree, reuseState, linkScratch)
+	if materializationTiming != nil {
+		materializationTiming.transientParentMaterializeNanos += time.Since(materializeStart).Nanoseconds()
+	}
+	buildStart := time.Time{}
+	if materializationTiming != nil {
+		buildStart = time.Now()
+	}
+	tree := p.buildResultFromNodes(nodes, source, arena, oldTree, reuseState, linkScratch)
+	if materializationTiming != nil {
+		materializationTiming.resultTreeBuildNanos += time.Since(buildStart).Nanoseconds()
+	}
+	return tree
 }
 
 func materializeTransientParentEntries(entries []stackEntry, arena *nodeArena, transientParents *transientParentScratch, transientChildren *transientChildScratch) {

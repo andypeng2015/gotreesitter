@@ -168,3 +168,52 @@ func TestTransientParentScratchMaterializesRecoveredNodeSlice(t *testing.T) {
 		t.Fatal("recovered materialized parent was invalidated by scratch reset")
 	}
 }
+
+func TestTransientParentScratchMaterializesSharedTransientParentOnce(t *testing.T) {
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	var childScratch transientChildScratch
+	var parentScratch transientParentScratch
+	leaf := newLeafNodeInArena(arena, Symbol(1), true, 0, 1, Point{}, Point{Column: 1})
+	sharedChildren := childScratch.alloc(1)
+	sharedChildren[0] = leaf
+	shared := parentScratch.allocParent(arena, Symbol(2), true, sharedChildren, 19, true)
+	leftChildren := childScratch.alloc(1)
+	leftChildren[0] = shared
+	rightChildren := childScratch.alloc(1)
+	rightChildren[0] = shared
+	left := parentScratch.allocParent(arena, Symbol(3), true, leftChildren, 23, true)
+	right := parentScratch.allocParent(arena, Symbol(4), true, rightChildren, 29, true)
+	rootChildren := childScratch.alloc(2)
+	rootChildren[0] = left
+	rootChildren[1] = right
+	root := parentScratch.allocParent(arena, Symbol(5), true, rootChildren, 31, true)
+
+	entries := []stackEntry{newStackEntryNode(root.parseState, root)}
+	parentScratch.materializeEntries(entries, arena, &childScratch)
+
+	gotRoot := stackEntryNode(entries[0])
+	if gotRoot == nil || parentScratch.owns(gotRoot) {
+		t.Fatal("root was not materialized out of transient storage")
+	}
+	gotLeft := gotRoot.children[0]
+	gotRight := gotRoot.children[1]
+	if gotLeft == nil || gotRight == nil {
+		t.Fatal("materialized root children are nil")
+	}
+	gotSharedLeft := gotLeft.children[0]
+	gotSharedRight := gotRight.children[0]
+	if gotSharedLeft == nil || gotSharedRight == nil {
+		t.Fatal("materialized shared children are nil")
+	}
+	if gotSharedLeft != gotSharedRight {
+		t.Fatal("shared transient parent was materialized more than once")
+	}
+	if parentScratch.owns(gotSharedLeft) {
+		t.Fatal("shared parent still points at transient storage")
+	}
+	if got := parentScratch.nodesMaterialized; got != 4 {
+		t.Fatalf("nodesMaterialized = %d, want 4", got)
+	}
+}

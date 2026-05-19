@@ -119,6 +119,10 @@ type pythonRuntimeBenchStats struct {
 	compactFullLeafMaterialized        uint64
 	compactFullLeafDropped             uint64
 	checkpointLeafFullNodesAvoided     uint64
+	resultSelectionNanos               int64
+	transientParentMaterializeNanos    int64
+	resultTreeBuildNanos               int64
+	transientChildMaterializeNanos     int64
 	arenaNodesConstructed              uint64
 	nodeLiveCount                      uint64
 	nodeCapacityCount                  uint64
@@ -270,6 +274,10 @@ func (s *pythonRuntimeBenchStats) add(rt gotreesitter.ParseRuntime, breakdown go
 	s.compactFullLeafMaterialized += rt.CompactFullLeafMaterialized
 	s.compactFullLeafDropped += rt.CompactFullLeafDropped
 	s.checkpointLeafFullNodesAvoided += rt.CheckpointLeafFullNodesAvoided
+	s.resultSelectionNanos += rt.ResultSelectionNanos
+	s.transientParentMaterializeNanos += rt.TransientParentMaterializationNanos
+	s.resultTreeBuildNanos += rt.ResultTreeBuildNanos
+	s.transientChildMaterializeNanos += rt.TransientChildMaterializationNanos
 	s.leafNodesConstructed += rt.LeafNodesConstructed
 	s.parentNodesConstructed += rt.ParentNodesConstructed
 	s.noTreeReduceNodesConstructed += rt.NoTreeReduceNodesConstructed
@@ -572,6 +580,13 @@ func (s pythonRuntimeBenchStats) report(b *testing.B) {
 		b.ReportMetric(float64(s.compactFullLeafMaterialized)/tokens, "compact_full_leaf_materialized/token")
 		b.ReportMetric(float64(s.compactFullLeafDropped)/tokens, "compact_full_leaf_dropped/token")
 		b.ReportMetric(float64(s.checkpointLeafFullNodesAvoided)/tokens, "checkpoint_leaf_full_nodes_avoided/token")
+	}
+	if s.resultSelectionNanos != 0 || s.transientParentMaterializeNanos != 0 || s.resultTreeBuildNanos != 0 || s.transientChildMaterializeNanos != 0 {
+		ops := float64(s.ops)
+		b.ReportMetric(float64(s.resultSelectionNanos)/ops, "result_select_ns/op")
+		b.ReportMetric(float64(s.transientParentMaterializeNanos)/ops, "transient_parent_materialize_ns/op")
+		b.ReportMetric(float64(s.resultTreeBuildNanos)/ops, "result_tree_build_ns/op")
+		b.ReportMetric(float64(s.transientChildMaterializeNanos)/ops, "transient_child_materialize_ns/op")
 	}
 	b.ReportMetric(float64(s.normalizationNodesVisited)/tokens, "norm_visited/token")
 	b.ReportMetric(float64(s.normalizationNodesRewritten)/tokens, "norm_rewritten/token")
