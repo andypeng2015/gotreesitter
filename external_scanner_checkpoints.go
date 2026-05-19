@@ -50,20 +50,38 @@ func underlyingDFATokenSource(ts TokenSource) *dfaTokenSource {
 	}
 }
 
-func (a *nodeArena) recordExternalScannerLeafCheckpoint(node *Node, start, end []byte) {
+func (a *nodeArena) recordExternalScannerLeafCheckpoint(node *Node, start, end []byte) bool {
 	if a == nil || node == nil {
-		return
+		return false
 	}
 	startRef := a.copyExternalScannerSnapshotRef(start)
 	endRef := startRef
 	if !bytes.Equal(start, end) {
 		endRef = a.copyExternalScannerSnapshotRef(end)
 	}
-	if a.setExternalScannerCheckpoint(node, externalScannerCheckpointRef{
+	ok := a.setExternalScannerCheckpoint(node, externalScannerCheckpointRef{
 		start: startRef,
 		end:   endRef,
-	}) {
+	})
+	if ok {
 		a.externalScannerCheckpointRecords++
+	}
+	return ok
+}
+
+func (a *nodeArena) recordExternalScannerCompactCheckpoint(start, end []byte) externalScannerCheckpointRef {
+	if a == nil {
+		return externalScannerCheckpointRef{}
+	}
+	startRef := a.copyExternalScannerSnapshotRef(start)
+	endRef := startRef
+	if !bytes.Equal(start, end) {
+		endRef = a.copyExternalScannerSnapshotRef(end)
+	}
+	a.externalScannerCheckpointRecords++
+	return externalScannerCheckpointRef{
+		start: startRef,
+		end:   endRef,
 	}
 }
 

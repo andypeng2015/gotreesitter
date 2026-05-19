@@ -180,7 +180,7 @@ func noteRepeatedReduceChainSignature(prev reduceChainSignature, prevCount int, 
 }
 
 func (p *Parser) useCompactNoTreeShiftLeaf() bool {
-	return p != nil && p.noTreeBenchmarkOnly && p.compactNoTreeShiftLeaves && !p.noTreeCheckpointBenchmarkOnly
+	return p != nil && p.noTreeBenchmarkOnly && p.compactNoTreeShiftLeaves
 }
 
 func (p *Parser) shiftTokenIsMissingError(tok Token) bool {
@@ -269,15 +269,24 @@ func (p *Parser) applyAction(s *glrStack, act ParseAction, tok Token, anyReduced
 		currentState := s.top().state
 		targetState := extraShiftTargetState(currentState, act)
 		if p.useCompactNoTreeShiftLeaf() && !p.shiftTokenIsMissingError(tok) {
-			leaf := newNoTreeLeafNodeInArena(arena, tok.Symbol, named,
-				tok.StartByte, tok.EndByte, tok.StartPoint, tok.EndPoint)
-			leaf.setExtra(act.Extra)
-			if leaf.isExtra() && perfCountersEnabled {
+			extra := act.Extra
+			if cp, ok := p.currentExternalNoTreeLeafCheckpointRef(arena, tok); ok {
+				leaf := newCompactCheckpointLeafInArena(arena, tok.Symbol, named, tok.StartByte, tok.EndByte, cp)
+				leaf.setExtra(extra)
+				leaf.preGotoState = currentState
+				leaf.parseState = targetState
+				p.pushStackCompactCheckpointLeaf(s, targetState, leaf, entryScratch, gssScratch)
+			} else {
+				leaf := newNoTreeLeafNodeInArena(arena, tok.Symbol, named,
+					tok.StartByte, tok.EndByte, tok.StartPoint, tok.EndPoint)
+				leaf.setExtra(extra)
+				leaf.preGotoState = currentState
+				leaf.parseState = targetState
+				p.pushStackNoTreeNode(s, targetState, leaf, entryScratch, gssScratch)
+			}
+			if extra && perfCountersEnabled {
 				perfRecordExtraNode()
 			}
-			leaf.preGotoState = currentState
-			leaf.parseState = targetState
-			p.pushStackNoTreeNode(s, targetState, leaf, entryScratch, gssScratch)
 		} else {
 			leaf := newLeafNodeInArena(arena, tok.Symbol, named,
 				tok.StartByte, tok.EndByte, tok.StartPoint, tok.EndPoint)
@@ -2504,6 +2513,11 @@ func (p *Parser) pushStackNoTreeNode(s *glrStack, state StateID, node *noTreeNod
 	if !s.mayRecover && p.stateCanRecover(state) {
 		s.mayRecover = true
 	}
+}
+
+func (p *Parser) pushStackCompactCheckpointLeaf(s *glrStack, state StateID, leaf *compactCheckpointLeaf, entryScratch *glrEntryScratch, gssScratch *gssScratch) {
+	entry := newStackEntryCompactCheckpointLeaf(state, leaf)
+	p.pushStackEntry(s, entry, entryScratch, gssScratch)
 }
 
 func newNoTreeReduceNodeInArena(arena *nodeArena, sym Symbol, named bool, productionID uint16, entries []stackEntry, start, reducedEnd int, tok Token, trackChildErrors bool) *noTreeNode {

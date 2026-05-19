@@ -199,6 +199,11 @@ type ParseRuntime struct {
 	ExternalScannerCheckpointSlotsAllocated uint64
 	ExternalScannerCheckpointBytesAllocated int64
 	ExternalScannerSnapshotBytesAllocated   uint64
+	ExternalScannerCheckpointLeafNodes      uint64
+	CompactFullLeafCreated                  uint64
+	CompactFullLeafMaterialized             uint64
+	CompactFullLeafDropped                  uint64
+	CheckpointLeafFullNodesAvoided          uint64
 	LeafNodesConstructed                    uint64
 	ParentNodesConstructed                  uint64
 	NoTreeReduceNodesConstructed            uint64

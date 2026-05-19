@@ -114,6 +114,11 @@ type pythonRuntimeBenchStats struct {
 	externalCheckpointSlots            uint64
 	externalCheckpointBytes            int64
 	externalCheckpointSnapshotBytes    uint64
+	externalCheckpointLeafNodes        uint64
+	compactFullLeafCreated             uint64
+	compactFullLeafMaterialized        uint64
+	compactFullLeafDropped             uint64
+	checkpointLeafFullNodesAvoided     uint64
 	arenaNodesConstructed              uint64
 	nodeLiveCount                      uint64
 	nodeCapacityCount                  uint64
@@ -260,6 +265,11 @@ func (s *pythonRuntimeBenchStats) add(rt gotreesitter.ParseRuntime, breakdown go
 	s.externalCheckpointSlots += rt.ExternalScannerCheckpointSlotsAllocated
 	s.externalCheckpointBytes += rt.ExternalScannerCheckpointBytesAllocated
 	s.externalCheckpointSnapshotBytes += rt.ExternalScannerSnapshotBytesAllocated
+	s.externalCheckpointLeafNodes += rt.ExternalScannerCheckpointLeafNodes
+	s.compactFullLeafCreated += rt.CompactFullLeafCreated
+	s.compactFullLeafMaterialized += rt.CompactFullLeafMaterialized
+	s.compactFullLeafDropped += rt.CompactFullLeafDropped
+	s.checkpointLeafFullNodesAvoided += rt.CheckpointLeafFullNodesAvoided
 	s.leafNodesConstructed += rt.LeafNodesConstructed
 	s.parentNodesConstructed += rt.ParentNodesConstructed
 	s.noTreeReduceNodesConstructed += rt.NoTreeReduceNodesConstructed
@@ -554,6 +564,15 @@ func (s pythonRuntimeBenchStats) report(b *testing.B) {
 	b.ReportMetric(float64(s.externalCheckpointSlots)/tokens, "chk_slots/token")
 	b.ReportMetric(float64(s.externalCheckpointBytes)/tokens, "chk_B/token")
 	b.ReportMetric(float64(s.externalCheckpointSnapshotBytes)/tokens, "chk_snap_B/token")
+	if s.externalCheckpointLeafNodes != 0 {
+		b.ReportMetric(float64(s.externalCheckpointLeafNodes)/tokens, "checkpoint_leaf_full_nodes/token")
+	}
+	if s.compactFullLeafCreated != 0 {
+		b.ReportMetric(float64(s.compactFullLeafCreated)/tokens, "compact_full_leaf_created/token")
+		b.ReportMetric(float64(s.compactFullLeafMaterialized)/tokens, "compact_full_leaf_materialized/token")
+		b.ReportMetric(float64(s.compactFullLeafDropped)/tokens, "compact_full_leaf_dropped/token")
+		b.ReportMetric(float64(s.checkpointLeafFullNodesAvoided)/tokens, "checkpoint_leaf_full_nodes_avoided/token")
+	}
 	b.ReportMetric(float64(s.normalizationNodesVisited)/tokens, "norm_visited/token")
 	b.ReportMetric(float64(s.normalizationNodesRewritten)/tokens, "norm_rewritten/token")
 }

@@ -76,10 +76,12 @@ type nodeArena struct {
 	skipChildClear bool
 	audit          *runtimeAudit
 
-	nodeSlabs            []nodeSlab
-	nodeSlabCursor       int
-	noTreeNodeSlabs      []noTreeNodeSlab
-	noTreeNodeSlabCursor int
+	nodeSlabs                       []nodeSlab
+	nodeSlabCursor                  int
+	noTreeNodeSlabs                 []noTreeNodeSlab
+	noTreeNodeSlabCursor            int
+	compactCheckpointLeafSlabs      []compactCheckpointLeafSlab
+	compactCheckpointLeafSlabCursor int
 
 	childSlabs                         []childSliceSlab
 	fieldSlabs                         []fieldSliceSlab
@@ -93,6 +95,11 @@ type nodeArena struct {
 	externalScannerCheckpointRecords    uint64
 	externalScannerSnapshotPayloadBytes uint64
 	externalScannerLastSnapshotRef      externalScannerSnapshotRef
+	externalScannerCheckpointLeafNodes  uint64
+	compactFullLeafCreated              uint64
+	compactFullLeafMaterialized         uint64
+	compactFullLeafDropped              uint64
+	checkpointLeafFullNodesAvoided      uint64
 	leafNodesConstructed                uint64
 	parentNodesConstructed              uint64
 	fieldedParentNodesConstructed       uint64
@@ -461,6 +468,30 @@ func (a *nodeArena) reset() {
 		a.noTreeNodeSlabs[i].used = 0
 	}
 	a.noTreeNodeSlabCursor = 0
+	if len(a.compactCheckpointLeafSlabs) > 0 {
+		retained := 0
+		keep := 0
+		limit := maxRetainedCompactCheckpointLeafCapacityForClass(a.class)
+		for i := 0; i < len(a.compactCheckpointLeafSlabs); i++ {
+			capacity := len(a.compactCheckpointLeafSlabs[i].data)
+			if capacity <= 0 {
+				break
+			}
+			if retained+capacity > limit {
+				break
+			}
+			retained += capacity
+			keep = i + 1
+		}
+		for i := keep; i < len(a.compactCheckpointLeafSlabs); i++ {
+			a.compactCheckpointLeafSlabs[i] = compactCheckpointLeafSlab{}
+		}
+		a.compactCheckpointLeafSlabs = a.compactCheckpointLeafSlabs[:keep]
+	}
+	for i := range a.compactCheckpointLeafSlabs {
+		a.compactCheckpointLeafSlabs[i].used = 0
+	}
+	a.compactCheckpointLeafSlabCursor = 0
 
 	if len(a.childSlabs) > 0 {
 		retained := 0
@@ -497,6 +528,11 @@ func (a *nodeArena) reset() {
 	a.externalScannerCheckpointRecords = 0
 	a.externalScannerSnapshotPayloadBytes = 0
 	a.externalScannerLastSnapshotRef = externalScannerSnapshotRef{}
+	a.externalScannerCheckpointLeafNodes = 0
+	a.compactFullLeafCreated = 0
+	a.compactFullLeafMaterialized = 0
+	a.compactFullLeafDropped = 0
+	a.checkpointLeafFullNodesAvoided = 0
 	a.leafNodesConstructed = 0
 	a.parentNodesConstructed = 0
 	a.fieldedParentNodesConstructed = 0
@@ -713,6 +749,38 @@ func (a *nodeArena) allocNoTreeNode() *noTreeNode {
 		// Callers must initialize every field. noTreeNode has no pointer fields,
 		// so avoiding per-slot clearing cuts large no-tree allocation CPU.
 		return n
+	}
+}
+
+func (a *nodeArena) allocCompactCheckpointLeaf() *compactCheckpointLeaf {
+	if a == nil {
+		return &compactCheckpointLeaf{}
+	}
+	if len(a.compactCheckpointLeafSlabs) == 0 {
+		capacity := max(defaultCompactCheckpointLeafSlabCap(a.class), minArenaNodeCap)
+		a.compactCheckpointLeafSlabs = append(a.compactCheckpointLeafSlabs, compactCheckpointLeafSlab{data: make([]compactCheckpointLeaf, capacity)})
+		a.allocatedBytes += compactCheckpointLeafBytesForCap(capacity)
+		a.compactCheckpointLeafSlabCursor = 0
+	}
+	if a.compactCheckpointLeafSlabCursor < 0 || a.compactCheckpointLeafSlabCursor >= len(a.compactCheckpointLeafSlabs) {
+		a.compactCheckpointLeafSlabCursor = 0
+	}
+	for i := a.compactCheckpointLeafSlabCursor; ; i++ {
+		if i >= len(a.compactCheckpointLeafSlabs) {
+			lastCap := len(a.compactCheckpointLeafSlabs[len(a.compactCheckpointLeafSlabs)-1].data)
+			capacity := max(lastCap*2, minArenaNodeCap)
+			a.compactCheckpointLeafSlabs = append(a.compactCheckpointLeafSlabs, compactCheckpointLeafSlab{data: make([]compactCheckpointLeaf, capacity)})
+			a.allocatedBytes += compactCheckpointLeafBytesForCap(capacity)
+		}
+
+		slab := &a.compactCheckpointLeafSlabs[i]
+		if slab.used >= len(slab.data) {
+			continue
+		}
+		idx := slab.used
+		slab.used++
+		a.compactCheckpointLeafSlabCursor = i
+		return &slab.data[idx]
 	}
 }
 
@@ -995,12 +1063,24 @@ func (a *nodeArena) noTreeNodeBytesAllocated() int64 {
 	return total
 }
 
+func (a *nodeArena) compactCheckpointLeafBytesAllocated() int64 {
+	if a == nil {
+		return 0
+	}
+	var total int64
+	for i := range a.compactCheckpointLeafSlabs {
+		total += compactCheckpointLeafBytesForCap(len(a.compactCheckpointLeafSlabs[i].data))
+	}
+	return total
+}
+
 func (a *nodeArena) recomputeAllocatedBytes() {
 	if a == nil {
 		return
 	}
 	total := a.nodeStructBytesAllocated() +
 		a.noTreeNodeBytesAllocated() +
+		a.compactCheckpointLeafBytesAllocated() +
 		a.childSliceBytesAllocated() +
 		a.fieldIDBytesAllocated() +
 		a.fieldSourceBytesAllocated()
@@ -1412,6 +1492,18 @@ func maxRetainedNoTreeNodeCapacityForClass(class arenaClass) int {
 	}
 	floor := maxRetainedIncrementalNodeBytes / nodeSize
 	return max(defaultNoTreeNodeSlabCap(class)*maxRetainedArenaFactor, floor)
+}
+
+func maxRetainedCompactCheckpointLeafCapacityForClass(class arenaClass) int {
+	nodeSize := int(unsafe.Sizeof(compactCheckpointLeaf{}))
+	if nodeSize <= 0 {
+		nodeSize = 1
+	}
+	if class == arenaClassFull {
+		return max(maxRetainedFullNodeBytes/nodeSize, defaultCompactCheckpointLeafSlabCap(class))
+	}
+	floor := maxRetainedIncrementalNodeBytes / nodeSize
+	return max(defaultCompactCheckpointLeafSlabCap(class)*maxRetainedArenaFactor, floor)
 }
 
 func maxRetainedChildSliceCapacityForClass(class arenaClass) int {

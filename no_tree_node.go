@@ -17,6 +17,16 @@ type noTreeNodeSlab struct {
 	used int
 }
 
+type compactCheckpointLeaf struct {
+	noTreeNode
+	checkpoint externalScannerCheckpointRef
+}
+
+type compactCheckpointLeafSlab struct {
+	data []compactCheckpointLeaf
+	used int
+}
+
 const (
 	stackEntryKindNode uint32 = iota
 	stackEntryKindNoTreeNode
@@ -33,6 +43,14 @@ func newStackEntryNode(state StateID, node *Node) stackEntry {
 func newStackEntryNoTreeNode(state StateID, node *noTreeNode) stackEntry {
 	return stackEntry{
 		node:  (*Node)(unsafe.Pointer(node)),
+		state: state,
+		kind:  stackEntryKindNoTreeNode,
+	}
+}
+
+func newStackEntryCompactCheckpointLeaf(state StateID, leaf *compactCheckpointLeaf) stackEntry {
+	return stackEntry{
+		node:  (*Node)(unsafe.Pointer(leaf)),
 		state: state,
 		kind:  stackEntryKindNoTreeNode,
 	}
@@ -83,12 +101,35 @@ func noTreeNodeBytesForCap(n int) int64 {
 	return int64(n) * int64(unsafe.Sizeof(noTreeNode{}))
 }
 
+func compactCheckpointLeafBytesForCap(n int) int64 {
+	if n <= 0 {
+		return 0
+	}
+	return int64(n) * int64(unsafe.Sizeof(compactCheckpointLeaf{}))
+}
+
 func defaultNoTreeNodeSlabCap(class arenaClass) int {
 	slabBytes := incrementalArenaSlab
 	if class == arenaClassFull {
 		slabBytes = fullParseArenaSlab
 	}
 	size := int(unsafe.Sizeof(noTreeNode{}))
+	if size <= 0 {
+		return minArenaNodeCap
+	}
+	capacity := slabBytes / size
+	if capacity < minArenaNodeCap {
+		return minArenaNodeCap
+	}
+	return capacity
+}
+
+func defaultCompactCheckpointLeafSlabCap(class arenaClass) int {
+	slabBytes := incrementalArenaSlab
+	if class == arenaClassFull {
+		slabBytes = fullParseArenaSlab
+	}
+	size := int(unsafe.Sizeof(compactCheckpointLeaf{}))
 	if size <= 0 {
 		return minArenaNodeCap
 	}
@@ -201,7 +242,10 @@ func stackEntryNodeIsExtra(e stackEntry) bool {
 		return n.isExtra()
 	}
 	n := stackEntryNoTreeNode(e)
-	return n != nil && n.isExtra()
+	if n != nil {
+		return n.isExtra()
+	}
+	return false
 }
 
 func stackEntryNodeIsNamed(e stackEntry) bool {
@@ -209,7 +253,10 @@ func stackEntryNodeIsNamed(e stackEntry) bool {
 		return n.isNamed()
 	}
 	n := stackEntryNoTreeNode(e)
-	return n != nil && n.isNamed()
+	if n != nil {
+		return n.isNamed()
+	}
+	return false
 }
 
 func stackEntryNodeIsMissing(e stackEntry) bool {
@@ -217,7 +264,10 @@ func stackEntryNodeIsMissing(e stackEntry) bool {
 		return n.isMissing()
 	}
 	n := stackEntryNoTreeNode(e)
-	return n != nil && n.isMissing()
+	if n != nil {
+		return n.isMissing()
+	}
+	return false
 }
 
 func stackEntryNodeHasError(e stackEntry) bool {
@@ -225,7 +275,10 @@ func stackEntryNodeHasError(e stackEntry) bool {
 		return n.hasError()
 	}
 	n := stackEntryNoTreeNode(e)
-	return n != nil && n.hasError()
+	if n != nil {
+		return n.hasError()
+	}
+	return false
 }
 
 func stackEntryNodeChildCount(e stackEntry) int {
@@ -264,5 +317,23 @@ func newNoTreeLeafNodeInArena(arena *nodeArena, sym Symbol, named bool, startByt
 	n.preGotoState = 0
 	n.productionID = 0
 	n.flags = noTreeNodeInitialFlags(named)
+	return n
+}
+
+func newCompactCheckpointLeafInArena(arena *nodeArena, sym Symbol, named bool, startByte, endByte uint32, checkpoint externalScannerCheckpointRef) *compactCheckpointLeaf {
+	var n *compactCheckpointLeaf
+	if arena == nil {
+		n = &compactCheckpointLeaf{}
+	} else {
+		n = arena.allocCompactCheckpointLeaf()
+	}
+	n.symbol = sym
+	n.startByte = startByte
+	n.endByte = endByte
+	n.parseState = 0
+	n.preGotoState = 0
+	n.productionID = 0
+	n.flags = noTreeNodeInitialFlags(named)
+	n.checkpoint = checkpoint
 	return n
 }

@@ -1255,7 +1255,33 @@ func (p *Parser) recordCurrentExternalLeafCheckpoint(node *Node, tok Token) {
 	if node.StartByte() != p.currentExternalTokenCheckpointStart || node.EndByte() != p.currentExternalTokenCheckpointEnd {
 		return
 	}
-	node.ownerArena.recordExternalScannerLeafCheckpoint(node, p.currentExternalTokenCheckpoint.start, p.currentExternalTokenCheckpoint.end)
+	arena := node.ownerArena
+	if !arena.recordExternalScannerLeafCheckpoint(node, p.currentExternalTokenCheckpoint.start, p.currentExternalTokenCheckpoint.end) {
+		return
+	}
+	arena.externalScannerCheckpointLeafNodes++
+}
+
+func (p *Parser) currentExternalNoTreeLeafCheckpointRef(arena *nodeArena, tok Token) (externalScannerCheckpointRef, bool) {
+	if p == nil || arena == nil || !p.currentExternalTokenCheckpointValid {
+		return externalScannerCheckpointRef{}, false
+	}
+	if !p.noTreeCheckpointBenchmarkOnly {
+		return externalScannerCheckpointRef{}, false
+	}
+	if tok.Missing || tok.NoLookahead || tok.Symbol == 0 {
+		return externalScannerCheckpointRef{}, false
+	}
+	if tok.StartByte != p.currentExternalTokenCheckpointStart || tok.EndByte != p.currentExternalTokenCheckpointEnd {
+		return externalScannerCheckpointRef{}, false
+	}
+	cp := arena.recordExternalScannerCompactCheckpoint(
+		p.currentExternalTokenCheckpoint.start,
+		p.currentExternalTokenCheckpoint.end,
+	)
+	arena.compactFullLeafCreated++
+	arena.checkpointLeafFullNodesAvoided++
+	return cp, true
 }
 
 func canReuseUnchangedTree(source []byte, oldTree *Tree, lang *Language) bool {
@@ -1314,7 +1340,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	prevTransientReduceChildren := p.transientReduceChildren
 	prevTransientReduceScratchNoAlias := p.transientReduceScratchNoAlias
 	prevTransientChildren := p.transientChildren
-	p.compactNoTreeShiftLeaves = p.noTreeBenchmarkOnly && !p.noTreeCheckpointBenchmarkOnly && parseShouldCompactNoTreeShiftLeaves(len(source))
+	p.compactNoTreeShiftLeaves = p.noTreeBenchmarkOnly && parseShouldCompactNoTreeShiftLeaves(len(source))
 	defer func() {
 		p.compactNoTreeShiftLeaves = prevCompactNoTreeShiftLeaves
 		p.transientReduceChildren = prevTransientReduceChildren
@@ -1400,9 +1426,6 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		target := parseFullArenaNodeCapacity(len(source), p.fullArenaHintCapacity())
 		if p.noTreeBenchmarkOnly {
 			target = parseNoTreeArenaNodeCapacity(len(source))
-			if p.noTreeCheckpointBenchmarkOnly {
-				target = parseNoTreeFullLeafArenaNodeCapacity(len(source))
-			}
 		}
 		arena.ensureExactNodeCapacity(target)
 		scratch.entries.ensureInitialCap(parseFullEntryScratchCapacity(len(source)))
@@ -1451,6 +1474,11 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		parseRuntime.ExternalScannerCheckpointSlotsAllocated = arena.externalScannerCheckpointSlotsAllocated()
 		parseRuntime.ExternalScannerCheckpointBytesAllocated = arena.externalScannerCheckpointBytesAllocated()
 		parseRuntime.ExternalScannerSnapshotBytesAllocated = arena.externalScannerSnapshotPayloadBytes
+		parseRuntime.ExternalScannerCheckpointLeafNodes = arena.externalScannerCheckpointLeafNodes
+		parseRuntime.CompactFullLeafCreated = arena.compactFullLeafCreated
+		parseRuntime.CompactFullLeafMaterialized = arena.compactFullLeafMaterialized
+		parseRuntime.CompactFullLeafDropped = arena.compactFullLeafDropped
+		parseRuntime.CheckpointLeafFullNodesAvoided = arena.checkpointLeafFullNodesAvoided
 		parseRuntime.LeafNodesConstructed = arena.leafNodesConstructed
 		parseRuntime.ParentNodesConstructed = arena.parentNodesConstructed
 		parseRuntime.NoTreeReduceNodesConstructed = arena.noTreeReduceNodesConstructed
@@ -2015,12 +2043,20 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				named := p.isNamedSymbol(tok.Symbol)
 				targetState := extraShiftTargetState(currentState, actions[0])
 				if p.useCompactNoTreeShiftLeaf() && !p.shiftTokenIsMissingError(tok) {
-					leaf := newNoTreeLeafNodeInArena(arena, tok.Symbol, named,
-						tok.StartByte, tok.EndByte, tok.StartPoint, tok.EndPoint)
-					leaf.setExtra(true)
-					leaf.preGotoState = currentState
-					leaf.parseState = targetState
-					p.pushStackNoTreeNode(s, targetState, leaf, &scratch.entries, &scratch.gss)
+					if cp, ok := p.currentExternalNoTreeLeafCheckpointRef(arena, tok); ok {
+						leaf := newCompactCheckpointLeafInArena(arena, tok.Symbol, named, tok.StartByte, tok.EndByte, cp)
+						leaf.setExtra(true)
+						leaf.preGotoState = currentState
+						leaf.parseState = targetState
+						p.pushStackCompactCheckpointLeaf(s, targetState, leaf, &scratch.entries, &scratch.gss)
+					} else {
+						leaf := newNoTreeLeafNodeInArena(arena, tok.Symbol, named,
+							tok.StartByte, tok.EndByte, tok.StartPoint, tok.EndPoint)
+						leaf.setExtra(true)
+						leaf.preGotoState = currentState
+						leaf.parseState = targetState
+						p.pushStackNoTreeNode(s, targetState, leaf, &scratch.entries, &scratch.gss)
+					}
 				} else {
 					leaf := newLeafNodeInArena(arena, tok.Symbol, named,
 						tok.StartByte, tok.EndByte, tok.StartPoint, tok.EndPoint)

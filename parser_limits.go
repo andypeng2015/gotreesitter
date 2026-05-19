@@ -158,8 +158,8 @@ func parseNoTreeFullLeafArenaNodeCapacity(sourceLen int) int {
 	if sourceLen <= 0 {
 		return base
 	}
-	// Small no-tree parses and the checkpoint attribution lane still use real
-	// shifted leaves; keep enough full Node capacity for that mode.
+	// Small no-tree parses still use real shifted leaves; keep enough full Node
+	// capacity for that mode.
 	estimate := sourceLen / 2
 	if sourceLen >= 1024*1024 {
 		estimate = sourceLen / 3

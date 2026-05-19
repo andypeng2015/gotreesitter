@@ -35,6 +35,27 @@ func TestNoTreeNodeStackEntryKeepsBytesAndDropsPoints(t *testing.T) {
 	}
 }
 
+func TestCompactCheckpointLeafStackEntryUsesNoTreePrefix(t *testing.T) {
+	leaf := newCompactCheckpointLeafInArena(nil, 9, true, 13, 21, externalScannerCheckpointRef{})
+	entry := newStackEntryCompactCheckpointLeaf(4, leaf)
+
+	if got := stackEntryNoTreeNode(entry); got == nil {
+		t.Fatal("compact checkpoint leaf did not expose no-tree prefix")
+	}
+	if got := stackEntryNodeSymbol(entry); got != 9 {
+		t.Fatalf("symbol = %d, want 9", got)
+	}
+	if got := stackEntryNodeStartByte(entry); got != 13 {
+		t.Fatalf("start byte = %d, want 13", got)
+	}
+	if got := stackEntryNodeEndByte(entry); got != 21 {
+		t.Fatalf("end byte = %d, want 21", got)
+	}
+	if got := stackEntryNodeIsNamed(entry); !got {
+		t.Fatal("named = false, want true")
+	}
+}
+
 func TestNoTreeNodeConstructorsResetReusedSlots(t *testing.T) {
 	arena := newNodeArena(arenaClassFull)
 
