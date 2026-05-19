@@ -215,6 +215,13 @@ type ParseRuntime struct {
 	TransientParentMaterializationNanos     int64
 	ResultTreeBuildNanos                    int64
 	TransientChildMaterializationNanos      int64
+	ResultPythonKeywordRepairNanos          int64
+	ResultPythonRootRepairNanos             int64
+	ResultFinalizeRootNanos                 int64
+	ResultExtendTrailingNanos               int64
+	ResultNormalizeRootStartNanos           int64
+	ResultCompatibilityNanos                int64
+	ResultParentLinkNanos                   int64
 	NormalizationPassesChecked              uint64
 	NormalizationPassesRun                  uint64
 	NormalizationNodesVisited               uint64

@@ -13,6 +13,69 @@ type parseMaterializationTiming struct {
 	transientParentMaterializeNanos    int64
 	resultTreeBuildNanos               int64
 	transientChildMaterializationNanos int64
+	pythonKeywordRepairNanos           int64
+	pythonRootRepairNanos              int64
+	resultFinalizeRootNanos            int64
+	resultExtendTrailingNanos          int64
+	resultNormalizeRootStartNanos      int64
+	resultCompatibilityNanos           int64
+	resultParentLinkNanos              int64
+}
+
+func materializationTimingStart(t *parseMaterializationTiming) time.Time {
+	if t == nil {
+		return time.Time{}
+	}
+	return time.Now()
+}
+
+func (t *parseMaterializationTiming) addPythonKeywordRepair(start time.Time) {
+	if t != nil {
+		t.pythonKeywordRepairNanos += time.Since(start).Nanoseconds()
+	}
+}
+
+func (t *parseMaterializationTiming) addPythonRootRepair(start time.Time) {
+	if t != nil {
+		t.pythonRootRepairNanos += time.Since(start).Nanoseconds()
+	}
+}
+
+func (t *parseMaterializationTiming) addResultFinalizeRoot(start time.Time) {
+	if t != nil {
+		t.resultFinalizeRootNanos += time.Since(start).Nanoseconds()
+	}
+}
+
+func (t *parseMaterializationTiming) addResultExtendTrailing(start time.Time) {
+	if t != nil {
+		t.resultExtendTrailingNanos += time.Since(start).Nanoseconds()
+	}
+}
+
+func (t *parseMaterializationTiming) addResultNormalizeRootStart(start time.Time) {
+	if t != nil {
+		t.resultNormalizeRootStartNanos += time.Since(start).Nanoseconds()
+	}
+}
+
+func (t *parseMaterializationTiming) addResultCompatibility(start time.Time) {
+	if t != nil {
+		t.resultCompatibilityNanos += time.Since(start).Nanoseconds()
+	}
+}
+
+func (t *parseMaterializationTiming) addResultParentLink(start time.Time) {
+	if t != nil {
+		t.resultParentLinkNanos += time.Since(start).Nanoseconds()
+	}
+}
+
+func (p *Parser) currentMaterializationTiming() *parseMaterializationTiming {
+	if p == nil {
+		return nil
+	}
+	return p.materializationTiming
 }
 
 // buildResultFromGLR picks the best stack and constructs the final tree.
@@ -411,7 +474,10 @@ func (p *Parser) buildResultFromNodes(nodes []*Node, source []byte, arena *nodeA
 		hasExpectedRoot = true
 	}
 	if p != nil && p.language != nil && p.language.Name == "python" {
+		timing := p.currentMaterializationTiming()
+		repairStart := materializationTimingStart(timing)
 		nodes, _ = repairPythonKeywordErrorNodes(nodes, source, arena, p.language)
+		timing.addPythonKeywordRepair(repairStart)
 		nodes = collapsePythonRootFragments(nodes, arena, p.language)
 	}
 	if hasExpectedRoot && len(nodes) > 1 {
@@ -431,8 +497,13 @@ func (p *Parser) buildResultFromNodes(nodes []*Node, source []byte, arena *nodeA
 	if len(nodes) == 1 {
 		candidate := nodes[0]
 		candidate = flattenInvisibleRootChildren(candidate, arena, p.language)
+		timing := p.currentMaterializationTiming()
+		keywordRepairStart := materializationTimingStart(timing)
 		candidate = repairPythonKeywordErrorNode(candidate, source, arena, p.language)
+		timing.addPythonKeywordRepair(keywordRepairStart)
+		rootRepairStart := materializationTimingStart(timing)
 		candidate = repairPythonRootNode(candidate, arena, p.language)
+		timing.addPythonRootRepair(rootRepairStart)
 		if !hasExpectedRoot || candidate.symbol == expectedRootSymbol {
 			p.finalizeResultRoot(candidate, source, linkScratch, shouldWireParentLinks, true)
 			return newTreeWithArenas(candidate, source, p.language, arena, getBorrowed())
@@ -553,7 +624,10 @@ func (p *Parser) buildResultFromNodes(nodes []*Node, source []byte, arena *nodeA
 				}
 			}
 		}
+		timing := p.currentMaterializationTiming()
+		rootRepairStart := materializationTimingStart(timing)
 		realRoot = repairPythonRootNode(realRoot, arena, p.language)
+		timing.addPythonRootRepair(rootRepairStart)
 		extendTrailing := returnRealRoot || !realRoot.hasError()
 		p.finalizeResultRoot(realRoot, source, linkScratch, shouldWireParentLinks && returnRealRoot, extendTrailing)
 		if returnRealRoot {
@@ -562,7 +636,10 @@ func (p *Parser) buildResultFromNodes(nodes []*Node, source []byte, arena *nodeA
 	}
 
 	rootChildren := filterZeroWidthExtras(nodes, arena)
+	timing := p.currentMaterializationTiming()
+	keywordRepairStart := materializationTimingStart(timing)
 	rootChildren, _ = repairPythonKeywordErrorNodes(rootChildren, source, arena, p.language)
+	timing.addPythonKeywordRepair(keywordRepairStart)
 	rootSymbol := rootChildren[len(rootChildren)-1].symbol
 	rootHasError := false
 	for _, n := range rootChildren {
@@ -586,7 +663,9 @@ func (p *Parser) buildResultFromNodes(nodes []*Node, source []byte, arena *nodeA
 	if rootHasError && !(p != nil && p.language != nil && p.language.Name == "python" && hasExpectedRoot && pythonModuleChildrenLookComplete(rootChildren, p.language)) {
 		root.setHasError(true)
 	}
+	rootRepairStart := materializationTimingStart(timing)
 	root = repairPythonRootNode(root, arena, p.language)
+	timing.addPythonRootRepair(rootRepairStart)
 	p.finalizeResultRoot(root, source, linkScratch, shouldWireParentLinks, true)
 	return newTreeWithArenas(root, source, p.language, arena, getBorrowed())
 }
@@ -595,19 +674,30 @@ func (p *Parser) finalizeResultRoot(root *Node, source []byte, linkScratch *[]*N
 	if root == nil {
 		return
 	}
+	timing := p.currentMaterializationTiming()
+	finalizeStart := materializationTimingStart(timing)
+	defer timing.addResultFinalizeRoot(finalizeStart)
 	if extendTrailing {
+		start := materializationTimingStart(timing)
 		extendNodeToTrailingWhitespace(root, source)
+		timing.addResultExtendTrailing(start)
 	}
+	start := materializationTimingStart(timing)
 	p.normalizeRootSourceStart(root, source)
+	timing.addResultNormalizeRootStart(start)
 	if p == nil || !p.noResultCompatibilityBenchmarkOnly {
+		start = materializationTimingStart(timing)
 		normalizeResultCompatibility(root, source, p)
+		timing.addResultCompatibility(start)
 	}
 	if wireParentLinks {
+		start = materializationTimingStart(timing)
 		if p != nil && p.shouldDeferResultParentLinks(root) {
 			root.ownerArena.deferParentLinks(root)
 		} else {
 			wireParentLinksWithScratch(root, linkScratch)
 		}
+		timing.addResultParentLink(start)
 	}
 }
 

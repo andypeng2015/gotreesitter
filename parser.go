@@ -69,6 +69,7 @@ type Parser struct {
 	currentExternalTokenCheckpointEnd   uint32
 	currentExternalTokenCheckpointValid bool
 	normalizationStats                  normalizationStats
+	materializationTiming               *parseMaterializationTiming
 }
 
 var snippetParserPools sync.Map
@@ -1421,6 +1422,11 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	if parseShouldCaptureFullMaterializationTiming(p, source, reuse, oldTree, arenaClass) {
 		materializationTimingRef = &materializationTiming
 	}
+	prevMaterializationTiming := p.materializationTiming
+	p.materializationTiming = materializationTimingRef
+	defer func() {
+		p.materializationTiming = prevMaterializationTiming
+	}()
 	if arenaClass == arenaClassFull {
 		defer func() {
 			if !p.noTreeBenchmarkOnly {
@@ -1581,6 +1587,13 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			parseRuntime.TransientParentMaterializationNanos = materializationTiming.transientParentMaterializeNanos
 			parseRuntime.ResultTreeBuildNanos = materializationTiming.resultTreeBuildNanos
 			parseRuntime.TransientChildMaterializationNanos = materializationTiming.transientChildMaterializationNanos
+			parseRuntime.ResultPythonKeywordRepairNanos = materializationTiming.pythonKeywordRepairNanos
+			parseRuntime.ResultPythonRootRepairNanos = materializationTiming.pythonRootRepairNanos
+			parseRuntime.ResultFinalizeRootNanos = materializationTiming.resultFinalizeRootNanos
+			parseRuntime.ResultExtendTrailingNanos = materializationTiming.resultExtendTrailingNanos
+			parseRuntime.ResultNormalizeRootStartNanos = materializationTiming.resultNormalizeRootStartNanos
+			parseRuntime.ResultCompatibilityNanos = materializationTiming.resultCompatibilityNanos
+			parseRuntime.ResultParentLinkNanos = materializationTiming.resultParentLinkNanos
 		}
 		parseRuntime.TokensConsumed = perfTokensConsumed
 		parseRuntime.LastTokenEndByte = lastTokenEndByte

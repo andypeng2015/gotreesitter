@@ -133,6 +133,13 @@ type pythonRuntimeBenchStats struct {
 	transientParentMaterializeNanos    int64
 	resultTreeBuildNanos               int64
 	transientChildMaterializeNanos     int64
+	resultPythonKeywordRepairNanos     int64
+	resultPythonRootRepairNanos        int64
+	resultFinalizeRootNanos            int64
+	resultExtendTrailingNanos          int64
+	resultNormalizeRootStartNanos      int64
+	resultCompatibilityNanos           int64
+	resultParentLinkNanos              int64
 	arenaNodesConstructed              uint64
 	nodeLiveCount                      uint64
 	nodeCapacityCount                  uint64
@@ -291,6 +298,13 @@ func (s *pythonRuntimeBenchStats) add(rt gotreesitter.ParseRuntime, breakdown go
 	s.transientParentMaterializeNanos += rt.TransientParentMaterializationNanos
 	s.resultTreeBuildNanos += rt.ResultTreeBuildNanos
 	s.transientChildMaterializeNanos += rt.TransientChildMaterializationNanos
+	s.resultPythonKeywordRepairNanos += rt.ResultPythonKeywordRepairNanos
+	s.resultPythonRootRepairNanos += rt.ResultPythonRootRepairNanos
+	s.resultFinalizeRootNanos += rt.ResultFinalizeRootNanos
+	s.resultExtendTrailingNanos += rt.ResultExtendTrailingNanos
+	s.resultNormalizeRootStartNanos += rt.ResultNormalizeRootStartNanos
+	s.resultCompatibilityNanos += rt.ResultCompatibilityNanos
+	s.resultParentLinkNanos += rt.ResultParentLinkNanos
 	s.leafNodesConstructed += rt.LeafNodesConstructed
 	s.parentNodesConstructed += rt.ParentNodesConstructed
 	s.noTreeReduceNodesConstructed += rt.NoTreeReduceNodesConstructed
@@ -624,6 +638,13 @@ func (s pythonRuntimeBenchStats) report(b *testing.B) {
 		b.ReportMetric(float64(s.transientParentMaterializeNanos)/ops, "transient_parent_materialize_ns/op")
 		b.ReportMetric(float64(s.resultTreeBuildNanos)/ops, "result_tree_build_ns/op")
 		b.ReportMetric(float64(s.transientChildMaterializeNanos)/ops, "transient_child_materialize_ns/op")
+		b.ReportMetric(float64(s.resultPythonKeywordRepairNanos)/ops, "result_python_keyword_repair_ns/op")
+		b.ReportMetric(float64(s.resultPythonRootRepairNanos)/ops, "result_python_root_repair_ns/op")
+		b.ReportMetric(float64(s.resultFinalizeRootNanos)/ops, "result_finalize_root_ns/op")
+		b.ReportMetric(float64(s.resultExtendTrailingNanos)/ops, "result_extend_trailing_ns/op")
+		b.ReportMetric(float64(s.resultNormalizeRootStartNanos)/ops, "result_normalize_root_start_ns/op")
+		b.ReportMetric(float64(s.resultCompatibilityNanos)/ops, "result_compatibility_ns/op")
+		b.ReportMetric(float64(s.resultParentLinkNanos)/ops, "result_parent_link_ns/op")
 	}
 	b.ReportMetric(float64(s.normalizationNodesVisited)/tokens, "norm_visited/token")
 	b.ReportMetric(float64(s.normalizationNodesRewritten)/tokens, "norm_rewritten/token")
