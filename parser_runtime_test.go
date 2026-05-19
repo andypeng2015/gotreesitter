@@ -208,6 +208,9 @@ func assertParseRuntimeArenaBreakdown(t *testing.T, tree *Tree, rt ParseRuntime)
 	}
 	breakdown := arenaBreakdown.NodeStructBytesAllocated +
 		arenaBreakdown.NoTreeNodeBytesAllocated +
+		arenaBreakdown.CompactFullLeafBytesAllocated +
+		arenaBreakdown.PendingParentBytesAllocated +
+		arenaBreakdown.PendingChildEntryBytesAllocated +
 		arenaBreakdown.ChildSliceBytesAllocated +
 		arenaBreakdown.FieldIDBytesAllocated +
 		arenaBreakdown.FieldSourceBytesAllocated +

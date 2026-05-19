@@ -183,6 +183,21 @@ func (p *Parser) useCompactNoTreeShiftLeaf() bool {
 	return p != nil && p.noTreeBenchmarkOnly && p.compactNoTreeShiftLeaves
 }
 
+func (p *Parser) useCompactFullShiftLeaf() bool {
+	return p != nil && !p.noTreeBenchmarkOnly && p.compactFullShiftLeaves
+}
+
+func (p *Parser) usePendingFullParents() bool {
+	return p != nil && !p.noTreeBenchmarkOnly && p.pendingFullParents
+}
+
+func (p *Parser) canCompactFullShiftLeaf(act ParseAction, tok Token) bool {
+	return p.useCompactFullShiftLeaf() &&
+		!act.Extra &&
+		!tok.NoLookahead &&
+		!p.shiftTokenIsMissingError(tok)
+}
+
 func (p *Parser) shiftTokenIsMissingError(tok Token) bool {
 	if tok.Missing {
 		return true
@@ -287,6 +302,16 @@ func (p *Parser) applyAction(s *glrStack, act ParseAction, tok Token, anyReduced
 			if extra && perfCountersEnabled {
 				perfRecordExtraNode()
 			}
+		} else if p.canCompactFullShiftLeaf(act, tok) {
+			leaf := newCompactFullLeafInArena(arena, tok.Symbol, named,
+				tok.StartByte, tok.EndByte, tok.StartPoint, tok.EndPoint)
+			if cp, ok := p.currentExternalCompactFullLeafCheckpointRef(arena, tok); ok {
+				leaf.checkpoint = cp
+				leaf.hasCheckpoint = true
+			}
+			leaf.preGotoState = currentState
+			leaf.parseState = targetState
+			p.pushStackCompactFullLeaf(s, targetState, leaf, entryScratch, gssScratch)
 		} else {
 			leaf := newLeafNodeInArena(arena, tok.Symbol, named,
 				tok.StartByte, tok.EndByte, tok.StartPoint, tok.EndPoint)
@@ -581,6 +606,34 @@ func (p *Parser) applyReduceActionFromGSS(s *glrStack, act ParseAction, tok Toke
 		}
 		reducedEnd--
 	}
+	if p.usePendingFullParents() {
+		if child, ok := p.collapsibleRawUnarySelfReductionEntry(act, tok, arena, windowEntries, 0, reducedEnd); ok {
+			targetDepth := s.depth() - actualEnd
+			if targetDepth < 0 || !s.truncate(targetDepth) {
+				s.dead = true
+				if tmpEntries != nil {
+					*tmpEntries = windowEntries[:0]
+				}
+				return
+			}
+			p.pushCollapsedUnaryReduceEntry(s, act, tok, child, entryScratch, gssScratch, windowEntries, reducedEnd, actualEnd, topState)
+			s.score += int(act.DynamicPrecedence)
+			*anyReduced = true
+			if tmpEntries != nil {
+				*tmpEntries = windowEntries[:0]
+			}
+			return
+		}
+	}
+	if p.usePendingFullParents() {
+		if p.tryPushPendingNoFieldParent(s, act, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, windowEntries, 0, reducedEnd, actualEnd, topState, s.depth()-actualEnd) {
+			if tmpEntries != nil {
+				*tmpEntries = windowEntries[:0]
+			}
+			return
+		}
+		materializePendingPayloadEntries(windowEntries, 0, actualEnd, arena)
+	}
 
 	if child := p.collapsibleRawUnarySelfReduction(act, tok, arena, windowEntries, 0, reducedEnd); child != nil {
 		targetDepth := s.depth() - actualEnd
@@ -783,6 +836,34 @@ func (p *Parser) applyReduceActionFromGSSTransientParents(s *glrStack, act Parse
 		}
 		reducedEnd--
 	}
+	if p.usePendingFullParents() {
+		if child, ok := p.collapsibleRawUnarySelfReductionEntry(act, tok, arena, windowEntries, 0, reducedEnd); ok {
+			targetDepth := s.depth() - actualEnd
+			if targetDepth < 0 || !s.truncate(targetDepth) {
+				s.dead = true
+				if tmpEntries != nil {
+					*tmpEntries = windowEntries[:0]
+				}
+				return
+			}
+			p.pushCollapsedUnaryReduceEntry(s, act, tok, child, entryScratch, gssScratch, windowEntries, reducedEnd, actualEnd, topState)
+			s.score += int(act.DynamicPrecedence)
+			*anyReduced = true
+			if tmpEntries != nil {
+				*tmpEntries = windowEntries[:0]
+			}
+			return
+		}
+	}
+	if p.usePendingFullParents() {
+		if p.tryPushPendingNoFieldParent(s, act, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, windowEntries, 0, reducedEnd, actualEnd, topState, s.depth()-actualEnd) {
+			if tmpEntries != nil {
+				*tmpEntries = windowEntries[:0]
+			}
+			return
+		}
+		materializePendingPayloadEntries(windowEntries, 0, actualEnd, arena)
+	}
 
 	if child := p.collapsibleRawUnarySelfReduction(act, tok, arena, windowEntries, 0, reducedEnd); child != nil {
 		targetDepth := s.depth() - actualEnd
@@ -939,6 +1020,353 @@ func computeReduceRangePayload(entries []stackEntry, childCount int) (reduceRang
 		actualEnd:  actualEnd,
 		topState:   entries[start-1].state,
 	}, true
+}
+
+func computeReduceRangeForFullPayloads(entries []stackEntry, childCount int, payloads bool) (reduceRange, bool) {
+	if payloads {
+		return computeReduceRangePayload(entries, childCount)
+	}
+	return computeReduceRange(entries, childCount)
+}
+
+func materializePendingPayloadEntries(entries []stackEntry, start, end int, arena *nodeArena) {
+	if end > len(entries) {
+		end = len(entries)
+	}
+	for i := start; i < end; i++ {
+		if stackEntryCompactFullLeaf(entries[i]) == nil && stackEntryPendingParent(entries[i]) == nil {
+			continue
+		}
+		materializeStackEntryPayload(arena, &entries[i], compactFullLeafMaterializeForParentReduce, pendingParentMaterializeForParentReduce)
+	}
+}
+
+func (p *Parser) tryPushPendingNoFieldParent(s *glrStack, act ParseAction, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, entries []stackEntry, start, reducedEnd, trailingEnd int, topState StateID, truncateDepth int) bool {
+	if p == nil || !p.usePendingFullParents() || p.language == nil || s == nil {
+		return false
+	}
+	if act.ChildCount == 0 || act.ChildCount > 32 || len(p.reduceAliasSequence(act.ProductionID)) != 0 {
+		return false
+	}
+	if p.forceRawSpanAll || (int(act.Symbol) < len(p.forceRawSpanTable) && p.forceRawSpanTable[act.Symbol]) {
+		return false
+	}
+	if p.reduceProductionHasFields(act.ProductionID) {
+		return false
+	}
+	symbolMeta := p.language.SymbolMetadata
+	parentVisible := symbolVisibleForPending(act.Symbol, symbolMeta)
+	childCount := 0
+	hasError := false
+	for i := start; i < reducedEnd; i++ {
+		count, _, childHasError, ok := pendingNoFieldChildCount(entries[i], parentVisible, symbolMeta)
+		if !ok {
+			return false
+		}
+		childCount += count
+		hasError = hasError || childHasError
+	}
+	if childCount == 0 {
+		return false
+	}
+	var first, last stackEntry
+	if firstEntry, lastEntry, ok := pendingNoFieldChildEndpoints(entries, start, reducedEnd, parentVisible, symbolMeta); ok {
+		first = firstEntry
+		last = lastEntry
+	} else {
+		return false
+	}
+	startByte := stackEntryNodeStartByte(first)
+	endByte := stackEntryNodeEndByte(last)
+	startPoint := stackEntryNodeStartPoint(first)
+	endPoint := stackEntryNodeEndPoint(last)
+	if span, ok := pendingReduceWindowSpan(entries, start, reducedEnd); ok {
+		startByte = span.startByte
+		endByte = span.endByte
+		startPoint = span.startPoint
+		endPoint = span.endPoint
+	}
+	parent := newPendingParentShellInArena(
+		arena,
+		act.Symbol,
+		p.isNamedSymbol(act.Symbol),
+		act.ProductionID,
+		childCount,
+		startByte,
+		endByte,
+		startPoint,
+		endPoint,
+		hasError,
+	)
+	out := 0
+	flattenedParents := 0
+	flattenedChildRefs := 0
+	parentChildren := parent.childEntries()
+	for i := start; i < reducedEnd; i++ {
+		next, parents, refs := fillPendingNoFieldChildren(parentChildren, out, entries[i], parentVisible, symbolMeta)
+		out = next
+		flattenedParents += parents
+		flattenedChildRefs += refs
+	}
+	if out != childCount {
+		return false
+	}
+	if arena != nil {
+		arena.pendingParentsFlattened += uint64(flattenedParents)
+		arena.pendingChildRefsFlattened += uint64(flattenedChildRefs)
+	}
+	gotoState := p.lookupGoto(topState, act.Symbol)
+	targetState := topState
+	if gotoState != 0 {
+		targetState = gotoState
+	}
+	if tok.NoLookahead && targetState == topState {
+		parent.setExtra(true)
+	}
+	parent.preGotoState = topState
+	parent.parseState = targetState
+	if !s.truncate(truncateDepth) {
+		s.dead = true
+		return true
+	}
+	p.pushStackPendingParent(s, targetState, parent, entryScratch, gssScratch)
+	for i := reducedEnd; i < trailingEnd; i++ {
+		extra, ok := retargetStackEntryPayload(entries[i], targetState)
+		if !ok {
+			continue
+		}
+		p.pushStackEntry(s, extra, entryScratch, gssScratch)
+	}
+	if nodeCount != nil {
+		*nodeCount = *nodeCount + 1
+	}
+	s.score += int(act.DynamicPrecedence)
+	if anyReduced != nil {
+		*anyReduced = true
+	}
+	return true
+}
+
+func symbolVisibleForPending(sym Symbol, symbolMeta []SymbolMetadata) bool {
+	if idx := int(sym); idx >= 0 && idx < len(symbolMeta) {
+		return symbolMeta[sym].Visible
+	}
+	return true
+}
+
+func stackEntryVisibleForPending(entry stackEntry, symbolMeta []SymbolMetadata) bool {
+	return symbolVisibleForPending(stackEntryNodeSymbol(entry), symbolMeta)
+}
+
+func pendingNoFieldChildCount(entry stackEntry, parentVisible bool, symbolMeta []SymbolMetadata) (count int, hasPayload bool, hasError bool, ok bool) {
+	if !stackEntryHasNode(entry) {
+		return 0, false, false, true
+	}
+	if stackEntryNodeIsMissing(entry) {
+		return 0, false, false, false
+	}
+	hasPayload = stackEntryCompactFullLeaf(entry) != nil || stackEntryPendingParent(entry) != nil
+	hasError = stackEntryNodeHasError(entry)
+	if stackEntryVisibleForPending(entry, symbolMeta) {
+		return 1, hasPayload, hasError, true
+	}
+	if parentVisible {
+		if parent := stackEntryPendingParent(entry); parent != nil {
+			for _, child := range parent.childEntries() {
+				childCount, childPayload, childHasError, childOK := pendingNoFieldChildCount(child, true, symbolMeta)
+				if !childOK {
+					return 0, false, false, false
+				}
+				count += childCount
+				hasPayload = hasPayload || childPayload
+				hasError = hasError || childHasError
+			}
+			return count, hasPayload, hasError, true
+		}
+		if node := stackEntryNode(entry); node != nil {
+			for _, child := range node.children {
+				childEntry := newStackEntryNode(child.parseState, child)
+				childCount, childPayload, childHasError, childOK := pendingNoFieldChildCount(childEntry, true, symbolMeta)
+				if !childOK {
+					return 0, false, false, false
+				}
+				count += childCount
+				hasPayload = hasPayload || childPayload
+				hasError = hasError || childHasError
+			}
+		}
+		return count, hasPayload, hasError, true
+	}
+	if stackEntryNodeChildCount(entry) == 0 {
+		return 0, hasPayload, hasError, true
+	}
+	return 1, hasPayload, hasError, true
+}
+
+func pendingNoFieldChildEndpoints(entries []stackEntry, start, end int, parentVisible bool, symbolMeta []SymbolMetadata) (first, last stackEntry, ok bool) {
+	for i := start; i < end; i++ {
+		next, found := pendingNoFieldFirstChild(entries[i], parentVisible, symbolMeta)
+		if !found {
+			continue
+		}
+		first = next
+		ok = true
+		break
+	}
+	if !ok {
+		return stackEntry{}, stackEntry{}, false
+	}
+	for i := end - 1; i >= start; i-- {
+		next, found := pendingNoFieldLastChild(entries[i], parentVisible, symbolMeta)
+		if !found {
+			continue
+		}
+		last = next
+		return first, last, true
+	}
+	return stackEntry{}, stackEntry{}, false
+}
+
+func pendingNoFieldFirstChild(entry stackEntry, parentVisible bool, symbolMeta []SymbolMetadata) (stackEntry, bool) {
+	if !stackEntryHasNode(entry) || stackEntryNodeIsMissing(entry) {
+		return stackEntry{}, false
+	}
+	if stackEntryVisibleForPending(entry, symbolMeta) {
+		return entry, true
+	}
+	if parentVisible {
+		if parent := stackEntryPendingParent(entry); parent != nil {
+			for _, child := range parent.childEntries() {
+				if next, ok := pendingNoFieldFirstChild(child, true, symbolMeta); ok {
+					return next, true
+				}
+			}
+			return stackEntry{}, false
+		}
+		if node := stackEntryNode(entry); node != nil {
+			for _, child := range node.children {
+				if next, ok := pendingNoFieldFirstChild(newStackEntryNode(child.parseState, child), true, symbolMeta); ok {
+					return next, true
+				}
+			}
+		}
+		return stackEntry{}, false
+	}
+	if stackEntryNodeChildCount(entry) == 0 {
+		return stackEntry{}, false
+	}
+	return entry, true
+}
+
+func pendingNoFieldLastChild(entry stackEntry, parentVisible bool, symbolMeta []SymbolMetadata) (stackEntry, bool) {
+	if !stackEntryHasNode(entry) || stackEntryNodeIsMissing(entry) {
+		return stackEntry{}, false
+	}
+	if stackEntryVisibleForPending(entry, symbolMeta) {
+		return entry, true
+	}
+	if parentVisible {
+		if parent := stackEntryPendingParent(entry); parent != nil {
+			children := parent.childEntries()
+			for i := len(children) - 1; i >= 0; i-- {
+				if next, ok := pendingNoFieldLastChild(children[i], true, symbolMeta); ok {
+					return next, true
+				}
+			}
+			return stackEntry{}, false
+		}
+		if node := stackEntryNode(entry); node != nil {
+			for i := len(node.children) - 1; i >= 0; i-- {
+				child := node.children[i]
+				if next, ok := pendingNoFieldLastChild(newStackEntryNode(child.parseState, child), true, symbolMeta); ok {
+					return next, true
+				}
+			}
+		}
+		return stackEntry{}, false
+	}
+	if stackEntryNodeChildCount(entry) == 0 {
+		return stackEntry{}, false
+	}
+	return entry, true
+}
+
+func fillPendingNoFieldChildren(dst []stackEntry, out int, entry stackEntry, parentVisible bool, symbolMeta []SymbolMetadata) (next int, flattenedParents int, flattenedChildRefs int) {
+	if !stackEntryHasNode(entry) || stackEntryNodeIsMissing(entry) {
+		return out, 0, 0
+	}
+	if stackEntryVisibleForPending(entry, symbolMeta) {
+		if out < len(dst) {
+			dst[out] = entry
+			out++
+		}
+		return out, 0, 0
+	}
+	if parentVisible {
+		if parent := stackEntryPendingParent(entry); parent != nil {
+			before := out
+			children := parent.childEntries()
+			for _, child := range children {
+				var parents, refs int
+				out, parents, refs = fillPendingNoFieldChildren(dst, out, child, true, symbolMeta)
+				flattenedParents += parents
+				flattenedChildRefs += refs
+			}
+			if out > before {
+				flattenedParents++
+				flattenedChildRefs += len(children)
+			}
+			return out, flattenedParents, flattenedChildRefs
+		}
+		if node := stackEntryNode(entry); node != nil {
+			for _, child := range node.children {
+				var parents, refs int
+				out, parents, refs = fillPendingNoFieldChildren(dst, out, newStackEntryNode(child.parseState, child), true, symbolMeta)
+				flattenedParents += parents
+				flattenedChildRefs += refs
+			}
+		}
+		return out, flattenedParents, flattenedChildRefs
+	}
+	if stackEntryNodeChildCount(entry) == 0 {
+		return out, 0, 0
+	}
+	if out < len(dst) {
+		dst[out] = entry
+		out++
+	}
+	return out, 0, 0
+}
+
+func pendingReduceWindowSpan(entries []stackEntry, start, end int) (reduceRawSpan, bool) {
+	span := reduceRawSpan{}
+	if end <= start {
+		return span, false
+	}
+	foundStart := false
+	for i := start; i < end; i++ {
+		entry := entries[i]
+		if !stackEntryHasNode(entry) || stackEntryNodeIsExtra(entry) {
+			continue
+		}
+		span.startByte = stackEntryNodeStartByte(entry)
+		span.startPoint = stackEntryNodeStartPoint(entry)
+		foundStart = true
+		break
+	}
+	if !foundStart {
+		return span, false
+	}
+	for i := end - 1; i >= start; i-- {
+		entry := entries[i]
+		if !stackEntryHasNode(entry) || stackEntryNodeIsExtra(entry) {
+			continue
+		}
+		span.endByte = stackEntryNodeEndByte(entry)
+		span.endPoint = stackEntryNodeEndPoint(entry)
+		return span, true
+	}
+	return span, true
 }
 
 func computeReduceRawSpan(entries []stackEntry, start, end int) reduceRawSpan {
@@ -2285,7 +2713,7 @@ func (p *Parser) applyReduceAction(s *glrStack, act ParseAction, tok Token, anyR
 	if p != nil && p.noTreeBenchmarkOnly {
 		window, ok = computeReduceRangePayload(entries, childCount)
 	} else {
-		window, ok = computeReduceRange(entries, childCount)
+		window, ok = computeReduceRangeForFullPayloads(entries, childCount, p.usePendingFullParents())
 	}
 	if !ok {
 		// Not enough stack entries — kill this stack version.
@@ -2302,6 +2730,24 @@ func (p *Parser) applyReduceAction(s *glrStack, act ParseAction, tok Token, anyR
 		s.score += int(act.DynamicPrecedence)
 		*anyReduced = true
 		return
+	}
+	if p.usePendingFullParents() {
+		if child, ok := p.collapsibleRawUnarySelfReductionEntry(act, tok, arena, entries, window.start, window.reducedEnd); ok {
+			if !s.truncate(window.start) {
+				s.dead = true
+				return
+			}
+			p.pushCollapsedUnaryReduceEntry(s, act, tok, child, entryScratch, gssScratch, entries, window.reducedEnd, window.actualEnd, window.topState)
+			s.score += int(act.DynamicPrecedence)
+			*anyReduced = true
+			return
+		}
+	}
+	if p.usePendingFullParents() {
+		if p.tryPushPendingNoFieldParent(s, act, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, entries, window.start, window.reducedEnd, window.actualEnd, window.topState, window.start) {
+			return
+		}
+		materializePendingPayloadEntries(entries, window.start, window.actualEnd, arena)
 	}
 
 	if child := p.collapsibleRawUnarySelfReduction(act, tok, arena, entries, window.start, window.reducedEnd); child != nil {
@@ -2390,7 +2836,7 @@ func (p *Parser) applyReduceActionTransientParents(s *glrStack, act ParseAction,
 	if p != nil && p.noTreeBenchmarkOnly {
 		window, ok = computeReduceRangePayload(entries, childCount)
 	} else {
-		window, ok = computeReduceRange(entries, childCount)
+		window, ok = computeReduceRangeForFullPayloads(entries, childCount, p.usePendingFullParents())
 	}
 	if !ok {
 		s.dead = true
@@ -2406,6 +2852,24 @@ func (p *Parser) applyReduceActionTransientParents(s *glrStack, act ParseAction,
 		s.score += int(act.DynamicPrecedence)
 		*anyReduced = true
 		return
+	}
+	if p.usePendingFullParents() {
+		if child, ok := p.collapsibleRawUnarySelfReductionEntry(act, tok, arena, entries, window.start, window.reducedEnd); ok {
+			if !s.truncate(window.start) {
+				s.dead = true
+				return
+			}
+			p.pushCollapsedUnaryReduceEntry(s, act, tok, child, entryScratch, gssScratch, entries, window.reducedEnd, window.actualEnd, window.topState)
+			s.score += int(act.DynamicPrecedence)
+			*anyReduced = true
+			return
+		}
+	}
+	if p.usePendingFullParents() {
+		if p.tryPushPendingNoFieldParent(s, act, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, entries, window.start, window.reducedEnd, window.actualEnd, window.topState, window.start) {
+			return
+		}
+		materializePendingPayloadEntries(entries, window.start, window.actualEnd, arena)
 	}
 
 	if child := p.collapsibleRawUnarySelfReduction(act, tok, arena, entries, window.start, window.reducedEnd); child != nil {
@@ -2520,6 +2984,16 @@ func (p *Parser) pushStackCompactCheckpointLeaf(s *glrStack, state StateID, leaf
 	p.pushStackEntry(s, entry, entryScratch, gssScratch)
 }
 
+func (p *Parser) pushStackCompactFullLeaf(s *glrStack, state StateID, leaf *compactFullLeaf, entryScratch *glrEntryScratch, gssScratch *gssScratch) {
+	entry := newStackEntryCompactFullLeaf(state, leaf)
+	p.pushStackEntry(s, entry, entryScratch, gssScratch)
+}
+
+func (p *Parser) pushStackPendingParent(s *glrStack, state StateID, parent *pendingParent, entryScratch *glrEntryScratch, gssScratch *gssScratch) {
+	entry := newStackEntryPendingParent(state, parent)
+	p.pushStackEntry(s, entry, entryScratch, gssScratch)
+}
+
 func newNoTreeReduceNodeInArena(arena *nodeArena, sym Symbol, named bool, productionID uint16, entries []stackEntry, start, reducedEnd int, tok Token, trackChildErrors bool) *noTreeNode {
 	var n *noTreeNode
 	if arena == nil {
@@ -2592,6 +3066,168 @@ func (p *Parser) pushCollapsedUnaryReduceNode(s *glrStack, act ParseAction, tok 
 		nodeBumpEquivVersion(extra)
 		p.pushStackNode(s, targetState, extra, entryScratch, gssScratch)
 	}
+}
+
+func (p *Parser) pushCollapsedUnaryReduceEntry(s *glrStack, act ParseAction, tok Token, child stackEntry, entryScratch *glrEntryScratch, gssScratch *gssScratch, entries []stackEntry, trailingStart, trailingEnd int, topState StateID) {
+	gotoState := p.lookupGoto(topState, act.Symbol)
+	targetState := topState
+	if gotoState != 0 {
+		targetState = gotoState
+	}
+	setCollapsedUnaryEntryMetadata(&child, act, tok.NoLookahead && targetState == topState, topState, targetState)
+	p.pushStackEntry(s, child, entryScratch, gssScratch)
+	for i := trailingStart; i < trailingEnd; i++ {
+		extra, ok := retargetStackEntryPayload(entries[i], targetState)
+		if !ok {
+			continue
+		}
+		p.pushStackEntry(s, extra, entryScratch, gssScratch)
+	}
+}
+
+func setCollapsedUnaryEntryMetadata(entry *stackEntry, act ParseAction, extra bool, preGotoState, parseState StateID) {
+	if entry == nil {
+		return
+	}
+	if n := stackEntryNode(*entry); n != nil {
+		if extra {
+			n.setExtra(true)
+		}
+		n.productionID = act.ProductionID
+		n.preGotoState = preGotoState
+		n.parseState = parseState
+		nodeBumpEquivVersion(n)
+		entry.state = parseState
+		return
+	}
+	if n := stackEntryCompactFullLeaf(*entry); n != nil {
+		if extra {
+			n.setExtra(true)
+		}
+		n.productionID = act.ProductionID
+		n.preGotoState = preGotoState
+		n.parseState = parseState
+		entry.state = parseState
+	}
+}
+
+func (p *Parser) collapsibleRawUnarySelfReductionEntry(act ParseAction, tok Token, arena *nodeArena, entries []stackEntry, start, reducedEnd int) (stackEntry, bool) {
+	if p == nil || arena == nil {
+		return stackEntry{}, false
+	}
+	diag := arena.breakdownEnabled
+	if diag {
+		arena.collapseRawUnaryAttempts++
+	}
+	if tok.NoLookahead {
+		if diag {
+			arena.collapseRawUnaryMissShape++
+		}
+		return stackEntry{}, false
+	}
+	if reducedEnd-start != 1 || start < 0 || reducedEnd > len(entries) {
+		if diag {
+			arena.collapseRawUnaryMissShape++
+		}
+		return stackEntry{}, false
+	}
+	if p.reduceProductionHasFields(act.ProductionID) || len(p.reduceAliasSequence(act.ProductionID)) != 0 {
+		if diag {
+			arena.collapseRawUnaryMissGrammar++
+		}
+		return stackEntry{}, false
+	}
+
+	entry := entries[start]
+	if child := stackEntryNode(entry); child != nil {
+		if child.ownerArena != arena || child.parent != nil {
+			if diag {
+				arena.collapseRawUnaryMissChild++
+			}
+			return stackEntry{}, false
+		}
+		if !p.isVisibleSymbol(child.symbol) {
+			if diag {
+				arena.collapseRawUnaryMissChild++
+			}
+			return stackEntry{}, false
+		}
+		collapsed, rule := p.collapseUnaryChildForReductionWithRule(act, arena, child)
+		if collapsed == nil {
+			if diag {
+				arena.collapseRawUnaryMissRule++
+			}
+			return stackEntry{}, false
+		}
+		if diag {
+			arena.collapseRawUnarySuccesses++
+			recordCollapseRule(arena, rule)
+		}
+		return newStackEntryNode(entry.state, collapsed), true
+	}
+
+	leaf := stackEntryCompactFullLeaf(entry)
+	if leaf == nil {
+		if diag {
+			arena.collapseRawUnaryMissChild++
+		}
+		return stackEntry{}, false
+	}
+	if !p.isVisibleSymbol(leaf.symbol) || leaf.isExtra() || leaf.isMissing() || leaf.hasError() {
+		if diag {
+			arena.collapseRawUnaryMissChild++
+		}
+		return stackEntry{}, false
+	}
+	rule := p.collapseUnaryLeafRule(act, leaf.symbol)
+	if rule == collapseUnaryRuleNone {
+		if diag {
+			arena.collapseRawUnaryMissRule++
+		}
+		return stackEntry{}, false
+	}
+	if rule == collapseUnaryRuleNamedLeafAlias {
+		cloned := newCompactFullLeafInArena(arena, leaf.symbol, leaf.isNamed(), leaf.startByte, leaf.endByte, leaf.startPoint, leaf.endPoint)
+		*cloned = *leaf
+		leaf = cloned
+		entry = newStackEntryCompactFullLeaf(entry.state, leaf)
+	}
+	if rule == collapseUnaryRuleNamedLeafAlias {
+		leaf.symbol = act.Symbol
+		leaf.setNamed(p.isNamedSymbol(act.Symbol))
+	}
+	if diag {
+		arena.collapseRawUnarySuccesses++
+		recordCollapseRule(arena, rule)
+	}
+	return entry, true
+}
+
+func (p *Parser) collapseUnaryLeafRule(act ParseAction, childSym Symbol) collapseUnaryRule {
+	if childSym != act.Symbol {
+		if p.canCollapseInvisibleUnaryWrapperSymbol(act.Symbol) {
+			return collapseUnaryRuleInvisibleWrapper
+		}
+		if !p.canCollapseNamedLeafWrapper(act.Symbol, childSym) {
+			return collapseUnaryRuleNone
+		}
+		if !p.isSingleTokenWrapperSymbol(act.Symbol) && !p.sameSymbolName(act.Symbol, childSym) {
+			return collapseUnaryRuleNone
+		}
+		return collapseUnaryRuleNamedLeafAlias
+	}
+	return collapseUnaryRuleSameSymbol
+}
+
+func (p *Parser) canCollapseInvisibleUnaryWrapperSymbol(parentSym Symbol) bool {
+	if p == nil || p.language == nil {
+		return false
+	}
+	meta := p.language.SymbolMetadata
+	if int(parentSym) >= len(meta) {
+		return false
+	}
+	return !meta[parentSym].Visible
 }
 
 func (p *Parser) collapsibleRawUnarySelfReduction(act ParseAction, tok Token, arena *nodeArena, entries []stackEntry, start, reducedEnd int) *Node {

@@ -90,6 +90,16 @@ func parseTransientReduceParentsEnabled() bool {
 	return parseTransientReduceEnabled("GOT_TRANSIENT_REDUCE_PARENTS")
 }
 
+func parseCompactFullLeavesEnabled() bool {
+	raw := strings.TrimSpace(os.Getenv("GOT_GLR_V2_COMPACT_FULL_LEAVES"))
+	return raw != "" && raw != "0" && !strings.EqualFold(raw, "false")
+}
+
+func parsePendingParentsEnabled() bool {
+	raw := strings.TrimSpace(os.Getenv("GOT_GLR_V2_PENDING_PARENTS"))
+	return raw != "" && raw != "0" && !strings.EqualFold(raw, "false")
+}
+
 func parseTransientReduceEnabled(envName string) bool {
 	raw := strings.TrimSpace(os.Getenv(envName))
 	if raw == "" {

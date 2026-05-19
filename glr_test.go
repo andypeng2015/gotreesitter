@@ -17,6 +17,18 @@ func TestNoTreeNodeSizeBudget(t *testing.T) {
 	}
 }
 
+func TestCompactFullLeafSizeBudget(t *testing.T) {
+	if got := unsafe.Sizeof(compactFullLeaf{}); got != 60 {
+		t.Fatalf("compactFullLeaf size = %d, want 60", got)
+	}
+}
+
+func TestPendingParentSizeBudget(t *testing.T) {
+	if got := unsafe.Sizeof(pendingParent{}); got != 56 {
+		t.Fatalf("pendingParent size = %d, want 56", got)
+	}
+}
+
 func TestNoTreeNodeStackEntryKeepsBytesAndDropsPoints(t *testing.T) {
 	leaf := newNoTreeLeafNodeInArena(nil, 7, true, 11, 19, Point{Row: 3, Column: 5}, Point{Row: 3, Column: 13})
 	entry := newStackEntryNoTreeNode(2, leaf)
@@ -32,6 +44,42 @@ func TestNoTreeNodeStackEntryKeepsBytesAndDropsPoints(t *testing.T) {
 	}
 	if got := stackEntryNodeEndPoint(entry); got != (Point{}) {
 		t.Fatalf("end point = %#v, want zero point", got)
+	}
+}
+
+func TestCompactFullLeafStackEntryKeepsPointsAndMaterializes(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	leaf := newCompactFullLeafInArena(arena, 9, true, 13, 21, Point{Row: 2, Column: 3}, Point{Row: 2, Column: 11})
+	entry := newStackEntryCompactFullLeaf(4, leaf)
+
+	if got := stackEntryNode(entry); got != nil {
+		t.Fatalf("stackEntryNode = %p, want nil before materialization", got)
+	}
+	if got := stackEntryNodeStartPoint(entry); got != (Point{Row: 2, Column: 3}) {
+		t.Fatalf("start point = %#v", got)
+	}
+	if got := stackEntryNodeEndPoint(entry); got != (Point{Row: 2, Column: 11}) {
+		t.Fatalf("end point = %#v", got)
+	}
+
+	node := materializeStackEntryCompactFullLeaf(arena, &entry, compactFullLeafMaterializeForParentReduce)
+	if node == nil {
+		t.Fatal("materialized node = nil")
+	}
+	if got := stackEntryNode(entry); got != node {
+		t.Fatal("entry was not retargeted to materialized node")
+	}
+	if got := node.startPoint; got != (Point{Row: 2, Column: 3}) {
+		t.Fatalf("node start point = %#v", got)
+	}
+	if got := arena.compactFullLeafCreated; got != 1 {
+		t.Fatalf("compactFullLeafCreated = %d, want 1", got)
+	}
+	if got := arena.compactFullLeafMaterialized; got != 1 {
+		t.Fatalf("compactFullLeafMaterialized = %d, want 1", got)
+	}
+	if got := arena.compactFullLeafMaterializedForParentReduce; got != 1 {
+		t.Fatalf("compactFullLeafMaterializedForParentReduce = %d, want 1", got)
 	}
 }
 

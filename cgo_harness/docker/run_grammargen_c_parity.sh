@@ -86,6 +86,8 @@ echo "  ratchet:    ${RATCHET_UPDATE:-no}"
 echo "  timeout:    ${TIMEOUT_MINS}m"
 echo "  gomaxprocs: ${GOMAXPROCS_VALUE:-inherit}"
 echo "  goflags:    ${GOFLAGS_VALUE:-inherit}"
+echo "  glr_v2_pending_parents: ${GOT_GLR_V2_PENDING_PARENTS:-unset}"
+echo "  glr_v2_compact_full_leaves: ${GOT_GLR_V2_COMPACT_FULL_LEAVES:-unset}"
 echo "  offline:    $OFFLINE"
 echo "  seed dir:   ${SEED_DIR:-none}"
 echo "  output:     $OUT_DIR"
@@ -142,6 +144,12 @@ if [[ -n "$GOMAXPROCS_VALUE" ]]; then
 fi
 if [[ -n "$GOFLAGS_VALUE" ]]; then
     ENV_ARGS+=(-e "GOFLAGS=$GOFLAGS_VALUE")
+fi
+if [[ -n "${GOT_GLR_V2_PENDING_PARENTS:-}" ]]; then
+    ENV_ARGS+=(-e "GOT_GLR_V2_PENDING_PARENTS=$GOT_GLR_V2_PENDING_PARENTS")
+fi
+if [[ -n "${GOT_GLR_V2_COMPACT_FULL_LEAVES:-}" ]]; then
+    ENV_ARGS+=(-e "GOT_GLR_V2_COMPACT_FULL_LEAVES=$GOT_GLR_V2_COMPACT_FULL_LEAVES")
 fi
 
 read -r -d '' CONTAINER_CMD <<EOF || true
@@ -334,6 +342,8 @@ ratchet_update: ${RATCHET_UPDATE:-no}
 timeout_mins: $TIMEOUT_MINS
 gomaxprocs: ${GOMAXPROCS_VALUE:-inherit}
 goflags: ${GOFLAGS_VALUE:-inherit}
+glr_v2_pending_parents: ${GOT_GLR_V2_PENDING_PARENTS:-unset}
+glr_v2_compact_full_leaves: ${GOT_GLR_V2_COMPACT_FULL_LEAVES:-unset}
 offline: $OFFLINE
 seed_dir: ${SEED_DIR:-none}
 exit_code: $CONTAINER_EXIT

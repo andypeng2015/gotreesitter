@@ -80,6 +80,12 @@ type nodeArena struct {
 	nodeSlabCursor                  int
 	noTreeNodeSlabs                 []noTreeNodeSlab
 	noTreeNodeSlabCursor            int
+	compactFullLeafSlabs            []compactFullLeafSlab
+	compactFullLeafSlabCursor       int
+	pendingParentSlabs              []pendingParentSlab
+	pendingParentSlabCursor         int
+	pendingChildEntrySlabs          []pendingChildEntrySlab
+	pendingChildEntrySlabCursor     int
 	compactCheckpointLeafSlabs      []compactCheckpointLeafSlab
 	compactCheckpointLeafSlabCursor int
 
@@ -92,74 +98,83 @@ type nodeArena struct {
 	fieldSlabCursor                    int
 	fieldSourceSlabCursor              int
 
-	externalScannerCheckpointRecords    uint64
-	externalScannerSnapshotPayloadBytes uint64
-	externalScannerLastSnapshotRef      externalScannerSnapshotRef
-	externalScannerCheckpointLeafNodes  uint64
-	compactFullLeafCreated              uint64
-	compactFullLeafMaterialized         uint64
-	compactFullLeafDropped              uint64
-	checkpointLeafFullNodesAvoided      uint64
-	leafNodesConstructed                uint64
-	parentNodesConstructed              uint64
-	fieldedParentNodesConstructed       uint64
-	unfieldedParentNodesConstructed     uint64
-	parentConstructedChildLen0          uint64
-	parentConstructedChildLen1          uint64
-	parentConstructedChildLen2          uint64
-	parentConstructedChildLen3          uint64
-	parentConstructedChildLen4Plus      uint64
-	parentConstructedNoLinks            uint64
-	parentConstructedWithLinks          uint64
-	parentConstructedTrackErrors        uint64
-	parentConstructedFieldSources       uint64
-	parentReductionVisible              uint64
-	parentReductionInvisible            uint64
-	parentReductionVisibleFielded       uint64
-	parentReductionVisibleUnfielded     uint64
-	parentReductionInvisibleFielded     uint64
-	parentReductionInvisibleUnfielded   uint64
-	parentReductionVisibleChildPointers uint64
-	parentReductionInvisibleChildPtrs   uint64
-	parentReductionVisibleChildLen0     uint64
-	parentReductionVisibleChildLen1     uint64
-	parentReductionVisibleChildLen2     uint64
-	parentReductionVisibleChildLen3     uint64
-	parentReductionVisibleChildLen4Plus uint64
-	parentReductionInvisibleChildLen0   uint64
-	parentReductionInvisibleChildLen1   uint64
-	parentReductionInvisibleChildLen2   uint64
-	parentReductionInvisibleChildLen3   uint64
-	parentReductionInvisibleChildLen4P  uint64
-	reduceChildSlicesFastGSS            uint64
-	reduceChildPointersFastGSS          uint64
-	reduceChildSlicesAllVisible         uint64
-	reduceChildPointersAllVisible       uint64
-	reduceChildSlicesNoAlias            uint64
-	reduceChildPointersNoAlias          uint64
-	reduceChildSlicesScratchGeneral     uint64
-	reduceChildPointersScratchGeneral   uint64
-	reduceChildSlicesScratchNoAlias     uint64
-	reduceChildPointersScratchNoAlias   uint64
-	collapseRawUnaryAttempts            uint64
-	collapseRawUnarySuccesses           uint64
-	collapseRawUnaryMissShape           uint64
-	collapseRawUnaryMissGrammar         uint64
-	collapseRawUnaryMissChild           uint64
-	collapseRawUnaryMissRule            uint64
-	collapseUnaryAttempts               uint64
-	collapseUnarySuccesses              uint64
-	collapseUnaryMissShape              uint64
-	collapseUnaryMissGrammar            uint64
-	collapseUnaryMissFielded            uint64
-	collapseUnaryMissChild              uint64
-	collapseUnaryMissRule               uint64
-	collapseRuleSameSymbol              uint64
-	collapseRuleInvisibleWrapper        uint64
-	collapseRuleNamedLeafAlias          uint64
-	noTreeReduceNodesConstructed        uint64
-	noTreeLeafNodesConstructed          uint64
-	noTreePlaceholderNodesConstructed   uint64
+	externalScannerCheckpointRecords           uint64
+	externalScannerSnapshotPayloadBytes        uint64
+	externalScannerLastSnapshotRef             externalScannerSnapshotRef
+	externalScannerCheckpointLeafNodes         uint64
+	compactFullLeafCreated                     uint64
+	compactFullLeafMaterialized                uint64
+	compactFullLeafMaterializedForParentReduce uint64
+	compactFullLeafMaterializedForFinalTree    uint64
+	compactFullLeafDropped                     uint64
+	pendingParentCreated                       uint64
+	pendingParentMaterialized                  uint64
+	pendingParentMaterializedForParentReduce   uint64
+	pendingParentMaterializedForFinalTree      uint64
+	pendingParentDropped                       uint64
+	pendingParentsFlattened                    uint64
+	pendingChildRefsFlattened                  uint64
+	checkpointLeafFullNodesAvoided             uint64
+	leafNodesConstructed                       uint64
+	parentNodesConstructed                     uint64
+	fieldedParentNodesConstructed              uint64
+	unfieldedParentNodesConstructed            uint64
+	parentConstructedChildLen0                 uint64
+	parentConstructedChildLen1                 uint64
+	parentConstructedChildLen2                 uint64
+	parentConstructedChildLen3                 uint64
+	parentConstructedChildLen4Plus             uint64
+	parentConstructedNoLinks                   uint64
+	parentConstructedWithLinks                 uint64
+	parentConstructedTrackErrors               uint64
+	parentConstructedFieldSources              uint64
+	parentReductionVisible                     uint64
+	parentReductionInvisible                   uint64
+	parentReductionVisibleFielded              uint64
+	parentReductionVisibleUnfielded            uint64
+	parentReductionInvisibleFielded            uint64
+	parentReductionInvisibleUnfielded          uint64
+	parentReductionVisibleChildPointers        uint64
+	parentReductionInvisibleChildPtrs          uint64
+	parentReductionVisibleChildLen0            uint64
+	parentReductionVisibleChildLen1            uint64
+	parentReductionVisibleChildLen2            uint64
+	parentReductionVisibleChildLen3            uint64
+	parentReductionVisibleChildLen4Plus        uint64
+	parentReductionInvisibleChildLen0          uint64
+	parentReductionInvisibleChildLen1          uint64
+	parentReductionInvisibleChildLen2          uint64
+	parentReductionInvisibleChildLen3          uint64
+	parentReductionInvisibleChildLen4P         uint64
+	reduceChildSlicesFastGSS                   uint64
+	reduceChildPointersFastGSS                 uint64
+	reduceChildSlicesAllVisible                uint64
+	reduceChildPointersAllVisible              uint64
+	reduceChildSlicesNoAlias                   uint64
+	reduceChildPointersNoAlias                 uint64
+	reduceChildSlicesScratchGeneral            uint64
+	reduceChildPointersScratchGeneral          uint64
+	reduceChildSlicesScratchNoAlias            uint64
+	reduceChildPointersScratchNoAlias          uint64
+	collapseRawUnaryAttempts                   uint64
+	collapseRawUnarySuccesses                  uint64
+	collapseRawUnaryMissShape                  uint64
+	collapseRawUnaryMissGrammar                uint64
+	collapseRawUnaryMissChild                  uint64
+	collapseRawUnaryMissRule                   uint64
+	collapseUnaryAttempts                      uint64
+	collapseUnarySuccesses                     uint64
+	collapseUnaryMissShape                     uint64
+	collapseUnaryMissGrammar                   uint64
+	collapseUnaryMissFielded                   uint64
+	collapseUnaryMissChild                     uint64
+	collapseUnaryMissRule                      uint64
+	collapseRuleSameSymbol                     uint64
+	collapseRuleInvisibleWrapper               uint64
+	collapseRuleNamedLeafAlias                 uint64
+	noTreeReduceNodesConstructed               uint64
+	noTreeLeafNodesConstructed                 uint64
+	noTreePlaceholderNodesConstructed          uint64
 }
 
 type nodeSlab struct {
@@ -468,6 +483,88 @@ func (a *nodeArena) reset() {
 		a.noTreeNodeSlabs[i].used = 0
 	}
 	a.noTreeNodeSlabCursor = 0
+	if len(a.compactFullLeafSlabs) > 0 {
+		retained := 0
+		keep := 0
+		limit := maxRetainedCompactFullLeafCapacityForClass(a.class)
+		for i := 0; i < len(a.compactFullLeafSlabs); i++ {
+			capacity := len(a.compactFullLeafSlabs[i].data)
+			if capacity <= 0 {
+				break
+			}
+			if retained+capacity > limit {
+				break
+			}
+			retained += capacity
+			keep = i + 1
+		}
+		for i := keep; i < len(a.compactFullLeafSlabs); i++ {
+			a.compactFullLeafSlabs[i] = compactFullLeafSlab{}
+		}
+		a.compactFullLeafSlabs = a.compactFullLeafSlabs[:keep]
+	}
+	for i := range a.compactFullLeafSlabs {
+		a.compactFullLeafSlabs[i].used = 0
+	}
+	a.compactFullLeafSlabCursor = 0
+	if len(a.pendingParentSlabs) > 0 {
+		retained := 0
+		keep := 0
+		limit := maxRetainedPendingParentCapacityForClass(a.class)
+		for i := 0; i < len(a.pendingParentSlabs); i++ {
+			capacity := len(a.pendingParentSlabs[i].data)
+			if capacity <= 0 {
+				break
+			}
+			if retained+capacity > limit {
+				break
+			}
+			retained += capacity
+			keep = i + 1
+		}
+		for i := keep; i < len(a.pendingParentSlabs); i++ {
+			a.pendingParentSlabs[i] = pendingParentSlab{}
+		}
+		a.pendingParentSlabs = a.pendingParentSlabs[:keep]
+	}
+	for i := range a.pendingParentSlabs {
+		slab := &a.pendingParentSlabs[i]
+		used := slab.used
+		if used > len(slab.data) {
+			used = len(slab.data)
+		}
+		clear(slab.data[:used])
+		slab.used = 0
+	}
+	a.pendingParentSlabCursor = 0
+	if len(a.pendingChildEntrySlabs) > 0 {
+		retained := 0
+		keep := 0
+		limit := maxRetainedPendingChildEntryCapacityForClass(a.class)
+		for i := 0; i < len(a.pendingChildEntrySlabs); i++ {
+			capacity := len(a.pendingChildEntrySlabs[i].data)
+			if capacity <= 0 {
+				break
+			}
+			if retained+capacity > limit {
+				break
+			}
+			retained += capacity
+			keep = i + 1
+		}
+		for i := keep; i < len(a.pendingChildEntrySlabs); i++ {
+			a.pendingChildEntrySlabs[i] = pendingChildEntrySlab{}
+		}
+		a.pendingChildEntrySlabs = a.pendingChildEntrySlabs[:keep]
+	}
+	for i := range a.pendingChildEntrySlabs {
+		slab := &a.pendingChildEntrySlabs[i]
+		if slab.used > 0 {
+			clear(slab.data[:slab.used])
+			slab.used = 0
+		}
+	}
+	a.pendingChildEntrySlabCursor = 0
 	if len(a.compactCheckpointLeafSlabs) > 0 {
 		retained := 0
 		keep := 0
@@ -531,7 +628,16 @@ func (a *nodeArena) reset() {
 	a.externalScannerCheckpointLeafNodes = 0
 	a.compactFullLeafCreated = 0
 	a.compactFullLeafMaterialized = 0
+	a.compactFullLeafMaterializedForParentReduce = 0
+	a.compactFullLeafMaterializedForFinalTree = 0
 	a.compactFullLeafDropped = 0
+	a.pendingParentCreated = 0
+	a.pendingParentMaterialized = 0
+	a.pendingParentMaterializedForParentReduce = 0
+	a.pendingParentMaterializedForFinalTree = 0
+	a.pendingParentDropped = 0
+	a.pendingParentsFlattened = 0
+	a.pendingChildRefsFlattened = 0
 	a.checkpointLeafFullNodesAvoided = 0
 	a.leafNodesConstructed = 0
 	a.parentNodesConstructed = 0
@@ -749,6 +855,104 @@ func (a *nodeArena) allocNoTreeNode() *noTreeNode {
 		// Callers must initialize every field. noTreeNode has no pointer fields,
 		// so avoiding per-slot clearing cuts large no-tree allocation CPU.
 		return n
+	}
+}
+
+func (a *nodeArena) allocCompactFullLeaf() *compactFullLeaf {
+	if a == nil {
+		return &compactFullLeaf{}
+	}
+	if len(a.compactFullLeafSlabs) == 0 {
+		capacity := max(defaultCompactFullLeafSlabCap(a.class), minArenaNodeCap)
+		a.compactFullLeafSlabs = append(a.compactFullLeafSlabs, compactFullLeafSlab{data: make([]compactFullLeaf, capacity)})
+		a.allocatedBytes += compactFullLeafBytesForCap(capacity)
+		a.compactFullLeafSlabCursor = 0
+	}
+	if a.compactFullLeafSlabCursor < 0 || a.compactFullLeafSlabCursor >= len(a.compactFullLeafSlabs) {
+		a.compactFullLeafSlabCursor = 0
+	}
+	for i := a.compactFullLeafSlabCursor; ; i++ {
+		if i >= len(a.compactFullLeafSlabs) {
+			lastCap := len(a.compactFullLeafSlabs[len(a.compactFullLeafSlabs)-1].data)
+			capacity := max(lastCap*2, minArenaNodeCap)
+			a.compactFullLeafSlabs = append(a.compactFullLeafSlabs, compactFullLeafSlab{data: make([]compactFullLeaf, capacity)})
+			a.allocatedBytes += compactFullLeafBytesForCap(capacity)
+		}
+
+		slab := &a.compactFullLeafSlabs[i]
+		if slab.used >= len(slab.data) {
+			continue
+		}
+		idx := slab.used
+		slab.used++
+		a.compactFullLeafSlabCursor = i
+		return &slab.data[idx]
+	}
+}
+
+func (a *nodeArena) allocPendingParent() *pendingParent {
+	if a == nil {
+		return &pendingParent{}
+	}
+	if len(a.pendingParentSlabs) == 0 {
+		capacity := max(defaultPendingParentSlabCap(a.class), minArenaNodeCap)
+		a.pendingParentSlabs = append(a.pendingParentSlabs, pendingParentSlab{data: make([]pendingParent, capacity)})
+		a.allocatedBytes += pendingParentBytesForCap(capacity)
+		a.pendingParentSlabCursor = 0
+	}
+	if a.pendingParentSlabCursor < 0 || a.pendingParentSlabCursor >= len(a.pendingParentSlabs) {
+		a.pendingParentSlabCursor = 0
+	}
+	for i := a.pendingParentSlabCursor; ; i++ {
+		if i >= len(a.pendingParentSlabs) {
+			capacity := max(defaultPendingParentSlabCap(a.class), minArenaNodeCap)
+			a.pendingParentSlabs = append(a.pendingParentSlabs, pendingParentSlab{data: make([]pendingParent, capacity)})
+			a.allocatedBytes += pendingParentBytesForCap(capacity)
+		}
+
+		slab := &a.pendingParentSlabs[i]
+		if slab.used >= len(slab.data) {
+			continue
+		}
+		idx := slab.used
+		slab.used++
+		a.pendingParentSlabCursor = i
+		return &slab.data[idx]
+	}
+}
+
+func (a *nodeArena) allocPendingChildEntries(n int) []stackEntry {
+	if n <= 0 {
+		return nil
+	}
+	if a == nil {
+		return make([]stackEntry, n)
+	}
+	if len(a.pendingChildEntrySlabs) == 0 {
+		capacity := max(defaultPendingChildEntrySlabCap(a.class), n)
+		a.pendingChildEntrySlabs = append(a.pendingChildEntrySlabs, pendingChildEntrySlab{data: make([]stackEntry, capacity)})
+		a.allocatedBytes += pendingChildEntryBytesForCap(capacity)
+		a.pendingChildEntrySlabCursor = 0
+	}
+	if a.pendingChildEntrySlabCursor < 0 || a.pendingChildEntrySlabCursor >= len(a.pendingChildEntrySlabs) {
+		a.pendingChildEntrySlabCursor = 0
+	}
+	for i := a.pendingChildEntrySlabCursor; ; i++ {
+		if i >= len(a.pendingChildEntrySlabs) {
+			lastCap := len(a.pendingChildEntrySlabs[len(a.pendingChildEntrySlabs)-1].data)
+			capacity := max(lastCap*2, n)
+			a.pendingChildEntrySlabs = append(a.pendingChildEntrySlabs, pendingChildEntrySlab{data: make([]stackEntry, capacity)})
+			a.allocatedBytes += pendingChildEntryBytesForCap(capacity)
+		}
+
+		slab := &a.pendingChildEntrySlabs[i]
+		if len(slab.data)-slab.used < n {
+			continue
+		}
+		start := slab.used
+		slab.used += n
+		a.pendingChildEntrySlabCursor = i
+		return slab.data[start:slab.used]
 	}
 }
 
@@ -1070,6 +1274,39 @@ func (a *nodeArena) noTreeNodeBytesAllocated() int64 {
 	return total
 }
 
+func (a *nodeArena) compactFullLeafBytesAllocated() int64 {
+	if a == nil {
+		return 0
+	}
+	var total int64
+	for i := range a.compactFullLeafSlabs {
+		total += compactFullLeafBytesForCap(len(a.compactFullLeafSlabs[i].data))
+	}
+	return total
+}
+
+func (a *nodeArena) pendingParentBytesAllocated() int64 {
+	if a == nil {
+		return 0
+	}
+	var total int64
+	for i := range a.pendingParentSlabs {
+		total += pendingParentBytesForCap(len(a.pendingParentSlabs[i].data))
+	}
+	return total
+}
+
+func (a *nodeArena) pendingChildEntryBytesAllocated() int64 {
+	if a == nil {
+		return 0
+	}
+	var total int64
+	for i := range a.pendingChildEntrySlabs {
+		total += pendingChildEntryBytesForCap(len(a.pendingChildEntrySlabs[i].data))
+	}
+	return total
+}
+
 func (a *nodeArena) compactCheckpointLeafBytesAllocated() int64 {
 	if a == nil {
 		return 0
@@ -1087,6 +1324,9 @@ func (a *nodeArena) recomputeAllocatedBytes() {
 	}
 	total := a.nodeStructBytesAllocated() +
 		a.noTreeNodeBytesAllocated() +
+		a.compactFullLeafBytesAllocated() +
+		a.pendingParentBytesAllocated() +
+		a.pendingChildEntryBytesAllocated() +
 		a.compactCheckpointLeafBytesAllocated() +
 		a.childSliceBytesAllocated() +
 		a.fieldIDBytesAllocated() +
@@ -1096,6 +1336,28 @@ func (a *nodeArena) recomputeAllocatedBytes() {
 		total += a.externalScannerNodeCheckpointSlabs[i].checkpoints.bytesAllocated()
 	}
 	a.allocatedBytes = total
+}
+
+func (a *nodeArena) finalizeCompactFullLeafDropped() {
+	if a == nil {
+		return
+	}
+	if a.compactFullLeafCreated >= a.compactFullLeafMaterialized {
+		a.compactFullLeafDropped = a.compactFullLeafCreated - a.compactFullLeafMaterialized
+		return
+	}
+	a.compactFullLeafDropped = 0
+}
+
+func (a *nodeArena) finalizePendingParentDropped() {
+	if a == nil {
+		return
+	}
+	if a.pendingParentCreated >= a.pendingParentMaterialized {
+		a.pendingParentDropped = a.pendingParentCreated - a.pendingParentMaterialized
+		return
+	}
+	a.pendingParentDropped = 0
 }
 
 func (a *nodeArena) externalScannerCheckpointSlotsAllocated() uint64 {
@@ -1134,6 +1396,9 @@ func (a *nodeArena) collectArenaBreakdown() *ArenaBreakdown {
 	breakdown := &ArenaBreakdown{
 		NodeStructBytesAllocated:          a.nodeStructBytesAllocated(),
 		NoTreeNodeBytesAllocated:          a.noTreeNodeBytesAllocated(),
+		CompactFullLeafBytesAllocated:     a.compactFullLeafBytesAllocated(),
+		PendingParentBytesAllocated:       a.pendingParentBytesAllocated(),
+		PendingChildEntryBytesAllocated:   a.pendingChildEntryBytesAllocated(),
 		ChildSliceBytesAllocated:          a.childSliceBytesAllocated(),
 		FieldIDBytesAllocated:             a.fieldIDBytesAllocated(),
 		FieldSourceBytesAllocated:         a.fieldSourceBytesAllocated(),
@@ -1499,6 +1764,41 @@ func maxRetainedNoTreeNodeCapacityForClass(class arenaClass) int {
 	}
 	floor := maxRetainedIncrementalNodeBytes / nodeSize
 	return max(defaultNoTreeNodeSlabCap(class)*maxRetainedArenaFactor, floor)
+}
+
+func maxRetainedCompactFullLeafCapacityForClass(class arenaClass) int {
+	nodeSize := int(unsafe.Sizeof(compactFullLeaf{}))
+	if nodeSize <= 0 {
+		nodeSize = 1
+	}
+	if class == arenaClassFull {
+		return max(maxRetainedFullNodeBytes/nodeSize, defaultCompactFullLeafSlabCap(class))
+	}
+	floor := maxRetainedIncrementalNodeBytes / nodeSize
+	return max(defaultCompactFullLeafSlabCap(class)*maxRetainedArenaFactor, floor)
+}
+
+func maxRetainedPendingParentCapacityForClass(class arenaClass) int {
+	nodeSize := int(unsafe.Sizeof(pendingParent{}))
+	if nodeSize <= 0 {
+		nodeSize = 1
+	}
+	if class == arenaClassFull {
+		return max(maxRetainedFullNodeBytes/nodeSize, defaultPendingParentSlabCap(class))
+	}
+	floor := maxRetainedIncrementalNodeBytes / nodeSize
+	return max(defaultPendingParentSlabCap(class)*maxRetainedArenaFactor, floor)
+}
+
+func maxRetainedPendingChildEntryCapacityForClass(class arenaClass) int {
+	nodeSize := int(unsafe.Sizeof(stackEntry{}))
+	if nodeSize <= 0 {
+		nodeSize = 1
+	}
+	if class == arenaClassFull {
+		return max(maxRetainedFullSliceCap, defaultPendingChildEntrySlabCap(class))
+	}
+	return max(defaultPendingChildEntrySlabCap(class)*maxRetainedArenaFactor, maxRetainedIncrementalSliceCap)
 }
 
 func maxRetainedCompactCheckpointLeafCapacityForClass(class arenaClass) int {

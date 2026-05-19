@@ -135,6 +135,56 @@ func parseFullArenaInitialNodeCapacity(sourceLen int) int {
 	return max(base, estimate)
 }
 
+func parsePendingFullArenaNodeCapacity(sourceLen, hint int) int {
+	target := parsePendingFullArenaInitialNodeCapacity(sourceLen)
+	if hint <= 0 {
+		return target
+	}
+	limit := parsePendingFullArenaHintLimit(sourceLen)
+	if hint > limit {
+		hint = limit
+	}
+	base := nodeCapacityForClass(arenaClassFull)
+	if hint < base {
+		hint = base
+	}
+	if hint < target && hint < target*3/4 {
+		return target
+	}
+	return hint
+}
+
+func parsePendingFullArenaHintLimit(sourceLen int) int {
+	base := nodeCapacityForClass(arenaClassFull)
+	if sourceLen <= 0 {
+		return base
+	}
+	limit := sourceLen
+	const maxPendingFullArenaHintNodes = 2_000_000
+	if limit > maxPendingFullArenaHintNodes {
+		limit = maxPendingFullArenaHintNodes
+	}
+	return max(base, limit)
+}
+
+func parsePendingFullArenaInitialNodeCapacity(sourceLen int) int {
+	target := parseFullArenaInitialNodeCapacity(sourceLen)
+	if sourceLen < 1024*1024 {
+		return target
+	}
+	estimate := sourceLen / 2
+	const maxPendingFullParentPreallocNodes = 1_250_000
+	if estimate > maxPendingFullParentPreallocNodes {
+		estimate = maxPendingFullParentPreallocNodes
+	}
+	base := nodeCapacityForClass(arenaClassFull)
+	pendingTarget := max(base, estimate)
+	if pendingTarget < target {
+		return pendingTarget
+	}
+	return target
+}
+
 func parseFullExternalScannerCheckpointCapacity(sourceLen, nodeCapacity int) int {
 	if sourceLen < 256*1024 || nodeCapacity <= 0 {
 		return 0
@@ -158,6 +208,32 @@ func parseNoTreeArenaNodeCapacity(sourceLen int) int {
 
 func parseShouldCompactNoTreeShiftLeaves(sourceLen int) bool {
 	return sourceLen >= 256*1024
+}
+
+func parseShouldUseCompactFullShiftLeaves(p *Parser, source []byte, reuse *reuseCursor, oldTree *Tree, arenaClass arenaClass) bool {
+	return p != nil &&
+		parseCompactFullLeavesEnabled() &&
+		!p.noTreeBenchmarkOnly &&
+		p.noResultCompatibilityBenchmarkOnly &&
+		arenaClass == arenaClassFull &&
+		reuse == nil &&
+		oldTree == nil &&
+		len(source) >= 256*1024
+}
+
+func parseShouldUsePendingFullParents(p *Parser, source []byte, reuse *reuseCursor, oldTree *Tree, arenaClass arenaClass) bool {
+	if p == nil {
+		return false
+	}
+	pendingEnabled := parsePendingParentsEnabled()
+	compactLeafParentBoundary := parseCompactFullLeavesEnabled() && p.noResultCompatibilityBenchmarkOnly
+	return p != nil &&
+		(pendingEnabled || compactLeafParentBoundary) &&
+		!p.noTreeBenchmarkOnly &&
+		arenaClass == arenaClassFull &&
+		reuse == nil &&
+		oldTree == nil &&
+		len(source) >= 256*1024
 }
 
 func parseShouldSkipInvisibleFullLeafCheckpoints(p *Parser, source []byte, reuse *reuseCursor, oldTree *Tree, arenaClass arenaClass) bool {
@@ -210,6 +286,13 @@ func (p *Parser) fullArenaHintCapacity() int {
 	return int(atomic.LoadUint32(&p.fullArenaHint))
 }
 
+func (p *Parser) pendingFullArenaHintCapacity() int {
+	if p == nil {
+		return 0
+	}
+	return int(atomic.LoadUint32(&p.pendingFullArenaHint))
+}
+
 func (p *Parser) incrementalArenaHintCapacity() int {
 	if p == nil {
 		return 0
@@ -243,18 +326,34 @@ func (p *Parser) recordFullArenaUsage(used int) {
 	if p == nil || used <= 0 {
 		return
 	}
-	target := used + parseFullArenaHintHeadroom(used)
+	p.recordArenaUsageHint(&p.fullArenaHint, used, 2_000_000, parseFullArenaHintHeadroom)
+}
+
+func (p *Parser) recordPendingFullArenaUsage(used int) {
+	if p == nil || used <= 0 {
+		return
+	}
+	p.recordArenaUsageHint(&p.pendingFullArenaHint, used, 2_000_000, parsePendingFullArenaHintHeadroom)
+}
+
+func (p *Parser) recordArenaUsageHint(slot *uint32, used int, maxHintNodes int, headroom func(int) int) {
+	if p == nil || slot == nil || used <= 0 {
+		return
+	}
+	target := used
+	if headroom != nil {
+		target += headroom(used)
+	}
 	base := nodeCapacityForClass(arenaClassFull)
 	if target < base {
 		target = base
 	}
-	const maxHintNodes = 2_000_000
 	if target > maxHintNodes {
 		target = maxHintNodes
 	}
 
 	for {
-		old := atomic.LoadUint32(&p.fullArenaHint)
+		old := atomic.LoadUint32(slot)
 		var next uint32
 		if old == 0 {
 			next = uint32(target)
@@ -265,7 +364,7 @@ func (p *Parser) recordFullArenaUsage(used int) {
 			}
 			next = uint32(blended)
 		}
-		if old == next || atomic.CompareAndSwapUint32(&p.fullArenaHint, old, next) {
+		if old == next || atomic.CompareAndSwapUint32(slot, old, next) {
 			return
 		}
 	}
@@ -282,6 +381,21 @@ func parseFullArenaHintHeadroom(used int) int {
 	const maxLargeFullArenaHintHeadroom = 64 * 1024
 	if headroom > maxLargeFullArenaHintHeadroom {
 		return maxLargeFullArenaHintHeadroom
+	}
+	return headroom
+}
+
+func parsePendingFullArenaHintHeadroom(used int) int {
+	if used <= 0 {
+		return 0
+	}
+	if used < 256*1024 {
+		return used / 4
+	}
+	headroom := used / 32
+	const maxLargePendingFullArenaHintHeadroom = 32 * 1024
+	if headroom > maxLargePendingFullArenaHintHeadroom {
+		return maxLargePendingFullArenaHintHeadroom
 	}
 	return headroom
 }

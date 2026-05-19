@@ -26,6 +26,7 @@ type Parser struct {
 	recoveryParser                      *Parser
 	skipRecoveryReparse                 bool
 	fullArenaHint                       uint32
+	pendingFullArenaHint                uint32
 	incrementalArenaHint                uint32
 	fullGSSHint                         uint32
 	incrementalGSSHint                  uint32
@@ -59,6 +60,8 @@ type Parser struct {
 	noTreeBenchmarkOnly                 bool
 	noTreeCheckpointBenchmarkOnly       bool
 	compactNoTreeShiftLeaves            bool
+	compactFullShiftLeaves              bool
+	pendingFullParents                  bool
 	skipInvisibleFullLeafCheckpoints    bool
 	transientReduceChildren             bool
 	transientReduceScratchNoAlias       bool
@@ -315,6 +318,7 @@ func resetSnippetParser(parser *Parser) {
 	parser.recoveryParser = nil
 	parser.skipRecoveryReparse = false
 	parser.fullArenaHint = 0
+	parser.pendingFullArenaHint = 0
 	parser.incrementalArenaHint = 0
 	parser.fullGSSHint = 0
 	parser.incrementalGSSHint = 0
@@ -325,6 +329,8 @@ func resetSnippetParser(parser *Parser) {
 	parser.noTreeBenchmarkOnly = false
 	parser.noTreeCheckpointBenchmarkOnly = false
 	parser.compactNoTreeShiftLeaves = false
+	parser.compactFullShiftLeaves = false
+	parser.pendingFullParents = false
 	parser.skipInvisibleFullLeafCheckpoints = false
 	parser.noResultCompatibilityBenchmarkOnly = false
 	parser.timeoutMicros = 0
@@ -1290,6 +1296,27 @@ func (p *Parser) currentExternalNoTreeLeafCheckpointRef(arena *nodeArena, tok To
 	return cp, true
 }
 
+func (p *Parser) currentExternalCompactFullLeafCheckpointRef(arena *nodeArena, tok Token) (externalScannerCheckpointRef, bool) {
+	if p == nil || arena == nil || !p.currentExternalTokenCheckpointValid {
+		return externalScannerCheckpointRef{}, false
+	}
+	if tok.Missing || tok.NoLookahead || tok.Symbol == 0 {
+		return externalScannerCheckpointRef{}, false
+	}
+	if tok.StartByte != p.currentExternalTokenCheckpointStart || tok.EndByte != p.currentExternalTokenCheckpointEnd {
+		return externalScannerCheckpointRef{}, false
+	}
+	if p.skipInvisibleFullLeafCheckpoints && !p.isVisibleSymbol(tok.Symbol) {
+		return externalScannerCheckpointRef{}, false
+	}
+	cp := arena.recordExternalScannerCompactCheckpoint(
+		p.currentExternalTokenCheckpoint.start,
+		p.currentExternalTokenCheckpoint.end,
+	)
+	arena.checkpointLeafFullNodesAvoided++
+	return cp, true
+}
+
 func canReuseUnchangedTree(source []byte, oldTree *Tree, lang *Language) bool {
 	if oldTree == nil || oldTree.language != lang || len(oldTree.edits) != 0 {
 		return false
@@ -1343,14 +1370,20 @@ func resolveParseMaxStacks(configuredMaxStacks, maxStacksOverride, conflictWidth
 func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor, oldTree *Tree, arenaClass arenaClass, timing *incrementalParseTiming, maxStacksOverride int, maxNodesOverride int, maxMergePerKeyOverride int, deterministicExternalConflicts bool) *Tree {
 	parseStart := time.Now()
 	prevCompactNoTreeShiftLeaves := p.compactNoTreeShiftLeaves
+	prevCompactFullShiftLeaves := p.compactFullShiftLeaves
+	prevPendingFullParents := p.pendingFullParents
 	prevSkipInvisibleFullLeafCheckpoints := p.skipInvisibleFullLeafCheckpoints
 	prevTransientReduceChildren := p.transientReduceChildren
 	prevTransientReduceScratchNoAlias := p.transientReduceScratchNoAlias
 	prevTransientChildren := p.transientChildren
 	p.compactNoTreeShiftLeaves = p.noTreeBenchmarkOnly && parseShouldCompactNoTreeShiftLeaves(len(source))
+	p.compactFullShiftLeaves = parseShouldUseCompactFullShiftLeaves(p, source, reuse, oldTree, arenaClass)
+	p.pendingFullParents = parseShouldUsePendingFullParents(p, source, reuse, oldTree, arenaClass)
 	p.skipInvisibleFullLeafCheckpoints = parseShouldSkipInvisibleFullLeafCheckpoints(p, source, reuse, oldTree, arenaClass)
 	defer func() {
 		p.compactNoTreeShiftLeaves = prevCompactNoTreeShiftLeaves
+		p.compactFullShiftLeaves = prevCompactFullShiftLeaves
+		p.pendingFullParents = prevPendingFullParents
 		p.skipInvisibleFullLeafCheckpoints = prevSkipInvisibleFullLeafCheckpoints
 		p.transientReduceChildren = prevTransientReduceChildren
 		p.transientReduceScratchNoAlias = prevTransientReduceScratchNoAlias
@@ -1430,7 +1463,11 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	if arenaClass == arenaClassFull {
 		defer func() {
 			if !p.noTreeBenchmarkOnly {
-				p.recordFullArenaUsage(arena.used)
+				if p.pendingFullParents {
+					p.recordPendingFullArenaUsage(arena.used)
+				} else {
+					p.recordFullArenaUsage(arena.used)
+				}
 			}
 			p.recordFullGSSUsage(scratch.gss.usedTotal)
 		}()
@@ -1443,6 +1480,9 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	switch arenaClass {
 	case arenaClassFull:
 		target := parseFullArenaNodeCapacity(len(source), p.fullArenaHintCapacity())
+		if p.pendingFullParents {
+			target = parsePendingFullArenaNodeCapacity(len(source), p.pendingFullArenaHintCapacity())
+		}
 		if p.noTreeBenchmarkOnly {
 			target = parseNoTreeArenaNodeCapacity(len(source))
 		}
@@ -1490,6 +1530,8 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		if arenaStatsCaptured || arena == nil {
 			return
 		}
+		arena.finalizeCompactFullLeafDropped()
+		arena.finalizePendingParentDropped()
 		parseRuntime.ArenaBytesAllocated = arena.allocatedBytes
 		parseRuntime.MemoryBudgetBytes = arena.budgetBytes
 		parseRuntime.ExternalScannerCheckpointRecords = arena.externalScannerCheckpointRecords
@@ -1499,7 +1541,16 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		parseRuntime.ExternalScannerCheckpointLeafNodes = arena.externalScannerCheckpointLeafNodes
 		parseRuntime.CompactFullLeafCreated = arena.compactFullLeafCreated
 		parseRuntime.CompactFullLeafMaterialized = arena.compactFullLeafMaterialized
+		parseRuntime.CompactFullLeafMaterializedForParentReduce = arena.compactFullLeafMaterializedForParentReduce
+		parseRuntime.CompactFullLeafMaterializedForFinalTree = arena.compactFullLeafMaterializedForFinalTree
 		parseRuntime.CompactFullLeafDropped = arena.compactFullLeafDropped
+		parseRuntime.PendingParentCreated = arena.pendingParentCreated
+		parseRuntime.PendingParentMaterialized = arena.pendingParentMaterialized
+		parseRuntime.PendingParentMaterializedForParentReduce = arena.pendingParentMaterializedForParentReduce
+		parseRuntime.PendingParentMaterializedForFinalTree = arena.pendingParentMaterializedForFinalTree
+		parseRuntime.PendingParentDropped = arena.pendingParentDropped
+		parseRuntime.PendingParentsFlattened = arena.pendingParentsFlattened
+		parseRuntime.PendingChildRefsFlattened = arena.pendingChildRefsFlattened
 		parseRuntime.CheckpointLeafFullNodesAvoided = arena.checkpointLeafFullNodesAvoided
 		parseRuntime.LeafNodesConstructed = arena.leafNodesConstructed
 		parseRuntime.ParentNodesConstructed = arena.parentNodesConstructed

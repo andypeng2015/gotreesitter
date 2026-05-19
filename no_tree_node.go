@@ -27,9 +27,31 @@ type compactCheckpointLeafSlab struct {
 	used int
 }
 
+type compactFullLeaf struct {
+	noTreeNode
+	startPoint    Point
+	endPoint      Point
+	checkpoint    externalScannerCheckpointRef
+	hasCheckpoint bool
+}
+
+type compactFullLeafSlab struct {
+	data []compactFullLeaf
+	used int
+}
+
+type compactFullLeafMaterializeReason uint8
+
+const (
+	compactFullLeafMaterializeForParentReduce compactFullLeafMaterializeReason = iota
+	compactFullLeafMaterializeForFinalTree
+)
+
 const (
 	stackEntryKindNode uint32 = iota
 	stackEntryKindNoTreeNode
+	stackEntryKindCompactFullLeaf
+	stackEntryKindPendingParent
 )
 
 func newStackEntryNode(state StateID, node *Node) stackEntry {
@@ -56,6 +78,22 @@ func newStackEntryCompactCheckpointLeaf(state StateID, leaf *compactCheckpointLe
 	}
 }
 
+func newStackEntryCompactFullLeaf(state StateID, leaf *compactFullLeaf) stackEntry {
+	return stackEntry{
+		node:  (*Node)(unsafe.Pointer(leaf)),
+		state: state,
+		kind:  stackEntryKindCompactFullLeaf,
+	}
+}
+
+func newStackEntryPendingParent(state StateID, parent *pendingParent) stackEntry {
+	return stackEntry{
+		node:  (*Node)(unsafe.Pointer(parent)),
+		state: state,
+		kind:  stackEntryKindPendingParent,
+	}
+}
+
 func stackEntryNode(e stackEntry) *Node {
 	if e.kind != stackEntryKindNode || e.node == nil {
 		return nil
@@ -68,6 +106,20 @@ func stackEntryNoTreeNode(e stackEntry) *noTreeNode {
 		return nil
 	}
 	return (*noTreeNode)(unsafe.Pointer(e.node))
+}
+
+func stackEntryCompactFullLeaf(e stackEntry) *compactFullLeaf {
+	if e.kind != stackEntryKindCompactFullLeaf || e.node == nil {
+		return nil
+	}
+	return (*compactFullLeaf)(unsafe.Pointer(e.node))
+}
+
+func stackEntryPendingParent(e stackEntry) *pendingParent {
+	if e.kind != stackEntryKindPendingParent || e.node == nil {
+		return nil
+	}
+	return (*pendingParent)(unsafe.Pointer(e.node))
 }
 
 func (n *noTreeNode) hasFlag(flag nodeFlags) bool {
@@ -108,6 +160,13 @@ func compactCheckpointLeafBytesForCap(n int) int64 {
 	return int64(n) * int64(unsafe.Sizeof(compactCheckpointLeaf{}))
 }
 
+func compactFullLeafBytesForCap(n int) int64 {
+	if n <= 0 {
+		return 0
+	}
+	return int64(n) * int64(unsafe.Sizeof(compactFullLeaf{}))
+}
+
 func defaultNoTreeNodeSlabCap(class arenaClass) int {
 	slabBytes := incrementalArenaSlab
 	if class == arenaClassFull {
@@ -140,11 +199,33 @@ func defaultCompactCheckpointLeafSlabCap(class arenaClass) int {
 	return capacity
 }
 
+func defaultCompactFullLeafSlabCap(class arenaClass) int {
+	slabBytes := incrementalArenaSlab
+	if class == arenaClassFull {
+		slabBytes = fullParseArenaSlab
+	}
+	size := int(unsafe.Sizeof(compactFullLeaf{}))
+	if size <= 0 {
+		return minArenaNodeCap
+	}
+	capacity := slabBytes / size
+	if capacity < minArenaNodeCap {
+		return minArenaNodeCap
+	}
+	return capacity
+}
+
 func stackEntryNodeSymbol(e stackEntry) Symbol {
 	if n := stackEntryNode(e); n != nil {
 		return n.symbol
 	}
 	if n := stackEntryNoTreeNode(e); n != nil {
+		return n.symbol
+	}
+	if n := stackEntryCompactFullLeaf(e); n != nil {
+		return n.symbol
+	}
+	if n := stackEntryPendingParent(e); n != nil {
 		return n.symbol
 	}
 	return 0
@@ -157,6 +238,12 @@ func stackEntryNodeStartByte(e stackEntry) uint32 {
 	if n := stackEntryNoTreeNode(e); n != nil {
 		return n.startByte
 	}
+	if n := stackEntryCompactFullLeaf(e); n != nil {
+		return n.startByte
+	}
+	if n := stackEntryPendingParent(e); n != nil {
+		return n.startByte
+	}
 	return 0
 }
 
@@ -167,11 +254,23 @@ func stackEntryNodeEndByte(e stackEntry) uint32 {
 	if n := stackEntryNoTreeNode(e); n != nil {
 		return n.endByte
 	}
+	if n := stackEntryCompactFullLeaf(e); n != nil {
+		return n.endByte
+	}
+	if n := stackEntryPendingParent(e); n != nil {
+		return n.endByte
+	}
 	return 0
 }
 
 func stackEntryNodeStartPoint(e stackEntry) Point {
 	if n := stackEntryNode(e); n != nil {
+		return n.startPoint
+	}
+	if n := stackEntryCompactFullLeaf(e); n != nil {
+		return n.startPoint
+	}
+	if n := stackEntryPendingParent(e); n != nil {
 		return n.startPoint
 	}
 	// Compact no-tree payloads are byte-span only. No-tree benchmark results
@@ -182,6 +281,12 @@ func stackEntryNodeStartPoint(e stackEntry) Point {
 
 func stackEntryNodeEndPoint(e stackEntry) Point {
 	if n := stackEntryNode(e); n != nil {
+		return n.endPoint
+	}
+	if n := stackEntryCompactFullLeaf(e); n != nil {
+		return n.endPoint
+	}
+	if n := stackEntryPendingParent(e); n != nil {
 		return n.endPoint
 	}
 	// See stackEntryNodeStartPoint.
@@ -195,6 +300,12 @@ func stackEntryNodeParseState(e stackEntry) StateID {
 	if n := stackEntryNoTreeNode(e); n != nil {
 		return n.parseState
 	}
+	if n := stackEntryCompactFullLeaf(e); n != nil {
+		return n.parseState
+	}
+	if n := stackEntryPendingParent(e); n != nil {
+		return n.parseState
+	}
 	return 0
 }
 
@@ -205,6 +316,12 @@ func stackEntryNodePreGotoState(e stackEntry) StateID {
 	if n := stackEntryNoTreeNode(e); n != nil {
 		return n.preGotoState
 	}
+	if n := stackEntryCompactFullLeaf(e); n != nil {
+		return n.preGotoState
+	}
+	if n := stackEntryPendingParent(e); n != nil {
+		return n.preGotoState
+	}
 	return 0
 }
 
@@ -213,6 +330,12 @@ func stackEntryNodeProductionID(e stackEntry) uint16 {
 		return n.productionID
 	}
 	if n := stackEntryNoTreeNode(e); n != nil {
+		return n.productionID
+	}
+	if n := stackEntryCompactFullLeaf(e); n != nil {
+		return n.productionID
+	}
+	if n := stackEntryPendingParent(e); n != nil {
 		return n.productionID
 	}
 	return 0
@@ -234,6 +357,16 @@ func retargetStackEntryPayload(e stackEntry, state StateID) (stackEntry, bool) {
 		e.state = state
 		return e, true
 	}
+	if n := stackEntryCompactFullLeaf(e); n != nil {
+		n.parseState = state
+		e.state = state
+		return e, true
+	}
+	if n := stackEntryPendingParent(e); n != nil {
+		n.parseState = state
+		e.state = state
+		return e, true
+	}
 	return e, false
 }
 
@@ -243,6 +376,12 @@ func stackEntryNodeIsExtra(e stackEntry) bool {
 	}
 	n := stackEntryNoTreeNode(e)
 	if n != nil {
+		return n.isExtra()
+	}
+	if n := stackEntryCompactFullLeaf(e); n != nil {
+		return n.isExtra()
+	}
+	if n := stackEntryPendingParent(e); n != nil {
 		return n.isExtra()
 	}
 	return false
@@ -256,6 +395,12 @@ func stackEntryNodeIsNamed(e stackEntry) bool {
 	if n != nil {
 		return n.isNamed()
 	}
+	if n := stackEntryCompactFullLeaf(e); n != nil {
+		return n.isNamed()
+	}
+	if n := stackEntryPendingParent(e); n != nil {
+		return n.isNamed()
+	}
 	return false
 }
 
@@ -265,6 +410,12 @@ func stackEntryNodeIsMissing(e stackEntry) bool {
 	}
 	n := stackEntryNoTreeNode(e)
 	if n != nil {
+		return n.isMissing()
+	}
+	if n := stackEntryCompactFullLeaf(e); n != nil {
+		return n.isMissing()
+	}
+	if n := stackEntryPendingParent(e); n != nil {
 		return n.isMissing()
 	}
 	return false
@@ -278,12 +429,21 @@ func stackEntryNodeHasError(e stackEntry) bool {
 	if n != nil {
 		return n.hasError()
 	}
+	if n := stackEntryCompactFullLeaf(e); n != nil {
+		return n.hasError()
+	}
+	if n := stackEntryPendingParent(e); n != nil {
+		return n.hasError()
+	}
 	return false
 }
 
 func stackEntryNodeChildCount(e stackEntry) int {
 	if n := stackEntryNode(e); n != nil {
 		return len(n.children)
+	}
+	if n := stackEntryPendingParent(e); n != nil {
+		return len(n.childEntries())
 	}
 	return 0
 }
@@ -336,4 +496,62 @@ func newCompactCheckpointLeafInArena(arena *nodeArena, sym Symbol, named bool, s
 	n.flags = noTreeNodeInitialFlags(named)
 	n.checkpoint = checkpoint
 	return n
+}
+
+func newCompactFullLeafInArena(arena *nodeArena, sym Symbol, named bool, startByte, endByte uint32, startPoint, endPoint Point) *compactFullLeaf {
+	var n *compactFullLeaf
+	if arena == nil {
+		n = &compactFullLeaf{}
+	} else {
+		n = arena.allocCompactFullLeaf()
+		arena.compactFullLeafCreated++
+	}
+	n.symbol = sym
+	n.startByte = startByte
+	n.endByte = endByte
+	n.parseState = 0
+	n.preGotoState = 0
+	n.productionID = 0
+	n.flags = noTreeNodeInitialFlags(named)
+	n.startPoint = startPoint
+	n.endPoint = endPoint
+	n.checkpoint = externalScannerCheckpointRef{}
+	n.hasCheckpoint = false
+	return n
+}
+
+func materializeStackEntryCompactFullLeaf(arena *nodeArena, entry *stackEntry, reason compactFullLeafMaterializeReason) *Node {
+	if entry == nil {
+		return nil
+	}
+	leaf := stackEntryCompactFullLeaf(*entry)
+	if leaf == nil {
+		return stackEntryNode(*entry)
+	}
+	node := newLeafNodeInArena(arena, leaf.symbol, leaf.isNamed(), leaf.startByte, leaf.endByte, leaf.startPoint, leaf.endPoint)
+	node.flags = leaf.flags
+	node.parseState = leaf.parseState
+	node.preGotoState = leaf.preGotoState
+	node.productionID = leaf.productionID
+	if leaf.hasCheckpoint && arena != nil {
+		if arena.setExternalScannerCheckpoint(node, leaf.checkpoint) {
+			arena.externalScannerCheckpointLeafNodes++
+			if arena.checkpointLeafFullNodesAvoided > 0 {
+				arena.checkpointLeafFullNodesAvoided--
+			}
+		}
+	}
+	entry.node = node
+	entry.kind = stackEntryKindNode
+	entry.state = node.parseState
+	if arena != nil {
+		arena.compactFullLeafMaterialized++
+		switch reason {
+		case compactFullLeafMaterializeForParentReduce:
+			arena.compactFullLeafMaterializedForParentReduce++
+		case compactFullLeafMaterializeForFinalTree:
+			arena.compactFullLeafMaterializedForFinalTree++
+		}
+	}
+	return node
 }

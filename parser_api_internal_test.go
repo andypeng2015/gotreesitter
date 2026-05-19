@@ -743,6 +743,34 @@ func TestParseFullArenaInitialNodeCapacityScalesForLargeSources(t *testing.T) {
 	}
 }
 
+func TestParsePendingFullArenaInitialNodeCapacityUsesLowerLargeSourceFloor(t *testing.T) {
+	sourceLen := 2 * 1024 * 1024
+	got := parsePendingFullArenaInitialNodeCapacity(sourceLen)
+	want := sourceLen / 2
+	if got != want {
+		t.Fatalf("parsePendingFullArenaInitialNodeCapacity(%d) = %d, want %d", sourceLen, got, want)
+	}
+}
+
+func TestParsePendingFullArenaNodeCapacityUsesCloseWarmHint(t *testing.T) {
+	sourceLen := 2 * 1024 * 1024
+	initial := parsePendingFullArenaInitialNodeCapacity(sourceLen)
+	hint := initial - initial/16
+	got := parsePendingFullArenaNodeCapacity(sourceLen, hint)
+	if got != hint {
+		t.Fatalf("parsePendingFullArenaNodeCapacity(%d, %d) = %d, want hint", sourceLen, hint, got)
+	}
+}
+
+func TestParsePendingFullArenaHintHeadroomIsTighterForLargeSources(t *testing.T) {
+	used := 1_200_000
+	got := parsePendingFullArenaHintHeadroom(used)
+	want := 32 * 1024
+	if got != want {
+		t.Fatalf("parsePendingFullArenaHintHeadroom(%d) = %d, want %d", used, got, want)
+	}
+}
+
 func TestParseFullArenaHintHeadroomIsBoundedForLargeSources(t *testing.T) {
 	used := 1_500_000
 	got := parseFullArenaHintHeadroom(used)

@@ -141,6 +141,48 @@ func TestApplyActionNoTreeCompactShiftUsesNoTreeNode(t *testing.T) {
 	}
 }
 
+func TestApplyActionCompactFullShiftUsesCompactLeaf(t *testing.T) {
+	lang := buildArithmeticLanguage()
+	parser := NewParser(lang)
+	parser.noResultCompatibilityBenchmarkOnly = true
+	parser.compactFullShiftLeaves = true
+
+	arena := newNodeArena(arenaClassFull)
+	s := newGLRStack(lang.InitialState)
+	anyReduced := false
+	nodeCount := 0
+	targetState := lang.InitialState + 7
+	tok := Token{
+		Symbol:     1,
+		StartByte:  2,
+		EndByte:    3,
+		StartPoint: Point{Row: 0, Column: 2},
+		EndPoint:   Point{Row: 0, Column: 3},
+	}
+
+	parser.applyAction(&s, ParseAction{
+		Type:  ParseActionShift,
+		State: targetState,
+	}, tok, &anyReduced, &nodeCount, arena, nil, nil, nil, false, nil)
+
+	if got := stackEntryNode(s.top()); got != nil {
+		t.Fatalf("stackEntryNode = %p, want nil", got)
+	}
+	leaf := stackEntryCompactFullLeaf(s.top())
+	if leaf == nil {
+		t.Fatal("stackEntryCompactFullLeaf = nil, want compact full leaf")
+	}
+	if got := leaf.parseState; got != targetState {
+		t.Fatalf("compact leaf parseState = %d, want %d", got, targetState)
+	}
+	if got := arena.leafNodesConstructed; got != 0 {
+		t.Fatalf("leafNodesConstructed = %d, want 0", got)
+	}
+	if got := arena.compactFullLeafCreated; got != 1 {
+		t.Fatalf("compactFullLeafCreated = %d, want 1", got)
+	}
+}
+
 func TestApplyActionNoTreeMissingShiftStaysNode(t *testing.T) {
 	lang := buildArithmeticLanguage()
 	parser := NewParser(lang)

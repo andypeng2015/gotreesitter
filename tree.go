@@ -200,35 +200,44 @@ type ParseRuntime struct {
 	GlobalCullStacksIn                 uint64
 	GlobalCullStacksOut                uint64
 
-	ExternalScannerCheckpointRecords        uint64
-	ExternalScannerCheckpointSlotsAllocated uint64
-	ExternalScannerCheckpointBytesAllocated int64
-	ExternalScannerSnapshotBytesAllocated   uint64
-	ExternalScannerCheckpointLeafNodes      uint64
-	CompactFullLeafCreated                  uint64
-	CompactFullLeafMaterialized             uint64
-	CompactFullLeafDropped                  uint64
-	CheckpointLeafFullNodesAvoided          uint64
-	LeafNodesConstructed                    uint64
-	ParentNodesConstructed                  uint64
-	NoTreeReduceNodesConstructed            uint64
-	NoTreeLeafNodesConstructed              uint64
-	ResultSelectionNanos                    int64
-	TransientParentMaterializationNanos     int64
-	ResultTreeBuildNanos                    int64
-	TransientChildMaterializationNanos      int64
-	ResultPythonKeywordRepairNanos          int64
-	ResultPythonRootRepairNanos             int64
-	ResultFinalizeRootNanos                 int64
-	ResultExtendTrailingNanos               int64
-	ResultNormalizeRootStartNanos           int64
-	ResultCompatibilityNanos                int64
-	ResultParentLinkNanos                   int64
-	NormalizationPassesChecked              uint64
-	NormalizationPassesRun                  uint64
-	NormalizationNodesVisited               uint64
-	NormalizationNodesRewritten             uint64
-	NormalizationNanos                      int64
+	ExternalScannerCheckpointRecords           uint64
+	ExternalScannerCheckpointSlotsAllocated    uint64
+	ExternalScannerCheckpointBytesAllocated    int64
+	ExternalScannerSnapshotBytesAllocated      uint64
+	ExternalScannerCheckpointLeafNodes         uint64
+	CompactFullLeafCreated                     uint64
+	CompactFullLeafMaterialized                uint64
+	CompactFullLeafMaterializedForParentReduce uint64
+	CompactFullLeafMaterializedForFinalTree    uint64
+	CompactFullLeafDropped                     uint64
+	PendingParentCreated                       uint64
+	PendingParentMaterialized                  uint64
+	PendingParentMaterializedForParentReduce   uint64
+	PendingParentMaterializedForFinalTree      uint64
+	PendingParentDropped                       uint64
+	PendingParentsFlattened                    uint64
+	PendingChildRefsFlattened                  uint64
+	CheckpointLeafFullNodesAvoided             uint64
+	LeafNodesConstructed                       uint64
+	ParentNodesConstructed                     uint64
+	NoTreeReduceNodesConstructed               uint64
+	NoTreeLeafNodesConstructed                 uint64
+	ResultSelectionNanos                       int64
+	TransientParentMaterializationNanos        int64
+	ResultTreeBuildNanos                       int64
+	TransientChildMaterializationNanos         int64
+	ResultPythonKeywordRepairNanos             int64
+	ResultPythonRootRepairNanos                int64
+	ResultFinalizeRootNanos                    int64
+	ResultExtendTrailingNanos                  int64
+	ResultNormalizeRootStartNanos              int64
+	ResultCompatibilityNanos                   int64
+	ResultParentLinkNanos                      int64
+	NormalizationPassesChecked                 uint64
+	NormalizationPassesRun                     uint64
+	NormalizationNodesVisited                  uint64
+	NormalizationNodesRewritten                uint64
+	NormalizationNanos                         int64
 }
 
 type ReduceChildPathRuntime struct {
@@ -259,12 +268,15 @@ func (p reduceChildPath) valid() bool {
 // ArenaBreakdown captures optional arena/materialization attribution. It is
 // populated only when EnableArenaBreakdown(true) is set before parsing.
 type ArenaBreakdown struct {
-	NodeStructBytesAllocated   int64
-	NoTreeNodeBytesAllocated   int64
-	ChildSliceBytesAllocated   int64
-	FieldIDBytesAllocated      int64
-	FieldSourceBytesAllocated  int64
-	MergeScratchBytesAllocated int64
+	NodeStructBytesAllocated        int64
+	NoTreeNodeBytesAllocated        int64
+	CompactFullLeafBytesAllocated   int64
+	PendingParentBytesAllocated     int64
+	PendingChildEntryBytesAllocated int64
+	ChildSliceBytesAllocated        int64
+	FieldIDBytesAllocated           int64
+	FieldSourceBytesAllocated       int64
+	MergeScratchBytesAllocated      int64
 
 	ArenaNodesConstructed uint64
 	// NodeLiveCount is arena allocation-slot usage, not root-reachable tree

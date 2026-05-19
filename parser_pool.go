@@ -114,6 +114,7 @@ func (pp *ParserPool) applyDefaults(p *Parser) {
 	p.noTreeBenchmarkOnly = false
 	p.noTreeCheckpointBenchmarkOnly = false
 	p.compactNoTreeShiftLeaves = false
+	p.compactFullShiftLeaves = false
 	p.skipInvisibleFullLeafCheckpoints = false
 	p.noResultCompatibilityBenchmarkOnly = false
 }
