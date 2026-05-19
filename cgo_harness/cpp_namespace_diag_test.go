@@ -1,4 +1,4 @@
-//go:build cgo && treesitter_c_parity
+//go:build diagnostic && cgo && treesitter_c_parity
 
 package cgoharness
 
@@ -11,7 +11,6 @@ import (
 
 	gotreesitter "github.com/odvcencio/gotreesitter"
 )
-
 
 func TestCppNamespaceDiag(t *testing.T) {
 	sources := []struct {

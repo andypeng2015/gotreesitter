@@ -1,4 +1,4 @@
-//go:build cgo && treesitter_c_bench
+//go:build diagnostic && cgo && treesitter_c_bench
 
 package cgoharness
 

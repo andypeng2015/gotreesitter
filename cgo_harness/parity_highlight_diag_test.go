@@ -1,4 +1,4 @@
-//go:build cgo && treesitter_c_parity
+//go:build diagnostic && cgo && treesitter_c_parity
 
 package cgoharness
 

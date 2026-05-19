@@ -132,6 +132,117 @@ py_library(name = "lib")
 	assertImportRefsEqualShape(t, sourceRefs, refs)
 }
 
+func TestExtractImportsSourceParityFixtures(t *testing.T) {
+	cases := []struct {
+		name   string
+		lang   *gotreesitter.Language
+		source string
+		want   []gotreesitter.ImportRef
+	}{
+		{
+			name: "go_aliases_and_comments",
+			lang: grammars.GoLanguage(),
+			source: `package main
+
+// import "fake/comment"
+import (
+	alias "example.com/aliased"
+	_ "example.com/sideeffect"
+	. "example.com/dot"
+	"example.com/plain"
+)
+
+const s = "import \"fake/string\""
+`,
+			want: []gotreesitter.ImportRef{
+				{Lang: "go", Kind: "package", Name: "main"},
+				{Lang: "go", Kind: "import", Path: "example.com/aliased", Name: "aliased", Alias: "alias"},
+				{Lang: "go", Kind: "import", Path: "example.com/sideeffect", Name: "sideeffect", Alias: "_"},
+				{Lang: "go", Kind: "import", Path: "example.com/dot", Name: "dot", Alias: "."},
+				{Lang: "go", Kind: "import", Path: "example.com/plain", Name: "plain"},
+			},
+		},
+		{
+			name: "java_comments_strings_static_wildcard",
+			lang: grammars.JavaLanguage(),
+			source: `package example.app;
+
+// import fake.Comment;
+import java.util.List;
+import static java.util.Collections.*;
+
+class A {
+  String s = "import fake.String;";
+}
+`,
+			want: []gotreesitter.ImportRef{
+				{Lang: "java", Kind: "package", Path: "example.app", Name: "app"},
+				{Lang: "java", Kind: "import", Path: "java.util.List", Name: "List"},
+				{Lang: "java", Kind: "import", Path: "java.util.Collections", Name: "Collections", Static: true, Wildcard: true},
+			},
+		},
+		{
+			name: "python_multiline_relative_and_comments",
+			lang: grammars.PythonLanguage(),
+			source: `# import fake_comment
+text = "from fake import string"
+import os, sys as system
+from . import local
+from ..pkg import (
+    thing,
+    other as alias,
+)
+from pkg import *
+`,
+			want: []gotreesitter.ImportRef{
+				{Lang: "python", Kind: "import", Path: "os", Name: "os"},
+				{Lang: "python", Kind: "import", Path: "sys", Name: "sys", Alias: "system"},
+				{Lang: "python", Kind: "from_import", Path: "local", Name: "local", Relative: 1},
+				{Lang: "python", Kind: "from_import", Path: "pkg.thing", From: "pkg", Name: "thing", Relative: 2},
+				{Lang: "python", Kind: "from_import", Path: "pkg.other", From: "pkg", Name: "other", Alias: "alias", Relative: 2},
+				{Lang: "python", Kind: "from_import", Path: "pkg", From: "pkg", Name: "*", Wildcard: true},
+			},
+		},
+		{
+			name: "starlark_skip_comments_and_strings",
+			lang: grammars.StarlarkLanguage(),
+			source: `# load("//fake:comment.bzl", "x")
+s = 'load("//fake:string.bzl", "y")'
+load(
+    "@repo//pkg:file.bzl",
+    "sym",
+    alias = "other",
+)
+`,
+			want: []gotreesitter.ImportRef{
+				{Lang: "starlark", Kind: "load", Path: "@repo//pkg:file.bzl:sym", From: "@repo//pkg:file.bzl", Name: "sym"},
+				{Lang: "starlark", Kind: "load", Path: "@repo//pkg:file.bzl:other", From: "@repo//pkg:file.bzl", Name: "other", Alias: "alias"},
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			source := []byte(tc.source)
+			treeRefs := extractImportsFromTree(t, tc.lang, source)
+			sourceRefs := gotreesitter.ExtractImportsFromSource(tc.lang, source)
+			assertImportRefsEqualShape(t, sourceRefs, treeRefs)
+			assertImportRefsEqualShape(t, treeRefs, tc.want)
+		})
+	}
+}
+
+func extractImportsFromTree(t *testing.T, lang *gotreesitter.Language, source []byte) []gotreesitter.ImportRef {
+	t.Helper()
+	parser := gotreesitter.NewParser(lang)
+	tree, err := parser.Parse(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tree.Release()
+	return gotreesitter.ExtractImports(tree)
+}
+
 func assertImportRef(t *testing.T, ref gotreesitter.ImportRef, lang, kind, path, name, alias string) {
 	t.Helper()
 	if ref.Lang != lang || ref.Kind != kind || ref.Path != path || ref.Name != name || ref.Alias != alias {

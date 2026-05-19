@@ -1,3 +1,5 @@
+//go:build diagnostic
+
 package grammars
 
 import (

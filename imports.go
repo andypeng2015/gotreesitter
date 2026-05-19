@@ -363,8 +363,28 @@ func extractPythonImportsFromSource(lang *Language, source []byte) []ImportRef {
 			next++
 		}
 		line := string(source[offset:next])
-		trimmed := strings.TrimSpace(stripPythonLineComment(line))
+		stripped := stripPythonLineComment(line)
+		trimmed := strings.TrimSpace(stripped)
 		start := offset + len(line) - len(strings.TrimLeft(line, " \t\r"))
+		stmtEnd := next
+		advance := next + 1
+		if strings.HasPrefix(trimmed, "import ") || strings.HasPrefix(trimmed, "from ") {
+			stmt := stripped
+			for pythonImportStatementContinues(stmt) && advance <= len(source) {
+				lineStart := advance
+				lineEnd := lineStart
+				for lineEnd < len(source) && source[lineEnd] != '\n' {
+					lineEnd++
+				}
+				stmt += "\n" + stripPythonLineComment(string(source[lineStart:lineEnd]))
+				stmtEnd = lineEnd
+				advance = lineEnd + 1
+				if lineEnd == len(source) {
+					break
+				}
+			}
+			trimmed = strings.TrimSpace(stmt)
+		}
 		switch {
 		case strings.HasPrefix(trimmed, "import "):
 			body := strings.TrimSpace(strings.TrimPrefix(trimmed, "import"))
@@ -380,16 +400,16 @@ func extractPythonImportsFromSource(lang *Language, source []byte) []ImportRef {
 					Name:      lastDottedName(path),
 					Alias:     alias,
 					StartByte: uint32(start),
-					EndByte:   uint32(next),
+					EndByte:   uint32(stmtEnd),
 				})
 			}
 		case strings.HasPrefix(trimmed, "from "):
-			appendPythonFromImportRefs(lang, trimmed, uint32(start), uint32(next), &refs)
+			appendPythonFromImportRefs(lang, trimmed, uint32(start), uint32(stmtEnd), &refs)
 		}
 		if next == len(source) {
 			break
 		}
-		offset = next + 1
+		offset = advance
 	}
 	return refs
 }
@@ -443,25 +463,15 @@ func extractStarlarkImportNode(n *Node, lang *Language, source []byte, refs *[]I
 }
 
 func extractStarlarkImportsFromSource(lang *Language, source []byte) []ImportRef {
-	text := string(stripHashLineComments(source))
+	text := string(source)
 	var refs []ImportRef
 	searchFrom := 0
 	for {
-		idx := strings.Index(text[searchFrom:], "load")
-		if idx < 0 {
+		start, open := findStarlarkLoadCall(text, searchFrom)
+		if start < 0 {
 			break
 		}
-		start := searchFrom + idx
-		beforeOK := start == 0 || !isIdentByte(text[start-1])
-		after := start + len("load")
-		for after < len(text) && (text[after] == ' ' || text[after] == '\t' || text[after] == '\r' || text[after] == '\n') {
-			after++
-		}
-		if !beforeOK || after >= len(text) || text[after] != '(' {
-			searchFrom = start + len("load")
-			continue
-		}
-		close := findClosingParen(text, after)
+		close := findClosingParen(text, open)
 		if close < 0 {
 			break
 		}
@@ -469,6 +479,55 @@ func extractStarlarkImportsFromSource(lang *Language, source []byte) []ImportRef
 		searchFrom = close + 1
 	}
 	return refs
+}
+
+func findStarlarkLoadCall(text string, from int) (int, int) {
+	inQuote := byte(0)
+	escaped := false
+	inComment := false
+	for i := from; i < len(text); i++ {
+		c := text[i]
+		if inComment {
+			if c == '\n' {
+				inComment = false
+			}
+			continue
+		}
+		if escaped {
+			escaped = false
+			continue
+		}
+		if inQuote != 0 {
+			if c == '\\' {
+				escaped = true
+				continue
+			}
+			if c == inQuote {
+				inQuote = 0
+			}
+			continue
+		}
+		switch c {
+		case '#':
+			inComment = true
+			continue
+		case '\'', '"':
+			inQuote = c
+			continue
+		}
+		if !strings.HasPrefix(text[i:], "load") {
+			continue
+		}
+		beforeOK := i == 0 || !isIdentByte(text[i-1])
+		after := i + len("load")
+		for after < len(text) && (text[after] == ' ' || text[after] == '\t' || text[after] == '\r' || text[after] == '\n') {
+			after++
+		}
+		if beforeOK && after < len(text) && text[after] == '(' {
+			return i, after
+		}
+	}
+	return -1, -1
 }
 
 func appendStarlarkLoadRefs(lang *Language, text string, startByte, endByte uint32, refs *[]ImportRef) {
@@ -697,26 +756,48 @@ func stripPythonLineComment(line string) string {
 	return line
 }
 
-func stripHashLineComments(source []byte) []byte {
-	out := make([]byte, len(source))
-	copy(out, source)
-	offset := 0
-	for offset <= len(out) {
-		next := offset
-		for next < len(out) && out[next] != '\n' {
-			next++
-		}
-		line := string(out[offset:next])
-		stripped := stripPythonLineComment(line)
-		for i := offset + len(stripped); i < next; i++ {
-			out[i] = ' '
-		}
-		if next == len(out) {
-			break
-		}
-		offset = next + 1
+func pythonImportStatementContinues(stmt string) bool {
+	trimmed := strings.TrimRight(stmt, " \t\r\n")
+	if strings.HasSuffix(trimmed, "\\") {
+		return true
 	}
-	return out
+	return parenBalanceIgnoringQuotes(stmt) > 0
+}
+
+func parenBalanceIgnoringQuotes(text string) int {
+	depth := 0
+	inQuote := byte(0)
+	escaped := false
+	for i := 0; i < len(text); i++ {
+		c := text[i]
+		if escaped {
+			escaped = false
+			continue
+		}
+		if inQuote != 0 {
+			if c == '\\' {
+				escaped = true
+				continue
+			}
+			if c == inQuote {
+				inQuote = 0
+			}
+			continue
+		}
+		if c == '\'' || c == '"' {
+			inQuote = c
+			continue
+		}
+		switch c {
+		case '(':
+			depth++
+		case ')':
+			if depth > 0 {
+				depth--
+			}
+		}
+	}
+	return depth
 }
 
 func findClosingParen(text string, open int) int {
