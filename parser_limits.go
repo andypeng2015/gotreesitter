@@ -225,10 +225,17 @@ func parseShouldUsePendingFullParents(p *Parser, source []byte, reuse *reuseCurs
 	if p == nil {
 		return false
 	}
-	pendingEnabled := parsePendingParentsEnabled()
+	pendingConfigured, pendingEnabled := parsePendingParentsEnv()
+	if pendingConfigured && !pendingEnabled {
+		return false
+	}
 	compactLeafParentBoundary := parseCompactFullLeavesEnabled() && p.noResultCompatibilityBenchmarkOnly
+	defaultPythonLargeNoCompat := !pendingConfigured &&
+		p.noResultCompatibilityBenchmarkOnly &&
+		p.language != nil &&
+		p.language.Name == "python"
 	return p != nil &&
-		(pendingEnabled || compactLeafParentBoundary) &&
+		(pendingEnabled || compactLeafParentBoundary || defaultPythonLargeNoCompat) &&
 		!p.noTreeBenchmarkOnly &&
 		arenaClass == arenaClassFull &&
 		reuse == nil &&

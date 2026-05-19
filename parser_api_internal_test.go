@@ -771,6 +771,39 @@ func TestParsePendingFullArenaHintHeadroomIsTighterForLargeSources(t *testing.T)
 	}
 }
 
+func TestParseShouldUsePendingFullParentsDefaultsForLargePythonNoCompat(t *testing.T) {
+	source := make([]byte, 256*1024)
+	parser := &Parser{
+		language:                           &Language{Name: "python"},
+		noResultCompatibilityBenchmarkOnly: true,
+	}
+
+	if !parseShouldUsePendingFullParents(parser, source, nil, nil, arenaClassFull) {
+		t.Fatal("parseShouldUsePendingFullParents = false, want true for large Python no-compat")
+	}
+
+	t.Setenv("GOT_GLR_V2_PENDING_PARENTS", "0")
+	if parseShouldUsePendingFullParents(parser, source, nil, nil, arenaClassFull) {
+		t.Fatal("parseShouldUsePendingFullParents = true, want explicit env disable")
+	}
+}
+
+func TestParseShouldUsePendingFullParentsKeepsEnvOptInForOtherLargeSources(t *testing.T) {
+	source := make([]byte, 256*1024)
+	parser := &Parser{
+		language: &Language{Name: "java"},
+	}
+
+	if parseShouldUsePendingFullParents(parser, source, nil, nil, arenaClassFull) {
+		t.Fatal("parseShouldUsePendingFullParents = true, want false without env for Java")
+	}
+
+	t.Setenv("GOT_GLR_V2_PENDING_PARENTS", "1")
+	if !parseShouldUsePendingFullParents(parser, source, nil, nil, arenaClassFull) {
+		t.Fatal("parseShouldUsePendingFullParents = false, want env opt-in")
+	}
+}
+
 func TestParseFullArenaHintHeadroomIsBoundedForLargeSources(t *testing.T) {
 	used := 1_500_000
 	got := parseFullArenaHintHeadroom(used)
