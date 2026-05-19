@@ -285,14 +285,17 @@ func (s *externalScannerCheckpointSet) upsert(idx int, cp externalScannerCheckpo
 	if s == nil || idx < 0 {
 		return 0
 	}
-	before := s.bytesAllocated()
 	key := uint32(idx)
 	n := len(s.indexes)
 	if n == 0 || s.indexes[n-1] < key {
+		beforeIndexCap := cap(s.indexes)
+		beforeRefCap := cap(s.refs)
 		s.indexes = append(s.indexes, key)
 		s.refs = append(s.refs, cp)
-		return s.bytesAllocated() - before
+		return externalScannerCheckpointIndexBytesForCap(cap(s.indexes)-beforeIndexCap) +
+			externalScannerCheckpointBytesForCap(cap(s.refs)-beforeRefCap)
 	}
+	before := s.bytesAllocated()
 	pos := sort.Search(n, func(i int) bool {
 		return s.indexes[i] >= key
 	})
@@ -306,6 +309,24 @@ func (s *externalScannerCheckpointSet) upsert(idx int, cp externalScannerCheckpo
 	s.refs = append(s.refs, externalScannerCheckpointRef{})
 	copy(s.refs[pos+1:], s.refs[pos:])
 	s.refs[pos] = cp
+	return s.bytesAllocated() - before
+}
+
+func (s *externalScannerCheckpointSet) ensureCapacity(min int) int64 {
+	if s == nil || min <= 0 || (cap(s.indexes) >= min && cap(s.refs) >= min) {
+		return 0
+	}
+	before := s.bytesAllocated()
+	if cap(s.indexes) < min {
+		indexes := make([]uint32, len(s.indexes), min)
+		copy(indexes, s.indexes)
+		s.indexes = indexes
+	}
+	if cap(s.refs) < min {
+		refs := make([]externalScannerCheckpointRef, len(s.refs), min)
+		copy(refs, s.refs)
+		s.refs = refs
+	}
 	return s.bytesAllocated() - before
 }
 

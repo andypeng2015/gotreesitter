@@ -823,6 +823,13 @@ func (a *nodeArena) ensureExactNodeCapacity(min int) {
 	a.recomputeAllocatedBytes()
 }
 
+func (a *nodeArena) ensureExternalScannerCheckpointCapacity(min int) {
+	if a == nil || min <= 0 {
+		return
+	}
+	a.allocatedBytes += a.externalScannerNodeCheckpoints.ensureCapacity(min)
+}
+
 func (a *nodeArena) allocNodeSlice(n int) []*Node {
 	return a.allocNodeSliceInternal(n, true)
 }

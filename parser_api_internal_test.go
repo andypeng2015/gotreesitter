@@ -752,6 +752,22 @@ func TestParseFullArenaHintHeadroomIsBoundedForLargeSources(t *testing.T) {
 	}
 }
 
+func TestParseFullExternalScannerCheckpointCapacityUsesNodeHeadroom(t *testing.T) {
+	const nodeCapacity = 1_500_000
+	const sourceLen = 2 * 1024 * 1024
+	got := parseFullExternalScannerCheckpointCapacity(sourceLen, nodeCapacity)
+	want := sourceLen * 3 / 8
+	if got != want {
+		t.Fatalf("parseFullExternalScannerCheckpointCapacity = %d, want %d", got, want)
+	}
+	if got := parseFullExternalScannerCheckpointCapacity(8*1024*1024, nodeCapacity); got != nodeCapacity {
+		t.Fatalf("capped checkpoint capacity = %d, want node capacity %d", got, nodeCapacity)
+	}
+	if got := parseFullExternalScannerCheckpointCapacity(256*1024-1, nodeCapacity); got != 0 {
+		t.Fatalf("small-source checkpoint capacity = %d, want 0", got)
+	}
+}
+
 func TestParseShouldSkipInvisibleFullLeafCheckpointsIsNarrow(t *testing.T) {
 	parser := &Parser{
 		language:                           &Language{Name: "python"},

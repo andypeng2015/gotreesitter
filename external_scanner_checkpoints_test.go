@@ -104,6 +104,28 @@ func TestExternalScannerCheckpointStats(t *testing.T) {
 	}
 }
 
+func TestExternalScannerCheckpointPreallocatesSparseSet(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+
+	const checkpointSlots = 8
+	before := arena.allocatedBytes
+	arena.ensureExternalScannerCheckpointCapacity(checkpointSlots)
+	if got := arena.externalScannerCheckpointSlotsAllocated(); got != checkpointSlots {
+		t.Fatalf("checkpoint slots = %d, want %d", got, checkpointSlots)
+	}
+	if got := arena.allocatedBytes - before; got != arena.externalScannerCheckpointBytesAllocated() {
+		t.Fatalf("allocated byte delta = %d, want checkpoint bytes %d", got, arena.externalScannerCheckpointBytesAllocated())
+	}
+
+	node := arena.allocNode()
+	node.ownerArena = arena
+	recordCheckpointBytesBefore := arena.externalScannerCheckpointBytesAllocated()
+	arena.recordExternalScannerLeafCheckpoint(node, []byte{1}, []byte{2})
+	if got := arena.externalScannerCheckpointBytesAllocated() - recordCheckpointBytesBefore; got != 0 {
+		t.Fatalf("checkpoint sparse-set bytes grew by %d, want 0 with preallocated slots", got)
+	}
+}
+
 func TestExternalScannerCheckpointReusesEqualStartEndSnapshot(t *testing.T) {
 	arena := acquireNodeArena(arenaClassFull)
 	defer arena.Release()

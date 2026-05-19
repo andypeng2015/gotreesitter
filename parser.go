@@ -1447,6 +1447,9 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			target = parseNoTreeArenaNodeCapacity(len(source))
 		}
 		arena.ensureExactNodeCapacity(target)
+		if !p.noTreeBenchmarkOnly && languageUsesExternalScannerCheckpoints(p.language) {
+			arena.ensureExternalScannerCheckpointCapacity(parseFullExternalScannerCheckpointCapacity(len(source), target))
+		}
 		scratch.entries.ensureInitialCap(parseFullEntryScratchCapacity(len(source)))
 	case arenaClassIncremental:
 		target := parseIncrementalArenaNodeCapacity(len(source), p.incrementalArenaHintCapacity())

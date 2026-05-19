@@ -135,6 +135,17 @@ func parseFullArenaInitialNodeCapacity(sourceLen int) int {
 	return max(base, estimate)
 }
 
+func parseFullExternalScannerCheckpointCapacity(sourceLen, nodeCapacity int) int {
+	if sourceLen < 256*1024 || nodeCapacity <= 0 {
+		return 0
+	}
+	sourceSized := sourceLen * 3 / 8
+	if sourceSized <= 0 || sourceSized > nodeCapacity {
+		return nodeCapacity
+	}
+	return sourceSized
+}
+
 func parseNoTreeArenaNodeCapacity(sourceLen int) int {
 	if !parseShouldCompactNoTreeShiftLeaves(sourceLen) {
 		return parseNoTreeFullLeafArenaNodeCapacity(sourceLen)
