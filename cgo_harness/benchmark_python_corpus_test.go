@@ -860,6 +860,36 @@ func BenchmarkPythonCorpusGoTreeSitterParseDFANoTreeWithCheckpoints(b *testing.B
 	benchmarkPythonCorpusGoDFA(b, pythonCorpusParseModeDFANoTreeWithCheckpoints)
 }
 
+func BenchmarkPythonCorpusGoTreeSitterParseDFAWithImportExtract(b *testing.B) {
+	file := loadPythonCorpusFile(b)
+	lang := grammars.PythonLanguage()
+	pool := gotreesitter.NewParserPool(
+		lang,
+		gotreesitter.WithParserPoolTimeoutMicros(pythonCorpusBenchTimeoutMicros(b)),
+	)
+
+	b.ReportAllocs()
+	b.SetBytes(int64(len(file.source)))
+	b.ResetTimer()
+
+	var imports int64
+	for i := 0; i < b.N; i++ {
+		tree, err := pool.Parse(file.source)
+		if err != nil {
+			if tree != nil {
+				tree.Release()
+			}
+			b.Fatalf("%s: %v", file.path, err)
+		}
+		requireCompletePythonCorpusTree(b, lang, file, tree, "dfa_import_extract")
+		imports += int64(len(gotreesitter.ExtractImports(tree)))
+		tree.Release()
+	}
+	if b.N > 0 {
+		b.ReportMetric(float64(imports)/float64(b.N), "imports/op")
+	}
+}
+
 func BenchmarkPythonCorpusCTreeSitterParseFull(b *testing.B) {
 	file := loadPythonCorpusFile(b)
 	parser := newCTreeSitterParserWithLanguage(b, sitterpython.GetLanguage)
