@@ -1365,57 +1365,23 @@ func (p *Parser) tryPushPendingNoFieldParent(s *glrStack, act ParseAction, tok T
 }
 
 func (p *Parser) tryPushPendingDirectFieldParent(s *glrStack, act ParseAction, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, entries []stackEntry, start, reducedEnd, trailingEnd int, topState StateID, truncateDepth int, rawFieldIDs []FieldID, rawInherited []bool) bool {
-	if p == nil || p.language == nil || arena == nil || s == nil || !p.noResultCompatibilityBenchmarkOnly || len(rawFieldIDs) == 0 || !fieldIDSliceHasAny(rawFieldIDs) {
+	if !p.pendingDirectFieldParentEligible(s, arena, rawFieldIDs, rawInherited) {
 		return false
-	}
-	// Dart has a grammar-specific direct-field suppression rule that needs
-	// materialized child type checks; keep that path on the existing reducer.
-	if p.language.Name == "dart" {
-		return false
-	}
-	for _, inherited := range rawInherited {
-		if inherited {
-			return false
-		}
 	}
 	symbolMeta := p.language.SymbolMetadata
 	if !symbolVisibleForPending(act.Symbol, symbolMeta) {
 		return false
 	}
-	childCount := 0
-	hasError := false
-	var first, last stackEntry
-	skippedHiddenChild := false
-	for i := start; i < reducedEnd; i++ {
-		entry := entries[i]
-		if !stackEntryHasNode(entry) {
-			continue
-		}
-		if stackEntryNodeIsMissing(entry) {
-			return false
-		}
-		if !stackEntryVisibleForPending(entry, symbolMeta) {
-			if stackEntryNodeHasError(entry) || stackEntryTreeHasFieldIDs(entry, arena) || pendingPlainHiddenVisibleDescendantCount(entry, arena, symbolMeta) != 0 {
-				return false
-			}
-			skippedHiddenChild = true
-			continue
-		}
-		if childCount == 0 {
-			first = entry
-		}
-		last = entry
-		childCount++
-		hasError = hasError || stackEntryNodeHasError(entry)
-	}
-	if childCount == 0 {
+
+	window, ok := scanPendingDirectFieldParentWindow(entries, start, reducedEnd, arena, symbolMeta)
+	if !ok {
 		return false
 	}
-	useDenseFieldEntries := skippedHiddenChild && !p.pendingDirectFieldParentFieldsRecomputable(act.ProductionID, childCount, entries, start, reducedEnd, rawFieldIDs, rawInherited, symbolMeta)
-	startByte := stackEntryNodeStartByte(first)
-	endByte := stackEntryNodeEndByte(last)
-	startPoint := stackEntryNodeStartPoint(first)
-	endPoint := stackEntryNodeEndPoint(last)
+	useDenseFieldEntries := window.skippedHiddenChild && !p.pendingDirectFieldParentFieldsRecomputable(act.ProductionID, window.childCount, entries, start, reducedEnd, rawFieldIDs, rawInherited, symbolMeta)
+	startByte := stackEntryNodeStartByte(window.first)
+	endByte := stackEntryNodeEndByte(window.last)
+	startPoint := stackEntryNodeStartPoint(window.first)
+	endPoint := stackEntryNodeEndPoint(window.last)
 	if span, ok := pendingReduceWindowSpan(entries, start, reducedEnd); ok {
 		startByte = span.startByte
 		endByte = span.endByte
@@ -1427,13 +1393,13 @@ func (p *Parser) tryPushPendingDirectFieldParent(s *glrStack, act ParseAction, t
 		act.Symbol,
 		p.isNamedSymbol(act.Symbol),
 		act.ProductionID,
-		childCount,
-		pendingDirectFieldParentEntrySlots(childCount, useDenseFieldEntries),
+		window.childCount,
+		pendingDirectFieldParentEntrySlots(window.childCount, useDenseFieldEntries),
 		startByte,
 		endByte,
 		startPoint,
 		endPoint,
-		hasError,
+		window.hasError,
 	)
 	if useDenseFieldEntries {
 		parent.setHasFieldEntries(true)
@@ -1463,7 +1429,7 @@ func (p *Parser) tryPushPendingDirectFieldParent(s *glrStack, act ParseAction, t
 		}
 		out++
 	}
-	if out != childCount {
+	if out != window.childCount {
 		arena.recordPendingParentRejected(pendingParentRejectFill)
 		return false
 	}
@@ -1497,6 +1463,58 @@ func (p *Parser) tryPushPendingDirectFieldParent(s *glrStack, act ParseAction, t
 		*anyReduced = true
 	}
 	return true
+}
+
+func (p *Parser) pendingDirectFieldParentEligible(s *glrStack, arena *nodeArena, rawFieldIDs []FieldID, rawInherited []bool) bool {
+	if p == nil || p.language == nil || arena == nil || s == nil || !p.noResultCompatibilityBenchmarkOnly || len(rawFieldIDs) == 0 || !fieldIDSliceHasAny(rawFieldIDs) {
+		return false
+	}
+	// Dart has a grammar-specific direct-field suppression rule that needs
+	// materialized child type checks; keep that path on the existing reducer.
+	if p.language.Name == "dart" {
+		return false
+	}
+	for _, inherited := range rawInherited {
+		if inherited {
+			return false
+		}
+	}
+	return true
+}
+
+type pendingDirectFieldParentWindow struct {
+	childCount         int
+	hasError           bool
+	skippedHiddenChild bool
+	first              stackEntry
+	last               stackEntry
+}
+
+func scanPendingDirectFieldParentWindow(entries []stackEntry, start, reducedEnd int, arena *nodeArena, symbolMeta []SymbolMetadata) (pendingDirectFieldParentWindow, bool) {
+	var window pendingDirectFieldParentWindow
+	for i := start; i < reducedEnd; i++ {
+		entry := entries[i]
+		if !stackEntryHasNode(entry) {
+			continue
+		}
+		if stackEntryNodeIsMissing(entry) {
+			return pendingDirectFieldParentWindow{}, false
+		}
+		if !stackEntryVisibleForPending(entry, symbolMeta) {
+			if stackEntryNodeHasError(entry) || stackEntryTreeHasFieldIDs(entry, arena) || pendingPlainHiddenVisibleDescendantCount(entry, arena, symbolMeta) != 0 {
+				return pendingDirectFieldParentWindow{}, false
+			}
+			window.skippedHiddenChild = true
+			continue
+		}
+		if window.childCount == 0 {
+			window.first = entry
+		}
+		window.last = entry
+		window.childCount++
+		window.hasError = window.hasError || stackEntryNodeHasError(entry)
+	}
+	return window, window.childCount != 0
 }
 
 func pendingDirectFieldParentEntrySlots(childCount int, useDenseFieldEntries bool) int {
