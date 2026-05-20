@@ -920,8 +920,8 @@ func (n *Node) NamedChildCount() int {
 	count := 0
 	childCount := nodeChildCountNoMaterialize(n)
 	for i := 0; i < childCount; i++ {
-		c := nodeChildAtForReason(n, i, materializeForParentAPI)
-		if c != nil && c.isNamed() {
+		entry, ok := nodeChildEntryAtNoMaterialize(n, i)
+		if ok && stackEntryNodeIsNamed(entry) {
 			count++
 		}
 	}
@@ -931,16 +931,20 @@ func (n *Node) NamedChildCount() int {
 // NamedChild returns the i-th named child (skipping anonymous children),
 // or nil if i is out of range.
 func (n *Node) NamedChild(i int) *Node {
+	if i < 0 {
+		return nil
+	}
 	count := 0
 	childCount := nodeChildCountNoMaterialize(n)
 	for childIndex := 0; childIndex < childCount; childIndex++ {
-		c := nodeChildAtForReason(n, childIndex, materializeForParentAPI)
-		if c != nil && c.isNamed() {
-			if count == i {
-				return c
-			}
-			count++
+		entry, ok := nodeChildEntryAtNoMaterialize(n, childIndex)
+		if !ok || !stackEntryNodeIsNamed(entry) {
+			continue
 		}
+		if count == i {
+			return nodeChildAtForReason(n, childIndex, materializeForParentAPI)
+		}
+		count++
 	}
 	return nil
 }
@@ -1009,12 +1013,18 @@ func sexprWrite(n *Node, lang *Language, b *strings.Builder) {
 
 	// Walk children, writing only named ones. Because a named child always
 	// produces at least "(type)", we can write a space before each one eagerly.
-	for i := 0; i < n.ChildCount(); i++ {
-		child := n.Child(i)
-		if child != nil && child.IsNamed() {
-			b.WriteByte(' ')
-			sexprWrite(child, lang, b)
+	childCount := nodeChildCountNoMaterialize(n)
+	for i := 0; i < childCount; i++ {
+		entry, ok := nodeChildEntryAtNoMaterialize(n, i)
+		if !ok || !stackEntryNodeIsNamed(entry) {
+			continue
 		}
+		child := nodeChildAtForReason(n, i, materializeForParentAPI)
+		if child == nil {
+			continue
+		}
+		b.WriteByte(' ')
+		sexprWrite(child, lang, b)
 	}
 
 	b.WriteByte(')')

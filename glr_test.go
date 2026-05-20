@@ -392,6 +392,83 @@ func TestLazyFinalChildRefsParentAndSiblingAvoidRangeMaterialization(t *testing.
 	}
 }
 
+func TestNamedChildAPIsSkipAnonymousLazyFinalChildRefs(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	arena.finalChildRefs = true
+	anon := newCompactFullLeafInArena(arena, 1, false, 0, 1, Point{}, Point{Column: 1})
+	anon.parseState = 11
+	named := newCompactFullLeafInArena(arena, 2, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	named.parseState = 12
+	parent := newPendingParentInArena(arena, 3, true, 4, []stackEntry{
+		newStackEntryCompactFullLeaf(anon.parseState, anon),
+		newStackEntryCompactFullLeaf(named.parseState, named),
+	}, 0, 2, Point{}, Point{Column: 2}, false)
+	parent.parseState = 13
+
+	entry := newStackEntryPendingParent(parent.parseState, parent)
+	root := materializeStackEntryPendingParent(arena, &entry, pendingParentMaterializeForFinalTree)
+	if root == nil {
+		t.Fatal("root = nil")
+	}
+	if got := root.NamedChildCount(); got != 1 {
+		t.Fatalf("NamedChildCount = %d, want 1", got)
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 0 {
+		t.Fatalf("final child ref single children after NamedChildCount = %d, want 0", got)
+	}
+	child := root.NamedChild(0)
+	if child == nil {
+		t.Fatal("NamedChild(0) = nil")
+	}
+	if got := child.Symbol(); got != 2 {
+		t.Fatalf("NamedChild(0).Symbol = %d, want 2", got)
+	}
+	if got := arena.finalChildRefsMaterializedParents; got != 0 {
+		t.Fatalf("final child ref range materialized parents = %d, want 0", got)
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 1 {
+		t.Fatalf("final child ref single children after NamedChild = %d, want 1", got)
+	}
+}
+
+func TestSExprSkipsAnonymousLazyFinalChildRefs(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	arena.finalChildRefs = true
+	anon := newCompactFullLeafInArena(arena, 1, false, 0, 1, Point{}, Point{Column: 1})
+	anon.parseState = 11
+	named := newCompactFullLeafInArena(arena, 2, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	named.parseState = 12
+	parent := newPendingParentInArena(arena, 3, true, 4, []stackEntry{
+		newStackEntryCompactFullLeaf(anon.parseState, anon),
+		newStackEntryCompactFullLeaf(named.parseState, named),
+	}, 0, 2, Point{}, Point{Column: 2}, false)
+	parent.parseState = 13
+
+	entry := newStackEntryPendingParent(parent.parseState, parent)
+	root := materializeStackEntryPendingParent(arena, &entry, pendingParentMaterializeForFinalTree)
+	if root == nil {
+		t.Fatal("root = nil")
+	}
+	lang := &Language{
+		SymbolNames: []string{"", "anon", "name", "parent"},
+		SymbolMetadata: []SymbolMetadata{
+			{},
+			{Named: false, Visible: true},
+			{Named: true, Visible: true},
+			{Named: true, Visible: true},
+		},
+	}
+	if got, want := root.SExpr(lang), "(parent (name))"; got != want {
+		t.Fatalf("SExpr = %q, want %q", got, want)
+	}
+	if got := arena.finalChildRefsMaterializedParents; got != 0 {
+		t.Fatalf("final child ref range materialized parents = %d, want 0", got)
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 1 {
+		t.Fatalf("final child ref single children after SExpr = %d, want 1", got)
+	}
+}
+
 func TestTreeEditKeepsUnaffectedFinalChildRefsLazy(t *testing.T) {
 	arena := newNodeArena(arenaClassFull)
 	arena.finalChildRefs = true
