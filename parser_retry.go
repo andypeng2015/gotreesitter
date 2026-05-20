@@ -16,6 +16,7 @@ const (
 	// bounded retry to preserve the declaration branch.
 	javaFullParseRetryMaxGLRStacks   = 64
 	javaFullParseRetryMaxMergePerKey = 6
+	javaTightMergeCapSourceLen       = 256 * 1024
 	// Retry node-limit full parses with a bounded larger node budget instead of
 	// globally raising the default cap for every parse.
 	fullParseRetryNodeLimitScale = 2
@@ -315,9 +316,13 @@ func fullParseInitialMaxStacks(lang *Language, conflictWidth int) int {
 	return initialMaxStacks
 }
 
-func effectiveParseMergePerKeyCap(lang *Language, mergePerKeyCap int, incremental bool) int {
+func effectiveParseMergePerKeyCap(lang *Language, mergePerKeyCap int, incremental bool, sourceLen ...int) int {
 	if lang == nil || incremental {
 		return mergePerKeyCap
+	}
+	fullSourceLen := 0
+	if len(sourceLen) > 0 {
+		fullSourceLen = sourceLen[0]
 	}
 	switch lang.Name {
 	case "json":
@@ -344,13 +349,16 @@ func effectiveParseMergePerKeyCap(lang *Language, mergePerKeyCap int, incrementa
 			return 4
 		}
 	case "java":
-		// Giant generated switch/case bodies can retain many equivalent Java GLR
-		// survivors under the default per-key budget. Keep the Java full-parse
-		// cap narrow, but retain two survivors so common top-level annotations
-		// do not lose the declaration branch to expression-shaped alternatives.
+		// Giant generated string/switch-heavy Java sources can retain millions
+		// of redundant GLR survivors under the default per-key budget. Keep one
+		// steady-state survivor for large full parses; smaller annotation-heavy
+		// files still need two survivors to retain the declaration branch.
 		// Accepted-error retries can still widen this cap when a file proves the
 		// steady-state budget is insufficient.
 		// Preserve explicit env overrides for diagnosis and parity experiments.
+		if !parseMaxMergePerKeyEnvConfigured() && fullSourceLen >= javaTightMergeCapSourceLen && mergePerKeyCap > 1 {
+			return 1
+		}
 		if !parseMaxMergePerKeyEnvConfigured() && mergePerKeyCap > 2 {
 			return 2
 		}
