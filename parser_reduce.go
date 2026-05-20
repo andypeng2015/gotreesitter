@@ -1033,10 +1033,15 @@ func materializePendingPayloadEntries(entries []stackEntry, start, end int, aren
 	if end > len(entries) {
 		end = len(entries)
 	}
+	rejectReason := pendingParentRejectUnknown
+	if arena != nil {
+		rejectReason = arena.pendingParentLastRejectReason
+	}
 	for i := start; i < end; i++ {
 		if stackEntryCompactFullLeaf(entries[i]) == nil && stackEntryPendingParent(entries[i]) == nil {
 			continue
 		}
+		arena.recordParentRejectPayloadMaterialized(entries[i], rejectReason)
 		materializeStackEntryPayload(arena, &entries[i], compactFullLeafMaterializeForParentReduce, pendingParentMaterializeForParentReduce)
 	}
 }

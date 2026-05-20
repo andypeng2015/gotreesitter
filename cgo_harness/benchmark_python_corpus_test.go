@@ -131,12 +131,14 @@ type pythonRuntimeBenchStats struct {
 	compactFullLeafCreated               uint64
 	compactFullLeafMaterialized          uint64
 	compactFullLeafMaterializedParent    uint64
+	compactFullLeafParentRejects         gotreesitter.PendingParentRejectStats
 	compactFullLeafMaterializedFinal     uint64
 	compactFullLeafReasons               pythonMaterializeReasonStats
 	compactFullLeafDropped               uint64
 	pendingParentCreated                 uint64
 	pendingParentMaterialized            uint64
 	pendingParentMaterializedParent      uint64
+	pendingParentParentRejects           gotreesitter.PendingParentRejectStats
 	pendingParentMaterializedFinal       uint64
 	pendingParentReasons                 pythonMaterializeReasonStats
 	pendingParentDropped                 uint64
@@ -279,6 +281,30 @@ type pythonPendingParentRejectStats struct {
 	fill             uint64
 }
 
+func addPendingParentRejectStats(dst *gotreesitter.PendingParentRejectStats, src gotreesitter.PendingParentRejectStats) {
+	dst.Unknown += src.Unknown
+	dst.Empty += src.Empty
+	dst.ChildLimit += src.ChildLimit
+	dst.Alias += src.Alias
+	dst.RawSpan += src.RawSpan
+	dst.Fields += src.Fields
+	dst.Child += src.Child
+	dst.Span += src.Span
+	dst.Fill += src.Fill
+}
+
+func reportPendingParentRejectStats(b *testing.B, s gotreesitter.PendingParentRejectStats, tokens float64, prefix string) {
+	b.ReportMetric(float64(s.Unknown)/tokens, prefix+"_unknown/token")
+	b.ReportMetric(float64(s.Empty)/tokens, prefix+"_empty/token")
+	b.ReportMetric(float64(s.ChildLimit)/tokens, prefix+"_child_limit/token")
+	b.ReportMetric(float64(s.Alias)/tokens, prefix+"_alias/token")
+	b.ReportMetric(float64(s.RawSpan)/tokens, prefix+"_raw_span/token")
+	b.ReportMetric(float64(s.Fields)/tokens, prefix+"_fields/token")
+	b.ReportMetric(float64(s.Child)/tokens, prefix+"_child/token")
+	b.ReportMetric(float64(s.Span)/tokens, prefix+"_span/token")
+	b.ReportMetric(float64(s.Fill)/tokens, prefix+"_fill/token")
+}
+
 func (s *pythonRuntimeBenchStats) add(rt gotreesitter.ParseRuntime, breakdown gotreesitter.ArenaBreakdown, hasBreakdown bool) {
 	s.ops++
 	s.tokensConsumed += rt.TokensConsumed
@@ -348,6 +374,8 @@ func (s *pythonRuntimeBenchStats) add(rt gotreesitter.ParseRuntime, breakdown go
 	s.pendingParentCreated += rt.PendingParentCreated
 	s.pendingParentMaterialized += rt.PendingParentMaterialized
 	s.pendingParentMaterializedParent += rt.PendingParentMaterializedForParentReduce
+	addPendingParentRejectStats(&s.compactFullLeafParentRejects, rt.CompactFullLeafMaterializedForParentReject)
+	addPendingParentRejectStats(&s.pendingParentParentRejects, rt.PendingParentMaterializedForParentReject)
 	s.pendingParentMaterializedFinal += rt.PendingParentMaterializedForFinalTree
 	s.pendingParentReasons.normalization += rt.PendingParentMaterializedForNormalization
 	s.pendingParentReasons.recovery += rt.PendingParentMaterializedForRecovery
@@ -717,6 +745,7 @@ func (s pythonRuntimeBenchStats) report(b *testing.B) {
 		b.ReportMetric(float64(s.compactFullLeafCreated)/tokens, "compact_full_leaf_created/token")
 		b.ReportMetric(float64(s.compactFullLeafMaterialized)/tokens, "compact_full_leaf_materialized/token")
 		b.ReportMetric(float64(s.compactFullLeafMaterializedParent)/tokens, "compact_full_leaf_materialized_parent/token")
+		reportPendingParentRejectStats(b, s.compactFullLeafParentRejects, tokens, "compact_full_leaf_materialized_parent_reject")
 		b.ReportMetric(float64(s.compactFullLeafMaterializedFinal)/tokens, "compact_full_leaf_materialized_final/token")
 		b.ReportMetric(float64(s.compactFullLeafReasons.normalization)/tokens, "compact_full_leaf_materialized_normalization/token")
 		b.ReportMetric(float64(s.compactFullLeafReasons.recovery)/tokens, "compact_full_leaf_materialized_recovery/token")
@@ -732,6 +761,7 @@ func (s pythonRuntimeBenchStats) report(b *testing.B) {
 		b.ReportMetric(float64(s.pendingParentCreated)/tokens, "pending_parent_created/token")
 		b.ReportMetric(float64(s.pendingParentMaterialized)/tokens, "pending_parent_materialized/token")
 		b.ReportMetric(float64(s.pendingParentMaterializedParent)/tokens, "pending_parent_materialized_parent/token")
+		reportPendingParentRejectStats(b, s.pendingParentParentRejects, tokens, "pending_parent_materialized_parent_reject")
 		b.ReportMetric(float64(s.pendingParentMaterializedFinal)/tokens, "pending_parent_materialized_final/token")
 		b.ReportMetric(float64(s.pendingParentReasons.normalization)/tokens, "pending_parent_materialized_normalization/token")
 		b.ReportMetric(float64(s.pendingParentReasons.recovery)/tokens, "pending_parent_materialized_recovery/token")

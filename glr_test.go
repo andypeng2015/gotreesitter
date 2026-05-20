@@ -126,6 +126,26 @@ func TestPendingParentRejectCountersClassifyReasons(t *testing.T) {
 	if got := arena.pendingParentRejectedRawSpan; got != 0 {
 		t.Fatalf("pendingParentRejectedRawSpan = %d, want 0", got)
 	}
+	if got := arena.pendingParentLastRejectReason; got != pendingParentRejectChild {
+		t.Fatalf("pendingParentLastRejectReason = %d, want child", got)
+	}
+}
+
+func TestParentRejectPayloadMaterializedCountersClassifyPayloadKind(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	leaf := newCompactFullLeafInArena(arena, 9, true, 13, 21, Point{Row: 2, Column: 3}, Point{Row: 2, Column: 11})
+	leafEntry := newStackEntryCompactFullLeaf(4, leaf)
+	arena.recordParentRejectPayloadMaterialized(leafEntry, pendingParentRejectFields)
+	if got := arena.compactFullLeafMaterializedForParentReject.Fields; got != 1 {
+		t.Fatalf("compact leaf parent reject fields = %d, want 1", got)
+	}
+
+	parent := newPendingParentInArena(arena, 10, true, 7, nil, 0, 0, Point{}, Point{}, false)
+	parentEntry := newStackEntryPendingParent(5, parent)
+	arena.recordParentRejectPayloadMaterialized(parentEntry, pendingParentRejectAlias)
+	if got := arena.pendingParentMaterializedForParentReject.Alias; got != 1 {
+		t.Fatalf("pending parent reject alias = %d, want 1", got)
+	}
 }
 
 func TestCompactCheckpointLeafStackEntryUsesNoTreePrefix(t *testing.T) {

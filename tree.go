@@ -126,6 +126,18 @@ const (
 	ParseStopMemoryBudget    ParseStopReason = "memory_budget"
 )
 
+type PendingParentRejectStats struct {
+	Unknown    uint64
+	Empty      uint64
+	ChildLimit uint64
+	Alias      uint64
+	RawSpan    uint64
+	Fields     uint64
+	Child      uint64
+	Span       uint64
+	Fill       uint64
+}
+
 // ParseRuntime captures parser-loop diagnostics for a completed tree.
 type ParseRuntime struct {
 	StopReason                         ParseStopReason
@@ -208,6 +220,7 @@ type ParseRuntime struct {
 	CompactFullLeafCreated                          uint64
 	CompactFullLeafMaterialized                     uint64
 	CompactFullLeafMaterializedForParentReduce      uint64
+	CompactFullLeafMaterializedForParentReject      PendingParentRejectStats
 	CompactFullLeafMaterializedForFinalTree         uint64
 	CompactFullLeafMaterializedForNormalization     uint64
 	CompactFullLeafMaterializedForRecovery          uint64
@@ -220,6 +233,7 @@ type ParseRuntime struct {
 	PendingParentCreated                            uint64
 	PendingParentMaterialized                       uint64
 	PendingParentMaterializedForParentReduce        uint64
+	PendingParentMaterializedForParentReject        PendingParentRejectStats
 	PendingParentMaterializedForFinalTree           uint64
 	PendingParentMaterializedForNormalization       uint64
 	PendingParentMaterializedForRecovery            uint64

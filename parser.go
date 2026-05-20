@@ -1542,6 +1542,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		parseRuntime.CompactFullLeafCreated = arena.compactFullLeafCreated
 		parseRuntime.CompactFullLeafMaterialized = arena.compactFullLeafMaterialized
 		parseRuntime.CompactFullLeafMaterializedForParentReduce = arena.compactFullLeafMaterializedForParentReduce
+		parseRuntime.CompactFullLeafMaterializedForParentReject = arena.compactFullLeafMaterializedForParentReject
 		parseRuntime.CompactFullLeafMaterializedForFinalTree = arena.compactFullLeafMaterializedForFinalTree
 		parseRuntime.CompactFullLeafMaterializedForNormalization = arena.compactFullLeafMaterializedForNormalization
 		parseRuntime.CompactFullLeafMaterializedForRecovery = arena.compactFullLeafMaterializedForRecovery
@@ -1554,6 +1555,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		parseRuntime.PendingParentCreated = arena.pendingParentCreated
 		parseRuntime.PendingParentMaterialized = arena.pendingParentMaterialized
 		parseRuntime.PendingParentMaterializedForParentReduce = arena.pendingParentMaterializedForParentReduce
+		parseRuntime.PendingParentMaterializedForParentReject = arena.pendingParentMaterializedForParentReject
 		parseRuntime.PendingParentMaterializedForFinalTree = arena.pendingParentMaterializedForFinalTree
 		parseRuntime.PendingParentMaterializedForNormalization = arena.pendingParentMaterializedForNormalization
 		parseRuntime.PendingParentMaterializedForRecovery = arena.pendingParentMaterializedForRecovery

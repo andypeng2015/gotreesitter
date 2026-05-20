@@ -113,6 +113,7 @@ type nodeArena struct {
 	compactFullLeafMaterializedForParentAPI         uint64
 	compactFullLeafMaterializedForEdit              uint64
 	compactFullLeafMaterializedForCheckpointRebuild uint64
+	compactFullLeafMaterializedForParentReject      PendingParentRejectStats
 	compactFullLeafDropped                          uint64
 	pendingParentCreated                            uint64
 	pendingParentMaterialized                       uint64
@@ -125,6 +126,7 @@ type nodeArena struct {
 	pendingParentMaterializedForParentAPI           uint64
 	pendingParentMaterializedForEdit                uint64
 	pendingParentMaterializedForCheckpointRebuild   uint64
+	pendingParentMaterializedForParentReject        PendingParentRejectStats
 	pendingParentDropped                            uint64
 	pendingParentsFlattened                         uint64
 	pendingChildRefsFlattened                       uint64
@@ -143,6 +145,7 @@ type nodeArena struct {
 	pendingParentRejectedChild                      uint64
 	pendingParentRejectedSpan                       uint64
 	pendingParentRejectedFill                       uint64
+	pendingParentLastRejectReason                   pendingParentRejectReason
 	checkpointLeafFullNodesAvoided                  uint64
 	leafNodesConstructed                            uint64
 	parentNodesConstructed                          uint64
@@ -666,6 +669,7 @@ func (a *nodeArena) reset() {
 	a.compactFullLeafMaterializedForParentAPI = 0
 	a.compactFullLeafMaterializedForEdit = 0
 	a.compactFullLeafMaterializedForCheckpointRebuild = 0
+	a.compactFullLeafMaterializedForParentReject = PendingParentRejectStats{}
 	a.compactFullLeafDropped = 0
 	a.pendingParentCreated = 0
 	a.pendingParentMaterialized = 0
@@ -678,6 +682,7 @@ func (a *nodeArena) reset() {
 	a.pendingParentMaterializedForParentAPI = 0
 	a.pendingParentMaterializedForEdit = 0
 	a.pendingParentMaterializedForCheckpointRebuild = 0
+	a.pendingParentMaterializedForParentReject = PendingParentRejectStats{}
 	a.pendingParentDropped = 0
 	a.pendingParentsFlattened = 0
 	a.pendingChildRefsFlattened = 0
@@ -696,6 +701,7 @@ func (a *nodeArena) reset() {
 	a.pendingParentRejectedChild = 0
 	a.pendingParentRejectedSpan = 0
 	a.pendingParentRejectedFill = 0
+	a.pendingParentLastRejectReason = pendingParentRejectUnknown
 	a.checkpointLeafFullNodesAvoided = 0
 	a.leafNodesConstructed = 0
 	a.parentNodesConstructed = 0
@@ -1453,7 +1459,8 @@ func (a *nodeArena) recordPendingParentMaterialized(reason materializeReason) {
 type pendingParentRejectReason uint8
 
 const (
-	pendingParentRejectEmpty pendingParentRejectReason = iota
+	pendingParentRejectUnknown pendingParentRejectReason = iota
+	pendingParentRejectEmpty
 	pendingParentRejectChildLimit
 	pendingParentRejectAlias
 	pendingParentRejectRawSpan
@@ -1463,10 +1470,37 @@ const (
 	pendingParentRejectFill
 )
 
+func (s *PendingParentRejectStats) increment(reason pendingParentRejectReason) {
+	if s == nil {
+		return
+	}
+	switch reason {
+	case pendingParentRejectEmpty:
+		s.Empty++
+	case pendingParentRejectChildLimit:
+		s.ChildLimit++
+	case pendingParentRejectAlias:
+		s.Alias++
+	case pendingParentRejectRawSpan:
+		s.RawSpan++
+	case pendingParentRejectFields:
+		s.Fields++
+	case pendingParentRejectChild:
+		s.Child++
+	case pendingParentRejectSpan:
+		s.Span++
+	case pendingParentRejectFill:
+		s.Fill++
+	default:
+		s.Unknown++
+	}
+}
+
 func (a *nodeArena) recordPendingParentRejected(reason pendingParentRejectReason) {
 	if a == nil {
 		return
 	}
+	a.pendingParentLastRejectReason = reason
 	switch reason {
 	case pendingParentRejectEmpty:
 		a.pendingParentRejectedEmpty++
@@ -1484,6 +1518,19 @@ func (a *nodeArena) recordPendingParentRejected(reason pendingParentRejectReason
 		a.pendingParentRejectedSpan++
 	case pendingParentRejectFill:
 		a.pendingParentRejectedFill++
+	}
+}
+
+func (a *nodeArena) recordParentRejectPayloadMaterialized(entry stackEntry, reason pendingParentRejectReason) {
+	if a == nil {
+		return
+	}
+	if stackEntryCompactFullLeaf(entry) != nil {
+		a.compactFullLeafMaterializedForParentReject.increment(reason)
+		return
+	}
+	if stackEntryPendingParent(entry) != nil {
+		a.pendingParentMaterializedForParentReject.increment(reason)
 	}
 }
 
