@@ -350,120 +350,136 @@ func (p *Parser) applyAction(s *glrStack, act ParseAction, tok Token, anyReduced
 	}
 	switch act.Type {
 	case ParseActionShift:
-		named := p.isNamedSymbol(tok.Symbol)
-		currentState := s.top().state
-		targetState := extraShiftTargetState(currentState, act)
-		if p.useCompactNoTreeShiftLeaf() && !p.shiftTokenIsMissingError(tok) {
-			extra := act.Extra
-			if cp, ok := p.currentExternalNoTreeLeafCheckpointRef(arena, tok); ok {
-				leaf := newCompactCheckpointLeafInArena(arena, tok.Symbol, named, tok.StartByte, tok.EndByte, cp)
-				leaf.setExtra(extra)
-				leaf.preGotoState = currentState
-				leaf.parseState = targetState
-				p.pushStackCompactCheckpointLeaf(s, targetState, leaf, entryScratch, gssScratch)
-			} else {
-				leaf := newNoTreeLeafNodeInArena(arena, tok.Symbol, named,
-					tok.StartByte, tok.EndByte, tok.StartPoint, tok.EndPoint)
-				leaf.setExtra(extra)
-				leaf.preGotoState = currentState
-				leaf.parseState = targetState
-				p.pushStackNoTreeNode(s, targetState, leaf, entryScratch, gssScratch)
-			}
-			if extra && perfCountersEnabled {
-				perfRecordExtraNode()
-			}
-		} else if p.canCompactFullShiftLeaf(act, tok) {
-			leaf := newCompactFullLeafInArena(arena, tok.Symbol, named,
-				tok.StartByte, tok.EndByte, tok.StartPoint, tok.EndPoint)
-			if cp, ok := p.currentExternalCompactFullLeafCheckpointRef(arena, tok); ok {
-				leaf.checkpoint = cp
-				leaf.hasCheckpoint = true
-			}
-			leaf.preGotoState = currentState
-			leaf.parseState = targetState
-			p.pushStackCompactFullLeaf(s, targetState, leaf, entryScratch, gssScratch)
-		} else {
-			leaf := newLeafNodeInArena(arena, tok.Symbol, named,
-				tok.StartByte, tok.EndByte, tok.StartPoint, tok.EndPoint)
-			if p.shiftTokenIsMissingError(tok) {
-				leaf.setMissing(true)
-				leaf.setHasError(true)
-				if trackChildErrors != nil {
-					*trackChildErrors = true
-				}
-			}
-			leaf.setExtra(act.Extra)
-			if leaf.isExtra() && perfCountersEnabled {
-				perfRecordExtraNode()
-			}
-			leaf.preGotoState = currentState
-			leaf.parseState = targetState
-			p.recordCurrentExternalLeafCheckpoint(leaf, tok)
-			p.pushStackNode(s, targetState, leaf, entryScratch, gssScratch)
-		}
-		s.shifted = true
-		*nodeCount++
-		if p != nil && p.glrTrace {
-			fmt.Printf("      -> SHIFT new_state=%d depth=%d\n", targetState, s.depth())
-		}
+		p.applyShiftAction(s, act, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
 
 	case ParseActionReduce:
-		entries := s.entries
-		borrowed := false
-		if entries == nil {
-			if !s.cacheEntries && s.gss.head != nil {
-				tmp := []stackEntry(nil)
-				if tmpEntries != nil {
-					tmp = *tmpEntries
-				}
-				if p != nil && p.reduceScratch != nil && p.reduceScratch.transientParents != nil {
-					p.applyReduceActionFromGSSTransientParents(s, act, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, tmp, deferParentLinks, trackChildErrors != nil && *trackChildErrors)
-				} else {
-					p.applyReduceActionFromGSS(s, act, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, tmp, deferParentLinks, trackChildErrors != nil && *trackChildErrors)
-				}
-				return
-			}
-			if s.cacheEntries {
-				entries = s.ensureEntries(entryScratch)
-			} else {
-				tmp := []stackEntry(nil)
-				if tmpEntries != nil {
-					tmp = *tmpEntries
-				}
-				entries, borrowed = s.entriesForRead(tmp)
-			}
-		}
-		if p != nil && p.reduceScratch != nil && p.reduceScratch.transientParents != nil {
-			p.applyReduceActionTransientParents(s, act, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, entries, deferParentLinks, trackChildErrors != nil && *trackChildErrors)
-		} else {
-			p.applyReduceAction(s, act, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, entries, deferParentLinks, trackChildErrors != nil && *trackChildErrors)
-		}
-		if borrowed && tmpEntries != nil {
-			*tmpEntries = entries[:0]
-		}
-		if p != nil && p.glrTrace && s != nil && !s.dead {
-			fmt.Printf("      -> REDUCE top_state=%d depth=%d\n", s.top().state, s.depth())
-		}
+		p.applyReduceActionDispatch(s, act, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
 
 	case ParseActionAccept:
-		s.accepted = true
-		if p != nil && p.glrTrace {
-			fmt.Printf("      -> ACCEPT\n")
-		}
+		p.applyAcceptAction(s)
 
 	case ParseActionRecover:
-		if tok.Symbol == 0 && tok.StartByte == tok.EndByte {
-			s.accepted = true
+		p.applyRecoverAction(s, act, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
+	}
+}
+
+func (p *Parser) applyShiftAction(s *glrStack, act ParseAction, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) {
+	named := p.isNamedSymbol(tok.Symbol)
+	currentState := s.top().state
+	targetState := extraShiftTargetState(currentState, act)
+	if p.useCompactNoTreeShiftLeaf() && !p.shiftTokenIsMissingError(tok) {
+		extra := act.Extra
+		if cp, ok := p.currentExternalNoTreeLeafCheckpointRef(arena, tok); ok {
+			leaf := newCompactCheckpointLeafInArena(arena, tok.Symbol, named, tok.StartByte, tok.EndByte, cp)
+			leaf.setExtra(extra)
+			leaf.preGotoState = currentState
+			leaf.parseState = targetState
+			p.pushStackCompactCheckpointLeaf(s, targetState, leaf, entryScratch, gssScratch)
+		} else {
+			leaf := newNoTreeLeafNodeInArena(arena, tok.Symbol, named,
+				tok.StartByte, tok.EndByte, tok.StartPoint, tok.EndPoint)
+			leaf.setExtra(extra)
+			leaf.preGotoState = currentState
+			leaf.parseState = targetState
+			p.pushStackNoTreeNode(s, targetState, leaf, entryScratch, gssScratch)
+		}
+		if extra && perfCountersEnabled {
+			perfRecordExtraNode()
+		}
+	} else if p.canCompactFullShiftLeaf(act, tok) {
+		leaf := newCompactFullLeafInArena(arena, tok.Symbol, named,
+			tok.StartByte, tok.EndByte, tok.StartPoint, tok.EndPoint)
+		if cp, ok := p.currentExternalCompactFullLeafCheckpointRef(arena, tok); ok {
+			leaf.checkpoint = cp
+			leaf.hasCheckpoint = true
+		}
+		leaf.preGotoState = currentState
+		leaf.parseState = targetState
+		p.pushStackCompactFullLeaf(s, targetState, leaf, entryScratch, gssScratch)
+	} else {
+		leaf := newLeafNodeInArena(arena, tok.Symbol, named,
+			tok.StartByte, tok.EndByte, tok.StartPoint, tok.EndPoint)
+		if p.shiftTokenIsMissingError(tok) {
+			leaf.setMissing(true)
+			leaf.setHasError(true)
+			if trackChildErrors != nil {
+				*trackChildErrors = true
+			}
+		}
+		leaf.setExtra(act.Extra)
+		if leaf.isExtra() && perfCountersEnabled {
+			perfRecordExtraNode()
+		}
+		leaf.preGotoState = currentState
+		leaf.parseState = targetState
+		p.recordCurrentExternalLeafCheckpoint(leaf, tok)
+		p.pushStackNode(s, targetState, leaf, entryScratch, gssScratch)
+	}
+	s.shifted = true
+	*nodeCount++
+	if p != nil && p.glrTrace {
+		fmt.Printf("      -> SHIFT new_state=%d depth=%d\n", targetState, s.depth())
+	}
+}
+
+func (p *Parser) applyReduceActionDispatch(s *glrStack, act ParseAction, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, deferParentLinks bool, trackChildErrors *bool) {
+	entries := s.entries
+	borrowed := false
+	if entries == nil {
+		if !s.cacheEntries && s.gss.head != nil {
+			tmp := []stackEntry(nil)
+			if tmpEntries != nil {
+				tmp = *tmpEntries
+			}
+			if p != nil && p.reduceScratch != nil && p.reduceScratch.transientParents != nil {
+				p.applyReduceActionFromGSSTransientParents(s, act, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, tmp, deferParentLinks, trackChildErrors != nil && *trackChildErrors)
+			} else {
+				p.applyReduceActionFromGSS(s, act, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, tmp, deferParentLinks, trackChildErrors != nil && *trackChildErrors)
+			}
 			return
 		}
-		recoverState := s.top().state
-		if act.State != 0 {
-			recoverState = act.State
+		if s.cacheEntries {
+			entries = s.ensureEntries(entryScratch)
+		} else {
+			tmp := []stackEntry(nil)
+			if tmpEntries != nil {
+				tmp = *tmpEntries
+			}
+			entries, borrowed = s.entriesForRead(tmp)
 		}
-		p.pushOrExtendErrorNode(s, recoverState, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
-		if p != nil && p.glrTrace && s != nil && !s.dead {
-			fmt.Printf("      -> RECOVER state=%d depth=%d\n", s.top().state, s.depth())
-		}
+	}
+	if p != nil && p.reduceScratch != nil && p.reduceScratch.transientParents != nil {
+		p.applyReduceActionTransientParents(s, act, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, entries, deferParentLinks, trackChildErrors != nil && *trackChildErrors)
+	} else {
+		p.applyReduceAction(s, act, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, entries, deferParentLinks, trackChildErrors != nil && *trackChildErrors)
+	}
+	if borrowed && tmpEntries != nil {
+		*tmpEntries = entries[:0]
+	}
+	if p != nil && p.glrTrace && s != nil && !s.dead {
+		fmt.Printf("      -> REDUCE top_state=%d depth=%d\n", s.top().state, s.depth())
+	}
+}
+
+func (p *Parser) applyAcceptAction(s *glrStack) {
+	s.accepted = true
+	if p != nil && p.glrTrace {
+		fmt.Printf("      -> ACCEPT\n")
+	}
+}
+
+func (p *Parser) applyRecoverAction(s *glrStack, act ParseAction, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) {
+	if tok.Symbol == 0 && tok.StartByte == tok.EndByte {
+		s.accepted = true
+		return
+	}
+	recoverState := s.top().state
+	if act.State != 0 {
+		recoverState = act.State
+	}
+	p.pushOrExtendErrorNode(s, recoverState, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
+	if p != nil && p.glrTrace && s != nil && !s.dead {
+		fmt.Printf("      -> RECOVER state=%d depth=%d\n", s.top().state, s.depth())
 	}
 }
 
@@ -524,6 +540,49 @@ func reduceWindowFromGSS(s *glrStack, childCount int, buf []stackEntry) ([]stack
 		rev[i], rev[j] = rev[j], rev[i]
 	}
 	return rev, topState, true
+}
+
+func reduceWindowRangeFromGSS(s *glrStack, childCount int, buf []stackEntry) ([]stackEntry, reduceRange, bool) {
+	entries, topState, ok := reduceWindowFromGSS(s, childCount, buf)
+	if !ok {
+		return entries, reduceRange{}, false
+	}
+	return entries, reduceRange{
+		start:      0,
+		reducedEnd: reducedEndBeforeTrailingExtras(entries),
+		actualEnd:  len(entries),
+		topState:   topState,
+	}, true
+}
+
+func reducedEndBeforeTrailingExtras(entries []stackEntry) int {
+	reducedEnd := len(entries)
+	for i := len(entries) - 1; i >= 0; i-- {
+		if !stackEntryHasNode(entries[i]) || !stackEntryNodeIsExtra(entries[i]) {
+			break
+		}
+		reducedEnd--
+	}
+	return reducedEnd
+}
+
+func releaseReduceWindowEntries(tmpEntries *[]stackEntry, entries []stackEntry) {
+	if tmpEntries != nil {
+		*tmpEntries = entries[:0]
+	}
+}
+
+func truncateStackForReduce(s *glrStack, targetDepth int) bool {
+	if targetDepth < 0 || !s.truncate(targetDepth) {
+		s.dead = true
+		return false
+	}
+	return true
+}
+
+func markReduceApplied(s *glrStack, act ParseAction, anyReduced *bool) {
+	s.score += int(act.DynamicPrecedence)
+	*anyReduced = true
 }
 
 func (p *Parser) tryFastVisibleReduceActionFromGSS(s *glrStack, act ParseAction, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, deferParentLinks bool, trackChildErrors bool) bool {
@@ -620,127 +679,81 @@ func (p *Parser) tryFastVisibleReduceActionFromGSS(s *glrStack, act ParseAction,
 	return true
 }
 
+func (p *Parser) applyNoTreeReduceActionFromGSS(s *glrStack, act ParseAction, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, tmp []stackEntry, trackChildErrors bool) {
+	windowEntries, window, ok := reduceWindowRangeFromGSS(s, int(act.ChildCount), tmp)
+	if !ok {
+		s.dead = true
+		releaseReduceWindowEntries(tmpEntries, windowEntries)
+		return
+	}
+
+	targetDepth := s.depth() - window.actualEnd
+	if !truncateStackForReduce(s, targetDepth) {
+		releaseReduceWindowEntries(tmpEntries, windowEntries)
+		return
+	}
+	p.pushNoTreeReduceNode(s, act, tok, arena, entryScratch, gssScratch, windowEntries, window.start, window.reducedEnd, window.reducedEnd, window.actualEnd, window.topState, nodeCount, trackChildErrors)
+	markReduceApplied(s, act, anyReduced)
+	releaseReduceWindowEntries(tmpEntries, windowEntries)
+}
+
 func (p *Parser) applyReduceActionFromGSS(s *glrStack, act ParseAction, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, tmp []stackEntry, deferParentLinks bool, trackChildErrors bool) {
 	if p != nil && p.noTreeBenchmarkOnly {
-		childCount := int(act.ChildCount)
-		windowEntries, topState, ok := reduceWindowFromGSS(s, childCount, tmp)
-		if !ok {
-			s.dead = true
-			if tmpEntries != nil {
-				*tmpEntries = windowEntries[:0]
-			}
-			return
-		}
-		actualEnd := len(windowEntries)
-		reducedEnd := actualEnd
-		for i := actualEnd - 1; i >= 0; i-- {
-			if !stackEntryHasNode(windowEntries[i]) || !stackEntryNodeIsExtra(windowEntries[i]) {
-				break
-			}
-			reducedEnd--
-		}
-		targetDepth := s.depth() - actualEnd
-		if targetDepth < 0 || !s.truncate(targetDepth) {
-			s.dead = true
-			if tmpEntries != nil {
-				*tmpEntries = windowEntries[:0]
-			}
-			return
-		}
-		p.pushNoTreeReduceNode(s, act, tok, arena, entryScratch, gssScratch, windowEntries, 0, reducedEnd, reducedEnd, actualEnd, topState, nodeCount, trackChildErrors)
-		s.score += int(act.DynamicPrecedence)
-		*anyReduced = true
-		if tmpEntries != nil {
-			*tmpEntries = windowEntries[:0]
-		}
+		p.applyNoTreeReduceActionFromGSS(s, act, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, tmp, trackChildErrors)
 		return
 	}
 	if p.tryFastVisibleReduceActionFromGSS(s, act, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors) {
 		return
 	}
 	childCount := int(act.ChildCount)
-	windowEntries, topState, ok := reduceWindowFromGSS(s, childCount, tmp)
+	windowEntries, window, ok := reduceWindowRangeFromGSS(s, childCount, tmp)
 	if !ok {
 		s.dead = true
-		if tmpEntries != nil {
-			*tmpEntries = windowEntries[:0]
-		}
+		releaseReduceWindowEntries(tmpEntries, windowEntries)
 		return
 	}
 
-	actualEnd := len(windowEntries)
-	reducedEnd := actualEnd
-	for i := actualEnd - 1; i >= 0; i-- {
-		if !stackEntryHasNode(windowEntries[i]) || !stackEntryNodeIsExtra(windowEntries[i]) {
-			break
-		}
-		reducedEnd--
-	}
-	if p.usePendingFullParents() {
-		if child, ok := p.collapsibleRawUnarySelfReductionEntry(act, tok, arena, windowEntries, 0, reducedEnd); ok {
-			targetDepth := s.depth() - actualEnd
-			if targetDepth < 0 || !s.truncate(targetDepth) {
-				s.dead = true
-				if tmpEntries != nil {
-					*tmpEntries = windowEntries[:0]
-				}
+	targetDepth := s.depth() - window.actualEnd
+	if pendingFullParents := p.usePendingFullParents(); pendingFullParents {
+		if child, ok := p.collapsibleRawUnarySelfReductionEntry(act, tok, arena, windowEntries, window.start, window.reducedEnd); ok {
+			if !truncateStackForReduce(s, targetDepth) {
+				releaseReduceWindowEntries(tmpEntries, windowEntries)
 				return
 			}
-			p.pushCollapsedUnaryReduceEntry(s, act, tok, child, entryScratch, gssScratch, windowEntries, reducedEnd, actualEnd, topState)
-			s.score += int(act.DynamicPrecedence)
-			*anyReduced = true
-			if tmpEntries != nil {
-				*tmpEntries = windowEntries[:0]
-			}
+			p.pushCollapsedUnaryReduceEntry(s, act, tok, child, entryScratch, gssScratch, windowEntries, window.reducedEnd, window.actualEnd, window.topState)
+			markReduceApplied(s, act, anyReduced)
+			releaseReduceWindowEntries(tmpEntries, windowEntries)
 			return
 		}
-	}
-	if p.usePendingFullParents() {
-		if p.tryPushPendingNoFieldParent(s, act, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, windowEntries, 0, reducedEnd, actualEnd, topState, s.depth()-actualEnd) {
-			if tmpEntries != nil {
-				*tmpEntries = windowEntries[:0]
-			}
+		if p.tryPushPendingNoFieldParent(s, act, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, windowEntries, window.start, window.reducedEnd, window.actualEnd, window.topState, targetDepth) {
+			releaseReduceWindowEntries(tmpEntries, windowEntries)
 			return
 		}
-		materializePendingPayloadEntries(p, windowEntries, 0, actualEnd, arena)
+		materializePendingPayloadEntries(p, windowEntries, window.start, window.actualEnd, arena)
 	}
 
-	if child := p.collapsibleRawUnarySelfReduction(act, tok, arena, windowEntries, 0, reducedEnd); child != nil {
-		targetDepth := s.depth() - actualEnd
-		if targetDepth < 0 || !s.truncate(targetDepth) {
-			s.dead = true
-			if tmpEntries != nil {
-				*tmpEntries = windowEntries[:0]
-			}
+	if child := p.collapsibleRawUnarySelfReduction(act, tok, arena, windowEntries, window.start, window.reducedEnd); child != nil {
+		if !truncateStackForReduce(s, targetDepth) {
+			releaseReduceWindowEntries(tmpEntries, windowEntries)
 			return
 		}
-		p.pushCollapsedUnaryReduceNode(s, act, tok, child, entryScratch, gssScratch, windowEntries, reducedEnd, actualEnd, topState)
-		s.score += int(act.DynamicPrecedence)
-		*anyReduced = true
-		if tmpEntries != nil {
-			*tmpEntries = windowEntries[:0]
-		}
+		p.pushCollapsedUnaryReduceNode(s, act, tok, child, entryScratch, gssScratch, windowEntries, window.reducedEnd, window.actualEnd, window.topState)
+		markReduceApplied(s, act, anyReduced)
+		releaseReduceWindowEntries(tmpEntries, windowEntries)
 		return
 	}
 
-	children, fieldIDs, fieldSources, childPath := p.buildReduceChildrenWithPath(windowEntries, 0, reducedEnd, childCount, act.Symbol, act.ProductionID, arena)
+	children, fieldIDs, fieldSources, childPath := p.buildReduceChildrenWithPath(windowEntries, window.start, window.reducedEnd, childCount, act.Symbol, act.ProductionID, arena)
 
-	targetDepth := s.depth() - actualEnd
-	if targetDepth < 0 || !s.truncate(targetDepth) {
-		s.dead = true
-		if tmpEntries != nil {
-			*tmpEntries = windowEntries[:0]
-		}
+	if !truncateStackForReduce(s, targetDepth) {
+		releaseReduceWindowEntries(tmpEntries, windowEntries)
 		return
 	}
 
-	if child := p.collapsibleUnarySelfReduction(act, tok, arena, windowEntries, 0, reducedEnd, children, fieldIDs); child != nil {
-		p.pushCollapsedUnaryReduceNode(s, act, tok, child, entryScratch, gssScratch, windowEntries, reducedEnd, actualEnd, topState)
-		s.score += int(act.DynamicPrecedence)
-		*anyReduced = true
-		if tmpEntries != nil {
-			*tmpEntries = windowEntries[:0]
-		}
+	if child := p.collapsibleUnarySelfReduction(act, tok, arena, windowEntries, window.start, window.reducedEnd, children, fieldIDs); child != nil {
+		p.pushCollapsedUnaryReduceNode(s, act, tok, child, entryScratch, gssScratch, windowEntries, window.reducedEnd, window.actualEnd, window.topState)
+		markReduceApplied(s, act, anyReduced)
+		releaseReduceWindowEntries(tmpEntries, windowEntries)
 		return
 	}
 
@@ -753,10 +766,10 @@ func (p *Parser) applyReduceActionFromGSS(s *glrStack, act ParseAction, tok Toke
 	}
 	p.recordReductionParentConstructed(arena, parent, act.Symbol, len(children), fieldIDs, fieldSources, childPath)
 	shouldUseRawSpan := shouldUseRawSpanForReduction(act.Symbol, children, p.language.SymbolMetadata, p.forceRawSpanAll, p.forceRawSpanTable)
-	if shouldUseRawSpan && reducedEnd > 0 {
-		span := computeReduceRawSpan(windowEntries, 0, reducedEnd)
-		if int(act.Symbol) < len(p.forceRawSpanTable) && p.forceRawSpanTable[act.Symbol] && actualEnd > reducedEnd {
-			extendRawSpanToTrailingEntries(&span, windowEntries, reducedEnd, actualEnd)
+	if shouldUseRawSpan && window.reducedEnd > window.start {
+		span := computeReduceRawSpan(windowEntries, window.start, window.reducedEnd)
+		if int(act.Symbol) < len(p.forceRawSpanTable) && p.forceRawSpanTable[act.Symbol] && window.actualEnd > window.reducedEnd {
+			extendRawSpanToTrailingEntries(&span, windowEntries, window.reducedEnd, window.actualEnd)
 		}
 		parent.startByte = span.startByte
 		parent.endByte = span.endByte
@@ -764,21 +777,21 @@ func (p *Parser) applyReduceActionFromGSS(s *glrStack, act ParseAction, tok Toke
 		parent.endPoint = span.endPoint
 	}
 	// Extend parent span to cover invisible children dropped by buildReduceChildren.
-	extendParentSpanToWindow(parent, windowEntries, 0, reducedEnd, p.language.SymbolMetadata, p.language.SymbolNames)
+	extendParentSpanToWindow(parent, windowEntries, window.start, window.reducedEnd, p.language.SymbolMetadata, p.language.SymbolNames)
 	*nodeCount++
 
-	gotoState := p.lookupGoto(topState, act.Symbol)
-	targetState := topState
+	gotoState := p.lookupGoto(window.topState, act.Symbol)
+	targetState := window.topState
 	if gotoState != 0 {
 		targetState = gotoState
 	}
-	if tok.NoLookahead && targetState == topState {
+	if tok.NoLookahead && targetState == window.topState {
 		parent.setExtra(true)
 	}
-	parent.preGotoState = topState
+	parent.preGotoState = window.topState
 	parent.parseState = targetState
 	p.pushStackNode(s, targetState, parent, entryScratch, gssScratch)
-	for i := reducedEnd; i < actualEnd; i++ {
+	for i := window.reducedEnd; i < window.actualEnd; i++ {
 		extra := stackEntryNode(windowEntries[i])
 		if extra == nil {
 			continue
@@ -788,11 +801,8 @@ func (p *Parser) applyReduceActionFromGSS(s *glrStack, act ParseAction, tok Toke
 		p.pushStackNode(s, targetState, extra, entryScratch, gssScratch)
 	}
 
-	s.score += int(act.DynamicPrecedence)
-	*anyReduced = true
-	if tmpEntries != nil {
-		*tmpEntries = windowEntries[:0]
-	}
+	markReduceApplied(s, act, anyReduced)
+	releaseReduceWindowEntries(tmpEntries, windowEntries)
 }
 
 func (p *Parser) tryFastVisibleReduceActionFromGSSTransientParents(s *glrStack, act ParseAction, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, deferParentLinks bool, trackChildErrors bool) bool {

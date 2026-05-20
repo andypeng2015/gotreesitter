@@ -523,6 +523,37 @@ func csharpRecoverMethodDeclarationFromChildren(children []*Node, startIdx int, 
 	if p == nil || lang == nil || arena == nil || startIdx < 0 || startIdx >= len(children) || int(enclosingClose) > len(source) {
 		return nil, startIdx, false
 	}
+	header, params, nextIdx, ok := csharpRecoverMethodHeaderFromChildren(children, startIdx, lang, enclosingClose)
+	if !ok {
+		return nil, startIdx, false
+	}
+
+	openBracePos := int(csharpSkipSpaceBytes(source, params.endByte))
+	if openBracePos >= int(enclosingClose) || source[openBracePos] != '{' {
+		return nil, startIdx, false
+	}
+	closeBracePos := findMatchingBraceByte(source, openBracePos, int(enclosingClose))
+	if closeBracePos < 0 || closeBracePos <= openBracePos {
+		return nil, startIdx, false
+	}
+
+	statements, nextIdx, ok := csharpRecoverMethodBodyStatementsFromChildren(children, nextIdx, source, p, lang, arena, openBracePos, closeBracePos)
+	if !ok {
+		return nil, startIdx, false
+	}
+	block, ok := csharpBuildRecoveredMethodBlockNode(source, lang, arena, uint32(openBracePos), uint32(closeBracePos), statements)
+	if !ok {
+		return nil, startIdx, false
+	}
+	method, ok := csharpBuildRecoveredMethodDeclarationNode(header, block, source, lang, arena, closeBracePos)
+	if !ok {
+		return nil, startIdx, false
+	}
+	nextIdx = csharpSkipMethodChildrenBefore(children, nextIdx, uint32(closeBracePos+1))
+	return method, nextIdx, true
+}
+
+func csharpRecoverMethodHeaderFromChildren(children []*Node, startIdx int, lang *Language, enclosingClose uint32) ([]*Node, *Node, int, bool) {
 	i := startIdx
 	header := make([]*Node, 0, 4)
 	for i < len(children) {
@@ -536,37 +567,40 @@ func csharpRecoverMethodDeclarationFromChildren(children []*Node, startIdx int, 
 		header = append(header, child)
 		i++
 	}
-	if i >= len(children) || children[i] == nil || children[i].Type(lang) != "type" {
-		return nil, startIdx, false
+
+	returnType, i, ok := csharpRequiredChildByType(children, i, lang, "type")
+	if !ok {
+		return nil, nil, startIdx, false
 	}
-	returnType := children[i]
 	if len(returnType.children) == 1 && returnType.children[0] != nil {
 		returnType = returnType.children[0]
 	}
 	header = append(header, returnType)
-	i++
-	if i >= len(children) || children[i] == nil || children[i].Type(lang) != "identifier" {
-		return nil, startIdx, false
+
+	name, i, ok := csharpRequiredChildByType(children, i, lang, "identifier")
+	if !ok {
+		return nil, nil, startIdx, false
 	}
-	name := children[i]
 	header = append(header, name)
-	i++
-	if i >= len(children) || children[i] == nil || children[i].Type(lang) != "parameter_list" {
-		return nil, startIdx, false
+
+	params, i, ok := csharpRequiredChildByType(children, i, lang, "parameter_list")
+	if !ok {
+		return nil, nil, startIdx, false
 	}
-	params := children[i]
 	header = append(header, params)
-	i++
-	openBracePos := int(csharpSkipSpaceBytes(source, params.endByte))
-	if openBracePos >= int(enclosingClose) || source[openBracePos] != '{' {
-		return nil, startIdx, false
+	return header, params, i, true
+}
+
+func csharpRequiredChildByType(children []*Node, idx int, lang *Language, typ string) (*Node, int, bool) {
+	if idx >= len(children) || children[idx] == nil || children[idx].Type(lang) != typ {
+		return nil, idx, false
 	}
-	closeBracePos := findMatchingBraceByte(source, openBracePos, int(enclosingClose))
-	if closeBracePos < 0 || closeBracePos <= openBracePos {
-		return nil, startIdx, false
-	}
+	return children[idx], idx + 1, true
+}
+
+func csharpRecoverMethodBodyStatementsFromChildren(children []*Node, startIdx int, source []byte, p *Parser, lang *Language, arena *nodeArena, openBracePos, closeBracePos int) ([]*Node, int, bool) {
 	statements := make([]*Node, 0, 8)
-	nextIdx := i
+	nextIdx := startIdx
 	needSourceStatementRecovery := false
 	for nextIdx < len(children) {
 		child := children[nextIdx]
@@ -601,15 +635,15 @@ func csharpRecoverMethodDeclarationFromChildren(children []*Node, startIdx int, 
 		statements = recoveredStatements
 	}
 	if len(statements) == 0 && !bytesAreTrivia(source[openBracePos+1:closeBracePos]) {
-		return nil, startIdx, false
+		return nil, nextIdx, false
 	}
-	block, ok := csharpBuildRecoveredMethodBlockNode(source, lang, arena, uint32(openBracePos), uint32(closeBracePos), statements)
-	if !ok {
-		return nil, startIdx, false
-	}
+	return statements, nextIdx, true
+}
+
+func csharpBuildRecoveredMethodDeclarationNode(header []*Node, block *Node, source []byte, lang *Language, arena *nodeArena, closeBracePos int) (*Node, bool) {
 	methodSym, ok := symbolByName(lang, "method_declaration")
 	if !ok {
-		return nil, startIdx, false
+		return nil, false
 	}
 	methodNamed := symbolIsNamed(lang, methodSym)
 	methodChildren := make([]*Node, 0, len(header)+1)
@@ -627,14 +661,18 @@ func csharpRecoverMethodDeclarationFromChildren(children []*Node, startIdx int, 
 	method := newParentNodeInArena(arena, methodSym, methodNamed, methodChildren, nil, 0)
 	method.setHasError(false)
 	extendNodeEndTo(method, uint32(closeBracePos+1), source)
+	return method, true
+}
+
+func csharpSkipMethodChildrenBefore(children []*Node, nextIdx int, end uint32) int {
 	for nextIdx < len(children) {
 		child := children[nextIdx]
-		if child == nil || child.startByte >= uint32(closeBracePos+1) {
+		if child == nil || child.startByte >= end {
 			break
 		}
 		nextIdx++
 	}
-	return method, nextIdx, true
+	return nextIdx
 }
 
 func csharpRecoverMethodBlockStatementsFromNode(n *Node, lang *Language, arena *nodeArena) ([]*Node, bool) {
