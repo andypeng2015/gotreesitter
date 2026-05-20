@@ -599,208 +599,261 @@ func csharpBuildRecoveredQueryExpressionWithExpr(arena *nodeArena, source []byte
 }
 
 func csharpBuildRecoveredQueryClause(arena *nodeArena, source []byte, lang *Language, clause csharpQueryClauseSpec, expr func([2]uint32) (*Node, bool)) (*Node, []*Node, bool) {
-	if arena == nil || lang == nil || expr == nil {
-		return nil, nil, false
-	}
-	identifierSym, ok := symbolByName(lang, "identifier")
+	builder, ok := newCSharpRecoveredQueryClauseBuilder(arena, source, lang, expr)
 	if !ok {
 		return nil, nil, false
 	}
-	identifierNamed := symbolIsNamed(lang, identifierSym)
-	leafByName := func(name string, span [2]uint32) (*Node, bool) {
-		sym, ok := symbolByName(lang, name)
-		if !ok || span[0] >= span[1] {
-			return nil, false
-		}
-		named := symbolIsNamed(lang, sym)
-		return newLeafNodeInArena(arena, sym, named, span[0], span[1], advancePointByBytes(Point{}, source[:span[0]]), advancePointByBytes(Point{}, source[:span[1]])), true
-	}
-	ident := func(span [2]uint32) *Node {
-		return newLeafNodeInArena(arena, identifierSym, identifierNamed, span[0], span[1], advancePointByBytes(Point{}, source[:span[0]]), advancePointByBytes(Point{}, source[:span[1]]))
-	}
-	trailingComments := func(clause csharpQueryClauseSpec, extra []*Node) []*Node {
-		if len(clause.trailingComments) == 0 {
-			return extra
-		}
-		for _, span := range clause.trailingComments {
-			comment, ok := csharpRecoverTopLevelCommentNodeFromRange(source, span[0], span[1], lang, arena)
-			if !ok {
-				continue
-			}
-			extra = append(extra, comment)
-		}
-		return extra
-	}
 	switch clause.kind {
 	case csharpQueryFromClause:
-		fromClauseSym, ok := symbolByName(lang, "from_clause")
-		if !ok {
-			return nil, nil, false
-		}
-		fromClauseNamed := symbolIsNamed(lang, fromClauseSym)
-		nameFieldID, ok := lang.FieldByName("name")
-		if !ok {
-			return nil, nil, false
-		}
-		fromTok, ok := leafByName("from", clause.keyword)
-		if !ok {
-			return nil, nil, false
-		}
-		inTok, ok := leafByName("in", clause.sep1)
-		if !ok {
-			return nil, nil, false
-		}
-		sourceNode, ok := expr(clause.value1)
-		if !ok {
-			return nil, nil, false
-		}
-		children := []*Node{fromTok, ident(clause.name), inTok, sourceNode}
-		fields := cloneFieldIDSliceInArena(arena, []FieldID{0, nameFieldID, 0, 0})
-		return newParentNodeInArena(arena, fromClauseSym, fromClauseNamed, children, fields, 0), trailingComments(clause, nil), true
+		return builder.fromClause(clause)
 	case csharpQueryWhereClause:
-		whereClauseSym, ok := symbolByName(lang, "where_clause")
-		if !ok {
-			return nil, nil, false
-		}
-		whereClauseNamed := symbolIsNamed(lang, whereClauseSym)
-		whereTok, ok := leafByName("where", clause.keyword)
-		if !ok {
-			return nil, nil, false
-		}
-		value, ok := expr(clause.value1)
-		if !ok {
-			return nil, nil, false
-		}
-		return newParentNodeInArena(arena, whereClauseSym, whereClauseNamed, []*Node{whereTok, value}, nil, 0), trailingComments(clause, nil), true
+		return builder.whereClause(clause)
 	case csharpQueryOrderByClause:
-		orderByClauseSym, ok := symbolByName(lang, "order_by_clause")
-		if !ok {
-			return nil, nil, false
-		}
-		orderByClauseNamed := symbolIsNamed(lang, orderByClauseSym)
-		orderTok, ok := leafByName("orderby", clause.keyword)
-		if !ok {
-			return nil, nil, false
-		}
-		value, ok := expr(clause.value1)
-		if !ok {
-			return nil, nil, false
-		}
-		children := []*Node{orderTok, value}
-		if clause.extra[0] < clause.extra[1] {
-			dirName := string(source[clause.extra[0]:clause.extra[1]])
-			dirTok, ok := leafByName(dirName, clause.extra)
-			if !ok {
-				return nil, nil, false
-			}
-			children = append(children, dirTok)
-		}
-		return newParentNodeInArena(arena, orderByClauseSym, orderByClauseNamed, children, nil, 0), trailingComments(clause, nil), true
+		return builder.orderByClause(clause)
 	case csharpQueryLetClause:
-		letClauseSym, ok := symbolByName(lang, "let_clause")
-		if !ok {
-			return nil, nil, false
-		}
-		letClauseNamed := symbolIsNamed(lang, letClauseSym)
-		letTok, ok := leafByName("let", clause.keyword)
-		if !ok {
-			return nil, nil, false
-		}
-		eqTok, ok := leafByName("=", clause.sep1)
-		if !ok {
-			return nil, nil, false
-		}
-		value, ok := expr(clause.value1)
-		if !ok {
-			return nil, nil, false
-		}
-		return newParentNodeInArena(arena, letClauseSym, letClauseNamed, []*Node{letTok, ident(clause.name), eqTok, value}, nil, 0), trailingComments(clause, nil), true
+		return builder.letClause(clause)
 	case csharpQueryJoinClause:
-		joinClauseSym, ok := symbolByName(lang, "join_clause")
-		if !ok {
-			return nil, nil, false
-		}
-		joinClauseNamed := symbolIsNamed(lang, joinClauseSym)
-		joinTok, ok := leafByName("join", clause.keyword)
-		if !ok {
-			return nil, nil, false
-		}
-		inTok, ok := leafByName("in", clause.sep1)
-		if !ok {
-			return nil, nil, false
-		}
-		onTok, ok := leafByName("on", clause.sep2)
-		if !ok {
-			return nil, nil, false
-		}
-		equalsTok, ok := leafByName("equals", clause.sep3)
-		if !ok {
-			return nil, nil, false
-		}
-		sourceNode, ok := expr(clause.value1)
-		if !ok {
-			return nil, nil, false
-		}
-		leftNode, ok := expr(clause.value2)
-		if !ok {
-			return nil, nil, false
-		}
-		rightNode, ok := expr(clause.value3)
-		if !ok {
-			return nil, nil, false
-		}
-		children := []*Node{joinTok, ident(clause.name), inTok, sourceNode, onTok, leftNode, equalsTok, rightNode}
-		return newParentNodeInArena(arena, joinClauseSym, joinClauseNamed, children, nil, 0), trailingComments(clause, nil), true
+		return builder.joinClause(clause)
 	case csharpQueryGroupClause:
-		groupClauseSym, ok := symbolByName(lang, "group_clause")
-		if !ok {
-			return nil, nil, false
-		}
-		groupClauseNamed := symbolIsNamed(lang, groupClauseSym)
-		groupTok, ok := leafByName("group", clause.keyword)
-		if !ok {
-			return nil, nil, false
-		}
-		byTok, ok := leafByName("by", clause.sep1)
-		if !ok {
-			return nil, nil, false
-		}
-		groupExpr, ok := expr(clause.value1)
-		if !ok {
-			return nil, nil, false
-		}
-		keyExpr, ok := expr(clause.value2)
-		if !ok {
-			return nil, nil, false
-		}
-		groupClause := newParentNodeInArena(arena, groupClauseSym, groupClauseNamed, []*Node{groupTok, groupExpr, byTok, keyExpr}, nil, 0)
-		var extra []*Node
-		if clause.sep2[0] < clause.sep2[1] && clause.name[0] < clause.name[1] {
-			intoTok, ok := leafByName("into", clause.sep2)
-			if !ok {
-				return nil, nil, false
-			}
-			extra = []*Node{intoTok, ident(clause.name)}
-		}
-		return groupClause, trailingComments(clause, extra), true
+		return builder.groupClause(clause)
 	case csharpQuerySelectClause:
-		selectClauseSym, ok := symbolByName(lang, "select_clause")
-		if !ok {
-			return nil, nil, false
-		}
-		selectClauseNamed := symbolIsNamed(lang, selectClauseSym)
-		selectTok, ok := leafByName("select", clause.keyword)
-		if !ok {
-			return nil, nil, false
-		}
-		value, ok := expr(clause.value1)
-		if !ok {
-			return nil, nil, false
-		}
-		return newParentNodeInArena(arena, selectClauseSym, selectClauseNamed, []*Node{selectTok, value}, nil, 0), trailingComments(clause, nil), true
+		return builder.selectClause(clause)
 	default:
 		return nil, nil, false
 	}
+}
+
+type csharpRecoveredQueryClauseBuilder struct {
+	arena           *nodeArena
+	source          []byte
+	lang            *Language
+	expr            func([2]uint32) (*Node, bool)
+	identifierSym   Symbol
+	identifierNamed bool
+}
+
+func newCSharpRecoveredQueryClauseBuilder(arena *nodeArena, source []byte, lang *Language, expr func([2]uint32) (*Node, bool)) (csharpRecoveredQueryClauseBuilder, bool) {
+	var builder csharpRecoveredQueryClauseBuilder
+	if arena == nil || lang == nil || expr == nil {
+		return builder, false
+	}
+	identifierSym, ok := symbolByName(lang, "identifier")
+	if !ok {
+		return builder, false
+	}
+	return csharpRecoveredQueryClauseBuilder{
+		arena:           arena,
+		source:          source,
+		lang:            lang,
+		expr:            expr,
+		identifierSym:   identifierSym,
+		identifierNamed: symbolIsNamed(lang, identifierSym),
+	}, true
+}
+
+func (b csharpRecoveredQueryClauseBuilder) parentSymbol(name string) (Symbol, bool, bool) {
+	sym, ok := symbolByName(b.lang, name)
+	if !ok {
+		return 0, false, false
+	}
+	return sym, symbolIsNamed(b.lang, sym), true
+}
+
+func (b csharpRecoveredQueryClauseBuilder) leafByName(name string, span [2]uint32) (*Node, bool) {
+	sym, ok := symbolByName(b.lang, name)
+	if !ok || span[0] >= span[1] {
+		return nil, false
+	}
+	named := symbolIsNamed(b.lang, sym)
+	return newLeafNodeInArena(b.arena, sym, named, span[0], span[1], advancePointByBytes(Point{}, b.source[:span[0]]), advancePointByBytes(Point{}, b.source[:span[1]])), true
+}
+
+func (b csharpRecoveredQueryClauseBuilder) ident(span [2]uint32) *Node {
+	return newLeafNodeInArena(b.arena, b.identifierSym, b.identifierNamed, span[0], span[1], advancePointByBytes(Point{}, b.source[:span[0]]), advancePointByBytes(Point{}, b.source[:span[1]]))
+}
+
+func (b csharpRecoveredQueryClauseBuilder) trailingComments(clause csharpQueryClauseSpec, extra []*Node) []*Node {
+	for _, span := range clause.trailingComments {
+		comment, ok := csharpRecoverTopLevelCommentNodeFromRange(b.source, span[0], span[1], b.lang, b.arena)
+		if ok {
+			extra = append(extra, comment)
+		}
+	}
+	return extra
+}
+
+func (b csharpRecoveredQueryClauseBuilder) fromClause(clause csharpQueryClauseSpec) (*Node, []*Node, bool) {
+	fromClauseSym, fromClauseNamed, ok := b.parentSymbol("from_clause")
+	if !ok {
+		return nil, nil, false
+	}
+	nameFieldID, ok := b.lang.FieldByName("name")
+	if !ok {
+		return nil, nil, false
+	}
+	fromTok, ok := b.leafByName("from", clause.keyword)
+	if !ok {
+		return nil, nil, false
+	}
+	inTok, ok := b.leafByName("in", clause.sep1)
+	if !ok {
+		return nil, nil, false
+	}
+	sourceNode, ok := b.expr(clause.value1)
+	if !ok {
+		return nil, nil, false
+	}
+	children := []*Node{fromTok, b.ident(clause.name), inTok, sourceNode}
+	fields := cloneFieldIDSliceInArena(b.arena, []FieldID{0, nameFieldID, 0, 0})
+	return newParentNodeInArena(b.arena, fromClauseSym, fromClauseNamed, children, fields, 0), b.trailingComments(clause, nil), true
+}
+
+func (b csharpRecoveredQueryClauseBuilder) whereClause(clause csharpQueryClauseSpec) (*Node, []*Node, bool) {
+	whereClauseSym, whereClauseNamed, ok := b.parentSymbol("where_clause")
+	if !ok {
+		return nil, nil, false
+	}
+	whereTok, ok := b.leafByName("where", clause.keyword)
+	if !ok {
+		return nil, nil, false
+	}
+	value, ok := b.expr(clause.value1)
+	if !ok {
+		return nil, nil, false
+	}
+	return newParentNodeInArena(b.arena, whereClauseSym, whereClauseNamed, []*Node{whereTok, value}, nil, 0), b.trailingComments(clause, nil), true
+}
+
+func (b csharpRecoveredQueryClauseBuilder) orderByClause(clause csharpQueryClauseSpec) (*Node, []*Node, bool) {
+	orderByClauseSym, orderByClauseNamed, ok := b.parentSymbol("order_by_clause")
+	if !ok {
+		return nil, nil, false
+	}
+	orderTok, ok := b.leafByName("orderby", clause.keyword)
+	if !ok {
+		return nil, nil, false
+	}
+	value, ok := b.expr(clause.value1)
+	if !ok {
+		return nil, nil, false
+	}
+	children := []*Node{orderTok, value}
+	if clause.extra[0] < clause.extra[1] {
+		dirName := string(b.source[clause.extra[0]:clause.extra[1]])
+		dirTok, ok := b.leafByName(dirName, clause.extra)
+		if !ok {
+			return nil, nil, false
+		}
+		children = append(children, dirTok)
+	}
+	return newParentNodeInArena(b.arena, orderByClauseSym, orderByClauseNamed, children, nil, 0), b.trailingComments(clause, nil), true
+}
+
+func (b csharpRecoveredQueryClauseBuilder) letClause(clause csharpQueryClauseSpec) (*Node, []*Node, bool) {
+	letClauseSym, letClauseNamed, ok := b.parentSymbol("let_clause")
+	if !ok {
+		return nil, nil, false
+	}
+	letTok, ok := b.leafByName("let", clause.keyword)
+	if !ok {
+		return nil, nil, false
+	}
+	eqTok, ok := b.leafByName("=", clause.sep1)
+	if !ok {
+		return nil, nil, false
+	}
+	value, ok := b.expr(clause.value1)
+	if !ok {
+		return nil, nil, false
+	}
+	children := []*Node{letTok, b.ident(clause.name), eqTok, value}
+	return newParentNodeInArena(b.arena, letClauseSym, letClauseNamed, children, nil, 0), b.trailingComments(clause, nil), true
+}
+
+func (b csharpRecoveredQueryClauseBuilder) joinClause(clause csharpQueryClauseSpec) (*Node, []*Node, bool) {
+	joinClauseSym, joinClauseNamed, ok := b.parentSymbol("join_clause")
+	if !ok {
+		return nil, nil, false
+	}
+	joinTok, ok := b.leafByName("join", clause.keyword)
+	if !ok {
+		return nil, nil, false
+	}
+	inTok, ok := b.leafByName("in", clause.sep1)
+	if !ok {
+		return nil, nil, false
+	}
+	onTok, ok := b.leafByName("on", clause.sep2)
+	if !ok {
+		return nil, nil, false
+	}
+	equalsTok, ok := b.leafByName("equals", clause.sep3)
+	if !ok {
+		return nil, nil, false
+	}
+	sourceNode, ok := b.expr(clause.value1)
+	if !ok {
+		return nil, nil, false
+	}
+	leftNode, ok := b.expr(clause.value2)
+	if !ok {
+		return nil, nil, false
+	}
+	rightNode, ok := b.expr(clause.value3)
+	if !ok {
+		return nil, nil, false
+	}
+	children := []*Node{joinTok, b.ident(clause.name), inTok, sourceNode, onTok, leftNode, equalsTok, rightNode}
+	return newParentNodeInArena(b.arena, joinClauseSym, joinClauseNamed, children, nil, 0), b.trailingComments(clause, nil), true
+}
+
+func (b csharpRecoveredQueryClauseBuilder) groupClause(clause csharpQueryClauseSpec) (*Node, []*Node, bool) {
+	groupClauseSym, groupClauseNamed, ok := b.parentSymbol("group_clause")
+	if !ok {
+		return nil, nil, false
+	}
+	groupTok, ok := b.leafByName("group", clause.keyword)
+	if !ok {
+		return nil, nil, false
+	}
+	byTok, ok := b.leafByName("by", clause.sep1)
+	if !ok {
+		return nil, nil, false
+	}
+	groupExpr, ok := b.expr(clause.value1)
+	if !ok {
+		return nil, nil, false
+	}
+	keyExpr, ok := b.expr(clause.value2)
+	if !ok {
+		return nil, nil, false
+	}
+	groupClause := newParentNodeInArena(b.arena, groupClauseSym, groupClauseNamed, []*Node{groupTok, groupExpr, byTok, keyExpr}, nil, 0)
+	var extra []*Node
+	if clause.sep2[0] < clause.sep2[1] && clause.name[0] < clause.name[1] {
+		intoTok, ok := b.leafByName("into", clause.sep2)
+		if !ok {
+			return nil, nil, false
+		}
+		extra = []*Node{intoTok, b.ident(clause.name)}
+	}
+	return groupClause, b.trailingComments(clause, extra), true
+}
+
+func (b csharpRecoveredQueryClauseBuilder) selectClause(clause csharpQueryClauseSpec) (*Node, []*Node, bool) {
+	selectClauseSym, selectClauseNamed, ok := b.parentSymbol("select_clause")
+	if !ok {
+		return nil, nil, false
+	}
+	selectTok, ok := b.leafByName("select", clause.keyword)
+	if !ok {
+		return nil, nil, false
+	}
+	value, ok := b.expr(clause.value1)
+	if !ok {
+		return nil, nil, false
+	}
+	return newParentNodeInArena(b.arena, selectClauseSym, selectClauseNamed, []*Node{selectTok, value}, nil, 0), b.trailingComments(clause, nil), true
 }
 
 func csharpRecoverExpressionNodeFromRange(source []byte, start, end uint32, p *Parser, arena *nodeArena) (*Node, bool) {
