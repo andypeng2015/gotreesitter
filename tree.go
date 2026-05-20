@@ -282,6 +282,36 @@ func wireParentPathToNodeNoMaterialize(root, target *Node) bool {
 	return false
 }
 
+func nodeDeferredParentRoot(n *Node) (*Node, bool) {
+	if n == nil || n.ownerArena == nil {
+		return nil, false
+	}
+	arena := n.ownerArena
+	arena.parentLinkMu.Lock()
+	deferredRoot := arena.deferredParentRoot
+	parentLinksDeferred := arena.parentLinksDeferred
+	arena.parentLinkMu.Unlock()
+	if !parentLinksDeferred || deferredRoot == nil {
+		return nil, false
+	}
+	return deferredRoot, true
+}
+
+func wireDeferredParentPathToNode(n *Node) (*Node, bool) {
+	deferredRoot, ok := nodeDeferredParentRoot(n)
+	if !ok {
+		return nil, false
+	}
+	if deferredRoot == n {
+		setNodeRootLink(deferredRoot)
+		return deferredRoot, true
+	}
+	if wireParentPathToNodeNoMaterialize(deferredRoot, n) {
+		return deferredRoot, true
+	}
+	return deferredRoot, false
+}
+
 func nodeEditRoot(n *Node) *Node {
 	if n == nil {
 		return nil
@@ -299,14 +329,11 @@ func nodeEditRoot(n *Node) *Node {
 		return root
 	}
 
-	arena.parentLinkMu.Lock()
-	deferredRoot := arena.deferredParentRoot
-	parentLinksDeferred := arena.parentLinksDeferred
-	arena.parentLinkMu.Unlock()
-	if !parentLinksDeferred || deferredRoot == nil || root == deferredRoot {
+	deferredRoot, hasDeferredRoot := nodeDeferredParentRoot(n)
+	if !hasDeferredRoot || root == deferredRoot {
 		return root
 	}
-	if wireParentPathToNodeNoMaterialize(deferredRoot, n) {
+	if _, ok := wireDeferredParentPathToNode(n); ok {
 		return deferredRoot
 	}
 
@@ -905,6 +932,10 @@ func (n *Node) Parent() *Node {
 	if parent, _, ok := nodeParentLink(n); ok || parent != nil {
 		return parent
 	}
+	if _, ok := wireDeferredParentPathToNode(n); ok {
+		parent, _, _ := nodeParentLink(n)
+		return parent
+	}
 	n.ensureParentLinks()
 	parent, _, _ := nodeParentLink(n)
 	return parent
@@ -926,7 +957,9 @@ func (n *Node) NextSibling() *Node {
 	}
 	parent, index, ok := nodeParentLink(n)
 	if parent == nil {
-		n.ensureParentLinks()
+		if _, wired := wireDeferredParentPathToNode(n); !wired {
+			n.ensureParentLinks()
+		}
 		parent, index, ok = nodeParentLink(n)
 		if parent == nil {
 			return nil
@@ -959,7 +992,9 @@ func (n *Node) PrevSibling() *Node {
 	}
 	parent, index, ok := nodeParentLink(n)
 	if parent == nil {
-		n.ensureParentLinks()
+		if _, wired := wireDeferredParentPathToNode(n); !wired {
+			n.ensureParentLinks()
+		}
 		parent, index, ok = nodeParentLink(n)
 		if parent == nil {
 			return nil
