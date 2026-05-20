@@ -230,6 +230,97 @@ func nodeParentLink(n *Node) (*Node, int, bool) {
 	return n.parent, int(n.childIndex), n.childIndex >= 0
 }
 
+func nodeMaterializedChildAtNoMaterialize(n *Node, i int) *Node {
+	entry, ok := nodeChildEntryAtNoMaterialize(n, i)
+	if !ok {
+		return nil
+	}
+	return stackEntryNode(entry)
+}
+
+func wireParentPathToNodeNoMaterialize(root, target *Node) bool {
+	if root == nil || target == nil {
+		return false
+	}
+	if root == target {
+		setNodeRootLink(root)
+		return true
+	}
+
+	type pathFrame struct {
+		node       *Node
+		childIndex int
+		next       int
+	}
+
+	path := []pathFrame{{node: root, childIndex: -1}}
+	for len(path) > 0 {
+		top := &path[len(path)-1]
+		if top.next >= nodeChildCountNoMaterialize(top.node) {
+			path = path[:len(path)-1]
+			continue
+		}
+		childIndex := top.next
+		top.next++
+		child := nodeMaterializedChildAtNoMaterialize(top.node, childIndex)
+		if child == nil {
+			continue
+		}
+		if child == target {
+			setNodeRootLink(root)
+			for i := 1; i < len(path); i++ {
+				setNodeParentLink(path[i].node, path[i-1].node, path[i].childIndex)
+			}
+			setNodeParentLink(child, top.node, childIndex)
+			return true
+		}
+		path = append(path, pathFrame{
+			node:       child,
+			childIndex: childIndex,
+		})
+	}
+	return false
+}
+
+func nodeEditRoot(n *Node) *Node {
+	if n == nil {
+		return nil
+	}
+	root := n
+	for {
+		parent, _, _ := nodeParentLink(root)
+		if parent == nil {
+			break
+		}
+		root = parent
+	}
+	arena := n.ownerArena
+	if arena == nil {
+		return root
+	}
+
+	arena.parentLinkMu.Lock()
+	deferredRoot := arena.deferredParentRoot
+	parentLinksDeferred := arena.parentLinksDeferred
+	arena.parentLinkMu.Unlock()
+	if !parentLinksDeferred || deferredRoot == nil || root == deferredRoot {
+		return root
+	}
+	if wireParentPathToNodeNoMaterialize(deferredRoot, n) {
+		return deferredRoot
+	}
+
+	n.ensureParentLinks()
+	root = n
+	for {
+		parent, _, _ := nodeParentLink(root)
+		if parent == nil {
+			return root
+		}
+		root = parent
+	}
+}
+
 func nodeChildCountNoMaterialize(n *Node) int {
 	if n == nil {
 		return 0
@@ -371,28 +462,6 @@ func nodeChildrenForReason(n *Node, reason materializeReason) []*Node {
 	}
 	nodeMaterializeFinalChildRefs(n, reason)
 	return n.children
-}
-
-func materializeFinalChildRefsForSubtree(root *Node, reason materializeReason) {
-	if root == nil {
-		return
-	}
-	if root.ownerArena == nil || len(root.ownerArena.finalChildSidecars) == 0 {
-		return
-	}
-	var local [64]*Node
-	stack := local[:0]
-	stack = append(stack, root)
-	for len(stack) > 0 {
-		n := stack[len(stack)-1]
-		stack = stack[:len(stack)-1]
-		children := nodeChildrenForReason(n, reason)
-		for i := len(children) - 1; i >= 0; i-- {
-			if children[i] != nil {
-				stack = append(stack, children[i])
-			}
-		}
-	}
 }
 
 func nodeFieldIDAt(n *Node, i int) FieldID {
@@ -2143,8 +2212,9 @@ func (t *Tree) WriteDOT(w io.Writer, lang *Language) error {
 			return err
 		}
 
-		children := nodeChildrenForReason(n, materializeForParentAPI)
-		for _, child := range children {
+		childCount := nodeChildCountNoMaterialize(n)
+		for i := 0; i < childCount; i++ {
+			child := nodeChildAtForReason(n, i, materializeForParentAPI)
 			if child == nil {
 				continue
 			}
@@ -2208,7 +2278,6 @@ func cloneTreeNodesIntoArena(root *Node, arena *nodeArena) *Node {
 	if root == nil {
 		return nil
 	}
-	materializeFinalChildRefsForSubtree(root, materializeForParentAPI)
 
 	type clonePair struct {
 		old *Node
@@ -2248,10 +2317,11 @@ func cloneTreeNodesIntoArena(root *Node, arena *nodeArena) *Node {
 			newNode.fieldSources = fieldSources
 		}
 
-		if n := len(oldNode.children); n > 0 {
+		if n := nodeChildCountNoMaterialize(oldNode); n > 0 {
 			children := arena.allocNodeSlice(n)
 			newNode.children = children
-			for i, oldChild := range oldNode.children {
+			for i := 0; i < n; i++ {
+				oldChild := nodeChildAtForReason(oldNode, i, materializeForParentAPI)
 				if oldChild == nil {
 					continue
 				}
@@ -2271,7 +2341,6 @@ func cloneTreeNodesWithOffset(root *Node, offsetBytes uint32, offsetExtent Point
 	if root == nil {
 		return nil
 	}
-	materializeFinalChildRefsForSubtree(root, materializeForParentAPI)
 
 	type clonePair struct {
 		old *Node
@@ -2325,9 +2394,10 @@ func cloneTreeNodesWithOffset(root *Node, offsetBytes uint32, offsetExtent Point
 			copy(newNode.fieldSources, oldNode.fieldSources)
 		}
 
-		if n := len(oldNode.children); n > 0 {
+		if n := nodeChildCountNoMaterialize(oldNode); n > 0 {
 			newNode.children = make([]*Node, n)
-			for i, oldChild := range oldNode.children {
+			for i := 0; i < n; i++ {
+				oldChild := nodeChildAtForReason(oldNode, i, materializeForParentAPI)
 				if oldChild == nil {
 					continue
 				}
@@ -2492,13 +2562,9 @@ func (n *Node) Edit(edit InputEdit) {
 	if inputEditIsNoop(edit) {
 		return
 	}
-	materializeFinalChildRefsForSubtree(n, materializeForEdit)
-	n.ensureParentLinks()
-	root := n
-	for root.parent != nil {
-		root = root.parent
+	if root := nodeEditRoot(n); root != nil {
+		editNode(root, edit)
 	}
-	editNode(root, edit)
 }
 
 func inputEditIsNoop(edit InputEdit) bool {
