@@ -237,6 +237,12 @@ type ParseRuntime struct {
 	PendingParentRejectedAlias                      uint64
 	PendingParentRejectedRawSpan                    uint64
 	PendingParentRejectedFields                     uint64
+	PendingParentRejectedFieldsParentHidden         uint64
+	PendingParentRejectedFieldsNoIDs                uint64
+	PendingParentRejectedFieldsInherited            uint64
+	PendingParentRejectedFieldsHiddenChild          uint64
+	PendingParentRejectedFieldsChild                uint64
+	PendingParentRejectedFieldsAllVisibleDirect     uint64
 	PendingParentRejectedChild                      uint64
 	PendingParentRejectedSpan                       uint64
 	PendingParentRejectedFill                       uint64

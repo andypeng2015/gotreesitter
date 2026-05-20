@@ -1065,6 +1065,7 @@ func (p *Parser) tryPushPendingNoFieldParent(s *glrStack, act ParseAction, tok T
 		return false
 	}
 	if p.reduceProductionHasFields(act.ProductionID) {
+		p.recordPendingFieldRejectShape(arena, act, entries, start, reducedEnd)
 		arena.recordPendingParentRejected(pendingParentRejectFields)
 		return false
 	}
@@ -1163,6 +1164,43 @@ func (p *Parser) tryPushPendingNoFieldParent(s *glrStack, act ParseAction, tok T
 		*anyReduced = true
 	}
 	return true
+}
+
+func (p *Parser) recordPendingFieldRejectShape(arena *nodeArena, act ParseAction, entries []stackEntry, start, reducedEnd int) {
+	if p == nil || p.language == nil || arena == nil {
+		return
+	}
+	symbolMeta := p.language.SymbolMetadata
+	if !symbolVisibleForPending(act.Symbol, symbolMeta) {
+		arena.pendingParentRejectedFieldsParentHidden++
+		return
+	}
+	rawFieldIDs, rawInherited := p.buildFieldIDs(int(act.ChildCount), act.ProductionID, arena)
+	if len(rawFieldIDs) == 0 {
+		arena.pendingParentRejectedFieldsNoIDs++
+		return
+	}
+	for _, inherited := range rawInherited {
+		if inherited {
+			arena.pendingParentRejectedFieldsInherited++
+			return
+		}
+	}
+	for i := start; i < reducedEnd; i++ {
+		entry := entries[i]
+		if !stackEntryHasNode(entry) {
+			continue
+		}
+		if stackEntryNodeIsMissing(entry) {
+			arena.pendingParentRejectedFieldsChild++
+			return
+		}
+		if !stackEntryVisibleForPending(entry, symbolMeta) {
+			arena.pendingParentRejectedFieldsHiddenChild++
+			return
+		}
+	}
+	arena.pendingParentRejectedFieldsAllVisibleDirect++
 }
 
 func symbolVisibleForPending(sym Symbol, symbolMeta []SymbolMetadata) bool {

@@ -134,6 +134,12 @@ type nodeArena struct {
 	pendingParentRejectedAlias                      uint64
 	pendingParentRejectedRawSpan                    uint64
 	pendingParentRejectedFields                     uint64
+	pendingParentRejectedFieldsParentHidden         uint64
+	pendingParentRejectedFieldsNoIDs                uint64
+	pendingParentRejectedFieldsInherited            uint64
+	pendingParentRejectedFieldsHiddenChild          uint64
+	pendingParentRejectedFieldsChild                uint64
+	pendingParentRejectedFieldsAllVisibleDirect     uint64
 	pendingParentRejectedChild                      uint64
 	pendingParentRejectedSpan                       uint64
 	pendingParentRejectedFill                       uint64
@@ -681,6 +687,12 @@ func (a *nodeArena) reset() {
 	a.pendingParentRejectedAlias = 0
 	a.pendingParentRejectedRawSpan = 0
 	a.pendingParentRejectedFields = 0
+	a.pendingParentRejectedFieldsParentHidden = 0
+	a.pendingParentRejectedFieldsNoIDs = 0
+	a.pendingParentRejectedFieldsInherited = 0
+	a.pendingParentRejectedFieldsHiddenChild = 0
+	a.pendingParentRejectedFieldsChild = 0
+	a.pendingParentRejectedFieldsAllVisibleDirect = 0
 	a.pendingParentRejectedChild = 0
 	a.pendingParentRejectedSpan = 0
 	a.pendingParentRejectedFill = 0
