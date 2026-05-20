@@ -943,6 +943,55 @@ func TestNodeEditFromDeferredSubnodeWiresOnlyTargetPath(t *testing.T) {
 	}
 }
 
+func TestSiblingFallbackScanKeepsUnreturnedFinalChildRefsLazy(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	arena.finalChildRefs = true
+	leftLeaf := newCompactFullLeafInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	leftLeaf.parseState = 11
+	middleLeaf := newCompactFullLeafInArena(arena, 2, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	middleLeaf.parseState = 12
+	rightLeaf := newCompactFullLeafInArena(arena, 3, true, 2, 3, Point{Column: 2}, Point{Column: 3})
+	rightLeaf.parseState = 13
+	parent := newPendingParentInArena(arena, 4, true, 5, []stackEntry{
+		newStackEntryCompactFullLeaf(leftLeaf.parseState, leftLeaf),
+		newStackEntryCompactFullLeaf(middleLeaf.parseState, middleLeaf),
+		newStackEntryCompactFullLeaf(rightLeaf.parseState, rightLeaf),
+	}, 0, 3, Point{}, Point{Column: 3}, false)
+	parent.parseState = 14
+
+	entry := newStackEntryPendingParent(parent.parseState, parent)
+	root := materializeStackEntryPendingParent(arena, &entry, pendingParentMaterializeForFinalTree)
+	if root == nil {
+		t.Fatal("root = nil")
+	}
+	middle := root.Child(1)
+	if middle == nil {
+		t.Fatal("middle child nil")
+	}
+	middle.childIndex = -1
+
+	next := middle.NextSibling()
+	if next == nil || next.Symbol() != 3 {
+		t.Fatalf("next sibling = %#v, want symbol 3", next)
+	}
+	if got := arena.finalChildRefsMaterializedParents; got != 0 {
+		t.Fatalf("final child ref range materialized parents = %d, want 0", got)
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 2 {
+		t.Fatalf("single children after NextSibling = %d, want middle+right only", got)
+	}
+	prev := middle.PrevSibling()
+	if prev == nil || prev.Symbol() != 1 {
+		t.Fatalf("prev sibling = %#v, want symbol 1", prev)
+	}
+	if got := arena.finalChildRefsMaterializedParents; got != 0 {
+		t.Fatalf("final child ref range materialized parents after PrevSibling = %d, want 0", got)
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 3 {
+		t.Fatalf("single children after PrevSibling = %d, want all three", got)
+	}
+}
+
 func TestCloneTreeNodesIntoArenaKeepsFinalChildRefsRangeLazy(t *testing.T) {
 	arena := newNodeArena(arenaClassFull)
 	arena.finalChildRefs = true

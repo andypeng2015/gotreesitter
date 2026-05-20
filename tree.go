@@ -973,7 +973,7 @@ func (n *Node) NextSibling() *Node {
 		return nil
 	}
 	for i := 0; i < childCount; i++ {
-		if nodeChildAtForReason(parent, i, materializeForParentAPI) != n {
+		if nodeMaterializedChildAtNoMaterialize(parent, i) != n {
 			continue
 		}
 		if i+1 < childCount {
@@ -1008,7 +1008,7 @@ func (n *Node) PrevSibling() *Node {
 		return nil
 	}
 	for i := 0; i < childCount; i++ {
-		if nodeChildAtForReason(parent, i, materializeForParentAPI) != n {
+		if nodeMaterializedChildAtNoMaterialize(parent, i) != n {
 			continue
 		}
 		if i > 0 {
