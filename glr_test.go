@@ -96,6 +96,16 @@ func TestMaterializationReasonCountersClassifyNonParentReasons(t *testing.T) {
 		t.Fatalf("compactFullLeafMaterializedForParentReduce = %d, want 0", got)
 	}
 
+	fallbackLeaf := newCompactFullLeafInArena(arena, 9, true, 22, 23, Point{Row: 3, Column: 0}, Point{Row: 3, Column: 1})
+	fallbackEntry := newStackEntryCompactFullLeaf(4, fallbackLeaf)
+	_ = materializeStackEntryPendingParent(arena, &fallbackEntry, pendingParentMaterializeForQuery)
+	if got := arena.compactFullLeafMaterializedForQuery; got != 1 {
+		t.Fatalf("compactFullLeafMaterializedForQuery = %d, want 1", got)
+	}
+	if got := arena.compactFullLeafMaterializedForParentReduce; got != 0 {
+		t.Fatalf("compactFullLeafMaterializedForParentReduce after fallback = %d, want 0", got)
+	}
+
 	parent := newPendingParentInArena(arena, 10, true, 7, nil, 0, 0, Point{}, Point{}, false)
 	parentEntry := newStackEntryPendingParent(5, parent)
 	_ = materializeStackEntryPendingParent(arena, &parentEntry, pendingParentMaterializeForQuery)

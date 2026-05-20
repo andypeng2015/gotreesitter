@@ -138,7 +138,7 @@ func materializeStackEntryPendingParentWithParser(p *Parser, arena *nodeArena, e
 	}
 	parent := stackEntryPendingParent(*entry)
 	if parent == nil {
-		return materializeStackEntryCompactFullLeaf(arena, entry, compactFullLeafMaterializeForParentReduce)
+		return materializeStackEntryCompactFullLeaf(arena, entry, compactFullLeafMaterializeReason(reason))
 	}
 	parentChildren := parent.childEntries()
 	children := arena.allocNodeSliceNoClear(len(parentChildren))
