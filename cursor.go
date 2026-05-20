@@ -212,8 +212,12 @@ func (c *TreeCursor) GotoFirstNamedChild() bool {
 	}
 	count := nodeChildCountNoMaterialize(node)
 	for i := 0; i < count; i++ {
+		entry, ok := nodeChildEntryAtNoMaterialize(node, i)
+		if !ok || !stackEntryNodeIsNamed(entry) {
+			continue
+		}
 		child := nodeChildAtForReason(node, i, materializeForCursor)
-		if child.isNamed() {
+		if child != nil {
 			c.stack = append(c.stack, cursorFrame{node: child, childIndex: i})
 			return true
 		}
@@ -229,8 +233,12 @@ func (c *TreeCursor) GotoLastNamedChild() bool {
 		return false
 	}
 	for i := nodeChildCountNoMaterialize(node) - 1; i >= 0; i-- {
+		entry, ok := nodeChildEntryAtNoMaterialize(node, i)
+		if !ok || !stackEntryNodeIsNamed(entry) {
+			continue
+		}
 		child := nodeChildAtForReason(node, i, materializeForCursor)
-		if child.isNamed() {
+		if child != nil {
 			c.stack = append(c.stack, cursorFrame{node: child, childIndex: i})
 			return true
 		}
@@ -251,8 +259,12 @@ func (c *TreeCursor) GotoNextNamedSibling() bool {
 	}
 	count := nodeChildCountNoMaterialize(parentNode)
 	for i := frame.childIndex + 1; i < count; i++ {
+		entry, ok := nodeChildEntryAtNoMaterialize(parentNode, i)
+		if !ok || !stackEntryNodeIsNamed(entry) {
+			continue
+		}
 		child := nodeChildAtForReason(parentNode, i, materializeForCursor)
-		if child.isNamed() {
+		if child != nil {
 			frame.childIndex = i
 			frame.node = child
 			return true
@@ -273,8 +285,12 @@ func (c *TreeCursor) GotoPrevNamedSibling() bool {
 		return false
 	}
 	for i := frame.childIndex - 1; i >= 0; i-- {
+		entry, ok := nodeChildEntryAtNoMaterialize(parentNode, i)
+		if !ok || !stackEntryNodeIsNamed(entry) {
+			continue
+		}
 		child := nodeChildAtForReason(parentNode, i, materializeForCursor)
-		if child.isNamed() {
+		if child != nil {
 			frame.childIndex = i
 			frame.node = child
 			return true
@@ -300,8 +316,8 @@ func (c *TreeCursor) GotoFirstChildForByte(targetByte uint32) int64 {
 		return -1
 	}
 	i := sort.Search(childCount, func(i int) bool {
-		child := nodeChildAtForReason(node, i, materializeForCursor)
-		return child != nil && child.endByte > targetByte
+		entry, ok := nodeChildEntryAtNoMaterialize(node, i)
+		return ok && stackEntryNodeEndByte(entry) > targetByte
 	})
 	if i >= childCount {
 		return -1
@@ -320,8 +336,8 @@ func (c *TreeCursor) GotoFirstChildForPoint(targetPoint Point) int64 {
 		return -1
 	}
 	i := sort.Search(childCount, func(i int) bool {
-		child := nodeChildAtForReason(node, i, materializeForCursor)
-		return child != nil && pointGreaterThan(child.endPoint, targetPoint)
+		entry, ok := nodeChildEntryAtNoMaterialize(node, i)
+		return ok && pointGreaterThan(stackEntryNodeEndPoint(entry), targetPoint)
 	})
 	if i >= childCount {
 		return -1
