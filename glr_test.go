@@ -148,6 +148,21 @@ func TestParentRejectPayloadMaterializedCountersClassifyPayloadKind(t *testing.T
 	}
 }
 
+func TestMaterializeStackEntryPayloadTracksActiveParentReject(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	leaf := newCompactFullLeafInArena(arena, 9, true, 13, 21, Point{Row: 2, Column: 3}, Point{Row: 2, Column: 11})
+	entry := newStackEntryCompactFullLeaf(4, leaf)
+
+	arena.pendingParentActiveRejectReason = pendingParentRejectFields
+	node := materializeStackEntryPayload(arena, &entry, compactFullLeafMaterializeForParentReduce, pendingParentMaterializeForParentReduce)
+	if node == nil {
+		t.Fatal("materialized node = nil")
+	}
+	if got := arena.compactFullLeafMaterializedForParentReject.Fields; got != 1 {
+		t.Fatalf("compact leaf active parent reject fields = %d, want 1", got)
+	}
+}
+
 func TestCompactCheckpointLeafStackEntryUsesNoTreePrefix(t *testing.T) {
 	leaf := newCompactCheckpointLeafInArena(nil, 9, true, 13, 21, externalScannerCheckpointRef{})
 	entry := newStackEntryCompactCheckpointLeaf(4, leaf)

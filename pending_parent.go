@@ -160,6 +160,9 @@ func materializeStackEntryPayload(arena *nodeArena, entry *stackEntry, leafReaso
 	if entry == nil {
 		return nil
 	}
+	if arena != nil && arena.pendingParentActiveRejectReason != pendingParentRejectUnknown {
+		arena.recordParentRejectPayloadMaterialized(*entry, arena.pendingParentActiveRejectReason)
+	}
 	if stackEntryPendingParent(*entry) != nil {
 		return materializeStackEntryPendingParent(arena, entry, parentReason)
 	}

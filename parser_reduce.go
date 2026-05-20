@@ -1037,11 +1037,18 @@ func materializePendingPayloadEntries(entries []stackEntry, start, end int, aren
 	if arena != nil {
 		rejectReason = arena.pendingParentLastRejectReason
 	}
+	prevRejectReason := pendingParentRejectUnknown
+	if arena != nil {
+		prevRejectReason = arena.pendingParentActiveRejectReason
+		arena.pendingParentActiveRejectReason = rejectReason
+		defer func() {
+			arena.pendingParentActiveRejectReason = prevRejectReason
+		}()
+	}
 	for i := start; i < end; i++ {
 		if stackEntryCompactFullLeaf(entries[i]) == nil && stackEntryPendingParent(entries[i]) == nil {
 			continue
 		}
-		arena.recordParentRejectPayloadMaterialized(entries[i], rejectReason)
 		materializeStackEntryPayload(arena, &entries[i], compactFullLeafMaterializeForParentReduce, pendingParentMaterializeForParentReduce)
 	}
 }

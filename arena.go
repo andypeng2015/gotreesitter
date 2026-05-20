@@ -146,6 +146,7 @@ type nodeArena struct {
 	pendingParentRejectedSpan                       uint64
 	pendingParentRejectedFill                       uint64
 	pendingParentLastRejectReason                   pendingParentRejectReason
+	pendingParentActiveRejectReason                 pendingParentRejectReason
 	checkpointLeafFullNodesAvoided                  uint64
 	leafNodesConstructed                            uint64
 	parentNodesConstructed                          uint64
@@ -702,6 +703,7 @@ func (a *nodeArena) reset() {
 	a.pendingParentRejectedSpan = 0
 	a.pendingParentRejectedFill = 0
 	a.pendingParentLastRejectReason = pendingParentRejectUnknown
+	a.pendingParentActiveRejectReason = pendingParentRejectUnknown
 	a.checkpointLeafFullNodesAvoided = 0
 	a.leafNodesConstructed = 0
 	a.parentNodesConstructed = 0
