@@ -1399,6 +1399,7 @@ func (p *Parser) tryPushPendingDirectFieldParent(s *glrStack, act ParseAction, t
 	if childCount == 0 {
 		return false
 	}
+	useDenseFieldEntries := skippedHiddenChild && !p.pendingDirectFieldParentFieldsRecomputable(act.ProductionID, childCount, entries, start, reducedEnd, rawFieldIDs, rawInherited, symbolMeta)
 	startByte := stackEntryNodeStartByte(first)
 	endByte := stackEntryNodeEndByte(last)
 	startPoint := stackEntryNodeStartPoint(first)
@@ -1415,14 +1416,14 @@ func (p *Parser) tryPushPendingDirectFieldParent(s *glrStack, act ParseAction, t
 		p.isNamedSymbol(act.Symbol),
 		act.ProductionID,
 		childCount,
-		pendingDirectFieldParentEntrySlots(childCount, skippedHiddenChild),
+		pendingDirectFieldParentEntrySlots(childCount, useDenseFieldEntries),
 		startByte,
 		endByte,
 		startPoint,
 		endPoint,
 		hasError,
 	)
-	if skippedHiddenChild {
+	if useDenseFieldEntries {
 		parent.setHasFieldEntries(true)
 	} else {
 		parent.setHasDirectFieldEntries(true)
@@ -1445,7 +1446,7 @@ func (p *Parser) tryPushPendingDirectFieldParent(s *glrStack, act ParseAction, t
 			continue
 		}
 		parent.setChildEntry(arena, out, entry)
-		if skippedHiddenChild && fid != 0 {
+		if useDenseFieldEntries && fid != 0 {
 			parent.setChildFieldEntry(arena, out, fid, fieldSourceDirect)
 		}
 		out++
@@ -1486,11 +1487,100 @@ func (p *Parser) tryPushPendingDirectFieldParent(s *glrStack, act ParseAction, t
 	return true
 }
 
-func pendingDirectFieldParentEntrySlots(childCount int, skippedHiddenChild bool) int {
-	if skippedHiddenChild {
+func pendingDirectFieldParentEntrySlots(childCount int, useDenseFieldEntries bool) int {
+	if useDenseFieldEntries {
 		return childCount * 2
 	}
 	return childCount
+}
+
+func (p *Parser) pendingDirectFieldParentFieldsRecomputable(productionID uint16, visibleChildCount int, entries []stackEntry, start, reducedEnd int, rawFieldIDs []FieldID, rawInherited []bool, symbolMeta []SymbolMetadata) bool {
+	visibleFieldIDs, visibleInherited := p.fixedFieldIDsForProduction(visibleChildCount, productionID)
+	structuralChildIndex := 0
+	visibleStructuralChildIndex := 0
+	for i := start; i < reducedEnd; i++ {
+		entry := entries[i]
+		if !stackEntryHasNode(entry) {
+			continue
+		}
+		var fid FieldID
+		inherited := false
+		if !stackEntryNodeIsExtra(entry) {
+			if structuralChildIndex < len(rawFieldIDs) {
+				fid = rawFieldIDs[structuralChildIndex]
+			}
+			if structuralChildIndex < len(rawInherited) {
+				inherited = rawInherited[structuralChildIndex]
+			}
+			structuralChildIndex++
+		}
+		if !stackEntryVisibleForPending(entry, symbolMeta) {
+			continue
+		}
+		if stackEntryNodeIsExtra(entry) {
+			continue
+		}
+		if visibleStructuralChildIndex >= visibleChildCount ||
+			inherited ||
+			visibleInherited[visibleStructuralChildIndex] ||
+			fid != visibleFieldIDs[visibleStructuralChildIndex] {
+			return false
+		}
+		visibleStructuralChildIndex++
+	}
+	return visibleStructuralChildIndex == visibleChildCount
+}
+
+func (p *Parser) fixedFieldIDsForProduction(childCount int, productionID uint16) ([32]FieldID, [32]bool) {
+	var fieldIDs [32]FieldID
+	var inherited [32]bool
+	if p == nil || p.language == nil || childCount <= 0 || childCount > len(fieldIDs) || len(p.language.FieldMapEntries) == 0 {
+		return fieldIDs, inherited
+	}
+	pid := int(productionID)
+	if pid < 0 || pid >= len(p.language.FieldMapSlices) {
+		return fieldIDs, inherited
+	}
+	fm := p.language.FieldMapSlices[pid]
+	count := int(fm[1])
+	if count == 0 {
+		return fieldIDs, inherited
+	}
+	var conflictedInherited [32]bool
+	start := int(fm[0])
+	for i := 0; i < count; i++ {
+		entryIdx := start + i
+		if entryIdx >= len(p.language.FieldMapEntries) {
+			break
+		}
+		entry := p.language.FieldMapEntries[entryIdx]
+		idx := int(entry.ChildIndex)
+		if idx < 0 || idx >= childCount {
+			continue
+		}
+		switch {
+		case conflictedInherited[idx]:
+			if !entry.Inherited {
+				fieldIDs[idx] = entry.FieldID
+				inherited[idx] = false
+				conflictedInherited[idx] = false
+			}
+		case fieldIDs[idx] == 0:
+			fieldIDs[idx] = entry.FieldID
+			inherited[idx] = entry.Inherited
+		case !entry.Inherited && inherited[idx]:
+			fieldIDs[idx] = entry.FieldID
+			inherited[idx] = false
+		case entry.Inherited && inherited[idx] && fieldIDs[idx] != entry.FieldID:
+			fieldIDs[idx] = 0
+			inherited[idx] = false
+			conflictedInherited[idx] = true
+		case entry.Inherited == inherited[idx]:
+			fieldIDs[idx] = entry.FieldID
+			inherited[idx] = entry.Inherited
+		}
+	}
+	return fieldIDs, inherited
 }
 
 func (p *Parser) populatePendingDirectFieldEntries(parent *pendingParent, children []*Node, fieldIDs []FieldID, fieldSources []uint8, arena *nodeArena) {

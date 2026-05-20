@@ -174,6 +174,78 @@ func TestPendingParentMaterializationRecomputesDirectFieldEntries(t *testing.T) 
 	}
 }
 
+func TestPendingDirectFieldParentFieldsRecomputableWithTrailingHidden(t *testing.T) {
+	parser := &Parser{language: &Language{
+		SymbolMetadata: []SymbolMetadata{
+			{},
+			{Visible: true},
+			{Visible: false},
+		},
+		FieldMapSlices: [][2]uint16{
+			{},
+			{},
+			{},
+			{},
+			{},
+			{0, 2},
+		},
+		FieldMapEntries: []FieldMapEntry{
+			{FieldID: 7, ChildIndex: 0},
+			{FieldID: 9, ChildIndex: 1},
+		},
+	}}
+	arena := newNodeArena(arenaClassFull)
+	left := newLeafNodeInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	right := newLeafNodeInArena(arena, 1, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	hidden := newParentNodeInArenaNoLinksWithFieldSources(arena, 2, false, nil, nil, nil, 5, false)
+	entries := []stackEntry{
+		newStackEntryNode(1, left),
+		newStackEntryNode(2, right),
+		newStackEntryNode(3, hidden),
+	}
+	rawFieldIDs := []FieldID{7, 9, 0}
+	rawInherited := []bool{false, false, false}
+	if !parser.pendingDirectFieldParentFieldsRecomputable(5, 2, entries, 0, len(entries), rawFieldIDs, rawInherited, parser.language.SymbolMetadata) {
+		t.Fatal("pendingDirectFieldParentFieldsRecomputable = false, want true for trailing hidden child")
+	}
+}
+
+func TestPendingDirectFieldParentFieldsRecomputableRejectsShiftedHidden(t *testing.T) {
+	parser := &Parser{language: &Language{
+		SymbolMetadata: []SymbolMetadata{
+			{},
+			{Visible: true},
+			{Visible: false},
+		},
+		FieldMapSlices: [][2]uint16{
+			{},
+			{},
+			{},
+			{},
+			{},
+			{0, 2},
+		},
+		FieldMapEntries: []FieldMapEntry{
+			{FieldID: 7, ChildIndex: 0},
+			{FieldID: 9, ChildIndex: 2},
+		},
+	}}
+	arena := newNodeArena(arenaClassFull)
+	left := newLeafNodeInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	hidden := newParentNodeInArenaNoLinksWithFieldSources(arena, 2, false, nil, nil, nil, 5, false)
+	right := newLeafNodeInArena(arena, 1, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	entries := []stackEntry{
+		newStackEntryNode(1, left),
+		newStackEntryNode(2, hidden),
+		newStackEntryNode(3, right),
+	}
+	rawFieldIDs := []FieldID{7, 0, 9}
+	rawInherited := []bool{false, false, false}
+	if parser.pendingDirectFieldParentFieldsRecomputable(5, 2, entries, 0, len(entries), rawFieldIDs, rawInherited, parser.language.SymbolMetadata) {
+		t.Fatal("pendingDirectFieldParentFieldsRecomputable = true, want false when hidden child shifts field map")
+	}
+}
+
 func TestNoTreeNodeStackEntryKeepsBytesAndDropsPoints(t *testing.T) {
 	leaf := newNoTreeLeafNodeInArena(nil, 7, true, 11, 19, Point{Row: 3, Column: 5}, Point{Row: 3, Column: 13})
 	entry := newStackEntryNoTreeNode(2, leaf)
