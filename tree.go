@@ -236,6 +236,41 @@ func nodeChildCountNoMaterialize(n *Node) int {
 	return len(n.children)
 }
 
+func nodeHasFinalChildRefs(n *Node) bool {
+	if n == nil || n.ownerArena == nil {
+		return false
+	}
+	_, ok := n.ownerArena.finalChildRange(n)
+	return ok
+}
+
+func nodeChildEntryAtNoMaterialize(n *Node, i int) (stackEntry, bool) {
+	if n == nil || i < 0 {
+		return stackEntry{}, false
+	}
+	if n.ownerArena != nil {
+		if childRange, ok := n.ownerArena.finalChildRange(n); ok {
+			if i >= childRange.count() {
+				return stackEntry{}, false
+			}
+			refs := childRange.refs(n.ownerArena)
+			if i >= len(refs) {
+				return stackEntry{}, false
+			}
+			entry := refs[i].stackEntry()
+			if entry.node == nil {
+				return entry, entry.kind != stackEntryKindNode
+			}
+			return entry, true
+		}
+	}
+	if i >= len(n.children) || n.children[i] == nil {
+		return stackEntry{}, false
+	}
+	child := n.children[i]
+	return newStackEntryNode(child.parseState, child), true
+}
+
 func nodeMaterializeFinalChildRefs(n *Node, reason materializeReason) {
 	if n == nil || n.ownerArena == nil {
 		return
@@ -2440,7 +2475,6 @@ func (t *Tree) Edit(edit InputEdit) {
 	t.edits = append(t.edits, edit)
 	t.lastEditedLeaf = nil
 	if t.root != nil {
-		materializeFinalChildRefsForSubtree(t.root, materializeForEdit)
 		byteDelta := int64(edit.NewEndByte) - int64(edit.OldEndByte)
 		rowDelta := int64(edit.NewEndPoint.Row) - int64(edit.OldEndPoint.Row)
 		colDelta := int64(edit.NewEndPoint.Column) - int64(edit.OldEndPoint.Column)
@@ -2555,7 +2589,7 @@ func editNodeWithDelta(n *Node, edit InputEdit, byteDelta, rowDelta, colDelta in
 				n.endPoint.Column = addUint32Delta(n.endPoint.Column, colDelta)
 			}
 		}
-		shiftSubtreeAfterEdit(n.children, edit, byteDelta, rowDelta, colDelta, shiftScratch)
+		shiftNodeChildrenAfterEdit(n, edit, byteDelta, rowDelta, colDelta, shiftScratch)
 		return
 	}
 
@@ -2572,23 +2606,75 @@ func editNodeWithDelta(n *Node, edit InputEdit, byteDelta, rowDelta, colDelta in
 
 	// Recurse only into children that can be affected.
 	descended := false
-	for _, c := range n.children {
-		if c.endByte <= edit.StartByte {
-			continue
-		}
-		if c.startByte >= edit.OldEndByte {
-			if !hasTailShift {
-				break
+	childCount := nodeChildCountNoMaterialize(n)
+	if !nodeHasFinalChildRefs(n) {
+		for _, c := range n.children {
+			if c.endByte <= edit.StartByte {
+				continue
 			}
-			shiftSubtreeNodeAfterEdit(c, edit, byteDelta, rowDelta, colDelta, shiftScratch)
-			continue
+			if c.startByte >= edit.OldEndByte {
+				if !hasTailShift {
+					break
+				}
+				shiftSubtreeNodeAfterEdit(c, edit, byteDelta, rowDelta, colDelta, shiftScratch)
+				continue
+			}
+			descended = true
+			editNodeWithDelta(c, edit, byteDelta, rowDelta, colDelta, hasTailShift, shiftScratch, leafHint)
 		}
-		descended = true
-		editNodeWithDelta(c, edit, byteDelta, rowDelta, colDelta, hasTailShift, shiftScratch, leafHint)
+	} else {
+		for i := 0; i < childCount; i++ {
+			entry, ok := nodeChildEntryAtNoMaterialize(n, i)
+			if !ok || stackEntryNodeEndByte(entry) <= edit.StartByte {
+				continue
+			}
+			if stackEntryNodeStartByte(entry) >= edit.OldEndByte {
+				if !hasTailShift {
+					break
+				}
+				c := nodeChildAtForReason(n, i, materializeForEdit)
+				if c == nil {
+					continue
+				}
+				shiftSubtreeNodeAfterEdit(c, edit, byteDelta, rowDelta, colDelta, shiftScratch)
+				continue
+			}
+			c := nodeChildAtForReason(n, i, materializeForEdit)
+			if c == nil {
+				continue
+			}
+			descended = true
+			editNodeWithDelta(c, edit, byteDelta, rowDelta, colDelta, hasTailShift, shiftScratch, leafHint)
+		}
 	}
-	if leafHint != nil && !descended && len(n.children) == 0 {
+	if leafHint != nil && !descended && childCount == 0 {
 		*leafHint = n
 	}
+}
+
+func shiftNodeChildrenAfterEdit(parent *Node, edit InputEdit, byteDelta, rowDelta, colDelta int64, shiftScratch *[]*Node) {
+	childCount := nodeChildCountNoMaterialize(parent)
+	if childCount == 0 {
+		return
+	}
+	if !nodeHasFinalChildRefs(parent) {
+		shiftSubtreeAfterEdit(parent.children, edit, byteDelta, rowDelta, colDelta, shiftScratch)
+		return
+	}
+	var local [8]*Node
+	children := local[:0]
+	for i := 0; i < childCount; i++ {
+		child := nodeChildAtForReason(parent, i, materializeForEdit)
+		if child == nil {
+			continue
+		}
+		children = append(children, child)
+		if len(children) == cap(children) {
+			shiftSubtreeAfterEdit(children, edit, byteDelta, rowDelta, colDelta, shiftScratch)
+			children = children[:0]
+		}
+	}
+	shiftSubtreeAfterEdit(children, edit, byteDelta, rowDelta, colDelta, shiftScratch)
 }
 
 func shiftSubtreeAfterEdit(roots []*Node, edit InputEdit, byteDelta, rowDelta, colDelta int64, shiftScratch *[]*Node) {
@@ -2621,8 +2707,15 @@ func shiftSubtreeAfterEdit(roots []*Node, edit InputEdit, byteDelta, rowDelta, c
 			}
 		}
 
-		for _, c := range n.children {
-			stack = append(stack, c)
+		if !nodeHasFinalChildRefs(n) {
+			stack = append(stack, n.children...)
+		} else {
+			childCount := nodeChildCountNoMaterialize(n)
+			for i := 0; i < childCount; i++ {
+				if c := nodeChildAtForReason(n, i, materializeForEdit); c != nil {
+					stack = append(stack, c)
+				}
+			}
 		}
 	}
 	if shiftScratch != nil {

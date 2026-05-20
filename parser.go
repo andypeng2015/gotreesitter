@@ -1099,11 +1099,11 @@ func (p *Parser) parseIncrementalInternal(source []byte, oldTree *Tree, ts Token
 	if canReuseUnchangedTree(source, oldTree, p.language) {
 		return oldTree
 	}
-	if oldTree != nil {
-		oldTree.ensureParentLinks()
-	}
 	if tree, ok := p.tryTokenInvariantLeafEdit(source, oldTree, ts, timing); ok {
 		return tree
+	}
+	if oldTree != nil {
+		oldTree.ensureParentLinks()
 	}
 
 	// Subtree reuse is safe for DFA token sources without external scanners
@@ -1127,8 +1127,8 @@ func (p *Parser) parseIncrementalInternal(source []byte, oldTree *Tree, ts Token
 		return tree
 	}
 	if oldTree != nil {
-		oldTree.ensureExternalScannerCheckpoints()
 		materializeFinalChildRefsForSubtree(oldTree.RootNode(), materializeForEdit)
+		oldTree.ensureExternalScannerCheckpoints()
 	}
 
 	p.reuseMu.Lock()
