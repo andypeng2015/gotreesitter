@@ -173,57 +173,59 @@ func (q *Query) applyDirectives(predicates []QueryPredicate, captures []QueryCap
 // pred.rightCapture. "Adjacent" means one node's end byte equals the other's
 // start byte.
 func applySelectAdjacent(pred QueryPredicate, captures []QueryCapture) []QueryCapture {
-	itemsName := pred.leftCapture
-	anchorName := pred.rightCapture
-
-	// Collect anchor byte boundaries.
-	type boundary struct {
-		start, end uint32
-	}
-	var anchors []boundary
-	for _, c := range captures {
-		if c.Name == anchorName && c.Node != nil {
-			anchors = append(anchors, boundary{c.Node.StartByte(), c.Node.EndByte()})
-		}
-	}
+	anchors := captureBoundaries(pred.rightCapture, captures)
 	if len(anchors) == 0 {
-		// No anchors — remove all items captures.
-		// Reuse the input backing array because captures is an ephemeral
-		// per-match slice owned by directive application.
-		out := captures[:0]
-		for _, c := range captures {
-			if c.Name != itemsName {
-				out = append(out, c)
-			}
-		}
-		return out
+		return removeCapturesByName(captures, pred.leftCapture)
 	}
+	return keepAdjacentCaptures(captures, pred.leftCapture, anchors)
+}
 
-	isAdjacent := func(n *Node) bool {
-		if n == nil {
-			return false
+type captureBoundary struct {
+	start, end uint32
+}
+
+func captureBoundaries(name string, captures []QueryCapture) []captureBoundary {
+	var boundaries []captureBoundary
+	for _, c := range captures {
+		if c.Name == name && c.Node != nil {
+			boundaries = append(boundaries, captureBoundary{c.Node.StartByte(), c.Node.EndByte()})
 		}
-		nStart := n.StartByte()
-		nEnd := n.EndByte()
-		for _, a := range anchors {
-			if nEnd == a.start || nStart == a.end {
-				return true
-			}
-		}
-		return false
 	}
+	return boundaries
+}
 
+func removeCapturesByName(captures []QueryCapture, name string) []QueryCapture {
 	out := captures[:0]
 	for _, c := range captures {
-		if c.Name == itemsName {
-			if isAdjacent(c.Node) {
-				out = append(out, c)
-			}
-			continue
+		if c.Name != name {
+			out = append(out, c)
 		}
-		out = append(out, c)
 	}
 	return out
+}
+
+func keepAdjacentCaptures(captures []QueryCapture, name string, anchors []captureBoundary) []QueryCapture {
+	out := captures[:0]
+	for _, c := range captures {
+		if c.Name != name || nodeAdjacentToBoundaries(c.Node, anchors) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+func nodeAdjacentToBoundaries(n *Node, boundaries []captureBoundary) bool {
+	if n == nil {
+		return false
+	}
+	nStart := n.StartByte()
+	nEnd := n.EndByte()
+	for _, boundary := range boundaries {
+		if nEnd == boundary.start || nStart == boundary.end {
+			return true
+		}
+	}
+	return false
 }
 
 // applyStrip applies the #strip! directive: for each capture named by
@@ -335,38 +337,37 @@ func stringInList(value string, values []string) bool {
 }
 
 func ancestorPredicateMatches(pred QueryPredicate, captures []QueryCapture, lang *Language, negated bool) bool {
-	nodes := captureNodes(pred.leftCapture, captures)
-	if len(nodes) == 0 {
-		return false
-	}
-	for _, n := range nodes {
-		matched := nodeHasAncestorType(n, pred.values, lang)
-		if negated && matched {
-			return false
-		}
-		if !negated && matched {
-			return true
-		}
-	}
-	return negated
+	return captureNodePredicateMatches(pred.leftCapture, captures, negated, func(n *Node) bool {
+		return nodeHasAncestorType(n, pred.values, lang)
+	})
 }
 
 func parentPredicateMatches(pred QueryPredicate, captures []QueryCapture, lang *Language, negated bool) bool {
-	nodes := captureNodes(pred.leftCapture, captures)
+	return captureNodePredicateMatches(pred.leftCapture, captures, negated, func(n *Node) bool {
+		parent := n.Parent()
+		return parent != nil && nodeTypeMatchesAny(parent, pred.values, lang)
+	})
+}
+
+func captureNodePredicateMatches(name string, captures []QueryCapture, negated bool, matches func(*Node) bool) bool {
+	nodes := captureNodes(name, captures)
 	if len(nodes) == 0 {
 		return false
 	}
+	matched := anyCaptureNodeMatches(nodes, matches)
+	if negated {
+		return !matched
+	}
+	return matched
+}
+
+func anyCaptureNodeMatches(nodes []*Node, matches func(*Node) bool) bool {
 	for _, n := range nodes {
-		parent := n.Parent()
-		matched := parent != nil && nodeTypeMatchesAny(parent, pred.values, lang)
-		if negated && matched {
-			return false
-		}
-		if !negated && matched {
+		if matches(n) {
 			return true
 		}
 	}
-	return negated
+	return false
 }
 
 func countPredicateMatches(pred QueryPredicate, captures []QueryCapture) bool {
@@ -420,25 +421,38 @@ func nodeTypeMatchesAny(node *Node, typeNames []string, lang *Language) bool {
 	if node == nil || lang == nil {
 		return false
 	}
-	nodeType := node.Type(lang)
-	if typeNameMatchesAny(nodeType, typeNames) {
+	if typeNameMatchesAny(node.Type(lang), typeNames) {
 		return true
 	}
 	nodeInternal := node.Symbol()
 	nodePublic := lang.PublicSymbol(nodeInternal)
 	for _, typeName := range typeNames {
-		supertype, ok := lang.SymbolByName(typeName)
-		if ok {
-			if nodeInternal == supertype || nodePublic == supertype {
-				return true
-			}
-			if lang.IsSupertype(supertype) {
-				for _, child := range lang.SupertypeChildren(supertype) {
-					if child == nodeInternal || lang.PublicSymbol(child) == nodePublic {
-						return true
-					}
-				}
-			}
+		if nodeSymbolMatchesTypeName(nodeInternal, nodePublic, typeName, lang) {
+			return true
+		}
+	}
+	return false
+}
+
+func nodeSymbolMatchesTypeName(nodeInternal Symbol, nodePublic Symbol, typeName string, lang *Language) bool {
+	symbol, ok := lang.SymbolByName(typeName)
+	if !ok {
+		return false
+	}
+	if nodeSymbolMatches(nodeInternal, nodePublic, symbol) {
+		return true
+	}
+	return lang.IsSupertype(symbol) && supertypeContainsNodeSymbol(symbol, nodeInternal, nodePublic, lang)
+}
+
+func nodeSymbolMatches(nodeInternal Symbol, nodePublic Symbol, candidate Symbol) bool {
+	return nodeInternal == candidate || nodePublic == candidate
+}
+
+func supertypeContainsNodeSymbol(supertype Symbol, nodeInternal Symbol, nodePublic Symbol, lang *Language) bool {
+	for _, child := range lang.SupertypeChildren(supertype) {
+		if child == nodeInternal || lang.PublicSymbol(child) == nodePublic {
+			return true
 		}
 	}
 	return false
