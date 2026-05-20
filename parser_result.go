@@ -285,22 +285,14 @@ func stackEntryResultErrorRank(entry stackEntry, arena *nodeArena, rank *int) {
 	if stackEntryNodeHasError(entry) && *rank == 0 {
 		*rank = 1
 	}
-	if n := stackEntryNode(entry); n != nil {
-		for _, child := range n.children {
-			stackEntryResultErrorRank(newStackEntryNode(child.parseState, child), arena, rank)
-			if *rank == 2 {
-				return
-			}
+	for i := 0; i < stackEntryNodeChildCount(entry); i++ {
+		child, ok := stackEntryAliasChild(entry, arena, i)
+		if !ok {
+			continue
 		}
-		return
-	}
-	if parent := stackEntryPendingParent(entry); parent != nil {
-		for i := 0; i < parent.childEntryCount(); i++ {
-			child := parent.childEntry(arena, i)
-			stackEntryResultErrorRank(child, arena, rank)
-			if *rank == 2 {
-				return
-			}
+		stackEntryResultErrorRank(child, arena, rank)
+		if *rank == 2 {
+			return
 		}
 	}
 }
@@ -322,7 +314,7 @@ func compareAcceptedStackAliasPreference(p *Parser, arena *nodeArena, a, b glrSt
 	const maxBufferedAliasPreferenceEntries = 8
 	if aCount > maxBufferedAliasPreferenceEntries {
 		if !stackHasCompactResultPayload(a) && !stackHasCompactResultPayload(b) {
-			return compareAcceptedStackNodeAliasPreference(p, a, b)
+			return compareAcceptedStackNodeAliasPreference(p, arena, a, b)
 		}
 		return 0
 	}
@@ -340,14 +332,14 @@ func compareAcceptedStackAliasPreference(p *Parser, arena *nodeArena, a, b glrSt
 	return 0
 }
 
-func compareAcceptedStackNodeAliasPreference(p *Parser, a, b glrStack) int {
+func compareAcceptedStackNodeAliasPreference(p *Parser, arena *nodeArena, a, b glrStack) int {
 	aNodes := resultNodesFromStack(a)
 	bNodes := resultNodesFromStack(b)
 	if len(aNodes) != len(bNodes) {
 		return 0
 	}
 	for i := range aNodes {
-		if cmp := compareNodeAliasPreference(p, aNodes[i], bNodes[i]); cmp != 0 {
+		if cmp := compareNodeAliasPreference(p, arena, aNodes[i], bNodes[i]); cmp != 0 {
 			return cmp
 		}
 	}
@@ -496,23 +488,30 @@ func resultNodesFromStack(s glrStack) []*Node {
 	return nodesFromGSS(s.gss)
 }
 
-func compareNodeAliasPreference(p *Parser, a, b *Node) int {
+func compareNodeAliasPreference(p *Parser, arena *nodeArena, a, b *Node) int {
 	if a == b || a == nil || b == nil {
 		return 0
 	}
+	aChildCount := nodeChildCountNoMaterialize(a)
+	bChildCount := nodeChildCountNoMaterialize(b)
 	if a.startByte != b.startByte ||
 		a.endByte != b.endByte ||
 		a.isExtra() != b.isExtra() ||
 		a.isMissing() != b.isMissing() ||
-		len(a.children) != len(b.children) {
+		aChildCount != bChildCount {
 		return 0
 	}
 	if a.symbol != b.symbol {
 		aType := a.Type(p.language)
 		bType := b.Type(p.language)
 		if aType == bType {
-			for i := range a.children {
-				if cmp := compareNodeAliasPreference(p, a.children[i], b.children[i]); cmp != 0 {
+			for i := 0; i < aChildCount; i++ {
+				aChild, aOK := nodeChildEntryAtNoMaterialize(a, i)
+				bChild, bOK := nodeChildEntryAtNoMaterialize(b, i)
+				if !aOK || !bOK {
+					return 0
+				}
+				if cmp := compareStackEntryAliasPreference(p, arena, aChild, bChild); cmp != 0 {
 					return cmp
 				}
 			}
@@ -528,8 +527,13 @@ func compareNodeAliasPreference(p *Parser, a, b *Node) int {
 		}
 		return 0
 	}
-	for i := range a.children {
-		if cmp := compareNodeAliasPreference(p, a.children[i], b.children[i]); cmp != 0 {
+	for i := 0; i < aChildCount; i++ {
+		aChild, aOK := nodeChildEntryAtNoMaterialize(a, i)
+		bChild, bOK := nodeChildEntryAtNoMaterialize(b, i)
+		if !aOK || !bOK {
+			return 0
+		}
+		if cmp := compareStackEntryAliasPreference(p, arena, aChild, bChild); cmp != 0 {
 			return cmp
 		}
 	}
@@ -544,7 +548,7 @@ func compareStackEntryAliasPreference(p *Parser, arena *nodeArena, a, b stackEnt
 		return 0
 	}
 	if stackEntryNode(a) != nil && stackEntryNode(b) != nil {
-		return compareNodeAliasPreference(p, stackEntryNode(a), stackEntryNode(b))
+		return compareNodeAliasPreference(p, arena, stackEntryNode(a), stackEntryNode(b))
 	}
 	if stackEntryNodeStartByte(a) != stackEntryNodeStartByte(b) ||
 		stackEntryNodeEndByte(a) != stackEntryNodeEndByte(b) ||
@@ -594,11 +598,7 @@ func compareStackEntryAliasPreference(p *Parser, arena *nodeArena, a, b stackEnt
 
 func stackEntryAliasChild(entry stackEntry, arena *nodeArena, i int) (stackEntry, bool) {
 	if n := stackEntryNode(entry); n != nil {
-		if i < 0 || i >= len(n.children) {
-			return stackEntry{}, false
-		}
-		child := n.children[i]
-		return newStackEntryNode(child.parseState, child), true
+		return nodeChildEntryAtNoMaterialize(n, i)
 	}
 	if parent := stackEntryPendingParent(entry); parent != nil {
 		if i < 0 || i >= parent.childEntryCount() {

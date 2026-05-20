@@ -447,7 +447,7 @@ func stackEntryNodeHasError(e stackEntry) bool {
 
 func stackEntryNodeChildCount(e stackEntry) int {
 	if n := stackEntryNode(e); n != nil {
-		return len(n.children)
+		return nodeChildCountNoMaterialize(n)
 	}
 	if n := stackEntryPendingParent(e); n != nil {
 		return n.childEntryCount()
