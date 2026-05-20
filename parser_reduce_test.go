@@ -143,3 +143,52 @@ func TestCollapsibleRawUnarySelfReductionRejectsInvisibleChild(t *testing.T) {
 		t.Fatalf("raw unary collapse returned %v for invisible child", got)
 	}
 }
+
+func TestCollapsibleRawUnarySelfReductionEntryCollapsesPendingParentSameSymbol(t *testing.T) {
+	lang := &Language{
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF"},
+			{Name: "expr", Visible: true, Named: true},
+		},
+	}
+	p := &Parser{language: lang}
+	arena := newNodeArena(arenaClassFull)
+	parent := newPendingParentInArena(arena, 1, true, 3, nil, 1, 3, Point{Column: 1}, Point{Column: 3}, false)
+	entry := newStackEntryPendingParent(4, parent)
+	act := ParseAction{Symbol: 1, ChildCount: 1, ProductionID: 9}
+
+	got, ok := p.collapsibleRawUnarySelfReductionEntry(act, Token{}, arena, []stackEntry{entry}, 0, 1)
+	if !ok {
+		t.Fatal("expected pending parent raw unary reduction to collapse")
+	}
+	if stackEntryPendingParent(got) != parent {
+		t.Fatal("collapsed entry did not preserve pending parent payload")
+	}
+	setCollapsedUnaryEntryMetadata(&got, act, false, 2, 5)
+	if parent.productionID != 9 || parent.preGotoState != 2 || parent.parseState != 5 || got.state != 5 {
+		t.Fatalf("pending parent metadata = prod %d pre %d state %d entry %d", parent.productionID, parent.preGotoState, parent.parseState, got.state)
+	}
+}
+
+func TestCollapsibleRawUnarySelfReductionEntryCollapsesPendingParentInvisibleWrapper(t *testing.T) {
+	lang := &Language{
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF"},
+			{Name: "_wrapper", Visible: false, Named: false},
+			{Name: "expr", Visible: true, Named: true},
+		},
+	}
+	p := &Parser{language: lang}
+	arena := newNodeArena(arenaClassFull)
+	parent := newPendingParentInArena(arena, 2, true, 3, nil, 1, 3, Point{Column: 1}, Point{Column: 3}, false)
+	entry := newStackEntryPendingParent(4, parent)
+	act := ParseAction{Symbol: 1, ChildCount: 1, ProductionID: 9}
+
+	got, ok := p.collapsibleRawUnarySelfReductionEntry(act, Token{}, arena, []stackEntry{entry}, 0, 1)
+	if !ok {
+		t.Fatal("expected invisible wrapper over pending parent to collapse")
+	}
+	if stackEntryPendingParent(got) != parent {
+		t.Fatal("collapsed wrapper did not preserve pending parent payload")
+	}
+}

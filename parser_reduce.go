@@ -3308,6 +3308,16 @@ func setCollapsedUnaryEntryMetadata(entry *stackEntry, act ParseAction, extra bo
 		n.preGotoState = preGotoState
 		n.parseState = parseState
 		entry.state = parseState
+		return
+	}
+	if n := stackEntryPendingParent(*entry); n != nil {
+		if extra {
+			n.setExtra(true)
+		}
+		n.productionID = act.ProductionID
+		n.preGotoState = preGotoState
+		n.parseState = parseState
+		entry.state = parseState
 	}
 }
 
@@ -3366,6 +3376,27 @@ func (p *Parser) collapsibleRawUnarySelfReductionEntry(act ParseAction, tok Toke
 		return newStackEntryNode(entry.state, collapsed), true
 	}
 
+	if parent := stackEntryPendingParent(entry); parent != nil {
+		if !p.isVisibleSymbol(parent.symbol) {
+			if diag {
+				arena.collapseRawUnaryMissChild++
+			}
+			return stackEntry{}, false
+		}
+		rule := p.collapseUnaryPendingParentRule(act, parent)
+		if rule == collapseUnaryRuleNone {
+			if diag {
+				arena.collapseRawUnaryMissRule++
+			}
+			return stackEntry{}, false
+		}
+		if diag {
+			arena.collapseRawUnarySuccesses++
+			recordCollapseRule(arena, rule)
+		}
+		return entry, true
+	}
+
 	leaf := stackEntryCompactFullLeaf(entry)
 	if leaf == nil {
 		if diag {
@@ -3401,6 +3432,19 @@ func (p *Parser) collapsibleRawUnarySelfReductionEntry(act ParseAction, tok Toke
 		recordCollapseRule(arena, rule)
 	}
 	return entry, true
+}
+
+func (p *Parser) collapseUnaryPendingParentRule(act ParseAction, parent *pendingParent) collapseUnaryRule {
+	if parent == nil || parent.isExtra() || parent.isMissing() || parent.hasError() {
+		return collapseUnaryRuleNone
+	}
+	if parent.symbol != act.Symbol {
+		if p.canCollapseInvisibleUnaryWrapperSymbol(act.Symbol) {
+			return collapseUnaryRuleInvisibleWrapper
+		}
+		return collapseUnaryRuleNone
+	}
+	return collapseUnaryRuleSameSymbol
 }
 
 func (p *Parser) collapseUnaryLeafRule(act ParseAction, childSym Symbol) collapseUnaryRule {
