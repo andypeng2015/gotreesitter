@@ -1,35 +1,11 @@
 package gotreesitter
 
 func normalizeNimTopLevelCallEnd(root *Node, source []byte, lang *Language) {
-	if root == nil || lang == nil || lang.Name != "nim" || root.Type(lang) != "source_file" || resultChildCount(root) != 1 {
-		return
-	}
-	call := resultChildAt(root, 0)
-	if call == nil || call.IsExtra() || call.Type(lang) != "call" {
-		return
-	}
-	end := lastNonTriviaByteEnd(source)
-	if end == 0 || end >= call.endByte {
-		return
-	}
-	call.endByte = end
-	call.endPoint = advancePointByBytes(Point{}, source[:end])
+	shrinkFirstTopLevelChildEndToLastNonTrivia(root, source, lang, "nim", "source_file", "call", true)
 }
 
 func normalizePascalTopLevelProgramEnd(root *Node, source []byte, lang *Language) {
-	if root == nil || lang == nil || lang.Name != "pascal" || root.Type(lang) != "root" || resultChildCount(root) == 0 {
-		return
-	}
-	program := resultChildAt(root, 0)
-	if program == nil || program.IsExtra() || program.Type(lang) != "program" {
-		return
-	}
-	end := lastNonTriviaByteEnd(source)
-	if end == 0 || end >= program.endByte {
-		return
-	}
-	program.endByte = end
-	program.endPoint = advancePointByBytes(Point{}, source[:end])
+	shrinkFirstTopLevelChildEndToLastNonTrivia(root, source, lang, "pascal", "root", "program", false)
 }
 
 func normalizeCommentTrailingExtraTrivia(root *Node, source []byte, lang *Language) {
@@ -47,20 +23,28 @@ func normalizePascalTrailingExtraTrivia(root *Node, source []byte, lang *Languag
 }
 
 func normalizeRSTTopLevelSectionEnd(root *Node, source []byte, lang *Language) {
-	if root == nil || lang == nil || lang.Name != "rst" || root.Type(lang) != "document" || resultChildCount(root) == 0 {
-		return
-	}
 	trimTrailingExtraTriviaRoot(root, source)
-	section := resultChildAt(root, 0)
-	if section == nil || section.IsExtra() || section.Type(lang) != "section" {
-		return
+	shrinkFirstTopLevelChildEndToLastNonTrivia(root, source, lang, "rst", "document", "section", false)
+}
+
+func shrinkFirstTopLevelChildEndToLastNonTrivia(root *Node, source []byte, lang *Language, languageName, rootType, childType string, requireSingleChild bool) bool {
+	if root == nil || lang == nil || lang.Name != languageName || root.Type(lang) != rootType || resultChildCount(root) == 0 {
+		return false
+	}
+	if requireSingleChild && resultChildCount(root) != 1 {
+		return false
+	}
+	child := resultChildAt(root, 0)
+	if child == nil || child.IsExtra() || child.Type(lang) != childType {
+		return false
 	}
 	end := lastNonTriviaByteEnd(source)
-	if end == 0 || end >= section.endByte {
-		return
+	if end == 0 || end >= child.endByte {
+		return false
 	}
-	section.endByte = end
-	section.endPoint = advancePointByBytes(Point{}, source[:end])
+	child.endByte = end
+	child.endPoint = advancePointByBytes(Point{}, source[:end])
+	return true
 }
 
 func bytesAreCooklangStepTail(b []byte) bool {
@@ -79,6 +63,7 @@ func bytesAreCooklangStepTail(b []byte) bool {
 	}
 	return sawPunctuation
 }
+
 func normalizeCooklangTrailingStepTail(root *Node, source []byte, lang *Language) {
 	if root == nil || lang == nil || lang.Name != "cooklang" || len(source) == 0 {
 		return
@@ -107,6 +92,24 @@ func normalizeCooklangTrailingStepTail(root *Node, source []byte, lang *Language
 	if root.endByte < uint32(len(source)) {
 		extendNodeEndTo(root, uint32(len(source)), source)
 	}
+}
+
+func normalizeTopLevelTrailingLineBreakSpan(root *Node, source []byte, lang *Language) {
+	if root == nil || lang == nil || len(source) == 0 {
+		return
+	}
+	if resultChildCount(root) != 1 {
+		return
+	}
+	child := resultChildAt(root, 0)
+	if child == nil || child.endByte >= root.endByte || root.endByte > uint32(len(source)) {
+		return
+	}
+	gap := source[child.endByte:root.endByte]
+	if !bytesAreTrivia(gap) || !bytesContainLineBreak(gap) {
+		return
+	}
+	extendNodeEndTo(child, root.endByte, source)
 }
 
 func lineBreakEndAt(source []byte, start, limit uint32) uint32 {
@@ -177,29 +180,6 @@ func normalizeNginxAttributeLineBreaks(root *Node, source []byte, lang *Language
 		}
 	}
 	walk(root, 0)
-}
-
-func normalizeTopLevelTrailingLineBreakSpan(root *Node, source []byte, lang *Language) {
-	if root == nil || lang == nil || len(source) == 0 {
-		return
-	}
-	switch lang.Name {
-	case "caddy", "fortran", "pug":
-	default:
-		return
-	}
-	if resultChildCount(root) != 1 {
-		return
-	}
-	child := resultChildAt(root, 0)
-	if child == nil || child.endByte >= root.endByte || root.endByte > uint32(len(source)) {
-		return
-	}
-	gap := source[child.endByte:root.endByte]
-	if !bytesAreTrivia(gap) || !bytesContainLineBreak(gap) {
-		return
-	}
-	extendNodeEndTo(child, root.endByte, source)
 }
 
 func normalizeRootEOFNewlineSpan(root *Node, source []byte, lang *Language) {

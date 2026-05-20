@@ -18,20 +18,8 @@ func normalizeElixirNestedCallTargetFields(root *Node, lang *Language) {
 			second := n.children[1]
 			if first != nil && second != nil &&
 				first.Type(lang) == "call" &&
-				second.Type(lang) == "arguments" &&
-				(len(n.fieldIDs) == 0 || n.fieldIDs[0] == 0) {
-				if len(n.fieldIDs) < len(n.children) {
-					fieldIDs := make([]FieldID, len(n.children))
-					copy(fieldIDs, n.fieldIDs)
-					n.fieldIDs = fieldIDs
-				}
-				n.fieldIDs[0] = targetID
-				if len(n.fieldSources) < len(n.children) {
-					fieldSources := make([]uint8, len(n.children))
-					copy(fieldSources, n.fieldSources)
-					n.fieldSources = fieldSources
-				}
-				n.fieldSources[0] = fieldSourceInherited
+				second.Type(lang) == "arguments" {
+				setNodeChildFieldInheritedIfEmpty(n, 0, targetID)
 			}
 		}
 		for _, child := range n.children {

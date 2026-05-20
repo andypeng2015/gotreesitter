@@ -20,7 +20,6 @@ const (
 
 func normalizeCSharpCompatibility(root *Node, source []byte, p *Parser, lang *Language) {
 	if p != nil && p.skipRecoveryReparse {
-		normalizeCollapsedNamedLeafChildren(root, lang, "implicit_type", "var")
 		normalizeCSharpUnicodeIdentifierSpans(root, source, lang)
 		normalizeCSharpQuotedStringContentIdentifiers(root, source, lang)
 		normalizeCSharpMissingAttributedProperties(root, source, lang)
@@ -36,7 +35,6 @@ func normalizeCSharpCompatibility(root *Node, source []byte, p *Parser, lang *La
 	normalizeCSharpRecoveredTopLevelChunks(root, source, p)
 	normalizeCSharpRecoveredNamespaces(root, source, p, lang)
 	normalizeCSharpRecoveredTypeDeclarations(root, source, p, lang)
-	normalizeCollapsedNamedLeafChildren(root, lang, "implicit_type", "var")
 	normalizeCSharpUnicodeIdentifierSpans(root, source, lang)
 	normalizeCSharpQuotedStringContentIdentifiers(root, source, lang)
 	normalizeCSharpMissingAttributedProperties(root, source, lang)

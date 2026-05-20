@@ -21,10 +21,7 @@ func normalizeZigEmptyInitListFields(root *Node, lang *Language) {
 				if n.Type(lang) != "SuffixExpr" || len(n.children) != 2 || i != 1 || n.children[0] == nil || n.children[0].Type(lang) != "." {
 					continue
 				}
-				n.fieldIDs[i] = 0
-				if len(n.fieldSources) == len(n.children) {
-					n.fieldSources[i] = fieldSourceNone
-				}
+				clearNodeChildField(n, i)
 			}
 		}
 		for _, child := range n.children {

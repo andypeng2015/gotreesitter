@@ -6,7 +6,6 @@ func normalizeCobolCompatibility(root *Node, source []byte, lang *Language) {
 	normalizeCobolLeadingAreaStart(root, source, lang)
 	normalizeCobolTopLevelDefinitionEnd(root, source, lang)
 	normalizeCobolDivisionSiblingEnds(root, source, lang)
-	normalizeCobolPeriodChildren(root, source, lang)
 }
 func normalizeCobolLeadingAreaStart(root *Node, source []byte, lang *Language) {
 	if root == nil || lang == nil || (lang.Name != "cobol" && lang.Name != "COBOL") || len(source) == 0 {
@@ -113,11 +112,4 @@ func normalizeCobolDivisionSiblingEnds(root *Node, source []byte, lang *Language
 		cur.endByte = end
 		cur.endPoint = advancePointByBytes(Point{}, source[:end])
 	}
-}
-
-func normalizeCobolPeriodChildren(root *Node, source []byte, lang *Language) {
-	if root == nil || lang == nil || (lang.Name != "cobol" && lang.Name != "COBOL") {
-		return
-	}
-	normalizeCollapsedNamedLeafChildren(root, lang, "period", ".")
 }

@@ -8,6 +8,32 @@ func normalizeCollapsedNamedLeafChildren(root *Node, lang *Language, parentName,
 	normalizeCollapsedNamedLeafChildrenWithStats(root, lang, parentName, childName)
 }
 
+type collapsedNamedLeafRule struct {
+	languageName string
+	parentName   string
+	childName    string
+}
+
+var resultCollapsedNamedLeafRules = []collapsedNamedLeafRule{
+	{languageName: "c_sharp", parentName: "implicit_type", childName: "var"},
+	{languageName: "cobol", parentName: "period", childName: "."},
+	{languageName: "COBOL", parentName: "period", childName: "."},
+	{languageName: "tsx", parentName: "existential_type", childName: "*"},
+	{languageName: "typescript", parentName: "existential_type", childName: "*"},
+}
+
+func normalizeResultCollapsedNamedLeafChildren(root *Node, lang *Language) {
+	if root == nil || lang == nil {
+		return
+	}
+	for _, rule := range resultCollapsedNamedLeafRules {
+		if rule.languageName != lang.Name {
+			continue
+		}
+		normalizeCollapsedNamedLeafChildren(root, lang, rule.parentName, rule.childName)
+	}
+}
+
 func normalizeCollapsedNamedLeafChildrenWithStats(root *Node, lang *Language, parentName, childName string) normalizationPassCounters {
 	var counters normalizationPassCounters
 	if root == nil || lang == nil {

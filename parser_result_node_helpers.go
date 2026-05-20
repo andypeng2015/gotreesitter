@@ -25,6 +25,45 @@ func ensureNodeFieldStorage(n *Node, childCount int) {
 		n.fieldSources = fieldSources
 	}
 }
+
+func setNodeChildField(n *Node, childIndex int, fid FieldID, source uint8, overwrite bool) bool {
+	if n == nil || childIndex < 0 || childIndex >= len(n.children) || fid == 0 {
+		return false
+	}
+	ensureNodeFieldStorage(n, len(n.children))
+	if !overwrite && n.fieldIDs[childIndex] != 0 {
+		return false
+	}
+	n.fieldIDs[childIndex] = fid
+	n.fieldSources[childIndex] = source
+	return true
+}
+
+func setNodeChildFieldDirect(n *Node, childIndex int, fid FieldID) bool {
+	return setNodeChildField(n, childIndex, fid, fieldSourceDirect, true)
+}
+
+func setNodeChildFieldInherited(n *Node, childIndex int, fid FieldID) bool {
+	return setNodeChildField(n, childIndex, fid, fieldSourceInherited, true)
+}
+
+func setNodeChildFieldInheritedIfEmpty(n *Node, childIndex int, fid FieldID) bool {
+	return setNodeChildField(n, childIndex, fid, fieldSourceInherited, false)
+}
+
+func clearNodeChildField(n *Node, childIndex int) bool {
+	if n == nil || childIndex < 0 || childIndex >= len(n.children) {
+		return false
+	}
+	if len(n.fieldIDs) == len(n.children) {
+		n.fieldIDs[childIndex] = 0
+	}
+	if len(n.fieldSources) == len(n.children) {
+		n.fieldSources[childIndex] = fieldSourceNone
+	}
+	return true
+}
+
 func replaceChildRangeWithSingleNode(parent *Node, start, end int, replacement *Node) {
 	if parent == nil || replacement == nil {
 		return

@@ -21,7 +21,6 @@ func normalizeTypeScriptTreeCompatibility(root *Node, source []byte, lang *Langu
 	normalizeJavaScriptTypeScriptBinaryPrecedence(root, lang)
 	normalizeTypeScriptRecoveredNamespaceRoot(root, source, lang)
 	normalizeTypeScriptCompatibility(root, source, lang)
-	normalizeCollapsedNamedLeafChildren(root, lang, "existential_type", "*")
 }
 
 func normalizeJavaScriptTopLevelObjectLiterals(root *Node, lang *Language) {
