@@ -143,7 +143,7 @@ func materializeStackEntryPendingParentWithParser(p *Parser, arena *nodeArena, e
 	parentChildren := parent.childEntries()
 	children := arena.allocNodeSliceNoClear(len(parentChildren))
 	for i := range parentChildren {
-		children[i] = materializeStackEntryPayloadWithParser(p, arena, &parentChildren[i], compactFullLeafMaterializeForParentReduce, pendingParentMaterializeForParentReduce)
+		children[i] = materializeStackEntryPayloadWithParser(p, arena, &parentChildren[i], compactFullLeafMaterializeReason(reason), reason)
 	}
 	node := newParentNodeInArenaNoLinksWithFieldSources(arena, parent.symbol, parent.isNamed(), children, nil, nil, parent.productionID, parent.hasError())
 	node.flags = parent.flags
@@ -170,7 +170,7 @@ func materializeStackEntryPayloadWithParser(p *Parser, arena *nodeArena, entry *
 	}
 	restoreShape := false
 	prevPayloadShape := pendingParentFieldRejectPayloadUnknown
-	if p != nil && arena != nil && arena.pendingParentActiveRejectReason == pendingParentRejectFields {
+	if p != nil && arena != nil && arena.breakdownEnabled && arena.pendingParentActiveRejectReason == pendingParentRejectFields {
 		restoreShape = true
 		prevPayloadShape = arena.pendingParentActiveFieldPayloadShape
 		arena.pendingParentActiveFieldPayloadShape = p.pendingParentFieldRejectPayloadShape(*entry)

@@ -144,6 +144,86 @@ func TestCollapsibleRawUnarySelfReductionRejectsInvisibleChild(t *testing.T) {
 	}
 }
 
+func TestReduceProductionHasEffectiveFieldsIgnoresConflictedZeroFields(t *testing.T) {
+	lang := &Language{
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF"},
+			{Name: "expr", Visible: true, Named: true},
+			{Name: "identifier", Visible: true, Named: true},
+		},
+		FieldNames: []string{"", "left", "right"},
+		FieldMapSlices: [][2]uint16{
+			{0, 2},
+		},
+		FieldMapEntries: []FieldMapEntry{
+			{FieldID: 1, ChildIndex: 0, Inherited: true},
+			{FieldID: 2, ChildIndex: 0, Inherited: true},
+		},
+	}
+	p := NewParser(lang)
+	arena := newNodeArena(arenaClassFull)
+
+	if !p.reduceProductionHasFields(0) {
+		t.Fatal("reduceProductionHasFields = false, want true")
+	}
+	if p.reduceProductionHasEffectiveFields(1, 0, arena) {
+		t.Fatal("reduceProductionHasEffectiveFields = true, want false for conflicted zero field IDs")
+	}
+}
+
+func TestTryPushPendingNoFieldParentAllowsEffectiveNoFieldProduction(t *testing.T) {
+	lang := &Language{
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF"},
+			{Name: "expr", Visible: true, Named: true},
+			{Name: "identifier", Visible: true, Named: true},
+		},
+		FieldNames: []string{"", "left", "right"},
+		FieldMapSlices: [][2]uint16{
+			{0, 2},
+		},
+		FieldMapEntries: []FieldMapEntry{
+			{FieldID: 1, ChildIndex: 0, Inherited: true},
+			{FieldID: 2, ChildIndex: 0, Inherited: true},
+		},
+	}
+	p := NewParser(lang)
+	p.pendingFullParents = true
+	arena := newNodeArena(arenaClassFull)
+	leaf := newCompactFullLeafInArena(arena, 2, true, 1, 3, Point{Column: 1}, Point{Column: 3})
+	entry := newStackEntryCompactFullLeaf(4, leaf)
+	stack := &glrStack{entries: []stackEntry{entry}}
+	act := ParseAction{Symbol: 1, ChildCount: 1, ProductionID: 0}
+	anyReduced := false
+	nodeCount := 0
+
+	if !p.tryPushPendingNoFieldParent(stack, act, Token{}, &anyReduced, &nodeCount, arena, nil, nil, []stackEntry{entry}, 0, 1, 1, 0, 0) {
+		t.Fatal("tryPushPendingNoFieldParent = false, want true for effective no-field production")
+	}
+	if !anyReduced {
+		t.Fatal("anyReduced = false, want true")
+	}
+	if nodeCount != 1 {
+		t.Fatalf("nodeCount = %d, want 1", nodeCount)
+	}
+	if got := arena.pendingParentRejectedFields; got != 0 {
+		t.Fatalf("pendingParentRejectedFields = %d, want 0", got)
+	}
+	if got := arena.pendingParentCreated; got != 1 {
+		t.Fatalf("pendingParentCreated = %d, want 1", got)
+	}
+	if got := len(stack.entries); got != 1 {
+		t.Fatalf("stack entries = %d, want 1", got)
+	}
+	parent := stackEntryPendingParent(stack.entries[0])
+	if parent == nil {
+		t.Fatal("stack entry is not a pending parent")
+	}
+	if got := len(parent.childEntries()); got != 1 {
+		t.Fatalf("pending parent child count = %d, want 1", got)
+	}
+}
+
 func TestCollapsibleRawUnarySelfReductionEntryCollapsesPendingParentSameSymbol(t *testing.T) {
 	lang := &Language{
 		SymbolMetadata: []SymbolMetadata{

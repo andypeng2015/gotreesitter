@@ -1696,14 +1696,14 @@ func (a *nodeArena) recordParentRejectPayloadMaterialized(entry stackEntry, reas
 	}
 	if stackEntryCompactFullLeaf(entry) != nil {
 		a.compactFullLeafMaterializedForParentReject.increment(reason)
-		if reason == pendingParentRejectFields {
+		if reason == pendingParentRejectFields && a.breakdownEnabled {
 			a.compactFullLeafMaterializedForFieldRejectPayload.increment(a.pendingParentActiveFieldPayloadShape)
 		}
 		return
 	}
 	if stackEntryPendingParent(entry) != nil {
 		a.pendingParentMaterializedForParentReject.increment(reason)
-		if reason == pendingParentRejectFields {
+		if reason == pendingParentRejectFields && a.breakdownEnabled {
 			a.pendingParentMaterializedForFieldReject.increment(a.pendingParentActiveFieldRejectShape)
 			a.pendingParentMaterializedForFieldRejectPayload.increment(a.pendingParentActiveFieldPayloadShape)
 		}

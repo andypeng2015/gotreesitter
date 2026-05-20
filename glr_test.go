@@ -107,6 +107,33 @@ func TestMaterializationReasonCountersClassifyNonParentReasons(t *testing.T) {
 	}
 }
 
+func TestPendingParentMaterializationPropagatesReasonToPayloads(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+
+	leaf := newCompactFullLeafInArena(arena, 9, true, 13, 21, Point{Row: 2, Column: 3}, Point{Row: 2, Column: 11})
+	leafEntry := newStackEntryCompactFullLeaf(4, leaf)
+	childParent := newPendingParentInArena(arena, 11, true, 8, []stackEntry{leafEntry}, 13, 21, Point{Row: 2, Column: 3}, Point{Row: 2, Column: 11}, false)
+	childEntry := newStackEntryPendingParent(5, childParent)
+	rootParent := newPendingParentInArena(arena, 10, true, 7, []stackEntry{childEntry}, 13, 21, Point{Row: 2, Column: 3}, Point{Row: 2, Column: 11}, false)
+	rootEntry := newStackEntryPendingParent(6, rootParent)
+
+	if node := materializeStackEntryPendingParent(arena, &rootEntry, pendingParentMaterializeForFinalTree); node == nil {
+		t.Fatal("materialized root = nil")
+	}
+	if got := arena.pendingParentMaterializedForFinalTree; got != 2 {
+		t.Fatalf("pendingParentMaterializedForFinalTree = %d, want 2", got)
+	}
+	if got := arena.pendingParentMaterializedForParentReduce; got != 0 {
+		t.Fatalf("pendingParentMaterializedForParentReduce = %d, want 0", got)
+	}
+	if got := arena.compactFullLeafMaterializedForFinalTree; got != 1 {
+		t.Fatalf("compactFullLeafMaterializedForFinalTree = %d, want 1", got)
+	}
+	if got := arena.compactFullLeafMaterializedForParentReduce; got != 0 {
+		t.Fatalf("compactFullLeafMaterializedForParentReduce = %d, want 0", got)
+	}
+}
+
 func TestPendingParentRejectCountersClassifyReasons(t *testing.T) {
 	arena := newNodeArena(arenaClassFull)
 
@@ -255,6 +282,7 @@ func TestPendingParentFieldRejectPayloadShapeSplitsVisiblePendingParents(t *test
 
 func TestMaterializePendingPayloadEntriesPropagatesFieldRejectShape(t *testing.T) {
 	arena := newNodeArena(arenaClassFull)
+	arena.breakdownEnabled = true
 	parent := newPendingParentInArena(arena, 10, true, 7, nil, 0, 0, Point{}, Point{}, false)
 	entries := []stackEntry{newStackEntryPendingParent(5, parent)}
 
@@ -288,6 +316,7 @@ func TestMaterializePendingPayloadEntriesPropagatesFieldRejectShape(t *testing.T
 
 func TestMaterializeStackEntryPayloadTracksActiveParentReject(t *testing.T) {
 	arena := newNodeArena(arenaClassFull)
+	arena.breakdownEnabled = true
 	leaf := newCompactFullLeafInArena(arena, 9, true, 13, 21, Point{Row: 2, Column: 3}, Point{Row: 2, Column: 11})
 	entry := newStackEntryCompactFullLeaf(4, leaf)
 
@@ -317,6 +346,7 @@ func TestMaterializeStackEntryPayloadTracksActiveParentReject(t *testing.T) {
 
 func TestMaterializePendingParentRecursionClassifiesNestedPendingPayloadShape(t *testing.T) {
 	arena := newNodeArena(arenaClassFull)
+	arena.breakdownEnabled = true
 	lang := &Language{SymbolMetadata: []SymbolMetadata{
 		{},
 		{Name: "leaf", Visible: true, Named: true},
@@ -360,6 +390,7 @@ func TestMaterializePendingParentRecursionClassifiesNestedPendingPayloadShape(t 
 
 func TestMaterializePendingParentRecursionClassifiesNestedCompactLeafPayloadShape(t *testing.T) {
 	arena := newNodeArena(arenaClassFull)
+	arena.breakdownEnabled = true
 	lang := &Language{SymbolMetadata: []SymbolMetadata{
 		{},
 		{},

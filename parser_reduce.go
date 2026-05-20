@@ -464,7 +464,7 @@ func (p *Parser) tryFastVisibleReduceActionFromGSS(s *glrStack, act ParseAction,
 	if childCount <= 1 || childCount > 8 {
 		return false
 	}
-	if len(p.reduceAliasSequence(act.ProductionID)) != 0 || p.reduceProductionHasFields(act.ProductionID) {
+	if len(p.reduceAliasSequence(act.ProductionID)) != 0 || p.reduceProductionHasEffectiveFields(childCount, act.ProductionID, arena) {
 		return false
 	}
 	if p.forceRawSpanAll || (int(act.Symbol) < len(p.forceRawSpanTable) && p.forceRawSpanTable[act.Symbol]) {
@@ -733,7 +733,7 @@ func (p *Parser) tryFastVisibleReduceActionFromGSSTransientParents(s *glrStack, 
 	if childCount <= 1 || childCount > 8 {
 		return false
 	}
-	if len(p.reduceAliasSequence(act.ProductionID)) != 0 || p.reduceProductionHasFields(act.ProductionID) {
+	if len(p.reduceAliasSequence(act.ProductionID)) != 0 || p.reduceProductionHasEffectiveFields(childCount, act.ProductionID, arena) {
 		return false
 	}
 	if p.forceRawSpanAll || (int(act.Symbol) < len(p.forceRawSpanTable) && p.forceRawSpanTable[act.Symbol]) {
@@ -1035,9 +1035,11 @@ func materializePendingPayloadEntries(p *Parser, entries []stackEntry, start, en
 	}
 	rejectReason := pendingParentRejectUnknown
 	rejectShape := pendingParentFieldRejectUnknown
+	recordFieldRejectDetails := false
 	if arena != nil {
 		rejectReason = arena.pendingParentLastRejectReason
-		if rejectReason == pendingParentRejectFields {
+		recordFieldRejectDetails = arena.breakdownEnabled && rejectReason == pendingParentRejectFields
+		if recordFieldRejectDetails {
 			rejectShape = arena.pendingParentLastFieldRejectShape
 		}
 	}
@@ -1060,7 +1062,7 @@ func materializePendingPayloadEntries(p *Parser, entries []stackEntry, start, en
 		if stackEntryCompactFullLeaf(entries[i]) == nil && stackEntryPendingParent(entries[i]) == nil {
 			continue
 		}
-		if arena != nil && rejectReason == pendingParentRejectFields {
+		if recordFieldRejectDetails {
 			arena.pendingParentActiveFieldPayloadShape = p.pendingParentFieldRejectPayloadShape(entries[i])
 		}
 		materializeStackEntryPayloadWithParser(p, arena, &entries[i], compactFullLeafMaterializeForParentReduce, pendingParentMaterializeForParentReduce)
@@ -1171,8 +1173,10 @@ func (p *Parser) tryPushPendingNoFieldParent(s *glrStack, act ParseAction, tok T
 		arena.recordPendingParentRejected(pendingParentRejectRawSpan)
 		return false
 	}
-	if p.reduceProductionHasFields(act.ProductionID) {
-		p.recordPendingFieldRejectShape(arena, act, entries, start, reducedEnd)
+	if p.reduceProductionHasEffectiveFields(int(act.ChildCount), act.ProductionID, arena) {
+		if arena != nil && arena.breakdownEnabled {
+			p.recordPendingFieldRejectShape(arena, act, entries, start, reducedEnd)
+		}
 		arena.recordPendingParentRejected(pendingParentRejectFields)
 		return false
 	}
@@ -2188,7 +2192,7 @@ func (p *Parser) buildReduceChildrenWithPath(entries []stackEntry, start, end, c
 	symbolMeta := lang.SymbolMetadata
 
 	aliasSeq := p.reduceAliasSequence(productionID)
-	productionHasFields := p.reduceProductionHasFields(productionID)
+	productionHasFields := p.reduceProductionHasEffectiveFields(childCount, productionID, arena)
 	if len(aliasSeq) == 0 && !productionHasFields {
 		if children, _, _, ok := p.buildReduceChildrenAllVisible(entries, start, end, childCount, nil, nil, nil, symbolMeta, arena); ok {
 			path := reduceChildPathNone
@@ -3341,7 +3345,7 @@ func (p *Parser) collapsibleRawUnarySelfReductionEntry(act ParseAction, tok Toke
 		}
 		return stackEntry{}, false
 	}
-	if p.reduceProductionHasFields(act.ProductionID) || len(p.reduceAliasSequence(act.ProductionID)) != 0 {
+	if p.reduceProductionHasEffectiveFields(int(act.ChildCount), act.ProductionID, arena) || len(p.reduceAliasSequence(act.ProductionID)) != 0 {
 		if diag {
 			arena.collapseRawUnaryMissGrammar++
 		}
@@ -3494,7 +3498,7 @@ func (p *Parser) collapsibleRawUnarySelfReduction(act ParseAction, tok Token, ar
 		}
 		return nil
 	}
-	if p.reduceProductionHasFields(act.ProductionID) || len(p.reduceAliasSequence(act.ProductionID)) != 0 {
+	if p.reduceProductionHasEffectiveFields(int(act.ChildCount), act.ProductionID, arena) || len(p.reduceAliasSequence(act.ProductionID)) != 0 {
 		if diag {
 			arena.collapseRawUnaryMissGrammar++
 		}
@@ -3547,7 +3551,7 @@ func (p *Parser) collapsibleUnarySelfReduction(act ParseAction, tok Token, arena
 		}
 		return nil
 	}
-	if len(fieldIDs) != 0 {
+	if fieldIDSliceHasAny(fieldIDs) {
 		if diag {
 			arena.collapseUnaryMissFielded++
 		}
@@ -3566,7 +3570,7 @@ func (p *Parser) collapsibleUnarySelfReduction(act ParseAction, tok Token, arena
 		}
 		return nil
 	}
-	if p.reduceProductionHasFields(act.ProductionID) || len(p.reduceAliasSequence(act.ProductionID)) != 0 {
+	if p.reduceProductionHasEffectiveFields(int(act.ChildCount), act.ProductionID, arena) || len(p.reduceAliasSequence(act.ProductionID)) != 0 {
 		if diag {
 			arena.collapseUnaryMissGrammar++
 		}
@@ -3790,6 +3794,23 @@ func (p *Parser) reduceProductionHasFields(productionID uint16) bool {
 		return false
 	}
 	return p.reduceHasFields[pid]
+}
+
+func (p *Parser) reduceProductionHasEffectiveFields(childCount int, productionID uint16, arena *nodeArena) bool {
+	if !p.reduceProductionHasFields(productionID) {
+		return false
+	}
+	fieldIDs, _ := p.buildFieldIDs(childCount, productionID, arena)
+	return fieldIDSliceHasAny(fieldIDs)
+}
+
+func fieldIDSliceHasAny(fieldIDs []FieldID) bool {
+	for _, fid := range fieldIDs {
+		if fid != 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func aliasedNodeInArena(arena *nodeArena, lang *Language, n *Node, alias Symbol) *Node {
