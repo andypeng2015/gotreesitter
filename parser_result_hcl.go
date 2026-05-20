@@ -1,22 +1,27 @@
 package gotreesitter
 
 func normalizeHCLConfigFileRoot(root *Node, lang *Language) {
-	if root == nil || lang == nil || lang.Name != "hcl" || root.Type(lang) != "config_file" || len(root.children) == 0 {
+	childCount := resultChildCount(root)
+	if root == nil || lang == nil || lang.Name != "hcl" || root.Type(lang) != "config_file" || childCount == 0 {
 		return
 	}
-	filtered := make([]*Node, 0, len(root.children))
 	filteredChanged := false
-	for _, child := range root.children {
-		if child == nil {
-			continue
-		}
-		if child.Type(lang) == "_whitespace" {
+	for i := 0; i < childCount; i++ {
+		child := resultChildAt(root, i)
+		if child != nil && child.Type(lang) == "_whitespace" {
 			filteredChanged = true
-			continue
+			break
 		}
-		filtered = append(filtered, child)
 	}
 	if filteredChanged {
+		children := resultDenseChildrenForMutation(root)
+		filtered := make([]*Node, 0, len(children))
+		for _, child := range children {
+			if child == nil || child.Type(lang) == "_whitespace" {
+				continue
+			}
+			filtered = append(filtered, child)
+		}
 		if root.ownerArena != nil {
 			buf := root.ownerArena.allocNodeSlice(len(filtered))
 			copy(buf, filtered)
@@ -26,7 +31,8 @@ func normalizeHCLConfigFileRoot(root *Node, lang *Language) {
 		root.fieldIDs = nil
 		root.fieldSources = nil
 	}
-	for _, child := range root.children {
+	for i := 0; i < resultChildCount(root); i++ {
+		child := resultChildAt(root, i)
 		if child == nil || child.Type(lang) != "body" {
 			continue
 		}
@@ -35,10 +41,20 @@ func normalizeHCLConfigFileRoot(root *Node, lang *Language) {
 }
 
 func snapHCLBodyBounds(body *Node) {
-	if body == nil || len(body.children) == 0 {
+	if body == nil || resultChildCount(body) == 0 {
 		return
 	}
-	first, last := firstAndLastNonNilChild(body.children)
+	var first, last *Node
+	for i := 0; i < resultChildCount(body); i++ {
+		child := resultChildAt(body, i)
+		if child == nil {
+			continue
+		}
+		if first == nil {
+			first = child
+		}
+		last = child
+	}
 	if first == nil || last == nil {
 		return
 	}

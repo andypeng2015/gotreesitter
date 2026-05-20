@@ -14,8 +14,9 @@ func normalizeErlangSourceFileForms(root *Node, lang *Language) {
 	if formsOnlyID == 0 || !erlangSourceFileLooksLikeForms(root, lang) {
 		return
 	}
-	ensureNodeFieldStorage(root, len(root.children))
-	for i, child := range root.children {
+	children := resultDenseChildrenForMutation(root)
+	ensureNodeFieldStorage(root, len(children))
+	for i, child := range children {
 		if child == nil || child.IsExtra() {
 			continue
 		}
@@ -27,7 +28,8 @@ func normalizeErlangSourceFileForms(root *Node, lang *Language) {
 
 func erlangSourceFileLooksLikeForms(root *Node, lang *Language) bool {
 	sawForm := false
-	for _, child := range root.children {
+	for i := 0; i < resultChildCount(root); i++ {
+		child := resultChildAt(root, i)
 		if child == nil || child.IsExtra() {
 			continue
 		}
@@ -78,11 +80,12 @@ func erlangIsTopLevelFormType(typ string) bool {
 }
 
 func normalizeErlangTopLevelFormBounds(node *Node) {
-	if node == nil || len(node.children) == 0 {
+	if node == nil || resultChildCount(node) == 0 {
 		return
 	}
 	var first, last *Node
-	for _, child := range node.children {
+	for i := 0; i < resultChildCount(node); i++ {
+		child := resultChildAt(node, i)
 		if child == nil || child.IsExtra() {
 			continue
 		}

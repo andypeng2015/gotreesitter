@@ -9,10 +9,10 @@ func normalizeCSharpQuotedStringContentIdentifiers(root *Node, source []byte, la
 		if n == nil {
 			return
 		}
-		for _, child := range n.children {
-			walk(child)
+		for i := 0; i < resultChildCount(n); i++ {
+			walk(resultChildAt(n, i))
 		}
-		if n.Type(lang) != "identifier" || len(n.children) != 0 || n.startByte == 0 || int(n.endByte) >= len(source) {
+		if n.Type(lang) != "identifier" || resultChildCount(n) != 0 || n.startByte == 0 || int(n.endByte) >= len(source) {
 			return
 		}
 		if source[n.startByte-1] != '"' || source[n.endByte] != '"' {

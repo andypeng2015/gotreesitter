@@ -99,8 +99,11 @@ func htmlRecoveredStartTag(node *Node, lang *Language) *Node {
 	if node.Type(lang) == "start_tag" {
 		return node
 	}
-	if node.Type(lang) == "ERROR" && len(node.children) == 1 && node.children[0] != nil && node.children[0].Type(lang) == "start_tag" {
-		return node.children[0]
+	if node.Type(lang) == "ERROR" && resultChildCount(node) == 1 {
+		child := resultChildAt(node, 0)
+		if child != nil && child.Type(lang) == "start_tag" {
+			return child
+		}
 	}
 	return nil
 }
@@ -110,7 +113,8 @@ func htmlExtendOpenElementChain(node *Node, endByte uint32, endPoint Point, lang
 		return
 	}
 	hasEndTag := false
-	for _, child := range node.children {
+	for i := 0; i < resultChildCount(node); i++ {
+		child := resultChildAt(node, i)
 		if child == nil {
 			continue
 		}
@@ -129,10 +133,11 @@ func htmlExtendLeadingElementChain(node *Node, endByte uint32, endPoint Point, l
 	for cur := node; cur != nil && lang != nil && cur.Type(lang) == "element"; {
 		cur.endByte = endByte
 		cur.endPoint = endPoint
-		if len(cur.children) < 2 || cur.children[1] == nil || cur.children[1].Type(lang) != "element" {
+		child := resultChildAt(cur, 1)
+		if resultChildCount(cur) < 2 || child == nil || child.Type(lang) != "element" {
 			return
 		}
-		cur = cur.children[1]
+		cur = child
 	}
 }
 
@@ -145,19 +150,20 @@ func normalizeHTMLRecoveredNestedCustomTagRanges(root *Node, source []byte, lang
 		if node == nil {
 			return
 		}
-		for _, child := range node.children {
-			walk(child)
+		for i := 0; i < resultChildCount(node); i++ {
+			walk(resultChildAt(node, i))
 		}
-		if node.Type(lang) != "element" || len(node.children) < 2 {
+		childCount := resultChildCount(node)
+		if node.Type(lang) != "element" || childCount < 2 {
 			return
 		}
-		for i := 0; i+1 < len(node.children); i++ {
-			left := node.children[i]
-			right := node.children[i+1]
-			if left == nil || right == nil || left.Type(lang) != "element" || right.Type(lang) != "end_tag" || len(right.children) == 0 {
+		for i := 0; i+1 < childCount; i++ {
+			left := resultChildAt(node, i)
+			right := resultChildAt(node, i+1)
+			if left == nil || right == nil || left.Type(lang) != "element" || right.Type(lang) != "end_tag" || resultChildCount(right) == 0 {
 				continue
 			}
-			closeTok := right.children[0]
+			closeTok := resultChildAt(right, 0)
 			if closeTok == nil || closeTok.Type(lang) != "</" || left.endByte >= closeTok.startByte || closeTok.startByte > uint32(len(source)) {
 				continue
 			}
