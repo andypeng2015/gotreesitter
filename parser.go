@@ -1034,88 +1034,115 @@ func (p *Parser) tryRecoverTrailingEOFSuffix(s *glrStack, tok Token, nodeCount *
 		if firstDrop == 0 {
 			continue
 		}
-		cuts := []int{firstDrop}
-		if !node.isNamed() {
-			cut := firstDrop + 1
-			for cut < len(entries) {
-				trailing := stackEntryNode(entries[cut])
-				if trailing == nil || !trailing.isExtra() {
-					break
-				}
-				cut++
-			}
-			if cut > firstDrop && cut <= len(entries) {
-				cuts = append(cuts, cut)
-			}
-		}
-		for _, cut := range cuts {
+		for _, cut := range trailingEOFSuffixCuts(entries, firstDrop, node) {
 			prefix := s.cloneWithScratch(gssScratch)
 			if !prefix.truncate(cut) {
 				continue
 			}
-			prefixEOF := tok
-			switch {
-			case cut > 0 && stackEntryNode(entries[cut-1]) != nil:
-				last := stackEntryNode(entries[cut-1])
-				prefixEOF.StartByte = last.endByte
-				prefixEOF.EndByte = last.endByte
-				prefixEOF.StartPoint = last.endPoint
-				prefixEOF.EndPoint = last.endPoint
-			default:
-				prefixEOF.StartByte = node.startByte
-				prefixEOF.EndByte = node.startByte
-				prefixEOF.StartPoint = node.startPoint
-				prefixEOF.EndPoint = node.startPoint
-			}
-			insertedMissing := false
-			if !p.tryAdvanceEOFOnSingleStack(&prefix, prefixEOF, nodeCount, arena, entryScratch, gssScratch, tmpEntries) {
-				if !p.tryInsertMissingSingleShiftAtEOF(&prefix, prefixEOF, nodeCount, arena, entryScratch, gssScratch) {
-					continue
-				}
-				insertedMissing = true
-				if !p.tryAdvanceEOFOnSingleStack(&prefix, prefixEOF, nodeCount, arena, entryScratch, gssScratch, tmpEntries) {
-					continue
-				}
+			prefixEOF := eofTokenForTrailingCut(tok, entries, cut, node)
+			insertedMissing, advanced := p.advanceTrailingEOFPrefix(&prefix, prefixEOF, nodeCount, arena, entryScratch, gssScratch, tmpEntries)
+			if !advanced {
+				continue
 			}
 
-			nodes := nodesFromStack(prefix)
-			if p.hasRootSymbol && len(nodes) == 1 && nodes[0] != nil && nodes[0].symbol == p.rootSymbol {
-				nodes = append([]*Node(nil), nodes[0].children...)
-			}
+			nodes := p.trailingEOFNodesFromPrefix(prefix)
 			if insertedMissing || cut > firstDrop {
 				nodes = trimTrailingRecoveryEOFErrors(nodes, tok.StartByte)
 				for _, n := range nodes {
 					trimRecoveryWhitespaceTail(n, source)
 				}
 			}
-			recovered := false
-			for i := cut; i < len(entries); i++ {
-				trailing := stackEntryNode(entries[i])
-				if trailing == nil {
-					continue
-				}
-				if trailing.symbol == errorSymbol && trailing.startByte == tok.StartByte && trailing.endByte == tok.EndByte {
-					continue
-				}
-				if !recovered && !trailing.isExtra() {
-					errNode := newParentNodeInArena(arena, errorSymbol, true, []*Node{trailing}, nil, 0)
-					errNode.setHasError(true)
-					errNode.setExtra(true)
-					nodes = append(nodes, errNode)
-					recovered = true
-					if nodeCount != nil {
-						*nodeCount = *nodeCount + 1
-					}
-					continue
-				}
-				nodes = append(nodes, trailing)
-			}
+			nodes, recovered := appendTrailingEOFRecoveryNodes(nodes, entries, cut, tok, arena, nodeCount)
 			if recovered || insertedMissing || cut > firstDrop {
 				return nodes, true
 			}
 		}
 	}
 	return nil, false
+}
+
+func trailingEOFSuffixCuts(entries []stackEntry, firstDrop int, node *Node) []int {
+	cuts := []int{firstDrop}
+	if node == nil || node.isNamed() {
+		return cuts
+	}
+	cut := firstDrop + 1
+	for cut < len(entries) {
+		trailing := stackEntryNode(entries[cut])
+		if trailing == nil || !trailing.isExtra() {
+			break
+		}
+		cut++
+	}
+	if cut > firstDrop && cut <= len(entries) {
+		cuts = append(cuts, cut)
+	}
+	return cuts
+}
+
+func eofTokenForTrailingCut(tok Token, entries []stackEntry, cut int, fallback *Node) Token {
+	prefixEOF := tok
+	if cut > 0 {
+		if last := stackEntryNode(entries[cut-1]); last != nil {
+			prefixEOF.StartByte = last.endByte
+			prefixEOF.EndByte = last.endByte
+			prefixEOF.StartPoint = last.endPoint
+			prefixEOF.EndPoint = last.endPoint
+			return prefixEOF
+		}
+	}
+	prefixEOF.StartByte = fallback.startByte
+	prefixEOF.EndByte = fallback.startByte
+	prefixEOF.StartPoint = fallback.startPoint
+	prefixEOF.EndPoint = fallback.startPoint
+	return prefixEOF
+}
+
+func (p *Parser) advanceTrailingEOFPrefix(prefix *glrStack, prefixEOF Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry) (bool, bool) {
+	if p.tryAdvanceEOFOnSingleStack(prefix, prefixEOF, nodeCount, arena, entryScratch, gssScratch, tmpEntries) {
+		return false, true
+	}
+	if !p.tryInsertMissingSingleShiftAtEOF(prefix, prefixEOF, nodeCount, arena, entryScratch, gssScratch) {
+		return false, false
+	}
+	if !p.tryAdvanceEOFOnSingleStack(prefix, prefixEOF, nodeCount, arena, entryScratch, gssScratch, tmpEntries) {
+		return false, false
+	}
+	return true, true
+}
+
+func (p *Parser) trailingEOFNodesFromPrefix(prefix glrStack) []*Node {
+	nodes := nodesFromStack(prefix)
+	if p.hasRootSymbol && len(nodes) == 1 && nodes[0] != nil && nodes[0].symbol == p.rootSymbol {
+		return append([]*Node(nil), nodes[0].children...)
+	}
+	return nodes
+}
+
+func appendTrailingEOFRecoveryNodes(nodes []*Node, entries []stackEntry, cut int, tok Token, arena *nodeArena, nodeCount *int) ([]*Node, bool) {
+	recovered := false
+	for i := cut; i < len(entries); i++ {
+		trailing := stackEntryNode(entries[i])
+		if trailing == nil {
+			continue
+		}
+		if trailing.symbol == errorSymbol && trailing.startByte == tok.StartByte && trailing.endByte == tok.EndByte {
+			continue
+		}
+		if !recovered && !trailing.isExtra() {
+			errNode := newParentNodeInArena(arena, errorSymbol, true, []*Node{trailing}, nil, 0)
+			errNode.setHasError(true)
+			errNode.setExtra(true)
+			nodes = append(nodes, errNode)
+			recovered = true
+			if nodeCount != nil {
+				*nodeCount = *nodeCount + 1
+			}
+			continue
+		}
+		nodes = append(nodes, trailing)
+	}
+	return nodes, recovered
 }
 
 func (p *Parser) parseIncrementalInternal(source []byte, oldTree *Tree, ts TokenSource, timing *incrementalParseTiming) *Tree {
