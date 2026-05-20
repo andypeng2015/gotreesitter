@@ -3841,6 +3841,9 @@ func (p *Parser) collapseUnaryLeafRule(act ParseAction, childSym Symbol) collaps
 		if !p.canCollapseNamedLeafWrapper(act.Symbol, childSym) {
 			return collapseUnaryRuleNone
 		}
+		if p.shouldPreserveVisibleUnaryTokenWrapper(act.Symbol) {
+			return collapseUnaryRuleNone
+		}
 		if !p.isSingleTokenWrapperSymbol(act.Symbol) && !p.sameSymbolName(act.Symbol, childSym) {
 			return collapseUnaryRuleNone
 		}
@@ -3985,6 +3988,9 @@ func (p *Parser) collapseUnaryChildForReductionWithRule(act ParseAction, arena *
 		if child.ChildCount() != 0 || !p.canCollapseNamedLeafWrapper(act.Symbol, child.symbol) {
 			return nil, collapseUnaryRuleNone
 		}
+		if p.shouldPreserveVisibleUnaryTokenWrapper(act.Symbol) {
+			return nil, collapseUnaryRuleNone
+		}
 		if !p.isSingleTokenWrapperSymbol(act.Symbol) && !p.sameSymbolName(act.Symbol, child.symbol) {
 			return nil, collapseUnaryRuleNone
 		}
@@ -4006,6 +4012,21 @@ func (p *Parser) canCollapseInvisibleUnaryWrapper(parentSym Symbol, child *Node)
 		return false
 	}
 	return true
+}
+
+func (p *Parser) shouldPreserveVisibleUnaryTokenWrapper(parentSym Symbol) bool {
+	if p == nil || p.language == nil || p.language.Name != "java" {
+		return false
+	}
+	if int(parentSym) < 0 || int(parentSym) >= len(p.language.SymbolNames) {
+		return false
+	}
+	switch p.language.SymbolNames[parentSym] {
+	case "integral_type", "floating_point_type":
+		return true
+	default:
+		return false
+	}
 }
 
 func (p *Parser) isVisibleSymbol(sym Symbol) bool {
