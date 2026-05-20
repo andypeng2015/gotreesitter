@@ -121,13 +121,53 @@ Useful narrow-run knobs:
 - `GTS_REAL_CORPUS_BENCH_SKIP_MISMATCH=1` to benchmark only parity-clean files.
 - `GTS_REAL_CORPUS_BENCH_ALLOW_MISMATCH=1` for timing-only diagnosis when the
   selected corpus exposes a known structural mismatch.
+- `GOT_PARSE_PHASE_TIMING=1` to enable result-selection/tree-build/finalization
+  phase timing for full parses beyond the default large-Python diagnostic lane.
 
 The gotreesitter incremental lanes also report parser attribution counters:
 `edit_ns/op`, `parse_wall_ns/op`, `reuse_ns/op`, `reparse_ns/op`,
 `unattributed_ns/op`, reused subtree/byte counts, reuse rejection counts, GLR
-stack iteration counts, recovery counts, and survivor-node counts. The no-edit
-lane reports zero parser work when the unchanged-tree fast path returns the
-previous tree.
+stack iteration counts, recovery counts, survivor-node counts, and result
+phase buckets such as `result_tree_build_ns/op`,
+`result_compatibility_ns/op`, `result_parent_link_ns/op`, and
+`normalization_ns/op`. The no-edit lane reports zero parser work when the
+unchanged-tree fast path returns the previous tree.
+
+For cross-language optimization sweeps, use the Docker matrix runner. It runs
+one language per container, enables phase timing by default, keeps the raw logs,
+and writes a ranked JSON/Markdown report with Go/C ratios and top attribution
+buckets:
+
+```sh
+bash cgo_harness/docker/run_real_corpus_bench_matrix.sh \
+  --langs go,python,rust,java,javascript,typescript,c \
+  --count 5 \
+  --benchtime 750ms
+```
+
+Useful matrix diagnosis presets:
+
+```sh
+# Time only parity-clean files when a language has known corpus mismatches.
+bash cgo_harness/docker/run_real_corpus_bench_matrix.sh \
+  --langs rust,javascript \
+  --skip-mismatch
+
+# Timing-only probe for a bounded C-family lane.
+bash cgo_harness/docker/run_real_corpus_bench_matrix.sh \
+  --langs c \
+  --allow-mismatch \
+  --max-file-bytes 20000
+```
+
+To rebuild a report from existing logs:
+
+```sh
+cd cgo_harness
+go run ./cmd/real_corpus_bench_report \
+  -input ../harness_out/real_corpus_bench_matrix/<run>/docker \
+  -out-md ../harness_out/real_corpus_bench_matrix/<run>/REAL_CORPUS_BENCH_REPORT.md
+```
 
 ## Run Parity Tests In Docker Sandbox
 

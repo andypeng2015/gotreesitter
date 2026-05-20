@@ -112,109 +112,133 @@ const (
 // ReuseCursorNanos includes reuse-cursor setup and subtree-candidate checks.
 // ReparseNanos includes the remainder of incremental parsing/rebuild work.
 type IncrementalParseProfile struct {
-	ReuseCursorNanos                   int64
-	ReparseNanos                       int64
-	ReusedSubtrees                     uint64
-	ReusedBytes                        uint64
-	NewNodesAllocated                  uint64
-	ReuseUnsupported                   bool
-	ReuseUnsupportedReason             string
-	ReuseRejectDirty                   uint64
-	ReuseRejectAncestorDirtyBeforeEdit uint64
-	ReuseRejectHasError                uint64
-	ReuseRejectInvalidSpan             uint64
-	ReuseRejectOutOfBounds             uint64
-	ReuseRejectRootNonLeafChanged      uint64
-	ReuseRejectLargeNonLeaf            uint64
-	RecoverSearches                    uint64
-	RecoverStateChecks                 uint64
-	RecoverStateSkips                  uint64
-	RecoverSymbolSkips                 uint64
-	RecoverLookups                     uint64
-	RecoverHits                        uint64
-	MaxStacksSeen                      int
-	EntryScratchPeak                   uint64
-	StopReason                         ParseStopReason
-	TokensConsumed                     uint64
-	LastTokenEndByte                   uint32
-	ExpectedEOFByte                    uint32
-	ArenaBytesAllocated                int64
-	ScratchBytesAllocated              int64
-	EntryScratchBytesAllocated         int64
-	GSSBytesAllocated                  int64
-	SingleStackIterations              int
-	MultiStackIterations               int
-	SingleStackTokens                  uint64
-	MultiStackTokens                   uint64
-	SingleStackGSSNodes                uint64
-	MultiStackGSSNodes                 uint64
-	GSSNodesAllocated                  uint64
-	GSSNodesRetained                   uint64
-	GSSNodesDroppedSameToken           uint64
-	ParentNodesAllocated               uint64
-	ParentNodesRetained                uint64
-	ParentNodesDroppedSameToken        uint64
-	LeafNodesAllocated                 uint64
-	LeafNodesRetained                  uint64
-	LeafNodesDroppedSameToken          uint64
-	MergeStacksIn                      uint64
-	MergeStacksOut                     uint64
-	MergeSlotsUsed                     uint64
-	GlobalCullStacksIn                 uint64
-	GlobalCullStacksOut                uint64
+	ReuseCursorNanos                    int64
+	ReparseNanos                        int64
+	ReusedSubtrees                      uint64
+	ReusedBytes                         uint64
+	NewNodesAllocated                   uint64
+	ReuseUnsupported                    bool
+	ReuseUnsupportedReason              string
+	ReuseRejectDirty                    uint64
+	ReuseRejectAncestorDirtyBeforeEdit  uint64
+	ReuseRejectHasError                 uint64
+	ReuseRejectInvalidSpan              uint64
+	ReuseRejectOutOfBounds              uint64
+	ReuseRejectRootNonLeafChanged       uint64
+	ReuseRejectLargeNonLeaf             uint64
+	RecoverSearches                     uint64
+	RecoverStateChecks                  uint64
+	RecoverStateSkips                   uint64
+	RecoverSymbolSkips                  uint64
+	RecoverLookups                      uint64
+	RecoverHits                         uint64
+	MaxStacksSeen                       int
+	EntryScratchPeak                    uint64
+	StopReason                          ParseStopReason
+	TokensConsumed                      uint64
+	LastTokenEndByte                    uint32
+	ExpectedEOFByte                     uint32
+	ArenaBytesAllocated                 int64
+	ScratchBytesAllocated               int64
+	EntryScratchBytesAllocated          int64
+	GSSBytesAllocated                   int64
+	SingleStackIterations               int
+	MultiStackIterations                int
+	SingleStackTokens                   uint64
+	MultiStackTokens                    uint64
+	SingleStackGSSNodes                 uint64
+	MultiStackGSSNodes                  uint64
+	GSSNodesAllocated                   uint64
+	GSSNodesRetained                    uint64
+	GSSNodesDroppedSameToken            uint64
+	ParentNodesAllocated                uint64
+	ParentNodesRetained                 uint64
+	ParentNodesDroppedSameToken         uint64
+	LeafNodesAllocated                  uint64
+	LeafNodesRetained                   uint64
+	LeafNodesDroppedSameToken           uint64
+	MergeStacksIn                       uint64
+	MergeStacksOut                      uint64
+	MergeSlotsUsed                      uint64
+	GlobalCullStacksIn                  uint64
+	GlobalCullStacksOut                 uint64
+	ResultSelectionNanos                int64
+	TransientParentMaterializationNanos int64
+	ResultTreeBuildNanos                int64
+	TransientChildMaterializationNanos  int64
+	ResultPythonKeywordRepairNanos      int64
+	ResultPythonRootRepairNanos         int64
+	ResultFinalizeRootNanos             int64
+	ResultExtendTrailingNanos           int64
+	ResultNormalizeRootStartNanos       int64
+	ResultCompatibilityNanos            int64
+	ResultParentLinkNanos               int64
+	NormalizationNanos                  int64
 }
 
 type incrementalParseTiming struct {
-	totalNanos                         int64
-	reuseNanos                         int64
-	reusedSubtrees                     uint64
-	reusedBytes                        uint64
-	newNodes                           uint64
-	reuseUnsupported                   bool
-	reuseUnsupportedReason             string
-	reuseRejectDirty                   uint64
-	reuseRejectAncestorDirtyBeforeEdit uint64
-	reuseRejectHasError                uint64
-	reuseRejectInvalidSpan             uint64
-	reuseRejectOutOfBounds             uint64
-	reuseRejectRootNonLeafChanged      uint64
-	reuseRejectLargeNonLeaf            uint64
-	recoverSearches                    uint64
-	recoverStateChecks                 uint64
-	recoverStateSkips                  uint64
-	recoverSymbolSkips                 uint64
-	recoverLookups                     uint64
-	recoverHits                        uint64
-	maxStacksSeen                      int
-	entryScratchPeak                   uint64
-	stopReason                         ParseStopReason
-	tokensConsumed                     uint64
-	lastTokenEndByte                   uint32
-	expectedEOFByte                    uint32
-	arenaBytesAllocated                int64
-	scratchBytesAllocated              int64
-	entryScratchBytesAllocated         uint64
-	gssBytesAllocated                  uint64
-	singleStackIterations              int
-	multiStackIterations               int
-	singleStackTokens                  uint64
-	multiStackTokens                   uint64
-	singleStackGSSNodes                uint64
-	multiStackGSSNodes                 uint64
-	gssNodesAllocated                  uint64
-	gssNodesRetained                   uint64
-	gssNodesDroppedSameToken           uint64
-	parentNodesAllocated               uint64
-	parentNodesRetained                uint64
-	parentNodesDroppedSameToken        uint64
-	leafNodesAllocated                 uint64
-	leafNodesRetained                  uint64
-	leafNodesDroppedSameToken          uint64
-	mergeStacksIn                      uint64
-	mergeStacksOut                     uint64
-	mergeSlotsUsed                     uint64
-	globalCullStacksIn                 uint64
-	globalCullStacksOut                uint64
+	totalNanos                          int64
+	reuseNanos                          int64
+	reusedSubtrees                      uint64
+	reusedBytes                         uint64
+	newNodes                            uint64
+	reuseUnsupported                    bool
+	reuseUnsupportedReason              string
+	reuseRejectDirty                    uint64
+	reuseRejectAncestorDirtyBeforeEdit  uint64
+	reuseRejectHasError                 uint64
+	reuseRejectInvalidSpan              uint64
+	reuseRejectOutOfBounds              uint64
+	reuseRejectRootNonLeafChanged       uint64
+	reuseRejectLargeNonLeaf             uint64
+	recoverSearches                     uint64
+	recoverStateChecks                  uint64
+	recoverStateSkips                   uint64
+	recoverSymbolSkips                  uint64
+	recoverLookups                      uint64
+	recoverHits                         uint64
+	maxStacksSeen                       int
+	entryScratchPeak                    uint64
+	stopReason                          ParseStopReason
+	tokensConsumed                      uint64
+	lastTokenEndByte                    uint32
+	expectedEOFByte                     uint32
+	arenaBytesAllocated                 int64
+	scratchBytesAllocated               int64
+	entryScratchBytesAllocated          uint64
+	gssBytesAllocated                   uint64
+	singleStackIterations               int
+	multiStackIterations                int
+	singleStackTokens                   uint64
+	multiStackTokens                    uint64
+	singleStackGSSNodes                 uint64
+	multiStackGSSNodes                  uint64
+	gssNodesAllocated                   uint64
+	gssNodesRetained                    uint64
+	gssNodesDroppedSameToken            uint64
+	parentNodesAllocated                uint64
+	parentNodesRetained                 uint64
+	parentNodesDroppedSameToken         uint64
+	leafNodesAllocated                  uint64
+	leafNodesRetained                   uint64
+	leafNodesDroppedSameToken           uint64
+	mergeStacksIn                       uint64
+	mergeStacksOut                      uint64
+	mergeSlotsUsed                      uint64
+	globalCullStacksIn                  uint64
+	globalCullStacksOut                 uint64
+	resultSelectionNanos                int64
+	transientParentMaterializationNanos int64
+	resultTreeBuildNanos                int64
+	transientChildMaterializationNanos  int64
+	resultPythonKeywordRepairNanos      int64
+	resultPythonRootRepairNanos         int64
+	resultFinalizeRootNanos             int64
+	resultExtendTrailingNanos           int64
+	resultNormalizeRootStartNanos       int64
+	resultCompatibilityNanos            int64
+	resultParentLinkNanos               int64
+	normalizationNanos                  int64
 }
 
 type parseReuseState struct {
@@ -1464,7 +1488,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	}
 	var materializationTiming parseMaterializationTiming
 	var materializationTimingRef *parseMaterializationTiming
-	if parseShouldCaptureFullMaterializationTiming(p, source, reuse, oldTree, arenaClass) {
+	if timing != nil || parseShouldCaptureMaterializationTiming(p, source, reuse, oldTree, arenaClass) {
 		materializationTimingRef = &materializationTiming
 	}
 	prevMaterializationTiming := p.materializationTiming
@@ -1792,6 +1816,18 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			timing.mergeSlotsUsed = parseRuntime.MergeSlotsUsed
 			timing.globalCullStacksIn = parseRuntime.GlobalCullStacksIn
 			timing.globalCullStacksOut = parseRuntime.GlobalCullStacksOut
+			timing.resultSelectionNanos = parseRuntime.ResultSelectionNanos
+			timing.transientParentMaterializationNanos = parseRuntime.TransientParentMaterializationNanos
+			timing.resultTreeBuildNanos = parseRuntime.ResultTreeBuildNanos
+			timing.transientChildMaterializationNanos = parseRuntime.TransientChildMaterializationNanos
+			timing.resultPythonKeywordRepairNanos = parseRuntime.ResultPythonKeywordRepairNanos
+			timing.resultPythonRootRepairNanos = parseRuntime.ResultPythonRootRepairNanos
+			timing.resultFinalizeRootNanos = parseRuntime.ResultFinalizeRootNanos
+			timing.resultExtendTrailingNanos = parseRuntime.ResultExtendTrailingNanos
+			timing.resultNormalizeRootStartNanos = parseRuntime.ResultNormalizeRootStartNanos
+			timing.resultCompatibilityNanos = parseRuntime.ResultCompatibilityNanos
+			timing.resultParentLinkNanos = parseRuntime.ResultParentLinkNanos
+			timing.normalizationNanos = parseRuntime.NormalizationNanos
 		}
 		if p.logger != nil {
 			p.logf(

@@ -390,6 +390,16 @@ func parseShouldCaptureFullMaterializationTiming(p *Parser, source []byte, reuse
 		len(source) >= 256*1024
 }
 
+func parseShouldCaptureMaterializationTiming(p *Parser, source []byte, reuse *reuseCursor, oldTree *Tree, arenaClass arenaClass) bool {
+	if p == nil || p.noTreeBenchmarkOnly {
+		return false
+	}
+	if parsePhaseTimingEnabled() {
+		return true
+	}
+	return parseShouldCaptureFullMaterializationTiming(p, source, reuse, oldTree, arenaClass)
+}
+
 func parseShouldUseTransientReduceScratchNoAlias(sourceLen int) bool {
 	return sourceLen >= 256*1024
 }

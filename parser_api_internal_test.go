@@ -1018,3 +1018,21 @@ func TestParseShouldCaptureFullMaterializationTimingIsNarrow(t *testing.T) {
 		t.Fatal("parseShouldCaptureFullMaterializationTiming = true for non-Python language")
 	}
 }
+
+func TestParseShouldCaptureMaterializationTimingEnv(t *testing.T) {
+	ResetParseEnvConfigCacheForTests()
+	defer ResetParseEnvConfigCacheForTests()
+	t.Setenv("GOT_PARSE_PHASE_TIMING", "1")
+	parser := &Parser{language: &Language{Name: "go"}}
+	source := []byte("package p\n")
+	if !parseShouldCaptureMaterializationTiming(parser, source, nil, nil, arenaClassFull) {
+		t.Fatal("parseShouldCaptureMaterializationTiming = false, want env-enabled full timing")
+	}
+	if !parseShouldCaptureMaterializationTiming(parser, source, &reuseCursor{}, nil, arenaClassIncremental) {
+		t.Fatal("parseShouldCaptureMaterializationTiming = false, want env-enabled incremental timing")
+	}
+	parser.noTreeBenchmarkOnly = true
+	if parseShouldCaptureMaterializationTiming(parser, source, nil, nil, arenaClassFull) {
+		t.Fatal("parseShouldCaptureMaterializationTiming = true for no-tree benchmark mode")
+	}
+}

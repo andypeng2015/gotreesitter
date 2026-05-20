@@ -51,6 +51,18 @@ type realCorpusRuntimeTotals struct {
 	finalChildRefSingleAccesses       uint64
 	finalChildRefSingleMaterialized   uint64
 	normalizationRewrites             uint64
+	resultSelectionNanos              int64
+	transientParentMaterializeNanos   int64
+	resultTreeBuildNanos              int64
+	transientChildMaterializeNanos    int64
+	resultPythonKeywordRepairNanos    int64
+	resultPythonRootRepairNanos       int64
+	resultFinalizeRootNanos           int64
+	resultExtendTrailingNanos         int64
+	resultNormalizeRootStartNanos     int64
+	resultCompatibilityNanos          int64
+	resultParentLinkNanos             int64
+	normalizationNanos                int64
 }
 
 type realCorpusIncrementalProfileTotals struct {
@@ -98,6 +110,18 @@ type realCorpusIncrementalProfileTotals struct {
 	mergeSlotsUsed                     uint64
 	globalCullStacksIn                 uint64
 	globalCullStacksOut                uint64
+	resultSelectionNanos               int64
+	transientParentMaterializeNanos    int64
+	resultTreeBuildNanos               int64
+	transientChildMaterializeNanos     int64
+	resultPythonKeywordRepairNanos     int64
+	resultPythonRootRepairNanos        int64
+	resultFinalizeRootNanos            int64
+	resultExtendTrailingNanos          int64
+	resultNormalizeRootStartNanos      int64
+	resultCompatibilityNanos           int64
+	resultParentLinkNanos              int64
+	normalizationNanos                 int64
 }
 
 type realCorpusGoIncrementalState struct {
@@ -969,6 +993,18 @@ func (t *realCorpusRuntimeTotals) add(rt gotreesitter.ParseRuntime) {
 	t.finalChildRefSingleAccesses += rt.FinalChildRefSingleChildAccesses
 	t.finalChildRefSingleMaterialized += rt.FinalChildRefSingleChildMaterializedChildren
 	t.normalizationRewrites += rt.NormalizationNodesRewritten
+	t.resultSelectionNanos += rt.ResultSelectionNanos
+	t.transientParentMaterializeNanos += rt.TransientParentMaterializationNanos
+	t.resultTreeBuildNanos += rt.ResultTreeBuildNanos
+	t.transientChildMaterializeNanos += rt.TransientChildMaterializationNanos
+	t.resultPythonKeywordRepairNanos += rt.ResultPythonKeywordRepairNanos
+	t.resultPythonRootRepairNanos += rt.ResultPythonRootRepairNanos
+	t.resultFinalizeRootNanos += rt.ResultFinalizeRootNanos
+	t.resultExtendTrailingNanos += rt.ResultExtendTrailingNanos
+	t.resultNormalizeRootStartNanos += rt.ResultNormalizeRootStartNanos
+	t.resultCompatibilityNanos += rt.ResultCompatibilityNanos
+	t.resultParentLinkNanos += rt.ResultParentLinkNanos
+	t.normalizationNanos += rt.NormalizationNanos
 }
 
 func (t *realCorpusIncrementalProfileTotals) addEdit(d time.Duration) {
@@ -1028,6 +1064,18 @@ func (t *realCorpusIncrementalProfileTotals) add(profile gotreesitter.Incrementa
 	t.mergeSlotsUsed += profile.MergeSlotsUsed
 	t.globalCullStacksIn += profile.GlobalCullStacksIn
 	t.globalCullStacksOut += profile.GlobalCullStacksOut
+	t.resultSelectionNanos += profile.ResultSelectionNanos
+	t.transientParentMaterializeNanos += profile.TransientParentMaterializationNanos
+	t.resultTreeBuildNanos += profile.ResultTreeBuildNanos
+	t.transientChildMaterializeNanos += profile.TransientChildMaterializationNanos
+	t.resultPythonKeywordRepairNanos += profile.ResultPythonKeywordRepairNanos
+	t.resultPythonRootRepairNanos += profile.ResultPythonRootRepairNanos
+	t.resultFinalizeRootNanos += profile.ResultFinalizeRootNanos
+	t.resultExtendTrailingNanos += profile.ResultExtendTrailingNanos
+	t.resultNormalizeRootStartNanos += profile.ResultNormalizeRootStartNanos
+	t.resultCompatibilityNanos += profile.ResultCompatibilityNanos
+	t.resultParentLinkNanos += profile.ResultParentLinkNanos
+	t.normalizationNanos += profile.NormalizationNanos
 }
 
 func (t realCorpusRuntimeTotals) report(b *testing.B, cases []realCorpusBenchmarkCase, benchN int) {
@@ -1049,6 +1097,22 @@ func (t realCorpusRuntimeTotals) report(b *testing.B, cases []realCorpusBenchmar
 	b.ReportMetric(float64(t.finalChildRefSingleAccesses)/n, "final_child_ref_single_accesses/op")
 	b.ReportMetric(float64(t.finalChildRefSingleMaterialized)/n, "final_child_ref_single_mat/op")
 	b.ReportMetric(float64(t.normalizationRewrites)/n, "normalization_rewrites/op")
+	reportRealCorpusPhaseMetrics(
+		b,
+		n,
+		t.resultSelectionNanos,
+		t.transientParentMaterializeNanos,
+		t.resultTreeBuildNanos,
+		t.transientChildMaterializeNanos,
+		t.resultPythonKeywordRepairNanos,
+		t.resultPythonRootRepairNanos,
+		t.resultFinalizeRootNanos,
+		t.resultExtendTrailingNanos,
+		t.resultNormalizeRootStartNanos,
+		t.resultCompatibilityNanos,
+		t.resultParentLinkNanos,
+		t.normalizationNanos,
+	)
 }
 
 func (t realCorpusIncrementalProfileTotals) report(b *testing.B, benchN int) {
@@ -1105,6 +1169,65 @@ func (t realCorpusIncrementalProfileTotals) report(b *testing.B, benchN int) {
 	b.ReportMetric(float64(t.mergeSlotsUsed)/n, "merge_slots_used/op")
 	b.ReportMetric(float64(t.globalCullStacksIn)/n, "global_cull_stacks_in/op")
 	b.ReportMetric(float64(t.globalCullStacksOut)/n, "global_cull_stacks_out/op")
+	reportRealCorpusPhaseMetrics(
+		b,
+		n,
+		t.resultSelectionNanos,
+		t.transientParentMaterializeNanos,
+		t.resultTreeBuildNanos,
+		t.transientChildMaterializeNanos,
+		t.resultPythonKeywordRepairNanos,
+		t.resultPythonRootRepairNanos,
+		t.resultFinalizeRootNanos,
+		t.resultExtendTrailingNanos,
+		t.resultNormalizeRootStartNanos,
+		t.resultCompatibilityNanos,
+		t.resultParentLinkNanos,
+		t.normalizationNanos,
+	)
+}
+
+func reportRealCorpusPhaseMetrics(
+	b *testing.B,
+	n float64,
+	resultSelectionNanos int64,
+	transientParentMaterializeNanos int64,
+	resultTreeBuildNanos int64,
+	transientChildMaterializeNanos int64,
+	resultPythonKeywordRepairNanos int64,
+	resultPythonRootRepairNanos int64,
+	resultFinalizeRootNanos int64,
+	resultExtendTrailingNanos int64,
+	resultNormalizeRootStartNanos int64,
+	resultCompatibilityNanos int64,
+	resultParentLinkNanos int64,
+	normalizationNanos int64,
+) {
+	resultAccountedNanos := resultSelectionNanos +
+		transientParentMaterializeNanos +
+		resultTreeBuildNanos +
+		transientChildMaterializeNanos +
+		resultPythonKeywordRepairNanos +
+		resultPythonRootRepairNanos +
+		resultFinalizeRootNanos +
+		resultExtendTrailingNanos +
+		resultNormalizeRootStartNanos +
+		resultCompatibilityNanos +
+		resultParentLinkNanos +
+		normalizationNanos
+	b.ReportMetric(float64(resultSelectionNanos)/n, "result_select_ns/op")
+	b.ReportMetric(float64(transientParentMaterializeNanos)/n, "transient_parent_materialize_ns/op")
+	b.ReportMetric(float64(resultTreeBuildNanos)/n, "result_tree_build_ns/op")
+	b.ReportMetric(float64(transientChildMaterializeNanos)/n, "transient_child_materialize_ns/op")
+	b.ReportMetric(float64(resultPythonKeywordRepairNanos)/n, "result_python_keyword_repair_ns/op")
+	b.ReportMetric(float64(resultPythonRootRepairNanos)/n, "result_python_root_repair_ns/op")
+	b.ReportMetric(float64(resultFinalizeRootNanos)/n, "result_finalize_root_ns/op")
+	b.ReportMetric(float64(resultExtendTrailingNanos)/n, "result_extend_trailing_ns/op")
+	b.ReportMetric(float64(resultNormalizeRootStartNanos)/n, "result_normalize_root_start_ns/op")
+	b.ReportMetric(float64(resultCompatibilityNanos)/n, "result_compatibility_ns/op")
+	b.ReportMetric(float64(resultParentLinkNanos)/n, "result_parent_link_ns/op")
+	b.ReportMetric(float64(normalizationNanos)/n, "normalization_ns/op")
+	b.ReportMetric(float64(resultAccountedNanos)/n, "result_accounted_ns/op")
 }
 
 func reportRealCorpusCaseMetrics(b *testing.B, cases []realCorpusBenchmarkCase) {

@@ -18,6 +18,8 @@ var (
 	parseMaxMergePerKey        int
 	preMaterializationDiagOnce sync.Once
 	preMaterializationDiag     bool
+	parsePhaseTimingOnce       sync.Once
+	parsePhaseTiming           bool
 )
 
 // ResetParseEnvConfigCacheForTests clears memoized parser env config.
@@ -35,6 +37,8 @@ func ResetParseEnvConfigCacheForTests() {
 	parseMaxMergePerKey = 0
 	preMaterializationDiagOnce = sync.Once{}
 	preMaterializationDiag = false
+	parsePhaseTimingOnce = sync.Once{}
+	parsePhaseTiming = false
 }
 
 func parseNodeLimitScaleFactor() int {
@@ -134,6 +138,14 @@ func parsePreMaterializationDiagEnabled() bool {
 		preMaterializationDiag = raw != "" && raw != "0" && !strings.EqualFold(raw, "false")
 	})
 	return preMaterializationDiag
+}
+
+func parsePhaseTimingEnabled() bool {
+	parsePhaseTimingOnce.Do(func() {
+		raw := strings.TrimSpace(os.Getenv("GOT_PARSE_PHASE_TIMING"))
+		parsePhaseTiming = raw != "" && raw != "0" && !strings.EqualFold(raw, "false")
+	})
+	return parsePhaseTiming
 }
 
 func parseTransientReduceEnabled(envName string) bool {
