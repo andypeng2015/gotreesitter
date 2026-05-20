@@ -428,6 +428,40 @@ func TestStackResultErrorRankIncludesCompactRefs(t *testing.T) {
 	}
 }
 
+func TestCompareAcceptedStackAliasPreferenceIncludesCompactRefs(t *testing.T) {
+	lang := &Language{
+		SymbolNames: []string{"EOF", "identifier", "alias_identifier", "root"},
+		SymbolMetadata: []SymbolMetadata{
+			{},
+			{Visible: true, Named: true},
+			{Visible: true, Named: true},
+			{Visible: true, Named: true},
+		},
+		AliasSequences: [][]Symbol{{2}},
+	}
+	parser := NewParser(lang)
+	arena := newNodeArena(arenaClassFull)
+
+	normalLeaf := newLeafNodeInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	aliasLeaf := newCompactFullLeafInArena(arena, 2, true, 0, 1, Point{}, Point{Column: 1})
+	normalStack := glrStack{entries: []stackEntry{newStackEntryNode(1, normalLeaf)}}
+	aliasStack := glrStack{entries: []stackEntry{newStackEntryCompactFullLeaf(1, aliasLeaf)}}
+	if got := compareAcceptedStackAliasPreference(parser, aliasStack, normalStack); got != 1 {
+		t.Fatalf("compact alias preference = %d, want 1", got)
+	}
+	if got := compareAcceptedStackAliasPreference(parser, normalStack, aliasStack); got != -1 {
+		t.Fatalf("reverse compact alias preference = %d, want -1", got)
+	}
+
+	normalParent := newParentNodeInArena(arena, 3, true, []*Node{normalLeaf}, nil, 0)
+	aliasParent := newPendingParentInArena(arena, 3, true, 0, []stackEntry{newStackEntryCompactFullLeaf(1, aliasLeaf)}, 0, 1, Point{}, Point{Column: 1}, false)
+	parentNormalStack := glrStack{entries: []stackEntry{newStackEntryNode(2, normalParent)}}
+	parentAliasStack := glrStack{entries: []stackEntry{newStackEntryPendingParent(2, aliasParent)}}
+	if got := compareAcceptedStackAliasPreference(parser, parentAliasStack, parentNormalStack); got != 1 {
+		t.Fatalf("pending alias preference = %d, want 1", got)
+	}
+}
+
 func TestCompactCheckpointLeafStackEntryUsesNoTreePrefix(t *testing.T) {
 	leaf := newCompactCheckpointLeafInArena(nil, 9, true, 13, 21, externalScannerCheckpointRef{})
 	entry := newStackEntryCompactCheckpointLeaf(4, leaf)

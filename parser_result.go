@@ -308,6 +308,12 @@ func compareAcceptedStackAliasPreference(p *Parser, a, b glrStack) int {
 	if p == nil || p.language == nil {
 		return 0
 	}
+	if len(p.aliasTargetSymbol) == 0 {
+		return 0
+	}
+	if len(a.entries) > 0 && len(b.entries) > 0 {
+		return compareStackEntryAliasPreferenceSlices(p, a.entries, b.entries)
+	}
 	aNodes := resultNodesFromStack(a)
 	bNodes := resultNodesFromStack(b)
 	if len(aNodes) != len(bNodes) {
@@ -319,6 +325,49 @@ func compareAcceptedStackAliasPreference(p *Parser, a, b glrStack) int {
 		}
 	}
 	return 0
+}
+
+func compareStackEntryAliasPreferenceSlices(p *Parser, a, b []stackEntry) int {
+	aCount := countMaterializingResultEntries(a)
+	if aCount == 0 || aCount != countMaterializingResultEntries(b) {
+		return 0
+	}
+	ai, bi := 0, 0
+	for compared := 0; compared < aCount; compared++ {
+		var aEntry, bEntry stackEntry
+		var ok bool
+		aEntry, ai, ok = nextMaterializingResultEntry(a, ai)
+		if !ok {
+			return 0
+		}
+		bEntry, bi, ok = nextMaterializingResultEntry(b, bi)
+		if !ok {
+			return 0
+		}
+		if cmp := compareStackEntryAliasPreference(p, aEntry, bEntry); cmp != 0 {
+			return cmp
+		}
+	}
+	return 0
+}
+
+func countMaterializingResultEntries(entries []stackEntry) int {
+	count := 0
+	for i := range entries {
+		if stackEntryMaterializesForResult(entries[i]) {
+			count++
+		}
+	}
+	return count
+}
+
+func nextMaterializingResultEntry(entries []stackEntry, start int) (stackEntry, int, bool) {
+	for i := start; i < len(entries); i++ {
+		if stackEntryMaterializesForResult(entries[i]) {
+			return entries[i], i + 1, true
+		}
+	}
+	return stackEntry{}, len(entries), false
 }
 
 func stackEntryMaterializesForResult(entry stackEntry) bool {
@@ -388,6 +437,94 @@ func compareNodeAliasPreference(p *Parser, a, b *Node) int {
 		}
 	}
 	return 0
+}
+
+func compareStackEntryAliasPreference(p *Parser, a, b stackEntry) int {
+	if a.node == b.node && a.kind == b.kind {
+		return 0
+	}
+	if !stackEntryMaterializesForResult(a) || !stackEntryMaterializesForResult(b) {
+		return 0
+	}
+	if stackEntryNode(a) != nil && stackEntryNode(b) != nil {
+		return compareNodeAliasPreference(p, stackEntryNode(a), stackEntryNode(b))
+	}
+	if stackEntryNodeStartByte(a) != stackEntryNodeStartByte(b) ||
+		stackEntryNodeEndByte(a) != stackEntryNodeEndByte(b) ||
+		stackEntryNodeIsExtra(a) != stackEntryNodeIsExtra(b) ||
+		stackEntryNodeIsMissing(a) != stackEntryNodeIsMissing(b) ||
+		stackEntryNodeChildCount(a) != stackEntryNodeChildCount(b) {
+		return 0
+	}
+	if stackEntryNodeSymbol(a) != stackEntryNodeSymbol(b) {
+		aType := stackEntryTypeName(p, a)
+		bType := stackEntryTypeName(p, b)
+		if aType == bType {
+			for i := 0; i < stackEntryNodeChildCount(a); i++ {
+				aChild, aOK := stackEntryAliasChild(a, i)
+				bChild, bOK := stackEntryAliasChild(b, i)
+				if !aOK || !bOK {
+					return 0
+				}
+				if cmp := compareStackEntryAliasPreference(p, aChild, bChild); cmp != 0 {
+					return cmp
+				}
+			}
+			return 0
+		}
+		aAlias := p.isAliasTargetSymbol(stackEntryNodeSymbol(a))
+		bAlias := p.isAliasTargetSymbol(stackEntryNodeSymbol(b))
+		if aAlias != bAlias {
+			if aAlias {
+				return 1
+			}
+			return -1
+		}
+		return 0
+	}
+	for i := 0; i < stackEntryNodeChildCount(a); i++ {
+		aChild, aOK := stackEntryAliasChild(a, i)
+		bChild, bOK := stackEntryAliasChild(b, i)
+		if !aOK || !bOK {
+			return 0
+		}
+		if cmp := compareStackEntryAliasPreference(p, aChild, bChild); cmp != 0 {
+			return cmp
+		}
+	}
+	return 0
+}
+
+func stackEntryAliasChild(entry stackEntry, i int) (stackEntry, bool) {
+	if n := stackEntryNode(entry); n != nil {
+		if i < 0 || i >= len(n.children) {
+			return stackEntry{}, false
+		}
+		child := n.children[i]
+		return newStackEntryNode(child.parseState, child), true
+	}
+	if parent := stackEntryPendingParent(entry); parent != nil {
+		children := parent.childEntries()
+		if i < 0 || i >= len(children) {
+			return stackEntry{}, false
+		}
+		return children[i], true
+	}
+	return stackEntry{}, false
+}
+
+func stackEntryTypeName(p *Parser, entry stackEntry) string {
+	if stackEntryNodeSymbol(entry) == errorSymbol {
+		return "ERROR"
+	}
+	if p == nil || p.language == nil {
+		return ""
+	}
+	sym := stackEntryNodeSymbol(entry)
+	if int(sym) >= len(p.language.SymbolNames) {
+		return ""
+	}
+	return unescapePunctuationSymbolName(p.language.SymbolNames[sym])
 }
 
 func (p *Parser) isAliasTargetSymbol(sym Symbol) bool {
