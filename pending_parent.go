@@ -72,7 +72,7 @@ func defaultPendingParentSlabCap(class arenaClass) int {
 func defaultPendingChildEntrySlabCap(class arenaClass) int {
 	slabBytes := incrementalArenaSlab
 	if class == arenaClassFull {
-		slabBytes = fullParseArenaSlab
+		slabBytes = fullParseArenaSlab / 2
 	}
 	size := int(unsafe.Sizeof(pendingChildEntry(0)))
 	if size <= 0 {
