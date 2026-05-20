@@ -57,20 +57,15 @@ type PerfCounters struct {
 	CloneTreeFinalRefs     uint64
 	CloneTreeCompactCopies uint64
 	CloneTreeChildRefs     uint64
-	CloneTreeChildAt       uint64
 	CloneOffsetCalls       uint64
 	CloneOffsetPublicNodes uint64
 	CloneOffsetCopies      uint64
 	CloneOffsetShifted     uint64
-	CloneOffsetChildAt     uint64
 	NodeEditCalls          uint64
 	NodeEditNoopCalls      uint64
 	NodeEditCompactRefs    uint64
 	NodeEditShifted        uint64
 	NodeEditMarked         uint64
-	NodeEditPublicNodes    uint64
-	NodeEditChildAt        uint64
-	NodeEditFallbackFull   uint64
 	DenseMutationCalls     uint64
 	DenseMutationDrains    uint64
 	MutationChildRefCOW    uint64

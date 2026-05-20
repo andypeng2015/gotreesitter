@@ -43,10 +43,6 @@ func setNodeChildFieldDirect(n *Node, childIndex int, fid FieldID) bool {
 	return setNodeChildField(n, childIndex, fid, fieldSourceDirect, true)
 }
 
-func setNodeChildFieldInherited(n *Node, childIndex int, fid FieldID) bool {
-	return setNodeChildField(n, childIndex, fid, fieldSourceInherited, true)
-}
-
 func setNodeChildFieldInheritedIfEmpty(n *Node, childIndex int, fid FieldID) bool {
 	return setNodeChildField(n, childIndex, fid, fieldSourceInherited, false)
 }
@@ -130,7 +126,7 @@ func rewriteResultTreeChildrenPostorder(root *Node, rewrite func(*Node) *Node) {
 		return
 	}
 	walkResultTreePostorder(root, func(n *Node) {
-		children := resultDenseChildrenForMutation(n)
+		children := resultDenseChildrenFallbackForMutation(n)
 		for i, child := range children {
 			for {
 				rewritten := rewrite(child)

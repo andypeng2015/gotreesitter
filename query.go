@@ -905,6 +905,9 @@ func (c *QueryCursor) pushCurrentNodeChildren() {
 	if n == nil {
 		return
 	}
+	if c.currentNodePost {
+		return
+	}
 	if c.query != nil && c.query.hasPostorderPatterns() {
 		c.worklist = append(c.worklist, queryCursorWorkItem{
 			node:  n,
@@ -956,26 +959,6 @@ func (c *QueryCursor) NextCapture() (QueryCapture, bool) {
 		c.pendingCaptures = m.Captures
 		c.pendingCaptureIdx = 0
 	}
-}
-
-// matchPattern tries to match a pattern against the given node.
-// The pattern's steps describe a nested structure; step depth 0 matches
-// the given node, depth 1 matches its children, etc.
-func (q *Query) matchPattern(pat *Pattern, node *Node, lang *Language, source []byte) ([]QueryCapture, bool) {
-	if len(pat.steps) == 0 {
-		return nil, false
-	}
-
-	var captures []QueryCapture
-	ok := q.matchStepsWithPredicates(pat.steps, 0, node, lang, source, pat.predicates, &captures)
-	if !ok {
-		return nil, false
-	}
-	if !q.matchesPredicates(pat.predicates, captures, lang, source) {
-		return nil, false
-	}
-	captures = q.applyDirectives(pat.predicates, captures, source)
-	return captures, true
 }
 
 func (q *Query) matchStepWithRollbackPredicates(steps []QueryStep, stepIdx int, node *Node, lang *Language, source []byte, predicates []QueryPredicate, captures *[]QueryCapture) bool {

@@ -274,9 +274,7 @@ func foldResultRootExtras(root *Node, extras []*Node, arena *nodeArena) {
 		leadingCount++
 	}
 	merged = append(merged, rootChildren...)
-	for _, extra := range trailingExtras {
-		merged = append(merged, extra)
-	}
+	merged = append(merged, trailingExtras...)
 	if arena != nil {
 		out := arena.allocNodeSlice(len(merged))
 		copy(out, merged)

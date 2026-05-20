@@ -867,15 +867,14 @@ func pythonRootRepairNeedsMaterializedChildren(root *Node, lang *Language) bool 
 	}
 	syms := pythonRepairSymbolSet(lang)
 	childCount := resultChildCount(root)
-	for i := childCount - 1; i >= 0; i-- {
-		entry, ok := nodeChildEntryAtNoMaterialize(root, i)
+	if childCount > 0 {
+		entry, ok := nodeChildEntryAtNoMaterialize(root, childCount-1)
 		if !ok || !stackEntryHasNode(entry) {
 			return true
 		}
-		if stackEntryNodeIsNamed(entry) || stackEntryNodeStartByte(entry) != stackEntryNodeEndByte(entry) {
-			break
+		if !stackEntryNodeIsNamed(entry) && stackEntryNodeStartByte(entry) == stackEntryNodeEndByte(entry) {
+			return true
 		}
-		return true
 	}
 	for i := 0; i < childCount; i++ {
 		entry, ok := nodeChildEntryAtNoMaterialize(root, i)
@@ -1453,16 +1452,6 @@ func repairPythonBlockPending(pending []*Node, out []*Node, arena *nodeArena, la
 	return out
 }
 
-func pythonBlockOutputPrefix(children []*Node, end int) []*Node {
-	out := make([]*Node, 0, len(children))
-	for _, child := range children[:end] {
-		if child != nil {
-			out = append(out, child)
-		}
-	}
-	return out
-}
-
 func pythonBlockOutputPrefixFromNode(node *Node, end int) []*Node {
 	childCount := resultChildCount(node)
 	if end > childCount {
@@ -1752,7 +1741,11 @@ func normalizePythonStringContinuationEscapes(root *Node, source []byte, lang *L
 	if !ok {
 		return counters
 	}
-	walkResultTree(root, func(n *Node) {
+	var walk func(*Node)
+	walk = func(n *Node) {
+		if n == nil {
+			return
+		}
 		counters.nodesVisited++
 		if n.Type(lang) == "string_content" && n.startByte < n.endByte && int(n.endByte) <= len(source) {
 			children, changed := addPythonContinuationEscapes(n, source, escapeSym)
@@ -1762,7 +1755,11 @@ func normalizePythonStringContinuationEscapes(root *Node, source []byte, lang *L
 			}
 			return
 		}
-	})
+		for i := 0; i < resultChildCount(n); i++ {
+			walk(resultChildAt(n, i))
+		}
+	}
+	walk(root)
 	return counters
 }
 
