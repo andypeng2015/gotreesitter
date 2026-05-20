@@ -269,6 +269,56 @@ func TestQueryCursorDefersFinalChildRefsUntilCurrentNodeExhausted(t *testing.T) 
 	}
 }
 
+func TestQueryCursorByteRangeSkipsOutOfRangeLazyFinalChildRefs(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	arena.finalChildRefs = true
+	left := newCompactFullLeafInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	left.parseState = 11
+	right := newCompactFullLeafInArena(arena, 1, true, 10, 11, Point{Column: 10}, Point{Column: 11})
+	right.parseState = 12
+	parent := newPendingParentInArena(arena, 2, true, 5, []stackEntry{
+		newStackEntryCompactFullLeaf(left.parseState, left),
+		newStackEntryCompactFullLeaf(right.parseState, right),
+	}, 0, 11, Point{}, Point{Column: 11}, false)
+	parent.parseState = 13
+
+	entry := newStackEntryPendingParent(parent.parseState, parent)
+	node := materializeStackEntryPendingParent(arena, &entry, pendingParentMaterializeForFinalTree)
+	if node == nil {
+		t.Fatal("materialized parent = nil")
+	}
+	lang := &Language{
+		SymbolNames: []string{"", "leaf", "parent"},
+		SymbolMetadata: []SymbolMetadata{
+			{},
+			{Named: true, Visible: true},
+			{Named: true, Visible: true},
+		},
+	}
+	query, err := NewQuery(`(leaf) @l`, lang)
+	if err != nil {
+		t.Fatalf("NewQuery: %v", err)
+	}
+	cursor := query.Exec(node, lang, []byte("a         b"))
+	cursor.SetByteRange(0, 2)
+	match, ok := cursor.NextMatch()
+	if !ok {
+		t.Fatal("NextMatch returned !ok")
+	}
+	if len(match.Captures) != 1 || match.Captures[0].Node.StartByte() != 0 {
+		t.Fatalf("captures = %#v, want left leaf only", match.Captures)
+	}
+	if _, ok := cursor.NextMatch(); ok {
+		t.Fatal("unexpected second match")
+	}
+	if got := arena.finalChildRefsMaterializedParents; got != 0 {
+		t.Fatalf("final child ref range materialized parents = %d, want 0", got)
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 1 {
+		t.Fatalf("final child ref single children materialized = %d, want 1", got)
+	}
+}
+
 func TestAlternativeFieldMatchesUsesLazyFinalChildRefs(t *testing.T) {
 	arena := newNodeArena(arenaClassFull)
 	arena.finalChildRefs = true

@@ -403,6 +403,37 @@ func (c *QueryCursor) nodeIntersectsRanges(n *Node) bool {
 	return true
 }
 
+func (c *QueryCursor) stackEntryIntersectsRanges(e stackEntry) bool {
+	if c == nil {
+		return false
+	}
+	if c.hasByteRange {
+		if c.endByte <= c.startByte {
+			return false
+		}
+		if stackEntryNodeEndByte(e) <= c.startByte || stackEntryNodeStartByte(e) >= c.endByte {
+			return false
+		}
+	}
+	if c.hasPointRange {
+		if e.kind == stackEntryKindNoTreeNode {
+			return true
+		}
+		startPoint := stackEntryNodeStartPoint(e)
+		endPoint := stackEntryNodeEndPoint(e)
+		if !pointLessThan(c.startPoint, c.endPoint) && c.startPoint != c.endPoint {
+			return false
+		}
+		if !pointLessThan(startPoint, c.endPoint) && startPoint != c.endPoint {
+			return false
+		}
+		if !pointLessThan(c.startPoint, endPoint) && c.startPoint != endPoint {
+			return false
+		}
+	}
+	return true
+}
+
 func (q *Query) executeNode(root *Node, lang *Language, source []byte) []QueryMatch {
 	if root == nil || lang == nil {
 		return nil
@@ -731,6 +762,12 @@ func (c *QueryCursor) pushCurrentNodeChildren() {
 	nextDepth := c.currentNodeDepth + 1
 	// Push children in reverse order so leftmost is visited first.
 	for i := nodeChildCountNoMaterialize(n) - 1; i >= 0; i-- {
+		if c.hasByteRange || c.hasPointRange {
+			entry, ok := nodeChildEntryAtNoMaterialize(n, i)
+			if !ok || !c.stackEntryIntersectsRanges(entry) {
+				continue
+			}
+		}
 		child := nodeChildAtForReason(n, i, materializeForQuery)
 		if child != nil && c.nodeIntersectsRanges(child) {
 			c.worklist = append(c.worklist, queryCursorWorkItem{
