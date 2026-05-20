@@ -446,7 +446,9 @@ func normalizePythonInterpolationPatterns(root *Node, lang *Language) normalizat
 				counters.nodesRewritten++
 			}
 		}
-		for _, child := range n.children {
+		childCount := resultChildCount(n)
+		for i := 0; i < childCount; i++ {
+			child := resultChildAt(n, i)
 			rewrite(child, here)
 		}
 	}
@@ -465,12 +467,15 @@ func normalizePythonPrintStatements(root *Node, source []byte, lang *Language) n
 			return
 		}
 		counters.nodesVisited++
-		for _, child := range node.children {
+		childCount := resultChildCount(node)
+		for i := 0; i < childCount; i++ {
+			child := resultChildAt(node, i)
 			walk(child)
 		}
 		switch node.Type(lang) {
 		case "module", "block":
-			rewritten, changed := rewritePythonStatementList(node.children, source, lang)
+			children := resultDenseChildrenForMutation(node)
+			rewritten, changed := rewritePythonStatementList(children, source, lang)
 			if !changed {
 				return
 			}
@@ -496,13 +501,16 @@ func normalizePythonTrailingSelfCalls(root *Node, source []byte, lang *Language)
 			return
 		}
 		counters.nodesVisited++
-		for _, child := range node.children {
+		childCount := resultChildCount(node)
+		for i := 0; i < childCount; i++ {
+			child := resultChildAt(node, i)
 			walk(child)
 		}
 		if node.Type(lang) != "block" {
 			return
 		}
-		rewritten, changed := foldPythonTrailingSelfCallsInBlock(node.children, source, lang)
+		children := resultDenseChildrenForMutation(node)
+		rewritten, changed := foldPythonTrailingSelfCallsInBlock(children, source, lang)
 		if !changed {
 			return
 		}
@@ -573,7 +581,8 @@ func foldPythonTrailingSelfCallIntoNestedFunction(fnNode, trailingCall *Node, so
 	}
 	bodyIndex := -1
 	var body *Node
-	for i, child := range fnNode.children {
+	fnChildren := resultDenseChildrenForMutation(fnNode)
+	for i, child := range fnChildren {
 		if child != nil && child.Type(lang) == "block" {
 			bodyIndex = i
 			body = child
@@ -584,8 +593,9 @@ func foldPythonTrailingSelfCallIntoNestedFunction(fnNode, trailingCall *Node, so
 	}
 
 	bodyClone := cloneNodeInArena(body.ownerArena, body)
-	bodyChildren := make([]*Node, 0, len(body.children)+1)
-	bodyChildren = append(bodyChildren, body.children...)
+	bodyDenseChildren := resultDenseChildrenForMutation(body)
+	bodyChildren := make([]*Node, 0, len(bodyDenseChildren)+1)
+	bodyChildren = append(bodyChildren, bodyDenseChildren...)
 	bodyChildren = append(bodyChildren, trailingCall)
 	bodyClone.children = cloneNodeSliceInArena(bodyClone.ownerArena, bodyChildren)
 	bodyClone.fieldIDs = nil
@@ -593,7 +603,7 @@ func foldPythonTrailingSelfCallIntoNestedFunction(fnNode, trailingCall *Node, so
 	populateParentNode(bodyClone, bodyClone.children)
 
 	fnClone := cloneNodeInArena(fnNode.ownerArena, fnNode)
-	fnChildren := append([]*Node(nil), fnNode.children...)
+	fnChildren = append([]*Node(nil), fnChildren...)
 	fnChildren[bodyIndex] = bodyClone
 	fnClone.children = cloneNodeSliceInArena(fnClone.ownerArena, fnChildren)
 	fnClone.fieldIDs = append([]FieldID(nil), fnNode.fieldIDs...)
@@ -637,7 +647,7 @@ func rewriteMalformedPythonPrintStatement(node *Node, source []byte, lang *Langu
 		return nil, false
 	}
 	bin, extras, ok := pythonMalformedPrintStatementParts(node, source, lang)
-	if !ok || bin == nil || len(bin.children) < 3 {
+	if !ok || bin == nil || resultChildCount(bin) < 3 {
 		return nil, false
 	}
 	printStmtSym, ok := symbolByName(lang, "print_statement")
@@ -666,9 +676,9 @@ func rewriteMalformedPythonPrintStatement(node *Node, source []byte, lang *Langu
 		chevronNamed = lang.SymbolMetadata[chevronSym].Named
 	}
 
-	left := bin.children[0]
-	op := bin.children[1]
-	dest := bin.children[2]
+	left := resultChildAt(bin, 0)
+	op := resultChildAt(bin, 1)
+	dest := resultChildAt(bin, 2)
 	printLeaf := cloneNodeInArena(node.ownerArena, left)
 	printLeaf.symbol = printSym
 	printLeaf.setNamed(printNamed)
@@ -709,26 +719,31 @@ func pythonMalformedPrintStatementParts(node *Node, source []byte, lang *Languag
 			return node, nil, true
 		}
 	case "tuple_expression":
-		if len(node.children) == 0 {
+		childCount := resultChildCount(node)
+		if childCount == 0 {
 			return nil, nil, false
 		}
-		bin := node.children[0]
+		bin := resultChildAt(node, 0)
 		if pythonIsPrintChevronBinary(bin, source, lang) {
-			return bin, node.children[1:], true
+			extras := make([]*Node, 0, childCount-1)
+			for i := 1; i < childCount; i++ {
+				extras = append(extras, resultChildAt(node, i))
+			}
+			return bin, extras, true
 		}
 	}
 	return nil, nil, false
 }
 
 func pythonIsPrintChevronBinary(node *Node, source []byte, lang *Language) bool {
-	if node == nil || lang == nil || lang.Name != "python" || len(node.children) != 3 {
+	if node == nil || lang == nil || lang.Name != "python" || resultChildCount(node) != 3 {
 		return false
 	}
 	if node.Type(lang) != "binary_operator" {
 		return false
 	}
-	left := node.children[0]
-	op := node.children[1]
+	left := resultChildAt(node, 0)
+	op := resultChildAt(node, 1)
 	if left == nil || op == nil {
 		return false
 	}
@@ -773,24 +788,24 @@ func normalizePythonModuleChildren(nodes []*Node, arena *nodeArena, lang *Langua
 func normalizePythonModuleNode(node *Node, lang *Language) (*Node, bool) {
 	changed := false
 	for node != nil {
-		if node.Type(lang) == "_simple_statements" && len(node.children) == 1 {
-			child := node.children[0]
+		if node.Type(lang) == "_simple_statements" && resultChildCount(node) == 1 {
+			child := resultChildAt(node, 0)
 			if child != nil && child.IsNamed() {
 				node = child
 				changed = true
 				continue
 			}
 		}
-		if node.Type(lang) == "expression_statement" && len(node.children) == 1 {
-			child := node.children[0]
+		if node.Type(lang) == "expression_statement" && resultChildCount(node) == 1 {
+			child := resultChildAt(node, 0)
 			if child != nil && child.IsNamed() {
 				node = child
 				changed = true
 				continue
 			}
 		}
-		if (node.Type(lang) == "expression" || node.Type(lang) == "primary_expression") && len(node.children) == 1 {
-			child := node.children[0]
+		if (node.Type(lang) == "expression" || node.Type(lang) == "primary_expression") && resultChildCount(node) == 1 {
+			child := resultChildAt(node, 0)
 			if child != nil && child.IsNamed() {
 				node = child
 				changed = true
@@ -806,11 +821,12 @@ func repairPythonRootNode(root *Node, arena *nodeArena, lang *Language) *Node {
 	if root == nil || lang == nil || lang.Name != "python" || root.Type(lang) != "module" {
 		return root
 	}
-	children := collapsePythonRootFragments(root.children, arena, lang)
-	changed := len(children) != len(root.children)
+	rootChildren := resultDenseChildrenForMutation(root)
+	children := collapsePythonRootFragments(rootChildren, arena, lang)
+	changed := len(children) != len(rootChildren)
 	if !changed {
 		for i := range children {
-			if children[i] != root.children[i] {
+			if children[i] != rootChildren[i] {
 				changed = true
 				break
 			}
@@ -894,7 +910,8 @@ func repairPythonKeywordErrorNode(node *Node, source []byte, arena *nodeArena, l
 	if !node.hasError() && node.symbol != errorSymbol {
 		return node
 	}
-	if node.Type(lang) == "ERROR" && len(node.children) == 0 {
+	childCount := resultChildCount(node)
+	if node.Type(lang) == "ERROR" && childCount == 0 {
 		if keyword, ok := pythonKeywordLeafSymbol(node, source, lang); ok {
 			named := false
 			if int(keyword) < len(lang.SymbolMetadata) {
@@ -905,26 +922,39 @@ func repairPythonKeywordErrorNode(node *Node, source []byte, arena *nodeArena, l
 			return repl
 		}
 	}
-	if len(node.children) == 0 {
+	if childCount == 0 {
 		return node
 	}
 	var children []*Node
-	for i, child := range node.children {
+	for i := 0; i < childCount; i++ {
+		child := resultChildAt(node, i)
 		repaired := repairPythonKeywordErrorNode(child, source, arena, lang)
 		if repaired != child {
 			if children == nil {
-				children = make([]*Node, 0, len(node.children))
-				children = append(children, node.children[:i]...)
+				children = make([]*Node, 0, childCount)
+				for j := 0; j < i; j++ {
+					children = append(children, resultChildAt(node, j))
+				}
 			}
 		}
 		if children != nil {
 			children = append(children, repaired)
 		}
 	}
-	finalChildren := node.children
-	if children != nil {
-		finalChildren = children
+	if children == nil {
+		if node.Type(lang) == "ERROR" && childCount == 1 {
+			child := resultChildAt(node, 0)
+			if child != nil &&
+				!child.IsError() &&
+				!child.HasError() &&
+				child.startByte == node.startByte &&
+				child.endByte == node.endByte {
+				return child
+			}
+		}
+		return node
 	}
+	finalChildren := children
 	if node.Type(lang) == "ERROR" && len(finalChildren) == 1 {
 		child := finalChildren[0]
 		if child != nil &&
@@ -934,9 +964,6 @@ func repairPythonKeywordErrorNode(node *Node, source []byte, arena *nodeArena, l
 			child.endByte == node.endByte {
 			return child
 		}
-	}
-	if children == nil {
-		return node
 	}
 	cloned := cloneNodeInArena(arena, node)
 	if arena != nil {
@@ -1001,11 +1028,13 @@ func repairPythonNode(node *Node, arena *nodeArena, lang *Language) *Node {
 }
 
 func repairPythonClassDefinition(node *Node, arena *nodeArena, lang *Language) *Node {
-	if node == nil || node.Type(lang) != "class_definition" || len(node.children) == 0 {
+	childCount := resultChildCount(node)
+	if node == nil || node.Type(lang) != "class_definition" || childCount == 0 {
 		return node
 	}
 	bodyIndex := -1
-	for i, child := range node.children {
+	for i := 0; i < childCount; i++ {
+		child := resultChildAt(node, i)
 		if child != nil && child.Type(lang) == "block" {
 			bodyIndex = i
 		}
@@ -1013,21 +1042,15 @@ func repairPythonClassDefinition(node *Node, arena *nodeArena, lang *Language) *
 	if bodyIndex < 0 {
 		return node
 	}
-	body := node.children[bodyIndex]
+	body := resultChildAt(node, bodyIndex)
 	repairedBody, changed := repairPythonBlock(body, arena, lang, true)
 	if !changed {
 		return node
 	}
 
 	cloned := cloneNodeInArena(arena, node)
-	children := make([]*Node, len(node.children))
-	copy(children, node.children)
+	children := cloneNodeSliceInArena(arena, resultDenseChildrenForMutation(node))
 	children[bodyIndex] = repairedBody
-	if arena != nil {
-		buf := arena.allocNodeSlice(len(children))
-		copy(buf, children)
-		children = buf
-	}
 	cloned.children = children
 	if repairedBody != nil {
 		cloned.endByte = repairedBody.endByte
@@ -1037,11 +1060,13 @@ func repairPythonClassDefinition(node *Node, arena *nodeArena, lang *Language) *
 }
 
 func repairPythonFunctionDefinition(node *Node, arena *nodeArena, lang *Language) *Node {
-	if node == nil || node.Type(lang) != "function_definition" || len(node.children) == 0 {
+	childCount := resultChildCount(node)
+	if node == nil || node.Type(lang) != "function_definition" || childCount == 0 {
 		return node
 	}
 	bodyIndex := -1
-	for i, child := range node.children {
+	for i := 0; i < childCount; i++ {
+		child := resultChildAt(node, i)
 		if child != nil && child.Type(lang) == "block" {
 			bodyIndex = i
 		}
@@ -1049,21 +1074,15 @@ func repairPythonFunctionDefinition(node *Node, arena *nodeArena, lang *Language
 	if bodyIndex < 0 {
 		return node
 	}
-	body := node.children[bodyIndex]
+	body := resultChildAt(node, bodyIndex)
 	repairedBody, changed := repairPythonBlock(body, arena, lang, false)
 	if !changed {
 		return node
 	}
 
 	cloned := cloneNodeInArena(arena, node)
-	children := make([]*Node, len(node.children))
-	copy(children, node.children)
+	children := cloneNodeSliceInArena(arena, resultDenseChildrenForMutation(node))
 	children[bodyIndex] = repairedBody
-	if arena != nil {
-		buf := arena.allocNodeSlice(len(children))
-		copy(buf, children)
-		children = buf
-	}
 	cloned.children = children
 	if repairedBody != nil {
 		cloned.endByte = repairedBody.endByte
@@ -1073,16 +1092,20 @@ func repairPythonFunctionDefinition(node *Node, arena *nodeArena, lang *Language
 }
 
 func repairPythonIfStatement(node *Node, arena *nodeArena, lang *Language) *Node {
-	if node == nil || node.Type(lang) != "if_statement" || len(node.children) == 0 {
+	childCount := resultChildCount(node)
+	if node == nil || node.Type(lang) != "if_statement" || childCount == 0 {
 		return node
 	}
 	var children []*Node
-	for i, child := range node.children {
+	for i := 0; i < childCount; i++ {
+		child := resultChildAt(node, i)
 		repaired := repairPythonNode(child, arena, lang)
 		if repaired != child {
 			if children == nil {
-				children = make([]*Node, 0, len(node.children))
-				children = append(children, node.children[:i]...)
+				children = make([]*Node, 0, childCount)
+				for j := 0; j < i; j++ {
+					children = append(children, resultChildAt(node, j))
+				}
 			}
 		}
 		if children != nil {
@@ -1112,11 +1135,12 @@ func repairPythonBlock(node *Node, arena *nodeArena, lang *Language, allowHoist 
 	if node == nil || node.Type(lang) != "block" {
 		return node, false
 	}
+	nodeChildren := resultDenseChildrenForMutation(node)
 	var out []*Node
 	changed := false
 	processedPending := false
 
-	for i, cur := range node.children {
+	for i, cur := range nodeChildren {
 		if cur == nil {
 			continue
 		}
@@ -1124,7 +1148,7 @@ func repairPythonBlock(node *Node, arena *nodeArena, lang *Language, allowHoist 
 		if normChanged {
 			changed = true
 			if out == nil {
-				out = pythonBlockOutputPrefix(node.children, i)
+				out = pythonBlockOutputPrefix(nodeChildren, i)
 			}
 		}
 		cur = norm
@@ -1133,7 +1157,7 @@ func repairPythonBlock(node *Node, arena *nodeArena, lang *Language, allowHoist 
 			case "_indent", "_dedent":
 				changed = true
 				if out == nil {
-					out = pythonBlockOutputPrefix(node.children, i)
+					out = pythonBlockOutputPrefix(nodeChildren, i)
 				}
 				continue
 			case "_simple_statements":
@@ -1141,9 +1165,9 @@ func repairPythonBlock(node *Node, arena *nodeArena, lang *Language, allowHoist 
 				if len(flat) > 0 {
 					changed = true
 					if out == nil {
-						out = pythonBlockOutputPrefix(node.children, i)
+						out = pythonBlockOutputPrefix(nodeChildren, i)
 					}
-					pending := prependPythonBlockPending(flat, node.children[i+1:])
+					pending := prependPythonBlockPending(flat, nodeChildren[i+1:])
 					out = repairPythonBlockPending(pending, out, arena, lang, allowHoist)
 					processedPending = true
 					break
@@ -1159,12 +1183,12 @@ func repairPythonBlock(node *Node, arena *nodeArena, lang *Language, allowHoist 
 			if split {
 				changed = true
 				if out == nil {
-					out = pythonBlockOutputPrefix(node.children, i)
+					out = pythonBlockOutputPrefix(nodeChildren, i)
 				}
 				repairedFn = repairPythonNode(repairedFn, arena, lang)
 				out = append(out, repairedFn)
 				if len(hoisted) > 0 {
-					pending := prependPythonBlockPending(hoisted, node.children[i+1:])
+					pending := prependPythonBlockPending(hoisted, nodeChildren[i+1:])
 					out = repairPythonBlockPending(pending, out, arena, lang, allowHoist)
 					processedPending = true
 					break
@@ -1177,7 +1201,7 @@ func repairPythonBlock(node *Node, arena *nodeArena, lang *Language, allowHoist 
 		if repaired != cur {
 			changed = true
 			if out == nil {
-				out = pythonBlockOutputPrefix(node.children, i)
+				out = pythonBlockOutputPrefix(nodeChildren, i)
 			}
 		}
 		if out != nil {
@@ -1186,13 +1210,13 @@ func repairPythonBlock(node *Node, arena *nodeArena, lang *Language, allowHoist 
 	}
 
 	if !changed {
-		firstNamed := pythonBlockStartAnchor(node.children, lang)
-		lastSpan := pythonBlockEndAnchor(node.children)
+		firstNamed := pythonBlockStartAnchor(nodeChildren, lang)
+		lastSpan := pythonBlockEndAnchor(nodeChildren)
 		if firstNamed == nil || lastSpan == nil {
 			return node, false
 		}
 		wantEndByte, wantEndPoint := lastSpan.endByte, lastSpan.endPoint
-		if pythonBlockShouldPreserveOriginalEnd(node, node.children, lang) {
+		if pythonBlockShouldPreserveOriginalEnd(node, nodeChildren, lang) {
 			wantEndByte, wantEndPoint = node.endByte, node.endPoint
 		}
 		if node.startByte == firstNamed.startByte &&
@@ -1202,7 +1226,7 @@ func repairPythonBlock(node *Node, arena *nodeArena, lang *Language, allowHoist 
 			return node, false
 		}
 		changed = true
-		out = pythonBlockOutputPrefix(node.children, len(node.children))
+		out = pythonBlockOutputPrefix(nodeChildren, len(nodeChildren))
 	}
 
 	cloned := cloneNodeInArena(arena, node)
@@ -1337,10 +1361,11 @@ func pythonBlockLastChild(children []*Node) *Node {
 }
 
 func pythonBlockEndsWithSemicolon(node *Node, lang *Language) bool {
-	if node == nil || lang == nil || len(node.children) == 0 {
+	childCount := resultChildCount(node)
+	if node == nil || lang == nil || childCount == 0 {
 		return false
 	}
-	lastChild := node.children[len(node.children)-1]
+	lastChild := resultChildAt(node, childCount-1)
 	return lastChild != nil && lastChild.Type(lang) == ";"
 }
 
@@ -1348,7 +1373,9 @@ func pythonFunctionDefinitionNameNode(node *Node, lang *Language) (*Node, bool) 
 	if node == nil || lang == nil || node.Type(lang) != "function_definition" {
 		return nil, false
 	}
-	for _, child := range node.children {
+	childCount := resultChildCount(node)
+	for i := 0; i < childCount; i++ {
+		child := resultChildAt(node, i)
 		if child != nil && child.Type(lang) == "identifier" {
 			return child, true
 		}
@@ -1357,10 +1384,10 @@ func pythonFunctionDefinitionNameNode(node *Node, lang *Language) (*Node, bool) 
 }
 
 func pythonCallIdentifierNode(node *Node, lang *Language) (*Node, bool) {
-	if node == nil || lang == nil || node.Type(lang) != "call" || len(node.children) == 0 {
+	if node == nil || lang == nil || node.Type(lang) != "call" || resultChildCount(node) == 0 {
 		return nil, false
 	}
-	fn := node.children[0]
+	fn := resultChildAt(node, 0)
 	if fn != nil && fn.Type(lang) == "identifier" {
 		return fn, true
 	}
@@ -1388,7 +1415,8 @@ func splitPythonOvernestedFunction(node *Node, arena *nodeArena, lang *Language)
 		return node, nil, false
 	}
 	bodyIndex := -1
-	for i, child := range node.children {
+	nodeChildren := resultDenseChildrenForMutation(node)
+	for i, child := range nodeChildren {
 		if child != nil && child.Type(lang) == "block" {
 			bodyIndex = i
 		}
@@ -1396,13 +1424,14 @@ func splitPythonOvernestedFunction(node *Node, arena *nodeArena, lang *Language)
 	if bodyIndex < 0 {
 		return node, nil, false
 	}
-	body := node.children[bodyIndex]
-	if body == nil || len(body.children) == 0 {
+	body := nodeChildren[bodyIndex]
+	bodyChildren := resultDenseChildrenForMutation(body)
+	if body == nil || len(bodyChildren) == 0 {
 		return node, nil, false
 	}
 	fnColumn := node.startPoint.Column
 	hoistStart := -1
-	for i, child := range body.children {
+	for i, child := range bodyChildren {
 		if child == nil || !child.IsNamed() {
 			continue
 		}
@@ -1415,8 +1444,8 @@ func splitPythonOvernestedFunction(node *Node, arena *nodeArena, lang *Language)
 		return node, nil, false
 	}
 
-	kept := append([]*Node(nil), body.children[:hoistStart]...)
-	hoisted := append([]*Node(nil), body.children[hoistStart:]...)
+	kept := append([]*Node(nil), bodyChildren[:hoistStart]...)
+	hoisted := append([]*Node(nil), bodyChildren[hoistStart:]...)
 	if len(kept) == 0 {
 		return node, nil, false
 	}
@@ -1435,8 +1464,8 @@ func splitPythonOvernestedFunction(node *Node, arena *nodeArena, lang *Language)
 	newBody.endPoint = lastKept.endPoint
 
 	newFn := cloneNodeInArena(arena, node)
-	fnChildren := make([]*Node, len(node.children))
-	copy(fnChildren, node.children)
+	fnChildren := make([]*Node, len(nodeChildren))
+	copy(fnChildren, nodeChildren)
 	fnChildren[bodyIndex] = newBody
 	if arena != nil {
 		buf := arena.allocNodeSlice(len(fnChildren))
@@ -1455,13 +1484,18 @@ func flattenPythonSimpleStatements(node *Node, out []*Node, lang *Language) []*N
 	}
 	switch node.Type(lang) {
 	case "_simple_statements", "_simple_statements_repeat1":
-		for _, child := range node.children {
+		childCount := resultChildCount(node)
+		for i := 0; i < childCount; i++ {
+			child := resultChildAt(node, i)
 			out = flattenPythonSimpleStatements(child, out, lang)
 		}
 		return out
 	case "expression_statement":
-		if len(node.children) == 1 && node.children[0] != nil && node.children[0].IsNamed() {
-			return append(out, node.children[0])
+		if resultChildCount(node) == 1 {
+			child := resultChildAt(node, 0)
+			if child != nil && child.IsNamed() {
+				return append(out, child)
+			}
 		}
 	}
 	if node.IsNamed() || (lang != nil && node.Type(lang) == ";") {
@@ -1492,7 +1526,9 @@ func normalizePythonStringContinuationEscapes(root *Node, source []byte, lang *L
 				counters.nodesRewritten++
 			}
 		}
-		for _, child := range n.children {
+		childCount := resultChildCount(n)
+		for i := 0; i < childCount; i++ {
+			child := resultChildAt(n, i)
 			walk(child)
 		}
 	}
@@ -1502,9 +1538,12 @@ func normalizePythonStringContinuationEscapes(root *Node, source []byte, lang *L
 
 func addPythonContinuationEscapes(node *Node, source []byte, escapeSym Symbol) ([]*Node, bool) {
 	if node == nil || node.startByte >= node.endByte || int(node.endByte) > len(source) {
-		return node.children, false
+		if node == nil {
+			return nil, false
+		}
+		return resultDenseChildrenForMutation(node), false
 	}
-	children := node.children
+	children := resultDenseChildrenForMutation(node)
 	changed := false
 	for i := int(node.startByte); i+1 < int(node.endByte); i++ {
 		if source[i] != '\\' {
@@ -1550,7 +1589,7 @@ func addPythonContinuationEscapes(node *Node, source []byte, escapeSym Symbol) (
 		i = end - 1
 	}
 	if !changed {
-		return node.children, false
+		return children, false
 	}
 	return children, true
 }

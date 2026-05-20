@@ -844,7 +844,8 @@ func (p *Parser) buildResultFromNodes(nodes []*Node, source []byte, arena *nodeA
 		}
 		if foldExtras {
 			// Fold visible extras into the real root as leading/trailing children.
-			merged := make([]*Node, 0, len(extras)+len(realRoot.children))
+			realRootChildren := resultDenseChildrenForMutation(realRoot)
+			merged := make([]*Node, 0, len(extras)+len(realRootChildren))
 			leadingCount := 0
 			for _, e := range extras {
 				if e.startByte <= realRoot.startByte {
@@ -852,7 +853,7 @@ func (p *Parser) buildResultFromNodes(nodes []*Node, source []byte, arena *nodeA
 					leadingCount++
 				}
 			}
-			merged = append(merged, realRoot.children...)
+			merged = append(merged, realRootChildren...)
 			for _, e := range extras {
 				if e.startByte > realRoot.startByte {
 					merged = append(merged, e)
