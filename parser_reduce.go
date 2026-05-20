@@ -1258,32 +1258,44 @@ func (p *Parser) tryPushPendingNoFieldParent(s *glrStack, act ParseAction, tok T
 	symbolMeta := p.language.SymbolMetadata
 	parentVisible := symbolVisibleForPending(act.Symbol, symbolMeta)
 	childCount := 0
+	hasPayload := false
 	hasError := false
 	for i := start; i < reducedEnd; i++ {
-		count, _, childHasError, ok := pendingNoFieldChildCount(entries[i], arena, parentVisible, symbolMeta)
+		count, childHasPayload, childHasError, ok := pendingNoFieldChildCount(entries[i], arena, parentVisible, symbolMeta)
 		if !ok {
 			arena.recordPendingParentRejected(pendingParentRejectChild)
 			return false
 		}
 		childCount += count
+		hasPayload = hasPayload || childHasPayload
 		hasError = hasError || childHasError
 	}
 	if childCount == 0 {
-		arena.recordPendingParentRejected(pendingParentRejectEmpty)
-		return false
+		if !hasPayload {
+			arena.recordPendingParentRejected(pendingParentRejectEmpty)
+			return false
+		}
+		if _, ok := pendingReduceWindowSpan(entries, start, reducedEnd); !ok {
+			arena.recordPendingParentRejected(pendingParentRejectSpan)
+			return false
+		}
 	}
-	var first, last stackEntry
-	if firstEntry, lastEntry, ok := pendingNoFieldChildEndpoints(entries, start, reducedEnd, arena, parentVisible, symbolMeta); ok {
-		first = firstEntry
-		last = lastEntry
-	} else {
-		arena.recordPendingParentRejected(pendingParentRejectSpan)
-		return false
+	var startByte, endByte uint32
+	var startPoint, endPoint Point
+	if childCount > 0 {
+		var first, last stackEntry
+		if firstEntry, lastEntry, ok := pendingNoFieldChildEndpoints(entries, start, reducedEnd, arena, parentVisible, symbolMeta); ok {
+			first = firstEntry
+			last = lastEntry
+		} else {
+			arena.recordPendingParentRejected(pendingParentRejectSpan)
+			return false
+		}
+		startByte = stackEntryNodeStartByte(first)
+		endByte = stackEntryNodeEndByte(last)
+		startPoint = stackEntryNodeStartPoint(first)
+		endPoint = stackEntryNodeEndPoint(last)
 	}
-	startByte := stackEntryNodeStartByte(first)
-	endByte := stackEntryNodeEndByte(last)
-	startPoint := stackEntryNodeStartPoint(first)
-	endPoint := stackEntryNodeEndPoint(last)
 	if span, ok := pendingReduceWindowSpan(entries, start, reducedEnd); ok {
 		startByte = span.startByte
 		endByte = span.endByte

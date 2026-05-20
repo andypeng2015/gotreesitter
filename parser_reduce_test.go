@@ -276,6 +276,42 @@ func TestTryPushPendingNoFieldParentCountsOrdinaryHiddenNodeRefs(t *testing.T) {
 	}
 }
 
+func TestTryPushPendingNoFieldParentKeepsHiddenCompactLeafCompact(t *testing.T) {
+	lang := &Language{
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF"},
+			{Name: "expr", Visible: true, Named: true},
+			{Name: "_hidden", Visible: false, Named: false},
+		},
+	}
+	p := NewParser(lang)
+	p.pendingFullParents = true
+	arena := newNodeArena(arenaClassFull)
+	leaf := newCompactFullLeafInArena(arena, 2, false, 5, 8, Point{Column: 5}, Point{Column: 8})
+	entry := newStackEntryCompactFullLeaf(4, leaf)
+	stack := &glrStack{entries: []stackEntry{entry}}
+	act := ParseAction{Symbol: 1, ChildCount: 1, ProductionID: 0}
+	anyReduced := false
+	nodeCount := 0
+
+	if !p.tryPushPendingNoFieldParent(stack, act, Token{}, &anyReduced, &nodeCount, arena, nil, nil, []stackEntry{entry}, 0, 1, 1, 0, 0) {
+		t.Fatal("tryPushPendingNoFieldParent = false, want true for hidden compact leaf")
+	}
+	if got := arena.compactFullLeafMaterialized; got != 0 {
+		t.Fatalf("compactFullLeafMaterialized = %d, want 0", got)
+	}
+	parent := stackEntryPendingParent(stack.entries[0])
+	if parent == nil {
+		t.Fatal("stack entry is not a pending parent")
+	}
+	if got := parent.childEntryCount(); got != 0 {
+		t.Fatalf("pending parent child count = %d, want 0", got)
+	}
+	if parent.startByte != 5 || parent.endByte != 8 {
+		t.Fatalf("pending parent span = [%d,%d], want [5,8]", parent.startByte, parent.endByte)
+	}
+}
+
 func TestCollapsibleRawUnarySelfReductionEntryCollapsesPendingParentSameSymbol(t *testing.T) {
 	lang := &Language{
 		SymbolMetadata: []SymbolMetadata{
