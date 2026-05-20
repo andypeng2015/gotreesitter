@@ -199,6 +199,7 @@ func TestMaterializePendingPayloadEntriesPropagatesFieldRejectShape(t *testing.T
 	arena.pendingParentLastFieldRejectShape = pendingParentFieldRejectAllVisibleDirect
 	arena.pendingParentActiveRejectReason = pendingParentRejectAlias
 	arena.pendingParentActiveFieldRejectShape = pendingParentFieldRejectHiddenChildPlain
+	arena.pendingParentActiveFieldPayloadShape = pendingParentFieldRejectPayloadHiddenMany
 
 	materializePendingPayloadEntries(nil, entries, 0, len(entries), arena)
 
@@ -216,6 +217,9 @@ func TestMaterializePendingPayloadEntriesPropagatesFieldRejectShape(t *testing.T
 	}
 	if got := arena.pendingParentActiveFieldRejectShape; got != pendingParentFieldRejectHiddenChildPlain {
 		t.Fatalf("active field reject shape restored = %d, want hidden-child", got)
+	}
+	if got := arena.pendingParentActiveFieldPayloadShape; got != pendingParentFieldRejectPayloadHiddenMany {
+		t.Fatalf("active field payload shape restored = %d, want hidden-many", got)
 	}
 }
 
@@ -245,6 +249,72 @@ func TestMaterializeStackEntryPayloadTracksActiveParentReject(t *testing.T) {
 	}
 	if got := arena.pendingParentMaterializedForFieldReject.HiddenChildWithFields; got != 1 {
 		t.Fatalf("pending parent active field reject hidden-child-with-fields = %d, want 1", got)
+	}
+}
+
+func TestMaterializePendingParentRecursionClassifiesNestedPendingPayloadShape(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	lang := &Language{SymbolMetadata: []SymbolMetadata{
+		{},
+		{Name: "leaf", Visible: true, Named: true},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{Name: "outer", Visible: true, Named: true},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{Name: "hidden", Visible: false, Named: false},
+	}}
+	parser := &Parser{language: lang}
+	leaf := newLeafNodeInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	hidden := newPendingParentInArena(arena, 20, false, 3, []stackEntry{newStackEntryNode(4, leaf)}, 0, 1, Point{}, Point{Column: 1}, false)
+	outer := newPendingParentInArena(arena, 10, true, 5, []stackEntry{newStackEntryPendingParent(6, hidden)}, 0, 1, Point{}, Point{Column: 1}, false)
+	entries := []stackEntry{newStackEntryPendingParent(7, outer)}
+
+	arena.pendingParentLastRejectReason = pendingParentRejectFields
+	arena.pendingParentLastFieldRejectShape = pendingParentFieldRejectAllVisibleDirect
+	materializePendingPayloadEntries(parser, entries, 0, len(entries), arena)
+
+	if got := arena.pendingParentMaterializedForFieldRejectPayload.Visible; got != 1 {
+		t.Fatalf("visible payload count = %d, want 1", got)
+	}
+	if got := arena.pendingParentMaterializedForFieldRejectPayload.HiddenOne; got != 1 {
+		t.Fatalf("hidden-one payload count = %d, want 1", got)
+	}
+}
+
+func TestMaterializePendingParentRecursionClassifiesNestedCompactLeafPayloadShape(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	lang := &Language{SymbolMetadata: []SymbolMetadata{
+		{},
+		{},
+		{Name: "hidden_leaf", Visible: false, Named: false},
+	}}
+	parser := &Parser{language: lang}
+	leaf := newCompactFullLeafInArena(arena, 2, false, 0, 1, Point{}, Point{Column: 1})
+	entries := []stackEntry{newStackEntryCompactFullLeaf(3, leaf)}
+
+	arena.pendingParentLastRejectReason = pendingParentRejectFields
+	arena.pendingParentLastFieldRejectShape = pendingParentFieldRejectHiddenChildPlainEmpty
+	materializePendingPayloadEntries(parser, entries, 0, len(entries), arena)
+
+	if got := arena.compactFullLeafMaterializedForParentReject.Fields; got != 1 {
+		t.Fatalf("compact leaf reject fields = %d, want 1", got)
+	}
+	if got := arena.compactFullLeafMaterializedForFieldRejectPayload.HiddenEmpty; got != 1 {
+		t.Fatalf("compact leaf hidden-empty payload count = %d, want 1", got)
 	}
 }
 

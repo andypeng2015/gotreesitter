@@ -129,6 +129,10 @@ func (p *pendingParent) childEntries() []stackEntry {
 }
 
 func materializeStackEntryPendingParent(arena *nodeArena, entry *stackEntry, reason pendingParentMaterializeReason) *Node {
+	return materializeStackEntryPendingParentWithParser(nil, arena, entry, reason)
+}
+
+func materializeStackEntryPendingParentWithParser(p *Parser, arena *nodeArena, entry *stackEntry, reason pendingParentMaterializeReason) *Node {
 	if entry == nil {
 		return nil
 	}
@@ -139,7 +143,7 @@ func materializeStackEntryPendingParent(arena *nodeArena, entry *stackEntry, rea
 	parentChildren := parent.childEntries()
 	children := arena.allocNodeSliceNoClear(len(parentChildren))
 	for i := range parentChildren {
-		children[i] = materializeStackEntryPayload(arena, &parentChildren[i], compactFullLeafMaterializeForParentReduce, pendingParentMaterializeForParentReduce)
+		children[i] = materializeStackEntryPayloadWithParser(p, arena, &parentChildren[i], compactFullLeafMaterializeForParentReduce, pendingParentMaterializeForParentReduce)
 	}
 	node := newParentNodeInArenaNoLinksWithFieldSources(arena, parent.symbol, parent.isNamed(), children, nil, nil, parent.productionID, parent.hasError())
 	node.flags = parent.flags
@@ -157,14 +161,30 @@ func materializeStackEntryPendingParent(arena *nodeArena, entry *stackEntry, rea
 }
 
 func materializeStackEntryPayload(arena *nodeArena, entry *stackEntry, leafReason compactFullLeafMaterializeReason, parentReason pendingParentMaterializeReason) *Node {
+	return materializeStackEntryPayloadWithParser(nil, arena, entry, leafReason, parentReason)
+}
+
+func materializeStackEntryPayloadWithParser(p *Parser, arena *nodeArena, entry *stackEntry, leafReason compactFullLeafMaterializeReason, parentReason pendingParentMaterializeReason) *Node {
 	if entry == nil {
 		return nil
+	}
+	restoreShape := false
+	prevPayloadShape := pendingParentFieldRejectPayloadUnknown
+	if p != nil && arena != nil && arena.pendingParentActiveRejectReason == pendingParentRejectFields {
+		restoreShape = true
+		prevPayloadShape = arena.pendingParentActiveFieldPayloadShape
+		arena.pendingParentActiveFieldPayloadShape = p.pendingParentFieldRejectPayloadShape(*entry)
+	}
+	if restoreShape {
+		defer func() {
+			arena.pendingParentActiveFieldPayloadShape = prevPayloadShape
+		}()
 	}
 	if arena != nil && arena.pendingParentActiveRejectReason != pendingParentRejectUnknown {
 		arena.recordParentRejectPayloadMaterialized(*entry, arena.pendingParentActiveRejectReason)
 	}
 	if stackEntryPendingParent(*entry) != nil {
-		return materializeStackEntryPendingParent(arena, entry, parentReason)
+		return materializeStackEntryPendingParentWithParser(p, arena, entry, parentReason)
 	}
 	return materializeStackEntryCompactFullLeaf(arena, entry, leafReason)
 }

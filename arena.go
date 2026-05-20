@@ -98,55 +98,56 @@ type nodeArena struct {
 	fieldSlabCursor                    int
 	fieldSourceSlabCursor              int
 
-	externalScannerCheckpointRecords                uint64
-	externalScannerSnapshotPayloadBytes             uint64
-	externalScannerLastSnapshotRef                  externalScannerSnapshotRef
-	externalScannerCheckpointLeafNodes              uint64
-	compactFullLeafCreated                          uint64
-	compactFullLeafMaterialized                     uint64
-	compactFullLeafMaterializedForParentReduce      uint64
-	compactFullLeafMaterializedForFinalTree         uint64
-	compactFullLeafMaterializedForNormalization     uint64
-	compactFullLeafMaterializedForRecovery          uint64
-	compactFullLeafMaterializedForQuery             uint64
-	compactFullLeafMaterializedForCursor            uint64
-	compactFullLeafMaterializedForParentAPI         uint64
-	compactFullLeafMaterializedForEdit              uint64
-	compactFullLeafMaterializedForCheckpointRebuild uint64
-	compactFullLeafMaterializedForParentReject      PendingParentRejectStats
-	compactFullLeafDropped                          uint64
-	pendingParentCreated                            uint64
-	pendingParentMaterialized                       uint64
-	pendingParentMaterializedForParentReduce        uint64
-	pendingParentMaterializedForFinalTree           uint64
-	pendingParentMaterializedForNormalization       uint64
-	pendingParentMaterializedForRecovery            uint64
-	pendingParentMaterializedForQuery               uint64
-	pendingParentMaterializedForCursor              uint64
-	pendingParentMaterializedForParentAPI           uint64
-	pendingParentMaterializedForEdit                uint64
-	pendingParentMaterializedForCheckpointRebuild   uint64
-	pendingParentMaterializedForParentReject        PendingParentRejectStats
-	pendingParentMaterializedForFieldReject         PendingParentFieldRejectStats
-	pendingParentMaterializedForFieldRejectPayload  PendingParentFieldRejectPayloadStats
-	pendingParentDropped                            uint64
-	pendingParentsFlattened                         uint64
-	pendingChildRefsFlattened                       uint64
-	pendingParentCandidates                         uint64
-	pendingParentRejectedEmpty                      uint64
-	pendingParentRejectedChildLimit                 uint64
-	pendingParentRejectedAlias                      uint64
-	pendingParentRejectedRawSpan                    uint64
-	pendingParentRejectedFields                     uint64
-	pendingParentRejectedFieldsParentHidden         uint64
-	pendingParentRejectedFieldsNoIDs                uint64
-	pendingParentRejectedFieldsInherited            uint64
-	pendingParentRejectedFieldsHiddenChild          uint64
-	pendingParentRejectedFieldsChild                uint64
-	pendingParentRejectedFieldsAllVisibleDirect     uint64
-	pendingParentRejectedChild                      uint64
-	pendingParentRejectedSpan                       uint64
-	pendingParentRejectedFill                       uint64
+	externalScannerCheckpointRecords                 uint64
+	externalScannerSnapshotPayloadBytes              uint64
+	externalScannerLastSnapshotRef                   externalScannerSnapshotRef
+	externalScannerCheckpointLeafNodes               uint64
+	compactFullLeafCreated                           uint64
+	compactFullLeafMaterialized                      uint64
+	compactFullLeafMaterializedForParentReduce       uint64
+	compactFullLeafMaterializedForFinalTree          uint64
+	compactFullLeafMaterializedForNormalization      uint64
+	compactFullLeafMaterializedForRecovery           uint64
+	compactFullLeafMaterializedForQuery              uint64
+	compactFullLeafMaterializedForCursor             uint64
+	compactFullLeafMaterializedForParentAPI          uint64
+	compactFullLeafMaterializedForEdit               uint64
+	compactFullLeafMaterializedForCheckpointRebuild  uint64
+	compactFullLeafMaterializedForParentReject       PendingParentRejectStats
+	compactFullLeafMaterializedForFieldRejectPayload PendingParentFieldRejectPayloadStats
+	compactFullLeafDropped                           uint64
+	pendingParentCreated                             uint64
+	pendingParentMaterialized                        uint64
+	pendingParentMaterializedForParentReduce         uint64
+	pendingParentMaterializedForFinalTree            uint64
+	pendingParentMaterializedForNormalization        uint64
+	pendingParentMaterializedForRecovery             uint64
+	pendingParentMaterializedForQuery                uint64
+	pendingParentMaterializedForCursor               uint64
+	pendingParentMaterializedForParentAPI            uint64
+	pendingParentMaterializedForEdit                 uint64
+	pendingParentMaterializedForCheckpointRebuild    uint64
+	pendingParentMaterializedForParentReject         PendingParentRejectStats
+	pendingParentMaterializedForFieldReject          PendingParentFieldRejectStats
+	pendingParentMaterializedForFieldRejectPayload   PendingParentFieldRejectPayloadStats
+	pendingParentDropped                             uint64
+	pendingParentsFlattened                          uint64
+	pendingChildRefsFlattened                        uint64
+	pendingParentCandidates                          uint64
+	pendingParentRejectedEmpty                       uint64
+	pendingParentRejectedChildLimit                  uint64
+	pendingParentRejectedAlias                       uint64
+	pendingParentRejectedRawSpan                     uint64
+	pendingParentRejectedFields                      uint64
+	pendingParentRejectedFieldsParentHidden          uint64
+	pendingParentRejectedFieldsNoIDs                 uint64
+	pendingParentRejectedFieldsInherited             uint64
+	pendingParentRejectedFieldsHiddenChild           uint64
+	pendingParentRejectedFieldsChild                 uint64
+	pendingParentRejectedFieldsAllVisibleDirect      uint64
+	pendingParentRejectedChild                       uint64
+	pendingParentRejectedSpan                        uint64
+	pendingParentRejectedFill                        uint64
 
 	pendingParentLastRejectReason        pendingParentRejectReason
 	pendingParentLastFieldRejectShape    pendingParentFieldRejectShape
@@ -683,6 +684,7 @@ func (a *nodeArena) reset() {
 	a.compactFullLeafMaterializedForEdit = 0
 	a.compactFullLeafMaterializedForCheckpointRebuild = 0
 	a.compactFullLeafMaterializedForParentReject = PendingParentRejectStats{}
+	a.compactFullLeafMaterializedForFieldRejectPayload = PendingParentFieldRejectPayloadStats{}
 	a.compactFullLeafDropped = 0
 	a.pendingParentCreated = 0
 	a.pendingParentMaterialized = 0
@@ -1678,6 +1680,9 @@ func (a *nodeArena) recordParentRejectPayloadMaterialized(entry stackEntry, reas
 	}
 	if stackEntryCompactFullLeaf(entry) != nil {
 		a.compactFullLeafMaterializedForParentReject.increment(reason)
+		if reason == pendingParentRejectFields {
+			a.compactFullLeafMaterializedForFieldRejectPayload.increment(a.pendingParentActiveFieldPayloadShape)
+		}
 		return
 	}
 	if stackEntryPendingParent(entry) != nil {

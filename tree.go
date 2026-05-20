@@ -254,6 +254,7 @@ type ParseRuntime struct {
 	CompactFullLeafMaterializedForEdit               uint64
 	CompactFullLeafMaterializedForCheckpointRebuild  uint64
 	CompactFullLeafDropped                           uint64
+	CompactFullLeafMaterializedForFieldRejectPayload PendingParentFieldRejectPayloadStats
 	PendingParentCreated                             uint64
 	PendingParentMaterialized                        uint64
 	PendingParentMaterializedForParentReduce         uint64

@@ -1551,6 +1551,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		parseRuntime.CompactFullLeafMaterializedForParentAPI = arena.compactFullLeafMaterializedForParentAPI
 		parseRuntime.CompactFullLeafMaterializedForEdit = arena.compactFullLeafMaterializedForEdit
 		parseRuntime.CompactFullLeafMaterializedForCheckpointRebuild = arena.compactFullLeafMaterializedForCheckpointRebuild
+		parseRuntime.CompactFullLeafMaterializedForFieldRejectPayload = arena.compactFullLeafMaterializedForFieldRejectPayload
 		parseRuntime.CompactFullLeafDropped = arena.compactFullLeafDropped
 		parseRuntime.PendingParentCreated = arena.pendingParentCreated
 		parseRuntime.PendingParentMaterialized = arena.pendingParentMaterialized

@@ -1063,7 +1063,7 @@ func materializePendingPayloadEntries(p *Parser, entries []stackEntry, start, en
 		if arena != nil && rejectReason == pendingParentRejectFields {
 			arena.pendingParentActiveFieldPayloadShape = p.pendingParentFieldRejectPayloadShape(entries[i])
 		}
-		materializeStackEntryPayload(arena, &entries[i], compactFullLeafMaterializeForParentReduce, pendingParentMaterializeForParentReduce)
+		materializeStackEntryPayloadWithParser(p, arena, &entries[i], compactFullLeafMaterializeForParentReduce, pendingParentMaterializeForParentReduce)
 	}
 }
 

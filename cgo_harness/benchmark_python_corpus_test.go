@@ -132,6 +132,7 @@ type pythonRuntimeBenchStats struct {
 	compactFullLeafMaterialized          uint64
 	compactFullLeafMaterializedParent    uint64
 	compactFullLeafParentRejects         gotreesitter.PendingParentRejectStats
+	compactFullLeafFieldRejectPayloads   gotreesitter.PendingParentFieldRejectPayloadStats
 	compactFullLeafMaterializedFinal     uint64
 	compactFullLeafReasons               pythonMaterializeReasonStats
 	compactFullLeafDropped               uint64
@@ -417,6 +418,7 @@ func (s *pythonRuntimeBenchStats) add(rt gotreesitter.ParseRuntime, breakdown go
 	s.compactFullLeafCreated += rt.CompactFullLeafCreated
 	s.compactFullLeafMaterialized += rt.CompactFullLeafMaterialized
 	s.compactFullLeafMaterializedParent += rt.CompactFullLeafMaterializedForParentReduce
+	addPendingParentFieldRejectPayloadStats(&s.compactFullLeafFieldRejectPayloads, rt.CompactFullLeafMaterializedForFieldRejectPayload)
 	s.compactFullLeafMaterializedFinal += rt.CompactFullLeafMaterializedForFinalTree
 	s.compactFullLeafReasons.normalization += rt.CompactFullLeafMaterializedForNormalization
 	s.compactFullLeafReasons.recovery += rt.CompactFullLeafMaterializedForRecovery
@@ -808,6 +810,7 @@ func (s pythonRuntimeBenchStats) report(b *testing.B) {
 		b.ReportMetric(float64(s.compactFullLeafMaterialized)/tokens, "compact_full_leaf_materialized/token")
 		b.ReportMetric(float64(s.compactFullLeafMaterializedParent)/tokens, "compact_full_leaf_materialized_parent/token")
 		reportPendingParentRejectStats(b, s.compactFullLeafParentRejects, tokens, "compact_full_leaf_materialized_parent_reject")
+		reportPendingParentFieldRejectPayloadStats(b, s.compactFullLeafFieldRejectPayloads, tokens, "compact_full_leaf_materialized_parent_reject_fields_payload")
 		b.ReportMetric(float64(s.compactFullLeafMaterializedFinal)/tokens, "compact_full_leaf_materialized_final/token")
 		b.ReportMetric(float64(s.compactFullLeafReasons.normalization)/tokens, "compact_full_leaf_materialized_normalization/token")
 		b.ReportMetric(float64(s.compactFullLeafReasons.recovery)/tokens, "compact_full_leaf_materialized_recovery/token")
