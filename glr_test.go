@@ -591,6 +591,38 @@ func TestCompareAcceptedStackAliasPreferenceKeepsWideNodeFallback(t *testing.T) 
 	}
 }
 
+func TestObservePreMaterializationFieldRejectForkCountsSameKey(t *testing.T) {
+	parser := &Parser{
+		language:           &Language{},
+		pendingFullParents: true,
+		reduceHasFields:    []bool{true},
+	}
+	arena := newNodeArena(arenaClassFull)
+	leaf := newLeafNodeInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	stack := &glrStack{
+		entries: []stackEntry{
+			{state: 7},
+			newStackEntryNode(8, leaf),
+		},
+		byteOffset: 1,
+	}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 2, ChildCount: 1, ProductionID: 0},
+		{Type: ParseActionReduce, Symbol: 3, ChildCount: 1, ProductionID: 0},
+	}
+
+	candidates, sameKey, overflow := parser.observePreMaterializationFieldRejectFork(stack, actions, nil, 1)
+	if candidates != 2 {
+		t.Fatalf("candidates = %d, want 2", candidates)
+	}
+	if sameKey != 2 {
+		t.Fatalf("sameKey = %d, want 2", sameKey)
+	}
+	if overflow != 1 {
+		t.Fatalf("overflow = %d, want 1", overflow)
+	}
+}
+
 func TestCompactCheckpointLeafStackEntryUsesNoTreePrefix(t *testing.T) {
 	leaf := newCompactCheckpointLeafInArena(nil, 9, true, 13, 21, externalScannerCheckpointRef{})
 	entry := newStackEntryCompactCheckpointLeaf(4, leaf)

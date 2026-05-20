@@ -296,6 +296,9 @@ type ParseRuntime struct {
 	PendingParentRejectedChild                       uint64
 	PendingParentRejectedSpan                        uint64
 	PendingParentRejectedFill                        uint64
+	PreMaterializationFieldRejectCandidates          uint64
+	PreMaterializationFieldRejectSameKeyCandidates   uint64
+	PreMaterializationFieldRejectOverflowCandidates  uint64
 
 	CheckpointLeafFullNodesAvoided      uint64
 	LeafNodesConstructed                uint64

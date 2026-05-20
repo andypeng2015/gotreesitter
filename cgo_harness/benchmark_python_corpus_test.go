@@ -149,6 +149,9 @@ type pythonRuntimeBenchStats struct {
 	pendingChildRefsFlattened            uint64
 	pendingParentCandidates              uint64
 	pendingParentRejects                 pythonPendingParentRejectStats
+	preMatFieldRejectCandidates          uint64
+	preMatFieldRejectSameKey             uint64
+	preMatFieldRejectOverflow            uint64
 	checkpointLeafFullNodesAvoided       uint64
 	resultSelectionNanos                 int64
 	transientParentMaterializeNanos      int64
@@ -455,6 +458,9 @@ func (s *pythonRuntimeBenchStats) add(rt gotreesitter.ParseRuntime, breakdown go
 	s.pendingParentsFlattened += rt.PendingParentsFlattened
 	s.pendingChildRefsFlattened += rt.PendingChildRefsFlattened
 	s.pendingParentCandidates += rt.PendingParentCandidates
+	s.preMatFieldRejectCandidates += rt.PreMaterializationFieldRejectCandidates
+	s.preMatFieldRejectSameKey += rt.PreMaterializationFieldRejectSameKeyCandidates
+	s.preMatFieldRejectOverflow += rt.PreMaterializationFieldRejectOverflowCandidates
 	s.pendingParentRejects.empty += rt.PendingParentRejectedEmpty
 	s.pendingParentRejects.childLimit += rt.PendingParentRejectedChildLimit
 	s.pendingParentRejects.alias += rt.PendingParentRejectedAlias
@@ -849,6 +855,11 @@ func (s pythonRuntimeBenchStats) report(b *testing.B) {
 		b.ReportMetric(float64(s.pendingParentsFlattened)/tokens, "pending_parent_flattened/token")
 		b.ReportMetric(float64(s.pendingChildRefsFlattened)/tokens, "pending_child_refs_flattened/token")
 		b.ReportMetric(float64(s.pendingParentCandidates)/tokens, "pending_parent_candidate/token")
+		if s.preMatFieldRejectCandidates != 0 {
+			b.ReportMetric(float64(s.preMatFieldRejectCandidates)/tokens, "pre_materialization_field_reject_candidate/token")
+			b.ReportMetric(float64(s.preMatFieldRejectSameKey)/tokens, "pre_materialization_field_reject_same_key/token")
+			b.ReportMetric(float64(s.preMatFieldRejectOverflow)/tokens, "pre_materialization_field_reject_overflow/token")
+		}
 		b.ReportMetric(float64(s.pendingParentRejects.empty)/tokens, "pending_parent_reject_empty/token")
 		b.ReportMetric(float64(s.pendingParentRejects.childLimit)/tokens, "pending_parent_reject_child_limit/token")
 		b.ReportMetric(float64(s.pendingParentRejects.alias)/tokens, "pending_parent_reject_alias/token")

@@ -1513,6 +1513,10 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	multiStackIterations := 0
 	var singleStackTokens uint64
 	var multiStackTokens uint64
+	preMaterializationDiag := parsePreMaterializationDiagEnabled()
+	var preMaterializationFieldRejectCandidates uint64
+	var preMaterializationFieldRejectSameKeyCandidates uint64
+	var preMaterializationFieldRejectOverflowCandidates uint64
 	expectedEOFByte := uint32(len(source))
 	if len(p.included) > 0 {
 		expectedEOFByte = p.included[len(p.included)-1].EndByte
@@ -1590,6 +1594,9 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		parseRuntime.PendingParentRejectedChild = arena.pendingParentRejectedChild
 		parseRuntime.PendingParentRejectedSpan = arena.pendingParentRejectedSpan
 		parseRuntime.PendingParentRejectedFill = arena.pendingParentRejectedFill
+		parseRuntime.PreMaterializationFieldRejectCandidates = preMaterializationFieldRejectCandidates
+		parseRuntime.PreMaterializationFieldRejectSameKeyCandidates = preMaterializationFieldRejectSameKeyCandidates
+		parseRuntime.PreMaterializationFieldRejectOverflowCandidates = preMaterializationFieldRejectOverflowCandidates
 		parseRuntime.CheckpointLeafFullNodesAvoided = arena.checkpointLeafFullNodesAvoided
 		parseRuntime.LeafNodesConstructed = arena.leafNodesConstructed
 		parseRuntime.ParentNodesConstructed = arena.parentNodesConstructed
@@ -2390,6 +2397,12 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				if perfCountersEnabled {
 					perfRecordFork(len(actions), perfTokensConsumed)
 				}
+				if preMaterializationDiag {
+					candidates, sameKey, overflow := p.observePreMaterializationFieldRejectFork(s, actions, scratch.tmpEntries, mergePerKeyCap)
+					preMaterializationFieldRejectCandidates += candidates
+					preMaterializationFieldRejectSameKeyCandidates += sameKey
+					preMaterializationFieldRejectOverflowCandidates += overflow
+				}
 				// Deep-stack GLR forks can trigger pathological clone volumes on
 				// very large inputs. At extreme depths, take the primary action
 				// to keep parsing bounded.
@@ -3056,6 +3069,86 @@ func compareStackCullKeys(lang *Language, a, b stackCullKey) int {
 		return -1
 	}
 	return 0
+}
+
+type preMaterializationFieldRejectKey struct {
+	state      StateID
+	byteOffset uint32
+}
+
+func (p *Parser) observePreMaterializationFieldRejectFork(s *glrStack, actions []ParseAction, tmp []stackEntry, perKeyCap int) (candidates, sameKeyCandidates, overflowCandidates uint64) {
+	if p == nil || s == nil || p.noTreeBenchmarkOnly || !p.usePendingFullParents() || len(actions) <= 1 {
+		return 0, 0, 0
+	}
+	if perKeyCap <= 0 {
+		perKeyCap = maxStacksPerMergeKey
+	}
+	type keyCount struct {
+		key   preMaterializationFieldRejectKey
+		count int
+	}
+	var fixed [8]keyCount
+	keys := fixed[:0]
+	for _, act := range actions {
+		if act.Type != ParseActionReduce || !p.reduceProductionHasEffectiveFields(int(act.ChildCount), act.ProductionID, nil) {
+			continue
+		}
+		key, ok := p.preMaterializationFieldRejectKey(s, act, tmp)
+		if !ok {
+			continue
+		}
+		candidates++
+		found := false
+		for i := range keys {
+			if keys[i].key == key {
+				keys[i].count++
+				found = true
+				break
+			}
+		}
+		if found {
+			continue
+		}
+		if len(keys) == cap(keys) {
+			next := make([]keyCount, len(keys), len(keys)*2)
+			copy(next, keys)
+			keys = next
+		}
+		keys = append(keys, keyCount{key: key, count: 1})
+	}
+	for i := range keys {
+		if keys[i].count <= 1 {
+			continue
+		}
+		sameKeyCandidates += uint64(keys[i].count)
+		if keys[i].count > perKeyCap {
+			overflowCandidates += uint64(keys[i].count - perKeyCap)
+		}
+	}
+	return candidates, sameKeyCandidates, overflowCandidates
+}
+
+func (p *Parser) preMaterializationFieldRejectKey(s *glrStack, act ParseAction, tmp []stackEntry) (preMaterializationFieldRejectKey, bool) {
+	if p == nil || s == nil {
+		return preMaterializationFieldRejectKey{}, false
+	}
+	entries, _ := s.entriesForRead(tmp)
+	window, ok := computeReduceRangeForFullPayloads(entries, int(act.ChildCount), p.usePendingFullParents())
+	if !ok {
+		return preMaterializationFieldRejectKey{}, false
+	}
+	targetState := window.topState
+	if gotoState := p.lookupGoto(window.topState, act.Symbol); gotoState != 0 {
+		targetState = gotoState
+	}
+	byteOffset := s.byteOffset
+	if window.actualEnd > window.start {
+		byteOffset = stackEntryNodeEndByte(entries[window.actualEnd-1])
+	}
+	return preMaterializationFieldRejectKey{
+		state:      targetState,
+		byteOffset: byteOffset,
+	}, true
 }
 
 func retainTopStacks(stacks []glrStack, keep int) []glrStack {

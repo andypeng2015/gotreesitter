@@ -8,14 +8,16 @@ import (
 )
 
 var (
-	parseNodeLimitScaleOnce sync.Once
-	parseNodeLimitScale     int
-	parseMemoryBudgetOnce   sync.Once
-	parseMemoryBudgetMBVal  int
-	parseMaxGLRStacksOnce   sync.Once
-	parseMaxGLRStacks       int
-	parseMaxMergePerKeyOnce sync.Once
-	parseMaxMergePerKey     int
+	parseNodeLimitScaleOnce    sync.Once
+	parseNodeLimitScale        int
+	parseMemoryBudgetOnce      sync.Once
+	parseMemoryBudgetMBVal     int
+	parseMaxGLRStacksOnce      sync.Once
+	parseMaxGLRStacks          int
+	parseMaxMergePerKeyOnce    sync.Once
+	parseMaxMergePerKey        int
+	preMaterializationDiagOnce sync.Once
+	preMaterializationDiag     bool
 )
 
 // ResetParseEnvConfigCacheForTests clears memoized parser env config.
@@ -31,6 +33,8 @@ func ResetParseEnvConfigCacheForTests() {
 	parseMaxGLRStacks = 0
 	parseMaxMergePerKeyOnce = sync.Once{}
 	parseMaxMergePerKey = 0
+	preMaterializationDiagOnce = sync.Once{}
+	preMaterializationDiag = false
 }
 
 func parseNodeLimitScaleFactor() int {
@@ -106,6 +110,14 @@ func parsePendingParentsEnv() (configured bool, enabled bool) {
 		return false, false
 	}
 	return true, raw != "0" && !strings.EqualFold(raw, "false")
+}
+
+func parsePreMaterializationDiagEnabled() bool {
+	preMaterializationDiagOnce.Do(func() {
+		raw := strings.TrimSpace(os.Getenv("GOT_GLR_V2_PRE_MATERIALIZATION_DIAG"))
+		preMaterializationDiag = raw != "" && raw != "0" && !strings.EqualFold(raw, "false")
+	})
+	return preMaterializationDiag
 }
 
 func parseTransientReduceEnabled(envName string) bool {

@@ -557,6 +557,16 @@ func TestParseMaxMergePerKeyValue(t *testing.T) {
 	}
 }
 
+func TestParsePreMaterializationDiagEnabled(t *testing.T) {
+	t.Setenv("GOT_GLR_V2_PRE_MATERIALIZATION_DIAG", "1")
+	ResetParseEnvConfigCacheForTests()
+	defer ResetParseEnvConfigCacheForTests()
+
+	if !parsePreMaterializationDiagEnabled() {
+		t.Fatal("parsePreMaterializationDiagEnabled() = false, want true")
+	}
+}
+
 func TestEffectiveParseMergePerKeyCap(t *testing.T) {
 	t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "")
 	ResetParseEnvConfigCacheForTests()
