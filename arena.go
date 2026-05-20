@@ -2243,7 +2243,7 @@ func maxRetainedPendingParentCapacityForClass(class arenaClass) int {
 }
 
 func maxRetainedPendingChildEntryCapacityForClass(class arenaClass) int {
-	nodeSize := int(unsafe.Sizeof(pendingChildEntry(0)))
+	nodeSize := int(unsafe.Sizeof(pendingChildEntry{}))
 	if nodeSize <= 0 {
 		nodeSize = 1
 	}
