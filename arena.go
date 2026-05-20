@@ -1518,6 +1518,10 @@ type pendingParentFieldRejectPayloadShape uint8
 const (
 	pendingParentFieldRejectPayloadUnknown pendingParentFieldRejectPayloadShape = iota
 	pendingParentFieldRejectPayloadVisible
+	pendingParentFieldRejectPayloadVisibleFinalLike
+	pendingParentFieldRejectPayloadVisibleNestedPayload
+	pendingParentFieldRejectPayloadVisibleCompactLeaf
+	pendingParentFieldRejectPayloadVisibleFieldedDescendant
 	pendingParentFieldRejectPayloadHiddenEmpty
 	pendingParentFieldRejectPayloadHiddenOne
 	pendingParentFieldRejectPayloadHiddenMany
@@ -1597,6 +1601,18 @@ func (s *PendingParentFieldRejectPayloadStats) increment(shape pendingParentFiel
 	switch shape {
 	case pendingParentFieldRejectPayloadVisible:
 		s.Visible++
+	case pendingParentFieldRejectPayloadVisibleFinalLike:
+		s.Visible++
+		s.VisibleFinalLike++
+	case pendingParentFieldRejectPayloadVisibleNestedPayload:
+		s.Visible++
+		s.VisibleNestedPayload++
+	case pendingParentFieldRejectPayloadVisibleCompactLeaf:
+		s.Visible++
+		s.VisibleCompactLeaf++
+	case pendingParentFieldRejectPayloadVisibleFieldedDescendant:
+		s.Visible++
+		s.VisibleFieldedDesc++
 	case pendingParentFieldRejectPayloadHiddenEmpty:
 		s.HiddenEmpty++
 	case pendingParentFieldRejectPayloadHiddenOne:

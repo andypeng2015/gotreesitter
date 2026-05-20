@@ -154,12 +154,16 @@ type PendingParentFieldRejectStats struct {
 }
 
 type PendingParentFieldRejectPayloadStats struct {
-	Unknown          uint64
-	Visible          uint64
-	HiddenEmpty      uint64
-	HiddenOne        uint64
-	HiddenMany       uint64
-	HiddenWithFields uint64
+	Unknown              uint64
+	Visible              uint64
+	VisibleFinalLike     uint64
+	VisibleNestedPayload uint64
+	VisibleCompactLeaf   uint64
+	VisibleFieldedDesc   uint64
+	HiddenEmpty          uint64
+	HiddenOne            uint64
+	HiddenMany           uint64
+	HiddenWithFields     uint64
 }
 
 // ParseRuntime captures parser-loop diagnostics for a completed tree.

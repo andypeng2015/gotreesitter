@@ -190,6 +190,69 @@ func TestParentRejectPayloadMaterializedCountersClassifyPayloadKind(t *testing.T
 	}
 }
 
+func TestPendingParentFieldRejectPayloadStatsSplitVisibleShapes(t *testing.T) {
+	var stats PendingParentFieldRejectPayloadStats
+	stats.increment(pendingParentFieldRejectPayloadVisibleFinalLike)
+	if got := stats.Visible; got != 1 {
+		t.Fatalf("visible aggregate = %d, want 1", got)
+	}
+	if got := stats.VisibleFinalLike; got != 1 {
+		t.Fatalf("visible final-like = %d, want 1", got)
+	}
+	stats.increment(pendingParentFieldRejectPayloadVisibleNestedPayload)
+	if got := stats.Visible; got != 2 {
+		t.Fatalf("visible aggregate after nested = %d, want 2", got)
+	}
+	if got := stats.VisibleNestedPayload; got != 1 {
+		t.Fatalf("visible nested payload = %d, want 1", got)
+	}
+	stats.increment(pendingParentFieldRejectPayloadVisibleCompactLeaf)
+	if got := stats.VisibleCompactLeaf; got != 1 {
+		t.Fatalf("visible compact leaf = %d, want 1", got)
+	}
+	stats.increment(pendingParentFieldRejectPayloadVisibleFieldedDescendant)
+	if got := stats.VisibleFieldedDesc; got != 1 {
+		t.Fatalf("visible fielded descendant = %d, want 1", got)
+	}
+}
+
+func TestPendingParentFieldRejectPayloadShapeSplitsVisiblePendingParents(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	parser := &Parser{language: &Language{SymbolMetadata: []SymbolMetadata{
+		{},
+		{Name: "leaf", Visible: true, Named: true},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{Name: "parent", Visible: true, Named: true},
+	}}}
+	leaf := newLeafNodeInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	finalLike := newPendingParentInArena(arena, 10, true, 7, []stackEntry{newStackEntryNode(2, leaf)}, 0, 1, Point{}, Point{Column: 1}, false)
+	if got := parser.pendingParentFieldRejectPayloadShape(newStackEntryPendingParent(3, finalLike)); got != pendingParentFieldRejectPayloadVisibleFinalLike {
+		t.Fatalf("final-like visible payload shape = %d", got)
+	}
+	nestedLeaf := newCompactFullLeafInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	nested := newPendingParentInArena(arena, 10, true, 8, []stackEntry{newStackEntryCompactFullLeaf(4, nestedLeaf)}, 0, 1, Point{}, Point{Column: 1}, false)
+	if got := parser.pendingParentFieldRejectPayloadShape(newStackEntryPendingParent(5, nested)); got != pendingParentFieldRejectPayloadVisibleCompactLeaf {
+		t.Fatalf("compact-leaf visible payload shape = %d", got)
+	}
+	inner := newPendingParentInArena(arena, 10, true, 9, []stackEntry{newStackEntryNode(6, leaf)}, 0, 1, Point{}, Point{Column: 1}, false)
+	nestedParent := newPendingParentInArena(arena, 10, true, 10, []stackEntry{newStackEntryPendingParent(7, inner)}, 0, 1, Point{}, Point{Column: 1}, false)
+	if got := parser.pendingParentFieldRejectPayloadShape(newStackEntryPendingParent(8, nestedParent)); got != pendingParentFieldRejectPayloadVisibleNestedPayload {
+		t.Fatalf("nested-parent visible payload shape = %d", got)
+	}
+	fieldedChild := newParentNodeInArenaNoLinksWithFieldSources(arena, 10, true, []*Node{leaf}, []FieldID{3}, nil, 11, false)
+	fieldedParent := newPendingParentInArena(arena, 10, true, 12, []stackEntry{newStackEntryNode(9, fieldedChild)}, 0, 1, Point{}, Point{Column: 1}, false)
+	if got := parser.pendingParentFieldRejectPayloadShape(newStackEntryPendingParent(10, fieldedParent)); got != pendingParentFieldRejectPayloadVisibleFieldedDescendant {
+		t.Fatalf("fielded-desc visible payload shape = %d", got)
+	}
+}
+
 func TestMaterializePendingPayloadEntriesPropagatesFieldRejectShape(t *testing.T) {
 	arena := newNodeArena(arenaClassFull)
 	parent := newPendingParentInArena(arena, 10, true, 7, nil, 0, 0, Point{}, Point{}, false)

@@ -319,6 +319,10 @@ func addPendingParentFieldRejectStats(dst *gotreesitter.PendingParentFieldReject
 func addPendingParentFieldRejectPayloadStats(dst *gotreesitter.PendingParentFieldRejectPayloadStats, src gotreesitter.PendingParentFieldRejectPayloadStats) {
 	dst.Unknown += src.Unknown
 	dst.Visible += src.Visible
+	dst.VisibleFinalLike += src.VisibleFinalLike
+	dst.VisibleNestedPayload += src.VisibleNestedPayload
+	dst.VisibleCompactLeaf += src.VisibleCompactLeaf
+	dst.VisibleFieldedDesc += src.VisibleFieldedDesc
 	dst.HiddenEmpty += src.HiddenEmpty
 	dst.HiddenOne += src.HiddenOne
 	dst.HiddenMany += src.HiddenMany
@@ -355,6 +359,10 @@ func reportPendingParentFieldRejectStats(b *testing.B, s gotreesitter.PendingPar
 func reportPendingParentFieldRejectPayloadStats(b *testing.B, s gotreesitter.PendingParentFieldRejectPayloadStats, tokens float64, prefix string) {
 	b.ReportMetric(float64(s.Unknown)/tokens, prefix+"_unknown/token")
 	b.ReportMetric(float64(s.Visible)/tokens, prefix+"_visible/token")
+	b.ReportMetric(float64(s.VisibleFinalLike)/tokens, prefix+"_visible_final_like/token")
+	b.ReportMetric(float64(s.VisibleNestedPayload)/tokens, prefix+"_visible_nested_payload/token")
+	b.ReportMetric(float64(s.VisibleCompactLeaf)/tokens, prefix+"_visible_compact_leaf/token")
+	b.ReportMetric(float64(s.VisibleFieldedDesc)/tokens, prefix+"_visible_fielded_desc/token")
 	b.ReportMetric(float64(s.HiddenEmpty)/tokens, prefix+"_hidden_empty/token")
 	b.ReportMetric(float64(s.HiddenOne)/tokens, prefix+"_hidden_one/token")
 	b.ReportMetric(float64(s.HiddenMany)/tokens, prefix+"_hidden_many/token")

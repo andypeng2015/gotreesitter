@@ -1073,6 +1073,19 @@ func (p *Parser) pendingParentFieldRejectPayloadShape(entry stackEntry) pendingP
 	}
 	symbolMeta := p.language.SymbolMetadata
 	if stackEntryVisibleForPending(entry, symbolMeta) {
+		if parent := stackEntryPendingParent(entry); parent != nil {
+			shape := classifyPendingParentVisiblePayloadShape(parent)
+			switch {
+			case shape.containsCompactLeaf:
+				return pendingParentFieldRejectPayloadVisibleCompactLeaf
+			case shape.containsNestedPending:
+				return pendingParentFieldRejectPayloadVisibleNestedPayload
+			case shape.containsFieldedDesc:
+				return pendingParentFieldRejectPayloadVisibleFieldedDescendant
+			default:
+				return pendingParentFieldRejectPayloadVisibleFinalLike
+			}
+		}
 		return pendingParentFieldRejectPayloadVisible
 	}
 	if n := stackEntryNode(entry); hiddenTreeHasFieldIDs(n) {
@@ -1086,6 +1099,53 @@ func (p *Parser) pendingParentFieldRejectPayloadShape(entry stackEntry) pendingP
 	default:
 		return pendingParentFieldRejectPayloadHiddenMany
 	}
+}
+
+type pendingParentVisiblePayloadShape struct {
+	containsCompactLeaf   bool
+	containsNestedPending bool
+	containsFieldedDesc   bool
+}
+
+func classifyPendingParentVisiblePayloadShape(parent *pendingParent) pendingParentVisiblePayloadShape {
+	var shape pendingParentVisiblePayloadShape
+	collectPendingParentVisiblePayloadShape(parent, &shape)
+	return shape
+}
+
+func collectPendingParentVisiblePayloadShape(parent *pendingParent, shape *pendingParentVisiblePayloadShape) {
+	if parent == nil || shape == nil {
+		return
+	}
+	for _, child := range parent.childEntries() {
+		if stackEntryCompactFullLeaf(child) != nil {
+			shape.containsCompactLeaf = true
+			continue
+		}
+		if nested := stackEntryPendingParent(child); nested != nil {
+			shape.containsNestedPending = true
+			collectPendingParentVisiblePayloadShape(nested, shape)
+			continue
+		}
+		if node := stackEntryNode(child); node != nil && nodeTreeHasFieldIDs(node) {
+			shape.containsFieldedDesc = true
+		}
+	}
+}
+
+func nodeTreeHasFieldIDs(n *Node) bool {
+	if n == nil {
+		return false
+	}
+	if len(n.fieldIDs) != 0 {
+		return true
+	}
+	for _, child := range n.children {
+		if nodeTreeHasFieldIDs(child) {
+			return true
+		}
+	}
+	return false
 }
 
 func (p *Parser) tryPushPendingNoFieldParent(s *glrStack, act ParseAction, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, entries []stackEntry, start, reducedEnd, trailingEnd int, topState StateID, truncateDepth int) bool {
