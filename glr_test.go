@@ -319,6 +319,53 @@ func TestQueryCursorByteRangeSkipsOutOfRangeLazyFinalChildRefs(t *testing.T) {
 	}
 }
 
+func TestQueryMatcherSkipsNonCandidateLazyFinalChildRefs(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	arena.finalChildRefs = true
+	other := newCompactFullLeafInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	other.parseState = 11
+	wanted := newCompactFullLeafInArena(arena, 2, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	wanted.parseState = 12
+	parent := newPendingParentInArena(arena, 3, true, 4, []stackEntry{
+		newStackEntryCompactFullLeaf(other.parseState, other),
+		newStackEntryCompactFullLeaf(wanted.parseState, wanted),
+	}, 0, 2, Point{}, Point{Column: 2}, false)
+	parent.parseState = 13
+
+	entry := newStackEntryPendingParent(parent.parseState, parent)
+	node := materializeStackEntryPendingParent(arena, &entry, pendingParentMaterializeForFinalTree)
+	if node == nil {
+		t.Fatal("materialized parent = nil")
+	}
+	lang := &Language{
+		SymbolNames: []string{"", "other", "wanted", "parent"},
+		SymbolMetadata: []SymbolMetadata{
+			{},
+			{Named: true, Visible: true},
+			{Named: true, Visible: true},
+			{Named: true, Visible: true},
+		},
+	}
+	query, err := NewQuery(`(parent (wanted) @w)`, lang)
+	if err != nil {
+		t.Fatalf("NewQuery: %v", err)
+	}
+	cursor := query.Exec(node, lang, []byte("ow"))
+	match, ok := cursor.NextMatch()
+	if !ok {
+		t.Fatal("NextMatch returned !ok")
+	}
+	if len(match.Captures) != 1 || match.Captures[0].Node.Symbol() != 2 {
+		t.Fatalf("captures = %#v, want wanted child capture", match.Captures)
+	}
+	if got := arena.finalChildRefsMaterializedParents; got != 0 {
+		t.Fatalf("final child ref range materialized parents = %d, want 0", got)
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 1 {
+		t.Fatalf("final child ref single children materialized = %d, want 1", got)
+	}
+}
+
 func TestAlternativeFieldMatchesUsesLazyFinalChildRefs(t *testing.T) {
 	arena := newNodeArena(arenaClassFull)
 	arena.finalChildRefs = true

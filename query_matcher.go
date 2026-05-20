@@ -193,9 +193,8 @@ func (q *Query) matchChildSteps(
 	}
 	namedPos := 0
 	for i := 0; i < childCount; i++ {
-		child := nodeChildAtForReason(parent, i, materializeForQuery)
-		children[i] = child
-		if child != nil && child.IsNamed() {
+		entry, ok := nodeChildEntryAtNoMaterialize(parent, i)
+		if ok && stackEntryNodeIsNamed(entry) {
 			namedPosByIndex[i] = namedPos
 			namedPos++
 		} else {
@@ -251,7 +250,15 @@ func (q *Query) matchChildStepsRecursive(
 		// A parent can have multiple children with the same field name.
 		// Iterate children directly instead of ChildByFieldName (first match only).
 		for i := nextChildIdx; i < len(children); i++ {
+			entry, ok := nodeChildEntryAtNoMaterialize(parent, i)
+			if !ok || !q.stackEntryCanMatchStep(step, entry, lang) {
+				continue
+			}
 			child := children[i]
+			if child == nil {
+				child = nodeChildAtForReason(parent, i, materializeForQuery)
+				children[i] = child
+			}
 			if child == nil {
 				continue
 			}
@@ -264,7 +271,18 @@ func (q *Query) matchChildStepsRecursive(
 		}
 	} else {
 		for i := nextChildIdx; i < len(children); i++ {
+			entry, ok := nodeChildEntryAtNoMaterialize(parent, i)
+			if !ok || !q.stackEntryCanMatchStep(step, entry, lang) {
+				continue
+			}
 			child := children[i]
+			if child == nil {
+				child = nodeChildAtForReason(parent, i, materializeForQuery)
+				children[i] = child
+			}
+			if child == nil {
+				continue
+			}
 			if q.nodeMatchesStep(step, child, lang) {
 				candidateIndices = append(candidateIndices, i)
 			}
@@ -579,6 +597,70 @@ func (q *Query) matchAlternationBranch(
 		return false
 	}
 	return true
+}
+
+func (q *Query) stackEntryCanMatchStep(step *QueryStep, entry stackEntry, lang *Language) bool {
+	if !stackEntryHasNode(entry) {
+		return false
+	}
+	nodeSymbol := lang.PublicSymbol(stackEntryNodeSymbol(entry))
+	nodeNamed := stackEntryNodeIsNamed(entry)
+	if len(step.alternatives) > 0 {
+		if idx := step.altIndex; idx != nil {
+			if len(idx.wildcard) > 0 {
+				return true
+			}
+			if len(idx.bySymbolNamed[alternationSymbolNamedKey(nodeSymbol, nodeNamed)]) > 0 {
+				return true
+			}
+			if !nodeNamed && len(idx.byText) > 0 {
+				if len(idx.byText[queryStackEntryTypeName(entry, lang)]) > 0 {
+					return true
+				}
+			}
+			return false
+		}
+		for _, alt := range step.alternatives {
+			if alternativeMatchesStackEntry(alt, entry, lang, nodeSymbol, nodeNamed) {
+				return true
+			}
+		}
+		return false
+	}
+	if step.textMatch != "" {
+		return !nodeNamed && queryStackEntryTypeName(entry, lang) == step.textMatch
+	}
+	if step.symbol == 0 {
+		return !step.isNamed || nodeNamed
+	}
+	if nodeSymbol != step.symbol {
+		return false
+	}
+	return !step.isNamed || nodeNamed
+}
+
+func queryStackEntryTypeName(entry stackEntry, lang *Language) string {
+	if stackEntryNodeSymbol(entry) == errorSymbol {
+		return "ERROR"
+	}
+	if lang == nil {
+		return ""
+	}
+	symbol := stackEntryNodeSymbol(entry)
+	if int(symbol) >= 0 && int(symbol) < len(lang.SymbolNames) {
+		return unescapePunctuationSymbolName(lang.SymbolNames[symbol])
+	}
+	return ""
+}
+
+func alternativeMatchesStackEntry(alt alternativeSymbol, entry stackEntry, lang *Language, nodeSymbol Symbol, nodeNamed bool) bool {
+	if alt.symbol == 0 && alt.textMatch == "" {
+		return !alt.isNamed || nodeNamed
+	}
+	if alt.textMatch != "" {
+		return !nodeNamed && queryStackEntryTypeName(entry, lang) == alt.textMatch
+	}
+	return nodeSymbol == alt.symbol && nodeNamed == alt.isNamed
 }
 
 // nodeMatchesStep checks if a single node matches a single step's type/symbol constraint.
