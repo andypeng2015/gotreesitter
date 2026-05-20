@@ -513,54 +513,111 @@ func (q *Query) collectChildCandidateIndices(
 	lang *Language,
 	dst []int,
 ) ([]int, bool) {
-	fieldName := ""
-	if field != 0 {
-		if int(field) <= 0 || int(field) >= len(lang.FieldNames) {
-			return dst, false
-		}
-		fieldName = lang.FieldNames[field]
-		if fieldName == "" {
-			return dst, false
-		}
+	fieldName, ok := queryFieldName(field, lang)
+	if !ok {
+		return dst, false
 	}
 
-	contiguousRun := step.quantifier == queryQuantifierZeroOrMore || step.quantifier == queryQuantifierOneOrMore
-	startedRun := false
-	for i := nextChildIdx; i < len(children); i++ {
-		entry, ok := nodeChildEntryAtNoMaterialize(parent, i)
-		if !ok || !q.stackEntryCanMatchStep(step, entry, lang) {
-			if contiguousRun && startedRun {
-				break
-			}
-			continue
-		}
-		child := children[i]
-		if child == nil {
-			child = nodeChildAtForReason(parent, i, materializeForQuery)
-			children[i] = child
-		}
-		if child == nil {
-			if contiguousRun && startedRun {
-				break
-			}
-			continue
-		}
+	collector := childCandidateCollector{
+		q:             q,
+		parent:        parent,
+		children:      children,
+		step:          step,
+		fieldName:     fieldName,
+		nextChildIdx:  nextChildIdx,
+		lang:          lang,
+		dst:           dst,
+		contiguousRun: stepUsesContiguousRun(step),
+	}
+	return collector.collect(), true
+}
 
-		fieldMatches := true
-		if fieldName != "" {
-			fieldMatches = parent.FieldNameForChild(i, lang) == fieldName
-		}
-		if fieldMatches && q.nodeMatchesStep(step, child, lang) {
-			dst = append(dst, i)
-			startedRun = true
-			continue
-		}
+type childCandidateCollector struct {
+	q             *Query
+	parent        *Node
+	children      []*Node
+	step          *QueryStep
+	fieldName     string
+	nextChildIdx  int
+	lang          *Language
+	dst           []int
+	contiguousRun bool
+	startedRun    bool
+}
 
-		if contiguousRun && startedRun {
-			break
+func (c *childCandidateCollector) collect() []int {
+	for i := c.nextChildIdx; i < len(c.children); i++ {
+		switch c.candidateState(i) {
+		case childCandidateMatch:
+			c.dst = append(c.dst, i)
+			c.startedRun = true
+		case childCandidateStop:
+			return c.dst
 		}
 	}
-	return dst, true
+	return c.dst
+}
+
+type childCandidateState uint8
+
+const (
+	childCandidateSkip childCandidateState = iota
+	childCandidateMatch
+	childCandidateStop
+)
+
+func (c *childCandidateCollector) candidateState(childIdx int) childCandidateState {
+	if c.stackEntryRejects(childIdx) {
+		return c.skipOrStop()
+	}
+	child := c.materializedChild(childIdx)
+	if child == nil {
+		return c.skipOrStop()
+	}
+	if c.fieldMatches(childIdx) && c.q.nodeMatchesStep(c.step, child, c.lang) {
+		return childCandidateMatch
+	}
+	return c.skipOrStop()
+}
+
+func (c *childCandidateCollector) stackEntryRejects(childIdx int) bool {
+	entry, hasEntry := nodeChildEntryAtNoMaterialize(c.parent, childIdx)
+	return !hasEntry || !c.q.stackEntryCanMatchStep(c.step, entry, c.lang)
+}
+
+func (c *childCandidateCollector) materializedChild(childIdx int) *Node {
+	child := c.children[childIdx]
+	if child == nil {
+		child = nodeChildAtForReason(c.parent, childIdx, materializeForQuery)
+		c.children[childIdx] = child
+	}
+	return child
+}
+
+func (c *childCandidateCollector) fieldMatches(childIdx int) bool {
+	return c.fieldName == "" || c.parent.FieldNameForChild(childIdx, c.lang) == c.fieldName
+}
+
+func (c *childCandidateCollector) skipOrStop() childCandidateState {
+	if c.contiguousRun && c.startedRun {
+		return childCandidateStop
+	}
+	return childCandidateSkip
+}
+
+func queryFieldName(field FieldID, lang *Language) (string, bool) {
+	if field == 0 {
+		return "", true
+	}
+	if int(field) <= 0 || int(field) >= len(lang.FieldNames) {
+		return "", false
+	}
+	fieldName := lang.FieldNames[field]
+	return fieldName, fieldName != ""
+}
+
+func stepUsesContiguousRun(step *QueryStep) bool {
+	return step.quantifier == queryQuantifierZeroOrMore || step.quantifier == queryQuantifierOneOrMore
 }
 
 func quantifierBounds(quantifier queryQuantifier) (int, int, bool) {
@@ -895,87 +952,147 @@ func maxInt(a int, b int) int {
 }
 
 func (q *Query) matchAlternationStep(step *QueryStep, node *Node, parent *Node, childIdx int, lang *Language, source []byte, predicates []QueryPredicate, captures *[]QueryCapture) bool {
-	hasStepCaptures := len(step.captureIDs) > 0 || step.captureID >= 0
-	nodeNamed := node.IsNamed()
-	nodeSymbol := lang.PublicSymbolForNamedness(node.Symbol(), nodeNamed)
-	var nodeType string
-	nodeTypeLoaded := false
-
+	ctx := alternationMatchContext{
+		q:               q,
+		step:            step,
+		node:            node,
+		parent:          parent,
+		childIdx:        childIdx,
+		lang:            lang,
+		source:          source,
+		predicates:      predicates,
+		captures:        captures,
+		hasStepCaptures: len(step.captureIDs) > 0 || step.captureID >= 0,
+		nodeNamed:       node.IsNamed(),
+	}
+	ctx.nodeSymbol = lang.PublicSymbolForNamedness(node.Symbol(), ctx.nodeNamed)
 	if idx := step.altIndex; idx != nil {
-		key := alternationSymbolNamedKey(nodeSymbol, nodeNamed)
-		symbolMatches := idx.bySymbolNamed[key]
-		var textMatches []int
-		if !nodeNamed && len(idx.byText) > 0 {
-			nodeType = node.Type(lang)
-			nodeTypeLoaded = true
-			textMatches = idx.byText[nodeType]
-		}
-		wildcardMatches := idx.wildcard
-		if len(symbolMatches) == 0 && len(textMatches) == 0 && len(wildcardMatches) == 0 {
-			return false
-		}
+		return ctx.matchIndexedAlternation(idx)
+	}
+	return ctx.matchLinearAlternation()
+}
 
-		iSym, iText, iWild := 0, 0, 0
-		for {
-			nextSrc := 0
-			nextAlt := -1
-			if iSym < len(symbolMatches) {
-				nextSrc = 1
-				nextAlt = symbolMatches[iSym]
-			}
-			if iText < len(textMatches) && (nextAlt < 0 || textMatches[iText] < nextAlt) {
-				nextSrc = 2
-				nextAlt = textMatches[iText]
-			}
-			if iWild < len(wildcardMatches) && (nextAlt < 0 || wildcardMatches[iWild] < nextAlt) {
-				nextSrc = 3
-				nextAlt = wildcardMatches[iWild]
-			}
-			if nextAlt < 0 {
-				break
-			}
+type alternationMatchContext struct {
+	q               *Query
+	step            *QueryStep
+	node            *Node
+	parent          *Node
+	childIdx        int
+	lang            *Language
+	source          []byte
+	predicates      []QueryPredicate
+	captures        *[]QueryCapture
+	hasStepCaptures bool
 
-			alt := &step.alternatives[nextAlt]
-			if !q.alternativeFieldMatches(alt, node, parent, childIdx, lang) {
-				switch nextSrc {
-				case 1:
-					iSym++
-				case 2:
-					iText++
-				case 3:
-					iWild++
-				}
-				continue
-			}
+	nodeNamed      bool
+	nodeSymbol     Symbol
+	nodeType       string
+	nodeTypeLoaded bool
+}
 
-			if q.matchAlternationBranch(step, alt, node, lang, source, predicates, captures, hasStepCaptures) {
-				return true
-			}
-
-			switch nextSrc {
-			case 1:
-				iSym++
-			case 2:
-				iText++
-			case 3:
-				iWild++
-			}
-		}
+func (c *alternationMatchContext) matchIndexedAlternation(idx *queryAlternationIndex) bool {
+	cursor := c.indexedAlternationCursor(idx)
+	if !cursor.hasAny() {
 		return false
 	}
+	for {
+		nextAlt, sourceKind, ok := cursor.next()
+		if !ok {
+			return false
+		}
+		alt := &c.step.alternatives[nextAlt]
+		if c.alternativeMatches(alt) {
+			return true
+		}
+		cursor.advance(sourceKind)
+	}
+}
 
-	for _, alt := range step.alternatives {
-		if !alternativeMatchesNodeCached(alt, node, lang, nodeSymbol, nodeNamed, &nodeType, &nodeTypeLoaded) {
+func (c *alternationMatchContext) matchLinearAlternation() bool {
+	for _, alt := range c.step.alternatives {
+		if !alternativeMatchesNodeCached(alt, c.node, c.lang, c.nodeSymbol, c.nodeNamed, &c.nodeType, &c.nodeTypeLoaded) {
 			continue
 		}
-		if !q.alternativeFieldMatches(&alt, node, parent, childIdx, lang) {
-			continue
-		}
-		if q.matchAlternationBranch(step, &alt, node, lang, source, predicates, captures, hasStepCaptures) {
+		if c.alternativeMatches(&alt) {
 			return true
 		}
 	}
 	return false
+}
+
+func (c *alternationMatchContext) alternativeMatches(alt *alternativeSymbol) bool {
+	if !c.q.alternativeFieldMatches(alt, c.node, c.parent, c.childIdx, c.lang) {
+		return false
+	}
+	return c.q.matchAlternationBranch(
+		c.step, alt, c.node, c.lang, c.source, c.predicates, c.captures, c.hasStepCaptures,
+	)
+}
+
+func (c *alternationMatchContext) indexedAlternationCursor(idx *queryAlternationIndex) indexedAlternationCursor {
+	cursor := indexedAlternationCursor{
+		symbolMatches:   idx.bySymbolNamed[alternationSymbolNamedKey(c.nodeSymbol, c.nodeNamed)],
+		wildcardMatches: idx.wildcard,
+	}
+	if !c.nodeNamed && len(idx.byText) > 0 {
+		if !c.nodeTypeLoaded {
+			c.nodeType = c.node.Type(c.lang)
+			c.nodeTypeLoaded = true
+		}
+		cursor.textMatches = idx.byText[c.nodeType]
+	}
+	return cursor
+}
+
+type indexedAlternativeSource uint8
+
+const (
+	indexedAlternativeNone indexedAlternativeSource = iota
+	indexedAlternativeSymbol
+	indexedAlternativeText
+	indexedAlternativeWildcard
+)
+
+type indexedAlternationCursor struct {
+	symbolMatches   []int
+	textMatches     []int
+	wildcardMatches []int
+	iSym            int
+	iText           int
+	iWild           int
+}
+
+func (c *indexedAlternationCursor) hasAny() bool {
+	return len(c.symbolMatches) > 0 || len(c.textMatches) > 0 || len(c.wildcardMatches) > 0
+}
+
+func (c *indexedAlternationCursor) next() (int, indexedAlternativeSource, bool) {
+	nextAlt := -1
+	source := indexedAlternativeNone
+	if c.iSym < len(c.symbolMatches) {
+		nextAlt = c.symbolMatches[c.iSym]
+		source = indexedAlternativeSymbol
+	}
+	if c.iText < len(c.textMatches) && (nextAlt < 0 || c.textMatches[c.iText] < nextAlt) {
+		nextAlt = c.textMatches[c.iText]
+		source = indexedAlternativeText
+	}
+	if c.iWild < len(c.wildcardMatches) && (nextAlt < 0 || c.wildcardMatches[c.iWild] < nextAlt) {
+		nextAlt = c.wildcardMatches[c.iWild]
+		source = indexedAlternativeWildcard
+	}
+	return nextAlt, source, source != indexedAlternativeNone
+}
+
+func (c *indexedAlternationCursor) advance(source indexedAlternativeSource) {
+	switch source {
+	case indexedAlternativeSymbol:
+		c.iSym++
+	case indexedAlternativeText:
+		c.iText++
+	case indexedAlternativeWildcard:
+		c.iWild++
+	}
 }
 
 func (q *Query) alternativeFieldMatches(alt *alternativeSymbol, node *Node, parent *Node, childIdx int, lang *Language) bool {
@@ -1079,40 +1196,12 @@ func (q *Query) stackEntryCanMatchStep(step *QueryStep, entry stackEntry, lang *
 	if !stackEntryHasNode(entry) {
 		return false
 	}
-	nodeSymbol := lang.PublicSymbol(stackEntryNodeSymbol(entry))
 	nodeNamed := stackEntryNodeIsNamed(entry)
+	nodeSymbol := lang.PublicSymbolForNamedness(stackEntryNodeSymbol(entry), nodeNamed)
 	if len(step.alternatives) > 0 {
-		if idx := step.altIndex; idx != nil {
-			if len(idx.wildcard) > 0 {
-				return true
-			}
-			if len(idx.bySymbolNamed[alternationSymbolNamedKey(nodeSymbol, nodeNamed)]) > 0 {
-				return true
-			}
-			if !nodeNamed && len(idx.byText) > 0 {
-				if len(idx.byText[queryStackEntryTypeName(entry, lang)]) > 0 {
-					return true
-				}
-			}
-			return false
-		}
-		for _, alt := range step.alternatives {
-			if alternativeMatchesStackEntry(alt, entry, lang, nodeSymbol, nodeNamed) {
-				return true
-			}
-		}
-		return false
+		return stackEntryMatchesAlternatives(step, entry, lang, nodeSymbol, nodeNamed)
 	}
-	if step.textMatch != "" {
-		return !nodeNamed && queryStackEntryTypeName(entry, lang) == step.textMatch
-	}
-	if step.symbol == 0 {
-		return !step.isNamed || nodeNamed
-	}
-	if nodeSymbol != step.symbol {
-		return false
-	}
-	return !step.isNamed || nodeNamed
+	return stackEntryMatchesScalarStep(step, entry, lang, nodeSymbol, nodeNamed)
 }
 
 func queryStackEntryTypeName(entry stackEntry, lang *Language) string {
@@ -1136,47 +1225,87 @@ func alternativeMatchesStackEntry(alt alternativeSymbol, entry stackEntry, lang 
 	if alt.textMatch != "" {
 		return !nodeNamed && queryStackEntryTypeName(entry, lang) == alt.textMatch
 	}
-	return nodeSymbol == alt.symbol && nodeNamed == alt.isNamed
+	return nodeNamed == alt.isNamed && nodeSymbol == lang.PublicSymbolForNamedness(alt.symbol, alt.isNamed)
 }
 
 // nodeMatchesStep checks if a single node matches a single step's type/symbol constraint.
 func (q *Query) nodeMatchesStep(step *QueryStep, node *Node, lang *Language) bool {
-	// Alternation matching.
 	if len(step.alternatives) > 0 {
-		if idx := step.altIndex; idx != nil {
-			if len(idx.wildcard) > 0 {
-				return true
-			}
-			nodeNamed := node.IsNamed()
-			nodeSymbol := lang.PublicSymbolForNamedness(node.Symbol(), nodeNamed)
-			if len(idx.bySymbolNamed[alternationSymbolNamedKey(nodeSymbol, nodeNamed)]) > 0 {
-				return true
-			}
-			if !node.IsNamed() && len(idx.byText) > 0 {
-				if len(idx.byText[node.Type(lang)]) > 0 {
-					return true
-				}
-			}
-			return false
+		return nodeMatchesAlternatives(step, node, lang)
+	}
+	return nodeMatchesScalarStep(step, node, lang)
+}
+
+func stackEntryMatchesAlternatives(step *QueryStep, entry stackEntry, lang *Language, nodeSymbol Symbol, nodeNamed bool) bool {
+	if idx := step.altIndex; idx != nil {
+		return indexedAlternativesMatchStackEntry(idx, entry, lang, nodeSymbol, nodeNamed)
+	}
+	for _, alt := range step.alternatives {
+		if alternativeMatchesStackEntry(alt, entry, lang, nodeSymbol, nodeNamed) {
+			return true
 		}
-		nodeSymbol := node.Symbol()
-		nodeNamed := node.IsNamed()
-		var nodeType string
-		nodeTypeLoaded := false
-		for _, alt := range step.alternatives {
-			if alternativeMatchesNodeCached(alt, node, lang, nodeSymbol, nodeNamed, &nodeType, &nodeTypeLoaded) {
-				return true
-			}
-		}
-		return false
+	}
+	return false
+}
+
+func indexedAlternativesMatchStackEntry(idx *queryAlternationIndex, entry stackEntry, lang *Language, nodeSymbol Symbol, nodeNamed bool) bool {
+	if len(idx.wildcard) > 0 {
+		return true
+	}
+	if len(idx.bySymbolNamed[alternationSymbolNamedKey(nodeSymbol, nodeNamed)]) > 0 {
+		return true
+	}
+	if !nodeNamed && len(idx.byText) > 0 {
+		return len(idx.byText[queryStackEntryTypeName(entry, lang)]) > 0
+	}
+	return false
+}
+
+func stackEntryMatchesScalarStep(step *QueryStep, entry stackEntry, lang *Language, nodeSymbol Symbol, nodeNamed bool) bool {
+	if step.textMatch != "" {
+		return !nodeNamed && queryStackEntryTypeName(entry, lang) == step.textMatch
+	}
+	if step.symbol == 0 {
+		return !step.isNamed || nodeNamed
+	}
+	return nodeNamed == step.isNamed && nodeSymbol == lang.PublicSymbolForNamedness(step.symbol, step.isNamed)
+}
+
+func nodeMatchesAlternatives(step *QueryStep, node *Node, lang *Language) bool {
+	nodeNamed := node.IsNamed()
+	nodeSymbol := lang.PublicSymbolForNamedness(node.Symbol(), nodeNamed)
+	if idx := step.altIndex; idx != nil {
+		return indexedAlternativesMatchNode(idx, node, lang, nodeSymbol, nodeNamed)
 	}
 
-	// Text matching for string literals like "func".
+	var nodeType string
+	nodeTypeLoaded := false
+	for _, alt := range step.alternatives {
+		if alternativeMatchesNodeCached(alt, node, lang, nodeSymbol, nodeNamed, &nodeType, &nodeTypeLoaded) {
+			return true
+		}
+	}
+	return false
+}
+
+func indexedAlternativesMatchNode(idx *queryAlternationIndex, node *Node, lang *Language, nodeSymbol Symbol, nodeNamed bool) bool {
+	if len(idx.wildcard) > 0 {
+		return true
+	}
+	if len(idx.bySymbolNamed[alternationSymbolNamedKey(nodeSymbol, nodeNamed)]) > 0 {
+		return true
+	}
+	if !nodeNamed && len(idx.byText) > 0 {
+		return len(idx.byText[node.Type(lang)]) > 0
+	}
+	return false
+}
+
+func nodeMatchesScalarStep(step *QueryStep, node *Node, lang *Language) bool {
 	if step.textMatch != "" {
 		return !node.IsNamed() && node.Type(lang) == step.textMatch
 	}
 
-	// Wildcard (symbol == 0 and no textMatch and no alternatives).
 	if step.symbol == 0 {
 		return !step.isNamed || node.IsNamed()
 	}
@@ -1186,13 +1315,14 @@ func (q *Query) nodeMatchesStep(step *QueryStep, node *Node, lang *Language) boo
 		return false
 	}
 
-	// Symbol matching uses the public symbol with namedness to handle aliases
-	// without conflating anonymous tokens and named nodes that share text.
 	if lang.PublicSymbolForNamedness(node.Symbol(), nodeNamed) != lang.PublicSymbolForNamedness(step.symbol, step.isNamed) {
 		return false
 	}
 
-	// Field-negation constraints: each listed field must be absent.
+	return nodeAbsentFieldsSatisfied(step, node, lang)
+}
+
+func nodeAbsentFieldsSatisfied(step *QueryStep, node *Node, lang *Language) bool {
 	for _, fid := range step.absentFields {
 		if int(fid) <= 0 || int(fid) >= len(lang.FieldNames) {
 			return false
