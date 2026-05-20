@@ -113,6 +113,31 @@ func parent(sym Symbol, named bool, children []*Node, fields []FieldID) *Node {
 	return NewParentNode(sym, named, children, fields, 0)
 }
 
+func requireStepCapture(t *testing.T, q *Query, step QueryStep, want string) {
+	t.Helper()
+	if len(step.captureIDs) == 0 {
+		t.Fatal("captureIDs: expected at least one capture")
+	}
+	got := q.captures[step.captureIDs[0]]
+	if got != want {
+		t.Errorf("capture name: got %q, want %q", got, want)
+	}
+}
+
+func requireStepHasCapture(t *testing.T, step QueryStep) {
+	t.Helper()
+	if len(step.captureIDs) == 0 {
+		t.Fatal("captureIDs: expected at least one capture")
+	}
+}
+
+func requireAltHasCapture(t *testing.T, alt alternativeSymbol) {
+	t.Helper()
+	if len(alt.captureIDs) == 0 {
+		t.Fatal("captureIDs: expected at least one alternation branch capture")
+	}
+}
+
 // --------------------------------------------------------------------------
 // S-expression parser tests
 // --------------------------------------------------------------------------
@@ -136,12 +161,7 @@ func TestParseSimpleNodeType(t *testing.T) {
 	if !step.isNamed {
 		t.Error("isNamed: got false, want true")
 	}
-	if step.captureID < 0 {
-		t.Fatal("captureID: expected >= 0")
-	}
-	if q.captures[step.captureID] != "ident" {
-		t.Errorf("capture name: got %q, want %q", q.captures[step.captureID], "ident")
-	}
+	requireStepCapture(t, q, step, "ident")
 }
 
 func TestParseWildcard(t *testing.T) {
@@ -160,12 +180,7 @@ func TestParseWildcard(t *testing.T) {
 	if !step.isNamed {
 		t.Fatalf("isNamed: got false, want true for parenthesized named wildcard")
 	}
-	if step.captureID < 0 {
-		t.Fatal("captureID: expected >= 0")
-	}
-	if q.captures[step.captureID] != "any" {
-		t.Errorf("capture name: got %q, want %q", q.captures[step.captureID], "any")
-	}
+	requireStepCapture(t, q, step, "any")
 }
 
 func TestParseNestedPattern(t *testing.T) {
@@ -189,8 +204,8 @@ func TestParseNestedPattern(t *testing.T) {
 	if steps[0].depth != 0 {
 		t.Errorf("step[0] depth: got %d, want 0", steps[0].depth)
 	}
-	if steps[0].captureID != -1 {
-		t.Errorf("step[0] captureID: got %d, want -1", steps[0].captureID)
+	if len(steps[0].captureIDs) != 0 {
+		t.Errorf("step[0] captureIDs: got %d, want 0", len(steps[0].captureIDs))
 	}
 
 	// Step 1: identifier at depth 1 with field "name".
@@ -203,12 +218,7 @@ func TestParseNestedPattern(t *testing.T) {
 	if steps[1].field != FieldID(1) {
 		t.Errorf("step[1] field: got %d, want 1 (name)", steps[1].field)
 	}
-	if steps[1].captureID < 0 {
-		t.Fatal("step[1] captureID: expected >= 0")
-	}
-	if q.captures[steps[1].captureID] != "func.name" {
-		t.Errorf("capture name: got %q, want %q", q.captures[steps[1].captureID], "func.name")
-	}
+	requireStepCapture(t, q, steps[1], "func.name")
 }
 
 func TestParseAlternation(t *testing.T) {
@@ -234,12 +244,7 @@ func TestParseAlternation(t *testing.T) {
 	if step.alternatives[1].symbol != Symbol(4) {
 		t.Errorf("alt[1] symbol: got %d, want 4 (false)", step.alternatives[1].symbol)
 	}
-	if step.captureID < 0 {
-		t.Fatal("captureID: expected >= 0")
-	}
-	if q.captures[step.captureID] != "bool" {
-		t.Errorf("capture name: got %q, want %q", q.captures[step.captureID], "bool")
-	}
+	requireStepCapture(t, q, step, "bool")
 }
 
 func TestParseStringMatch(t *testing.T) {
@@ -255,12 +260,7 @@ func TestParseStringMatch(t *testing.T) {
 	if step.textMatch != "func" {
 		t.Errorf("textMatch: got %q, want %q", step.textMatch, "func")
 	}
-	if step.captureID < 0 {
-		t.Fatal("captureID: expected >= 0")
-	}
-	if q.captures[step.captureID] != "keyword" {
-		t.Errorf("capture name: got %q, want %q", q.captures[step.captureID], "keyword")
-	}
+	requireStepCapture(t, q, step, "keyword")
 }
 
 func TestParseQuantifiers(t *testing.T) {
@@ -435,12 +435,7 @@ func TestParsePatternWithCaptureInsideParen(t *testing.T) {
 		t.Fatalf("PatternCount: got %d, want 1", q.PatternCount())
 	}
 	step := q.patterns[0].steps[0]
-	if step.captureID < 0 {
-		t.Fatal("captureID: expected >= 0")
-	}
-	if q.captures[step.captureID] != "ident" {
-		t.Errorf("capture: got %q, want %q", q.captures[step.captureID], "ident")
-	}
+	requireStepCapture(t, q, step, "ident")
 }
 
 func TestParsePredicateEq(t *testing.T) {
@@ -700,9 +695,7 @@ func TestParseFieldWildcardShorthand(t *testing.T) {
 	if steps[1].symbol != 0 {
 		t.Fatalf("symbol: got %d, want wildcard 0", steps[1].symbol)
 	}
-	if steps[1].captureID < 0 {
-		t.Fatal("captureID: expected capture on wildcard child")
-	}
+	requireStepHasCapture(t, steps[1])
 }
 
 func TestParseAlternationBranchCaptures(t *testing.T) {
@@ -718,9 +711,8 @@ func TestParseAlternationBranchCaptures(t *testing.T) {
 	if len(step.alternatives) != 2 {
 		t.Fatalf("alternatives: got %d, want 2", len(step.alternatives))
 	}
-	if step.alternatives[0].captureID < 0 || step.alternatives[1].captureID < 0 {
-		t.Fatal("expected capture IDs on alternation branches")
-	}
+	requireAltHasCapture(t, step.alternatives[0])
+	requireAltHasCapture(t, step.alternatives[1])
 }
 
 func TestParseAlternationComplexBranchPreserved(t *testing.T) {
@@ -742,9 +734,7 @@ func TestParseAlternationComplexBranchPreserved(t *testing.T) {
 	if len(step.alternatives[0].steps) != 2 {
 		t.Fatalf("branch steps: got %d, want 2", len(step.alternatives[0].steps))
 	}
-	if step.alternatives[1].captureID < 0 {
-		t.Fatal("expected simple branch capture to be preserved")
-	}
+	requireAltHasCapture(t, step.alternatives[1])
 }
 
 func TestParseAlternationFieldShorthandPreserved(t *testing.T) {
@@ -937,12 +927,7 @@ func TestParseCaptureOutsideParen(t *testing.T) {
 		t.Fatalf("parse error: %v", err)
 	}
 	step := q.patterns[0].steps[0]
-	if step.captureID < 0 {
-		t.Fatal("captureID: expected >= 0")
-	}
-	if q.captures[step.captureID] != "func" {
-		t.Errorf("capture: got %q, want %q", q.captures[step.captureID], "func")
-	}
+	requireStepCapture(t, q, step, "func")
 }
 
 func TestParseMultipleCapturesOnSingleStep(t *testing.T) {
@@ -963,9 +948,6 @@ func TestParseMultipleCapturesOnSingleStep(t *testing.T) {
 	}
 	if q.captures[step.captureIDs[1]] != "spell" {
 		t.Fatalf("capture[1]: got %q, want %q", q.captures[step.captureIDs[1]], "spell")
-	}
-	if step.captureID != step.captureIDs[0] {
-		t.Fatalf("captureID compatibility field: got %d, want %d", step.captureID, step.captureIDs[0])
 	}
 }
 
@@ -3504,12 +3486,8 @@ func TestGroupingMultiSiblingWithCaptures(t *testing.T) {
 		t.Fatalf("step 0 symbol: got %d, want 0 (wildcard)", steps[0].symbol)
 	}
 	// Verify captures.
-	if steps[1].captureID < 0 {
-		t.Fatal("step 1: expected capture on identifier")
-	}
-	if steps[2].captureID < 0 {
-		t.Fatal("step 2: expected capture on number")
-	}
+	requireStepHasCapture(t, steps[1])
+	requireStepHasCapture(t, steps[2])
 }
 
 func TestGroupingTripleParens(t *testing.T) {
@@ -3534,9 +3512,8 @@ func TestGroupingTripleParens(t *testing.T) {
 		t.Fatalf("step 0 depth: got %d, want 0", steps[0].depth)
 	}
 	// Captures present.
-	if steps[1].captureID < 0 || steps[2].captureID < 0 {
-		t.Fatal("expected captures on both children")
-	}
+	requireStepHasCapture(t, steps[1])
+	requireStepHasCapture(t, steps[2])
 	// Predicate present.
 	if len(q.patterns[0].predicates) != 1 {
 		t.Fatalf("predicates: got %d, want 1", len(q.patterns[0].predicates))

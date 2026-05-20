@@ -219,20 +219,6 @@ func (p *queryParser) ensureString(value string) int {
 	return idx
 }
 
-func (p *queryParser) addCaptureToStep(step *QueryStep, captureID int) {
-	if step.captureID < 0 {
-		step.captureID = captureID
-	}
-	step.captureIDs = append(step.captureIDs, captureID)
-}
-
-func (p *queryParser) addCaptureToAlternative(alt *alternativeSymbol, captureID int) {
-	if alt.captureID < 0 {
-		alt.captureID = captureID
-	}
-	alt.captureIDs = append(alt.captureIDs, captureID)
-}
-
 // peekNextIsPatternElement checks whether the next non-whitespace token
 // starts a new pattern element (child or sibling pattern), as opposed to
 // a capture (@), predicate (#), close paren, or negation (!).

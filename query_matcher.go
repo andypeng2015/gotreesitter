@@ -27,7 +27,7 @@ func (q *Query) matchStepsWithParentPredicates(steps []QueryStep, stepIdx int, n
 		if !q.nodeMatchesStep(step, node, lang) {
 			return false
 		}
-		q.appendCaptureIDs(step.captureIDs, step.captureID, node, captures)
+		q.appendCaptureIDs(step.captureIDs, node, captures)
 		if !q.predicatesStillViable(predicates, *captures, source) {
 			return false
 		}
@@ -67,45 +67,29 @@ func (q *Query) matchStepsWithParentPredicates(steps []QueryStep, stepIdx int, n
 	return q.matchChildSteps(node, steps, childSteps, lang, source, predicates, captures)
 }
 
-func (q *Query) appendCaptureIDs(ids []int, legacyID int, node *Node, captures *[]QueryCapture) {
-	if len(ids) > 0 {
-		if len(q.disabledCaptureName) == 0 {
-			start := len(*captures)
-			*captures = slices.Grow(*captures, len(ids))
-			expanded := (*captures)[:start+len(ids)]
-			for i, captureID := range ids {
-				expanded[start+i] = QueryCapture{
-					Name: q.captures[captureID],
-					Node: node,
-				}
-			}
-			*captures = expanded
-			return
-		}
-		for _, captureID := range ids {
-			if q.isCaptureDisabled(q.captures[captureID]) {
-				continue
-			}
-			*captures = append(*captures, QueryCapture{
-				Name: q.captures[captureID],
-				Node: node,
-			})
-		}
+func (q *Query) appendCaptureIDs(ids []int, node *Node, captures *[]QueryCapture) {
+	if len(ids) == 0 {
 		return
 	}
-	if legacyID >= 0 {
-		if len(q.disabledCaptureName) == 0 {
-			*captures = append(*captures, QueryCapture{
-				Name: q.captures[legacyID],
+	if len(q.disabledCaptureName) == 0 {
+		start := len(*captures)
+		*captures = slices.Grow(*captures, len(ids))
+		expanded := (*captures)[:start+len(ids)]
+		for i, captureID := range ids {
+			expanded[start+i] = QueryCapture{
+				Name: q.captures[captureID],
 				Node: node,
-			})
-			return
+			}
 		}
-		if q.isCaptureDisabled(q.captures[legacyID]) {
-			return
+		*captures = expanded
+		return
+	}
+	for _, captureID := range ids {
+		if q.isCaptureDisabled(q.captures[captureID]) {
+			continue
 		}
 		*captures = append(*captures, QueryCapture{
-			Name: q.captures[legacyID],
+			Name: q.captures[captureID],
 			Node: node,
 		})
 	}
@@ -424,7 +408,7 @@ func (q *Query) matchChildStepsRecursive(
 }
 
 func (q *Query) matchAlternationStep(step *QueryStep, node *Node, parent *Node, childIdx int, lang *Language, source []byte, predicates []QueryPredicate, captures *[]QueryCapture) bool {
-	hasStepCaptures := len(step.captureIDs) > 0 || step.captureID >= 0
+	hasStepCaptures := len(step.captureIDs) > 0
 	nodeSymbol := lang.PublicSymbol(node.Symbol())
 	nodeNamed := node.IsNamed()
 	var nodeType string
@@ -567,7 +551,7 @@ func (q *Query) matchAlternationBranch(
 		checkpoint := len(*captures)
 		if hasStepCaptures {
 			// Captures on the alternation itself apply regardless of chosen branch.
-			q.appendCaptureIDs(step.captureIDs, step.captureID, node, captures)
+			q.appendCaptureIDs(step.captureIDs, node, captures)
 			if !q.predicatesStillViable(predicates, *captures, source) {
 				*captures = (*captures)[:checkpoint]
 				return false
@@ -585,18 +569,18 @@ func (q *Query) matchAlternationBranch(
 	}
 
 	// Simple alternation branch captures (no nested structure).
-	if !hasStepCaptures && len(alt.captureIDs) == 0 && alt.captureID < 0 {
+	if !hasStepCaptures && len(alt.captureIDs) == 0 {
 		return true
 	}
 	checkpoint := len(*captures)
 	if hasStepCaptures {
-		q.appendCaptureIDs(step.captureIDs, step.captureID, node, captures)
+		q.appendCaptureIDs(step.captureIDs, node, captures)
 		if !q.predicatesStillViable(predicates, *captures, source) {
 			*captures = (*captures)[:checkpoint]
 			return false
 		}
 	}
-	q.appendCaptureIDs(alt.captureIDs, alt.captureID, node, captures)
+	q.appendCaptureIDs(alt.captureIDs, node, captures)
 	if !q.predicatesStillViable(predicates, *captures, source) {
 		*captures = (*captures)[:checkpoint]
 		return false
@@ -686,8 +670,12 @@ func (q *Query) nodeMatchesStep(step *QueryStep, node *Node, lang *Language) boo
 			}
 			return false
 		}
+		nodeSymbol := node.Symbol()
+		nodeNamed := node.IsNamed()
+		var nodeType string
+		nodeTypeLoaded := false
 		for _, alt := range step.alternatives {
-			if alternativeMatchesNode(alt, node, lang) {
+			if alternativeMatchesNodeCached(alt, node, lang, nodeSymbol, nodeNamed, &nodeType, &nodeTypeLoaded) {
 				return true
 			}
 		}
@@ -731,20 +719,6 @@ func (q *Query) nodeMatchesStep(step *QueryStep, node *Node, lang *Language) boo
 	}
 
 	return true
-}
-
-func alternativeMatchesNode(alt alternativeSymbol, node *Node, lang *Language) bool {
-	// Wildcard in alternation `( _ )` should match any node.
-	if alt.symbol == 0 && alt.textMatch == "" {
-		return !alt.isNamed || node.IsNamed()
-	}
-
-	if alt.textMatch != "" {
-		// String match for anonymous nodes.
-		return !node.IsNamed() && node.Type(lang) == alt.textMatch
-	}
-
-	return lang.PublicSymbol(node.Symbol()) == alt.symbol && node.IsNamed() == alt.isNamed
 }
 
 func alternativeMatchesNodeCached(

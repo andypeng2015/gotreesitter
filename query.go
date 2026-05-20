@@ -35,7 +35,6 @@ type QueryStep struct {
 	symbol       Symbol          // node type to match, or 0 for wildcard
 	field        FieldID         // required field on parent, or 0
 	absentFields []FieldID       // fields that must be absent on this node
-	captureID    int             // first capture index into Query.captures, or -1
 	captureIDs   []int           // all captures in declaration order
 	isNamed      bool            // whether we expect a named node
 	depth        int             // nesting depth (0 = top-level node in pattern)
@@ -136,9 +135,7 @@ type alternativeSymbol struct {
 	// It is only evaluated when the alternation step is matched as a child.
 	field FieldID
 	// textMatch for string alternatives like "func"
-	textMatch string
-	// captureID is the first capture on this branch. captureIDs contains all.
-	captureID  int
+	textMatch  string
 	captureIDs []int
 	// steps/predicates represent a complex branch like
 	// [(function_declaration name: (identifier) @name) ...].

@@ -136,7 +136,6 @@ func (p *queryParser) parsePattern(depth int, parentSymbolHint Symbol) (*Pattern
 			return nil, err
 		}
 		pat.steps = append(pat.steps, QueryStep{
-			captureID: -1,
 			depth:     depth,
 			textMatch: text,
 		})
@@ -154,10 +153,9 @@ func (p *queryParser) parsePattern(depth int, parentSymbolHint Symbol) (*Pattern
 		if p.peekNextIsPatternElement() {
 			// Multi-sibling group: ((a) (b) ...) — insert wildcard root.
 			pat.steps = append(pat.steps, QueryStep{
-				symbol:    0,
-				isNamed:   false,
-				captureID: -1,
-				depth:     depth,
+				symbol:  0,
+				isNamed: false,
+				depth:   depth,
 			})
 			rootIdx = 0
 			for i := range innerPat.steps {
@@ -244,7 +242,7 @@ func (p *queryParser) parsePattern(depth int, parentSymbolHint Symbol) (*Pattern
 			}
 			capID := p.ensureCapture(capName)
 			if rootIdx >= 0 && rootIdx < len(pat.steps) {
-				p.addCaptureToStep(&pat.steps[rootIdx], capID)
+				pat.steps[rootIdx].captureIDs = append(pat.steps[rootIdx].captureIDs, capID)
 			}
 			continue
 		}
@@ -366,7 +364,7 @@ func (p *queryParser) parsePattern(depth int, parentSymbolHint Symbol) (*Pattern
 		}
 		capID := p.ensureCapture(capName)
 		if rootIdx >= 0 && rootIdx < len(pat.steps) {
-			p.addCaptureToStep(&pat.steps[rootIdx], capID)
+			pat.steps[rootIdx].captureIDs = append(pat.steps[rootIdx].captureIDs, capID)
 		}
 		p.skipWhitespaceAndComments()
 	}
@@ -447,7 +445,6 @@ func (p *queryParser) parseAlternationPattern(depth int, parentSymbolHint Symbol
 			isNamed:   root.isNamed,
 			field:     altField,
 			textMatch: root.textMatch,
-			captureID: -1,
 		}
 		if root.field != 0 {
 			alt.field = root.field
@@ -461,12 +458,8 @@ func (p *queryParser) parseAlternationPattern(depth int, parentSymbolHint Symbol
 			alt.predicates = make([]QueryPredicate, len(branchPat.predicates))
 			copy(alt.predicates, branchPat.predicates)
 		} else {
-			if len(root.captureIDs) > 0 {
-				for _, capID := range root.captureIDs {
-					p.addCaptureToAlternative(&alt, capID)
-				}
-			} else if root.captureID >= 0 {
-				p.addCaptureToAlternative(&alt, root.captureID)
+			for _, capID := range root.captureIDs {
+				alt.captureIDs = append(alt.captureIDs, capID)
 			}
 		}
 		alts = append(alts, alt)
@@ -477,7 +470,6 @@ func (p *queryParser) parseAlternationPattern(depth int, parentSymbolHint Symbol
 	}
 
 	step := QueryStep{
-		captureID:    -1,
 		depth:        depth,
 		alternatives: alts,
 	}
@@ -493,7 +485,7 @@ func (p *queryParser) parseAlternationPattern(depth int, parentSymbolHint Symbol
 		if err != nil {
 			return nil, err
 		}
-		p.addCaptureToStep(&step, p.ensureCapture(capName))
+		step.captureIDs = append(step.captureIDs, p.ensureCapture(capName))
 		p.skipWhitespaceAndComments()
 	}
 
@@ -508,7 +500,6 @@ func (p *queryParser) parseStringPattern(depth int) (*Pattern, error) {
 	}
 
 	step := QueryStep{
-		captureID: -1,
 		depth:     depth,
 		textMatch: text,
 	}
@@ -524,7 +515,7 @@ func (p *queryParser) parseStringPattern(depth int) (*Pattern, error) {
 		if err != nil {
 			return nil, err
 		}
-		p.addCaptureToStep(&step, p.ensureCapture(capName))
+		step.captureIDs = append(step.captureIDs, p.ensureCapture(capName))
 		p.skipWhitespaceAndComments()
 	}
 
@@ -567,10 +558,9 @@ func (p *queryParser) stepFromIdentifierName(depth int, name string) (QueryStep,
 	}
 
 	return QueryStep{
-		symbol:    sym,
-		isNamed:   isNamed,
-		captureID: -1,
-		depth:     depth,
+		symbol:  sym,
+		isNamed: isNamed,
+		depth:   depth,
 	}, nil
 }
 
@@ -590,7 +580,7 @@ func (p *queryParser) parseIdentifierPatternFromName(depth int, name string) (*P
 		if err != nil {
 			return nil, err
 		}
-		p.addCaptureToStep(&step, p.ensureCapture(capName))
+		step.captureIDs = append(step.captureIDs, p.ensureCapture(capName))
 		p.skipWhitespaceAndComments()
 	}
 
@@ -625,10 +615,9 @@ func (p *queryParser) parseFieldShorthandPattern(depth int) (*Pattern, error) {
 	// Use a wildcard root so field constraints can still be represented in the
 	// existing matcher shape.
 	root := QueryStep{
-		symbol:    0,
-		isNamed:   false,
-		captureID: -1,
-		depth:     depth,
+		symbol:  0,
+		isNamed: false,
+		depth:   depth,
 	}
 	pat := &Pattern{steps: []QueryStep{root}}
 	pat.steps = append(pat.steps, childPat.steps...)
