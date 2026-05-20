@@ -111,7 +111,9 @@ func defaultFieldSourcesInArena(arena *nodeArena, fieldIDs []FieldID) []uint8 {
 }
 
 type finalChildSidecar struct {
-	childRange pendingChildRange
+	childRange       pendingChildRange
+	parent           *Node
+	parentChildIndex int32
 }
 
 const finalChildSidecarIndexBase int32 = -2
@@ -131,21 +133,35 @@ func (a *nodeArena) attachFinalChildRefs(parent *Node, childRange pendingChildRa
 		return
 	}
 	id := len(a.finalChildSidecars)
-	a.finalChildSidecars = append(a.finalChildSidecars, finalChildSidecar{childRange: childRange})
+	a.finalChildSidecars = append(a.finalChildSidecars, finalChildSidecar{
+		childRange:       childRange,
+		parentChildIndex: -1,
+	})
 	parent.childIndex = -int32(id) - 2
 	a.finalChildRefParents++
 	a.finalChildRefsCreated += uint64(childRange.count())
+}
+
+func (a *nodeArena) finalChildSidecarForNode(n *Node) (*finalChildSidecar, bool) {
+	if a == nil || n == nil {
+		return nil, false
+	}
+	id, ok := finalChildSidecarID(n.childIndex)
+	if !ok || id < 0 || id >= len(a.finalChildSidecars) {
+		return nil, false
+	}
+	return &a.finalChildSidecars[id], true
 }
 
 func (a *nodeArena) finalChildRange(parent *Node) (pendingChildRange, bool) {
 	if a == nil || parent == nil {
 		return 0, false
 	}
-	id, ok := finalChildSidecarID(parent.childIndex)
-	if !ok || id < 0 || id >= len(a.finalChildSidecars) {
+	sidecar, ok := a.finalChildSidecarForNode(parent)
+	if !ok {
 		return 0, false
 	}
-	childRange := a.finalChildSidecars[id].childRange
+	childRange := sidecar.childRange
 	return childRange, childRange.count() > 0
 }
 
@@ -153,12 +169,61 @@ func (a *nodeArena) clearFinalChildRefs(parent *Node) {
 	if a == nil || parent == nil {
 		return
 	}
-	id, ok := finalChildSidecarID(parent.childIndex)
-	if !ok || id < 0 || id >= len(a.finalChildSidecars) {
+	sidecar, ok := a.finalChildSidecarForNode(parent)
+	if !ok {
 		return
 	}
-	a.finalChildSidecars[id] = finalChildSidecar{}
-	parent.childIndex = -1
+	restoredIndex := sidecar.parentChildIndex
+	*sidecar = finalChildSidecar{}
+	parent.childIndex = restoredIndex
+	if restoredIndex < 0 {
+		parent.childIndex = -1
+	}
+}
+
+func setNodeRootLink(n *Node) {
+	if n == nil {
+		return
+	}
+	n.parent = nil
+	if sidecar, ok := n.ownerArena.finalChildSidecarForNode(n); ok {
+		sidecar.parent = nil
+		sidecar.parentChildIndex = -1
+		return
+	}
+	n.childIndex = -1
+}
+
+func setNodeParentLink(child, parent *Node, index int) {
+	if child == nil {
+		return
+	}
+	child.parent = parent
+	if sidecar, ok := child.ownerArena.finalChildSidecarForNode(child); ok {
+		sidecar.parent = parent
+		sidecar.parentChildIndex = int32(index)
+		return
+	}
+	child.childIndex = int32(index)
+}
+
+func nodeParentLink(n *Node) (*Node, int, bool) {
+	if n == nil {
+		return nil, -1, false
+	}
+	if sidecar, ok := n.ownerArena.finalChildSidecarForNode(n); ok {
+		if sidecar.parent != nil {
+			return sidecar.parent, int(sidecar.parentChildIndex), sidecar.parentChildIndex >= 0
+		}
+		if n.parent != nil {
+			return n.parent, int(sidecar.parentChildIndex), sidecar.parentChildIndex >= 0
+		}
+		return nil, -1, false
+	}
+	if n.parent == nil {
+		return nil, -1, false
+	}
+	return n.parent, int(n.childIndex), n.childIndex >= 0
 }
 
 func nodeChildCountNoMaterialize(n *Node) int {
@@ -195,10 +260,7 @@ func nodeMaterializeFinalChildRefs(n *Node, reason materializeReason) {
 		children[i] = child
 		refs[i] = newPendingChildEntry(updated)
 		if child != nil {
-			child.parent = n
-			if _, hasChildRefs := child.ownerArena.finalChildRange(child); !hasChildRefs {
-				child.childIndex = int32(i)
-			}
+			setNodeParentLink(child, n, i)
 		}
 	}
 	n.children = children
@@ -246,10 +308,7 @@ func nodeMaterializeFinalChildRefAt(n *Node, i int, reason materializeReason) *N
 	if child == nil {
 		return nil
 	}
-	child.parent = n
-	if _, hasChildRefs := child.ownerArena.finalChildRange(child); !hasChildRefs {
-		child.childIndex = int32(i)
-	}
+	setNodeParentLink(child, n, i)
 	if !wasMaterialized {
 		arena.finalChildRefsSingleChildMaterializedChildren++
 	}
@@ -734,8 +793,12 @@ func (n *Node) Parent() *Node {
 	if n == nil {
 		return nil
 	}
+	if parent, _, ok := nodeParentLink(n); ok || parent != nil {
+		return parent
+	}
 	n.ensureParentLinks()
-	return n.parent
+	parent, _, _ := nodeParentLink(n)
+	return parent
 }
 
 // ChildCount returns the number of children (both named and anonymous).
@@ -752,23 +815,27 @@ func (n *Node) NextSibling() *Node {
 	if n == nil {
 		return nil
 	}
-	n.ensureParentLinks()
-	if n.parent == nil {
-		return nil
+	parent, index, ok := nodeParentLink(n)
+	if parent == nil {
+		n.ensureParentLinks()
+		parent, index, ok = nodeParentLink(n)
+		if parent == nil {
+			return nil
+		}
 	}
-	siblings := nodeChildrenForReason(n.parent, materializeForParentAPI)
-	if i := int(n.childIndex); i >= 0 && i < len(siblings) && siblings[i] == n {
-		if i+1 < len(siblings) {
-			return siblings[i+1]
+	childCount := nodeChildCountNoMaterialize(parent)
+	if ok && index >= 0 && index < childCount && nodeChildAtForReason(parent, index, materializeForParentAPI) == n {
+		if index+1 < childCount {
+			return nodeChildAtForReason(parent, index+1, materializeForParentAPI)
 		}
 		return nil
 	}
-	for i, s := range siblings {
-		if s != n {
+	for i := 0; i < childCount; i++ {
+		if nodeChildAtForReason(parent, i, materializeForParentAPI) != n {
 			continue
 		}
-		if i+1 < len(siblings) {
-			return siblings[i+1]
+		if i+1 < childCount {
+			return nodeChildAtForReason(parent, i+1, materializeForParentAPI)
 		}
 		return nil
 	}
@@ -781,23 +848,27 @@ func (n *Node) PrevSibling() *Node {
 	if n == nil {
 		return nil
 	}
-	n.ensureParentLinks()
-	if n.parent == nil {
-		return nil
+	parent, index, ok := nodeParentLink(n)
+	if parent == nil {
+		n.ensureParentLinks()
+		parent, index, ok = nodeParentLink(n)
+		if parent == nil {
+			return nil
+		}
 	}
-	siblings := nodeChildrenForReason(n.parent, materializeForParentAPI)
-	if i := int(n.childIndex); i >= 0 && i < len(siblings) && siblings[i] == n {
-		if i > 0 {
-			return siblings[i-1]
+	childCount := nodeChildCountNoMaterialize(parent)
+	if ok && index >= 0 && index < childCount && nodeChildAtForReason(parent, index, materializeForParentAPI) == n {
+		if index > 0 {
+			return nodeChildAtForReason(parent, index-1, materializeForParentAPI)
 		}
 		return nil
 	}
-	for i, s := range siblings {
-		if s != n {
+	for i := 0; i < childCount; i++ {
+		if nodeChildAtForReason(parent, i, materializeForParentAPI) != n {
 			continue
 		}
 		if i > 0 {
-			return siblings[i-1]
+			return nodeChildAtForReason(parent, i-1, materializeForParentAPI)
 		}
 		return nil
 	}
@@ -1092,8 +1163,7 @@ func populateParentNode(n *Node, children []*Node) {
 		n.endByte = c0.endByte
 		n.startPoint = c0.startPoint
 		n.endPoint = c0.endPoint
-		c0.parent = n
-		c0.childIndex = 0
+		setNodeParentLink(c0, n, 0)
 		n.setHasError(c0.hasError())
 		return
 	case 2:
@@ -1103,10 +1173,8 @@ func populateParentNode(n *Node, children []*Node) {
 		n.endByte = c1.endByte
 		n.startPoint = c0.startPoint
 		n.endPoint = c1.endPoint
-		c0.parent = n
-		c0.childIndex = 0
-		c1.parent = n
-		c1.childIndex = 1
+		setNodeParentLink(c0, n, 0)
+		setNodeParentLink(c1, n, 1)
 		n.setHasError(c0.hasError() || c1.hasError())
 		return
 	default:
@@ -1118,8 +1186,7 @@ func populateParentNode(n *Node, children []*Node) {
 		n.endPoint = last.endPoint
 
 		for i, c := range children {
-			c.parent = n
-			c.childIndex = int32(i)
+			setNodeParentLink(c, n, i)
 			if c.hasError() {
 				n.setHasError(true)
 				break
@@ -1177,8 +1244,7 @@ func wireParentLinksWithScratch(root *Node, scratch *[]*Node) {
 	if root == nil {
 		return
 	}
-	root.parent = nil
-	root.childIndex = -1
+	setNodeRootLink(root)
 
 	var stack []*Node
 	if scratch != nil {
@@ -1197,9 +1263,7 @@ func wireParentLinksWithScratch(root *Node, scratch *[]*Node) {
 			if c == nil {
 				continue
 			}
-			nodeMaterializeFinalChildRefs(c, materializeForParentAPI)
-			c.parent = n
-			c.childIndex = int32(i)
+			setNodeParentLink(c, n, i)
 			stack = append(stack, c)
 		}
 	}
@@ -1388,8 +1452,7 @@ func (a *nodeArena) deferParentLinks(root *Node) {
 	a.parentLinkMu.Lock()
 	a.deferredParentRoot = root
 	a.parentLinksDeferred = true
-	root.parent = nil
-	root.childIndex = -1
+	setNodeRootLink(root)
 	a.parentLinkMu.Unlock()
 }
 
@@ -2241,6 +2304,14 @@ func (t *Tree) ParseRuntime() ParseRuntime {
 		return ParseRuntime{StopReason: ParseStopNone}
 	}
 	out := t.parseRuntime
+	if arena := t.arena; arena != nil {
+		out.FinalChildRefParents = arena.finalChildRefParents
+		out.FinalChildRefs = arena.finalChildRefsCreated
+		out.FinalChildRefMaterializedParents = arena.finalChildRefsMaterializedParents
+		out.FinalChildRefMaterializedChildren = arena.finalChildRefsMaterializedChildren
+		out.FinalChildRefSingleChildAccesses = arena.finalChildRefsSingleChildAccesses
+		out.FinalChildRefSingleChildMaterializedChildren = arena.finalChildRefsSingleChildMaterializedChildren
+	}
 	if out.StopReason == "" {
 		out.StopReason = ParseStopNone
 	}

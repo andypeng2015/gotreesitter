@@ -28,6 +28,7 @@ type javaParseMode string
 
 const (
 	javaParseModeDFA            javaParseMode = "dfa"
+	javaParseModeDFANoCompat    javaParseMode = "dfa_no_compat"
 	javaParseModeDFANoTree      javaParseMode = "dfa_no_tree"
 	javaParseModeTokenSource    javaParseMode = "token_source"
 	javaParseModeAspectFallback javaParseMode = "aspect_fallback"
@@ -326,6 +327,12 @@ type javaRuntimeStats struct {
 	pendingParentCandidates   uint64
 	pendingParentRejects      gotreesitter.PendingParentRejectStats
 	pendingParentFieldRejects gotreesitter.PendingParentFieldRejectStats
+	finalChildRefParents      uint64
+	finalChildRefs            uint64
+	finalChildRefRangeParents uint64
+	finalChildRefRangeChild   uint64
+	finalChildRefSingleAccess uint64
+	finalChildRefSingleChild  uint64
 	maxStacksSeen             int
 	maxArenaBytesAllocated    int64
 	maxScratchBytesAllocated  int64
@@ -366,6 +373,9 @@ func parseJavaWithMode(pool *gotreesitter.ParserPool, lang *gotreesitter.Languag
 	case javaParseModeDFA:
 		tree, err := pool.Parse(source)
 		return javaParseResult{tree: tree, duration: time.Since(start), parseMode: mode}, err
+	case javaParseModeDFANoCompat:
+		tree, err := pool.ParseNoResultCompatibilityBenchmarkOnly(source)
+		return javaParseResult{tree: tree, duration: time.Since(start), parseMode: mode}, err
 	case javaParseModeDFANoTree:
 		tree, err := pool.ParseNoTreeBenchmarkOnly(source)
 		return javaParseResult{tree: tree, duration: time.Since(start), parseMode: mode}, err
@@ -405,10 +415,10 @@ func javaParseModes(tb testing.TB) []javaParseMode {
 		switch mode {
 		case "":
 			continue
-		case javaParseModeDFA, javaParseModeDFANoTree, javaParseModeTokenSource, javaParseModeAspectFallback:
+		case javaParseModeDFA, javaParseModeDFANoCompat, javaParseModeDFANoTree, javaParseModeTokenSource, javaParseModeAspectFallback:
 			modes = append(modes, mode)
 		default:
-			tb.Fatalf("invalid GOT_JAVA_PARSE_MODES value %q; want dfa, dfa_no_tree, token_source, or aspect_fallback", part)
+			tb.Fatalf("invalid GOT_JAVA_PARSE_MODES value %q; want dfa, dfa_no_compat, dfa_no_tree, token_source, or aspect_fallback", part)
 		}
 	}
 	if len(modes) == 0 {
@@ -584,6 +594,12 @@ func (s *javaRuntimeStats) add(rt gotreesitter.ParseRuntime) {
 	s.pendingChildEntryCapacity += rt.PendingChildEntryCapacity
 	s.pendingChildEntryWaste += rt.PendingChildEntryWaste
 	s.pendingParentCandidates += rt.PendingParentCandidates
+	s.finalChildRefParents += rt.FinalChildRefParents
+	s.finalChildRefs += rt.FinalChildRefs
+	s.finalChildRefRangeParents += rt.FinalChildRefMaterializedParents
+	s.finalChildRefRangeChild += rt.FinalChildRefMaterializedChildren
+	s.finalChildRefSingleAccess += rt.FinalChildRefSingleChildAccesses
+	s.finalChildRefSingleChild += rt.FinalChildRefSingleChildMaterializedChildren
 	if rt.MaxStacksSeen > s.maxStacksSeen {
 		s.maxStacksSeen = rt.MaxStacksSeen
 	}
@@ -603,7 +619,7 @@ func (s *javaRuntimeStats) add(rt gotreesitter.ParseRuntime) {
 
 func (s javaRuntimeStats) summary() string {
 	return fmt.Sprintf(
-		"tokens=%d nodes=%d parent_alloc=%d parent_retained=%d parent_dropped_same_token=%d leaf_alloc=%d leaf_retained=%d leaf_dropped_same_token=%d transient_child_slices_alloc=%d transient_child_slices_materialized=%d transient_child_ptrs_alloc=%d transient_child_ptrs_materialized=%d transient_parent_alloc=%d transient_parent_materialized=%d transient_parent_dropped=%d gss_alloc=%d gss_retained=%d gss_dropped_same_token=%d single_gss=%d multi_gss=%d single_iters=%d multi_iters=%d merge_in=%d merge_out=%d merge_slots=%d global_cull_in=%d global_cull_out=%d pending_created=%d pending_materialized=%d pending_materialized_parent=%d pending_materialized_parent_reject_fields=%d pending_materialized_field_hidden_child=%d pending_materialized_field_hidden_child_plain=%d pending_materialized_field_hidden_child_with_fields=%d pending_materialized_field_all_visible_direct=%d pending_dropped=%d pending_flattened=%d pending_child_refs_flattened=%d pending_child_entries=%d pending_child_entry_capacity=%d pending_child_entry_waste=%d pending_candidates=%d max_stacks=%d max_arena_bytes=%d max_scratch_bytes=%d max_gss_bytes=%d max_entry_scratch_bytes=%d",
+		"tokens=%d nodes=%d parent_alloc=%d parent_retained=%d parent_dropped_same_token=%d leaf_alloc=%d leaf_retained=%d leaf_dropped_same_token=%d transient_child_slices_alloc=%d transient_child_slices_materialized=%d transient_child_ptrs_alloc=%d transient_child_ptrs_materialized=%d transient_parent_alloc=%d transient_parent_materialized=%d transient_parent_dropped=%d gss_alloc=%d gss_retained=%d gss_dropped_same_token=%d single_gss=%d multi_gss=%d single_iters=%d multi_iters=%d merge_in=%d merge_out=%d merge_slots=%d global_cull_in=%d global_cull_out=%d pending_created=%d pending_materialized=%d pending_materialized_parent=%d pending_materialized_parent_reject_fields=%d pending_materialized_field_hidden_child=%d pending_materialized_field_hidden_child_plain=%d pending_materialized_field_hidden_child_with_fields=%d pending_materialized_field_all_visible_direct=%d pending_dropped=%d pending_flattened=%d pending_child_refs_flattened=%d pending_child_entries=%d pending_child_entry_capacity=%d pending_child_entry_waste=%d pending_candidates=%d final_child_ref_parents=%d final_child_refs=%d final_child_ref_range_parents=%d final_child_ref_range_children=%d final_child_ref_single_accesses=%d final_child_ref_single_children=%d max_stacks=%d max_arena_bytes=%d max_scratch_bytes=%d max_gss_bytes=%d max_entry_scratch_bytes=%d",
 		s.tokensConsumed,
 		s.nodesAllocated,
 		s.parentNodesAllocated,
@@ -646,6 +662,12 @@ func (s javaRuntimeStats) summary() string {
 		s.pendingChildEntryCapacity,
 		s.pendingChildEntryWaste,
 		s.pendingParentCandidates,
+		s.finalChildRefParents,
+		s.finalChildRefs,
+		s.finalChildRefRangeParents,
+		s.finalChildRefRangeChild,
+		s.finalChildRefSingleAccess,
+		s.finalChildRefSingleChild,
 		s.maxStacksSeen,
 		s.maxArenaBytesAllocated,
 		s.maxScratchBytesAllocated,
@@ -965,11 +987,21 @@ func benchmarkJavaCorpusGoTreeSitter(b *testing.B, mode javaParseMode) {
 		b.ReportMetric(float64(runtime.pendingChildEntryCapacity)/tokens, "pending_child_entry_capacity/token")
 		b.ReportMetric(float64(runtime.pendingChildEntryWaste)/tokens, "pending_child_entry_waste/token")
 		b.ReportMetric(float64(runtime.pendingParentCandidates)/tokens, "pending_parent_candidate/token")
+		b.ReportMetric(float64(runtime.finalChildRefParents)/tokens, "final_child_ref_parents/token")
+		b.ReportMetric(float64(runtime.finalChildRefs)/tokens, "final_child_refs/token")
+		b.ReportMetric(float64(runtime.finalChildRefRangeParents)/tokens, "final_child_ref_range_materialized_parents/token")
+		b.ReportMetric(float64(runtime.finalChildRefRangeChild)/tokens, "final_child_ref_range_materialized_children/token")
+		b.ReportMetric(float64(runtime.finalChildRefSingleAccess)/tokens, "final_child_ref_single_child_accesses/token")
+		b.ReportMetric(float64(runtime.finalChildRefSingleChild)/tokens, "final_child_ref_single_child_materialized/token")
 	}
 }
 
 func BenchmarkJavaCorpusGoTreeSitterParseDFA(b *testing.B) {
 	benchmarkJavaCorpusGoTreeSitter(b, javaParseModeDFA)
+}
+
+func BenchmarkJavaCorpusGoTreeSitterParseDFANoCompat(b *testing.B) {
+	benchmarkJavaCorpusGoTreeSitter(b, javaParseModeDFANoCompat)
 }
 
 func BenchmarkJavaCorpusGoTreeSitterParseDFANoTree(b *testing.B) {
@@ -1000,6 +1032,7 @@ func benchmarkJavaCorpusGoTreeSitterWithUse(b *testing.B, mode javaParseMode, me
 	b.ResetTimer()
 
 	var metricTotal int64
+	var runtime javaRuntimeStats
 	for i := 0; i < b.N; i++ {
 		for _, file := range files {
 			result, err := parseJavaWithMode(pool, lang, mode, file.source)
@@ -1017,12 +1050,22 @@ func benchmarkJavaCorpusGoTreeSitterWithUse(b *testing.B, mode javaParseMode, me
 			if root == nil {
 				b.Fatalf("%s: parse returned nil root", file.path)
 			}
+			runtime.add(tree.ParseRuntime())
 			tree.Release()
 		}
 	}
 	javaCorpusBenchmarkSink = metricTotal
 	if metric != "" && b.N > 0 {
 		b.ReportMetric(float64(metricTotal)/float64(b.N), metric)
+	}
+	if runtime.tokensConsumed != 0 {
+		tokens := float64(runtime.tokensConsumed)
+		b.ReportMetric(float64(runtime.finalChildRefParents)/tokens, "final_child_ref_parents/token")
+		b.ReportMetric(float64(runtime.finalChildRefs)/tokens, "final_child_refs/token")
+		b.ReportMetric(float64(runtime.finalChildRefRangeParents)/tokens, "final_child_ref_range_materialized_parents/token")
+		b.ReportMetric(float64(runtime.finalChildRefRangeChild)/tokens, "final_child_ref_range_materialized_children/token")
+		b.ReportMetric(float64(runtime.finalChildRefSingleAccess)/tokens, "final_child_ref_single_child_accesses/token")
+		b.ReportMetric(float64(runtime.finalChildRefSingleChild)/tokens, "final_child_ref_single_child_materialized/token")
 	}
 }
 
@@ -1049,6 +1092,16 @@ func BenchmarkJavaCorpusGoTreeSitterParseDFAWithSExpr(b *testing.B) {
 	})
 }
 
+func BenchmarkJavaCorpusGoTreeSitterParseDFANoCompatWithSExpr(b *testing.B) {
+	benchmarkJavaCorpusGoTreeSitterWithUse(b, javaParseModeDFANoCompat, "sexpr_bytes/op", func(b *testing.B, lang *gotreesitter.Language, tree *gotreesitter.Tree, file javaCorpusFile) int64 {
+		sexpr := tree.RootNode().SExpr(lang)
+		if sexpr == "" {
+			b.Fatalf("%s: SExpr returned empty string", file.path)
+		}
+		return int64(len(sexpr))
+	})
+}
+
 const javaCorpusRepresentativeQuery = `
 [
   (class_declaration name: (identifier) @type)
@@ -1066,6 +1119,26 @@ func BenchmarkJavaCorpusGoTreeSitterParseDFAWithQuery(b *testing.B) {
 		b.Fatalf("compile java corpus query: %v", err)
 	}
 	benchmarkJavaCorpusGoTreeSitterWithUse(b, javaParseModeDFA, "query_captures/op", func(b *testing.B, lang *gotreesitter.Language, tree *gotreesitter.Tree, file javaCorpusFile) int64 {
+		cursor := query.Exec(tree.RootNode(), lang, file.source)
+		var captures int64
+		for {
+			match, ok := cursor.NextMatch()
+			if !ok {
+				break
+			}
+			captures += int64(len(match.Captures))
+		}
+		return captures
+	})
+}
+
+func BenchmarkJavaCorpusGoTreeSitterParseDFANoCompatWithQuery(b *testing.B) {
+	lang := grammars.JavaLanguage()
+	query, err := gotreesitter.NewQuery(javaCorpusRepresentativeQuery, lang)
+	if err != nil {
+		b.Fatalf("compile java corpus query: %v", err)
+	}
+	benchmarkJavaCorpusGoTreeSitterWithUse(b, javaParseModeDFANoCompat, "query_captures/op", func(b *testing.B, lang *gotreesitter.Language, tree *gotreesitter.Tree, file javaCorpusFile) int64 {
 		cursor := query.Exec(tree.RootNode(), lang, file.source)
 		var captures int64
 		for {
@@ -1119,6 +1192,13 @@ func BenchmarkJavaCorpusGoTreeSitterParseDFAWithNamedTraversal(b *testing.B) {
 	})
 }
 
+func BenchmarkJavaCorpusGoTreeSitterParseDFANoCompatWithNamedTraversal(b *testing.B) {
+	var scratch []*gotreesitter.Node
+	benchmarkJavaCorpusGoTreeSitterWithUse(b, javaParseModeDFANoCompat, "named_nodes/op", func(b *testing.B, lang *gotreesitter.Language, tree *gotreesitter.Tree, file javaCorpusFile) int64 {
+		return countNamedJavaCorpusNodes(tree.RootNode(), &scratch)
+	})
+}
+
 func BenchmarkJavaCorpusGoTreeSitterParseDFAWithFirstParent(b *testing.B) {
 	benchmarkJavaCorpusGoTreeSitterWithUse(b, javaParseModeDFA, "parent_calls/op", func(b *testing.B, lang *gotreesitter.Language, tree *gotreesitter.Tree, file javaCorpusFile) int64 {
 		root := tree.RootNode()
@@ -1143,9 +1223,23 @@ func BenchmarkJavaCorpusGoTreeSitterParseDFAWithParentTraversal(b *testing.B) {
 	})
 }
 
+func BenchmarkJavaCorpusGoTreeSitterParseDFANoCompatWithParentTraversal(b *testing.B) {
+	var scratch []*gotreesitter.Node
+	benchmarkJavaCorpusGoTreeSitterWithUse(b, javaParseModeDFANoCompat, "parent_checks/op", func(b *testing.B, lang *gotreesitter.Language, tree *gotreesitter.Tree, file javaCorpusFile) int64 {
+		return countJavaCorpusParentChecks(b, file.path, tree.RootNode(), &scratch)
+	})
+}
+
 func BenchmarkJavaCorpusGoTreeSitterParseDFAWithSiblingWalk(b *testing.B) {
 	var scratch []*gotreesitter.Node
 	benchmarkJavaCorpusGoTreeSitterWithUse(b, javaParseModeDFA, "sibling_steps/op", func(b *testing.B, lang *gotreesitter.Language, tree *gotreesitter.Tree, file javaCorpusFile) int64 {
+		return countJavaCorpusSiblingSteps(b, file.path, tree.RootNode(), &scratch)
+	})
+}
+
+func BenchmarkJavaCorpusGoTreeSitterParseDFANoCompatWithSiblingWalk(b *testing.B) {
+	var scratch []*gotreesitter.Node
+	benchmarkJavaCorpusGoTreeSitterWithUse(b, javaParseModeDFANoCompat, "sibling_steps/op", func(b *testing.B, lang *gotreesitter.Language, tree *gotreesitter.Tree, file javaCorpusFile) int64 {
 		return countJavaCorpusSiblingSteps(b, file.path, tree.RootNode(), &scratch)
 	})
 }

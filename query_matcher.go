@@ -176,16 +176,25 @@ func (q *Query) matchChildSteps(
 	predicates []QueryPredicate,
 	captures *[]QueryCapture,
 ) bool {
-	children := parent.Children()
+	childCount := nodeChildCountNoMaterialize(parent)
+	var childrenBuf [64]*Node
+	var children []*Node
+	if childCount <= len(childrenBuf) {
+		children = childrenBuf[:childCount]
+	} else {
+		children = make([]*Node, childCount)
+	}
 	var namedPosByIndexBuf [64]int
 	var namedPosByIndex []int
-	if len(children) <= len(namedPosByIndexBuf) {
-		namedPosByIndex = namedPosByIndexBuf[:len(children)]
+	if childCount <= len(namedPosByIndexBuf) {
+		namedPosByIndex = namedPosByIndexBuf[:childCount]
 	} else {
-		namedPosByIndex = make([]int, len(children))
+		namedPosByIndex = make([]int, childCount)
 	}
 	namedPos := 0
-	for i, child := range children {
+	for i := 0; i < childCount; i++ {
+		child := nodeChildAtForReason(parent, i, materializeForQuery)
+		children[i] = child
 		if child != nil && child.IsNamed() {
 			namedPosByIndex[i] = namedPos
 			namedPos++
