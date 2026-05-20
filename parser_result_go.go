@@ -26,7 +26,8 @@ func normalizeGoSourceFileRoot(root *Node, source []byte, p *Parser) {
 	root.symbol = sym
 	root.setNamed(int(sym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[sym].Named)
 	root.setHasError(false)
-	for _, child := range root.children {
+	for i := 0; i < resultChildCount(root); i++ {
+		child := resultChildAt(root, i)
 		if child != nil && (child.IsError() || child.HasError()) {
 			root.setHasError(true)
 			break
@@ -38,11 +39,12 @@ func normalizeGoSourceFileRoot(root *Node, source []byte, p *Parser) {
 }
 
 func rootLooksLikeGoTopLevel(root *Node, lang *Language) bool {
-	if root == nil || lang == nil || len(root.children) == 0 {
+	if root == nil || lang == nil || resultChildCount(root) == 0 {
 		return false
 	}
 	sawTopLevel := false
-	for _, child := range root.children {
+	for i := 0; i < resultChildCount(root); i++ {
+		child := resultChildAt(root, i)
 		if child == nil {
 			continue
 		}
@@ -64,14 +66,14 @@ func rootLooksLikeGoTopLevel(root *Node, lang *Language) bool {
 }
 
 func recoverGoRootTopLevelChunks(root *Node, source []byte, p *Parser) {
-	if root == nil || p == nil || p.language == nil || p.skipRecoveryReparse || len(source) == 0 || len(root.children) == 0 {
+	if root == nil || p == nil || p.language == nil || p.skipRecoveryReparse || len(source) == 0 || resultChildCount(root) == 0 {
 		return
 	}
 	firstBad := firstGoNonTopLevelChildIndex(root, p.language)
 	if firstBad <= 0 {
 		return
 	}
-	start := goRootRecoveryStartByte(root.children[firstBad], source)
+	start := goRootRecoveryStartByte(resultChildAt(root, firstBad), source)
 	if int(start) >= len(source) {
 		return
 	}
@@ -79,8 +81,9 @@ func recoverGoRootTopLevelChunks(root *Node, source []byte, p *Parser) {
 	if !ok {
 		return
 	}
+	children := resultDenseChildrenForMutation(root)
 	newChildren := make([]*Node, 0, firstBad+len(recovered))
-	newChildren = append(newChildren, root.children[:firstBad]...)
+	newChildren = append(newChildren, children[:firstBad]...)
 	newChildren = append(newChildren, recovered...)
 	if !goChildrenLookLikeTopLevel(newChildren, p.language) {
 		return
@@ -101,7 +104,8 @@ func firstGoNonTopLevelChildIndex(root *Node, lang *Language) int {
 	if root == nil || lang == nil {
 		return -1
 	}
-	for i, child := range root.children {
+	for i := 0; i < resultChildCount(root); i++ {
+		child := resultChildAt(root, i)
 		if child == nil {
 			continue
 		}
@@ -745,8 +749,8 @@ func recomputeNodePointsFromBytes(n *Node, source []byte) {
 	if int(n.endByte) <= len(source) {
 		n.endPoint = advancePointByBytes(Point{}, source[:n.endByte])
 	}
-	for _, child := range n.children {
-		recomputeNodePointsFromBytes(child, source)
+	for i := 0; i < resultChildCount(n); i++ {
+		recomputeNodePointsFromBytes(resultChildAt(n, i), source)
 	}
 }
 
@@ -766,7 +770,8 @@ func shiftNodeBytes(n *Node, delta int64) bool {
 		}
 		cur.startByte = uint32(start)
 		cur.endByte = uint32(end)
-		for i, child := range cur.children {
+		for i := 0; i < resultChildCount(cur); i++ {
+			child := resultChildAt(cur, i)
 			if !walk(child) {
 				return false
 			}
@@ -895,27 +900,36 @@ func normalizeGoCompatibilityInRanges(root *Node, source []byte, lang *Language,
 		if !nodeOverlapsAnyRange(n, incrementalRanges) {
 			return
 		}
-		if len(n.children) > 0 {
+		if resultChildCount(n) > 0 {
 			if symbolIn(semiContainerSyms, n.symbol) {
-				kept := n.children[:0]
 				changed := false
-				for _, child := range n.children {
+				childCount := resultChildCount(n)
+				for i := 0; i < childCount; i++ {
+					child := resultChildAt(n, i)
 					if child != nil && child.symbol == semiSym && goShouldDropSemicolonNode(child, source) {
 						changed = true
-						continue
+						break
 					}
-					kept = append(kept, child)
 				}
 				if changed {
+					children := resultDenseChildrenForMutation(n)
+					kept := children[:0]
+					for _, child := range children {
+						if child != nil && child.symbol == semiSym && goShouldDropSemicolonNode(child, source) {
+							continue
+						}
+						kept = append(kept, child)
+					}
 					n.children = kept
 					n.fieldIDs = nil
 					n.fieldSources = nil
 					populateParentNode(n, n.children)
 				}
 			}
-			for i := 0; i+1 < len(n.children); i++ {
-				curr := n.children[i]
-				next := n.children[i+1]
+			childCount := resultChildCount(n)
+			for i := 0; i+1 < childCount; i++ {
+				curr := resultChildAt(n, i)
+				next := resultChildAt(n, i+1)
 				if curr == nil || next == nil {
 					continue
 				}
@@ -961,8 +975,8 @@ func normalizeGoCompatibilityInRanges(root *Node, source []byte, lang *Language,
 				}
 			}
 		}
-		for _, child := range n.children {
-			walk(child)
+		for i := 0; i < resultChildCount(n); i++ {
+			walk(resultChildAt(n, i))
 		}
 	}
 	walk(root)
@@ -1001,10 +1015,11 @@ gapReady:
 }
 
 func goTrailingCaseStatementList(n *Node, statementListSym, statementListRepeatSym Symbol) *Node {
-	if n == nil || len(n.children) == 0 {
+	childCount := resultChildCount(n)
+	if n == nil || childCount == 0 {
 		return nil
 	}
-	last := n.children[len(n.children)-1]
+	last := resultChildAt(n, childCount-1)
 	if last == nil {
 		return nil
 	}
@@ -1185,8 +1200,10 @@ func flattenRootSelfFragments(nodes []*Node, arena *nodeArena, rootSymbol Symbol
 		if node == nil {
 			continue
 		}
-		if node.symbol == rootSymbol && len(node.children) > 0 {
-			out = append(out, node.children...)
+		if node.symbol == rootSymbol && resultChildCount(node) > 0 {
+			for i := 0; i < resultChildCount(node); i++ {
+				out = append(out, resultChildAt(node, i))
+			}
 			changed = true
 			continue
 		}
@@ -1204,28 +1221,36 @@ func flattenRootSelfFragments(nodes []*Node, arena *nodeArena, rootSymbol Symbol
 }
 
 func flattenInvisibleRootChildren(root *Node, arena *nodeArena, lang *Language) *Node {
-	if root == nil || lang == nil || len(root.children) == 0 {
+	childCount := resultChildCount(root)
+	if root == nil || lang == nil || childCount == 0 {
 		return root
 	}
 	changed := false
-	out := make([]*Node, 0, len(root.children))
-	for _, child := range root.children {
+	for i := 0; i < childCount; i++ {
+		if shouldFlattenInvisibleRootChild(resultChildAt(root, i), lang) {
+			changed = true
+			break
+		}
+	}
+	if !changed {
+		return root
+	}
+	children := resultDenseChildrenForMutation(root)
+	out := make([]*Node, 0, len(children))
+	for _, child := range children {
 		if child == nil {
 			continue
 		}
 		if shouldFlattenInvisibleRootChild(child, lang) {
-			for _, grandchild := range child.children {
+			for i := 0; i < resultChildCount(child); i++ {
+				grandchild := resultChildAt(child, i)
 				if grandchild != nil {
 					out = append(out, grandchild)
 				}
 			}
-			changed = true
 			continue
 		}
 		out = append(out, child)
-	}
-	if !changed {
-		return root
 	}
 	if arena != nil {
 		buf := arena.allocNodeSlice(len(out))
@@ -1239,7 +1264,7 @@ func flattenInvisibleRootChildren(root *Node, arena *nodeArena, lang *Language) 
 }
 
 func shouldFlattenInvisibleRootChild(child *Node, lang *Language) bool {
-	if child == nil || child.isExtra() || child.isNamed() || len(child.children) == 0 {
+	if child == nil || child.isExtra() || child.isNamed() || resultChildCount(child) == 0 {
 		return false
 	}
 	if idx := int(child.symbol); idx < len(lang.SymbolMetadata) {
