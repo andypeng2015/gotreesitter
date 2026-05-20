@@ -58,10 +58,16 @@ go test . -tags treesitter_c_parity \
   -count=1 -v
 ```
 
-Set `GTS_PARITY_MODE=exhaustive` for the full curated sweep and the larger
+Set `GTS_PARITY_MODE=top50` for the top-50 correctness lock set, or
+`GTS_PARITY_MODE=exhaustive` for the full curated sweep and the larger
 diagnostic suites:
 
 ```sh
+GTS_PARITY_MODE=top50 \
+go test . -tags treesitter_c_parity \
+  -run '^TestParityFreshParse$|^TestParityIncrementalParse$|^TestParityHasNoErrors$|^TestParityTop50ParseSmoke$|^TestParityTop50ParseMaterializationTrends$' \
+  -count=1 -v
+
 GTS_PARITY_MODE=exhaustive \
 go test . -tags treesitter_c_parity \
   -run '^TestParityFreshParse$|^TestParityIncrementalParse$|^TestParityHasNoErrors$|^TestParityIssue3Repros$|^TestParityGLRCanaryGo$|^TestParityGLRCanarySet$|^TestParityGLRCapPressureTopLanguages$|^TestParityGateCoverageRatchet$|^TestParityHighlight$|^TestParityHighlightAllGrammars$' \
@@ -76,6 +82,20 @@ GTS_PARITY_MODE=exhaustive \
 go test . -tags treesitter_c_parity \
   -run '^TestParityYAMLCorpus$|^TestParityYAMLCorpusStructural$|^TestParityYAMLCorpusSummary$' \
   -count=1 -v
+```
+
+## Run Top-50 Parity Benchmarks
+
+`BenchmarkParityTop50ParseFull` prechecks gotreesitter-vs-C structural parity
+for each selected language, then benchmarks both parsers side by side. Keep
+local diagnosis narrow with `GTS_PARITY_BENCH_LANGS`; omit it only for CI/lab
+top-50 sweeps.
+
+```sh
+GOMAXPROCS=1 GTS_PARITY_MODE=top50 GTS_PARITY_BENCH_LANGS=java,python,rust \
+go test . -tags treesitter_c_parity -run '^$' \
+  -bench '^BenchmarkParityTop50ParseFull/' \
+  -benchmem -count=10 -benchtime=750ms
 ```
 
 ## Run Parity Tests In Docker Sandbox

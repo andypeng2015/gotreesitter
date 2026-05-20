@@ -149,6 +149,8 @@ func parityMode() string {
 	switch strings.ToLower(raw) {
 	case "", "smoke":
 		return "smoke"
+	case "top50", "tier1":
+		return "top50"
 	case "all", "full", "exhaustive":
 		return "exhaustive"
 	default:
@@ -160,6 +162,11 @@ func parityRunExhaustive() bool {
 	return parityMode() == "exhaustive"
 }
 
+func parityRunTop50() bool {
+	mode := parityMode()
+	return mode == "top50" || mode == "exhaustive"
+}
+
 func parityRequireExhaustive(t *testing.T, suite string) {
 	t.Helper()
 	if parityRunExhaustive() {
@@ -168,12 +175,23 @@ func parityRequireExhaustive(t *testing.T, suite string) {
 	t.Skipf("%s requires GTS_PARITY_MODE=exhaustive", suite)
 }
 
+func parityRequireTop50(t *testing.T, suite string) {
+	t.Helper()
+	if parityRunTop50() {
+		return
+	}
+	t.Skipf("%s requires GTS_PARITY_MODE=top50 or exhaustive", suite)
+}
+
 func parityIncludeStructuralLanguage(name string) bool {
 	if !curatedStructuralLanguages[name] {
 		return false
 	}
 	if parityRunExhaustive() {
 		return true
+	}
+	if parityMode() == "top50" {
+		return top50ParityLanguageSet[name]
 	}
 	return smokeParityLanguages[name]
 }
@@ -184,6 +202,9 @@ func parityIncludeHighlightLanguage(name string) bool {
 	}
 	if parityRunExhaustive() {
 		return true
+	}
+	if parityMode() == "top50" {
+		return top50ParityLanguageSet[name]
 	}
 	return smokeParityLanguages[name]
 }
