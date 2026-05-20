@@ -13,6 +13,30 @@ func normalizeCCompatibility(root *Node, source []byte, lang *Language) {
 	normalizeCBareTypeIdentifierExpressionStatements(root, source, lang)
 	normalizeCPreprocNewlineSpans(root, source, lang)
 	normalizeCPointerAssignmentPrecedence(root, lang)
+	normalizeCCollapsedKeywordChildren(root, source, lang)
+}
+
+func normalizeCCollapsedKeywordChildren(root *Node, source []byte, lang *Language) {
+	if root == nil || lang == nil || len(source) == 0 {
+		return
+	}
+	if lang.Name != "c" && lang.Name != "cpp" {
+		return
+	}
+	normalizeCollapsedNamedLeafChildrenBySource(root, source, lang, "null", "NULL")
+	normalizeCollapsedNamedLeafChildrenBySource(root, source, lang, "type_qualifier", "const", "restrict", "volatile", "_Atomic")
+	normalizeCollapsedNamedLeafChildrenBySource(
+		root,
+		source,
+		lang,
+		"storage_class_specifier",
+		"auto",
+		"extern",
+		"inline",
+		"register",
+		"static",
+		"_Thread_local",
+	)
 }
 
 func normalizeCTranslationUnitRoot(root *Node, lang *Language) {

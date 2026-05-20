@@ -31,6 +31,106 @@ func TestNormalizeCTranslationUnitRootRetagsRecoveredTopLevelChildren(t *testing
 	}
 }
 
+func TestNormalizeCCollapsedKeywordChildrenRestoresNull(t *testing.T) {
+	lang := &Language{
+		Name:        "c",
+		SymbolNames: []string{"EOF", "translation_unit", "null", "NULL"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF", Visible: false, Named: false},
+			{Name: "translation_unit", Visible: true, Named: true},
+			{Name: "null", Visible: true, Named: true},
+			{Name: "NULL", Visible: true, Named: false},
+		},
+	}
+	arena := newNodeArena(arenaClassFull)
+	source := []byte("NULL")
+	nullNode := newLeafNodeInArena(arena, 2, true, 0, 4, Point{}, Point{Column: 4})
+	root := newParentNodeInArena(arena, 1, true, []*Node{nullNode}, nil, 0)
+
+	normalizeCCompatibility(root, source, lang)
+
+	if got, want := nullNode.ChildCount(), 1; got != want {
+		t.Fatalf("null child count = %d, want %d", got, want)
+	}
+	child := nullNode.Child(0)
+	if child == nil {
+		t.Fatal("null child = nil")
+	}
+	if got, want := child.Type(lang), "NULL"; got != want {
+		t.Fatalf("null child type = %q, want %q", got, want)
+	}
+	if child.IsNamed() {
+		t.Fatal("restored NULL child should be anonymous")
+	}
+}
+
+func TestNormalizeCCollapsedKeywordChildrenRestoresStorageClassSpecifier(t *testing.T) {
+	lang := &Language{
+		Name:        "c",
+		SymbolNames: []string{"EOF", "translation_unit", "storage_class_specifier", "extern", "inline"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF", Visible: false, Named: false},
+			{Name: "translation_unit", Visible: true, Named: true},
+			{Name: "storage_class_specifier", Visible: true, Named: true},
+			{Name: "extern", Visible: true, Named: false},
+			{Name: "inline", Visible: true, Named: false},
+		},
+	}
+	arena := newNodeArena(arenaClassFull)
+	source := []byte("extern")
+	storage := newLeafNodeInArena(arena, 2, true, 0, 6, Point{}, Point{Column: 6})
+	root := newParentNodeInArena(arena, 1, true, []*Node{storage}, nil, 0)
+
+	normalizeCCompatibility(root, source, lang)
+
+	if got, want := storage.ChildCount(), 1; got != want {
+		t.Fatalf("storage class child count = %d, want %d", got, want)
+	}
+	child := storage.Child(0)
+	if child == nil {
+		t.Fatal("storage class child = nil")
+	}
+	if got, want := child.Type(lang), "extern"; got != want {
+		t.Fatalf("storage class child type = %q, want %q", got, want)
+	}
+	if child.IsNamed() {
+		t.Fatal("restored extern child should be anonymous")
+	}
+}
+
+func TestNormalizeCCollapsedKeywordChildrenRestoresTypeQualifier(t *testing.T) {
+	lang := &Language{
+		Name:        "c",
+		SymbolNames: []string{"EOF", "translation_unit", "type_qualifier", "const"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF", Visible: false, Named: false},
+			{Name: "translation_unit", Visible: true, Named: true},
+			{Name: "type_qualifier", Visible: true, Named: true},
+			{Name: "const", Visible: true, Named: false},
+		},
+	}
+	arena := newNodeArena(arenaClassFull)
+	source := []byte("const")
+	qualifier := newLeafNodeInArena(arena, 2, true, 0, 5, Point{}, Point{Column: 5})
+	root := newParentNodeInArena(arena, 1, true, []*Node{qualifier}, nil, 0)
+
+	normalizeCCompatibility(root, source, lang)
+
+	if got, want := qualifier.ChildCount(), 1; got != want {
+		t.Fatalf("type qualifier child count = %d, want %d", got, want)
+	}
+	child := qualifier.Child(0)
+	if child == nil {
+		t.Fatal("type qualifier child = nil")
+	}
+	if got, want := child.Type(lang), "const"; got != want {
+		t.Fatalf("type qualifier child type = %q, want %q", got, want)
+	}
+	if child.IsNamed() {
+		t.Fatal("restored const child should be anonymous")
+	}
+}
+
 func TestNormalizeGoSourceFileRootRetagsRecoveredTopLevelChildren(t *testing.T) {
 	lang := &Language{
 		Name:        "go",

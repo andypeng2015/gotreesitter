@@ -8,6 +8,10 @@ func normalizeRustCompatibility(root *Node, source []byte, p *Parser, lang *Lang
 	normalizeRustTokenBindingPatterns(root, source, lang)
 	normalizeRustRecoveredTokenTrees(root, source, lang)
 	normalizeRustSourceFileRoot(root, source, lang)
+	normalizeCollapsedNamedLeafChildrenBySource(root, source, lang, "boolean_literal", "true", "false")
+	normalizeCollapsedNamedLeafChildrenBySource(root, source, lang, "empty_statement", ";")
+	normalizeCollapsedNamedLeafChildrenBySource(root, source, lang, "remaining_field_pattern", "..")
+	normalizeCollapsedNamedLeafChildrenBySource(root, source, lang, "range_expression", "..", "..=")
 }
 
 func normalizeRustTokenBindingPatterns(root *Node, source []byte, lang *Language) {
