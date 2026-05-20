@@ -39,7 +39,7 @@ func normalizeHTMLRecoveredNestedCustomTags(root *Node, lang *Language) {
 		copy(buf, endTagChildren)
 		endTagChildren = buf
 	}
-	endTag := newParentNodeInArena(root.ownerArena, endTagSym, lang.SymbolMetadata[endTagSym].Named, endTagChildren, nil, 0)
+	endTag := newParentNodeInArena(root.ownerArena, endTagSym, symbolIsNamed(lang, endTagSym), endTagChildren, nil, 0)
 	inner := continuation
 	for i := len(startTags) - 1; i >= 1; i-- {
 		children := []*Node{startTags[i], inner}
@@ -48,7 +48,7 @@ func normalizeHTMLRecoveredNestedCustomTags(root *Node, lang *Language) {
 			copy(buf, children)
 			children = buf
 		}
-		wrapper := newParentNodeInArena(root.ownerArena, elementSym, lang.SymbolMetadata[elementSym].Named, children, nil, 0)
+		wrapper := newParentNodeInArena(root.ownerArena, elementSym, symbolIsNamed(lang, elementSym), children, nil, 0)
 		wrapper.endByte = closeTok.startByte
 		wrapper.endPoint = closeTok.startPoint
 		inner = wrapper
@@ -60,7 +60,7 @@ func normalizeHTMLRecoveredNestedCustomTags(root *Node, lang *Language) {
 		copy(buf, outerChildren)
 		outerChildren = buf
 	}
-	outer := newParentNodeInArena(root.ownerArena, elementSym, lang.SymbolMetadata[elementSym].Named, outerChildren, nil, 0)
+	outer := newParentNodeInArena(root.ownerArena, elementSym, symbolIsNamed(lang, elementSym), outerChildren, nil, 0)
 	root.children = []*Node{outer}
 	if root.ownerArena != nil {
 		buf := root.ownerArena.allocNodeSlice(1)
@@ -70,7 +70,7 @@ func normalizeHTMLRecoveredNestedCustomTags(root *Node, lang *Language) {
 	root.fieldIDs = nil
 	root.fieldSources = nil
 	root.symbol = documentSym
-	root.setNamed(lang.SymbolMetadata[documentSym].Named)
+	root.setNamed(symbolIsNamed(lang, documentSym))
 	root.setHasError(outer.HasError())
 }
 
@@ -145,14 +145,7 @@ func normalizeHTMLRecoveredNestedCustomTagRanges(root *Node, source []byte, lang
 	if root == nil || lang == nil || lang.Name != "html" || len(source) == 0 {
 		return
 	}
-	var walk func(*Node)
-	walk = func(node *Node) {
-		if node == nil {
-			return
-		}
-		for i := 0; i < resultChildCount(node); i++ {
-			walk(resultChildAt(node, i))
-		}
+	walkResultTreePostorder(root, func(node *Node) {
 		childCount := resultChildCount(node)
 		if node.Type(lang) != "element" || childCount < 2 {
 			return
@@ -172,6 +165,5 @@ func normalizeHTMLRecoveredNestedCustomTagRanges(root *Node, source []byte, lang
 			}
 			htmlExtendLeadingElementChain(left, closeTok.startByte, closeTok.startPoint, lang)
 		}
-	}
-	walk(root)
+	})
 }

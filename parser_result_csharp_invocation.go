@@ -31,17 +31,13 @@ func normalizeCSharpInvocationStatements(root *Node, source []byte, lang *Langua
 	if !hasFunctionField || !hasArgumentsField || !hasExpressionField || !hasNameField {
 		return
 	}
-	exprStmtNamed := int(exprStmtSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[exprStmtSym].Named
-	invocationNamed := int(invocationSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[invocationSym].Named
-	memberAccessNamed := int(memberAccessSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[memberAccessSym].Named
-	argumentListNamed := int(argumentListSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[argumentListSym].Named
-	argumentNamed := int(argumentSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[argumentSym].Named
+	exprStmtNamed := symbolIsNamed(lang, exprStmtSym)
+	invocationNamed := symbolIsNamed(lang, invocationSym)
+	memberAccessNamed := symbolIsNamed(lang, memberAccessSym)
+	argumentListNamed := symbolIsNamed(lang, argumentListSym)
+	argumentNamed := symbolIsNamed(lang, argumentSym)
 
-	var walk func(*Node)
-	walk = func(n *Node) {
-		if n == nil {
-			return
-		}
+	walkResultTree(root, func(n *Node) {
 		if n.Type(lang) == "argument_list" {
 			csharpPopulateMissingInvocationArguments(n, source, lang)
 		}
@@ -88,11 +84,7 @@ func normalizeCSharpInvocationStatements(root *Node, source []byte, lang *Langua
 				}
 			}
 		}
-		for _, child := range n.children {
-			walk(child)
-		}
-	}
-	walk(root)
+	})
 }
 
 func csharpPopulateMissingInvocationArguments(n *Node, source []byte, lang *Language) bool {
@@ -153,8 +145,8 @@ func csharpRecoverTopLevelInvocationStatementFromRange(source []byte, start, end
 	if !ok {
 		return nil, false
 	}
-	exprStmtNamed := int(exprStmtSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[exprStmtSym].Named
-	globalNamed := int(globalSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[globalSym].Named
+	exprStmtNamed := symbolIsNamed(lang, exprStmtSym)
+	globalNamed := symbolIsNamed(lang, globalSym)
 	expressionFieldID, _ := lang.FieldByName("expression")
 	exprChildren := []*Node{invocation, semiTok}
 	if arena != nil {
@@ -259,27 +251,11 @@ func normalizeCSharpSwitchTupleCasePatterns(root *Node, lang *Language) {
 	if !ok {
 		return
 	}
-	named := false
-	if idx := int(patternSym); idx < len(lang.SymbolMetadata) {
-		named = lang.SymbolMetadata[patternSym].Named
-	}
-	tupleNamed := false
-	if idx := int(tupleExprSym); idx < len(lang.SymbolMetadata) {
-		tupleNamed = lang.SymbolMetadata[tupleExprSym].Named
-	}
-	positionalNamed := false
-	if idx := int(positionalSym); idx < len(lang.SymbolMetadata) {
-		positionalNamed = lang.SymbolMetadata[positionalSym].Named
-	}
-	subpatternNamed := false
-	if idx := int(subpatternSym); idx < len(lang.SymbolMetadata) {
-		subpatternNamed = lang.SymbolMetadata[subpatternSym].Named
-	}
-	var walk func(*Node)
-	walk = func(n *Node) {
-		if n == nil {
-			return
-		}
+	named := symbolIsNamed(lang, patternSym)
+	tupleNamed := symbolIsNamed(lang, tupleExprSym)
+	positionalNamed := symbolIsNamed(lang, positionalSym)
+	subpatternNamed := symbolIsNamed(lang, subpatternSym)
+	walkResultTree(root, func(n *Node) {
 		if n.Type(lang) == "switch_section" && len(n.children) > 1 {
 			pat := n.children[1]
 			if n.children[0] != nil && n.children[0].Type(lang) == "case" &&
@@ -312,11 +288,7 @@ func normalizeCSharpSwitchTupleCasePatterns(root *Node, lang *Language) {
 				csharpRewriteSwitchTupleLiteralPatternArguments(pat.children[0], lang, positionalSym, positionalNamed, subpatternSym, subpatternNamed, patternSym, named)
 			}
 		}
-		for _, child := range n.children {
-			walk(child)
-		}
-	}
-	walk(root)
+	})
 }
 
 func csharpShouldWrapSwitchCaseConstantPattern(n *Node, lang *Language) bool {

@@ -22,23 +22,10 @@ func normalizeRustTokenBindingPatterns(root *Node, source []byte, lang *Language
 	if !ok {
 		return
 	}
-	tokenBindingPatternNamed := true
-	if int(tokenBindingPatternSym) < len(lang.SymbolMetadata) {
-		tokenBindingPatternNamed = lang.SymbolMetadata[tokenBindingPatternSym].Named
-	}
-	fragmentSpecifierNamed := true
-	if int(fragmentSpecifierSym) < len(lang.SymbolMetadata) {
-		fragmentSpecifierNamed = lang.SymbolMetadata[fragmentSpecifierSym].Named
-	}
+	tokenBindingPatternNamed := symbolIsNamed(lang, tokenBindingPatternSym)
+	fragmentSpecifierNamed := symbolIsNamed(lang, fragmentSpecifierSym)
 
-	var walk func(*Node)
-	walk = func(node *Node) {
-		if node == nil {
-			return
-		}
-		for _, child := range node.children {
-			walk(child)
-		}
+	walkResultTreePostorder(root, func(node *Node) {
 		if node.Type(lang) != "token_tree_pattern" || len(node.children) < 3 {
 			return
 		}
@@ -73,8 +60,7 @@ func normalizeRustTokenBindingPatterns(root *Node, source []byte, lang *Language
 
 			replaceChildRangeWithSingleNode(node, i, i+3, binding)
 		}
-	}
-	walk(root)
+	})
 }
 
 func normalizeRustRecoveredTokenTrees(root *Node, source []byte, lang *Language) {
@@ -82,14 +68,7 @@ func normalizeRustRecoveredTokenTrees(root *Node, source []byte, lang *Language)
 		return
 	}
 
-	var walk func(*Node)
-	walk = func(node *Node) {
-		if node == nil {
-			return
-		}
-		for _, child := range node.children {
-			walk(child)
-		}
+	walkResultTreePostorder(root, func(node *Node) {
 		if node.Type(lang) != "token_tree" || !node.HasError() {
 			return
 		}
@@ -98,9 +77,7 @@ func normalizeRustRecoveredTokenTrees(root *Node, source []byte, lang *Language)
 			return
 		}
 		*node = *recovered
-	}
-
-	walk(root)
+	})
 	rustRefreshRecoveredErrorFlags(root)
 }
 

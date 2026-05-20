@@ -133,11 +133,7 @@ func normalizeFortranStatementLineBreaks(root *Node, source []byte, lang *Langua
 	if root == nil || lang == nil || lang.Name != "fortran" || len(source) == 0 {
 		return
 	}
-	var walk func(*Node, int)
-	walk = func(n *Node, depth int) {
-		if n == nil || depth > maxTreeWalkDepth {
-			return
-		}
+	walkResultTreeBounded(root, func(n *Node) {
 		if n.Type(lang) == "program" {
 			childCount := resultChildCount(n)
 			for i := 0; i+1 < childCount; i++ {
@@ -154,32 +150,20 @@ func normalizeFortranStatementLineBreaks(root *Node, source []byte, lang *Langua
 				}
 			}
 		}
-		for i := 0; i < resultChildCount(n); i++ {
-			walk(resultChildAt(n, i), depth+1)
-		}
-	}
-	walk(root, 0)
+	})
 }
 
 func normalizeNginxAttributeLineBreaks(root *Node, source []byte, lang *Language) {
 	if root == nil || lang == nil || lang.Name != "nginx" || len(source) == 0 {
 		return
 	}
-	var walk func(*Node, int)
-	walk = func(n *Node, depth int) {
-		if n == nil || depth > maxTreeWalkDepth {
-			return
-		}
+	walkResultTreeBounded(root, func(n *Node) {
 		if n.Type(lang) == "attribute" {
 			if end := lineBreakEndAt(source, n.endByte, uint32(len(source))); end > n.endByte {
 				extendNodeEndTo(n, end, source)
 			}
 		}
-		for i := 0; i < resultChildCount(n); i++ {
-			walk(resultChildAt(n, i), depth+1)
-		}
-	}
-	walk(root, 0)
+	})
 }
 
 func normalizeRootEOFNewlineSpan(root *Node, source []byte, lang *Language) {

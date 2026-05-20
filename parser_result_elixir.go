@@ -8,11 +8,7 @@ func normalizeElixirNestedCallTargetFields(root *Node, lang *Language) {
 	if !ok {
 		return
 	}
-	var walk func(*Node)
-	walk = func(n *Node) {
-		if n == nil {
-			return
-		}
+	walkResultTree(root, func(n *Node) {
 		if n.Type(lang) == "call" && len(n.children) >= 2 {
 			first := n.children[0]
 			second := n.children[1]
@@ -22,9 +18,5 @@ func normalizeElixirNestedCallTargetFields(root *Node, lang *Language) {
 				setNodeChildFieldInheritedIfEmpty(n, 0, targetID)
 			}
 		}
-		for _, child := range n.children {
-			walk(child)
-		}
-	}
-	walk(root)
+	})
 }

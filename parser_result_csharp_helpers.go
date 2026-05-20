@@ -637,12 +637,12 @@ func csharpBuildSimpleJoinQueryExpression(arena *nodeArena, source []byte, lang 
 	if !hasNameField || !hasExpressionField {
 		return nil, false
 	}
-	identifierNamed := int(identifierSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[identifierSym].Named
-	memberAccessNamed := int(memberAccessSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[memberAccessSym].Named
-	fromClauseNamed := int(fromClauseSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[fromClauseSym].Named
-	joinClauseNamed := int(joinClauseSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[joinClauseSym].Named
-	selectClauseNamed := int(selectClauseSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[selectClauseSym].Named
-	queryExprNamed := int(queryExprSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[queryExprSym].Named
+	identifierNamed := symbolIsNamed(lang, identifierSym)
+	memberAccessNamed := symbolIsNamed(lang, memberAccessSym)
+	fromClauseNamed := symbolIsNamed(lang, fromClauseSym)
+	joinClauseNamed := symbolIsNamed(lang, joinClauseSym)
+	selectClauseNamed := symbolIsNamed(lang, selectClauseSym)
+	queryExprNamed := symbolIsNamed(lang, queryExprSym)
 
 	ident := func(span [2]uint32) *Node {
 		return newLeafNodeInArena(
@@ -656,7 +656,7 @@ func csharpBuildSimpleJoinQueryExpression(arena *nodeArena, source []byte, lang 
 		)
 	}
 	leaf := func(sym Symbol, start, end uint32) *Node {
-		named := int(sym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[sym].Named
+		named := symbolIsNamed(lang, sym)
 		return newLeafNodeInArena(
 			arena,
 			sym,
@@ -798,7 +798,7 @@ func csharpBuildIdentifierNodeFromSource(source []byte, start, end uint32, lang 
 	if !ok {
 		return ident, true
 	}
-	identNamed := int(identSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[identSym].Named
+	identNamed := symbolIsNamed(lang, identSym)
 	children := []*Node{keywordLeaf}
 	if arena != nil {
 		buf := arena.allocNodeSlice(len(children))

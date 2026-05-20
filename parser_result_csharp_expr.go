@@ -12,16 +12,12 @@ func normalizeCSharpConditionalIsPatternExpressions(root *Node, lang *Language) 
 	if !ok {
 		return
 	}
-	isPatternNamed := int(isPatternSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[isPatternSym].Named
-	constantPatternNamed := int(constantPatternSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[constantPatternSym].Named
+	isPatternNamed := symbolIsNamed(lang, isPatternSym)
+	constantPatternNamed := symbolIsNamed(lang, constantPatternSym)
 	expressionFieldID, _ := lang.FieldByName("expression")
 	patternFieldID, _ := lang.FieldByName("pattern")
 
-	var walk func(*Node)
-	walk = func(n *Node) {
-		if n == nil {
-			return
-		}
+	walkResultTree(root, func(n *Node) {
 		if n.Type(lang) == "conditional_expression" {
 			for i, child := range n.children {
 				if child == nil || n.FieldNameForChild(i, lang) != "condition" || child.Type(lang) != "is_expression" {
@@ -30,11 +26,7 @@ func normalizeCSharpConditionalIsPatternExpressions(root *Node, lang *Language) 
 				csharpRewriteConditionalIsPatternExpression(child, lang, isPatternSym, isPatternNamed, constantPatternSym, constantPatternNamed, expressionFieldID, patternFieldID)
 			}
 		}
-		for _, child := range n.children {
-			walk(child)
-		}
-	}
-	walk(root)
+	})
 }
 
 func csharpRewriteConditionalIsPatternExpression(n *Node, lang *Language, isPatternSym Symbol, isPatternNamed bool, constantPatternSym Symbol, constantPatternNamed bool, expressionFieldID, patternFieldID FieldID) bool {
@@ -101,19 +93,11 @@ func normalizeCSharpConditionalIsPatternInitializers(root *Node, source []byte, 
 	if root == nil || lang == nil || lang.Name != "c_sharp" || len(source) == 0 {
 		return
 	}
-	var walk func(*Node)
-	walk = func(n *Node) {
-		if n == nil {
-			return
-		}
+	walkResultTree(root, func(n *Node) {
 		if n.Type(lang) == "local_declaration_statement" {
 			csharpRewriteConditionalIsPatternInitializer(n, source, lang)
 		}
-		for _, child := range n.children {
-			walk(child)
-		}
-	}
-	walk(root)
+	})
 }
 
 func csharpRewriteConditionalIsPatternInitializer(stmt *Node, source []byte, lang *Language) bool {
@@ -166,26 +150,18 @@ func normalizeCSharpDereferenceLogicalAndCasts(root *Node, source []byte, lang *
 	if !ok {
 		return
 	}
-	castNamed := int(castSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[castSym].Named
-	prefixUnaryNamed := int(prefixUnarySym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[prefixUnarySym].Named
+	castNamed := symbolIsNamed(lang, castSym)
+	prefixUnaryNamed := symbolIsNamed(lang, prefixUnarySym)
 	typeFieldID, _ := lang.FieldByName("type")
 	valueFieldID, _ := lang.FieldByName("value")
 
-	var walk func(*Node)
-	walk = func(n *Node) {
-		if n == nil {
-			return
-		}
+	walkResultTree(root, func(n *Node) {
 		if n.Type(lang) == "binary_expression" {
 			csharpRewriteLogicalAndCastExpression(n, source, lang, castSym, castNamed, prefixUnarySym, prefixUnaryNamed, typeFieldID, valueFieldID)
 		} else if n.Type(lang) == "cast_expression" {
 			csharpRewriteLogicalAndCastValue(n, source, lang, prefixUnarySym, prefixUnaryNamed, valueFieldID)
 		}
-		for _, child := range n.children {
-			walk(child)
-		}
-	}
-	walk(root)
+	})
 }
 
 func csharpRewriteLogicalAndCastExpression(n *Node, source []byte, lang *Language, castSym Symbol, castNamed bool, prefixUnarySym Symbol, prefixUnaryNamed bool, typeFieldID, valueFieldID FieldID) bool {

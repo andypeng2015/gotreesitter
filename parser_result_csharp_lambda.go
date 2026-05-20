@@ -6,21 +6,13 @@ func normalizeCSharpRecoveredScopedLambdaBlocks(root *Node, source []byte, p *Pa
 	if root == nil || p == nil || p.language == nil || p.language.Name != "c_sharp" || len(source) == 0 || len(source) > csharpMaxTopLevelChunkRecoverySourceBytes {
 		return
 	}
-	var walk func(*Node)
-	walk = func(n *Node) {
-		if n == nil {
-			return
-		}
+	walkResultTree(root, func(n *Node) {
 		if n.Type(p.language) == "block" && csharpBlockNeedsScopedLambdaRecovery(n, source, p.language) {
 			if recovered, ok := csharpRecoverScopedLambdaBlock(n, source, p); ok {
 				csharpReplaceNodeContents(n, recovered)
 			}
 		}
-		for _, child := range n.children {
-			walk(child)
-		}
-	}
-	walk(root)
+	})
 }
 
 func csharpBlockNeedsScopedLambdaRecovery(block *Node, source []byte, lang *Language) bool {
@@ -46,19 +38,11 @@ func normalizeCSharpSplitScopedLambdaStatements(root *Node, source []byte, lang 
 	if root == nil || lang == nil || lang.Name != "c_sharp" || len(source) == 0 {
 		return
 	}
-	var walk func(*Node)
-	walk = func(n *Node) {
-		if n == nil {
-			return
-		}
+	walkResultTree(root, func(n *Node) {
 		if n.Type(lang) == "block" {
 			csharpSplitScopedLambdaStatementChildren(n, source, lang)
 		}
-		for _, child := range n.children {
-			walk(child)
-		}
-	}
-	walk(root)
+	})
 }
 
 func csharpSplitScopedLambdaStatementChildren(block *Node, source []byte, lang *Language) bool {

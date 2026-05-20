@@ -132,7 +132,7 @@ func scalaTemplateBodyFragmentChildren(nodes []*Node, arena *nodeArena, lang *La
 		if !ok {
 			return nil, false
 		}
-		closeNamed := int(closeSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[closeSym].Named
+		closeNamed := symbolIsNamed(lang, closeSym)
 		start := closeByte - 1
 		if int(closeByte) > len(source) || start >= closeByte {
 			return nil, false
@@ -206,12 +206,12 @@ func scalaRecoverTopLevelClassNodeFromRange(source []byte, classStart, classEnd 
 	if !ok {
 		return nil, false
 	}
-	classNamed := int(classSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[classSym].Named
+	classNamed := symbolIsNamed(lang, classSym)
 	templateBodySym, ok := symbolByName(lang, "template_body")
 	if !ok {
 		return nil, false
 	}
-	templateBodyNamed := int(templateBodySym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[templateBodySym].Named
+	templateBodyNamed := symbolIsNamed(lang, templateBodySym)
 	headerIdx := -1
 	classIdx := -1
 	constructorIdx := -1
@@ -368,12 +368,12 @@ func scalaRecoverTopLevelObjectNodeFromRange(source []byte, objectStart, objectE
 	if !ok {
 		return nil, false
 	}
-	objectNamed := int(objectSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[objectSym].Named
+	objectNamed := symbolIsNamed(lang, objectSym)
 	templateBodySym, ok := symbolByName(lang, "template_body")
 	if !ok {
 		return nil, false
 	}
-	templateBodyNamed := int(templateBodySym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[templateBodySym].Named
+	templateBodyNamed := symbolIsNamed(lang, templateBodySym)
 	objectIdx := -1
 	identifierIdx := -1
 	openIdx := -1

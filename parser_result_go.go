@@ -24,7 +24,7 @@ func normalizeGoSourceFileRoot(root *Node, source []byte, p *Parser) {
 		return
 	}
 	root.symbol = sym
-	root.setNamed(int(sym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[sym].Named)
+	root.setNamed(symbolIsNamed(lang, sym))
 	root.setHasError(false)
 	for i := 0; i < resultChildCount(root); i++ {
 		child := resultChildAt(root, i)
@@ -704,12 +704,12 @@ func goBuildRecoveredBlockNode(source []byte, openBrace, closeBrace uint32, body
 	if !ok {
 		return nil, false
 	}
-	blockNamed := int(blockSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[blockSym].Named
+	blockNamed := symbolIsNamed(lang, blockSym)
 	stmtListSym, ok := symbolByName(lang, "statement_list")
 	if !ok {
 		return nil, false
 	}
-	stmtListNamed := int(stmtListSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[stmtListSym].Named
+	stmtListNamed := symbolIsNamed(lang, stmtListSym)
 	openSym, ok := symbolByName(lang, "{")
 	if !ok {
 		return nil, false

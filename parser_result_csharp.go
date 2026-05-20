@@ -449,7 +449,7 @@ func normalizeCSharpRecoveredNamespaces(root *Node, source []byte, p *Parser, la
 	if root.Type(lang) == "ERROR" && csharpCanRecoverCompilationUnitRoot(root, lang) {
 		if sym, ok := lang.SymbolByName("compilation_unit"); ok {
 			root.symbol = sym
-			root.setNamed(int(sym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[sym].Named)
+			root.setNamed(symbolIsNamed(lang, sym))
 			root.setHasError(false)
 			populateParentNode(root, root.children)
 		}
@@ -579,22 +579,14 @@ func normalizeCSharpUnicodeIdentifierSpans(root *Node, source []byte, lang *Lang
 	if root == nil || lang == nil || lang.Name != "c_sharp" || len(source) == 0 {
 		return
 	}
-	var walk func(*Node)
-	walk = func(n *Node) {
-		if n == nil {
-			return
-		}
+	walkResultTree(root, func(n *Node) {
 		if n.Type(lang) == "identifier" && len(n.children) == 0 {
 			if end := csharpUnicodeIdentifierEnd(source, n.startByte); end > n.endByte && csharpCanExtendLeafNodeTo(n, end) {
 				n.endByte = end
 				n.endPoint = advancePointByBytes(Point{}, source[:end])
 			}
 		}
-		for _, child := range n.children {
-			walk(child)
-		}
-	}
-	walk(root)
+	})
 }
 
 func csharpUnicodeIdentifierEnd(source []byte, start uint32) uint32 {
@@ -652,7 +644,7 @@ func normalizeCSharpRecoveredTypeDeclarations(root *Node, source []byte, p *Pars
 	if !ok {
 		return
 	}
-	compilationUnitNamed := int(compilationUnitSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[compilationUnitSym].Named
+	compilationUnitNamed := symbolIsNamed(lang, compilationUnitSym)
 	recoveredChildren := make([]*Node, 0, len(root.children))
 	for i := 0; i < len(root.children); {
 		child := root.children[i]
@@ -782,7 +774,7 @@ func csharpBuildRecoveredEmptyTypeDeclaration(errNode, initNode *Node, source []
 	if !ok {
 		return nil, false
 	}
-	declNamed := int(declSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[declSym].Named
+	declNamed := symbolIsNamed(lang, declSym)
 	declList, ok := csharpBuildEmptyDeclarationListNode(arena, source, lang, uint32(openBrace), uint32(closeBrace))
 	if !ok {
 		return nil, false
@@ -817,7 +809,7 @@ func csharpBuildEmptyDeclarationListNode(arena *nodeArena, source []byte, lang *
 	if !ok {
 		return nil, false
 	}
-	named := int(sym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[sym].Named
+	named := symbolIsNamed(lang, sym)
 	return newParentNodeInArena(arena, sym, named, []*Node{openTok, closeTok}, nil, 0), true
 }
 
@@ -825,11 +817,7 @@ func normalizeCSharpTypeConstraintKeywords(root *Node, lang *Language) {
 	if root == nil || lang == nil || lang.Name != "c_sharp" {
 		return
 	}
-	var walk func(*Node)
-	walk = func(n *Node) {
-		if n == nil {
-			return
-		}
+	walkResultTree(root, func(n *Node) {
 		if n.Type(lang) == "type_parameter_constraint" && len(n.children) == 1 {
 			child := n.children[0]
 			if child != nil && child.Type(lang) == "identifier" && len(child.children) == 1 {
@@ -848,11 +836,7 @@ func normalizeCSharpTypeConstraintKeywords(root *Node, lang *Language) {
 				}
 			}
 		}
-		for _, child := range n.children {
-			walk(child)
-		}
-	}
-	walk(root)
+	})
 }
 
 type csharpSimpleJoinQuerySpec struct {

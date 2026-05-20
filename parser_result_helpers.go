@@ -476,6 +476,18 @@ func symbolByName(lang *Language, name string) (Symbol, bool) {
 	return 0, false
 }
 
+func symbolIsNamed(lang *Language, sym Symbol) bool {
+	return lang != nil && int(sym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[sym].Named
+}
+
+func symbolMeta(lang *Language, name string) (Symbol, bool, bool) {
+	sym, ok := symbolByName(lang, name)
+	if !ok {
+		return 0, false, false
+	}
+	return sym, symbolIsNamed(lang, sym), true
+}
+
 func extendNodeEndTo(n *Node, end uint32, source []byte) {
 	if n == nil || end <= n.endByte || end > uint32(len(source)) {
 		return

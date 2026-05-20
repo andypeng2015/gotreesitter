@@ -1,15 +1,5 @@
 package gotreesitter
 
-// resultCompatibilityStrut is a language-specific post-build tree rewrite.
-//
-// These are deliberately named as struts: they hold up parity while the parser,
-// scanner, or grammargen output is not yet producing the final C tree-sitter
-// shape directly. New parser work should prefer fixing the underlying runtime
-// or grammar generation path. When that happens, remove the corresponding strut
-// and its regression tests instead of letting this registry become permanent
-// architecture.
-type resultCompatibilityStrut func(resultCompatibilityContext)
-
 type resultCompatibilityContext struct {
 	root   *Node
 	source []byte
@@ -114,16 +104,6 @@ func resultCompatibilityStrutIDForLanguage(name string) resultCompatibilityStrut
 		}
 	}
 	return resultCompatibilityStrutNone
-}
-
-func resultCompatibilityStrutForLanguage(name string) resultCompatibilityStrut {
-	id := resultCompatibilityStrutIDForLanguage(name)
-	if id == resultCompatibilityStrutNone {
-		return nil
-	}
-	return func(ctx resultCompatibilityContext) {
-		runResultCompatibilityStrut(id, ctx)
-	}
 }
 
 // normalizeResultCompatibility applies narrow post-build tree rewrites that

@@ -1175,7 +1175,7 @@ func rustNamedForSymbol(lang *Language, sym Symbol) bool {
 			return true
 		}
 	}
-	return int(sym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[sym].Named
+	return symbolIsNamed(lang, sym)
 }
 
 func rustTrimSpaceBounds(source []byte, start, end uint32) (uint32, uint32) {

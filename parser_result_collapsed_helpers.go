@@ -47,15 +47,8 @@ func normalizeCollapsedNamedLeafChildrenWithStats(root *Node, lang *Language, pa
 	if !childOk {
 		return counters
 	}
-	childNamed := false
-	if int(childSym) < len(lang.SymbolMetadata) {
-		childNamed = lang.SymbolMetadata[childSym].Named
-	}
-	var walk func(*Node)
-	walk = func(n *Node) {
-		if n == nil {
-			return
-		}
+	childNamed := symbolIsNamed(lang, childSym)
+	walkResultTree(root, func(n *Node) {
 		counters.nodesVisited++
 		childCount := resultChildCount(n)
 		if n.symbol == parentSym && childCount == 0 {
@@ -63,11 +56,6 @@ func normalizeCollapsedNamedLeafChildrenWithStats(root *Node, lang *Language, pa
 			n.children = cloneNodeSliceInArena(n.ownerArena, []*Node{child})
 			counters.nodesRewritten++
 		}
-		for i := 0; i < childCount; i++ {
-			child := resultChildAt(n, i)
-			walk(child)
-		}
-	}
-	walk(root)
+	})
 	return counters
 }

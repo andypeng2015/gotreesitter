@@ -116,7 +116,7 @@ func csharpRecoverSourceTopLevelTypeDeclarationFromRange(source []byte, start, e
 	}
 	buf := arena.allocNodeSlice(len(children))
 	copy(buf, children)
-	named := int(declSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[declSym].Named
+	named := symbolIsNamed(lang, declSym)
 	decl := newParentNodeInArena(arena, declSym, named, buf, nil, 0)
 	extendNodeEndTo(decl, end, source)
 	decl.setHasError(false)
@@ -189,7 +189,7 @@ func csharpBuildSourceBaseListNode(source []byte, colon, end uint32, lang *Langu
 	}
 	buf := arena.allocNodeSlice(len(children))
 	copy(buf, children)
-	named := int(sym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[sym].Named
+	named := symbolIsNamed(lang, sym)
 	return newParentNodeInArena(arena, sym, named, buf, nil, 0), true
 }
 
@@ -209,7 +209,7 @@ func csharpBuildSourceBaseTypeNode(source []byte, start, end uint32, lang *Langu
 			if !ok {
 				return nil, false
 			}
-			named := int(sym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[sym].Named
+			named := symbolIsNamed(lang, sym)
 			return newParentNodeInArena(arena, sym, named, []*Node{typeNode, args}, nil, 0), true
 		}
 	}
@@ -333,7 +333,7 @@ func csharpBuildSourceDeclarationListNode(source []byte, openBrace, closeBrace u
 	children = append(children, closeTok)
 	buf := arena.allocNodeSlice(len(children))
 	copy(buf, children)
-	named := int(sym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[sym].Named
+	named := symbolIsNamed(lang, sym)
 	return newParentNodeInArena(arena, sym, named, buf, nil, 0), true
 }
 
@@ -426,7 +426,7 @@ func csharpBuildRecoveredTypeDeclarationWithBodyFromChildren(children []*Node, i
 	if !ok {
 		return nil, false
 	}
-	declListNamed := int(declListSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[declListSym].Named
+	declListNamed := symbolIsNamed(lang, declListSym)
 	if arena != nil {
 		buf := arena.allocNodeSlice(len(bodyChildren))
 		copy(buf, bodyChildren)
@@ -437,7 +437,7 @@ func csharpBuildRecoveredTypeDeclarationWithBodyFromChildren(children []*Node, i
 	if !ok {
 		return nil, false
 	}
-	declNamed := int(declSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[declSym].Named
+	declNamed := symbolIsNamed(lang, declSym)
 	declChildren := make([]*Node, 0, len(initNode.children)+1)
 	for _, child := range initNode.children {
 		if child != nil {
@@ -611,7 +611,7 @@ func csharpRecoverMethodDeclarationFromChildren(children []*Node, startIdx int, 
 	if !ok {
 		return nil, startIdx, false
 	}
-	methodNamed := int(methodSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[methodSym].Named
+	methodNamed := symbolIsNamed(lang, methodSym)
 	methodChildren := make([]*Node, 0, len(header)+1)
 	for _, child := range header {
 		if child != nil {
@@ -678,7 +678,7 @@ func csharpBuildRecoveredMethodBlockNode(source []byte, lang *Language, arena *n
 	if !ok {
 		return nil, false
 	}
-	blockNamed := int(blockSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[blockSym].Named
+	blockNamed := symbolIsNamed(lang, blockSym)
 	openTok, ok := csharpBuildLeafNodeByName(arena, source, lang, "{", openBrace, openBrace+1)
 	if !ok {
 		return nil, false

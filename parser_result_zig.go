@@ -8,11 +8,7 @@ func normalizeZigEmptyInitListFields(root *Node, lang *Language) {
 	if !ok {
 		return
 	}
-	var walk func(*Node)
-	walk = func(n *Node) {
-		if n == nil {
-			return
-		}
+	walkResultTree(root, func(n *Node) {
 		if len(n.fieldIDs) == len(n.children) {
 			for i, child := range n.children {
 				if child == nil || n.fieldIDs[i] != fieldConstantID || child.Type(lang) != "InitList" {
@@ -24,9 +20,5 @@ func normalizeZigEmptyInitListFields(root *Node, lang *Language) {
 				clearNodeChildField(n, i)
 			}
 		}
-		for _, child := range n.children {
-			walk(child)
-		}
-	}
-	walk(root)
+	})
 }

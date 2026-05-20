@@ -27,19 +27,19 @@ func normalizeJavaScriptTopLevelObjectLiterals(root *Node, lang *Language) {
 	if root == nil || lang == nil || lang.Name != "javascript" || root.Type(lang) != "program" {
 		return
 	}
-	exprSym, exprNamed, ok := javaScriptSymbolMeta(lang, "expression_statement")
+	exprSym, exprNamed, ok := symbolMeta(lang, "expression_statement")
 	if !ok {
 		return
 	}
-	objectSym, objectNamed, ok := javaScriptSymbolMeta(lang, "object")
+	objectSym, objectNamed, ok := symbolMeta(lang, "object")
 	if !ok {
 		return
 	}
-	pairSym, pairNamed, ok := javaScriptSymbolMeta(lang, "pair")
+	pairSym, pairNamed, ok := symbolMeta(lang, "pair")
 	if !ok {
 		return
 	}
-	propSym, _, ok := javaScriptSymbolMeta(lang, "property_identifier")
+	propSym, _, ok := symbolMeta(lang, "property_identifier")
 	if !ok {
 		return
 	}
@@ -121,17 +121,9 @@ func normalizeJavaScriptTrailingContinueComments(root *Node, source []byte, lang
 	if root == nil || lang == nil || lang.Name != "javascript" || len(source) == 0 {
 		return
 	}
-	var walk func(*Node)
-	walk = func(n *Node) {
-		if n == nil {
-			return
-		}
+	walkResultTree(root, func(n *Node) {
 		normalizeJavaScriptTrailingContinueCommentSiblings(n, source, lang)
-		for _, child := range n.children {
-			walk(child)
-		}
-	}
-	walk(root)
+	})
 }
 
 func normalizeJavaScriptTrailingContinueCommentSiblings(parent *Node, source []byte, lang *Language) {
@@ -217,11 +209,7 @@ func normalizeJavaScriptTypeScriptOptionalChainLeaves(root *Node, lang *Language
 		return
 	}
 
-	var walk func(*Node)
-	walk = func(n *Node) {
-		if n == nil {
-			return
-		}
+	walkResultTree(root, func(n *Node) {
 		if n.Type(lang) == "optional_chain" && len(n.children) == 1 {
 			child := n.children[0]
 			if child != nil && !child.IsNamed() && !child.IsExtra() &&
@@ -232,11 +220,7 @@ func normalizeJavaScriptTypeScriptOptionalChainLeaves(root *Node, lang *Language
 				n.fieldSources = nil
 			}
 		}
-		for _, child := range n.children {
-			walk(child)
-		}
-	}
-	walk(root)
+	})
 }
 
 func normalizeJavaScriptTypeScriptCallPrecedence(root *Node, lang *Language) {
@@ -249,22 +233,15 @@ func normalizeJavaScriptTypeScriptCallPrecedence(root *Node, lang *Language) {
 		return
 	}
 
-	var walk func(*Node)
-	walk = func(n *Node) {
-		if n == nil {
-			return
-		}
+	walkResultTree(root, func(n *Node) {
 		for i, child := range n.children {
 			if rewritten := rewriteJavaScriptTypeScriptCallPrecedence(child, lang); rewritten != nil {
 				n.children[i] = rewritten
 				rewritten.parent = n
 				rewritten.childIndex = int32(i)
-				child = rewritten
 			}
-			walk(child)
 		}
-	}
-	walk(root)
+	})
 }
 
 func rewriteJavaScriptTypeScriptCallPrecedence(node *Node, lang *Language) *Node {
@@ -389,26 +366,9 @@ func normalizeJavaScriptTypeScriptUnaryPrecedence(root *Node, lang *Language) {
 		return
 	}
 
-	var walk func(*Node)
-	walk = func(n *Node) {
-		if n == nil {
-			return
-		}
-		for i, child := range n.children {
-			walk(child)
-			for {
-				rewritten := rewriteJavaScriptTypeScriptUnaryPrecedence(child, lang)
-				if rewritten == nil {
-					break
-				}
-				n.children[i] = rewritten
-				rewritten.parent = n
-				rewritten.childIndex = int32(i)
-				child = rewritten
-			}
-		}
-	}
-	walk(root)
+	rewriteResultTreeChildrenPostorder(root, func(n *Node) *Node {
+		return rewriteJavaScriptTypeScriptUnaryPrecedence(n, lang)
+	})
 }
 
 func rewriteJavaScriptTypeScriptUnaryPrecedence(node *Node, lang *Language) *Node {
@@ -448,26 +408,9 @@ func normalizeJavaScriptTypeScriptBinaryPrecedence(root *Node, lang *Language) {
 		return
 	}
 
-	var walk func(*Node)
-	walk = func(n *Node) {
-		if n == nil {
-			return
-		}
-		for i, child := range n.children {
-			walk(child)
-			for {
-				rewritten := rewriteJavaScriptTypeScriptBinaryPrecedence(child, lang)
-				if rewritten == nil {
-					break
-				}
-				n.children[i] = rewritten
-				rewritten.parent = n
-				rewritten.childIndex = int32(i)
-				child = rewritten
-			}
-		}
-	}
-	walk(root)
+	rewriteResultTreeChildrenPostorder(root, func(n *Node) *Node {
+		return rewriteJavaScriptTypeScriptBinaryPrecedence(n, lang)
+	})
 }
 
 func rewriteJavaScriptTypeScriptBinaryPrecedence(node *Node, lang *Language) *Node {
@@ -597,19 +540,4 @@ func rewriteJavaScriptTopLevelObjectLiteral(node *Node, lang *Language, arena *n
 		node.children[2],
 	}, nil, 0)
 	return newParentNodeInArena(arena, exprSym, exprNamed, []*Node{object}, nil, 0), true
-}
-
-func javaScriptSymbolMeta(lang *Language, name string) (Symbol, bool, bool) {
-	if lang == nil {
-		return 0, false, false
-	}
-	sym, ok := symbolByName(lang, name)
-	if !ok {
-		return 0, false, false
-	}
-	named := false
-	if int(sym) < len(lang.SymbolMetadata) {
-		named = lang.SymbolMetadata[sym].Named
-	}
-	return sym, named, true
 }

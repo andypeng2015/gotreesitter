@@ -76,11 +76,7 @@ func normalizeTypeScriptCompatibility(root *Node, source []byte, lang *Language)
 		return
 	}
 
-	var walk func(*Node)
-	walk = func(n *Node) {
-		if n == nil {
-			return
-		}
+	walkResultTree(root, func(n *Node) {
 		normalizeTypeScriptIdentifierKeywordAliases(n, &ctx)
 		normalizeTypeScriptImportKeywordNamedness(n, &ctx)
 		if ctx.canClearEnumBodyFields && n.symbol == ctx.enumBodySym && len(n.fieldIDs) > 0 {
@@ -126,10 +122,8 @@ func normalizeTypeScriptCompatibility(root *Node, source []byte, lang *Language)
 				rewritten.childIndex = int32(i)
 				child = rewritten
 			}
-			walk(child)
 		}
-	}
-	walk(root)
+	})
 }
 
 func normalizeTypeScriptIdentifierKeywordAliases(node *Node, ctx *typeScriptNormalizationContext) {
@@ -220,8 +214,8 @@ func normalizeTypeScriptRecoveredNamespaceRoot(root *Node, source []byte, lang *
 		bodyChildren = buf
 	}
 
-	stmtBlockNamed := int(stmtBlockSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[stmtBlockSym].Named
-	internalModuleNamed := int(internalModuleSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[internalModuleSym].Named
+	stmtBlockNamed := symbolIsNamed(lang, stmtBlockSym)
+	internalModuleNamed := symbolIsNamed(lang, internalModuleSym)
 	block := newParentNodeInArena(root.ownerArena, stmtBlockSym, stmtBlockNamed, bodyChildren, nil, 0)
 	block.startByte = openBrace.startByte
 	block.startPoint = openBrace.startPoint
@@ -245,7 +239,7 @@ func normalizeTypeScriptRecoveredNamespaceRoot(root *Node, source []byte, lang *
 
 	wrapped := internalModule
 	if hasExprStmtSym {
-		exprStmtNamed := int(exprStmtSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[exprStmtSym].Named
+		exprStmtNamed := symbolIsNamed(lang, exprStmtSym)
 		exprChildren := []*Node{internalModule}
 		if root.ownerArena != nil {
 			buf := root.ownerArena.allocNodeSlice(1)
@@ -277,7 +271,7 @@ func normalizeTypeScriptRecoveredNamespaceRoot(root *Node, source []byte, lang *
 	root.fieldSources = nil
 	if hasProgramSym {
 		root.symbol = programSym
-		root.setNamed(int(programSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[programSym].Named)
+		root.setNamed(symbolIsNamed(lang, programSym))
 	}
 	populateParentNode(root, root.children)
 }
@@ -309,7 +303,7 @@ func newTypeScriptNormalizationContext(source []byte, lang *Language) (typeScrip
 	if callSym, ok := lang.SymbolByName("call_expression"); ok {
 		if instantiationExprSym, ok := lang.SymbolByName("instantiation_expression"); ok {
 			ctx.instantiationExprSym = instantiationExprSym
-			ctx.instantiationExprNamed = int(instantiationExprSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[instantiationExprSym].Named
+			ctx.instantiationExprNamed = symbolIsNamed(lang, instantiationExprSym)
 		}
 		if typeArgsSym, ok := lang.SymbolByName("type_arguments"); ok {
 			if argsSym, ok := lang.SymbolByName("arguments"); ok {
@@ -323,13 +317,13 @@ func newTypeScriptNormalizationContext(source []byte, lang *Language) (typeScrip
 											if sequenceExpressionSym, ok := lang.SymbolByName("sequence_expression"); ok {
 												ctx.canRewriteGenericCalls = true
 												ctx.callSym = callSym
-												ctx.callNamed = int(callSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[callSym].Named
+												ctx.callNamed = symbolIsNamed(lang, callSym)
 												ctx.typeArgsSym = typeArgsSym
-												ctx.typeArgsNamed = int(typeArgsSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[typeArgsSym].Named
+												ctx.typeArgsNamed = symbolIsNamed(lang, typeArgsSym)
 												ctx.argsSym = argsSym
-												ctx.argsNamed = int(argsSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[argsSym].Named
+												ctx.argsNamed = symbolIsNamed(lang, argsSym)
 												ctx.predefinedTypeSym = predefinedTypeSym
-												ctx.predefinedTypeNamed = int(predefinedTypeSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[predefinedTypeSym].Named
+												ctx.predefinedTypeNamed = symbolIsNamed(lang, predefinedTypeSym)
 												ctx.binaryExpressionSym = binaryExpressionSym
 												ctx.greaterThanSym = greaterThanSym
 												ctx.parenthesizedExprSym = parenthesizedExprSym
@@ -364,15 +358,15 @@ func newTypeScriptNormalizationContext(source []byte, lang *Language) (typeScrip
 					if intersectionTypeSym, ok := lang.SymbolByName("intersection_type"); ok {
 						ctx.canRewriteAsExpressions = true
 						ctx.asExpressionSym = asExpressionSym
-						ctx.asExpressionNamed = int(asExpressionSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[asExpressionSym].Named
+						ctx.asExpressionNamed = symbolIsNamed(lang, asExpressionSym)
 						ctx.assignmentExprSym = assignmentExprSym
-						ctx.assignmentExprNamed = int(assignmentExprSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[assignmentExprSym].Named
+						ctx.assignmentExprNamed = symbolIsNamed(lang, assignmentExprSym)
 						ctx.ternaryExprSym = ternaryExprSym
-						ctx.ternaryExprNamed = int(ternaryExprSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[ternaryExprSym].Named
+						ctx.ternaryExprNamed = symbolIsNamed(lang, ternaryExprSym)
 						ctx.unionTypeSym = unionTypeSym
-						ctx.unionTypeNamed = int(unionTypeSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[unionTypeSym].Named
+						ctx.unionTypeNamed = symbolIsNamed(lang, unionTypeSym)
 						ctx.intersectionTypeSym = intersectionTypeSym
-						ctx.intersectionTypeNamed = int(intersectionTypeSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[intersectionTypeSym].Named
+						ctx.intersectionTypeNamed = symbolIsNamed(lang, intersectionTypeSym)
 						if objectTypeSym, ok := lang.SymbolByName("object_type"); ok {
 							if propertySignatureSym, ok := lang.SymbolByName("property_signature"); ok {
 								if typeAnnotationSym, ok := lang.SymbolByName("type_annotation"); ok {
@@ -381,11 +375,11 @@ func newTypeScriptNormalizationContext(source []byte, lang *Language) (typeScrip
 											if propertyIdentifierSym, ok := lang.SymbolByName("property_identifier"); ok {
 												if colonSym, ok := lang.SymbolByName(":"); ok {
 													ctx.objectTypeSym = objectTypeSym
-													ctx.objectTypeNamed = int(objectTypeSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[objectTypeSym].Named
+													ctx.objectTypeNamed = symbolIsNamed(lang, objectTypeSym)
 													ctx.propertySignatureSym = propertySignatureSym
-													ctx.propertySignatureNamed = int(propertySignatureSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[propertySignatureSym].Named
+													ctx.propertySignatureNamed = symbolIsNamed(lang, propertySignatureSym)
 													ctx.typeAnnotationSym = typeAnnotationSym
-													ctx.typeAnnotationNamed = int(typeAnnotationSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[typeAnnotationSym].Named
+													ctx.typeAnnotationNamed = symbolIsNamed(lang, typeAnnotationSym)
 													ctx.objectSym = objectSym
 													ctx.pairSym = pairSym
 													ctx.propertyIdentifierSym = propertyIdentifierSym
@@ -422,11 +416,11 @@ func newTypeScriptNormalizationContext(source []byte, lang *Language) (typeScrip
 							ctx.arrowFunctionSym = arrowFunctionSym
 							ctx.typeArgsSym = typeArgsSym
 							ctx.typeParametersSym = typeParametersSym
-							ctx.typeParametersNamed = int(typeParametersSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[typeParametersSym].Named
+							ctx.typeParametersNamed = symbolIsNamed(lang, typeParametersSym)
 							ctx.typeParameterSym = typeParameterSym
-							ctx.typeParameterNamed = int(typeParameterSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[typeParameterSym].Named
+							ctx.typeParameterNamed = symbolIsNamed(lang, typeParameterSym)
 							ctx.typeIdentifierSym = typeIdentifierSym
-							ctx.typeIdentifierNamed = int(typeIdentifierSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[typeIdentifierSym].Named
+							ctx.typeIdentifierNamed = symbolIsNamed(lang, typeIdentifierSym)
 							ctx.nameFieldID, _ = lang.FieldByName("name")
 							ctx.typeParametersFieldID, _ = lang.FieldByName("type_parameters")
 						}
@@ -443,7 +437,7 @@ func newTypeScriptNormalizationContext(source []byte, lang *Language) (typeScrip
 				ctx.expressionStatementSym = expressionStatementSym
 				ctx.classSym = classSym
 				ctx.classDeclarationSym = classDeclarationSym
-				ctx.classDeclarationNamed = int(classDeclarationSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[classDeclarationSym].Named
+				ctx.classDeclarationNamed = symbolIsNamed(lang, classDeclarationSym)
 				if ctx.nameFieldID == 0 {
 					ctx.nameFieldID, _ = lang.FieldByName("name")
 				}

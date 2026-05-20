@@ -10,7 +10,7 @@ func normalizeScalaObjectTemplateBodyFragments(root *Node, source []byte, lang *
 	if !ok {
 		return
 	}
-	templateBodyNamed := int(templateBodySym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[templateBodySym].Named
+	templateBodyNamed := symbolIsNamed(lang, templateBodySym)
 	arena := root.ownerArena
 	changed := false
 	for i := 0; i+2 < len(root.children); i++ {
@@ -58,11 +58,7 @@ func normalizeScalaTemplateBodyObjectFragments(root *Node, source []byte, lang *
 	if root == nil || lang == nil || lang.Name != "scala" || len(source) == 0 {
 		return
 	}
-	var walk func(*Node)
-	walk = func(n *Node) {
-		if n == nil {
-			return
-		}
+	walkResultTree(root, func(n *Node) {
 		if n.Type(lang) == "template_body" && len(n.children) >= 4 {
 			for i := 0; i+2 < len(n.children); i++ {
 				objTok := n.children[i]
@@ -107,11 +103,7 @@ func normalizeScalaTemplateBodyObjectFragments(root *Node, source []byte, lang *
 				i = startIdx
 			}
 		}
-		for _, child := range n.children {
-			walk(child)
-		}
-	}
-	walk(root)
+	})
 }
 
 type scalaTemplateMemberKind uint8
@@ -140,30 +132,18 @@ func normalizeScalaTemplateBodyRecoveredMembers(root *Node, source []byte, lang 
 	if root == nil || lang == nil || lang.Name != "scala" || len(source) == 0 {
 		return
 	}
-	var walk func(*Node)
-	walk = func(n *Node) {
-		if n == nil {
-			return
-		}
+	walkResultTree(root, func(n *Node) {
 		if n.Type(lang) == "template_body" && n.HasError() {
 			scalaRecoverTemplateBodyMembers(n, source, lang)
 		}
-		for _, child := range n.children {
-			walk(child)
-		}
-	}
-	walk(root)
+	})
 }
 
 func normalizeScalaRecoveredObjectTemplateBodies(root *Node, source []byte, lang *Language) {
 	if root == nil || lang == nil || lang.Name != "scala" || len(source) == 0 {
 		return
 	}
-	var walk func(*Node)
-	walk = func(n *Node) {
-		if n == nil {
-			return
-		}
+	walkResultTree(root, func(n *Node) {
 		if scalaDefinitionTemplateBodyNeedsRecovery(n, lang) {
 			for i, child := range n.children {
 				if child == nil || child.Type(lang) != "template_body" {
@@ -183,11 +163,7 @@ func normalizeScalaRecoveredObjectTemplateBodies(root *Node, source []byte, lang
 				break
 			}
 		}
-		for _, child := range n.children {
-			walk(child)
-		}
-	}
-	walk(root)
+	})
 }
 
 func scalaDefinitionTemplateBodyNeedsRecovery(n *Node, lang *Language) bool {
@@ -315,9 +291,9 @@ closeLeafDone:
 	if !ok {
 		return nil, false
 	}
-	commentNamed := int(commentSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[commentSym].Named
-	openNamed := int(openSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[openSym].Named
-	closeNamed := int(closeSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[closeSym].Named
+	commentNamed := symbolIsNamed(lang, commentSym)
+	openNamed := symbolIsNamed(lang, openSym)
+	closeNamed := symbolIsNamed(lang, closeSym)
 	openNode := newLeafNodeInArena(
 		arena,
 		openSym,
@@ -351,19 +327,11 @@ func normalizeScalaSplitFunctionDefinitions(root *Node, source []byte, lang *Lan
 	if root == nil || lang == nil || lang.Name != "scala" || len(source) == 0 {
 		return
 	}
-	var walk func(*Node)
-	walk = func(n *Node) {
-		if n == nil {
-			return
-		}
+	walkResultTree(root, func(n *Node) {
 		if n.Type(lang) == "template_body" && n.HasError() {
 			scalaRecoverSplitFunctionDefinition(n, source, lang)
 		}
-		for _, child := range n.children {
-			walk(child)
-		}
-	}
-	walk(root)
+	})
 }
 
 func scalaRecoverSplitFunctionDefinition(body *Node, source []byte, lang *Language) {
@@ -963,7 +931,7 @@ func scalaRecoverSplitFunctionDefinitionFromRange(source []byte, fnStart, fnEnd 
 	if !ok {
 		return nil, false
 	}
-	functionNamed := int(functionSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[functionSym].Named
+	functionNamed := symbolIsNamed(lang, functionSym)
 	children := make([]*Node, 0, len(header.children)+2)
 	for _, child := range header.children {
 		if child == nil {
@@ -989,17 +957,17 @@ func scalaRecoverFunctionBlockFromRange(source []byte, blockStart, blockEnd uint
 	if !ok {
 		return nil, false
 	}
-	blockNamed := int(blockSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[blockSym].Named
+	blockNamed := symbolIsNamed(lang, blockSym)
 	openSym, ok := symbolByName(lang, "{")
 	if !ok {
 		return nil, false
 	}
-	openNamed := int(openSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[openSym].Named
+	openNamed := symbolIsNamed(lang, openSym)
 	closeSym, ok := symbolByName(lang, "}")
 	if !ok {
 		return nil, false
 	}
-	closeNamed := int(closeSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[closeSym].Named
+	closeNamed := symbolIsNamed(lang, closeSym)
 	open := newLeafNodeInArena(arena, openSym, openNamed, blockStart, blockStart+1, advancePointByBytes(Point{}, source[:blockStart]), advancePointByBytes(Point{}, source[:blockStart+1]))
 	close := newLeafNodeInArena(arena, closeSym, closeNamed, blockEnd-1, blockEnd, advancePointByBytes(Point{}, source[:blockEnd-1]), advancePointByBytes(Point{}, source[:blockEnd]))
 	statementSpans := scalaBlockStatementSpans(source, blockStart+1, blockEnd-1)
@@ -1231,13 +1199,13 @@ func scalaRecoverValDefinitionIfExpressionFromRange(source []byte, start, end ui
 	if !ok {
 		return nil, false
 	}
-	valNamed := int(valSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[valSym].Named
-	identifierNamed := int(identifierSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[identifierSym].Named
-	eqNamed := int(eqSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[eqSym].Named
-	valDefNamed := int(valDefSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[valDefSym].Named
-	ifExprNamed := int(ifExprSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[ifExprSym].Named
-	ifNamed := int(ifSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[ifSym].Named
-	elseNamed := int(elseSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[elseSym].Named
+	valNamed := symbolIsNamed(lang, valSym)
+	identifierNamed := symbolIsNamed(lang, identifierSym)
+	eqNamed := symbolIsNamed(lang, eqSym)
+	valDefNamed := symbolIsNamed(lang, valDefSym)
+	ifExprNamed := symbolIsNamed(lang, ifExprSym)
+	ifNamed := symbolIsNamed(lang, ifSym)
+	elseNamed := symbolIsNamed(lang, elseSym)
 
 	ifPos := bytes.Index(source[start:end], []byte("if "))
 	elsePos := bytes.Index(source[start:end], []byte(" else "))
@@ -1323,7 +1291,7 @@ func scalaRecoverSingleExpressionNode(source []byte, start, end uint32, lang *La
 		if !ok {
 			return nil, false
 		}
-		named := int(sym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[sym].Named
+		named := symbolIsNamed(lang, sym)
 		return newLeafNodeInArena(arena, sym, named, start, end, advancePointByBytes(Point{}, source[:start]), advancePointByBytes(Point{}, source[:end])), true
 	}
 	return nil, false

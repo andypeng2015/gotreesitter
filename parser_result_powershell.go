@@ -143,7 +143,7 @@ func normalizePowerShellProgramShape(root *Node, source []byte, lang *Language) 
 	statementList.fieldIDs = nil
 	statementList.fieldSources = nil
 	statementList.symbol = statementListSym
-	statementList.setNamed(int(statementListSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[statementListSym].Named)
+	statementList.setNamed(symbolIsNamed(lang, statementListSym))
 	statementList.setHasError(true)
 	extendNodeEndTo(statementList, pipelines[len(pipelines)-1].endByte, source)
 
@@ -159,7 +159,7 @@ func normalizePowerShellProgramShape(root *Node, source []byte, lang *Language) 
 	root.fieldIDs = nil
 	root.fieldSources = nil
 	root.symbol = programSym
-	root.setNamed(int(programSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[programSym].Named)
+	root.setNamed(symbolIsNamed(lang, programSym))
 	root.setHasError(true)
 }
 
@@ -234,7 +234,7 @@ trimmed:
 				copy(buf, statementListChildren)
 				statementListChildren = buf
 			}
-			statementListNamed := int(statementListSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[statementListSym].Named
+			statementListNamed := symbolIsNamed(lang, statementListSym)
 			stmtList := newParentNodeInArena(arena, statementListSym, statementListNamed, statementListChildren, nil, 0)
 			stmtList.setHasError(true)
 			stmtList.endByte = uint32(scriptEnd)
@@ -245,7 +245,7 @@ trimmed:
 				buf[0] = stmtList
 				bodyChildren = buf
 			}
-			scriptBlockBodyNamed := int(scriptBlockBodySym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[scriptBlockBodySym].Named
+			scriptBlockBodyNamed := symbolIsNamed(lang, scriptBlockBodySym)
 			body := newParentNodeInArena(arena, scriptBlockBodySym, scriptBlockBodyNamed, bodyChildren, nil, 0)
 			body.setHasError(true)
 			for fieldIdx, fieldName := range lang.FieldNames {
@@ -266,7 +266,7 @@ trimmed:
 		copy(buf, scriptChildren)
 		scriptChildren = buf
 	}
-	scriptBlockNamed := int(scriptBlockSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[scriptBlockSym].Named
+	scriptBlockNamed := symbolIsNamed(lang, scriptBlockSym)
 	scriptBlock := newParentNodeInArena(arena, scriptBlockSym, scriptBlockNamed, scriptChildren, nil, 0)
 	scriptBlock.setHasError(true)
 	for i, child := range scriptBlock.children {
@@ -284,7 +284,7 @@ trimmed:
 		}
 		break
 	}
-	functionStatementNamed := int(functionStatementSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[functionStatementSym].Named
+	functionStatementNamed := symbolIsNamed(lang, functionStatementSym)
 	closeBraceStart := advancePointByBytes(Point{}, source[:closeBracePos])
 	closeBraceLeaf := newLeafNodeInArena(arena, closeBraceSym, false, uint32(closeBracePos), uint32(closeBracePos+1), closeBraceStart, advancePointByBytes(closeBraceStart, source[closeBracePos:closeBracePos+1]))
 	children := []*Node{functionLeaf, functionName, openBrace, scriptBlock, closeBraceLeaf}
@@ -298,7 +298,7 @@ trimmed:
 	if functionLeaf.symbol != functionSym {
 		functionLeaf = cloneNodeInArena(arena, functionLeaf)
 		functionLeaf.symbol = functionSym
-		functionLeaf.setNamed(int(functionSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[functionSym].Named)
+		functionLeaf.setNamed(symbolIsNamed(lang, functionSym))
 		fn.children[0] = functionLeaf
 	}
 	extendNodeEndTo(fn, uint32(closeBracePos+1), source)
@@ -375,7 +375,7 @@ func buildPowerShellRecoveredStatements(arena *nodeArena, source []byte, lang *L
 	if lang == nil || len(source) == 0 || start >= end {
 		return nil
 	}
-	commentSym, commentNamed, ok := powerShellSymbolMeta(lang, "comment")
+	commentSym, commentNamed, ok := symbolMeta(lang, "comment")
 	if !ok {
 		return nil
 	}
@@ -422,27 +422,27 @@ func buildPowerShellRecoveredStatements(arena *nodeArena, source []byte, lang *L
 }
 
 func buildPowerShellRecoveredIfStatement(arena *nodeArena, source []byte, lang *Language, start, end int, existing []*Node) (*Node, int) {
-	ifStatementSym, ifStatementNamed, ok := powerShellSymbolMeta(lang, "if_statement")
+	ifStatementSym, ifStatementNamed, ok := symbolMeta(lang, "if_statement")
 	if !ok {
 		return nil, 0
 	}
-	ifSym, ifNamed, ok := powerShellSymbolMeta(lang, "if")
+	ifSym, ifNamed, ok := symbolMeta(lang, "if")
 	if !ok {
 		return nil, 0
 	}
-	openParenSym, _, ok := powerShellSymbolMeta(lang, "(")
+	openParenSym, _, ok := symbolMeta(lang, "(")
 	if !ok {
 		return nil, 0
 	}
-	closeParenSym, _, ok := powerShellSymbolMeta(lang, ")")
+	closeParenSym, _, ok := symbolMeta(lang, ")")
 	if !ok {
 		return nil, 0
 	}
-	elseClauseSym, elseClauseNamed, ok := powerShellSymbolMeta(lang, "else_clause")
+	elseClauseSym, elseClauseNamed, ok := symbolMeta(lang, "else_clause")
 	if !ok {
 		return nil, 0
 	}
-	elseSym, elseNamed, ok := powerShellSymbolMeta(lang, "else")
+	elseSym, elseNamed, ok := symbolMeta(lang, "else")
 	if !ok {
 		return nil, 0
 	}
@@ -540,19 +540,19 @@ func buildPowerShellRecoveredIfStatement(arena *nodeArena, source []byte, lang *
 }
 
 func buildPowerShellRecoveredStatementBlock(arena *nodeArena, source []byte, lang *Language, openBracePos, closeBracePos int) *Node {
-	statementBlockSym, statementBlockNamed, ok := powerShellSymbolMeta(lang, "statement_block")
+	statementBlockSym, statementBlockNamed, ok := symbolMeta(lang, "statement_block")
 	if !ok {
 		return nil
 	}
-	openBraceSym, _, ok := powerShellSymbolMeta(lang, "{")
+	openBraceSym, _, ok := symbolMeta(lang, "{")
 	if !ok {
 		return nil
 	}
-	closeBraceSym, _, ok := powerShellSymbolMeta(lang, "}")
+	closeBraceSym, _, ok := symbolMeta(lang, "}")
 	if !ok {
 		return nil
 	}
-	statementListSym, statementListNamed, ok := powerShellSymbolMeta(lang, "statement_list")
+	statementListSym, statementListNamed, ok := symbolMeta(lang, "statement_list")
 	if !ok {
 		return nil
 	}
@@ -599,15 +599,15 @@ func buildPowerShellRecoveredStatementBlock(arena *nodeArena, source []byte, lan
 }
 
 func buildPowerShellRecoveredTryStatement(arena *nodeArena, source []byte, lang *Language, start, end int) (*Node, int) {
-	tryStatementSym, tryStatementNamed, ok := powerShellSymbolMeta(lang, "try_statement")
+	tryStatementSym, tryStatementNamed, ok := symbolMeta(lang, "try_statement")
 	if !ok {
 		return nil, 0
 	}
-	trySym, tryNamed, ok := powerShellSymbolMeta(lang, "try")
+	trySym, tryNamed, ok := symbolMeta(lang, "try")
 	if !ok {
 		return nil, 0
 	}
-	catchClausesSym, catchClausesNamed, ok := powerShellSymbolMeta(lang, "catch_clauses")
+	catchClausesSym, catchClausesNamed, ok := symbolMeta(lang, "catch_clauses")
 	if !ok {
 		return nil, 0
 	}
@@ -651,27 +651,27 @@ func buildPowerShellRecoveredTryStatement(arena *nodeArena, source []byte, lang 
 }
 
 func buildPowerShellRecoveredCatchClause(arena *nodeArena, source []byte, lang *Language, start, end int) (*Node, int) {
-	catchClauseSym, catchClauseNamed, ok := powerShellSymbolMeta(lang, "catch_clause")
+	catchClauseSym, catchClauseNamed, ok := symbolMeta(lang, "catch_clause")
 	if !ok {
 		return nil, 0
 	}
-	catchSym, catchNamed, ok := powerShellSymbolMeta(lang, "catch")
+	catchSym, catchNamed, ok := symbolMeta(lang, "catch")
 	if !ok {
 		return nil, 0
 	}
-	catchTypeListSym, catchTypeListNamed, ok := powerShellSymbolMeta(lang, "catch_type_list")
+	catchTypeListSym, catchTypeListNamed, ok := symbolMeta(lang, "catch_type_list")
 	if !ok {
 		return nil, 0
 	}
-	typeLiteralSym, typeLiteralNamed, ok := powerShellSymbolMeta(lang, "type_literal")
+	typeLiteralSym, typeLiteralNamed, ok := symbolMeta(lang, "type_literal")
 	if !ok {
 		return nil, 0
 	}
-	openBracketSym, _, ok := powerShellSymbolMeta(lang, "[")
+	openBracketSym, _, ok := symbolMeta(lang, "[")
 	if !ok {
 		return nil, 0
 	}
-	closeBracketSym, _, ok := powerShellSymbolMeta(lang, "]")
+	closeBracketSym, _, ok := symbolMeta(lang, "]")
 	if !ok {
 		return nil, 0
 	}
@@ -733,11 +733,11 @@ func buildPowerShellRecoveredCatchClause(arena *nodeArena, source []byte, lang *
 }
 
 func buildPowerShellRecoveredFlowControlStatement(arena *nodeArena, source []byte, lang *Language, start, end int) *Node {
-	flowControlSym, flowControlNamed, ok := powerShellSymbolMeta(lang, "flow_control_statement")
+	flowControlSym, flowControlNamed, ok := symbolMeta(lang, "flow_control_statement")
 	if !ok {
 		return nil
 	}
-	throwSym, throwNamed, ok := powerShellSymbolMeta(lang, "throw")
+	throwSym, throwNamed, ok := symbolMeta(lang, "throw")
 	if !ok {
 		return nil
 	}
@@ -829,19 +829,19 @@ func buildPowerShellRecoveredPipeline(arena *nodeArena, source []byte, lang *Lan
 }
 
 func buildPowerShellRecoveredAssignmentPipeline(arena *nodeArena, source []byte, lang *Language, start, end int) *Node {
-	pipelineSym, pipelineNamed, ok := powerShellSymbolMeta(lang, "pipeline")
+	pipelineSym, pipelineNamed, ok := symbolMeta(lang, "pipeline")
 	if !ok {
 		return nil
 	}
-	assignmentExprSym, assignmentExprNamed, ok := powerShellSymbolMeta(lang, "assignment_expression")
+	assignmentExprSym, assignmentExprNamed, ok := symbolMeta(lang, "assignment_expression")
 	if !ok {
 		return nil
 	}
-	assignOpSym, assignOpNamed, ok := powerShellSymbolMeta(lang, "assignement_operator")
+	assignOpSym, assignOpNamed, ok := symbolMeta(lang, "assignement_operator")
 	if !ok {
 		return nil
 	}
-	assignLeafSym, assignLeafNamed, ok := powerShellSymbolMeta(lang, "=")
+	assignLeafSym, assignLeafNamed, ok := symbolMeta(lang, "=")
 	if !ok {
 		assignLeafSym = assignOpSym
 		assignLeafNamed = assignOpNamed
@@ -899,7 +899,7 @@ func buildPowerShellRecoveredAssignmentPipeline(arena *nodeArena, source []byte,
 }
 
 func buildPowerShellLeftAssignmentExpression(arena *nodeArena, source []byte, lang *Language, start, end int) *Node {
-	if _, _, ok := powerShellSymbolMeta(lang, "left_assignment_expression"); !ok {
+	if _, _, ok := symbolMeta(lang, "left_assignment_expression"); !ok {
 		return nil
 	}
 	core := buildPowerShellExpressionCore(arena, source, lang, start, end)
@@ -910,11 +910,11 @@ func buildPowerShellLeftAssignmentExpression(arena *nodeArena, source []byte, la
 }
 
 func buildPowerShellRecoveredConditionPipeline(arena *nodeArena, source []byte, lang *Language, start, end int) *Node {
-	pipelineSym, pipelineNamed, ok := powerShellSymbolMeta(lang, "pipeline")
+	pipelineSym, pipelineNamed, ok := symbolMeta(lang, "pipeline")
 	if !ok {
 		return nil
 	}
-	pipelineChainSym, pipelineChainNamed, ok := powerShellSymbolMeta(lang, "pipeline_chain")
+	pipelineChainSym, pipelineChainNamed, ok := symbolMeta(lang, "pipeline_chain")
 	if !ok {
 		return nil
 	}

@@ -12,11 +12,11 @@ func TestResultCompatibilityStrutInventoryResolves(t *testing.T) {
 		if rule.strut == resultCompatibilityStrutNone {
 			t.Fatalf("result compatibility strut rule for %q has no strut", rule.languageName)
 		}
-		if got := resultCompatibilityStrutForLanguage(rule.languageName); got == nil {
-			t.Fatalf("resultCompatibilityStrutForLanguage(%q) = nil, want strut", rule.languageName)
+		if got := resultCompatibilityStrutIDForLanguage(rule.languageName); got != rule.strut {
+			t.Fatalf("resultCompatibilityStrutIDForLanguage(%q) = %d, want %d", rule.languageName, got, rule.strut)
 		}
 	}
-	if got := resultCompatibilityStrutForLanguage("definitely_not_a_language"); got != nil {
-		t.Fatal("resultCompatibilityStrutForLanguage returned a strut for unknown language")
+	if got := resultCompatibilityStrutIDForLanguage("definitely_not_a_language"); got != resultCompatibilityStrutNone {
+		t.Fatalf("resultCompatibilityStrutIDForLanguage returned %d for unknown language", got)
 	}
 }

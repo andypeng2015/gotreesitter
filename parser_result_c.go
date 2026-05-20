@@ -27,7 +27,7 @@ func normalizeCTranslationUnitRoot(root *Node, lang *Language) {
 		return
 	}
 	root.symbol = sym
-	root.setNamed(int(sym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[sym].Named)
+	root.setNamed(symbolIsNamed(lang, sym))
 }
 
 func rootLooksLikeCTopLevel(root *Node, lang *Language) bool {
@@ -72,11 +72,7 @@ func normalizeCDeclarationBounds(root *Node, source []byte, lang *Language) {
 	if lang.Name != "c" && lang.Name != "cpp" {
 		return
 	}
-	var walk func(*Node)
-	walk = func(n *Node) {
-		if n == nil {
-			return
-		}
+	walkResultTree(root, func(n *Node) {
 		if n.Type(lang) == "declaration" {
 			first, last := firstAndLastNonNilChild(n.children)
 			if first != nil && n.startByte < first.startByte &&
@@ -91,11 +87,7 @@ func normalizeCDeclarationBounds(root *Node, source []byte, lang *Language) {
 				setNodeEndTo(n, last.endByte, source)
 			}
 		}
-		for _, child := range n.children {
-			walk(child)
-		}
-	}
-	walk(root)
+	})
 }
 
 func normalizeCPreprocessorDirectiveShapes(root *Node, source []byte, lang *Language) {
@@ -112,7 +104,7 @@ func normalizeCPreprocessorDirectiveShapes(root *Node, source []byte, lang *Lang
 	preprocArgSym, hasPreprocArg := symbolByName(lang, "preproc_arg")
 	nameFieldID, hasNameField := lang.FieldByName("name")
 	valueFieldID, hasValueField := lang.FieldByName("value")
-	preprocArgNamed := hasPreprocArg && int(preprocArgSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[preprocArgSym].Named
+	preprocArgNamed := hasPreprocArg && symbolIsNamed(lang, preprocArgSym)
 
 	out := make([]*Node, 0, len(root.children))
 	changed := false
@@ -192,7 +184,7 @@ func normalizeCWhitespaceSeparatedFunctionMacro(node *Node, source []byte, lang 
 		children = buf
 	}
 	node.symbol = preprocDefSym
-	node.setNamed(int(preprocDefSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[preprocDefSym].Named)
+	node.setNamed(symbolIsNamed(lang, preprocDefSym))
 	node.children = children
 	ensureNodeFieldStorage(node, len(children))
 	for i := range node.fieldIDs {
@@ -380,22 +372,12 @@ func normalizeCSizeofUnknownTypeIdentifiers(root *Node, source []byte, lang *Lan
 	if !ok {
 		return
 	}
-	identifierNamed := false
-	if int(identifierSym) < len(lang.SymbolMetadata) {
-		identifierNamed = lang.SymbolMetadata[identifierSym].Named
-	}
-	parenthesizedNamed := false
-	if int(parenthesizedSym) < len(lang.SymbolMetadata) {
-		parenthesizedNamed = lang.SymbolMetadata[parenthesizedSym].Named
-	}
+	identifierNamed := symbolIsNamed(lang, identifierSym)
+	parenthesizedNamed := symbolIsNamed(lang, parenthesizedSym)
 	valueFieldID, hasValueField := lang.FieldByName("value")
 	localTypes := collectCLocalTypeNames(root, source, lang)
 
-	var rewrite func(*Node)
-	rewrite = func(n *Node) {
-		if n == nil {
-			return
-		}
+	walkResultTree(root, func(n *Node) {
 		if n.Type(lang) == "sizeof_expression" && len(n.children) == 4 {
 			typeDescriptor := n.children[2]
 			if typeDescriptor != nil && typeDescriptor.symbol == typeDescriptorSym && len(typeDescriptor.children) == 1 {
@@ -415,11 +397,7 @@ func normalizeCSizeofUnknownTypeIdentifiers(root *Node, source []byte, lang *Lan
 				}
 			}
 		}
-		for _, child := range n.children {
-			rewrite(child)
-		}
-	}
-	rewrite(root)
+	})
 }
 
 func normalizeCBuiltinPrimitiveTypeIdentifiers(root *Node, source []byte, lang *Language) {
@@ -430,24 +408,13 @@ func normalizeCBuiltinPrimitiveTypeIdentifiers(root *Node, source []byte, lang *
 	if !ok {
 		return
 	}
-	primitiveTypeNamed := false
-	if int(primitiveTypeSym) < len(lang.SymbolMetadata) {
-		primitiveTypeNamed = lang.SymbolMetadata[primitiveTypeSym].Named
-	}
-	var rewrite func(*Node)
-	rewrite = func(n *Node) {
-		if n == nil {
-			return
-		}
+	primitiveTypeNamed := symbolIsNamed(lang, primitiveTypeSym)
+	walkResultTree(root, func(n *Node) {
 		if n.Type(lang) == "type_identifier" && isCBuiltinPrimitiveTypeName(canonicalCTypeName(n.Text(source))) {
 			n.symbol = primitiveTypeSym
 			n.setNamed(primitiveTypeNamed)
 		}
-		for _, child := range n.children {
-			rewrite(child)
-		}
-	}
-	rewrite(root)
+	})
 }
 
 func normalizeCVariadicParameterEllipsis(root *Node, lang *Language) {
@@ -462,25 +429,14 @@ func normalizeCVariadicParameterEllipsis(root *Node, lang *Language) {
 	if !ok {
 		return
 	}
-	ellipsisNamed := false
-	if int(ellipsisSym) < len(lang.SymbolMetadata) {
-		ellipsisNamed = lang.SymbolMetadata[ellipsisSym].Named
-	}
-	var rewrite func(*Node)
-	rewrite = func(n *Node) {
-		if n == nil {
-			return
-		}
+	ellipsisNamed := symbolIsNamed(lang, ellipsisSym)
+	walkResultTree(root, func(n *Node) {
 		if n.symbol == variadicSym && len(n.children) == 0 {
 			child := newLeafNodeInArena(n.ownerArena, ellipsisSym, ellipsisNamed, n.startByte, n.endByte, n.startPoint, n.endPoint)
 			n.children = cloneNodeSliceInArena(n.ownerArena, []*Node{child})
 			populateParentNode(n, n.children)
 		}
-		for _, child := range n.children {
-			rewrite(child)
-		}
-	}
-	rewrite(root)
+	})
 }
 
 func normalizeCPreprocNewlineSpans(root *Node, source []byte, lang *Language) {
@@ -491,11 +447,7 @@ func normalizeCPreprocNewlineSpans(root *Node, source []byte, lang *Language) {
 	if !ok {
 		return
 	}
-	var walk func(*Node)
-	walk = func(n *Node) {
-		if n == nil {
-			return
-		}
+	walkResultTree(root, func(n *Node) {
 		for _, child := range n.children {
 			if child != nil && child.symbol == nlSym && child.endByte < uint32(len(source)) {
 				// Extend newline tokens to include consecutive newlines/whitespace
@@ -508,10 +460,8 @@ func normalizeCPreprocNewlineSpans(root *Node, source []byte, lang *Language) {
 					child.endPoint = advancePointByBytes(Point{}, source[:end])
 				}
 			}
-			walk(child)
 		}
-	}
-	walk(root)
+	})
 }
 
 func normalizeCBareTypeIdentifierExpressionStatements(root *Node, source []byte, lang *Language) {
@@ -526,13 +476,9 @@ func normalizeCBareTypeIdentifierExpressionStatements(root *Node, source []byte,
 	if !ok1 || !ok2 || !ok3 || !ok4 || !ok5 {
 		return
 	}
-	exprStmtNamed := int(exprStmtSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[exprStmtSym].Named
-	identNamed := int(identSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[identSym].Named
-	var walk func(*Node)
-	walk = func(n *Node) {
-		if n == nil {
-			return
-		}
+	exprStmtNamed := symbolIsNamed(lang, exprStmtSym)
+	identNamed := symbolIsNamed(lang, identSym)
+	walkResultTree(root, func(n *Node) {
 		if n.symbol == compoundSym {
 			// Look for bare type_identifier ; pairs that should be expression_statement(identifier ;)
 			newChildren := make([]*Node, 0, len(n.children))
@@ -556,11 +502,7 @@ func normalizeCBareTypeIdentifierExpressionStatements(root *Node, source []byte,
 				n.children = newChildren
 			}
 		}
-		for _, child := range n.children {
-			walk(child)
-		}
-	}
-	walk(root)
+	})
 }
 
 func normalizeCCastUnknownTypeIdentifiers(root *Node, source []byte, lang *Language) {
@@ -605,41 +547,16 @@ func normalizeCCastUnknownTypeIdentifiers(root *Node, source []byte, lang *Langu
 	if !hasTypeField || !hasValueField {
 		return
 	}
-	identifierNamed := false
-	if int(identifierSym) < len(lang.SymbolMetadata) {
-		identifierNamed = lang.SymbolMetadata[identifierSym].Named
-	}
-	typeDescriptorNamed := false
-	if int(typeDescriptorSym) < len(lang.SymbolMetadata) {
-		typeDescriptorNamed = lang.SymbolMetadata[typeDescriptorSym].Named
-	}
-	typeIdentifierNamed := false
-	if int(typeIdentifierSym) < len(lang.SymbolMetadata) {
-		typeIdentifierNamed = lang.SymbolMetadata[typeIdentifierSym].Named
-	}
-	parenthesizedNamed := false
-	if int(parenthesizedSym) < len(lang.SymbolMetadata) {
-		parenthesizedNamed = lang.SymbolMetadata[parenthesizedSym].Named
-	}
-	callNamed := false
-	if int(callSym) < len(lang.SymbolMetadata) {
-		callNamed = lang.SymbolMetadata[callSym].Named
-	}
-	castNamed := false
-	if int(castSym) < len(lang.SymbolMetadata) {
-		castNamed = lang.SymbolMetadata[castSym].Named
-	}
-	argumentListNamed := false
-	if int(argumentListSym) < len(lang.SymbolMetadata) {
-		argumentListNamed = lang.SymbolMetadata[argumentListSym].Named
-	}
+	identifierNamed := symbolIsNamed(lang, identifierSym)
+	typeDescriptorNamed := symbolIsNamed(lang, typeDescriptorSym)
+	typeIdentifierNamed := symbolIsNamed(lang, typeIdentifierSym)
+	parenthesizedNamed := symbolIsNamed(lang, parenthesizedSym)
+	callNamed := symbolIsNamed(lang, callSym)
+	castNamed := symbolIsNamed(lang, castSym)
+	argumentListNamed := symbolIsNamed(lang, argumentListSym)
 	localTypes := collectCLocalTypeNames(root, source, lang)
 
-	var rewrite func(*Node)
-	rewrite = func(n *Node) {
-		if n == nil {
-			return
-		}
+	walkResultTree(root, func(n *Node) {
 		if n.Type(lang) == "cast_expression" && len(n.children) == 4 {
 			typeDescriptor := n.children[1]
 			value := n.children[3]
@@ -690,17 +607,9 @@ func normalizeCCastUnknownTypeIdentifiers(root *Node, source []byte, lang *Langu
 				}
 			}
 		}
-		for _, child := range n.children {
-			rewrite(child)
-		}
-	}
-	rewrite(root)
+	})
 
-	var repair func(*Node)
-	repair = func(n *Node) {
-		if n == nil {
-			return
-		}
+	walkResultTree(root, func(n *Node) {
 		if n.Type(lang) == "call_expression" && len(n.children) == 2 {
 			function := n.children[0]
 			arguments := n.children[1]
@@ -762,11 +671,7 @@ func normalizeCCastUnknownTypeIdentifiers(root *Node, source []byte, lang *Langu
 				}
 			}
 		}
-		for _, child := range n.children {
-			repair(child)
-		}
-	}
-	repair(root)
+	})
 }
 
 func normalizeCPointerAssignmentPrecedence(root *Node, lang *Language) {
@@ -777,26 +682,9 @@ func normalizeCPointerAssignmentPrecedence(root *Node, lang *Language) {
 		return
 	}
 
-	var walk func(*Node)
-	walk = func(n *Node) {
-		if n == nil {
-			return
-		}
-		for i, child := range n.children {
-			walk(child)
-			for {
-				rewritten := rewriteCPointerAssignmentPrecedence(child, lang)
-				if rewritten == nil {
-					break
-				}
-				n.children[i] = rewritten
-				rewritten.parent = n
-				rewritten.childIndex = int32(i)
-				child = rewritten
-			}
-		}
-	}
-	walk(root)
+	rewriteResultTreeChildrenPostorder(root, func(n *Node) *Node {
+		return rewriteCPointerAssignmentPrecedence(n, lang)
+	})
 }
 
 func rewriteCPointerAssignmentPrecedence(node *Node, lang *Language) *Node {
@@ -877,11 +765,7 @@ func collectCLocalTypeNames(root *Node, source []byte, lang *Language) map[strin
 	if root == nil || lang == nil || lang.Name != "c" {
 		return localTypes
 	}
-	var walk func(*Node)
-	walk = func(n *Node) {
-		if n == nil {
-			return
-		}
+	walkResultTree(root, func(n *Node) {
 		if n.Type(lang) == "type_definition" {
 			for _, child := range n.children {
 				if child == nil || child.Type(lang) != "type_identifier" {
@@ -892,10 +776,6 @@ func collectCLocalTypeNames(root *Node, source []byte, lang *Language) map[strin
 				}
 			}
 		}
-		for _, child := range n.children {
-			walk(child)
-		}
-	}
-	walk(root)
+	})
 	return localTypes
 }

@@ -418,14 +418,8 @@ func normalizePythonInterpolationPatterns(root *Node, lang *Language) normalizat
 	expressionListSym, hasExpressionList := symbolByName(lang, "expression_list")
 	listSplatSym, hasListSplat := symbolByName(lang, "list_splat")
 
-	patternListNamed := false
-	if int(patternListSym) < len(lang.SymbolMetadata) {
-		patternListNamed = lang.SymbolMetadata[patternListSym].Named
-	}
-	listSplatPatternNamed := false
-	if hasListSplatPattern && int(listSplatPatternSym) < len(lang.SymbolMetadata) {
-		listSplatPatternNamed = lang.SymbolMetadata[listSplatPatternSym].Named
-	}
+	patternListNamed := symbolIsNamed(lang, patternListSym)
+	listSplatPatternNamed := hasListSplatPattern && symbolIsNamed(lang, listSplatPatternSym)
 
 	var rewrite func(*Node, bool)
 	rewrite = func(n *Node, inInterpolation bool) {
@@ -461,17 +455,8 @@ func normalizePythonPrintStatements(root *Node, source []byte, lang *Language) n
 	if root == nil || lang == nil || lang.Name != "python" || len(source) == 0 {
 		return counters
 	}
-	var walk func(*Node)
-	walk = func(node *Node) {
-		if node == nil {
-			return
-		}
+	walkResultTreePostorder(root, func(node *Node) {
 		counters.nodesVisited++
-		childCount := resultChildCount(node)
-		for i := 0; i < childCount; i++ {
-			child := resultChildAt(node, i)
-			walk(child)
-		}
 		switch node.Type(lang) {
 		case "module", "block":
 			children := resultChildSliceForMutation(node)
@@ -485,8 +470,7 @@ func normalizePythonPrintStatements(root *Node, source []byte, lang *Language) n
 			populateParentNode(node, node.children)
 			counters.nodesRewritten++
 		}
-	}
-	walk(root)
+	})
 	return counters
 }
 
@@ -495,17 +479,8 @@ func normalizePythonTrailingSelfCalls(root *Node, source []byte, lang *Language)
 	if root == nil || lang == nil || lang.Name != "python" || len(source) == 0 {
 		return counters
 	}
-	var walk func(*Node)
-	walk = func(node *Node) {
-		if node == nil {
-			return
-		}
+	walkResultTreePostorder(root, func(node *Node) {
 		counters.nodesVisited++
-		childCount := resultChildCount(node)
-		for i := 0; i < childCount; i++ {
-			child := resultChildAt(node, i)
-			walk(child)
-		}
 		if node.Type(lang) != "block" {
 			return
 		}
@@ -519,8 +494,7 @@ func normalizePythonTrailingSelfCalls(root *Node, source []byte, lang *Language)
 		node.fieldSources = nil
 		populateParentNode(node, node.children)
 		counters.nodesRewritten++
-	}
-	walk(root)
+	})
 	return counters
 }
 
@@ -644,18 +618,9 @@ func rewriteMalformedPythonPrintStatement(node *Node, source []byte, lang *Langu
 		return nil, false
 	}
 
-	printNamed := false
-	if int(printSym) < len(lang.SymbolMetadata) {
-		printNamed = lang.SymbolMetadata[printSym].Named
-	}
-	printStmtNamed := true
-	if int(printStmtSym) < len(lang.SymbolMetadata) {
-		printStmtNamed = lang.SymbolMetadata[printStmtSym].Named
-	}
-	chevronNamed := true
-	if int(chevronSym) < len(lang.SymbolMetadata) {
-		chevronNamed = lang.SymbolMetadata[chevronSym].Named
-	}
+	printNamed := symbolIsNamed(lang, printSym)
+	printStmtNamed := symbolIsNamed(lang, printStmtSym)
+	chevronNamed := symbolIsNamed(lang, chevronSym)
 
 	left := resultChildAt(bin, 0)
 	op := resultChildAt(bin, 1)
@@ -1139,10 +1104,7 @@ func repairPythonKeywordErrorNode(node *Node, source []byte, arena *nodeArena, l
 	childCount := resultChildCount(node)
 	if node.Type(lang) == "ERROR" && childCount == 0 {
 		if keyword, ok := pythonKeywordLeafSymbol(node, source, lang); ok {
-			named := false
-			if int(keyword) < len(lang.SymbolMetadata) {
-				named = lang.SymbolMetadata[keyword].Named
-			}
+			named := symbolIsNamed(lang, keyword)
 			repl := newLeafNodeInArena(arena, keyword, named, node.startByte, node.endByte, node.startPoint, node.endPoint)
 			repl.setExtra(node.isExtra())
 			return repl
@@ -1804,11 +1766,7 @@ func normalizePythonStringContinuationEscapes(root *Node, source []byte, lang *L
 	if !ok {
 		return counters
 	}
-	var walk func(*Node)
-	walk = func(n *Node) {
-		if n == nil {
-			return
-		}
+	walkResultTree(root, func(n *Node) {
 		counters.nodesVisited++
 		if n.Type(lang) == "string_content" && n.startByte < n.endByte && int(n.endByte) <= len(source) {
 			children, changed := addPythonContinuationEscapes(n, source, escapeSym)
@@ -1818,13 +1776,7 @@ func normalizePythonStringContinuationEscapes(root *Node, source []byte, lang *L
 			}
 			return
 		}
-		childCount := resultChildCount(n)
-		for i := 0; i < childCount; i++ {
-			child := resultChildAt(n, i)
-			walk(child)
-		}
-	}
-	walk(root)
+	})
 	return counters
 }
 
