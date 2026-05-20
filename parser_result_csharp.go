@@ -78,8 +78,7 @@ func normalizeCSharpRecoveredTopLevelChunks(root *Node, source []byte, p *Parser
 		copy(buf, recovered)
 		recovered = buf
 	}
-	root.symbol = compilationUnitSym
-	root.setNamed(compilationUnitNamed)
+	retagResultRoot(root, compilationUnitSym, compilationUnitNamed)
 	root.children = recovered
 	root.fieldIDs = nil
 	root.fieldSources = nil
@@ -448,8 +447,7 @@ func normalizeCSharpRecoveredNamespaces(root *Node, source []byte, p *Parser, la
 	populateParentNode(root, root.children)
 	if root.Type(lang) == "ERROR" && csharpCanRecoverCompilationUnitRoot(root, lang) {
 		if sym, ok := lang.SymbolByName("compilation_unit"); ok {
-			root.symbol = sym
-			root.setNamed(symbolIsNamed(lang, sym))
+			retagResultRoot(root, sym, symbolIsNamed(lang, sym))
 			root.setHasError(false)
 			populateParentNode(root, root.children)
 		}
@@ -694,8 +692,7 @@ func normalizeCSharpRecoveredTypeDeclarations(root *Node, source []byte, p *Pars
 		copy(buf, recoveredChildren)
 		recoveredChildren = buf
 	}
-	root.symbol = compilationUnitSym
-	root.setNamed(compilationUnitNamed)
+	retagResultRoot(root, compilationUnitSym, compilationUnitNamed)
 	root.children = recoveredChildren
 	root.fieldIDs = nil
 	root.fieldSources = nil

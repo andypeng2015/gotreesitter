@@ -119,8 +119,7 @@ func normalizeRustRecoveredPatternStatementsRoot(root *Node, source []byte, p *P
 	root.children = cloneNodeSliceInArena(root.ownerArena, recovered)
 	root.fieldIDs = nil
 	root.fieldSources = nil
-	root.symbol = sourceFileSym
-	root.setNamed(rustNamedForSymbol(p.language, sourceFileSym))
+	retagResultRoot(root, sourceFileSym, rustNamedForSymbol(p.language, sourceFileSym))
 	populateParentNode(root, root.children)
 	root.setHasError(false)
 	if root.endByte < uint32(len(source)) && bytesAreTrivia(source[root.endByte:]) {

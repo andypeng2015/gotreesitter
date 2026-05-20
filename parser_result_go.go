@@ -23,16 +23,7 @@ func normalizeGoSourceFileRoot(root *Node, source []byte, p *Parser) {
 	if !rootLooksLikeGoTopLevel(root, lang) {
 		return
 	}
-	root.symbol = sym
-	root.setNamed(symbolIsNamed(lang, sym))
-	root.setHasError(false)
-	for i := 0; i < resultChildCount(root); i++ {
-		child := resultChildAt(root, i)
-		if child != nil && (child.IsError() || child.HasError()) {
-			root.setHasError(true)
-			break
-		}
-	}
+	retagResultRootAndRefreshError(root, sym, symbolIsNamed(lang, sym))
 	if root.endByte < uint32(len(source)) && bytesAreTrivia(source[root.endByte:]) {
 		extendNodeEndTo(root, uint32(len(source)), source)
 	}

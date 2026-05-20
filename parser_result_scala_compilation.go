@@ -33,16 +33,9 @@ func normalizeScalaCompilationUnitRoot(root *Node, source []byte, lang *Language
 		root.children = children
 		root.fieldIDs = nil
 		root.fieldSources = nil
-		root.symbol = sym
-		root.setNamed(symbolIsNamed(lang, sym))
+		retagResultRoot(root, sym, symbolIsNamed(lang, sym))
 		populateParentNode(root, root.children)
-		root.setHasError(false)
-		for _, child := range root.children {
-			if child != nil && (child.IsError() || child.HasError()) {
-				root.setHasError(true)
-				break
-			}
-		}
+		refreshResultRootError(root)
 		if !root.hasError() {
 			return
 		}
@@ -50,15 +43,7 @@ func normalizeScalaCompilationUnitRoot(root *Node, source []byte, lang *Language
 	if !rootLooksLikeScalaCompilationUnit(root, lang) {
 		return
 	}
-	root.symbol = sym
-	root.setNamed(symbolIsNamed(lang, sym))
-	root.setHasError(false)
-	for _, child := range root.children {
-		if child != nil && (child.IsError() || child.HasError()) {
-			root.setHasError(true)
-			break
-		}
-	}
+	retagResultRootAndRefreshError(root, sym, symbolIsNamed(lang, sym))
 }
 
 func scalaRebuildCompilationUnitChildren(source []byte, lang *Language, arena *nodeArena) ([]*Node, bool) {

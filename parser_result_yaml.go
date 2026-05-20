@@ -27,8 +27,7 @@ func normalizeYAMLRecoveredRoot(root *Node, source []byte, lang *Language) {
 					streamChildren = append(streamChildren, flat[:leadingComments]...)
 					streamChildren = append(streamChildren, doc)
 
-					root.symbol = streamSym
-					root.setNamed(symbolIsNamed(lang, streamSym))
+					retagResultRoot(root, streamSym, symbolIsNamed(lang, streamSym))
 					root.children = cloneNodeSliceInArena(root.ownerArena, streamChildren)
 					root.fieldIDs = nil
 					root.fieldSources = nil

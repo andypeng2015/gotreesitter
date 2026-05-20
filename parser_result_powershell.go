@@ -158,8 +158,7 @@ func normalizePowerShellProgramShape(root *Node, source []byte, lang *Language) 
 	root.children = out
 	root.fieldIDs = nil
 	root.fieldSources = nil
-	root.symbol = programSym
-	root.setNamed(symbolIsNamed(lang, programSym))
+	retagResultRoot(root, programSym, symbolIsNamed(lang, programSym))
 	root.setHasError(true)
 }
 

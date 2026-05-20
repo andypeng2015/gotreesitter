@@ -270,8 +270,7 @@ func normalizeTypeScriptRecoveredNamespaceRoot(root *Node, source []byte, lang *
 	root.fieldIDs = nil
 	root.fieldSources = nil
 	if hasProgramSym {
-		root.symbol = programSym
-		root.setNamed(symbolIsNamed(lang, programSym))
+		retagResultRoot(root, programSym, symbolIsNamed(lang, programSym))
 	}
 	populateParentNode(root, root.children)
 }

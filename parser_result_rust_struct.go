@@ -20,8 +20,7 @@ func normalizeRustRecoveredStructExpressionRoot(root *Node, source []byte, lang 
 	root.children = cloneNodeSliceInArena(root.ownerArena, stmts)
 	root.fieldIDs = nil
 	root.fieldSources = nil
-	root.symbol = sourceFileSym
-	root.setNamed(rustNamedForSymbol(lang, sourceFileSym))
+	retagResultRoot(root, sourceFileSym, rustNamedForSymbol(lang, sourceFileSym))
 	populateParentNode(root, root.children)
 	root.setHasError(false)
 	if root.endByte < uint32(len(source)) && bytesAreTrivia(source[root.endByte:]) {
@@ -1086,15 +1085,7 @@ func normalizeRustSourceFileRoot(root *Node, source []byte, lang *Language) {
 	if !ok || !rustRootLooksLikeTopLevel(root, lang) {
 		return
 	}
-	root.symbol = sourceFileSym
-	root.setNamed(rustNamedForSymbol(lang, sourceFileSym))
-	root.setHasError(false)
-	for _, child := range root.children {
-		if child != nil && (child.IsError() || child.HasError()) {
-			root.setHasError(true)
-			break
-		}
-	}
+	retagResultRootAndRefreshError(root, sourceFileSym, rustNamedForSymbol(lang, sourceFileSym))
 	if !root.hasError() && root.endByte < uint32(len(source)) && bytesAreTrivia(source[root.endByte:]) {
 		extendNodeEndTo(root, uint32(len(source)), source)
 	}

@@ -26,8 +26,7 @@ func normalizeCTranslationUnitRoot(root *Node, lang *Language) {
 	if !ok || !rootLooksLikeCTopLevel(root, lang) {
 		return
 	}
-	root.symbol = sym
-	root.setNamed(symbolIsNamed(lang, sym))
+	retagResultRoot(root, sym, symbolIsNamed(lang, sym))
 }
 
 func rootLooksLikeCTopLevel(root *Node, lang *Language) bool {
