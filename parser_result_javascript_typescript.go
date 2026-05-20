@@ -11,6 +11,7 @@ func normalizeJavaScriptCompatibility(root *Node, source []byte, lang *Language)
 	normalizeJavaScriptTrailingContinueComments(root, source, lang)
 	normalizeJavaScriptTopLevelExpressionStatementBounds(root, lang)
 	normalizeJavaScriptTopLevelObjectLiterals(root, lang)
+	normalizeJavaScriptProgramEnd(root, source, lang)
 }
 
 func normalizeTypeScriptTreeCompatibility(root *Node, source []byte, lang *Language) {
@@ -61,6 +62,36 @@ func normalizeJavaScriptProgramStart(root *Node, lang *Language) {
 	}
 	root.startByte = first.startByte
 	root.startPoint = first.startPoint
+}
+
+func normalizeJavaScriptProgramEnd(root *Node, source []byte, lang *Language) {
+	if root == nil || lang == nil || lang.Name != "javascript" || root.endByte >= uint32(len(source)) {
+		return
+	}
+	switch root.Type(lang) {
+	case "program", "ERROR":
+	default:
+		return
+	}
+	tail := source[root.endByte:]
+	if !bytesAreTrivia(tail) && !bytesAreJavaScriptStatementTerminatorTail(tail) {
+		return
+	}
+	extendNodeEndTo(root, uint32(len(source)), source)
+}
+
+func bytesAreJavaScriptStatementTerminatorTail(b []byte) bool {
+	seenSemicolon := false
+	for _, c := range b {
+		switch c {
+		case ';':
+			seenSemicolon = true
+		case ' ', '\t', '\n', '\r':
+		default:
+			return false
+		}
+	}
+	return seenSemicolon
 }
 
 func normalizeJavaScriptTopLevelExpressionStatementBounds(root *Node, lang *Language) {

@@ -42,6 +42,7 @@ func normalizeReturnedTree(root *Node, source []byte, lang *Language) {
 	normalizeScalaCaseClauseEnds(root, source, lang)
 	normalizeHTMLRecoveredNestedCustomTagRanges(root, source, lang)
 	normalizeRootEOFNewlineSpan(root, source, lang)
+	normalizeJavaScriptProgramEnd(root, source, lang)
 }
 
 func shouldNormalizeIncrementalReturnedTree(tree, oldTree *Tree) bool {

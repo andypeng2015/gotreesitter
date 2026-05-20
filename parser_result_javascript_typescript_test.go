@@ -70,6 +70,54 @@ func TestNormalizeJavaScriptProgramStart(t *testing.T) {
 	}
 }
 
+func TestNormalizeJavaScriptProgramEndExtendsTerminatorTail(t *testing.T) {
+	lang := &Language{
+		Name:        "javascript",
+		SymbolNames: []string{"EOF", "program", "call_expression"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF", Visible: false, Named: false},
+			{Name: "program", Visible: true, Named: true},
+			{Name: "call_expression", Visible: true, Named: true},
+		},
+	}
+
+	arena := newNodeArena(arenaClassFull)
+	call := newLeafNodeInArena(arena, 2, true, 0, 4, Point{}, Point{Column: 4})
+	root := newParentNodeInArena(arena, 1, true, []*Node{call}, nil, 0)
+	source := []byte("call;\n")
+
+	normalizeJavaScriptProgramEnd(root, source, lang)
+
+	if got, want := root.EndByte(), uint32(len(source)); got != want {
+		t.Fatalf("program.EndByte = %d, want %d", got, want)
+	}
+	if got, want := root.EndPoint(), (Point{Row: 1, Column: 0}); got != want {
+		t.Fatalf("program.EndPoint = %+v, want %+v", got, want)
+	}
+}
+
+func TestNormalizeJavaScriptProgramEndExtendsErrorRootTerminatorTail(t *testing.T) {
+	lang := &Language{
+		Name:        "javascript",
+		SymbolNames: []string{"EOF", "program", "call_expression"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF", Visible: false, Named: false},
+			{Name: "program", Visible: true, Named: true},
+			{Name: "call_expression", Visible: true, Named: true},
+		},
+	}
+
+	arena := newNodeArena(arenaClassFull)
+	root := newLeafNodeInArena(arena, errorSymbol, true, 0, 4, Point{}, Point{Column: 4})
+	source := []byte("call;\n")
+
+	normalizeJavaScriptProgramEnd(root, source, lang)
+
+	if got, want := root.EndByte(), uint32(len(source)); got != want {
+		t.Fatalf("ERROR root EndByte = %d, want %d", got, want)
+	}
+}
+
 func TestNormalizeJavaScriptTrailingContinueCommentSiblings(t *testing.T) {
 	lang := &Language{
 		Name:        "javascript",
