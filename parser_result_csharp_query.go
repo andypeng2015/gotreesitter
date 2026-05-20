@@ -655,7 +655,7 @@ func csharpBuildRecoveredQueryClause(arena *nodeArena, source []byte, lang *Lang
 			return nil, nil, false
 		}
 		children := []*Node{fromTok, ident(clause.name), inTok, sourceNode}
-		fields := csharpFieldIDsInArena(arena, []FieldID{0, nameFieldID, 0, 0})
+		fields := cloneFieldIDSliceInArena(arena, []FieldID{0, nameFieldID, 0, 0})
 		return newParentNodeInArena(arena, fromClauseSym, fromClauseNamed, children, fields, 0), trailingComments(clause, nil), true
 	case csharpQueryWhereClause:
 		whereClauseSym, ok := symbolByName(lang, "where_clause")
@@ -1127,7 +1127,7 @@ func csharpBuildElementAccessExpressionNode(arena *nodeArena, source []byte, lan
 	}
 	expressionID, _ := lang.FieldByName("expression")
 	argumentID, _ := lang.FieldByName("argument")
-	fields := csharpFieldIDsInArena(arena, []FieldID{expressionID, argumentID})
+	fields := cloneFieldIDSliceInArena(arena, []FieldID{expressionID, argumentID})
 	named := symbolIsNamed(lang, sym)
 	return newParentNodeInArena(arena, sym, named, []*Node{expr, args}, fields, 0), true
 }
@@ -1291,7 +1291,7 @@ func csharpBuildConditionalExpressionNode(arena *nodeArena, source []byte, lang 
 			fieldIDs = []FieldID{conditionID, 0, consequenceID, 0, alternativeID}
 		}
 	}
-	fields := csharpFieldIDsInArena(arena, fieldIDs)
+	fields := cloneFieldIDSliceInArena(arena, fieldIDs)
 	return newParentNodeInArena(arena, sym, named, children, fields, 0), true
 }
 
@@ -1315,7 +1315,7 @@ func csharpBuildBinaryExpressionNode(arena *nodeArena, source []byte, lang *Lang
 	leftID, _ := lang.FieldByName("left")
 	operatorID, _ := lang.FieldByName("operator")
 	rightID, _ := lang.FieldByName("right")
-	fields := csharpFieldIDsInArena(arena, []FieldID{leftID, operatorID, rightID})
+	fields := cloneFieldIDSliceInArena(arena, []FieldID{leftID, operatorID, rightID})
 	named := symbolIsNamed(lang, sym)
 	return newParentNodeInArena(arena, sym, named, []*Node{left, opTok, right}, fields, 0), true
 }
@@ -1339,7 +1339,7 @@ func csharpBuildIsPatternExpressionNode(arena *nodeArena, source []byte, lang *L
 	}
 	expressionID, _ := lang.FieldByName("expression")
 	patternID, _ := lang.FieldByName("pattern")
-	fields := csharpFieldIDsInArena(arena, []FieldID{expressionID, 0, patternID})
+	fields := cloneFieldIDSliceInArena(arena, []FieldID{expressionID, 0, patternID})
 	named := symbolIsNamed(lang, sym)
 	return newParentNodeInArena(arena, sym, named, []*Node{left, isTok, pattern}, fields, 0), true
 }
@@ -1390,7 +1390,7 @@ func csharpBuildAssignmentExpressionNode(arena *nodeArena, source []byte, lang *
 	leftID, _ := lang.FieldByName("left")
 	operatorID, _ := lang.FieldByName("operator")
 	rightID, _ := lang.FieldByName("right")
-	fields := csharpFieldIDsInArena(arena, []FieldID{leftID, operatorID, rightID})
+	fields := cloneFieldIDSliceInArena(arena, []FieldID{leftID, operatorID, rightID})
 	named := symbolIsNamed(lang, sym)
 	return newParentNodeInArena(arena, sym, named, []*Node{left, eqTok, right}, fields, 0), true
 }
@@ -1414,7 +1414,7 @@ func csharpBuildInvocationExpressionNode(arena *nodeArena, source []byte, lang *
 	}
 	functionID, _ := lang.FieldByName("function")
 	argumentsID, _ := lang.FieldByName("arguments")
-	fields := csharpFieldIDsInArena(arena, []FieldID{functionID, argumentsID})
+	fields := cloneFieldIDSliceInArena(arena, []FieldID{functionID, argumentsID})
 	named := symbolIsNamed(lang, sym)
 	return newParentNodeInArena(arena, sym, named, []*Node{function, args}, fields, 0), true
 }
@@ -1493,7 +1493,7 @@ func csharpBuildMemberAccessExpressionNode(arena *nodeArena, source []byte, lang
 	}
 	expressionID, _ := lang.FieldByName("expression")
 	nameID, _ := lang.FieldByName("name")
-	fields := csharpFieldIDsInArena(arena, []FieldID{expressionID, 0, nameID})
+	fields := cloneFieldIDSliceInArena(arena, []FieldID{expressionID, 0, nameID})
 	named := symbolIsNamed(lang, sym)
 	return newParentNodeInArena(arena, sym, named, []*Node{left, dotTok, nameNode}, fields, 0), true
 }
@@ -1752,7 +1752,7 @@ func csharpBuildLambdaExpressionNode(arena *nodeArena, source []byte, lang *Lang
 		if !ok {
 			return nil, false
 		}
-		fields := csharpFieldIDsInArena(arena, []FieldID{parametersID, 0, bodyID})
+		fields := cloneFieldIDSliceInArena(arena, []FieldID{parametersID, 0, bodyID})
 		return newParentNodeInArena(arena, sym, named, []*Node{params, arrowTok, bodyNode}, fields, 0), true
 	}
 	if typeStart, typeEnd, ok := csharpScanIdentifierAt(source, paramStart); ok {
@@ -1768,7 +1768,7 @@ func csharpBuildLambdaExpressionNode(arena *nodeArena, source []byte, lang *Lang
 					return nil, false
 				}
 				typeID, _ := lang.FieldByName("type")
-				fields := csharpFieldIDsInArena(arena, []FieldID{typeID, parametersID, 0, bodyID})
+				fields := cloneFieldIDSliceInArena(arena, []FieldID{typeID, parametersID, 0, bodyID})
 				return newParentNodeInArena(arena, sym, named, []*Node{typeNode, params, arrowTok, bodyNode}, fields, 0), true
 			}
 		}
@@ -1779,7 +1779,7 @@ func csharpBuildLambdaExpressionNode(arena *nodeArena, source []byte, lang *Lang
 			}
 			paramNamed := symbolIsNamed(lang, paramSym)
 			paramNode := newLeafNodeInArena(arena, paramSym, paramNamed, typeStart, typeEnd, advancePointByBytes(Point{}, source[:typeStart]), advancePointByBytes(Point{}, source[:typeEnd]))
-			fields := csharpFieldIDsInArena(arena, []FieldID{parametersID, 0, bodyID})
+			fields := cloneFieldIDSliceInArena(arena, []FieldID{parametersID, 0, bodyID})
 			return newParentNodeInArena(arena, sym, named, []*Node{paramNode, arrowTok, bodyNode}, fields, 0), true
 		}
 	}
@@ -1887,7 +1887,7 @@ func csharpBuildLambdaParameterNode(arena *nodeArena, source []byte, lang *Langu
 	if !ok {
 		return nil, false
 	}
-	fieldIDs := csharpFieldIDsInArena(arena, fields)
+	fieldIDs := cloneFieldIDSliceInArena(arena, fields)
 	named := symbolIsNamed(lang, sym)
 	return newParentNodeInArena(arena, sym, named, children, fieldIDs, 0), true
 }

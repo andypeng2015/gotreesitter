@@ -82,13 +82,9 @@ func recoverGoRootTopLevelChunks(root *Node, source []byte, p *Parser) {
 	if arena := root.ownerArena; arena != nil {
 		buf := arena.allocNodeSlice(len(newChildren))
 		copy(buf, newChildren)
-		root.children = buf
-	} else {
-		root.children = newChildren
+		newChildren = buf
 	}
-	root.fieldIDs = nil
-	root.fieldSources = nil
-	populateParentNode(root, root.children)
+	replaceNodeChildrenUnfielded(root, newChildren)
 }
 
 func firstGoNonTopLevelChildIndex(root *Node, lang *Language) int {
@@ -937,10 +933,7 @@ func normalizeGoCompatibilityInRanges(root *Node, source []byte, lang *Language,
 							}
 							kept = append(kept, child)
 						}
-						n.children = cloneNodeSliceInArena(n.ownerArena, kept)
-						n.fieldIDs = nil
-						n.fieldSources = nil
-						populateParentNode(n, n.children)
+						replaceNodeChildrenUnfielded(n, cloneNodeSliceIfArena(n.ownerArena, kept))
 					}
 				}
 			}

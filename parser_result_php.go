@@ -98,11 +98,7 @@ func normalizePHPStaticFunctionFragments(root *Node, source []byte, lang *Langua
 	if !changed {
 		return
 	}
-	if arena != nil {
-		buf := arena.allocNodeSlice(len(out))
-		copy(buf, out)
-		out = buf
-	}
+	out = cloneNodeSliceIfArena(arena, out)
 	root.children = out
 	root.fieldIDs = nil
 	root.fieldSources = nil

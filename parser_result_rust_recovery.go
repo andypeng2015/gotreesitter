@@ -52,11 +52,8 @@ func normalizeRustTokenBindingPatterns(root *Node, source []byte, lang *Language
 			binding := cloneNodeInArena(node.ownerArena, meta)
 			binding.symbol = tokenBindingPatternSym
 			binding.setNamed(tokenBindingPatternNamed)
-			binding.children = cloneNodeSliceInArena(binding.ownerArena, []*Node{meta, fragClone})
-			binding.fieldIDs = nil
-			binding.fieldSources = nil
+			replaceNodeChildrenUnfielded(binding, cloneNodeSliceInArena(binding.ownerArena, []*Node{meta, fragClone}))
 			binding.productionID = 0
-			populateParentNode(binding, binding.children)
 
 			replaceChildRangeWithSingleNode(node, i, i+3, binding)
 		}
@@ -116,11 +113,8 @@ func normalizeRustRecoveredPatternStatementsRoot(root *Node, source []byte, p *P
 	if !ok {
 		return
 	}
-	root.children = cloneNodeSliceInArena(root.ownerArena, recovered)
-	root.fieldIDs = nil
-	root.fieldSources = nil
 	retagResultRoot(root, sourceFileSym, rustNamedForSymbol(p.language, sourceFileSym))
-	populateParentNode(root, root.children)
+	replaceNodeChildrenUnfielded(root, cloneNodeSliceInArena(root.ownerArena, recovered))
 	root.setHasError(false)
 	if root.endByte < uint32(len(source)) && bytesAreTrivia(source[root.endByte:]) {
 		extendNodeEndTo(root, uint32(len(source)), source)

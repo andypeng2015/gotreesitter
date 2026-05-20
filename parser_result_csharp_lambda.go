@@ -77,7 +77,7 @@ func csharpSplitScopedLambdaStatementChildren(block *Node, source []byte, lang *
 	copy(children, rebuilt)
 	block.children = children
 	if hadFields {
-		block.fieldIDs = csharpFieldIDsInArena(block.ownerArena, rebuiltFields)
+		block.fieldIDs = cloneFieldIDSliceInArena(block.ownerArena, rebuiltFields)
 		block.fieldSources = defaultFieldSourcesInArena(block.ownerArena, block.fieldIDs)
 	} else {
 		block.fieldIDs = nil

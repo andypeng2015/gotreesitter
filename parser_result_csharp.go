@@ -73,18 +73,11 @@ func normalizeCSharpRecoveredTopLevelChunks(root *Node, source []byte, p *Parser
 		return
 	}
 	compilationUnitNamed := symbolIsNamed(p.language, compilationUnitSym)
-	if root.ownerArena != nil {
-		buf := root.ownerArena.allocNodeSlice(len(recovered))
-		copy(buf, recovered)
-		recovered = buf
-	}
+	recovered = cloneNodeSliceIfArena(root.ownerArena, recovered)
 	retagResultRoot(root, compilationUnitSym, compilationUnitNamed)
-	root.children = recovered
-	root.fieldIDs = nil
-	root.fieldSources = nil
+	replaceNodeChildrenUnfielded(root, recovered)
 	root.productionID = 0
 	root.setHasError(false)
-	populateParentNode(root, root.children)
 	extendNodeToTrailingWhitespace(root, source)
 }
 
@@ -437,11 +430,7 @@ func normalizeCSharpRecoveredNamespaces(root *Node, source []byte, p *Parser, la
 	if !changed {
 		return
 	}
-	if root.ownerArena != nil {
-		buf := root.ownerArena.allocNodeSlice(len(recoveredChildren))
-		copy(buf, recoveredChildren)
-		recoveredChildren = buf
-	}
+	recoveredChildren = cloneNodeSliceIfArena(root.ownerArena, recoveredChildren)
 	root.children = recoveredChildren
 	root.setHasError(false)
 	populateParentNode(root, root.children)
@@ -687,18 +676,11 @@ func normalizeCSharpRecoveredTypeDeclarations(root *Node, source []byte, p *Pars
 	if len(recoveredChildren) == 0 {
 		return
 	}
-	if root.ownerArena != nil {
-		buf := root.ownerArena.allocNodeSlice(len(recoveredChildren))
-		copy(buf, recoveredChildren)
-		recoveredChildren = buf
-	}
+	recoveredChildren = cloneNodeSliceIfArena(root.ownerArena, recoveredChildren)
 	retagResultRoot(root, compilationUnitSym, compilationUnitNamed)
-	root.children = recoveredChildren
-	root.fieldIDs = nil
-	root.fieldSources = nil
+	replaceNodeChildrenUnfielded(root, recoveredChildren)
 	root.productionID = 0
 	root.setHasError(false)
-	populateParentNode(root, root.children)
 }
 
 func csharpCanRecoverCompilationUnitRoot(root *Node, lang *Language) bool {

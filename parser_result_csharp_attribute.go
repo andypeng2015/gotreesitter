@@ -251,7 +251,7 @@ func csharpBuildAttributeNodeFromSource(source []byte, start, end uint32, lang *
 		copy(buf, children)
 		children = buf
 	}
-	fields := csharpFieldIDsInArena(arena, fieldIDs)
+	fields := cloneFieldIDSliceInArena(arena, fieldIDs)
 	return newParentNodeInArena(arena, attrSym, attrNamed, children, fields, 0), true
 }
 
@@ -344,7 +344,7 @@ func csharpBuildAttributeArgumentNodeFromSource(source []byte, start, end uint32
 			return nil, false
 		}
 		nameFieldID, _ := lang.FieldByName("name")
-		fields := csharpFieldIDsInArena(arena, []FieldID{nameFieldID, 0, 0})
+		fields := cloneFieldIDSliceInArena(arena, []FieldID{nameFieldID, 0, 0})
 		children := []*Node{nameNode, opTok, valueNode}
 		if arena != nil {
 			buf := arena.allocNodeSlice(len(children))
@@ -434,7 +434,7 @@ func csharpBuildQualifiedNameNode(source []byte, start, end uint32, lang *Langua
 		if !ok {
 			return nil, false
 		}
-		fields := csharpFieldIDsInArena(arena, []FieldID{qualifierFieldID, 0, nameFieldID})
+		fields := cloneFieldIDSliceInArena(arena, []FieldID{qualifierFieldID, 0, nameFieldID})
 		current = newParentNodeInArena(arena, qualifiedNameSym, qualifiedNameNamed, []*Node{current, dotTok, ident}, fields, 0)
 		cursor = segEnd
 	}
@@ -487,7 +487,7 @@ func csharpBuildMemberAccessNodeFromSource(source []byte, start, end uint32, lan
 		if !ok {
 			return nil, false
 		}
-		fields := csharpFieldIDsInArena(arena, []FieldID{expressionFieldID, 0, nameFieldID})
+		fields := cloneFieldIDSliceInArena(arena, []FieldID{expressionFieldID, 0, nameFieldID})
 		current = newParentNodeInArena(arena, memberAccessSym, memberAccessNamed, []*Node{current, dotTok, nameNode}, fields, 0)
 		cursor = nameEnd
 	}
@@ -513,7 +513,7 @@ func csharpPrependAttributeListsToDeclaration(decl *Node, attributeLists []*Node
 	if len(decl.fieldIDs) > 0 {
 		fieldIDs := make([]FieldID, len(children))
 		copy(fieldIDs[len(attributeLists):], decl.fieldIDs)
-		decl.fieldIDs = csharpFieldIDsInArena(arena, fieldIDs)
+		decl.fieldIDs = cloneFieldIDSliceInArena(arena, fieldIDs)
 		decl.fieldSources = defaultFieldSourcesInArena(arena, decl.fieldIDs)
 	}
 	populateParentNode(decl, decl.children)

@@ -673,7 +673,7 @@ func csharpBuildSimpleJoinQueryExpression(arena *nodeArena, source []byte, lang 
 			leaf(dotSym, dotPos, dotPos+1),
 			ident(prop),
 		}
-		fieldIDs := csharpFieldIDsInArena(arena, []FieldID{expressionFieldID, 0, nameFieldID})
+		fieldIDs := cloneFieldIDSliceInArena(arena, []FieldID{expressionFieldID, 0, nameFieldID})
 		return newParentNodeInArena(arena, memberAccessSym, memberAccessNamed, children, fieldIDs, 0)
 	}
 
@@ -683,7 +683,7 @@ func csharpBuildSimpleJoinQueryExpression(arena *nodeArena, source []byte, lang 
 		leaf(inSym, spec.in1Start, spec.in1End),
 		ident(spec.source1),
 	}
-	fromFields := csharpFieldIDsInArena(arena, []FieldID{0, nameFieldID, 0, 0})
+	fromFields := cloneFieldIDSliceInArena(arena, []FieldID{0, nameFieldID, 0, 0})
 	fromClause := newParentNodeInArena(arena, fromClauseSym, fromClauseNamed, fromChildren, fromFields, 0)
 
 	joinClause := newParentNodeInArena(arena, joinClauseSym, joinClauseNamed, []*Node{
@@ -708,20 +708,6 @@ func csharpBuildSimpleJoinQueryExpression(arena *nodeArena, source []byte, lang 
 		selectClause,
 	}, nil, 0)
 	return queryExpr, true
-}
-
-func csharpFieldIDsInArena(arena *nodeArena, ids []FieldID) []FieldID {
-	if len(ids) == 0 {
-		return nil
-	}
-	if arena == nil {
-		out := make([]FieldID, len(ids))
-		copy(out, ids)
-		return out
-	}
-	out := arena.allocFieldIDSlice(len(ids))
-	copy(out, ids)
-	return out
 }
 
 func csharpHasKeywordAt(source []byte, start uint32, kw string) bool {

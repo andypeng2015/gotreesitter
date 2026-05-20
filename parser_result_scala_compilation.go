@@ -30,11 +30,8 @@ func normalizeScalaCompilationUnitRoot(root *Node, source []byte, lang *Language
 		return
 	}
 	if children, ok := scalaRebuildCompilationUnitChildren(source, lang, root.ownerArena); ok {
-		root.children = children
-		root.fieldIDs = nil
-		root.fieldSources = nil
 		retagResultRoot(root, sym, symbolIsNamed(lang, sym))
-		populateParentNode(root, root.children)
+		replaceNodeChildrenUnfielded(root, children)
 		refreshResultRootError(root)
 		if !root.hasError() {
 			return

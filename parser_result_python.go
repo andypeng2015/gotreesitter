@@ -5,10 +5,6 @@ import (
 	"time"
 )
 
-func normalizePythonCompatibility(root *Node, source []byte, lang *Language) {
-	normalizePythonCompatibilityWithParser(root, source, nil, lang)
-}
-
 func normalizePythonCompatibilityWithParser(root *Node, source []byte, parser *Parser, lang *Language) {
 	if len(source) == 0 {
 		return
@@ -464,10 +460,7 @@ func normalizePythonPrintStatements(root *Node, source []byte, lang *Language) n
 			if !changed {
 				return
 			}
-			node.children = cloneNodeSliceInArena(node.ownerArena, rewritten)
-			node.fieldIDs = nil
-			node.fieldSources = nil
-			populateParentNode(node, node.children)
+			replaceNodeChildrenUnfielded(node, cloneNodeSliceInArena(node.ownerArena, rewritten))
 			counters.nodesRewritten++
 		}
 	})
@@ -489,10 +482,7 @@ func normalizePythonTrailingSelfCalls(root *Node, source []byte, lang *Language)
 		if !changed {
 			return
 		}
-		node.children = cloneNodeSliceInArena(node.ownerArena, rewritten)
-		node.fieldIDs = nil
-		node.fieldSources = nil
-		populateParentNode(node, node.children)
+		replaceNodeChildrenUnfielded(node, cloneNodeSliceInArena(node.ownerArena, rewritten))
 		counters.nodesRewritten++
 	})
 	return counters

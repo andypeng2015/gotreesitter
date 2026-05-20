@@ -90,11 +90,8 @@ func csharpInsertMissingAttributedProperties(declList *Node, source []byte, lang
 	}
 	children := declList.ownerArena.allocNodeSlice(len(rebuilt))
 	copy(children, rebuilt)
-	declList.children = children
-	declList.fieldIDs = nil
-	declList.fieldSources = nil
+	replaceNodeChildrenUnfielded(declList, children)
 	declList.setHasError(false)
-	populateParentNode(declList, declList.children)
 	return true
 }
 

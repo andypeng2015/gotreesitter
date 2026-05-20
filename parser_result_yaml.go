@@ -28,11 +28,8 @@ func normalizeYAMLRecoveredRoot(root *Node, source []byte, lang *Language) {
 					streamChildren = append(streamChildren, doc)
 
 					retagResultRoot(root, streamSym, symbolIsNamed(lang, streamSym))
-					root.children = cloneNodeSliceInArena(root.ownerArena, streamChildren)
-					root.fieldIDs = nil
-					root.fieldSources = nil
+					replaceNodeChildrenUnfielded(root, cloneNodeSliceInArena(root.ownerArena, streamChildren))
 					root.setHasError(false)
-					populateParentNode(root, root.children)
 				}
 			}
 		}
@@ -219,10 +216,7 @@ func yamlWrapDocumentBlockCollections(root *Node, lang *Language) {
 		if blockNode == nil {
 			continue
 		}
-		doc.children = cloneNodeSliceInArena(doc.ownerArena, []*Node{blockNode})
-		doc.fieldIDs = nil
-		doc.fieldSources = nil
-		populateParentNode(doc, doc.children)
+		replaceNodeChildrenUnfielded(doc, cloneNodeSliceInArena(doc.ownerArena, []*Node{blockNode}))
 	}
 }
 
@@ -250,11 +244,8 @@ func yamlWrapPlainScalarFlowNodes(node *Node, lang *Language) {
 		return
 	}
 	plain := newParentNodeInArena(node.ownerArena, plainScalarSym, symbolIsNamed(lang, plainScalarSym), []*Node{child}, nil, 0)
-	node.children = cloneNodeSliceInArena(node.ownerArena, []*Node{plain})
-	node.fieldIDs = nil
-	node.fieldSources = nil
+	replaceNodeChildrenUnfielded(node, cloneNodeSliceInArena(node.ownerArena, []*Node{plain}))
 	node.setHasError(false)
-	populateParentNode(node, node.children)
 }
 
 func yamlNormalizeRecoveredSubtrees(node *Node, source []byte, lang *Language) {
@@ -299,11 +290,8 @@ func yamlNormalizeYAMLCollectionNode(node *Node, itemType string, lang *Language
 	if len(filtered) == 0 {
 		return
 	}
-	node.children = cloneNodeSliceInArena(node.ownerArena, filtered)
-	node.fieldIDs = nil
-	node.fieldSources = nil
+	replaceNodeChildrenUnfielded(node, cloneNodeSliceInArena(node.ownerArena, filtered))
 	node.setHasError(false)
-	populateParentNode(node, node.children)
 }
 
 func yamlNormalizeYAMLBlockNode(node *Node, lang *Language) {
@@ -342,11 +330,8 @@ func yamlNormalizeYAMLBlockNode(node *Node, lang *Language) {
 	}
 	switch recovered.Type(lang) {
 	case "block_mapping", "block_sequence", "block_scalar":
-		node.children = cloneNodeSliceInArena(node.ownerArena, []*Node{recovered})
-		node.fieldIDs = nil
-		node.fieldSources = nil
+		replaceNodeChildrenUnfielded(node, cloneNodeSliceInArena(node.ownerArena, []*Node{recovered}))
 		node.setHasError(false)
-		populateParentNode(node, node.children)
 	}
 }
 
@@ -437,11 +422,8 @@ decoratorsDone:
 	children := make([]*Node, 0, decoratorsEnd+1)
 	children = append(children, flat[:decoratorsEnd]...)
 	children = append(children, core)
-	node.children = cloneNodeSliceInArena(node.ownerArena, children)
-	node.fieldIDs = nil
-	node.fieldSources = nil
+	replaceNodeChildrenUnfielded(node, cloneNodeSliceInArena(node.ownerArena, children))
 	node.setHasError(false)
-	populateParentNode(node, node.children)
 }
 
 func yamlChildrenNeedRecovery(children []*Node, lang *Language) bool {
@@ -547,11 +529,8 @@ func yamlCollapseNestedYAMLWrapper(node *Node, lang *Language) {
 		}
 		startByte, startPoint := node.startByte, node.startPoint
 		endByte, endPoint := node.endByte, node.endPoint
-		node.children = cloneNodeSliceInArena(node.ownerArena, child.children)
-		node.fieldIDs = nil
-		node.fieldSources = nil
+		replaceNodeChildrenUnfielded(node, cloneNodeSliceInArena(node.ownerArena, child.children))
 		node.setHasError(false)
-		populateParentNode(node, node.children)
 		node.startByte = startByte
 		node.startPoint = startPoint
 		node.endByte = endByte
@@ -593,11 +572,8 @@ func yamlUnwrapDocumentSequenceBlockNode(node *Node, lang *Language) {
 	}
 	startByte, startPoint := node.startByte, node.startPoint
 	endByte, endPoint := node.endByte, node.endPoint
-	node.children = cloneNodeSliceInArena(node.ownerArena, []*Node{seq})
-	node.fieldIDs = nil
-	node.fieldSources = nil
+	replaceNodeChildrenUnfielded(node, cloneNodeSliceInArena(node.ownerArena, []*Node{seq}))
 	node.setHasError(false)
-	populateParentNode(node, node.children)
 	node.startByte = startByte
 	node.startPoint = startPoint
 	node.endByte = endByte

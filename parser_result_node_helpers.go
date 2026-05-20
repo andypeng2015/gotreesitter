@@ -64,6 +64,16 @@ func clearNodeChildField(n *Node, childIndex int) bool {
 	return true
 }
 
+func replaceNodeChildrenUnfielded(n *Node, children []*Node) {
+	if n == nil {
+		return
+	}
+	n.children = children
+	n.fieldIDs = nil
+	n.fieldSources = nil
+	populateParentNode(n, n.children)
+}
+
 func walkResultTree(root *Node, visit func(*Node)) {
 	if visit == nil {
 		return

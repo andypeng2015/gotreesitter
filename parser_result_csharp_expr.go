@@ -54,29 +54,17 @@ func csharpRewriteConditionalIsPatternExpression(n *Node, lang *Language, isPatt
 		return false
 	}
 	patternChildren := []*Node{patternValue}
-	if n.ownerArena != nil {
-		buf := n.ownerArena.allocNodeSlice(len(patternChildren))
-		copy(buf, patternChildren)
-		patternChildren = buf
-	}
+	patternChildren = cloneNodeSliceIfArena(n.ownerArena, patternChildren)
 	constantPattern := newParentNodeInArena(n.ownerArena, constantPatternSym, constantPatternNamed, patternChildren, nil, 0)
 	constantPattern.setHasError(false)
 
 	children := append([]*Node(nil), n.children...)
 	children[patternIdx] = constantPattern
-	if n.ownerArena != nil {
-		buf := n.ownerArena.allocNodeSlice(len(children))
-		copy(buf, children)
-		children = buf
-	}
+	children = cloneNodeSliceIfArena(n.ownerArena, children)
 	fieldIDs := make([]FieldID, len(children))
 	fieldIDs[exprIdx] = expressionFieldID
 	fieldIDs[patternIdx] = patternFieldID
-	if n.ownerArena != nil {
-		buf := n.ownerArena.allocFieldIDSlice(len(fieldIDs))
-		copy(buf, fieldIDs)
-		fieldIDs = buf
-	}
+	fieldIDs = cloneFieldIDSliceInArena(n.ownerArena, fieldIDs)
 
 	n.symbol = isPatternSym
 	n.setNamed(isPatternNamed)
@@ -192,17 +180,9 @@ func csharpRewriteLogicalAndCastExpression(n *Node, source []byte, lang *Languag
 	}
 
 	children := []*Node{openTok, typeNode, closeTok, outer}
-	if n.ownerArena != nil {
-		buf := n.ownerArena.allocNodeSlice(len(children))
-		copy(buf, children)
-		children = buf
-	}
+	children = cloneNodeSliceIfArena(n.ownerArena, children)
 	fieldIDs := []FieldID{0, typeFieldID, 0, valueFieldID}
-	if n.ownerArena != nil {
-		buf := n.ownerArena.allocFieldIDSlice(len(fieldIDs))
-		copy(buf, fieldIDs)
-		fieldIDs = buf
-	}
+	fieldIDs = cloneFieldIDSliceInArena(n.ownerArena, fieldIDs)
 
 	n.symbol = castSym
 	n.setNamed(castNamed)
@@ -247,11 +227,7 @@ func csharpRewriteLogicalAndCastValue(n *Node, source []byte, lang *Language, pr
 	}
 	children := append([]*Node(nil), n.children...)
 	children[valueIdx] = outer
-	if n.ownerArena != nil {
-		buf := n.ownerArena.allocNodeSlice(len(children))
-		copy(buf, children)
-		children = buf
-	}
+	children = cloneNodeSliceIfArena(n.ownerArena, children)
 	n.children = children
 	n.setHasError(false)
 	populateParentNode(n, n.children)
@@ -271,19 +247,11 @@ func csharpBuildLogicalAndPrefixUnaryValue(arena *nodeArena, source []byte, lang
 		return nil, false
 	}
 	innerChildren := []*Node{amp1, value}
-	if arena != nil {
-		buf := arena.allocNodeSlice(len(innerChildren))
-		copy(buf, innerChildren)
-		innerChildren = buf
-	}
+	innerChildren = cloneNodeSliceIfArena(arena, innerChildren)
 	inner := newParentNodeInArena(arena, prefixUnarySym, prefixUnaryNamed, innerChildren, nil, 0)
 	inner.setHasError(false)
 	outerChildren := []*Node{amp0, inner}
-	if arena != nil {
-		buf := arena.allocNodeSlice(len(outerChildren))
-		copy(buf, outerChildren)
-		outerChildren = buf
-	}
+	outerChildren = cloneNodeSliceIfArena(arena, outerChildren)
 	outer := newParentNodeInArena(arena, prefixUnarySym, prefixUnaryNamed, outerChildren, nil, 0)
 	outer.setHasError(false)
 	return outer, true

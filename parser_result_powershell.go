@@ -134,11 +134,7 @@ func normalizePowerShellProgramShape(root *Node, source []byte, lang *Language) 
 	children = append(children, statementList.children...)
 	children = append(children, functionStatement)
 	children = append(children, pipelines...)
-	if root.ownerArena != nil {
-		buf := root.ownerArena.allocNodeSlice(len(children))
-		copy(buf, children)
-		children = buf
-	}
+	children = cloneNodeSliceIfArena(root.ownerArena, children)
 	statementList.children = children
 	statementList.fieldIDs = nil
 	statementList.fieldSources = nil
@@ -150,11 +146,7 @@ func normalizePowerShellProgramShape(root *Node, source []byte, lang *Language) 
 	out := make([]*Node, 0, statementListIdx+1)
 	out = append(out, root.children[:statementListIdx]...)
 	out = append(out, statementList)
-	if root.ownerArena != nil {
-		buf := root.ownerArena.allocNodeSlice(len(out))
-		copy(buf, out)
-		out = buf
-	}
+	out = cloneNodeSliceIfArena(root.ownerArena, out)
 	root.children = out
 	root.fieldIDs = nil
 	root.fieldSources = nil

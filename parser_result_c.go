@@ -128,15 +128,8 @@ func normalizeCPreprocessorDirectiveShapes(root *Node, source []byte, lang *Lang
 	if !changed {
 		return
 	}
-	if root.ownerArena != nil {
-		buf := root.ownerArena.allocNodeSlice(len(out))
-		copy(buf, out)
-		out = buf
-	}
-	root.children = out
-	root.fieldIDs = nil
-	root.fieldSources = nil
-	populateParentNode(root, out)
+	out = cloneNodeSliceIfArena(root.ownerArena, out)
+	replaceNodeChildrenUnfielded(root, out)
 	extendNodeToTrailingWhitespace(root, source)
 }
 
@@ -177,11 +170,7 @@ func normalizeCWhitespaceSeparatedFunctionMacro(node *Node, source []byte, lang 
 	}
 
 	children := []*Node{node.children[0], name, value}
-	if node.ownerArena != nil {
-		buf := node.ownerArena.allocNodeSlice(len(children))
-		copy(buf, children)
-		children = buf
-	}
+	children = cloneNodeSliceIfArena(node.ownerArena, children)
 	node.symbol = preprocDefSym
 	node.setNamed(symbolIsNamed(lang, preprocDefSym))
 	node.children = children
@@ -567,26 +556,14 @@ func normalizeCCastUnknownTypeIdentifiers(root *Node, source []byte, lang *Langu
 						ident := newLeafNodeInArena(n.ownerArena, identifierSym, identifierNamed, typeIdent.startByte, typeIdent.endByte, typeIdent.startPoint, typeIdent.endPoint)
 						function := newParentNodeInArena(n.ownerArena, parenthesizedSym, parenthesizedNamed, []*Node{n.children[0], ident, n.children[2]}, nil, 0)
 						argsChildren := append([]*Node(nil), value.children...)
-						if n.ownerArena != nil && len(argsChildren) > 0 {
-							buf := n.ownerArena.allocNodeSlice(len(argsChildren))
-							copy(buf, argsChildren)
-							argsChildren = buf
-						}
+						argsChildren = cloneNodeSliceIfArena(n.ownerArena, argsChildren)
 						arguments := newParentNodeInArena(n.ownerArena, argumentListSym, argumentListNamed, argsChildren, nil, 0)
 						children := []*Node{function, arguments}
-						if n.ownerArena != nil {
-							buf := n.ownerArena.allocNodeSlice(len(children))
-							copy(buf, children)
-							children = buf
-						}
+						children = cloneNodeSliceIfArena(n.ownerArena, children)
 						fieldIDs := make([]FieldID, len(children))
 						fieldIDs[0] = functionFieldID
 						fieldIDs[1] = argumentsFieldID
-						if n.ownerArena != nil {
-							buf := n.ownerArena.allocFieldIDSlice(len(fieldIDs))
-							copy(buf, fieldIDs)
-							fieldIDs = buf
-						}
+						fieldIDs = cloneFieldIDSliceInArena(n.ownerArena, fieldIDs)
 						n.symbol = callSym
 						n.setNamed(callNamed)
 						n.children = children
@@ -637,19 +614,11 @@ func normalizeCCastUnknownTypeIdentifiers(root *Node, source []byte, lang *Langu
 						}
 						if valueNode != nil {
 							children := []*Node{function.children[0], typeDescriptor, function.children[len(function.children)-1], valueNode}
-							if n.ownerArena != nil {
-								buf := n.ownerArena.allocNodeSlice(len(children))
-								copy(buf, children)
-								children = buf
-							}
+							children = cloneNodeSliceIfArena(n.ownerArena, children)
 							fieldIDs := make([]FieldID, len(children))
 							fieldIDs[1] = typeFieldID
 							fieldIDs[3] = valueFieldID
-							if n.ownerArena != nil {
-								buf := n.ownerArena.allocFieldIDSlice(len(fieldIDs))
-								copy(buf, fieldIDs)
-								fieldIDs = buf
-							}
+							fieldIDs = cloneFieldIDSliceInArena(n.ownerArena, fieldIDs)
 							n.symbol = castSym
 							n.setNamed(castNamed)
 							n.children = children

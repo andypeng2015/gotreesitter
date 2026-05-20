@@ -266,13 +266,10 @@ func normalizeTypeScriptRecoveredNamespaceRoot(root *Node, source []byte, lang *
 		copy(buf, newChildren)
 		newChildren = buf
 	}
-	root.children = newChildren
-	root.fieldIDs = nil
-	root.fieldSources = nil
 	if hasProgramSym {
 		retagResultRoot(root, programSym, symbolIsNamed(lang, programSym))
 	}
-	populateParentNode(root, root.children)
+	replaceNodeChildrenUnfielded(root, newChildren)
 }
 
 func typeScriptWhitespaceOnlyRecoverySubtree(node *Node, source []byte) bool {
@@ -555,20 +552,6 @@ func typeScriptClassExpressionHasName(node *Node, ctx *typeScriptNormalizationCo
 		}
 	}
 	return false
-}
-
-func cloneFieldIDSliceInArena(arena *nodeArena, fieldIDs []FieldID) []FieldID {
-	if len(fieldIDs) == 0 {
-		return nil
-	}
-	if arena != nil {
-		out := arena.allocFieldIDSlice(len(fieldIDs))
-		copy(out, fieldIDs)
-		return out
-	}
-	out := make([]FieldID, len(fieldIDs))
-	copy(out, fieldIDs)
-	return out
 }
 
 func cloneFieldSourceSliceInArena(arena *nodeArena, fieldSources []uint8) []uint8 {

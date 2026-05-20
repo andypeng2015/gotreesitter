@@ -464,6 +464,27 @@ func symbolTypeName(lang *Language, sym Symbol) string {
 	return unescapePunctuationSymbolName(lang.SymbolNames[sym])
 }
 
+func cloneNodeSliceIfArena(arena *nodeArena, nodes []*Node) []*Node {
+	if arena == nil {
+		return nodes
+	}
+	return cloneNodeSliceInArena(arena, nodes)
+}
+
+func cloneFieldIDSliceInArena(arena *nodeArena, fieldIDs []FieldID) []FieldID {
+	if len(fieldIDs) == 0 {
+		return nil
+	}
+	if arena != nil {
+		out := arena.allocFieldIDSlice(len(fieldIDs))
+		copy(out, fieldIDs)
+		return out
+	}
+	out := make([]FieldID, len(fieldIDs))
+	copy(out, fieldIDs)
+	return out
+}
+
 func symbolByName(lang *Language, name string) (Symbol, bool) {
 	if lang == nil {
 		return 0, false

@@ -34,20 +34,12 @@ func normalizeHTMLRecoveredNestedCustomTags(root *Node, lang *Language) {
 	}
 	htmlExtendOpenElementChain(continuation, closeTok.startByte, closeTok.startPoint, lang)
 	endTagChildren := []*Node{closeTok, tagName, closeAngle}
-	if root.ownerArena != nil {
-		buf := root.ownerArena.allocNodeSlice(len(endTagChildren))
-		copy(buf, endTagChildren)
-		endTagChildren = buf
-	}
+	endTagChildren = cloneNodeSliceIfArena(root.ownerArena, endTagChildren)
 	endTag := newParentNodeInArena(root.ownerArena, endTagSym, symbolIsNamed(lang, endTagSym), endTagChildren, nil, 0)
 	inner := continuation
 	for i := len(startTags) - 1; i >= 1; i-- {
 		children := []*Node{startTags[i], inner}
-		if root.ownerArena != nil {
-			buf := root.ownerArena.allocNodeSlice(len(children))
-			copy(buf, children)
-			children = buf
-		}
+		children = cloneNodeSliceIfArena(root.ownerArena, children)
 		wrapper := newParentNodeInArena(root.ownerArena, elementSym, symbolIsNamed(lang, elementSym), children, nil, 0)
 		wrapper.endByte = closeTok.startByte
 		wrapper.endPoint = closeTok.startPoint
@@ -55,18 +47,9 @@ func normalizeHTMLRecoveredNestedCustomTags(root *Node, lang *Language) {
 	}
 	htmlExtendLeadingElementChain(inner, closeTok.startByte, closeTok.startPoint, lang)
 	outerChildren := []*Node{startTags[0], inner, endTag}
-	if root.ownerArena != nil {
-		buf := root.ownerArena.allocNodeSlice(len(outerChildren))
-		copy(buf, outerChildren)
-		outerChildren = buf
-	}
+	outerChildren = cloneNodeSliceIfArena(root.ownerArena, outerChildren)
 	outer := newParentNodeInArena(root.ownerArena, elementSym, symbolIsNamed(lang, elementSym), outerChildren, nil, 0)
-	root.children = []*Node{outer}
-	if root.ownerArena != nil {
-		buf := root.ownerArena.allocNodeSlice(1)
-		buf[0] = outer
-		root.children = buf
-	}
+	root.children = cloneNodeSliceIfArena(root.ownerArena, []*Node{outer})
 	root.fieldIDs = nil
 	root.fieldSources = nil
 	retagResultRoot(root, documentSym, symbolIsNamed(lang, documentSym))
