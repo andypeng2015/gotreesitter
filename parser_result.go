@@ -844,38 +844,46 @@ func (p *Parser) buildResultFromNodes(nodes []*Node, source []byte, arena *nodeA
 		}
 		if foldExtras {
 			// Fold visible extras into the real root as leading/trailing children.
-			realRootChildren := resultDenseChildrenForMutation(realRoot)
-			merged := make([]*Node, 0, len(extras)+len(realRootChildren))
-			leadingCount := 0
+			var leadingExtras []*Node
+			var trailingExtras []*Node
 			for _, e := range extras {
 				if e.startByte <= realRoot.startByte {
+					leadingExtras = append(leadingExtras, e)
+				} else {
+					trailingExtras = append(trailingExtras, e)
+				}
+			}
+			if !resultMutableChildrenForMutation(realRoot).SurroundFinalRefs(leadingExtras, trailingExtras) {
+				realRootChildren := resultChildSliceForMutation(realRoot)
+				merged := make([]*Node, 0, len(extras)+len(realRootChildren))
+				leadingCount := 0
+				for _, e := range leadingExtras {
 					merged = append(merged, e)
 					leadingCount++
 				}
-			}
-			merged = append(merged, realRootChildren...)
-			for _, e := range extras {
-				if e.startByte > realRoot.startByte {
+				merged = append(merged, realRootChildren...)
+				for _, e := range trailingExtras {
 					merged = append(merged, e)
 				}
-			}
-			if arena != nil {
-				out := arena.allocNodeSlice(len(merged))
-				copy(out, merged)
-				merged = out
-			}
-			realRoot.children = merged
-			// Keep fieldIDs aligned with children: extras have no field (0).
-			if len(realRoot.fieldIDs) > 0 {
-				trailingCount := len(extras) - leadingCount
-				padded := make([]FieldID, leadingCount+len(realRoot.fieldIDs)+trailingCount)
-				copy(padded[leadingCount:], realRoot.fieldIDs)
-				realRoot.fieldIDs = padded
-				if len(realRoot.fieldSources) > 0 {
-					paddedSources := make([]uint8, len(padded))
-					copy(paddedSources[leadingCount:], realRoot.fieldSources)
-					realRoot.fieldSources = paddedSources
+				if arena != nil {
+					out := arena.allocNodeSlice(len(merged))
+					copy(out, merged)
+					merged = out
 				}
+				realRoot.children = merged
+				// Keep fieldIDs aligned with children: extras have no field (0).
+				if len(realRoot.fieldIDs) > 0 {
+					trailingCount := len(extras) - leadingCount
+					padded := make([]FieldID, leadingCount+len(realRoot.fieldIDs)+trailingCount)
+					copy(padded[leadingCount:], realRoot.fieldIDs)
+					realRoot.fieldIDs = padded
+					if len(realRoot.fieldSources) > 0 {
+						paddedSources := make([]uint8, len(padded))
+						copy(paddedSources[leadingCount:], realRoot.fieldSources)
+						realRoot.fieldSources = paddedSources
+					}
+				}
+				populateParentNode(realRoot, realRoot.children)
 			}
 			// Extend root range to cover the extras.
 			for _, e := range extras {

@@ -5,31 +5,48 @@ func normalizeHCLConfigFileRoot(root *Node, lang *Language) {
 	if root == nil || lang == nil || lang.Name != "hcl" || root.Type(lang) != "config_file" || childCount == 0 {
 		return
 	}
+	whitespaceSym, hasWhitespaceSym := symbolByName(lang, "_whitespace")
+	view := resultMutableChildrenForMutation(root)
 	filteredChanged := false
-	for i := 0; i < childCount; i++ {
-		child := resultChildAt(root, i)
-		if child != nil && child.Type(lang) == "_whitespace" {
-			filteredChanged = true
-			break
-		}
-	}
-	if filteredChanged {
-		children := resultDenseChildrenForMutation(root)
-		filtered := make([]*Node, 0, len(children))
-		for _, child := range children {
-			if child == nil || child.Type(lang) == "_whitespace" {
-				continue
+	if view.hasFinalChildRefs() && hasWhitespaceSym {
+		for i := 0; i < view.Len(); i++ {
+			entry, ok := view.Entry(i)
+			if ok && stackEntryNodeSymbol(entry) == whitespaceSym {
+				filteredChanged = true
+				break
 			}
-			filtered = append(filtered, child)
 		}
-		if root.ownerArena != nil {
-			buf := root.ownerArena.allocNodeSlice(len(filtered))
-			copy(buf, filtered)
-			filtered = buf
+		if filteredChanged {
+			view.FilterFinalRefs(func(_ int, entry stackEntry) bool {
+				return stackEntryNodeSymbol(entry) != whitespaceSym
+			})
 		}
-		root.children = filtered
-		root.fieldIDs = nil
-		root.fieldSources = nil
+	} else {
+		for i := 0; i < childCount; i++ {
+			child := resultChildAt(root, i)
+			if child != nil && child.Type(lang) == "_whitespace" {
+				filteredChanged = true
+				break
+			}
+		}
+		if filteredChanged {
+			children := resultChildSliceForMutation(root)
+			filtered := make([]*Node, 0, len(children))
+			for _, child := range children {
+				if child == nil || child.Type(lang) == "_whitespace" {
+					continue
+				}
+				filtered = append(filtered, child)
+			}
+			if root.ownerArena != nil {
+				buf := root.ownerArena.allocNodeSlice(len(filtered))
+				copy(buf, filtered)
+				filtered = buf
+			}
+			root.children = filtered
+			root.fieldIDs = nil
+			root.fieldSources = nil
+		}
 	}
 	for i := 0; i < resultChildCount(root); i++ {
 		child := resultChildAt(root, i)

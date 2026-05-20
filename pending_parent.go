@@ -31,10 +31,10 @@ const (
 	pendingChildRangeOffsetBits                 = 24
 	pendingChildRangeCountMask                  = (uint64(1) << pendingChildRangeCountBits) - 1
 	pendingChildRangeOffsetMask                 = (uint64(1) << pendingChildRangeOffsetBits) - 1
-	pendingParentFlagFieldEntries     nodeFlags = 1 << 4
-	pendingParentFlagDirectFieldEntry nodeFlags = 1 << 5
+	pendingParentFlagFieldEntries     nodeFlags = 1 << 5
+	pendingParentFlagDirectFieldEntry nodeFlags = 1 << 6
 
-	publicPendingParentNodeFlags nodeFlags = nodeFlagNamed | nodeFlagExtra | nodeFlagMissing | nodeFlagHasError
+	publicPendingParentNodeFlags nodeFlags = nodeFlagNamed | nodeFlagExtra | nodeFlagMissing | nodeFlagHasError | nodeFlagDirty
 )
 
 type pendingParentMaterializeReason = materializeReason

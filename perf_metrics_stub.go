@@ -56,51 +56,95 @@ type PerfCounters struct {
 	MergeAliveHist         [maxGLRStacks + 2]uint64
 	MergeOutHist           [maxGLRStacks + 2]uint64
 	ForkActionsHist        [8]uint64
+	CloneTreeCalls         uint64
+	CloneTreePublicNodes   uint64
+	CloneTreeFinalRefs     uint64
+	CloneTreeCompactCopies uint64
+	CloneTreeChildRefs     uint64
+	CloneTreeChildAt       uint64
+	CloneOffsetCalls       uint64
+	CloneOffsetPublicNodes uint64
+	CloneOffsetCopies      uint64
+	CloneOffsetShifted     uint64
+	CloneOffsetChildAt     uint64
+	NodeEditCalls          uint64
+	NodeEditNoopCalls      uint64
+	NodeEditCompactRefs    uint64
+	NodeEditShifted        uint64
+	NodeEditMarked         uint64
+	NodeEditPublicNodes    uint64
+	NodeEditChildAt        uint64
+	NodeEditFallbackFull   uint64
+	DenseMutationCalls     uint64
+	DenseMutationDrains    uint64
+	MutationChildRefCOW    uint64
 }
 
 func ResetPerfCounters()                 {}
 func PerfCountersSnapshot() PerfCounters { return PerfCounters{} }
 
-func perfRecordMergeCall(int)                  {}
-func perfRecordMergeAlive(int, int)            {}
-func perfRecordMergeOut(int)                   {}
-func perfRecordMergeHashZero()                 {}
-func perfRecordGlobalCapCull(int, int)         {}
-func perfRecordMergePerKeyOverflow()           {}
-func perfRecordMergeReplacement()              {}
-func perfRecordStackEquivalentCall()           {}
-func perfRecordStackEquivalentTrue()           {}
-func perfRecordStackEquivalentHashMissSkip()   {}
-func perfRecordStackCompare()                  {}
-func perfRecordConflictRR()                    {}
-func perfRecordConflictRS()                    {}
-func perfRecordConflictOther()                 {}
-func perfRecordFork(int, uint64)               {}
-func perfRecordMaxConcurrentStacks(int)        {}
-func perfRecordLexed(int, int)                 {}
-func perfRecordReuseVisited()                  {}
-func perfRecordReusePushed(int)                {}
-func perfRecordReusePopped()                   {}
-func perfRecordReuseCandidates(int)            {}
-func perfRecordReuseSuccess()                  {}
-func perfRecordReuseLeafSuccess()              {}
-func perfRecordReuseNonLeafCheck()             {}
-func perfRecordReuseNonLeafSuccess(uint32)     {}
-func perfRecordReuseNonLeafNoGoto()            {}
-func perfRecordReuseNonLeafNoGotoTerminal()    {}
-func perfRecordReuseNonLeafNoGotoNonTerminal() {}
-func perfRecordReuseNonLeafStateMiss()         {}
-func perfRecordReuseNonLeafStateZero()         {}
-func perfRecordReduceChainStep(int)            {}
-func perfRecordReduceChainBreakMulti()         {}
-func perfRecordReduceChainBreakShift()         {}
-func perfRecordReduceChainBreakAccept()        {}
-func perfRecordParentChildren(int)             {}
-func perfRecordReduceChildrenFastGSS(int)      {}
-func perfRecordReduceChildrenAllVisible(int)   {}
-func perfRecordReduceChildrenNoAlias(int)      {}
-func perfRecordReduceChildrenScratch(int)      {}
-func perfRecordReduceScratchNoAlias(int)       {}
-func perfRecordReduceScratchGeneral(int)       {}
-func perfRecordExtraNode()                     {}
-func perfRecordErrorNode()                     {}
+func perfRecordMergeCall(int)                   {}
+func perfRecordMergeAlive(int, int)             {}
+func perfRecordMergeOut(int)                    {}
+func perfRecordMergeHashZero()                  {}
+func perfRecordGlobalCapCull(int, int)          {}
+func perfRecordMergePerKeyOverflow()            {}
+func perfRecordMergeReplacement()               {}
+func perfRecordStackEquivalentCall()            {}
+func perfRecordStackEquivalentTrue()            {}
+func perfRecordStackEquivalentHashMissSkip()    {}
+func perfRecordStackCompare()                   {}
+func perfRecordConflictRR()                     {}
+func perfRecordConflictRS()                     {}
+func perfRecordConflictOther()                  {}
+func perfRecordFork(int, uint64)                {}
+func perfRecordMaxConcurrentStacks(int)         {}
+func perfRecordLexed(int, int)                  {}
+func perfRecordReuseVisited()                   {}
+func perfRecordReusePushed(int)                 {}
+func perfRecordReusePopped()                    {}
+func perfRecordReuseCandidates(int)             {}
+func perfRecordReuseSuccess()                   {}
+func perfRecordReuseLeafSuccess()               {}
+func perfRecordReuseNonLeafCheck()              {}
+func perfRecordReuseNonLeafSuccess(uint32)      {}
+func perfRecordReuseNonLeafNoGoto()             {}
+func perfRecordReuseNonLeafNoGotoTerminal()     {}
+func perfRecordReuseNonLeafNoGotoNonTerminal()  {}
+func perfRecordReuseNonLeafStateMiss()          {}
+func perfRecordReuseNonLeafStateZero()          {}
+func perfRecordReduceChainStep(int)             {}
+func perfRecordReduceChainBreakMulti()          {}
+func perfRecordReduceChainBreakShift()          {}
+func perfRecordReduceChainBreakAccept()         {}
+func perfRecordParentChildren(int)              {}
+func perfRecordReduceChildrenFastGSS(int)       {}
+func perfRecordReduceChildrenAllVisible(int)    {}
+func perfRecordReduceChildrenNoAlias(int)       {}
+func perfRecordReduceChildrenScratch(int)       {}
+func perfRecordReduceScratchNoAlias(int)        {}
+func perfRecordReduceScratchGeneral(int)        {}
+func perfRecordExtraNode()                      {}
+func perfRecordErrorNode()                      {}
+func perfRecordCloneTreeCall()                  {}
+func perfRecordCloneTreePublicNode()            {}
+func perfRecordCloneTreeFinalRefs(int)          {}
+func perfRecordCloneTreeCompactCopy()           {}
+func perfRecordCloneTreeChildRefs(int)          {}
+func perfRecordCloneTreeChildAt()               {}
+func perfRecordCloneOffsetCall()                {}
+func perfRecordCloneOffsetPublicNode()          {}
+func perfRecordCloneOffsetCompactCopy()         {}
+func perfRecordCloneOffsetShifted()             {}
+func perfRecordCloneOffsetChildAt()             {}
+func perfRecordNodeEditCall()                   {}
+func perfRecordNodeEditNoopCall()               {}
+func perfRecordNodeEditCompactRef()             {}
+func perfRecordNodeEditShifted()                {}
+func perfRecordNodeEditMarked()                 {}
+func perfRecordNodeEditPublicNode()             {}
+func perfRecordNodeEditChildAt()                {}
+func perfRecordNodeEditFallbackFull()           {}
+func perfRecordDenseMutationChildrenCall()      {}
+func perfRecordDenseMutationChildrenDrain()     {}
+func perfRecordMutationChildRefCopyOnWrite(int) {}

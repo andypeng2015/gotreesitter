@@ -191,35 +191,74 @@ func (c *reuseCursor) collectTopLevelCandidates(start uint32) bool {
 		return false
 	}
 	for c.topLevelIndex < c.topLevelEnd {
-		n := nodeChildAtForReason(c.topLevelParent, c.topLevelIndex, materializeForEdit)
-		if n == nil {
+		entry, ok := nodeChildEntryAtNoMaterialize(c.topLevelParent, c.topLevelIndex)
+		if !ok || !stackEntryHasNode(entry) {
 			c.topLevelIndex++
 			continue
 		}
-		if n.startByte < start {
+		childStart := stackEntryNodeStartByte(entry)
+		if childStart < start {
 			c.topLevelIndex++
 			continue
 		}
-		if n.startByte > start {
+		if childStart > start {
 			return false
 		}
 		for c.topLevelIndex < c.topLevelEnd {
-			n = nodeChildAtForReason(c.topLevelParent, c.topLevelIndex, materializeForEdit)
-			if n == nil {
+			entry, ok = nodeChildEntryAtNoMaterialize(c.topLevelParent, c.topLevelIndex)
+			if !ok || !stackEntryHasNode(entry) {
 				c.topLevelIndex++
 				continue
 			}
-			if n.startByte != start {
+			if stackEntryNodeStartByte(entry) != start {
 				return true
 			}
 			c.topLevelIndex++
-			if c.reusableIndexedNode(n) {
+			if !c.reusableIndexedEntry(entry) {
+				continue
+			}
+			n := nodeChildAtForReason(c.topLevelParent, c.topLevelIndex-1, materializeForEdit)
+			if n != nil {
 				c.cached = append(c.cached, n)
 			}
 		}
 		return true
 	}
 	return false
+}
+
+func (c *reuseCursor) reusableIndexedEntry(entry stackEntry) bool {
+	if !stackEntryHasNode(entry) {
+		return false
+	}
+	start := stackEntryNodeStartByte(entry)
+	end := stackEntryNodeEndByte(entry)
+	if c.hasEdits && !nodeBytesEqual(start, end, c.oldSource, c.newSource) {
+		c.rejectDirty++
+		return false
+	}
+	dirtyHere := stackEntryNodeDirty(entry)
+	if dirtyHere && nodeBytesEqual(start, end, c.oldSource, c.newSource) {
+		setStackEntryDirty(entry, false)
+		dirtyHere = false
+	}
+	if stackEntryNodeHasError(entry) {
+		c.rejectHasError++
+		return false
+	}
+	if end <= start {
+		c.rejectInvalidSpan++
+		return false
+	}
+	if end > c.sourceLen {
+		c.rejectOutOfBounds++
+		return false
+	}
+	if dirtyHere {
+		c.rejectDirty++
+		return false
+	}
+	return true
 }
 
 func (c *reuseCursor) reusableIndexedNode(cur *Node) bool {
@@ -303,6 +342,11 @@ func (c *reuseCursor) advance() *Node {
 			perfRecordReusePushed(childCount)
 		}
 		for i := childCount - 1; i >= 0; i-- {
+			if entry, ok := nodeChildEntryAtNoMaterialize(cur, i); ok &&
+				c.cachedStartValid &&
+				stackEntryNodeEndByte(entry) <= c.cachedStart {
+				continue
+			}
 			child := nodeChildAtForReason(cur, i, materializeForEdit)
 			if child == nil {
 				continue

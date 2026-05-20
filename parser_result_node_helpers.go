@@ -17,11 +17,19 @@ func ensureNodeFieldStorage(n *Node, childCount int) {
 	if len(n.fieldSources) != childCount {
 		fieldSources := make([]uint8, childCount)
 		copy(fieldSources, n.fieldSources)
+		if n.ownerArena != nil {
+			buf := n.ownerArena.allocFieldSourceSlice(childCount)
+			copy(buf, fieldSources)
+			fieldSources = buf
+		}
 		n.fieldSources = fieldSources
 	}
 }
 func replaceChildRangeWithSingleNode(parent *Node, start, end int, replacement *Node) {
 	if parent == nil || replacement == nil {
+		return
+	}
+	if resultMutableChildrenForMutation(parent).ReplaceFinalRefRangeWithNode(start, end, replacement) {
 		return
 	}
 	children := resultDenseChildrenForMutation(parent)

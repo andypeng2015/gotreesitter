@@ -14,26 +14,30 @@ func normalizeErlangSourceFileForms(root *Node, lang *Language) {
 	if formsOnlyID == 0 || !erlangSourceFileLooksLikeForms(root, lang) {
 		return
 	}
-	children := resultDenseChildrenForMutation(root)
-	ensureNodeFieldStorage(root, len(children))
-	for i, child := range children {
-		if child == nil || child.IsExtra() {
+	view := resultMutableChildrenForMutation(root)
+	ensureNodeFieldStorage(root, view.Len())
+	for i := 0; i < view.Len(); i++ {
+		entry, ok := view.Entry(i)
+		if !ok || stackEntryNodeIsExtra(entry) {
 			continue
 		}
 		root.fieldIDs[i] = formsOnlyID
 		root.fieldSources[i] = fieldSourceDirect
-		normalizeErlangTopLevelFormBounds(child)
+		if stackEntryNodeChildCount(entry) > 0 {
+			normalizeErlangTopLevelFormBounds(view.Child(i))
+		}
 	}
 }
 
 func erlangSourceFileLooksLikeForms(root *Node, lang *Language) bool {
 	sawForm := false
-	for i := 0; i < resultChildCount(root); i++ {
-		child := resultChildAt(root, i)
-		if child == nil || child.IsExtra() {
+	view := resultMutableChildrenForMutation(root)
+	for i := 0; i < view.Len(); i++ {
+		entry, ok := view.Entry(i)
+		if !ok || stackEntryNodeIsExtra(entry) {
 			continue
 		}
-		if !erlangIsTopLevelFormType(child.Type(lang)) {
+		if !erlangIsTopLevelFormType(symbolTypeName(lang, stackEntryNodeSymbol(entry))) {
 			return false
 		}
 		sawForm = true

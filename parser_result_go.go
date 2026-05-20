@@ -81,7 +81,7 @@ func recoverGoRootTopLevelChunks(root *Node, source []byte, p *Parser) {
 	if !ok {
 		return
 	}
-	children := resultDenseChildrenForMutation(root)
+	children := resultChildSliceForMutation(root)
 	newChildren := make([]*Node, 0, firstBad+len(recovered))
 	newChildren = append(newChildren, children[:firstBad]...)
 	newChildren = append(newChildren, recovered...)
@@ -801,10 +801,21 @@ func goShouldDropSemicolonNode(n *Node, source []byte) bool {
 	if n == nil {
 		return false
 	}
-	if n.startByte >= n.endByte || int(n.endByte) > len(source) {
+	return goShouldDropSemicolonSpan(n.startByte, n.endByte, source)
+}
+
+func goShouldDropSemicolonEntry(entry stackEntry, source []byte) bool {
+	if !stackEntryHasNode(entry) {
+		return false
+	}
+	return goShouldDropSemicolonSpan(stackEntryNodeStartByte(entry), stackEntryNodeEndByte(entry), source)
+}
+
+func goShouldDropSemicolonSpan(startByte, endByte uint32, source []byte) bool {
+	if startByte >= endByte || int(endByte) > len(source) {
 		return true
 	}
-	text := source[n.startByte:n.endByte]
+	text := source[startByte:endByte]
 	if bytes.IndexByte(text, ';') >= 0 {
 		return false
 	}
@@ -903,27 +914,43 @@ func normalizeGoCompatibilityInRanges(root *Node, source []byte, lang *Language,
 		if resultChildCount(n) > 0 {
 			if symbolIn(semiContainerSyms, n.symbol) {
 				changed := false
-				childCount := resultChildCount(n)
-				for i := 0; i < childCount; i++ {
-					child := resultChildAt(n, i)
-					if child != nil && child.symbol == semiSym && goShouldDropSemicolonNode(child, source) {
-						changed = true
-						break
-					}
-				}
-				if changed {
-					children := resultDenseChildrenForMutation(n)
-					kept := children[:0]
-					for _, child := range children {
-						if child != nil && child.symbol == semiSym && goShouldDropSemicolonNode(child, source) {
-							continue
+				view := resultMutableChildrenForMutation(n)
+				if view.hasFinalChildRefs() {
+					for i := 0; i < view.Len(); i++ {
+						entry, ok := view.Entry(i)
+						if ok && stackEntryNodeSymbol(entry) == semiSym && goShouldDropSemicolonEntry(entry, source) {
+							changed = true
+							break
 						}
-						kept = append(kept, child)
 					}
-					n.children = kept
-					n.fieldIDs = nil
-					n.fieldSources = nil
-					populateParentNode(n, n.children)
+					if changed {
+						view.FilterFinalRefs(func(_ int, entry stackEntry) bool {
+							return stackEntryNodeSymbol(entry) != semiSym || !goShouldDropSemicolonEntry(entry, source)
+						})
+					}
+				} else {
+					childCount := resultChildCount(n)
+					for i := 0; i < childCount; i++ {
+						child := resultChildAt(n, i)
+						if child != nil && child.symbol == semiSym && goShouldDropSemicolonNode(child, source) {
+							changed = true
+							break
+						}
+					}
+					if changed {
+						children := resultChildSliceForMutation(n)
+						kept := make([]*Node, 0, len(children))
+						for _, child := range children {
+							if child != nil && child.symbol == semiSym && goShouldDropSemicolonNode(child, source) {
+								continue
+							}
+							kept = append(kept, child)
+						}
+						n.children = cloneNodeSliceInArena(n.ownerArena, kept)
+						n.fieldIDs = nil
+						n.fieldSources = nil
+						populateParentNode(n, n.children)
+					}
 				}
 			}
 			childCount := resultChildCount(n)
@@ -1235,7 +1262,7 @@ func flattenInvisibleRootChildren(root *Node, arena *nodeArena, lang *Language) 
 	if !changed {
 		return root
 	}
-	children := resultDenseChildrenForMutation(root)
+	children := resultChildSliceForMutation(root)
 	out := make([]*Node, 0, len(children))
 	for _, child := range children {
 		if child == nil {

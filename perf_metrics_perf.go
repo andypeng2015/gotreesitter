@@ -62,6 +62,28 @@ type perfCountersData struct {
 	mergeAliveHist         [perfMergeHistBins]atomic.Uint64
 	mergeOutHist           [perfMergeHistBins]atomic.Uint64
 	forkActionsHist        [perfForkHistBins]atomic.Uint64
+	cloneTreeCalls         atomic.Uint64
+	cloneTreePublicNodes   atomic.Uint64
+	cloneTreeFinalRefs     atomic.Uint64
+	cloneTreeCompactCopies atomic.Uint64
+	cloneTreeChildRefs     atomic.Uint64
+	cloneTreeChildAt       atomic.Uint64
+	cloneOffsetCalls       atomic.Uint64
+	cloneOffsetPublicNodes atomic.Uint64
+	cloneOffsetCopies      atomic.Uint64
+	cloneOffsetShifted     atomic.Uint64
+	cloneOffsetChildAt     atomic.Uint64
+	nodeEditCalls          atomic.Uint64
+	nodeEditNoopCalls      atomic.Uint64
+	nodeEditCompactRefs    atomic.Uint64
+	nodeEditShifted        atomic.Uint64
+	nodeEditMarked         atomic.Uint64
+	nodeEditPublicNodes    atomic.Uint64
+	nodeEditChildAt        atomic.Uint64
+	nodeEditFallbackFull   atomic.Uint64
+	denseMutationCalls     atomic.Uint64
+	denseMutationDrains    atomic.Uint64
+	mutationChildRefCOW    atomic.Uint64
 }
 
 var perfCounters perfCountersData
@@ -118,6 +140,28 @@ type PerfCounters struct {
 	MergeAliveHist         [perfMergeHistBins]uint64
 	MergeOutHist           [perfMergeHistBins]uint64
 	ForkActionsHist        [perfForkHistBins]uint64
+	CloneTreeCalls         uint64
+	CloneTreePublicNodes   uint64
+	CloneTreeFinalRefs     uint64
+	CloneTreeCompactCopies uint64
+	CloneTreeChildRefs     uint64
+	CloneTreeChildAt       uint64
+	CloneOffsetCalls       uint64
+	CloneOffsetPublicNodes uint64
+	CloneOffsetCopies      uint64
+	CloneOffsetShifted     uint64
+	CloneOffsetChildAt     uint64
+	NodeEditCalls          uint64
+	NodeEditNoopCalls      uint64
+	NodeEditCompactRefs    uint64
+	NodeEditShifted        uint64
+	NodeEditMarked         uint64
+	NodeEditPublicNodes    uint64
+	NodeEditChildAt        uint64
+	NodeEditFallbackFull   uint64
+	DenseMutationCalls     uint64
+	DenseMutationDrains    uint64
+	MutationChildRefCOW    uint64
 }
 
 func ResetPerfCounters() {
@@ -180,6 +224,28 @@ func ResetPerfCounters() {
 	for i := range perfCounters.forkActionsHist {
 		perfCounters.forkActionsHist[i].Store(0)
 	}
+	perfCounters.cloneTreeCalls.Store(0)
+	perfCounters.cloneTreePublicNodes.Store(0)
+	perfCounters.cloneTreeFinalRefs.Store(0)
+	perfCounters.cloneTreeCompactCopies.Store(0)
+	perfCounters.cloneTreeChildRefs.Store(0)
+	perfCounters.cloneTreeChildAt.Store(0)
+	perfCounters.cloneOffsetCalls.Store(0)
+	perfCounters.cloneOffsetPublicNodes.Store(0)
+	perfCounters.cloneOffsetCopies.Store(0)
+	perfCounters.cloneOffsetShifted.Store(0)
+	perfCounters.cloneOffsetChildAt.Store(0)
+	perfCounters.nodeEditCalls.Store(0)
+	perfCounters.nodeEditNoopCalls.Store(0)
+	perfCounters.nodeEditCompactRefs.Store(0)
+	perfCounters.nodeEditShifted.Store(0)
+	perfCounters.nodeEditMarked.Store(0)
+	perfCounters.nodeEditPublicNodes.Store(0)
+	perfCounters.nodeEditChildAt.Store(0)
+	perfCounters.nodeEditFallbackFull.Store(0)
+	perfCounters.denseMutationCalls.Store(0)
+	perfCounters.denseMutationDrains.Store(0)
+	perfCounters.mutationChildRefCOW.Store(0)
 }
 
 func PerfCountersSnapshot() PerfCounters {
@@ -243,6 +309,28 @@ func PerfCountersSnapshot() PerfCounters {
 	for i := range out.ForkActionsHist {
 		out.ForkActionsHist[i] = perfCounters.forkActionsHist[i].Load()
 	}
+	out.CloneTreeCalls = perfCounters.cloneTreeCalls.Load()
+	out.CloneTreePublicNodes = perfCounters.cloneTreePublicNodes.Load()
+	out.CloneTreeFinalRefs = perfCounters.cloneTreeFinalRefs.Load()
+	out.CloneTreeCompactCopies = perfCounters.cloneTreeCompactCopies.Load()
+	out.CloneTreeChildRefs = perfCounters.cloneTreeChildRefs.Load()
+	out.CloneTreeChildAt = perfCounters.cloneTreeChildAt.Load()
+	out.CloneOffsetCalls = perfCounters.cloneOffsetCalls.Load()
+	out.CloneOffsetPublicNodes = perfCounters.cloneOffsetPublicNodes.Load()
+	out.CloneOffsetCopies = perfCounters.cloneOffsetCopies.Load()
+	out.CloneOffsetShifted = perfCounters.cloneOffsetShifted.Load()
+	out.CloneOffsetChildAt = perfCounters.cloneOffsetChildAt.Load()
+	out.NodeEditCalls = perfCounters.nodeEditCalls.Load()
+	out.NodeEditNoopCalls = perfCounters.nodeEditNoopCalls.Load()
+	out.NodeEditCompactRefs = perfCounters.nodeEditCompactRefs.Load()
+	out.NodeEditShifted = perfCounters.nodeEditShifted.Load()
+	out.NodeEditMarked = perfCounters.nodeEditMarked.Load()
+	out.NodeEditPublicNodes = perfCounters.nodeEditPublicNodes.Load()
+	out.NodeEditChildAt = perfCounters.nodeEditChildAt.Load()
+	out.NodeEditFallbackFull = perfCounters.nodeEditFallbackFull.Load()
+	out.DenseMutationCalls = perfCounters.denseMutationCalls.Load()
+	out.DenseMutationDrains = perfCounters.denseMutationDrains.Load()
+	out.MutationChildRefCOW = perfCounters.mutationChildRefCOW.Load()
 	return out
 }
 
@@ -479,6 +567,100 @@ func perfRecordExtraNode() {
 
 func perfRecordErrorNode() {
 	perfCounters.errorNodes.Add(1)
+}
+
+func perfRecordCloneTreeCall() {
+	perfCounters.cloneTreeCalls.Add(1)
+}
+
+func perfRecordCloneTreePublicNode() {
+	perfCounters.cloneTreePublicNodes.Add(1)
+}
+
+func perfRecordCloneTreeFinalRefs(n int) {
+	if n > 0 {
+		perfCounters.cloneTreeFinalRefs.Add(uint64(n))
+	}
+}
+
+func perfRecordCloneTreeCompactCopy() {
+	perfCounters.cloneTreeCompactCopies.Add(1)
+}
+
+func perfRecordCloneTreeChildRefs(n int) {
+	if n > 0 {
+		perfCounters.cloneTreeChildRefs.Add(uint64(n))
+	}
+}
+
+func perfRecordCloneTreeChildAt() {
+	perfCounters.cloneTreeChildAt.Add(1)
+}
+
+func perfRecordCloneOffsetCall() {
+	perfCounters.cloneOffsetCalls.Add(1)
+}
+
+func perfRecordCloneOffsetPublicNode() {
+	perfCounters.cloneOffsetPublicNodes.Add(1)
+}
+
+func perfRecordCloneOffsetCompactCopy() {
+	perfCounters.cloneOffsetCopies.Add(1)
+}
+
+func perfRecordCloneOffsetShifted() {
+	perfCounters.cloneOffsetShifted.Add(1)
+}
+
+func perfRecordCloneOffsetChildAt() {
+	perfCounters.cloneOffsetChildAt.Add(1)
+}
+
+func perfRecordNodeEditCall() {
+	perfCounters.nodeEditCalls.Add(1)
+}
+
+func perfRecordNodeEditNoopCall() {
+	perfCounters.nodeEditNoopCalls.Add(1)
+}
+
+func perfRecordNodeEditCompactRef() {
+	perfCounters.nodeEditCompactRefs.Add(1)
+}
+
+func perfRecordNodeEditShifted() {
+	perfCounters.nodeEditShifted.Add(1)
+}
+
+func perfRecordNodeEditMarked() {
+	perfCounters.nodeEditMarked.Add(1)
+}
+
+func perfRecordNodeEditPublicNode() {
+	perfCounters.nodeEditPublicNodes.Add(1)
+}
+
+func perfRecordNodeEditChildAt() {
+	perfCounters.nodeEditChildAt.Add(1)
+}
+
+func perfRecordNodeEditFallbackFull() {
+	perfCounters.nodeEditFallbackFull.Add(1)
+}
+
+func perfRecordDenseMutationChildrenCall() {
+	perfCounters.denseMutationCalls.Add(1)
+}
+
+func perfRecordDenseMutationChildrenDrain() {
+	perfCounters.denseMutationDrains.Add(1)
+}
+
+func perfRecordMutationChildRefCopyOnWrite(n int) {
+	if n > 0 {
+		perfCounters.mutationChildRefCOW.Add(uint64(n))
+	}
 }
 
 func perfMergeHistBin(n int) int {

@@ -152,6 +152,8 @@ func (n *noTreeNode) isMissing() bool    { return n.hasFlag(nodeFlagMissing) }
 func (n *noTreeNode) setMissing(v bool)  { n.setFlag(nodeFlagMissing, v) }
 func (n *noTreeNode) hasError() bool     { return n.hasFlag(nodeFlagHasError) }
 func (n *noTreeNode) setHasError(v bool) { n.setFlag(nodeFlagHasError, v) }
+func (n *noTreeNode) dirty() bool        { return n.hasFlag(nodeFlagDirty) }
+func (n *noTreeNode) setDirty(v bool)    { n.setFlag(nodeFlagDirty, v) }
 
 func noTreeNodeBytesForCap(n int) int64 {
 	if n <= 0 {
@@ -441,6 +443,22 @@ func stackEntryNodeHasError(e stackEntry) bool {
 	}
 	if n := stackEntryPendingParent(e); n != nil {
 		return n.hasError()
+	}
+	return false
+}
+
+func stackEntryNodeDirty(e stackEntry) bool {
+	if n := stackEntryNode(e); n != nil {
+		return n.dirty()
+	}
+	if n := stackEntryNoTreeNode(e); n != nil {
+		return n.dirty()
+	}
+	if n := stackEntryCompactFullLeaf(e); n != nil {
+		return n.dirty()
+	}
+	if n := stackEntryPendingParent(e); n != nil {
+		return n.dirty()
 	}
 	return false
 }

@@ -48,6 +48,7 @@ const (
 	nodeFlagExtra
 	nodeFlagMissing
 	nodeFlagHasError
+	nodeFlagDirty
 )
 
 func (n *Node) hasFlag(flag nodeFlags) bool {
@@ -70,8 +71,17 @@ func (n *Node) isMissing() bool    { return n.hasFlag(nodeFlagMissing) }
 func (n *Node) setMissing(v bool)  { n.setFlag(nodeFlagMissing, v) }
 func (n *Node) hasError() bool     { return n.hasFlag(nodeFlagHasError) }
 func (n *Node) setHasError(v bool) { n.setFlag(nodeFlagHasError, v) }
-func (n *Node) dirty() bool        { return n.dirtyFlag }
-func (n *Node) setDirty(v bool)    { n.dirtyFlag = v }
+func (n *Node) dirty() bool {
+	return n != nil && (n.dirtyFlag || n.hasFlag(nodeFlagDirty))
+}
+
+func (n *Node) setDirty(v bool) {
+	if n == nil {
+		return
+	}
+	n.dirtyFlag = v
+	n.setFlag(nodeFlagDirty, v)
+}
 
 // Version 0 is valid for fresh immutable arena nodes; initialized public nodes
 // use 1 so later mutations can still invalidate equivalence-cache entries.
@@ -2313,6 +2323,12 @@ func cloneTreeNodesIntoArena(root *Node, arena *nodeArena) *Node {
 	if root == nil {
 		return nil
 	}
+	if perfCountersEnabled {
+		perfRecordCloneTreeCall()
+	}
+	if arena == nil {
+		return cloneTreeNodesWithOffset(root, 0, Point{})
+	}
 
 	type clonePair struct {
 		old *Node
@@ -2321,13 +2337,10 @@ func cloneTreeNodesIntoArena(root *Node, arena *nodeArena) *Node {
 
 	cloneNode := func(src *Node) *Node {
 		dst := arena.allocNodeFast()
-		*dst = *src
-		dst.children = nil
-		dst.fieldIDs = nil
-		dst.fieldSources = nil
-		dst.parent = nil
-		dst.childIndex = -1
-		dst.ownerArena = arena
+		cloneNodeHeaderInto(dst, src, arena, nil)
+		if perfCountersEnabled {
+			perfRecordCloneTreePublicNode()
+		}
 		return dst
 	}
 
@@ -2341,22 +2354,16 @@ func cloneTreeNodesIntoArena(root *Node, arena *nodeArena) *Node {
 		oldNode := pair.old
 		newNode := pair.new
 
-		if n := len(oldNode.fieldIDs); n > 0 {
-			fieldIDs := arena.allocFieldIDSlice(n)
-			copy(fieldIDs, oldNode.fieldIDs)
-			newNode.fieldIDs = fieldIDs
-		}
-		if n := len(oldNode.fieldSources); n > 0 {
-			fieldSources := arena.allocFieldSourceSlice(n)
-			copy(fieldSources, oldNode.fieldSources)
-			newNode.fieldSources = fieldSources
-		}
+		cloneNodeFieldMetadataInto(newNode, oldNode, arena)
 
-		if n := nodeChildCountNoMaterialize(oldNode); n > 0 {
+		if cloneFinalChildRefsIntoArena(oldNode, newNode, arena, nil) {
+			continue
+		}
+		if n := len(oldNode.children); n > 0 {
 			children := arena.allocNodeSlice(n)
 			newNode.children = children
 			for i := 0; i < n; i++ {
-				oldChild := nodeChildAtForReason(oldNode, i, materializeForParentAPI)
+				oldChild := oldNode.children[i]
 				if oldChild == nil {
 					continue
 				}
@@ -2372,9 +2379,25 @@ func cloneTreeNodesIntoArena(root *Node, arena *nodeArena) *Node {
 	return newRoot
 }
 
+type cloneOffset struct {
+	byteDelta uint32
+	point     Point
+	baseRow   uint32
+}
+
 func cloneTreeNodesWithOffset(root *Node, offsetBytes uint32, offsetExtent Point) *Node {
 	if root == nil {
 		return nil
+	}
+	if perfCountersEnabled {
+		perfRecordCloneOffsetCall()
+	}
+	arena := newNodeArena(arenaClassIncremental)
+	arena.finalChildRefs = true
+	offset := &cloneOffset{
+		byteDelta: offsetBytes,
+		point:     offsetExtent,
+		baseRow:   root.startPoint.Row,
 	}
 
 	type clonePair struct {
@@ -2382,31 +2405,12 @@ func cloneTreeNodesWithOffset(root *Node, offsetBytes uint32, offsetExtent Point
 		new *Node
 	}
 
-	baseRow := root.startPoint.Row
-	offsetPoint := func(p Point) Point {
-		originalRow := p.Row
-		p.Row = addUint32Delta(p.Row, int64(offsetExtent.Row))
-		// When adding a multi-line prefix, only nodes on the original first row
-		// of this tree receive the column offset. Rows after that keep columns.
-		if offsetExtent.Row == 0 || originalRow == baseRow {
-			p.Column = addUint32Delta(p.Column, int64(offsetExtent.Column))
-		}
-		return p
-	}
-
 	cloneNode := func(src *Node) *Node {
-		dst := &Node{}
-		*dst = *src
-		dst.startByte = addUint32Delta(src.startByte, int64(offsetBytes))
-		dst.endByte = addUint32Delta(src.endByte, int64(offsetBytes))
-		dst.startPoint = offsetPoint(src.startPoint)
-		dst.endPoint = offsetPoint(src.endPoint)
-		dst.children = nil
-		dst.fieldIDs = nil
-		dst.fieldSources = nil
-		dst.parent = nil
-		dst.childIndex = -1
-		dst.ownerArena = nil
+		dst := arena.allocNodeFast()
+		cloneNodeHeaderInto(dst, src, arena, offset)
+		if perfCountersEnabled {
+			perfRecordCloneOffsetPublicNode()
+		}
 		return dst
 	}
 
@@ -2420,32 +2424,321 @@ func cloneTreeNodesWithOffset(root *Node, offsetBytes uint32, offsetExtent Point
 		oldNode := pair.old
 		newNode := pair.new
 
-		if n := len(oldNode.fieldIDs); n > 0 {
-			newNode.fieldIDs = make([]FieldID, n)
-			copy(newNode.fieldIDs, oldNode.fieldIDs)
-		}
-		if n := len(oldNode.fieldSources); n > 0 {
-			newNode.fieldSources = make([]uint8, n)
-			copy(newNode.fieldSources, oldNode.fieldSources)
-		}
+		cloneNodeFieldMetadataInto(newNode, oldNode, arena)
 
-		if n := nodeChildCountNoMaterialize(oldNode); n > 0 {
-			newNode.children = make([]*Node, n)
+		if cloneFinalChildRefsIntoArena(oldNode, newNode, arena, offset) {
+			continue
+		}
+		if n := len(oldNode.children); n > 0 {
+			children := arena.allocNodeSlice(n)
+			newNode.children = children
 			for i := 0; i < n; i++ {
-				oldChild := nodeChildAtForReason(oldNode, i, materializeForParentAPI)
+				oldChild := oldNode.children[i]
 				if oldChild == nil {
 					continue
 				}
 				newChild := cloneNode(oldChild)
 				newChild.parent = newNode
 				newChild.childIndex = int32(i)
-				newNode.children[i] = newChild
+				children[i] = newChild
 				stack = append(stack, clonePair{old: oldChild, new: newChild})
 			}
 		}
 	}
 
 	return newRoot
+}
+
+func cloneNodeHeaderInto(dst, src *Node, arena *nodeArena, offset *cloneOffset) {
+	*dst = *src
+	if offset != nil {
+		dst.startByte = addUint32Delta(src.startByte, int64(offset.byteDelta))
+		dst.endByte = addUint32Delta(src.endByte, int64(offset.byteDelta))
+		dst.startPoint = offset.offsetPoint(src.startPoint)
+		dst.endPoint = offset.offsetPoint(src.endPoint)
+	}
+	dst.children = nil
+	dst.fieldIDs = nil
+	dst.fieldSources = nil
+	dst.parent = nil
+	dst.childIndex = -1
+	dst.ownerArena = arena
+	if cp, ok := externalScannerCheckpointRefForNode(src); ok {
+		if cloned, ok := cloneExternalScannerCheckpointRef(src.ownerArena, arena, cp); ok && arena.setExternalScannerCheckpoint(dst, cloned) {
+			arena.externalScannerCheckpointRecords++
+		}
+	}
+}
+
+func (o *cloneOffset) offsetPoint(p Point) Point {
+	if o == nil {
+		return p
+	}
+	originalRow := p.Row
+	p.Row = addUint32Delta(p.Row, int64(o.point.Row))
+	// When adding a multi-line prefix, only nodes on the original first row
+	// of this tree receive the column offset. Rows after that keep columns.
+	if o.point.Row == 0 || originalRow == o.baseRow {
+		p.Column = addUint32Delta(p.Column, int64(o.point.Column))
+	}
+	return p
+}
+
+func cloneNodeFieldMetadataInto(dst, src *Node, arena *nodeArena) {
+	if n := len(src.fieldIDs); n > 0 {
+		fieldIDs := arena.allocFieldIDSlice(n)
+		copy(fieldIDs, src.fieldIDs)
+		dst.fieldIDs = fieldIDs
+	}
+	if n := len(src.fieldSources); n > 0 {
+		fieldSources := arena.allocFieldSourceSlice(n)
+		copy(fieldSources, src.fieldSources)
+		dst.fieldSources = fieldSources
+	}
+}
+
+type cloneMetricScope uint8
+
+const (
+	cloneMetricScopeNone cloneMetricScope = iota
+	cloneMetricScopeTree
+	cloneMetricScopeOffset
+)
+
+func cloneMetricScopeForOffset(offset *cloneOffset) cloneMetricScope {
+	if offset != nil {
+		return cloneMetricScopeOffset
+	}
+	return cloneMetricScopeTree
+}
+
+func cloneFinalChildRefsIntoArena(src, dst *Node, arena *nodeArena, offset *cloneOffset) bool {
+	return cloneFinalChildRefsIntoArenaWithMetrics(src, dst, arena, offset, cloneMetricScopeForOffset(offset))
+}
+
+func cloneFinalChildRefsIntoArenaForMutation(src, dst *Node, arena *nodeArena) bool {
+	return cloneFinalChildRefsIntoArenaWithMetrics(src, dst, arena, nil, cloneMetricScopeNone)
+}
+
+func cloneFinalChildRefsIntoArenaWithMetrics(src, dst *Node, arena *nodeArena, offset *cloneOffset, metrics cloneMetricScope) bool {
+	if src == nil || dst == nil || arena == nil || src.ownerArena == nil {
+		return false
+	}
+	childRange, ok := src.ownerArena.finalChildRange(src)
+	if !ok {
+		return false
+	}
+	count := childRange.count()
+	if count == 0 {
+		return false
+	}
+	srcRefs := childRange.refs(src.ownerArena)
+	if len(srcRefs) < count {
+		return false
+	}
+	if metrics == cloneMetricScopeTree && perfCountersEnabled {
+		perfRecordCloneTreeFinalRefs(count)
+		perfRecordCloneTreeChildRefs(count)
+	}
+	dstRange, dstRefs := arena.allocPendingChildEntries(count)
+	for i := 0; i < count; i++ {
+		entry := srcRefs[i].stackEntry()
+		dstRefs[i] = newPendingChildEntry(cloneStackEntryIntoArena(src.ownerArena, arena, entry, offset, metrics))
+	}
+	arena.finalChildRefs = arena.finalChildRefs || src.ownerArena.finalChildRefs
+	parentLink := dst.parent
+	parentChildIndex := dst.childIndex
+	arena.attachFinalChildRefs(dst, dstRange)
+	if sidecar, ok := arena.finalChildSidecarForNode(dst); ok {
+		sidecar.parent = parentLink
+		sidecar.parentChildIndex = parentChildIndex
+	}
+	return true
+}
+
+func cloneStackEntryIntoArena(srcArena, dstArena *nodeArena, entry stackEntry, offset *cloneOffset, metrics cloneMetricScope) stackEntry {
+	if node := stackEntryNode(entry); node != nil {
+		cloned := cloneTreeNodesIntoArenaWithOffset(node, dstArena, offset)
+		return newStackEntryNode(cloned.parseState, cloned)
+	}
+	if leaf := stackEntryCompactFullLeaf(entry); leaf != nil {
+		cloned := dstArena.allocCompactFullLeaf()
+		*cloned = *leaf
+		if perfCountersEnabled {
+			if metrics == cloneMetricScopeOffset {
+				perfRecordCloneOffsetCompactCopy()
+			} else if metrics == cloneMetricScopeTree {
+				perfRecordCloneTreeCompactCopy()
+			}
+		}
+		applyCloneOffsetToCompactFullLeaf(cloned, offset)
+		if cloned.hasCheckpoint {
+			cloned.checkpoint, _ = cloneExternalScannerCheckpointRef(srcArena, dstArena, leaf.checkpoint)
+		}
+		dstArena.compactFullLeafCreated++
+		return newStackEntryCompactFullLeaf(cloned.parseState, cloned)
+	}
+	if parent := stackEntryPendingParent(entry); parent != nil {
+		cloned := clonePendingParentIntoArena(srcArena, dstArena, parent, offset, metrics)
+		if perfCountersEnabled {
+			if metrics == cloneMetricScopeOffset {
+				perfRecordCloneOffsetCompactCopy()
+			} else if metrics == cloneMetricScopeTree {
+				perfRecordCloneTreeCompactCopy()
+			}
+		}
+		return newStackEntryPendingParent(cloned.parseState, cloned)
+	}
+	if noTree := stackEntryNoTreeNode(entry); noTree != nil {
+		cloned := dstArena.allocNoTreeNode()
+		*cloned = *noTree
+		if perfCountersEnabled {
+			if metrics == cloneMetricScopeOffset {
+				perfRecordCloneOffsetCompactCopy()
+			} else if metrics == cloneMetricScopeTree {
+				perfRecordCloneTreeCompactCopy()
+			}
+		}
+		applyCloneOffsetToNoTreeNode(cloned, offset)
+		return newStackEntryNoTreeNode(cloned.parseState, cloned)
+	}
+	return stackEntry{}
+}
+
+func cloneTreeNodesIntoArenaWithOffset(root *Node, arena *nodeArena, offset *cloneOffset) *Node {
+	if root == nil {
+		return nil
+	}
+	if offset == nil {
+		return cloneTreeNodesIntoArena(root, arena)
+	}
+
+	type clonePair struct {
+		old *Node
+		new *Node
+	}
+
+	cloneNode := func(src *Node) *Node {
+		dst := arena.allocNodeFast()
+		cloneNodeHeaderInto(dst, src, arena, offset)
+		if perfCountersEnabled {
+			perfRecordCloneOffsetPublicNode()
+		}
+		return dst
+	}
+
+	newRoot := cloneNode(root)
+	stack := []clonePair{{old: root, new: newRoot}}
+	for len(stack) > 0 {
+		last := len(stack) - 1
+		pair := stack[last]
+		stack = stack[:last]
+
+		oldNode := pair.old
+		newNode := pair.new
+
+		cloneNodeFieldMetadataInto(newNode, oldNode, arena)
+		if cloneFinalChildRefsIntoArena(oldNode, newNode, arena, offset) {
+			continue
+		}
+		if n := len(oldNode.children); n > 0 {
+			children := arena.allocNodeSlice(n)
+			newNode.children = children
+			for i := 0; i < n; i++ {
+				oldChild := oldNode.children[i]
+				if oldChild == nil {
+					continue
+				}
+				newChild := cloneNode(oldChild)
+				newChild.parent = newNode
+				newChild.childIndex = int32(i)
+				children[i] = newChild
+				stack = append(stack, clonePair{old: oldChild, new: newChild})
+			}
+		}
+	}
+	return newRoot
+}
+
+func clonePendingParentIntoArena(srcArena, dstArena *nodeArena, src *pendingParent, offset *cloneOffset, metrics cloneMetricScope) *pendingParent {
+	childCount := src.childEntryCount()
+	entrySlots := childCount
+	if src.hasFieldEntries() {
+		entrySlots = childCount * 2
+	}
+	dst := newPendingParentShellWithEntrySlotsInArena(dstArena, src.symbol, src.isNamed(), src.productionID, childCount, entrySlots, src.startByte, src.endByte, src.startPoint, src.endPoint, src.hasError())
+	dst.noTreeNode = src.noTreeNode
+	dst.startPoint = src.startPoint
+	dst.endPoint = src.endPoint
+	applyCloneOffsetToPendingParent(dst, offset)
+	dst.setHasFieldEntries(src.hasFieldEntries())
+	dst.setHasDirectFieldEntries(src.hasDirectFieldEntries())
+	for i := 0; i < childCount; i++ {
+		dst.setChildEntry(dstArena, i, cloneStackEntryIntoArena(srcArena, dstArena, src.childEntry(srcArena, i), offset, metrics))
+		if src.hasFieldEntries() {
+			fid, source := src.childFieldEntry(srcArena, i)
+			dst.setChildFieldEntry(dstArena, i, fid, source)
+		}
+	}
+	return dst
+}
+
+func applyCloneOffsetToNoTreeNode(n *noTreeNode, offset *cloneOffset) {
+	if n == nil || offset == nil {
+		return
+	}
+	n.startByte = addUint32Delta(n.startByte, int64(offset.byteDelta))
+	n.endByte = addUint32Delta(n.endByte, int64(offset.byteDelta))
+	if perfCountersEnabled {
+		perfRecordCloneOffsetShifted()
+	}
+}
+
+func applyCloneOffsetToCompactFullLeaf(n *compactFullLeaf, offset *cloneOffset) {
+	if n == nil || offset == nil {
+		return
+	}
+	applyCloneOffsetToNoTreeNode(&n.noTreeNode, offset)
+	n.startPoint = offset.offsetPoint(n.startPoint)
+	n.endPoint = offset.offsetPoint(n.endPoint)
+}
+
+func applyCloneOffsetToPendingParent(n *pendingParent, offset *cloneOffset) {
+	if n == nil || offset == nil {
+		return
+	}
+	applyCloneOffsetToNoTreeNode(&n.noTreeNode, offset)
+	n.startPoint = offset.offsetPoint(n.startPoint)
+	n.endPoint = offset.offsetPoint(n.endPoint)
+}
+
+func cloneExternalScannerCheckpointRef(srcArena, dstArena *nodeArena, cp externalScannerCheckpointRef) (externalScannerCheckpointRef, bool) {
+	if srcArena == nil || dstArena == nil || (cp.start.len == 0 && cp.end.len == 0) {
+		return externalScannerCheckpointRef{}, false
+	}
+	start := srcArena.externalScannerSnapshotBytes(cp.start)
+	end := srcArena.externalScannerSnapshotBytes(cp.end)
+	if len(start) == 0 && len(end) == 0 {
+		return externalScannerCheckpointRef{}, false
+	}
+	startRef := dstArena.copyExternalScannerSnapshotRef(start)
+	endRef := startRef
+	if !equalBytesForCheckpoint(start, end) {
+		endRef = dstArena.copyExternalScannerSnapshotRef(end)
+	}
+	return externalScannerCheckpointRef{start: startRef, end: endRef}, true
+}
+
+func equalBytesForCheckpoint(a, b []byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // ParseStopReason reports why parsing terminated.
@@ -2594,7 +2887,13 @@ func (n *Node) Edit(edit InputEdit) {
 	if n == nil {
 		return
 	}
+	if perfCountersEnabled {
+		perfRecordNodeEditCall()
+	}
 	if inputEditIsNoop(edit) {
+		if perfCountersEnabled {
+			perfRecordNodeEditNoopCall()
+		}
 		return
 	}
 	if root := nodeEditRoot(n); root != nil {
@@ -2614,6 +2913,12 @@ func inputEditIsNoop(edit InputEdit) bool {
 // and marks overlapping nodes as dirty so the incremental parser knows
 // what to re-parse.
 func (t *Tree) Edit(edit InputEdit) {
+	if perfCountersEnabled {
+		perfRecordNodeEditCall()
+		if inputEditIsNoop(edit) {
+			perfRecordNodeEditNoopCall()
+		}
+	}
 	t.edits = append(t.edits, edit)
 	t.lastEditedLeaf = nil
 	if t.root != nil {
@@ -2737,6 +3042,9 @@ func editNodeWithDelta(n *Node, edit InputEdit, byteDelta, rowDelta, colDelta in
 
 	// The node overlaps the edit — mark it dirty and adjust its end.
 	n.setDirty(true)
+	if perfCountersEnabled {
+		perfRecordNodeEditMarked()
+	}
 	if n.endByte <= edit.OldEndByte {
 		// Node is fully within the edited region.
 		n.endByte = edit.NewEndByte
@@ -2767,6 +3075,9 @@ func editNodeWithDelta(n *Node, edit InputEdit, byteDelta, rowDelta, colDelta in
 	} else {
 		for i := 0; i < childCount; i++ {
 			entry, ok := nodeChildEntryAtNoMaterialize(n, i)
+			if ok && perfCountersEnabled {
+				perfRecordNodeEditCompactRef()
+			}
 			if !ok || stackEntryNodeEndByte(entry) <= edit.StartByte {
 				continue
 			}
@@ -2774,23 +3085,121 @@ func editNodeWithDelta(n *Node, edit InputEdit, byteDelta, rowDelta, colDelta in
 				if !hasTailShift {
 					break
 				}
-				c := nodeChildAtForReason(n, i, materializeForEdit)
-				if c == nil {
-					continue
-				}
-				shiftSubtreeNodeAfterEdit(c, edit, byteDelta, rowDelta, colDelta, shiftScratch)
-				continue
-			}
-			c := nodeChildAtForReason(n, i, materializeForEdit)
-			if c == nil {
+				shiftStackEntrySubtreeAfterEdit(n.ownerArena, entry, edit, byteDelta, rowDelta, colDelta)
 				continue
 			}
 			descended = true
-			editNodeWithDelta(c, edit, byteDelta, rowDelta, colDelta, hasTailShift, shiftScratch, leafHint)
+			editStackEntryWithDelta(n.ownerArena, entry, edit, byteDelta, rowDelta, colDelta, hasTailShift, shiftScratch, leafHint)
 		}
 	}
 	if leafHint != nil && !descended && childCount == 0 {
 		*leafHint = n
+	}
+}
+
+func editStackEntryWithDelta(arena *nodeArena, entry stackEntry, edit InputEdit, byteDelta, rowDelta, colDelta int64, hasTailShift bool, shiftScratch *[]*Node, leafHint **Node) {
+	if node := stackEntryNode(entry); node != nil {
+		editNodeWithDelta(node, edit, byteDelta, rowDelta, colDelta, hasTailShift, shiftScratch, leafHint)
+		return
+	}
+	if !stackEntryHasNode(entry) || stackEntryNodeEndByte(entry) <= edit.StartByte {
+		return
+	}
+	if stackEntryNodeStartByte(entry) >= edit.OldEndByte {
+		if hasTailShift {
+			shiftStackEntrySubtreeAfterEdit(arena, entry, edit, byteDelta, rowDelta, colDelta)
+		}
+		return
+	}
+
+	setStackEntryDirty(entry, true)
+	if perfCountersEnabled {
+		perfRecordNodeEditMarked()
+	}
+	if stackEntryNodeEndByte(entry) <= edit.OldEndByte {
+		setStackEntryEnd(entry, edit.NewEndByte, edit.NewEndPoint)
+	} else {
+		setStackEntryEndByte(entry, addUint32Delta(stackEntryNodeEndByte(entry), byteDelta))
+	}
+
+	parent := stackEntryPendingParent(entry)
+	if parent == nil {
+		return
+	}
+	childCount := parent.childEntryCount()
+	for i := 0; i < childCount; i++ {
+		child := parent.childEntry(arena, i)
+		if !stackEntryHasNode(child) || stackEntryNodeEndByte(child) <= edit.StartByte {
+			continue
+		}
+		if stackEntryNodeStartByte(child) >= edit.OldEndByte {
+			if !hasTailShift {
+				break
+			}
+			shiftStackEntrySubtreeAfterEdit(arena, child, edit, byteDelta, rowDelta, colDelta)
+			continue
+		}
+		if perfCountersEnabled {
+			perfRecordNodeEditCompactRef()
+		}
+		editStackEntryWithDelta(arena, child, edit, byteDelta, rowDelta, colDelta, hasTailShift, shiftScratch, leafHint)
+	}
+}
+
+func setStackEntryDirty(entry stackEntry, dirty bool) {
+	if node := stackEntryNode(entry); node != nil {
+		node.setDirty(dirty)
+		return
+	}
+	if node := stackEntryNoTreeNode(entry); node != nil {
+		node.setDirty(dirty)
+		return
+	}
+	if leaf := stackEntryCompactFullLeaf(entry); leaf != nil {
+		leaf.setDirty(dirty)
+		return
+	}
+	if parent := stackEntryPendingParent(entry); parent != nil {
+		parent.setDirty(dirty)
+	}
+}
+
+func setStackEntryEnd(entry stackEntry, endByte uint32, endPoint Point) {
+	if node := stackEntryNode(entry); node != nil {
+		node.endByte = endByte
+		node.endPoint = endPoint
+		return
+	}
+	if node := stackEntryNoTreeNode(entry); node != nil {
+		node.endByte = endByte
+		return
+	}
+	if leaf := stackEntryCompactFullLeaf(entry); leaf != nil {
+		leaf.endByte = endByte
+		leaf.endPoint = endPoint
+		return
+	}
+	if parent := stackEntryPendingParent(entry); parent != nil {
+		parent.endByte = endByte
+		parent.endPoint = endPoint
+	}
+}
+
+func setStackEntryEndByte(entry stackEntry, endByte uint32) {
+	if node := stackEntryNode(entry); node != nil {
+		node.endByte = endByte
+		return
+	}
+	if node := stackEntryNoTreeNode(entry); node != nil {
+		node.endByte = endByte
+		return
+	}
+	if leaf := stackEntryCompactFullLeaf(entry); leaf != nil {
+		leaf.endByte = endByte
+		return
+	}
+	if parent := stackEntryPendingParent(entry); parent != nil {
+		parent.endByte = endByte
 	}
 }
 
@@ -2803,20 +3212,16 @@ func shiftNodeChildrenAfterEdit(parent *Node, edit InputEdit, byteDelta, rowDelt
 		shiftSubtreeAfterEdit(parent.children, edit, byteDelta, rowDelta, colDelta, shiftScratch)
 		return
 	}
-	var local [8]*Node
-	children := local[:0]
 	for i := 0; i < childCount; i++ {
-		child := nodeChildAtForReason(parent, i, materializeForEdit)
-		if child == nil {
+		entry, ok := nodeChildEntryAtNoMaterialize(parent, i)
+		if ok && perfCountersEnabled {
+			perfRecordNodeEditCompactRef()
+		}
+		if !ok {
 			continue
 		}
-		children = append(children, child)
-		if len(children) == cap(children) {
-			shiftSubtreeAfterEdit(children, edit, byteDelta, rowDelta, colDelta, shiftScratch)
-			children = children[:0]
-		}
+		shiftStackEntrySubtreeAfterEdit(parent.ownerArena, entry, edit, byteDelta, rowDelta, colDelta)
 	}
-	shiftSubtreeAfterEdit(children, edit, byteDelta, rowDelta, colDelta, shiftScratch)
 }
 
 func shiftSubtreeAfterEdit(roots []*Node, edit InputEdit, byteDelta, rowDelta, colDelta int64, shiftScratch *[]*Node) {
@@ -2854,9 +3259,14 @@ func shiftSubtreeAfterEdit(roots []*Node, edit InputEdit, byteDelta, rowDelta, c
 		} else {
 			childCount := nodeChildCountNoMaterialize(n)
 			for i := 0; i < childCount; i++ {
-				if c := nodeChildAtForReason(n, i, materializeForEdit); c != nil {
-					stack = append(stack, c)
+				entry, ok := nodeChildEntryAtNoMaterialize(n, i)
+				if ok && perfCountersEnabled {
+					perfRecordNodeEditCompactRef()
 				}
+				if !ok {
+					continue
+				}
+				shiftStackEntrySubtreeAfterEdit(n.ownerArena, entry, edit, byteDelta, rowDelta, colDelta)
 			}
 		}
 	}
@@ -2872,6 +3282,75 @@ func shiftSubtreeNodeAfterEdit(root *Node, edit InputEdit, byteDelta, rowDelta, 
 	var roots [1]*Node
 	roots[0] = root
 	shiftSubtreeAfterEdit(roots[:], edit, byteDelta, rowDelta, colDelta, shiftScratch)
+}
+
+func shiftStackEntrySubtreeAfterEdit(arena *nodeArena, entry stackEntry, edit InputEdit, byteDelta, rowDelta, colDelta int64) {
+	if node := stackEntryNode(entry); node != nil {
+		shiftSubtreeNodeAfterEdit(node, edit, byteDelta, rowDelta, colDelta, nil)
+		return
+	}
+	if leaf := stackEntryCompactFullLeaf(entry); leaf != nil {
+		shiftCompactFullLeafAfterEdit(leaf, edit, byteDelta, rowDelta, colDelta)
+		return
+	}
+	if parent := stackEntryPendingParent(entry); parent != nil {
+		shiftPendingParentAfterEdit(arena, parent, edit, byteDelta, rowDelta, colDelta)
+		return
+	}
+	if noTree := stackEntryNoTreeNode(entry); noTree != nil {
+		shiftNoTreeNodeAfterEdit(noTree, byteDelta)
+	}
+}
+
+func shiftNoTreeNodeAfterEdit(n *noTreeNode, byteDelta int64) {
+	if n == nil {
+		return
+	}
+	n.startByte = addUint32Delta(n.startByte, byteDelta)
+	n.endByte = addUint32Delta(n.endByte, byteDelta)
+	if perfCountersEnabled {
+		perfRecordNodeEditShifted()
+	}
+}
+
+func shiftCompactFullLeafAfterEdit(n *compactFullLeaf, edit InputEdit, byteDelta, rowDelta, colDelta int64) {
+	if n == nil {
+		return
+	}
+	shiftNoTreeNodeAfterEdit(&n.noTreeNode, byteDelta)
+	n.startPoint = shiftPointAfterEdit(n.startPoint, edit, rowDelta, colDelta)
+	n.endPoint = shiftPointAfterEdit(n.endPoint, edit, rowDelta, colDelta)
+}
+
+func shiftPendingParentAfterEdit(arena *nodeArena, n *pendingParent, edit InputEdit, byteDelta, rowDelta, colDelta int64) {
+	if n == nil {
+		return
+	}
+	shiftNoTreeNodeAfterEdit(&n.noTreeNode, byteDelta)
+	n.startPoint = shiftPointAfterEdit(n.startPoint, edit, rowDelta, colDelta)
+	n.endPoint = shiftPointAfterEdit(n.endPoint, edit, rowDelta, colDelta)
+	childCount := n.childEntryCount()
+	for i := 0; i < childCount; i++ {
+		child := n.childEntry(arena, i)
+		if !stackEntryHasNode(child) {
+			continue
+		}
+		if perfCountersEnabled {
+			perfRecordNodeEditCompactRef()
+		}
+		shiftStackEntrySubtreeAfterEdit(arena, child, edit, byteDelta, rowDelta, colDelta)
+	}
+}
+
+func shiftPointAfterEdit(p Point, edit InputEdit, rowDelta, colDelta int64) Point {
+	if p.Row != edit.OldEndPoint.Row {
+		return p
+	}
+	p.Row = addUint32Delta(p.Row, rowDelta)
+	if rowDelta == 0 {
+		p.Column = addUint32Delta(p.Column, colDelta)
+	}
+	return p
 }
 
 // DiffChangedRanges compares two syntax trees and returns the minimal

@@ -25,8 +25,27 @@ func lastNonTriviaByteEnd(source []byte) uint32 {
 }
 
 func trimTrailingExtraTriviaRoot(root *Node, source []byte) {
-	childCount := resultChildCount(root)
+	view := resultMutableChildrenForMutation(root)
+	childCount := view.Len()
 	if root == nil || childCount == 0 || len(source) == 0 {
+		return
+	}
+	if view.hasFinalChildRefs() {
+		last, ok := view.Entry(childCount - 1)
+		if !ok || !stackEntryNodeIsExtra(last) || stackEntryNodeChildCount(last) != 0 {
+			return
+		}
+		start := stackEntryNodeStartByte(last)
+		end := stackEntryNodeEndByte(last)
+		if start >= end || end != root.endByte || int(end) > len(source) {
+			return
+		}
+		if !bytesAreTrivia(source[start:end]) {
+			return
+		}
+		view.FilterFinalRefs(func(i int, entry stackEntry) bool {
+			return i+1 < childCount
+		})
 		return
 	}
 	last := resultChildAt(root, childCount-1)
@@ -39,12 +58,13 @@ func trimTrailingExtraTriviaRoot(root *Node, source []byte) {
 	if !bytesAreTrivia(source[last.startByte:last.endByte]) {
 		return
 	}
-	children := resultDenseChildrenForMutation(root)
-	root.children = children[:len(children)-1]
+	children := resultChildSliceForMutation(root)
+	root.children = cloneNodeSliceInArena(root.ownerArena, children[:len(children)-1])
 	if len(root.fieldIDs) > len(root.children) {
 		root.fieldIDs = root.fieldIDs[:len(root.children)]
 	}
 	if len(root.fieldSources) > len(root.children) {
 		root.fieldSources = root.fieldSources[:len(root.children)]
 	}
+	populateParentNode(root, root.children)
 }

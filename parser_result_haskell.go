@@ -41,18 +41,48 @@ func normalizeHaskellZeroWidthTokens(root *Node, lang *Language) {
 	if root == nil || lang == nil || lang.Name != "haskell" || resultChildCount(root) == 0 {
 		return
 	}
-	children := resultDenseChildrenForMutation(root)
+	tokenSym, hasTokenSym := symbolByName(lang, "_token1")
+	view := resultMutableChildrenForMutation(root)
+	if view.hasFinalChildRefs() && hasTokenSym {
+		changed := false
+		for i := 0; i < view.Len(); i++ {
+			entry, ok := view.Entry(i)
+			if ok && stackEntryNodeSymbol(entry) == tokenSym && stackEntryNodeStartByte(entry) == stackEntryNodeEndByte(entry) {
+				changed = true
+				break
+			}
+		}
+		if changed {
+			view.FilterFinalRefs(func(_ int, entry stackEntry) bool {
+				return stackEntryNodeSymbol(entry) != tokenSym || stackEntryNodeStartByte(entry) != stackEntryNodeEndByte(entry)
+			})
+		}
+		return
+	}
+	if !hasTokenSym {
+		return
+	}
+	children := resultChildSliceForMutation(root)
 	filtered := children[:0]
+	changed := false
 	for _, child := range children {
 		if child == nil {
+			changed = true
 			continue
 		}
-		if child.Type(lang) == "_token1" && child.startByte == child.endByte {
+		if child.symbol == tokenSym && child.startByte == child.endByte {
+			changed = true
 			continue
 		}
 		filtered = append(filtered, child)
 	}
-	root.children = filtered
+	if !changed {
+		return
+	}
+	root.children = cloneNodeSliceInArena(root.ownerArena, filtered)
+	root.fieldIDs = nil
+	root.fieldSources = nil
+	populateParentNode(root, root.children)
 }
 
 func normalizeHaskellRootImportField(root *Node, lang *Language) {
@@ -62,14 +92,17 @@ func normalizeHaskellRootImportField(root *Node, lang *Language) {
 	if len(lang.FieldNames) == 0 {
 		return
 	}
-	children := resultDenseChildrenForMutation(root)
-	for i, child := range children {
-		if child == nil {
+	view := resultMutableChildrenForMutation(root)
+	fieldStorageReady := len(root.fieldIDs) == view.Len() && len(root.fieldSources) == view.Len()
+	for i := 0; i < view.Len(); i++ {
+		entry, ok := view.Entry(i)
+		if !ok {
 			continue
 		}
 		fid := FieldID(0)
+		childType := symbolTypeName(lang, stackEntryNodeSymbol(entry))
 		for j, name := range lang.FieldNames {
-			if name == child.Type(lang) {
+			if name == childType {
 				fid = FieldID(j)
 				break
 			}
@@ -77,15 +110,9 @@ func normalizeHaskellRootImportField(root *Node, lang *Language) {
 		if fid == 0 {
 			continue
 		}
-		if len(root.fieldIDs) < len(children) {
-			fieldIDs := make([]FieldID, len(children))
-			copy(fieldIDs, root.fieldIDs)
-			root.fieldIDs = fieldIDs
-		}
-		if len(root.fieldSources) < len(children) {
-			fieldSources := make([]uint8, len(children))
-			copy(fieldSources, root.fieldSources)
-			root.fieldSources = fieldSources
+		if !fieldStorageReady {
+			ensureNodeFieldStorage(root, view.Len())
+			fieldStorageReady = true
 		}
 		root.fieldIDs[i] = fid
 		root.fieldSources[i] = fieldSourceInherited
