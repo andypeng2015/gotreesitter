@@ -132,11 +132,13 @@ type pythonRuntimeBenchStats struct {
 	compactFullLeafMaterialized          uint64
 	compactFullLeafMaterializedParent    uint64
 	compactFullLeafMaterializedFinal     uint64
+	compactFullLeafReasons               pythonMaterializeReasonStats
 	compactFullLeafDropped               uint64
 	pendingParentCreated                 uint64
 	pendingParentMaterialized            uint64
 	pendingParentMaterializedParent      uint64
 	pendingParentMaterializedFinal       uint64
+	pendingParentReasons                 pythonMaterializeReasonStats
 	pendingParentDropped                 uint64
 	pendingParentsFlattened              uint64
 	pendingChildRefsFlattened            uint64
@@ -248,6 +250,16 @@ type pythonRuntimeBenchStats struct {
 	maxStacksSeen                        int
 }
 
+type pythonMaterializeReasonStats struct {
+	normalization   uint64
+	recovery        uint64
+	query           uint64
+	cursor          uint64
+	parentAPI       uint64
+	edit            uint64
+	checkpointBuild uint64
+}
+
 func (s *pythonRuntimeBenchStats) add(rt gotreesitter.ParseRuntime, breakdown gotreesitter.ArenaBreakdown, hasBreakdown bool) {
 	s.ops++
 	s.tokensConsumed += rt.TokensConsumed
@@ -306,11 +318,25 @@ func (s *pythonRuntimeBenchStats) add(rt gotreesitter.ParseRuntime, breakdown go
 	s.compactFullLeafMaterialized += rt.CompactFullLeafMaterialized
 	s.compactFullLeafMaterializedParent += rt.CompactFullLeafMaterializedForParentReduce
 	s.compactFullLeafMaterializedFinal += rt.CompactFullLeafMaterializedForFinalTree
+	s.compactFullLeafReasons.normalization += rt.CompactFullLeafMaterializedForNormalization
+	s.compactFullLeafReasons.recovery += rt.CompactFullLeafMaterializedForRecovery
+	s.compactFullLeafReasons.query += rt.CompactFullLeafMaterializedForQuery
+	s.compactFullLeafReasons.cursor += rt.CompactFullLeafMaterializedForCursor
+	s.compactFullLeafReasons.parentAPI += rt.CompactFullLeafMaterializedForParentAPI
+	s.compactFullLeafReasons.edit += rt.CompactFullLeafMaterializedForEdit
+	s.compactFullLeafReasons.checkpointBuild += rt.CompactFullLeafMaterializedForCheckpointRebuild
 	s.compactFullLeafDropped += rt.CompactFullLeafDropped
 	s.pendingParentCreated += rt.PendingParentCreated
 	s.pendingParentMaterialized += rt.PendingParentMaterialized
 	s.pendingParentMaterializedParent += rt.PendingParentMaterializedForParentReduce
 	s.pendingParentMaterializedFinal += rt.PendingParentMaterializedForFinalTree
+	s.pendingParentReasons.normalization += rt.PendingParentMaterializedForNormalization
+	s.pendingParentReasons.recovery += rt.PendingParentMaterializedForRecovery
+	s.pendingParentReasons.query += rt.PendingParentMaterializedForQuery
+	s.pendingParentReasons.cursor += rt.PendingParentMaterializedForCursor
+	s.pendingParentReasons.parentAPI += rt.PendingParentMaterializedForParentAPI
+	s.pendingParentReasons.edit += rt.PendingParentMaterializedForEdit
+	s.pendingParentReasons.checkpointBuild += rt.PendingParentMaterializedForCheckpointRebuild
 	s.pendingParentDropped += rt.PendingParentDropped
 	s.pendingParentsFlattened += rt.PendingParentsFlattened
 	s.pendingChildRefsFlattened += rt.PendingChildRefsFlattened
@@ -658,6 +684,13 @@ func (s pythonRuntimeBenchStats) report(b *testing.B) {
 		b.ReportMetric(float64(s.compactFullLeafMaterialized)/tokens, "compact_full_leaf_materialized/token")
 		b.ReportMetric(float64(s.compactFullLeafMaterializedParent)/tokens, "compact_full_leaf_materialized_parent/token")
 		b.ReportMetric(float64(s.compactFullLeafMaterializedFinal)/tokens, "compact_full_leaf_materialized_final/token")
+		b.ReportMetric(float64(s.compactFullLeafReasons.normalization)/tokens, "compact_full_leaf_materialized_normalization/token")
+		b.ReportMetric(float64(s.compactFullLeafReasons.recovery)/tokens, "compact_full_leaf_materialized_recovery/token")
+		b.ReportMetric(float64(s.compactFullLeafReasons.query)/tokens, "compact_full_leaf_materialized_query/token")
+		b.ReportMetric(float64(s.compactFullLeafReasons.cursor)/tokens, "compact_full_leaf_materialized_cursor/token")
+		b.ReportMetric(float64(s.compactFullLeafReasons.parentAPI)/tokens, "compact_full_leaf_materialized_parent_api/token")
+		b.ReportMetric(float64(s.compactFullLeafReasons.edit)/tokens, "compact_full_leaf_materialized_edit/token")
+		b.ReportMetric(float64(s.compactFullLeafReasons.checkpointBuild)/tokens, "compact_full_leaf_materialized_checkpoint_rebuild/token")
 		b.ReportMetric(float64(s.compactFullLeafDropped)/tokens, "compact_full_leaf_dropped/token")
 		b.ReportMetric(float64(s.checkpointLeafFullNodesAvoided)/tokens, "checkpoint_leaf_full_nodes_avoided/token")
 	}
@@ -666,6 +699,13 @@ func (s pythonRuntimeBenchStats) report(b *testing.B) {
 		b.ReportMetric(float64(s.pendingParentMaterialized)/tokens, "pending_parent_materialized/token")
 		b.ReportMetric(float64(s.pendingParentMaterializedParent)/tokens, "pending_parent_materialized_parent/token")
 		b.ReportMetric(float64(s.pendingParentMaterializedFinal)/tokens, "pending_parent_materialized_final/token")
+		b.ReportMetric(float64(s.pendingParentReasons.normalization)/tokens, "pending_parent_materialized_normalization/token")
+		b.ReportMetric(float64(s.pendingParentReasons.recovery)/tokens, "pending_parent_materialized_recovery/token")
+		b.ReportMetric(float64(s.pendingParentReasons.query)/tokens, "pending_parent_materialized_query/token")
+		b.ReportMetric(float64(s.pendingParentReasons.cursor)/tokens, "pending_parent_materialized_cursor/token")
+		b.ReportMetric(float64(s.pendingParentReasons.parentAPI)/tokens, "pending_parent_materialized_parent_api/token")
+		b.ReportMetric(float64(s.pendingParentReasons.edit)/tokens, "pending_parent_materialized_edit/token")
+		b.ReportMetric(float64(s.pendingParentReasons.checkpointBuild)/tokens, "pending_parent_materialized_checkpoint_rebuild/token")
 		b.ReportMetric(float64(s.pendingParentDropped)/tokens, "pending_parent_dropped/token")
 		b.ReportMetric(float64(s.pendingParentsFlattened)/tokens, "pending_parent_flattened/token")
 		b.ReportMetric(float64(s.pendingChildRefsFlattened)/tokens, "pending_child_refs_flattened/token")
