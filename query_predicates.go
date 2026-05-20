@@ -73,88 +73,73 @@ func (q *Query) predicatesStillViable(predicates []QueryPredicate, captures []Qu
 	}
 
 	for _, pred := range predicates {
-		switch pred.kind {
-		case predicateEq, predicateNotEq:
-			left, ok := captureText(pred.leftCapture, captures, source)
-			if !ok {
-				continue
-			}
-			right := pred.literal
-			if pred.rightCapture != "" {
-				var okRight bool
-				right, okRight = captureText(pred.rightCapture, captures, source)
-				if !okRight {
-					continue
-				}
-			}
-			if pred.kind == predicateEq && left != right {
-				return false
-			}
-			if pred.kind == predicateNotEq && left == right {
-				return false
-			}
-
-		case predicateMatch, predicateLuaMatch:
-			left, ok := captureText(pred.leftCapture, captures, source)
-			if !ok {
-				continue
-			}
-			if pred.regex == nil || !pred.regex.MatchString(left) {
-				return false
-			}
-
-		case predicateNotMatch:
-			left, ok := captureText(pred.leftCapture, captures, source)
-			if !ok {
-				continue
-			}
-			if pred.regex != nil && pred.regex.MatchString(left) {
-				return false
-			}
-
-		case predicateAnyOf:
-			left, ok := captureText(pred.leftCapture, captures, source)
-			if !ok {
-				continue
-			}
-			matched := false
-			for _, v := range pred.values {
-				if left == v {
-					matched = true
-					break
-				}
-			}
-			if !matched {
-				return false
-			}
-
-		case predicateNotAnyOf:
-			left, ok := captureText(pred.leftCapture, captures, source)
-			if !ok {
-				continue
-			}
-			for _, v := range pred.values {
-				if left == v {
-					return false
-				}
-			}
-
-		case predicateIsExported:
-			text, ok := captureText(pred.leftCapture, captures, source)
-			if !ok {
-				continue
-			}
-			if text == "" {
-				return false
-			}
-			r, _ := utf8.DecodeRuneInString(text)
-			if r == utf8.RuneError || !unicode.IsUpper(r) {
-				return false
-			}
+		if !predicateStillViable(pred, captures, source) {
+			return false
 		}
 	}
 
 	return true
+}
+
+func predicateStillViable(pred QueryPredicate, captures []QueryCapture, source []byte) bool {
+	switch pred.kind {
+	case predicateEq:
+		return textEqualityPredicateStillViable(pred, captures, source, true)
+	case predicateNotEq:
+		return textEqualityPredicateStillViable(pred, captures, source, false)
+	case predicateMatch, predicateLuaMatch:
+		return regexPredicateStillViable(pred, captures, source, false)
+	case predicateNotMatch:
+		return regexPredicateStillViable(pred, captures, source, true)
+	case predicateAnyOf:
+		return listPredicateStillViable(pred, captures, source, true)
+	case predicateNotAnyOf:
+		return listPredicateStillViable(pred, captures, source, false)
+	case predicateIsExported:
+		return exportedPredicateStillViable(pred, captures, source)
+	default:
+		return true
+	}
+}
+
+func textEqualityPredicateStillViable(pred QueryPredicate, captures []QueryCapture, source []byte, wantEqual bool) bool {
+	left, ok := captureText(pred.leftCapture, captures, source)
+	if !ok {
+		return true
+	}
+	right, ok := predicateRightText(pred, captures, source)
+	if !ok {
+		return true
+	}
+	return (left == right) == wantEqual
+}
+
+func regexPredicateStillViable(pred QueryPredicate, captures []QueryCapture, source []byte, negated bool) bool {
+	left, ok := captureText(pred.leftCapture, captures, source)
+	if !ok {
+		return true
+	}
+	if pred.regex == nil {
+		return negated
+	}
+	matched := pred.regex.MatchString(left)
+	if negated {
+		return !matched
+	}
+	return matched
+}
+
+func listPredicateStillViable(pred QueryPredicate, captures []QueryCapture, source []byte, wantInList bool) bool {
+	left, ok := captureText(pred.leftCapture, captures, source)
+	if !ok {
+		return true
+	}
+	return stringInList(left, pred.values) == wantInList
+}
+
+func exportedPredicateStillViable(pred QueryPredicate, captures []QueryCapture, source []byte) bool {
+	text, ok := captureText(pred.leftCapture, captures, source)
+	return !ok || textIsExported(text)
 }
 
 func predicatesCanRejectMatch(predicates []QueryPredicate) bool {
@@ -411,7 +396,11 @@ func countPredicateMatches(pred QueryPredicate, captures []QueryCapture) bool {
 
 func captureTextIsExported(name string, captures []QueryCapture, source []byte) bool {
 	text, ok := captureText(name, captures, source)
-	if !ok || text == "" {
+	return ok && textIsExported(text)
+}
+
+func textIsExported(text string) bool {
+	if text == "" {
 		return false
 	}
 	r, _ := utf8.DecodeRuneInString(text)
