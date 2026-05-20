@@ -1133,20 +1133,20 @@ func materializePendingPayloadEntries(p *Parser, entries []stackEntry, start, en
 			continue
 		}
 		if recordFieldRejectDetails {
-			arena.pendingParentActiveFieldPayloadShape = p.pendingParentFieldRejectPayloadShape(entries[i])
+			arena.pendingParentActiveFieldPayloadShape = p.pendingParentFieldRejectPayloadShape(entries[i], arena)
 		}
 		materializeStackEntryPayloadWithParser(p, arena, &entries[i], compactFullLeafMaterializeForParentReduce, pendingParentMaterializeForParentReduce)
 	}
 }
 
-func (p *Parser) pendingParentFieldRejectPayloadShape(entry stackEntry) pendingParentFieldRejectPayloadShape {
+func (p *Parser) pendingParentFieldRejectPayloadShape(entry stackEntry, arena *nodeArena) pendingParentFieldRejectPayloadShape {
 	if p == nil || p.language == nil || !stackEntryHasNode(entry) {
 		return pendingParentFieldRejectPayloadUnknown
 	}
 	symbolMeta := p.language.SymbolMetadata
 	if stackEntryVisibleForPending(entry, symbolMeta) {
 		if parent := stackEntryPendingParent(entry); parent != nil {
-			shape := classifyPendingParentVisiblePayloadShape(parent)
+			shape := classifyPendingParentVisiblePayloadShape(parent, arena)
 			switch {
 			case shape.containsCompactLeaf:
 				return pendingParentFieldRejectPayloadVisibleCompactLeaf
@@ -1163,7 +1163,7 @@ func (p *Parser) pendingParentFieldRejectPayloadShape(entry stackEntry) pendingP
 	if n := stackEntryNode(entry); hiddenTreeHasFieldIDs(n) {
 		return pendingParentFieldRejectPayloadHiddenWithFields
 	}
-	switch pendingPlainHiddenVisibleDescendantCount(entry, symbolMeta) {
+	switch pendingPlainHiddenVisibleDescendantCount(entry, arena, symbolMeta) {
 	case 0:
 		return pendingParentFieldRejectPayloadHiddenEmpty
 	case 1:
@@ -1179,25 +1179,25 @@ type pendingParentVisiblePayloadShape struct {
 	containsFieldedDesc   bool
 }
 
-func classifyPendingParentVisiblePayloadShape(parent *pendingParent) pendingParentVisiblePayloadShape {
+func classifyPendingParentVisiblePayloadShape(parent *pendingParent, arena *nodeArena) pendingParentVisiblePayloadShape {
 	var shape pendingParentVisiblePayloadShape
-	collectPendingParentVisiblePayloadShape(parent, &shape)
+	collectPendingParentVisiblePayloadShape(parent, arena, &shape)
 	return shape
 }
 
-func collectPendingParentVisiblePayloadShape(parent *pendingParent, shape *pendingParentVisiblePayloadShape) {
+func collectPendingParentVisiblePayloadShape(parent *pendingParent, arena *nodeArena, shape *pendingParentVisiblePayloadShape) {
 	if parent == nil || shape == nil {
 		return
 	}
 	for i := 0; i < parent.childEntryCount(); i++ {
-		child := parent.childEntry(i)
+		child := parent.childEntry(arena, i)
 		if stackEntryCompactFullLeaf(child) != nil {
 			shape.containsCompactLeaf = true
 			continue
 		}
 		if nested := stackEntryPendingParent(child); nested != nil {
 			shape.containsNestedPending = true
-			collectPendingParentVisiblePayloadShape(nested, shape)
+			collectPendingParentVisiblePayloadShape(nested, arena, shape)
 			continue
 		}
 		if node := stackEntryNode(child); node != nil && nodeTreeHasFieldIDs(node) {
@@ -1256,7 +1256,7 @@ func (p *Parser) tryPushPendingNoFieldParent(s *glrStack, act ParseAction, tok T
 	childCount := 0
 	hasError := false
 	for i := start; i < reducedEnd; i++ {
-		count, _, childHasError, ok := pendingNoFieldChildCount(entries[i], parentVisible, symbolMeta)
+		count, _, childHasError, ok := pendingNoFieldChildCount(entries[i], arena, parentVisible, symbolMeta)
 		if !ok {
 			arena.recordPendingParentRejected(pendingParentRejectChild)
 			return false
@@ -1269,7 +1269,7 @@ func (p *Parser) tryPushPendingNoFieldParent(s *glrStack, act ParseAction, tok T
 		return false
 	}
 	var first, last stackEntry
-	if firstEntry, lastEntry, ok := pendingNoFieldChildEndpoints(entries, start, reducedEnd, parentVisible, symbolMeta); ok {
+	if firstEntry, lastEntry, ok := pendingNoFieldChildEndpoints(entries, start, reducedEnd, arena, parentVisible, symbolMeta); ok {
 		first = firstEntry
 		last = lastEntry
 	} else {
@@ -1301,9 +1301,9 @@ func (p *Parser) tryPushPendingNoFieldParent(s *glrStack, act ParseAction, tok T
 	out := 0
 	flattenedParents := 0
 	flattenedChildRefs := 0
-	parentChildren := parent.childRefs()
+	parentChildren := parent.childRefs(arena)
 	for i := start; i < reducedEnd; i++ {
-		next, parents, refs := fillPendingNoFieldChildren(parentChildren, out, entries[i], parentVisible, symbolMeta)
+		next, parents, refs := fillPendingNoFieldChildren(parentChildren, out, entries[i], arena, parentVisible, symbolMeta)
 		out = next
 		flattenedParents += parents
 		flattenedChildRefs += refs
@@ -1382,7 +1382,7 @@ func (p *Parser) recordPendingFieldRejectShape(arena *nodeArena, act ParseAction
 			if n := stackEntryNode(entry); hiddenTreeHasFieldIDs(n) {
 				shape = pendingParentFieldRejectHiddenChildWithFields
 			} else {
-				switch pendingPlainHiddenVisibleDescendantCount(entry, symbolMeta) {
+				switch pendingPlainHiddenVisibleDescendantCount(entry, arena, symbolMeta) {
 				case 0:
 					shape = pendingParentFieldRejectHiddenChildPlainEmpty
 				case 1:
@@ -1409,7 +1409,7 @@ func stackEntryVisibleForPending(entry stackEntry, symbolMeta []SymbolMetadata) 
 	return symbolVisibleForPending(stackEntryNodeSymbol(entry), symbolMeta)
 }
 
-func pendingPlainHiddenVisibleDescendantCount(entry stackEntry, symbolMeta []SymbolMetadata) int {
+func pendingPlainHiddenVisibleDescendantCount(entry stackEntry, arena *nodeArena, symbolMeta []SymbolMetadata) int {
 	if !stackEntryHasNode(entry) || stackEntryNodeIsMissing(entry) {
 		return 0
 	}
@@ -1419,22 +1419,22 @@ func pendingPlainHiddenVisibleDescendantCount(entry stackEntry, symbolMeta []Sym
 	if parent := stackEntryPendingParent(entry); parent != nil {
 		count := 0
 		for i := 0; i < parent.childEntryCount(); i++ {
-			child := parent.childEntry(i)
-			count += pendingPlainHiddenVisibleDescendantCount(child, symbolMeta)
+			child := parent.childEntry(arena, i)
+			count += pendingPlainHiddenVisibleDescendantCount(child, arena, symbolMeta)
 		}
 		return count
 	}
 	if node := stackEntryNode(entry); node != nil && !hiddenTreeHasFieldIDs(node) {
 		count := 0
 		for _, child := range node.children {
-			count += pendingPlainHiddenVisibleDescendantCount(newStackEntryNode(child.parseState, child), symbolMeta)
+			count += pendingPlainHiddenVisibleDescendantCount(newStackEntryNode(child.parseState, child), arena, symbolMeta)
 		}
 		return count
 	}
 	return 0
 }
 
-func pendingNoFieldChildCount(entry stackEntry, parentVisible bool, symbolMeta []SymbolMetadata) (count int, hasPayload bool, hasError bool, ok bool) {
+func pendingNoFieldChildCount(entry stackEntry, arena *nodeArena, parentVisible bool, symbolMeta []SymbolMetadata) (count int, hasPayload bool, hasError bool, ok bool) {
 	if !stackEntryHasNode(entry) {
 		return 0, false, false, true
 	}
@@ -1449,8 +1449,8 @@ func pendingNoFieldChildCount(entry stackEntry, parentVisible bool, symbolMeta [
 	if parentVisible {
 		if parent := stackEntryPendingParent(entry); parent != nil {
 			for i := 0; i < parent.childEntryCount(); i++ {
-				child := parent.childEntry(i)
-				childCount, childPayload, childHasError, childOK := pendingNoFieldChildCount(child, true, symbolMeta)
+				child := parent.childEntry(arena, i)
+				childCount, childPayload, childHasError, childOK := pendingNoFieldChildCount(child, arena, true, symbolMeta)
 				if !childOK {
 					return 0, false, false, false
 				}
@@ -1463,7 +1463,7 @@ func pendingNoFieldChildCount(entry stackEntry, parentVisible bool, symbolMeta [
 		if node := stackEntryNode(entry); node != nil {
 			for _, child := range node.children {
 				childEntry := newStackEntryNode(child.parseState, child)
-				childCount, childPayload, childHasError, childOK := pendingNoFieldChildCount(childEntry, true, symbolMeta)
+				childCount, childPayload, childHasError, childOK := pendingNoFieldChildCount(childEntry, arena, true, symbolMeta)
 				if !childOK {
 					return 0, false, false, false
 				}
@@ -1480,9 +1480,9 @@ func pendingNoFieldChildCount(entry stackEntry, parentVisible bool, symbolMeta [
 	return 1, hasPayload, hasError, true
 }
 
-func pendingNoFieldChildEndpoints(entries []stackEntry, start, end int, parentVisible bool, symbolMeta []SymbolMetadata) (first, last stackEntry, ok bool) {
+func pendingNoFieldChildEndpoints(entries []stackEntry, start, end int, arena *nodeArena, parentVisible bool, symbolMeta []SymbolMetadata) (first, last stackEntry, ok bool) {
 	for i := start; i < end; i++ {
-		next, found := pendingNoFieldFirstChild(entries[i], parentVisible, symbolMeta)
+		next, found := pendingNoFieldFirstChild(entries[i], arena, parentVisible, symbolMeta)
 		if !found {
 			continue
 		}
@@ -1494,7 +1494,7 @@ func pendingNoFieldChildEndpoints(entries []stackEntry, start, end int, parentVi
 		return stackEntry{}, stackEntry{}, false
 	}
 	for i := end - 1; i >= start; i-- {
-		next, found := pendingNoFieldLastChild(entries[i], parentVisible, symbolMeta)
+		next, found := pendingNoFieldLastChild(entries[i], arena, parentVisible, symbolMeta)
 		if !found {
 			continue
 		}
@@ -1504,7 +1504,7 @@ func pendingNoFieldChildEndpoints(entries []stackEntry, start, end int, parentVi
 	return stackEntry{}, stackEntry{}, false
 }
 
-func pendingNoFieldFirstChild(entry stackEntry, parentVisible bool, symbolMeta []SymbolMetadata) (stackEntry, bool) {
+func pendingNoFieldFirstChild(entry stackEntry, arena *nodeArena, parentVisible bool, symbolMeta []SymbolMetadata) (stackEntry, bool) {
 	if !stackEntryHasNode(entry) || stackEntryNodeIsMissing(entry) {
 		return stackEntry{}, false
 	}
@@ -1514,8 +1514,8 @@ func pendingNoFieldFirstChild(entry stackEntry, parentVisible bool, symbolMeta [
 	if parentVisible {
 		if parent := stackEntryPendingParent(entry); parent != nil {
 			for i := 0; i < parent.childEntryCount(); i++ {
-				child := parent.childEntry(i)
-				if next, ok := pendingNoFieldFirstChild(child, true, symbolMeta); ok {
+				child := parent.childEntry(arena, i)
+				if next, ok := pendingNoFieldFirstChild(child, arena, true, symbolMeta); ok {
 					return next, true
 				}
 			}
@@ -1523,7 +1523,7 @@ func pendingNoFieldFirstChild(entry stackEntry, parentVisible bool, symbolMeta [
 		}
 		if node := stackEntryNode(entry); node != nil {
 			for _, child := range node.children {
-				if next, ok := pendingNoFieldFirstChild(newStackEntryNode(child.parseState, child), true, symbolMeta); ok {
+				if next, ok := pendingNoFieldFirstChild(newStackEntryNode(child.parseState, child), arena, true, symbolMeta); ok {
 					return next, true
 				}
 			}
@@ -1536,7 +1536,7 @@ func pendingNoFieldFirstChild(entry stackEntry, parentVisible bool, symbolMeta [
 	return entry, true
 }
 
-func pendingNoFieldLastChild(entry stackEntry, parentVisible bool, symbolMeta []SymbolMetadata) (stackEntry, bool) {
+func pendingNoFieldLastChild(entry stackEntry, arena *nodeArena, parentVisible bool, symbolMeta []SymbolMetadata) (stackEntry, bool) {
 	if !stackEntryHasNode(entry) || stackEntryNodeIsMissing(entry) {
 		return stackEntry{}, false
 	}
@@ -1546,8 +1546,8 @@ func pendingNoFieldLastChild(entry stackEntry, parentVisible bool, symbolMeta []
 	if parentVisible {
 		if parent := stackEntryPendingParent(entry); parent != nil {
 			for i := parent.childEntryCount() - 1; i >= 0; i-- {
-				child := parent.childEntry(i)
-				if next, ok := pendingNoFieldLastChild(child, true, symbolMeta); ok {
+				child := parent.childEntry(arena, i)
+				if next, ok := pendingNoFieldLastChild(child, arena, true, symbolMeta); ok {
 					return next, true
 				}
 			}
@@ -1556,7 +1556,7 @@ func pendingNoFieldLastChild(entry stackEntry, parentVisible bool, symbolMeta []
 		if node := stackEntryNode(entry); node != nil {
 			for i := len(node.children) - 1; i >= 0; i-- {
 				child := node.children[i]
-				if next, ok := pendingNoFieldLastChild(newStackEntryNode(child.parseState, child), true, symbolMeta); ok {
+				if next, ok := pendingNoFieldLastChild(newStackEntryNode(child.parseState, child), arena, true, symbolMeta); ok {
 					return next, true
 				}
 			}
@@ -1569,7 +1569,7 @@ func pendingNoFieldLastChild(entry stackEntry, parentVisible bool, symbolMeta []
 	return entry, true
 }
 
-func fillPendingNoFieldChildren(dst []pendingChildEntry, out int, entry stackEntry, parentVisible bool, symbolMeta []SymbolMetadata) (next int, flattenedParents int, flattenedChildRefs int) {
+func fillPendingNoFieldChildren(dst []pendingChildEntry, out int, entry stackEntry, arena *nodeArena, parentVisible bool, symbolMeta []SymbolMetadata) (next int, flattenedParents int, flattenedChildRefs int) {
 	if !stackEntryHasNode(entry) || stackEntryNodeIsMissing(entry) {
 		return out, 0, 0
 	}
@@ -1583,11 +1583,11 @@ func fillPendingNoFieldChildren(dst []pendingChildEntry, out int, entry stackEnt
 	if parentVisible {
 		if parent := stackEntryPendingParent(entry); parent != nil {
 			before := out
-			children := parent.childRefs()
+			children := parent.childRefs(arena)
 			for _, childRef := range children {
 				child := childRef.stackEntry()
 				var parents, refs int
-				out, parents, refs = fillPendingNoFieldChildren(dst, out, child, true, symbolMeta)
+				out, parents, refs = fillPendingNoFieldChildren(dst, out, child, arena, true, symbolMeta)
 				flattenedParents += parents
 				flattenedChildRefs += refs
 			}
@@ -1602,7 +1602,7 @@ func fillPendingNoFieldChildren(dst []pendingChildEntry, out int, entry stackEnt
 			children := node.children
 			for _, child := range children {
 				var parents, refs int
-				out, parents, refs = fillPendingNoFieldChildren(dst, out, newStackEntryNode(child.parseState, child), true, symbolMeta)
+				out, parents, refs = fillPendingNoFieldChildren(dst, out, newStackEntryNode(child.parseState, child), arena, true, symbolMeta)
 				flattenedParents += parents
 				flattenedChildRefs += refs
 			}

@@ -6,8 +6,7 @@ type pendingParent struct {
 	noTreeNode
 	startPoint Point
 	endPoint   Point
-	firstChild *pendingChildEntry
-	childCount uint32
+	childRange pendingChildRange
 }
 
 type pendingParentSlab struct {
@@ -24,6 +23,15 @@ type pendingChildEntrySlab struct {
 // kind in the low bits. The payload parseState is the source of truth when the
 // stack entry is reconstructed.
 type pendingChildEntry uintptr
+
+type pendingChildRange uint64
+
+const (
+	pendingChildRangeCountBits  = 20
+	pendingChildRangeOffsetBits = 24
+	pendingChildRangeCountMask  = (uint64(1) << pendingChildRangeCountBits) - 1
+	pendingChildRangeOffsetMask = (uint64(1) << pendingChildRangeOffsetBits) - 1
+)
 
 type pendingParentMaterializeReason = materializeReason
 
@@ -88,14 +96,14 @@ func defaultPendingChildEntrySlabCap(class arenaClass) int {
 func newPendingParentInArena(arena *nodeArena, sym Symbol, named bool, productionID uint16, children []stackEntry, startByte, endByte uint32, startPoint, endPoint Point, hasError bool) *pendingParent {
 	p := newPendingParentShellInArena(arena, sym, named, productionID, len(children), startByte, endByte, startPoint, endPoint, hasError)
 	for i, child := range children {
-		p.setChildEntry(i, child)
+		p.setChildEntry(arena, i, child)
 	}
 	return p
 }
 
 func newPendingParentShellInArena(arena *nodeArena, sym Symbol, named bool, productionID uint16, childCount int, startByte, endByte uint32, startPoint, endPoint Point, hasError bool) *pendingParent {
 	var p *pendingParent
-	var children []pendingChildEntry
+	var childRange pendingChildRange
 	if arena == nil {
 		if childCount > 0 {
 			panic("pending parent child refs require arena-backed payloads")
@@ -103,10 +111,10 @@ func newPendingParentShellInArena(arena *nodeArena, sym Symbol, named bool, prod
 		p = &pendingParent{}
 	} else {
 		p = arena.allocPendingParent()
-		children = arena.allocPendingChildEntries(childCount)
+		childRange, _ = arena.allocPendingChildEntries(childCount)
 		arena.pendingParentCreated++
 	}
-	p.setChildEntries(children)
+	p.setChildEntries(childRange)
 	p.symbol = sym
 	p.startByte = startByte
 	p.endByte = endByte
@@ -120,40 +128,91 @@ func newPendingParentShellInArena(arena *nodeArena, sym Symbol, named bool, prod
 	return p
 }
 
-func (p *pendingParent) setChildEntries(children []pendingChildEntry) {
-	if p == nil || len(children) == 0 {
+func (p *pendingParent) setChildEntries(childRange pendingChildRange) {
+	if p == nil {
 		return
 	}
-	p.firstChild = &children[0]
-	p.childCount = uint32(len(children))
+	p.childRange = childRange
 }
 
-func (p *pendingParent) childRefs() []pendingChildEntry {
-	if p == nil || p.firstChild == nil || p.childCount == 0 {
+func (p *pendingParent) childRefs(arena *nodeArena) []pendingChildEntry {
+	if p == nil || arena == nil || p.childRange.count() == 0 {
 		return nil
 	}
-	return unsafe.Slice(p.firstChild, int(p.childCount))
+	return p.childRange.refs(arena)
 }
 
 func (p *pendingParent) childEntryCount() int {
 	if p == nil {
 		return 0
 	}
-	return int(p.childCount)
+	return p.childRange.count()
 }
 
-func (p *pendingParent) childEntry(i int) stackEntry {
-	if p == nil || i < 0 || i >= int(p.childCount) {
+func (p *pendingParent) childEntry(arena *nodeArena, i int) stackEntry {
+	if p == nil || i < 0 || i >= p.childEntryCount() {
 		return stackEntry{}
 	}
-	return p.childRefs()[i].stackEntry()
+	refs := p.childRefs(arena)
+	if i >= len(refs) {
+		return stackEntry{}
+	}
+	return refs[i].stackEntry()
 }
 
-func (p *pendingParent) setChildEntry(i int, entry stackEntry) {
-	if p == nil || i < 0 || i >= int(p.childCount) {
+func (p *pendingParent) setChildEntry(arena *nodeArena, i int, entry stackEntry) {
+	if p == nil || i < 0 || i >= p.childEntryCount() {
 		return
 	}
-	p.childRefs()[i] = newPendingChildEntry(entry)
+	refs := p.childRefs(arena)
+	if i >= len(refs) {
+		return
+	}
+	refs[i] = newPendingChildEntry(entry)
+}
+
+func newPendingChildRange(slabIndex, offset, count int) pendingChildRange {
+	if count <= 0 {
+		return 0
+	}
+	if slabIndex < 0 || offset < 0 || count < 0 ||
+		uint64(slabIndex) >= 1<<(64-pendingChildRangeOffsetBits-pendingChildRangeCountBits) ||
+		uint64(offset) > pendingChildRangeOffsetMask ||
+		uint64(count) > pendingChildRangeCountMask {
+		panic("pending child range exceeds packed bounds")
+	}
+	return pendingChildRange(uint64(slabIndex)<<(pendingChildRangeOffsetBits+pendingChildRangeCountBits) |
+		uint64(offset)<<pendingChildRangeCountBits |
+		uint64(count))
+}
+
+func (r pendingChildRange) count() int {
+	return int(uint64(r) & pendingChildRangeCountMask)
+}
+
+func (r pendingChildRange) slabIndex() int {
+	return int(uint64(r) >> (pendingChildRangeOffsetBits + pendingChildRangeCountBits))
+}
+
+func (r pendingChildRange) offset() int {
+	return int((uint64(r) >> pendingChildRangeCountBits) & pendingChildRangeOffsetMask)
+}
+
+func (r pendingChildRange) refs(arena *nodeArena) []pendingChildEntry {
+	count := r.count()
+	if arena == nil || count == 0 {
+		return nil
+	}
+	slabIndex := r.slabIndex()
+	if slabIndex < 0 || slabIndex >= len(arena.pendingChildEntrySlabs) {
+		return nil
+	}
+	offset := r.offset()
+	slab := arena.pendingChildEntrySlabs[slabIndex].data
+	if offset < 0 || offset+count > len(slab) {
+		return nil
+	}
+	return slab[offset : offset+count]
 }
 
 func newPendingChildEntry(entry stackEntry) pendingChildEntry {
@@ -208,11 +267,11 @@ func materializeStackEntryPendingParentEntryWithParser(p *Parser, arena *nodeAre
 	childCount := parent.childEntryCount()
 	children := arena.allocNodeSliceNoClear(childCount)
 	for i := 0; i < childCount; i++ {
-		child := parent.childEntry(i)
+		child := parent.childEntry(arena, i)
 		var updatedChild stackEntry
 		children[i], updatedChild = materializeStackEntryPayloadEntryWithParser(p, arena, child, compactFullLeafMaterializeReason(reason), reason)
 		child = updatedChild
-		parent.setChildEntry(i, child)
+		parent.setChildEntry(arena, i, child)
 	}
 	node := newParentNodeInArenaNoLinksWithFieldSources(arena, parent.symbol, parent.isNamed(), children, nil, nil, parent.productionID, parent.hasError())
 	node.flags = parent.flags
@@ -248,7 +307,7 @@ func materializeStackEntryPayloadEntryWithParser(p *Parser, arena *nodeArena, en
 	if p != nil && arena != nil && arena.breakdownEnabled && arena.pendingParentActiveRejectReason == pendingParentRejectFields {
 		restoreShape = true
 		prevPayloadShape = arena.pendingParentActiveFieldPayloadShape
-		arena.pendingParentActiveFieldPayloadShape = p.pendingParentFieldRejectPayloadShape(entry)
+		arena.pendingParentActiveFieldPayloadShape = p.pendingParentFieldRejectPayloadShape(entry, arena)
 	}
 	if restoreShape {
 		defer func() {

@@ -24,8 +24,8 @@ func TestCompactFullLeafSizeBudget(t *testing.T) {
 }
 
 func TestPendingParentSizeBudget(t *testing.T) {
-	if got := unsafe.Sizeof(pendingParent{}); got != 56 {
-		t.Fatalf("pendingParent size = %d, want 56", got)
+	if got := unsafe.Sizeof(pendingParent{}); got != 48 {
+		t.Fatalf("pendingParent size = %d, want 48", got)
 	}
 }
 
@@ -96,7 +96,7 @@ func TestPendingParentMaterializationCachesMaterializedChildRefs(t *testing.T) {
 	if got := arena.compactFullLeafMaterialized; got != 1 {
 		t.Fatalf("compact leaf materialized after second pass = %d, want 1", got)
 	}
-	if child := parent.childEntry(0); stackEntryNode(child) == nil {
+	if child := parent.childEntry(arena, 0); stackEntryNode(child) == nil {
 		t.Fatal("pending child ref was not updated to materialized node")
 	}
 }
@@ -343,22 +343,22 @@ func TestPendingParentFieldRejectPayloadShapeSplitsVisiblePendingParents(t *test
 	}}}
 	leaf := newLeafNodeInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
 	finalLike := newPendingParentInArena(arena, 10, true, 7, []stackEntry{newStackEntryNode(2, leaf)}, 0, 1, Point{}, Point{Column: 1}, false)
-	if got := parser.pendingParentFieldRejectPayloadShape(newStackEntryPendingParent(3, finalLike)); got != pendingParentFieldRejectPayloadVisibleFinalLike {
+	if got := parser.pendingParentFieldRejectPayloadShape(newStackEntryPendingParent(3, finalLike), arena); got != pendingParentFieldRejectPayloadVisibleFinalLike {
 		t.Fatalf("final-like visible payload shape = %d", got)
 	}
 	nestedLeaf := newCompactFullLeafInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
 	nested := newPendingParentInArena(arena, 10, true, 8, []stackEntry{newStackEntryCompactFullLeaf(4, nestedLeaf)}, 0, 1, Point{}, Point{Column: 1}, false)
-	if got := parser.pendingParentFieldRejectPayloadShape(newStackEntryPendingParent(5, nested)); got != pendingParentFieldRejectPayloadVisibleCompactLeaf {
+	if got := parser.pendingParentFieldRejectPayloadShape(newStackEntryPendingParent(5, nested), arena); got != pendingParentFieldRejectPayloadVisibleCompactLeaf {
 		t.Fatalf("compact-leaf visible payload shape = %d", got)
 	}
 	inner := newPendingParentInArena(arena, 10, true, 9, []stackEntry{newStackEntryNode(6, leaf)}, 0, 1, Point{}, Point{Column: 1}, false)
 	nestedParent := newPendingParentInArena(arena, 10, true, 10, []stackEntry{newStackEntryPendingParent(7, inner)}, 0, 1, Point{}, Point{Column: 1}, false)
-	if got := parser.pendingParentFieldRejectPayloadShape(newStackEntryPendingParent(8, nestedParent)); got != pendingParentFieldRejectPayloadVisibleNestedPayload {
+	if got := parser.pendingParentFieldRejectPayloadShape(newStackEntryPendingParent(8, nestedParent), arena); got != pendingParentFieldRejectPayloadVisibleNestedPayload {
 		t.Fatalf("nested-parent visible payload shape = %d", got)
 	}
 	fieldedChild := newParentNodeInArenaNoLinksWithFieldSources(arena, 10, true, []*Node{leaf}, []FieldID{3}, nil, 11, false)
 	fieldedParent := newPendingParentInArena(arena, 10, true, 12, []stackEntry{newStackEntryNode(9, fieldedChild)}, 0, 1, Point{}, Point{Column: 1}, false)
-	if got := parser.pendingParentFieldRejectPayloadShape(newStackEntryPendingParent(10, fieldedParent)); got != pendingParentFieldRejectPayloadVisibleFieldedDescendant {
+	if got := parser.pendingParentFieldRejectPayloadShape(newStackEntryPendingParent(10, fieldedParent), arena); got != pendingParentFieldRejectPayloadVisibleFieldedDescendant {
 		t.Fatalf("fielded-desc visible payload shape = %d", got)
 	}
 }
@@ -499,14 +499,14 @@ func TestStackResultErrorRankIncludesCompactRefs(t *testing.T) {
 	arena := newNodeArena(arenaClassFull)
 	errorLeaf := newCompactFullLeafInArena(arena, errorSymbol, false, 0, 1, Point{}, Point{Column: 1})
 	leafStack := &glrStack{entries: []stackEntry{newStackEntryCompactFullLeaf(2, errorLeaf)}}
-	if got := stackResultErrorRank(leafStack); got != 2 {
+	if got := stackResultErrorRank(leafStack, arena); got != 2 {
 		t.Fatalf("compact leaf error rank = %d, want 2", got)
 	}
 
 	child := newLeafNodeInArena(arena, errorSymbol, false, 0, 1, Point{}, Point{Column: 1})
 	parent := newPendingParentInArena(arena, 10, true, 7, []stackEntry{newStackEntryNode(3, child)}, 0, 1, Point{}, Point{Column: 1}, false)
 	parentStack := &glrStack{entries: []stackEntry{newStackEntryPendingParent(4, parent)}}
-	if got := stackResultErrorRank(parentStack); got != 2 {
+	if got := stackResultErrorRank(parentStack, arena); got != 2 {
 		t.Fatalf("pending parent child error rank = %d, want 2", got)
 	}
 }
@@ -529,10 +529,10 @@ func TestCompareAcceptedStackAliasPreferenceIncludesCompactRefs(t *testing.T) {
 	aliasLeaf := newCompactFullLeafInArena(arena, 2, true, 0, 1, Point{}, Point{Column: 1})
 	normalStack := glrStack{entries: []stackEntry{newStackEntryNode(1, normalLeaf)}}
 	aliasStack := glrStack{entries: []stackEntry{newStackEntryCompactFullLeaf(1, aliasLeaf)}}
-	if got := compareAcceptedStackAliasPreference(parser, aliasStack, normalStack); got != 1 {
+	if got := compareAcceptedStackAliasPreference(parser, arena, aliasStack, normalStack); got != 1 {
 		t.Fatalf("compact alias preference = %d, want 1", got)
 	}
-	if got := compareAcceptedStackAliasPreference(parser, normalStack, aliasStack); got != -1 {
+	if got := compareAcceptedStackAliasPreference(parser, arena, normalStack, aliasStack); got != -1 {
 		t.Fatalf("reverse compact alias preference = %d, want -1", got)
 	}
 
@@ -540,7 +540,7 @@ func TestCompareAcceptedStackAliasPreferenceIncludesCompactRefs(t *testing.T) {
 	aliasParent := newPendingParentInArena(arena, 3, true, 0, []stackEntry{newStackEntryCompactFullLeaf(1, aliasLeaf)}, 0, 1, Point{}, Point{Column: 1}, false)
 	parentNormalStack := glrStack{entries: []stackEntry{newStackEntryNode(2, normalParent)}}
 	parentAliasStack := glrStack{entries: []stackEntry{newStackEntryPendingParent(2, aliasParent)}}
-	if got := compareAcceptedStackAliasPreference(parser, parentAliasStack, parentNormalStack); got != 1 {
+	if got := compareAcceptedStackAliasPreference(parser, arena, parentAliasStack, parentNormalStack); got != 1 {
 		t.Fatalf("pending alias preference = %d, want 1", got)
 	}
 }
@@ -566,10 +566,10 @@ func TestCompareAcceptedStackAliasPreferenceIncludesGSSCompactRefs(t *testing.T)
 	aliasGSSStack := glrStack{
 		gss: buildGSSStack([]stackEntry{{state: 0}, newStackEntryCompactFullLeaf(1, aliasLeaf)}, &scratch),
 	}
-	if got := compareAcceptedStackAliasPreference(parser, aliasGSSStack, normalStack); got != 1 {
+	if got := compareAcceptedStackAliasPreference(parser, arena, aliasGSSStack, normalStack); got != 1 {
 		t.Fatalf("gss compact alias preference = %d, want 1", got)
 	}
-	if got := compareAcceptedStackAliasPreference(parser, normalStack, aliasGSSStack); got != -1 {
+	if got := compareAcceptedStackAliasPreference(parser, arena, normalStack, aliasGSSStack); got != -1 {
 		t.Fatalf("reverse gss compact alias preference = %d, want -1", got)
 	}
 
@@ -581,7 +581,7 @@ func TestCompareAcceptedStackAliasPreferenceIncludesGSSCompactRefs(t *testing.T)
 	parentAliasGSS := glrStack{
 		gss: buildGSSStack([]stackEntry{{state: 0}, newStackEntryPendingParent(2, aliasParent)}, &scratch),
 	}
-	if got := compareAcceptedStackAliasPreference(parser, parentAliasGSS, parentNormalGSS); got != 1 {
+	if got := compareAcceptedStackAliasPreference(parser, arena, parentAliasGSS, parentNormalGSS); got != 1 {
 		t.Fatalf("gss pending alias preference = %d, want 1", got)
 	}
 	if got := arena.compactFullLeafMaterialized; got != 0 {
@@ -626,7 +626,7 @@ func TestCompareAcceptedStackAliasPreferencePreservesGSSResultOrder(t *testing.T
 			newStackEntryCompactFullLeaf(2, topAlias),
 		}, &scratch),
 	}
-	if got := compareAcceptedStackAliasPreference(parser, preferBottomStack, preferTopStack); got != 1 {
+	if got := compareAcceptedStackAliasPreference(parser, arena, preferBottomStack, preferTopStack); got != 1 {
 		t.Fatalf("gss alias preference order = %d, want 1", got)
 	}
 }
@@ -659,7 +659,7 @@ func TestCompareAcceptedStackAliasPreferenceKeepsWideNodeFallback(t *testing.T) 
 	}
 	aStack := glrStack{gss: buildGSSStack(aEntries, &scratch)}
 	bStack := glrStack{gss: buildGSSStack(bEntries, &scratch)}
-	if got := compareAcceptedStackAliasPreference(parser, aStack, bStack); got != 1 {
+	if got := compareAcceptedStackAliasPreference(parser, arena, aStack, bStack); got != 1 {
 		t.Fatalf("wide node alias preference = %d, want 1", got)
 	}
 }

@@ -1013,12 +1013,12 @@ func (a *nodeArena) allocPendingParent() *pendingParent {
 	}
 }
 
-func (a *nodeArena) allocPendingChildEntries(n int) []pendingChildEntry {
+func (a *nodeArena) allocPendingChildEntries(n int) (pendingChildRange, []pendingChildEntry) {
 	if n <= 0 {
-		return nil
+		return 0, nil
 	}
 	if a == nil {
-		return make([]pendingChildEntry, n)
+		panic("pending child entry ranges require an arena")
 	}
 	a.pendingChildEntriesAllocated += uint64(n)
 	if len(a.pendingChildEntrySlabs) == 0 {
@@ -1045,7 +1045,7 @@ func (a *nodeArena) allocPendingChildEntries(n int) []pendingChildEntry {
 		start := slab.used
 		slab.used += n
 		a.pendingChildEntrySlabCursor = i
-		return slab.data[start:slab.used]
+		return newPendingChildRange(i, start, n), slab.data[start:slab.used]
 	}
 }
 

@@ -338,8 +338,8 @@ func TestArenaByteBreakdownMatchesAllocatedBytes(t *testing.T) {
 
 func TestPendingChildEntryBreakdownReportsUsedCapacityAndWaste(t *testing.T) {
 	arena := newNodeArena(arenaClassIncremental)
-	first := arena.allocPendingChildEntries(3)
-	second := arena.allocPendingChildEntries(5)
+	_, first := arena.allocPendingChildEntries(3)
+	_, second := arena.allocPendingChildEntries(5)
 	if len(first) != 3 || len(second) != 5 {
 		t.Fatalf("pending child entries len = (%d,%d), want (3,5)", len(first), len(second))
 	}
@@ -360,7 +360,7 @@ func TestPendingChildEntrySlabsUseFixedFullGrowth(t *testing.T) {
 	arena := newNodeArena(arenaClassFull)
 	slabCap := defaultPendingChildEntrySlabCap(arena.class)
 	for i := 0; i < slabCap+1; i++ {
-		_ = arena.allocPendingChildEntries(1)
+		_, _ = arena.allocPendingChildEntries(1)
 	}
 
 	if got := len(arena.pendingChildEntrySlabs); got != 2 {
@@ -375,7 +375,7 @@ func TestPendingChildEntrySlabsKeepGeometricIncrementalGrowth(t *testing.T) {
 	arena := newNodeArena(arenaClassIncremental)
 	slabCap := defaultPendingChildEntrySlabCap(arena.class)
 	for i := 0; i < slabCap+1; i++ {
-		_ = arena.allocPendingChildEntries(1)
+		_, _ = arena.allocPendingChildEntries(1)
 	}
 
 	if got := len(arena.pendingChildEntrySlabs); got != 2 {
