@@ -504,11 +504,11 @@ func normalizeCCastUnknownTypeIdentifiers(root *Node, source []byte, lang *Langu
 	localTypes := collectCLocalTypeNames(root, source, lang)
 
 	walkResultTree(root, func(n *Node) {
-		rewriteUnknownCCastAsCall(n, source, syms, localTypes)
+		rewriteUnknownCCastAsCall(n, source, lang, syms, localTypes)
 	})
 
 	walkResultTree(root, func(n *Node) {
-		rewriteKnownCCallAsCast(n, source, syms, localTypes)
+		rewriteKnownCCallAsCast(n, source, lang, syms, localTypes)
 	})
 }
 
@@ -536,25 +536,25 @@ type cCastRewriteSymbols struct {
 func cCastRewriteSymbolsForLanguage(lang *Language) (cCastRewriteSymbols, bool) {
 	var syms cCastRewriteSymbols
 	var ok bool
-	if syms.typeDescriptor, ok = lang.SymbolByName("type_descriptor"); !ok {
+	if syms.typeDescriptor, ok = lang.symbolByNamePreferNamed("type_descriptor"); !ok {
 		return syms, false
 	}
-	if syms.typeIdentifier, ok = lang.SymbolByName("type_identifier"); !ok {
+	if syms.typeIdentifier, ok = lang.symbolByNamePreferNamed("type_identifier"); !ok {
 		return syms, false
 	}
-	if syms.identifier, ok = lang.SymbolByName("identifier"); !ok {
+	if syms.identifier, ok = lang.symbolByNamePreferNamed("identifier"); !ok {
 		return syms, false
 	}
-	if syms.parenthesized, ok = lang.SymbolByName("parenthesized_expression"); !ok {
+	if syms.parenthesized, ok = lang.symbolByNamePreferNamed("parenthesized_expression"); !ok {
 		return syms, false
 	}
-	if syms.call, ok = lang.SymbolByName("call_expression"); !ok {
+	if syms.call, ok = lang.symbolByNamePreferNamed("call_expression"); !ok {
 		return syms, false
 	}
-	if syms.cast, ok = lang.SymbolByName("cast_expression"); !ok {
+	if syms.cast, ok = lang.symbolByNamePreferNamed("cast_expression"); !ok {
 		return syms, false
 	}
-	if syms.argumentList, ok = lang.SymbolByName("argument_list"); !ok {
+	if syms.argumentList, ok = lang.symbolByNamePreferNamed("argument_list"); !ok {
 		return syms, false
 	}
 	if syms.functionField, ok = lang.FieldByName("function"); !ok {
@@ -579,59 +579,67 @@ func cCastRewriteSymbolsForLanguage(lang *Language) (cCastRewriteSymbols, bool) 
 	return syms, true
 }
 
-func rewriteUnknownCCastAsCall(n *Node, source []byte, syms cCastRewriteSymbols, localTypes map[string]struct{}) {
-	if n == nil || n.symbol != syms.cast || len(n.children) != 4 {
+func rewriteUnknownCCastAsCall(n *Node, source []byte, lang *Language, syms cCastRewriteSymbols, localTypes map[string]struct{}) {
+	if n == nil || !cResultSymbolMatches(lang, n, syms.cast) || resultChildCount(n) != 4 {
 		return
 	}
-	typeDescriptor := n.children[1]
-	value := n.children[3]
-	if typeDescriptor == nil || value == nil || typeDescriptor.symbol != syms.typeDescriptor || len(typeDescriptor.children) != 1 {
+	openParen := resultChildAt(n, 0)
+	typeDescriptor := resultChildAt(n, 1)
+	closeParen := resultChildAt(n, 2)
+	value := resultChildAt(n, 3)
+	if typeDescriptor == nil || value == nil || !cResultSymbolMatches(lang, typeDescriptor, syms.typeDescriptor) || resultChildCount(typeDescriptor) != 1 {
 		return
 	}
-	typeIdent := typeDescriptor.children[0]
-	if typeIdent == nil || typeIdent.symbol != syms.typeIdentifier || value.symbol != syms.parenthesized {
+	typeIdent := resultChildAt(typeDescriptor, 0)
+	if typeIdent == nil || !cResultSymbolMatches(lang, typeIdent, syms.typeIdentifier) || !cResultSymbolMatches(lang, value, syms.parenthesized) {
 		return
 	}
-	if _, ok := localTypes[typeIdent.Text(source)]; ok {
+	if _, ok := localTypes[canonicalCTypeName(typeIdent.Text(source))]; ok {
 		return
 	}
 
 	ident := newLeafNodeInArena(n.ownerArena, syms.identifier, syms.identifierNamed, typeIdent.startByte, typeIdent.endByte, typeIdent.startPoint, typeIdent.endPoint)
-	function := newParentNodeInArena(n.ownerArena, syms.parenthesized, syms.parenthesizedNamed, []*Node{n.children[0], ident, n.children[2]}, nil, 0)
-	argsChildren := cloneNodeSliceIfArena(n.ownerArena, append([]*Node(nil), value.children...))
+	function := newParentNodeInArena(n.ownerArena, syms.parenthesized, syms.parenthesizedNamed, []*Node{openParen, ident, closeParen}, nil, 0)
+	argsChildren := resultChildSliceRangeForMutation(value, 0, resultChildCount(value))
+	argsChildren = cloneNodeSliceIfArena(n.ownerArena, append([]*Node(nil), argsChildren...))
 	arguments := newParentNodeInArena(n.ownerArena, syms.argumentList, syms.argumentListNamed, argsChildren, nil, 0)
 	children := cloneNodeSliceIfArena(n.ownerArena, []*Node{function, arguments})
 	fieldIDs := cloneFieldIDSliceInArena(n.ownerArena, []FieldID{syms.functionField, syms.argumentsField})
 	setCRewriteChildren(n, syms.call, syms.callNamed, children, fieldIDs, []int{0, 1})
 }
 
-func rewriteKnownCCallAsCast(n *Node, source []byte, syms cCastRewriteSymbols, localTypes map[string]struct{}) {
-	if n == nil || n.symbol != syms.call || len(n.children) != 2 {
+func rewriteKnownCCallAsCast(n *Node, source []byte, lang *Language, syms cCastRewriteSymbols, localTypes map[string]struct{}) {
+	if n == nil || !cResultSymbolMatches(lang, n, syms.call) || resultChildCount(n) != 2 {
 		return
 	}
-	function := n.children[0]
-	arguments := n.children[1]
+	function := resultChildAt(n, 0)
+	arguments := resultChildAt(n, 1)
 	if function == nil || arguments == nil ||
-		function.symbol != syms.parenthesized ||
-		arguments.symbol != syms.argumentList ||
-		len(function.children) < 3 {
+		!cResultSymbolMatches(lang, function, syms.parenthesized) ||
+		!cResultSymbolMatches(lang, arguments, syms.argumentList) ||
+		resultChildCount(function) < 3 {
 		return
 	}
-	ident := firstChildWithSymbol(function.children, syms.identifier)
+	ident := firstChildWithSymbol(function, lang, syms.identifier)
 	if ident == nil {
 		return
 	}
 	if _, ok := localTypes[canonicalCTypeName(ident.Text(source))]; !ok {
 		return
 	}
-	valueNode := firstNamedChild(arguments.children)
+	valueNode := firstNamedChild(arguments)
 	if valueNode == nil {
 		return
 	}
 
 	typeIdent := newLeafNodeInArena(n.ownerArena, syms.typeIdentifier, syms.typeIdentNamed, ident.startByte, ident.endByte, ident.startPoint, ident.endPoint)
 	typeDescriptor := newParentNodeInArena(n.ownerArena, syms.typeDescriptor, syms.typeDescNamed, []*Node{typeIdent}, nil, 0)
-	children := cloneNodeSliceIfArena(n.ownerArena, []*Node{function.children[0], typeDescriptor, function.children[len(function.children)-1], valueNode})
+	children := cloneNodeSliceIfArena(n.ownerArena, []*Node{
+		resultChildAt(function, 0),
+		typeDescriptor,
+		resultChildAt(function, resultChildCount(function)-1),
+		valueNode,
+	})
 	fieldIDs := make([]FieldID, len(children))
 	fieldIDs[1] = syms.typeField
 	fieldIDs[3] = syms.valueField
@@ -639,17 +647,29 @@ func rewriteKnownCCallAsCast(n *Node, source []byte, syms cCastRewriteSymbols, l
 	setCRewriteChildren(n, syms.cast, syms.castNamed, children, fieldIDs, []int{1, 3})
 }
 
-func firstChildWithSymbol(children []*Node, sym Symbol) *Node {
-	for _, child := range children {
-		if child != nil && child.symbol == sym {
+func cResultSymbolMatches(lang *Language, n *Node, sym Symbol) bool {
+	if n == nil {
+		return false
+	}
+	if n.symbol == sym {
+		return true
+	}
+	return lang != nil && lang.PublicSymbolForNamedness(n.symbol, n.isNamed()) == sym
+}
+
+func firstChildWithSymbol(n *Node, lang *Language, sym Symbol) *Node {
+	for i := 0; i < resultChildCount(n); i++ {
+		child := resultChildAt(n, i)
+		if cResultSymbolMatches(lang, child, sym) {
 			return child
 		}
 	}
 	return nil
 }
 
-func firstNamedChild(children []*Node) *Node {
-	for _, child := range children {
+func firstNamedChild(n *Node) *Node {
+	for i := 0; i < resultChildCount(n); i++ {
+		child := resultChildAt(n, i)
 		if child != nil && child.isNamed() {
 			return child
 		}
@@ -765,7 +785,8 @@ func collectCLocalTypeNames(root *Node, source []byte, lang *Language) map[strin
 	}
 	walkResultTree(root, func(n *Node) {
 		if n.Type(lang) == "type_definition" {
-			for _, child := range n.children {
+			for i := 0; i < resultChildCount(n); i++ {
+				child := resultChildAt(n, i)
 				if child == nil || child.Type(lang) != "type_identifier" {
 					continue
 				}
