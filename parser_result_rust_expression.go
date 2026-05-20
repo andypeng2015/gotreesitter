@@ -605,46 +605,36 @@ func rustBuildCanonicalDotRangeNodeFromTokens(arena *nodeArena, source []byte, l
 	if !ok || len(tokens) == 0 {
 		return nil, false
 	}
-	if len(tokens) == 1 {
+	dotLeaf := func(tok rustDotRangeToken, includeEq bool) (*Node, bool) {
+		name := ".."
+		end := tok.end
+		if includeEq {
+			name = "..="
+			end++
+			if int(end) > len(source) {
+				return nil, false
+			}
+		}
+		sym, ok := symbolByName(lang, name)
+		if !ok {
+			return nil, false
+		}
+		return newLeafNodeInArena(
+			arena,
+			sym,
+			rustNamedForSymbol(lang, sym),
+			tok.start,
+			end,
+			advancePointByBytes(Point{}, source[:tok.start]),
+			advancePointByBytes(Point{}, source[:end]),
+		), true
+	}
+	rangeNode := func(children []*Node) *Node {
 		node := newParentNodeInArena(
 			arena,
 			rangeSym,
 			rustNamedForSymbol(lang, rangeSym),
-			nil,
-			nil,
-			0,
-		)
-		node.startByte = tokens[0].start
-		node.startPoint = advancePointByBytes(Point{}, source[:tokens[0].start])
-		node.endByte = tokens[0].end
-		node.endPoint = advancePointByBytes(Point{}, source[:tokens[0].end])
-		return node, true
-	}
-	firstEq := -1
-	for i, hasEq := range eqAfter {
-		if hasEq {
-			firstEq = i
-			break
-		}
-	}
-	if firstEq == 0 {
-		left, ok := rustBuildCanonicalDotRangeNodeFromTokens(arena, source, lang, tokens[:1], nil)
-		if !ok {
-			return nil, false
-		}
-		right, ok := rustBuildCanonicalDotRangeNodeFromTokens(arena, source, lang, tokens[1:], eqAfter[1:])
-		if !ok {
-			return nil, false
-		}
-		assignSym, ok := symbolByName(lang, "assignment_expression")
-		if !ok {
-			return nil, false
-		}
-		node := newParentNodeInArena(
-			arena,
-			assignSym,
-			rustNamedForSymbol(lang, assignSym),
-			[]*Node{left, right},
+			children,
 			nil,
 			0,
 		)
@@ -652,9 +642,23 @@ func rustBuildCanonicalDotRangeNodeFromTokens(arena *nodeArena, source []byte, l
 		node.startPoint = advancePointByBytes(Point{}, source[:tokens[0].start])
 		node.endByte = tokens[len(tokens)-1].end
 		node.endPoint = advancePointByBytes(Point{}, source[:tokens[len(tokens)-1].end])
-		return node, true
+		return node
 	}
-	if firstEq == -1 || firstEq < len(tokens)-2 {
+	if len(tokens) == 1 {
+		leaf, ok := dotLeaf(tokens[0], false)
+		if !ok {
+			return nil, false
+		}
+		return rangeNode([]*Node{leaf}), true
+	}
+	lastEq := -1
+	for i := len(eqAfter) - 1; i >= 0; i-- {
+		if eqAfter[i] {
+			lastEq = i
+			break
+		}
+	}
+	if lastEq < 0 || lastEq != len(eqAfter)-2 {
 		prefixEq := eqAfter
 		if len(prefixEq) > 0 {
 			prefixEq = prefixEq[:len(prefixEq)-1]
@@ -663,41 +667,29 @@ func rustBuildCanonicalDotRangeNodeFromTokens(arena *nodeArena, source []byte, l
 		if !ok {
 			return nil, false
 		}
-		node := newParentNodeInArena(
-			arena,
-			rangeSym,
-			rustNamedForSymbol(lang, rangeSym),
-			[]*Node{child},
-			nil,
-			0,
-		)
-		node.startByte = tokens[0].start
-		node.startPoint = advancePointByBytes(Point{}, source[:tokens[0].start])
-		node.endByte = tokens[len(tokens)-1].end
-		node.endPoint = advancePointByBytes(Point{}, source[:tokens[len(tokens)-1].end])
-		return node, true
+		leaf, ok := dotLeaf(tokens[len(tokens)-1], false)
+		if !ok {
+			return nil, false
+		}
+		return rangeNode([]*Node{child, leaf}), true
 	}
-	leftEq := eqAfter[:firstEq]
-	rightEq := eqAfter[firstEq+1:]
-	left, ok := rustBuildCanonicalDotRangeNodeFromTokens(arena, source, lang, tokens[:firstEq], leftEq)
+	opIndex := lastEq + 1
+	leftEq := eqAfter[:lastEq]
+	left, ok := rustBuildCanonicalDotRangeNodeFromTokens(arena, source, lang, tokens[:opIndex], leftEq)
 	if !ok {
 		return nil, false
 	}
-	right, ok := rustBuildCanonicalDotRangeNodeFromTokens(arena, source, lang, tokens[firstEq+1:], rightEq)
+	op, ok := dotLeaf(tokens[opIndex], true)
 	if !ok {
 		return nil, false
 	}
-	node := newParentNodeInArena(
-		arena,
-		rangeSym,
-		rustNamedForSymbol(lang, rangeSym),
-		[]*Node{left, right},
-		nil,
-		0,
-	)
-	node.startByte = tokens[0].start
-	node.startPoint = advancePointByBytes(Point{}, source[:tokens[0].start])
-	node.endByte = tokens[len(tokens)-1].end
-	node.endPoint = advancePointByBytes(Point{}, source[:tokens[len(tokens)-1].end])
-	return node, true
+	if opIndex+1 >= len(tokens) {
+		return rangeNode([]*Node{left, op}), true
+	}
+	rightEq := eqAfter[opIndex+1:]
+	right, ok := rustBuildCanonicalDotRangeNodeFromTokens(arena, source, lang, tokens[opIndex+1:], rightEq)
+	if !ok {
+		return nil, false
+	}
+	return rangeNode([]*Node{left, op, right}), true
 }

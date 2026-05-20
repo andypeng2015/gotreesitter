@@ -146,6 +146,53 @@ func TestNormalizeRustRangeExpressionRestoresOperatorChild(t *testing.T) {
 	}
 }
 
+func TestRustCanonicalDotRangeBuildsOperatorChildren(t *testing.T) {
+	lang := &Language{
+		Name:        "rust",
+		SymbolNames: []string{"", "range_expression", "..", "..="},
+		SymbolMetadata: []SymbolMetadata{
+			{},
+			{Name: "range_expression", Visible: true, Named: true},
+			{Name: "..", Visible: true, Named: false},
+			{Name: "..=", Visible: true, Named: false},
+		},
+	}
+	arena := acquireNodeArena(arenaClassFull)
+	source := []byte(".. ..    ..=..")
+
+	node, ok := rustBuildCanonicalDotRangeNode(arena, source, lang, 0, uint32(len(source)))
+	if !ok {
+		t.Fatal("rustBuildCanonicalDotRangeNode returned false")
+	}
+	if got, want := node.ChildCount(), 3; got != want {
+		t.Fatalf("root child count = %d, want %d", got, want)
+	}
+	if got, want := node.Child(1).Type(lang), "..="; got != want {
+		t.Fatalf("operator child type = %q, want %q", got, want)
+	}
+	if got, want := node.Child(2).Type(lang), "range_expression"; got != want {
+		t.Fatalf("right child type = %q, want %q", got, want)
+	}
+	if got, want := node.Child(2).ChildCount(), 1; got != want {
+		t.Fatalf("right child count = %d, want %d", got, want)
+	}
+	if got, want := node.Child(2).Child(0).Type(lang), ".."; got != want {
+		t.Fatalf("right operator child type = %q, want %q", got, want)
+	}
+
+	source = []byte("..\n    ..=..")
+	node, ok = rustBuildCanonicalDotRangeNode(arena, source, lang, 0, uint32(len(source)))
+	if !ok {
+		t.Fatal("rustBuildCanonicalDotRangeNode for leading range returned false")
+	}
+	if got, want := node.Type(lang), "range_expression"; got != want {
+		t.Fatalf("leading range root type = %q, want %q", got, want)
+	}
+	if got, want := node.ChildCount(), 3; got != want {
+		t.Fatalf("leading range child count = %d, want %d", got, want)
+	}
+}
+
 func TestNormalizeRustTokenBindingPatterns(t *testing.T) {
 	lang := &Language{
 		Name: "rust",
