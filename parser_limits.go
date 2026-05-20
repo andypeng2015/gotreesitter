@@ -185,6 +185,51 @@ func parsePendingFullArenaInitialNodeCapacity(sourceLen int) int {
 	return target
 }
 
+func parseCompactFullArenaNodeCapacity(sourceLen, hint int) int {
+	target := parseCompactFullArenaInitialNodeCapacity(sourceLen)
+	if hint <= 0 {
+		return target
+	}
+	limit := parseCompactFullArenaHintLimit(sourceLen)
+	if hint > limit {
+		hint = limit
+	}
+	base := nodeCapacityForClass(arenaClassFull)
+	if hint < base {
+		hint = base
+	}
+	if hint < target/2 {
+		return target
+	}
+	return hint
+}
+
+func parseCompactFullArenaHintLimit(sourceLen int) int {
+	base := nodeCapacityForClass(arenaClassFull)
+	if sourceLen <= 0 {
+		return base
+	}
+	limit := sourceLen / 2
+	const maxCompactFullArenaHintNodes = 1_000_000
+	if limit > maxCompactFullArenaHintNodes {
+		limit = maxCompactFullArenaHintNodes
+	}
+	return max(base, limit)
+}
+
+func parseCompactFullArenaInitialNodeCapacity(sourceLen int) int {
+	base := nodeCapacityForClass(arenaClassFull)
+	if sourceLen <= 0 {
+		return base
+	}
+	estimate := sourceLen / 4
+	const maxCompactFullArenaPreallocNodes = 750_000
+	if estimate > maxCompactFullArenaPreallocNodes {
+		estimate = maxCompactFullArenaPreallocNodes
+	}
+	return max(base, estimate)
+}
+
 func parseFullExternalScannerCheckpointCapacity(sourceLen, nodeCapacity int) int {
 	if sourceLen < 256*1024 || nodeCapacity <= 0 {
 		return 0
@@ -211,8 +256,19 @@ func parseShouldCompactNoTreeShiftLeaves(sourceLen int) bool {
 }
 
 func parseShouldUseCompactFullShiftLeaves(p *Parser, source []byte, reuse *reuseCursor, oldTree *Tree, arenaClass arenaClass) bool {
+	if p == nil {
+		return false
+	}
+	compactConfigured, compactEnabled := parseCompactFullLeavesEnv()
+	if compactConfigured && !compactEnabled {
+		return false
+	}
+	defaultPythonLargeNoCompat := !compactConfigured &&
+		p.noResultCompatibilityBenchmarkOnly &&
+		p.language != nil &&
+		p.language.Name == "python"
 	return p != nil &&
-		parseCompactFullLeavesEnabled() &&
+		(compactEnabled || defaultPythonLargeNoCompat) &&
 		!p.noTreeBenchmarkOnly &&
 		p.noResultCompatibilityBenchmarkOnly &&
 		arenaClass == arenaClassFull &&
@@ -300,6 +356,13 @@ func (p *Parser) pendingFullArenaHintCapacity() int {
 	return int(atomic.LoadUint32(&p.pendingFullArenaHint))
 }
 
+func (p *Parser) compactFullArenaHintCapacity() int {
+	if p == nil {
+		return 0
+	}
+	return int(atomic.LoadUint32(&p.compactFullArenaHint))
+}
+
 func (p *Parser) incrementalArenaHintCapacity() int {
 	if p == nil {
 		return 0
@@ -341,6 +404,13 @@ func (p *Parser) recordPendingFullArenaUsage(used int) {
 		return
 	}
 	p.recordArenaUsageHint(&p.pendingFullArenaHint, used, 2_000_000, parsePendingFullArenaHintHeadroom)
+}
+
+func (p *Parser) recordCompactFullArenaUsage(used int) {
+	if p == nil || used <= 0 {
+		return
+	}
+	p.recordArenaUsageHint(&p.compactFullArenaHint, used, 1_000_000, parseCompactFullArenaHintHeadroom)
 }
 
 func (p *Parser) recordArenaUsageHint(slot *uint32, used int, maxHintNodes int, headroom func(int) int) {
@@ -403,6 +473,21 @@ func parsePendingFullArenaHintHeadroom(used int) int {
 	const maxLargePendingFullArenaHintHeadroom = 32 * 1024
 	if headroom > maxLargePendingFullArenaHintHeadroom {
 		return maxLargePendingFullArenaHintHeadroom
+	}
+	return headroom
+}
+
+func parseCompactFullArenaHintHeadroom(used int) int {
+	if used <= 0 {
+		return 0
+	}
+	if used < 256*1024 {
+		return used / 4
+	}
+	headroom := used / 16
+	const maxLargeCompactFullArenaHintHeadroom = 32 * 1024
+	if headroom > maxLargeCompactFullArenaHintHeadroom {
+		return maxLargeCompactFullArenaHintHeadroom
 	}
 	return headroom
 }

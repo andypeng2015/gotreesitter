@@ -27,6 +27,7 @@ type Parser struct {
 	skipRecoveryReparse                 bool
 	fullArenaHint                       uint32
 	pendingFullArenaHint                uint32
+	compactFullArenaHint                uint32
 	incrementalArenaHint                uint32
 	fullGSSHint                         uint32
 	incrementalGSSHint                  uint32
@@ -319,6 +320,7 @@ func resetSnippetParser(parser *Parser) {
 	parser.skipRecoveryReparse = false
 	parser.fullArenaHint = 0
 	parser.pendingFullArenaHint = 0
+	parser.compactFullArenaHint = 0
 	parser.incrementalArenaHint = 0
 	parser.fullGSSHint = 0
 	parser.incrementalGSSHint = 0
@@ -1463,7 +1465,9 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	if arenaClass == arenaClassFull {
 		defer func() {
 			if !p.noTreeBenchmarkOnly {
-				if p.pendingFullParents {
+				if p.compactFullShiftLeaves {
+					p.recordCompactFullArenaUsage(arena.used)
+				} else if p.pendingFullParents {
 					p.recordPendingFullArenaUsage(arena.used)
 				} else {
 					p.recordFullArenaUsage(arena.used)
@@ -1480,15 +1484,21 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	switch arenaClass {
 	case arenaClassFull:
 		target := parseFullArenaNodeCapacity(len(source), p.fullArenaHintCapacity())
-		if p.pendingFullParents {
+		checkpointCapacityTarget := target
+		if p.compactFullShiftLeaves {
+			target = parseCompactFullArenaNodeCapacity(len(source), p.compactFullArenaHintCapacity())
+			checkpointCapacityTarget = parseFullArenaInitialNodeCapacity(len(source))
+		} else if p.pendingFullParents {
 			target = parsePendingFullArenaNodeCapacity(len(source), p.pendingFullArenaHintCapacity())
+			checkpointCapacityTarget = target
 		}
 		if p.noTreeBenchmarkOnly {
 			target = parseNoTreeArenaNodeCapacity(len(source))
+			checkpointCapacityTarget = target
 		}
 		arena.ensureExactNodeCapacity(target)
 		if !p.noTreeBenchmarkOnly && languageUsesExternalScannerCheckpoints(p.language) {
-			arena.ensureExternalScannerCheckpointCapacity(parseFullExternalScannerCheckpointCapacity(len(source), target))
+			arena.ensureExternalScannerCheckpointCapacity(parseFullExternalScannerCheckpointCapacity(len(source), checkpointCapacityTarget))
 		}
 		scratch.entries.ensureInitialCap(parseFullEntryScratchCapacity(len(source)))
 	case arenaClassIncremental:

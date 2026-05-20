@@ -340,6 +340,7 @@ func TestResetSnippetParserClearsTransientState(t *testing.T) {
 	parser.recoveryParser = NewParser(buildArithmeticLanguage())
 	parser.skipRecoveryReparse = true
 	parser.fullArenaHint = 123
+	parser.compactFullArenaHint = 456
 	parser.included = []Range{{StartByte: 1, EndByte: 2}}
 	parser.logger = func(kind ParserLogType, message string) {}
 	parser.glrTrace = true
@@ -360,6 +361,9 @@ func TestResetSnippetParserClearsTransientState(t *testing.T) {
 	}
 	if parser.fullArenaHint != 0 {
 		t.Fatal("resetSnippetParser did not clear fullArenaHint")
+	}
+	if parser.compactFullArenaHint != 0 {
+		t.Fatal("resetSnippetParser did not clear compactFullArenaHint")
 	}
 	if len(parser.included) != 0 {
 		t.Fatal("resetSnippetParser did not clear included ranges")
@@ -771,6 +775,24 @@ func TestParsePendingFullArenaInitialNodeCapacityCapsHugeSourceFloor(t *testing.
 	}
 }
 
+func TestParseCompactFullArenaInitialNodeCapacityUsesCompactLargeSourceFloor(t *testing.T) {
+	sourceLen := 2 * 1024 * 1024
+	got := parseCompactFullArenaInitialNodeCapacity(sourceLen)
+	want := sourceLen / 4
+	if got != want {
+		t.Fatalf("parseCompactFullArenaInitialNodeCapacity(%d) = %d, want %d", sourceLen, got, want)
+	}
+}
+
+func TestParseCompactFullArenaInitialNodeCapacityCapsHugeSourceFloor(t *testing.T) {
+	sourceLen := 4 * 1024 * 1024
+	got := parseCompactFullArenaInitialNodeCapacity(sourceLen)
+	want := 750_000
+	if got != want {
+		t.Fatalf("parseCompactFullArenaInitialNodeCapacity(%d) = %d, want %d", sourceLen, got, want)
+	}
+}
+
 func TestParsePendingFullArenaNodeCapacityUsesCloseWarmHint(t *testing.T) {
 	sourceLen := 2 * 1024 * 1024
 	initial := parsePendingFullArenaInitialNodeCapacity(sourceLen)
@@ -781,12 +803,41 @@ func TestParsePendingFullArenaNodeCapacityUsesCloseWarmHint(t *testing.T) {
 	}
 }
 
+func TestParseCompactFullArenaNodeCapacityUsesWarmHintBelowInitial(t *testing.T) {
+	sourceLen := 2 * 1024 * 1024
+	initial := parseCompactFullArenaInitialNodeCapacity(sourceLen)
+	hint := initial * 3 / 4
+	got := parseCompactFullArenaNodeCapacity(sourceLen, hint)
+	if got != hint {
+		t.Fatalf("parseCompactFullArenaNodeCapacity(%d, %d) = %d, want hint", sourceLen, hint, got)
+	}
+}
+
+func TestParseCompactFullArenaNodeCapacityRejectsTinyStaleHint(t *testing.T) {
+	sourceLen := 2 * 1024 * 1024
+	initial := parseCompactFullArenaInitialNodeCapacity(sourceLen)
+	hint := initial/2 - 1
+	got := parseCompactFullArenaNodeCapacity(sourceLen, hint)
+	if got != initial {
+		t.Fatalf("parseCompactFullArenaNodeCapacity(%d, %d) = %d, want initial %d", sourceLen, hint, got, initial)
+	}
+}
+
 func TestParsePendingFullArenaHintHeadroomIsTighterForLargeSources(t *testing.T) {
 	used := 1_200_000
 	got := parsePendingFullArenaHintHeadroom(used)
 	want := 32 * 1024
 	if got != want {
 		t.Fatalf("parsePendingFullArenaHintHeadroom(%d) = %d, want %d", used, got, want)
+	}
+}
+
+func TestParseCompactFullArenaHintHeadroomIsTighterForLargeSources(t *testing.T) {
+	used := 1_200_000
+	got := parseCompactFullArenaHintHeadroom(used)
+	want := 32 * 1024
+	if got != want {
+		t.Fatalf("parseCompactFullArenaHintHeadroom(%d) = %d, want %d", used, got, want)
 	}
 }
 
@@ -820,6 +871,45 @@ func TestParseShouldUsePendingFullParentsKeepsEnvOptInForOtherLargeSources(t *te
 	t.Setenv("GOT_GLR_V2_PENDING_PARENTS", "1")
 	if !parseShouldUsePendingFullParents(parser, source, nil, nil, arenaClassFull) {
 		t.Fatal("parseShouldUsePendingFullParents = false, want env opt-in")
+	}
+}
+
+func TestParseShouldUseCompactFullShiftLeavesDefaultsForLargePythonNoCompat(t *testing.T) {
+	source := make([]byte, 256*1024)
+	parser := &Parser{
+		language:                           &Language{Name: "python"},
+		noResultCompatibilityBenchmarkOnly: true,
+	}
+
+	if !parseShouldUseCompactFullShiftLeaves(parser, source, nil, nil, arenaClassFull) {
+		t.Fatal("parseShouldUseCompactFullShiftLeaves = false, want true for large Python no-compat")
+	}
+
+	t.Setenv("GOT_GLR_V2_COMPACT_FULL_LEAVES", "0")
+	if parseShouldUseCompactFullShiftLeaves(parser, source, nil, nil, arenaClassFull) {
+		t.Fatal("parseShouldUseCompactFullShiftLeaves = true, want explicit env disable")
+	}
+}
+
+func TestParseShouldUseCompactFullShiftLeavesKeepsEnvOptInForOtherLargeSources(t *testing.T) {
+	source := make([]byte, 256*1024)
+	parser := &Parser{
+		language:                           &Language{Name: "java"},
+		noResultCompatibilityBenchmarkOnly: true,
+	}
+
+	if parseShouldUseCompactFullShiftLeaves(parser, source, nil, nil, arenaClassFull) {
+		t.Fatal("parseShouldUseCompactFullShiftLeaves = true, want false without env for Java")
+	}
+
+	t.Setenv("GOT_GLR_V2_COMPACT_FULL_LEAVES", "1")
+	if !parseShouldUseCompactFullShiftLeaves(parser, source, nil, nil, arenaClassFull) {
+		t.Fatal("parseShouldUseCompactFullShiftLeaves = false, want env opt-in")
+	}
+
+	parser.noResultCompatibilityBenchmarkOnly = false
+	if parseShouldUseCompactFullShiftLeaves(parser, source, nil, nil, arenaClassFull) {
+		t.Fatal("parseShouldUseCompactFullShiftLeaves = true, want no-compat-only gate")
 	}
 }
 
