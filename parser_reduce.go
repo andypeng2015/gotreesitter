@@ -2605,47 +2605,54 @@ func (p *Parser) buildReduceChildrenWithPath(entries []stackEntry, start, end, c
 	productionHasFields := p.reduceProductionHasEffectiveFields(childCount, productionID, arena)
 	if len(aliasSeq) == 0 && !productionHasFields {
 		if children, _, _, ok := p.buildReduceChildrenAllVisible(entries, start, end, childCount, nil, nil, nil, symbolMeta, arena); ok {
-			path := reduceChildPathNone
-			if len(children) > 0 {
-				path = reduceChildPathAllVisible
-			}
-			return children, nil, nil, path
+			return children, nil, nil, reduceChildPathForLen(len(children), reduceChildPathAllVisible)
 		}
 	}
-	parentVisible := true
-	if idx := int(parentSymbol); idx < len(symbolMeta) {
-		parentVisible = symbolMeta[parentSymbol].Visible
-	}
-	preserveHiddenFields := false
-	if parentVisible {
-		for i := start; i < end; i++ {
-			n := stackEntryNode(entries[i])
-			if n == nil {
-				continue
-			}
-			visible := true
-			if idx := int(n.symbol); idx < len(symbolMeta) {
-				visible = symbolMeta[n.symbol].Visible
-			}
-			if !visible && hiddenTreeHasFieldIDs(n) {
-				preserveHiddenFields = true
-				break
-			}
-		}
-	}
+	parentVisible := symbolVisibleForPending(parentSymbol, symbolMeta)
+	preserveHiddenFields := parentVisible && reduceEntriesContainHiddenFieldIDs(entries, start, end, symbolMeta)
 	if len(aliasSeq) == 0 && !productionHasFields && !preserveHiddenFields {
 		return p.buildReduceChildrenNoAliasNoFieldsStreaming(entries, start, end, parentSymbol, symbolMeta, arena)
 	}
 
 	rawFieldIDs, rawInherited := p.buildFieldIDs(childCount, productionID, arena)
 	if children, fieldIDs, fieldSources, ok := p.buildReduceChildrenAllVisible(entries, start, end, childCount, aliasSeq, rawFieldIDs, rawInherited, symbolMeta, arena); ok {
-		path := reduceChildPathNone
-		if len(children) > 0 {
-			path = reduceChildPathAllVisible
-		}
-		return children, fieldIDs, fieldSources, path
+		return children, fieldIDs, fieldSources, reduceChildPathForLen(len(children), reduceChildPathAllVisible)
 	}
 
+	scratch := p.newReduceBuildScratch(rawFieldIDs)
+	p.appendReduceChildrenToScratch(scratch, entries, start, end, aliasSeq, rawFieldIDs, rawInherited, symbolMeta, arena, lang)
+	if scratch.trackFields {
+		p.suppressReducedChildFields(scratch.nodes, scratch.fieldIDs, scratch.fieldSources)
+	}
+	if perfCountersEnabled {
+		perfRecordReduceScratchGeneral(len(scratch.nodes))
+	}
+	arena.recordReduceChildSliceScratchGeneral(len(scratch.nodes))
+	children, fieldIDs, fieldSources := materializeReduceChildrenFromScratch(scratch, arena)
+	return children, fieldIDs, fieldSources, reduceChildPathForLen(len(children), reduceChildPathScratchGeneral)
+}
+
+func reduceChildPathForLen(n int, nonEmptyPath reduceChildPath) reduceChildPath {
+	if n == 0 {
+		return reduceChildPathNone
+	}
+	return nonEmptyPath
+}
+
+func reduceEntriesContainHiddenFieldIDs(entries []stackEntry, start, end int, symbolMeta []SymbolMetadata) bool {
+	for i := start; i < end; i++ {
+		n := stackEntryNode(entries[i])
+		if n == nil || symbolVisibleForPending(n.symbol, symbolMeta) {
+			continue
+		}
+		if hiddenTreeHasFieldIDs(n) {
+			return true
+		}
+	}
+	return false
+}
+
+func (p *Parser) newReduceBuildScratch(rawFieldIDs []FieldID) *reduceBuildScratch {
 	var scratch *reduceBuildScratch
 	if p != nil && p.reduceScratch != nil {
 		scratch = p.reduceScratch
@@ -2656,157 +2663,144 @@ func (p *Parser) buildReduceChildrenWithPath(entries []stackEntry, start, end, c
 	if rawFieldIDs != nil {
 		scratch.ensureFieldStorage()
 	}
+	return scratch
+}
 
+type reduceChildBuildItem struct {
+	node                *Node
+	fieldID             FieldID
+	inherited           bool
+	nextStructuralIndex int
+}
+
+func reduceChildBuildItemForEntry(entry stackEntry, structuralChildIndex int, aliasSeq []Symbol, rawFieldIDs []FieldID, rawInherited []bool, arena *nodeArena, lang *Language) (reduceChildBuildItem, bool) {
+	n := stackEntryNode(entry)
+	if n == nil {
+		return reduceChildBuildItem{}, false
+	}
+	item := reduceChildBuildItem{node: n, nextStructuralIndex: structuralChildIndex}
+	if n.isExtra() {
+		return item, true
+	}
+	if structuralChildIndex < len(rawFieldIDs) {
+		item.fieldID = rawFieldIDs[structuralChildIndex]
+		if structuralChildIndex < len(rawInherited) {
+			item.inherited = rawInherited[structuralChildIndex]
+		}
+	}
+	if structuralChildIndex < len(aliasSeq) {
+		if alias := aliasSeq[structuralChildIndex]; alias != 0 {
+			item.node = aliasedNodeInArena(arena, lang, n, alias)
+		}
+	}
+	item.nextStructuralIndex = structuralChildIndex + 1
+	return item, true
+}
+
+func (p *Parser) appendReduceChildrenToScratch(scratch *reduceBuildScratch, entries []stackEntry, start, end int, aliasSeq []Symbol, rawFieldIDs []FieldID, rawInherited []bool, symbolMeta []SymbolMetadata, arena *nodeArena, lang *Language) {
 	structuralChildIndex := 0
 	for i := start; i < end; i++ {
-		n := stackEntryNode(entries[i])
-		if n == nil {
+		item, ok := reduceChildBuildItemForEntry(entries[i], structuralChildIndex, aliasSeq, rawFieldIDs, rawInherited, arena, lang)
+		if !ok {
 			continue
 		}
-		var fid FieldID
-		inherited := false
-		if !n.isExtra() {
-			if structuralChildIndex < len(rawFieldIDs) {
-				fid = rawFieldIDs[structuralChildIndex]
-				if structuralChildIndex < len(rawInherited) {
-					inherited = rawInherited[structuralChildIndex]
-				}
-			}
-			if structuralChildIndex < len(aliasSeq) {
-				if alias := aliasSeq[structuralChildIndex]; alias != 0 {
-					n = aliasedNodeInArena(arena, lang, n, alias)
-				}
-			}
-			structuralChildIndex++
-		}
-		visible := true
-		if idx := int(n.symbol); idx < len(symbolMeta) {
-			visible = symbolMeta[n.symbol].Visible
-		}
-		if visible {
-			out := len(scratch.nodes)
-			scratch.appendNode(n)
-			if scratch.trackFields {
-				if !inherited && !p.shouldSuppressVisibleDirectField(n, fid) {
-					scratch.fieldIDs[out] = fid
-					if fid != 0 {
-						scratch.fieldSources[out] = fieldSourceDirect
-					}
-				}
-			}
-			continue
-		}
+		structuralChildIndex = item.nextStructuralIndex
+		p.appendReduceChildItemToScratch(scratch, item, rawFieldIDs, structuralChildIndex, symbolMeta)
+	}
+}
 
-		kids := n.children
-		if len(kids) == 0 {
-			continue
+func (p *Parser) appendReduceChildItemToScratch(scratch *reduceBuildScratch, item reduceChildBuildItem, rawFieldIDs []FieldID, nextStructuralChildIndex int, symbolMeta []SymbolMetadata) {
+	n := item.node
+	if symbolVisibleForPending(n.symbol, symbolMeta) {
+		p.appendVisibleReduceChildToScratch(scratch, n, item.fieldID, item.inherited)
+		return
+	}
+	if len(n.children) == 0 {
+		return
+	}
+
+	spanStart := len(scratch.nodes)
+	if hiddenTreeHasFieldIDs(n) {
+		appendFlattenedHiddenChildrenWithFieldScratch(scratch, n, symbolMeta)
+	} else {
+		appendFlattenedHiddenChildrenToScratch(scratch, n, symbolMeta)
+	}
+	if item.fieldID == 0 {
+		return
+	}
+	if !scratch.trackFields {
+		scratch.ensureFieldStorage()
+	}
+	fieldEnd := len(scratch.fieldIDs)
+	applyParentFieldToFlattenedHiddenSpan(scratch, n, spanStart, fieldEnd, item.fieldID, item.inherited, rawFieldIDs, nextStructuralChildIndex)
+}
+
+func (p *Parser) appendVisibleReduceChildToScratch(scratch *reduceBuildScratch, n *Node, fid FieldID, inherited bool) {
+	out := len(scratch.nodes)
+	scratch.appendNode(n)
+	if !scratch.trackFields || inherited || p.shouldSuppressVisibleDirectField(n, fid) {
+		return
+	}
+	scratch.fieldIDs[out] = fid
+	if fid != 0 {
+		scratch.fieldSources[out] = fieldSourceDirect
+	}
+}
+
+func applyParentFieldToFlattenedHiddenSpan(scratch *reduceBuildScratch, hiddenParent *Node, spanStart, fieldEnd int, fid FieldID, inherited bool, rawFieldIDs []FieldID, nextStructuralChildIndex int) {
+	source := fieldSourceForInheritance(inherited)
+	hasField := flattenedSpanHasFieldID(scratch.fieldIDs, spanStart, fieldEnd, fid)
+	if inherited && !hasField {
+		if assignSingleDescendantInheritedField(scratch, spanStart, fieldEnd, fid) {
+			normalizeMixedSourceFieldSpan(scratch.fieldIDs, scratch.fieldSources, spanStart, fieldEnd)
+			return
 		}
-		spanStart := len(scratch.nodes)
-		if hiddenTreeHasFieldIDs(n) {
-			appendFlattenedHiddenChildrenWithFieldScratch(scratch, n, symbolMeta)
-		} else {
-			appendFlattenedHiddenChildrenToScratch(scratch, n, symbolMeta)
-		}
-		if scratch.trackFields {
-			fieldEnd := len(scratch.fieldIDs)
-			// Apply the parent's inherited field assignment to the
-			// flattened child span, but only if inlining did not
-			// already surface that same field on one of the copied
-			// children.
-			if fid != 0 {
-				source := fieldSourceDirect
-				if inherited {
-					source = fieldSourceInherited
-				}
-				if inherited && !flattenedSpanHasFieldID(scratch.fieldIDs, spanStart, fieldEnd, fid) {
-					if target, ok := flattenedSpanSingleDescendantFieldTarget(scratch.nodes, spanStart, fieldEnd, fid); ok {
-						scratch.fieldIDs[target] = fid
-						scratch.fieldSources[target] = fieldSourceInherited
-						normalizeMixedSourceFieldSpan(scratch.fieldIDs, scratch.fieldSources, spanStart, fieldEnd)
-						continue
-					}
-				}
-				if inherited && fieldEnd-spanStart == 1 && !flattenedSpanHasFieldID(scratch.fieldIDs, spanStart, fieldEnd, fid) {
-					child := scratch.nodes[spanStart]
-					if child == nil {
-						continue
-					}
-					if nodeHasDirectFieldID(child, fid) || len(child.children) == 0 {
-						continue
-					}
-				}
-				if inherited && n.isNamed() && !flattenedSpanHasFieldID(scratch.fieldIDs, spanStart, fieldEnd, fid) && countEligibleNamedFieldTargets(scratch.nodes, scratch.fieldIDs, spanStart, fieldEnd) > 1 {
-					continue
-				}
-				if inherited && !flattenedSpanHasFieldID(scratch.fieldIDs, spanStart, fieldEnd, fid) && flattenedSpanHasAnyDirectField(scratch.nodes, scratch.fieldIDs, scratch.fieldSources, spanStart, fieldEnd) {
-					if fieldEnd-spanStart != 1 {
-						continue
-					}
-					child := scratch.nodes[spanStart]
-					if child == nil || !nodeHasDirectFieldID(child, fid) {
-						continue
-					}
-				}
-				if !inherited || !fieldIDAppearsLater(rawFieldIDs, structuralChildIndex, fid) {
-					applyFieldToFlattenedSpan(scratch.nodes, scratch.fieldIDs, scratch.fieldSources, spanStart, fieldEnd, fid, source, true)
-					normalizeMixedSourceFieldSpan(scratch.fieldIDs, scratch.fieldSources, spanStart, fieldEnd)
-				}
-			}
-		} else if fid != 0 {
-			scratch.ensureFieldStorage()
-			fieldEnd := len(scratch.fieldIDs)
-			source := fieldSourceDirect
-			if inherited {
-				source = fieldSourceInherited
-			}
-			if inherited && !flattenedSpanHasFieldID(scratch.fieldIDs, spanStart, fieldEnd, fid) {
-				if target, ok := flattenedSpanSingleDescendantFieldTarget(scratch.nodes, spanStart, fieldEnd, fid); ok {
-					scratch.fieldIDs[target] = fid
-					scratch.fieldSources[target] = fieldSourceInherited
-					normalizeMixedSourceFieldSpan(scratch.fieldIDs, scratch.fieldSources, spanStart, fieldEnd)
-					continue
-				}
-			}
-			if inherited && fieldEnd-spanStart == 1 && !flattenedSpanHasFieldID(scratch.fieldIDs, spanStart, fieldEnd, fid) {
-				child := scratch.nodes[spanStart]
-				if child == nil {
-					continue
-				}
-				if nodeHasDirectFieldID(child, fid) || len(child.children) == 0 {
-					continue
-				}
-			}
-			if inherited && n.isNamed() && !flattenedSpanHasFieldID(scratch.fieldIDs, spanStart, fieldEnd, fid) && countEligibleNamedFieldTargets(scratch.nodes, scratch.fieldIDs, spanStart, fieldEnd) > 1 {
-				continue
-			}
-			if inherited && !flattenedSpanHasFieldID(scratch.fieldIDs, spanStart, fieldEnd, fid) && flattenedSpanHasAnyDirectField(scratch.nodes, scratch.fieldIDs, scratch.fieldSources, spanStart, fieldEnd) {
-				if fieldEnd-spanStart != 1 {
-					continue
-				}
-				child := scratch.nodes[spanStart]
-				if child == nil || !nodeHasDirectFieldID(child, fid) {
-					continue
-				}
-			}
-			if !inherited || !fieldIDAppearsLater(rawFieldIDs, structuralChildIndex, fid) {
-				applyFieldToFlattenedSpan(scratch.nodes, scratch.fieldIDs, scratch.fieldSources, spanStart, fieldEnd, fid, source, true)
-				normalizeMixedSourceFieldSpan(scratch.fieldIDs, scratch.fieldSources, spanStart, fieldEnd)
-			}
+		if shouldSkipInheritedParentFieldForFlattenedSpan(scratch, hiddenParent, spanStart, fieldEnd, fid) {
+			return
 		}
 	}
-	if scratch.trackFields {
-		p.suppressReducedChildFields(scratch.nodes, scratch.fieldIDs, scratch.fieldSources)
+	if inherited && fieldIDAppearsLater(rawFieldIDs, nextStructuralChildIndex, fid) {
+		return
 	}
-	if perfCountersEnabled {
-		perfRecordReduceScratchGeneral(len(scratch.nodes))
+	applyFieldToFlattenedSpan(scratch.nodes, scratch.fieldIDs, scratch.fieldSources, spanStart, fieldEnd, fid, source, true)
+	normalizeMixedSourceFieldSpan(scratch.fieldIDs, scratch.fieldSources, spanStart, fieldEnd)
+}
+
+func fieldSourceForInheritance(inherited bool) uint8 {
+	if inherited {
+		return fieldSourceInherited
 	}
-	arena.recordReduceChildSliceScratchGeneral(len(scratch.nodes))
-	children, fieldIDs, fieldSources := materializeReduceChildrenFromScratch(scratch, arena)
-	path := reduceChildPathNone
-	if len(children) > 0 {
-		path = reduceChildPathScratchGeneral
+	return fieldSourceDirect
+}
+
+func assignSingleDescendantInheritedField(scratch *reduceBuildScratch, spanStart, fieldEnd int, fid FieldID) bool {
+	target, ok := flattenedSpanSingleDescendantFieldTarget(scratch.nodes, spanStart, fieldEnd, fid)
+	if !ok {
+		return false
 	}
-	return children, fieldIDs, fieldSources, path
+	scratch.fieldIDs[target] = fid
+	scratch.fieldSources[target] = fieldSourceInherited
+	return true
+}
+
+func shouldSkipInheritedParentFieldForFlattenedSpan(scratch *reduceBuildScratch, hiddenParent *Node, spanStart, fieldEnd int, fid FieldID) bool {
+	if fieldEnd-spanStart == 1 {
+		child := scratch.nodes[spanStart]
+		if child == nil || nodeHasDirectFieldID(child, fid) || len(child.children) == 0 {
+			return true
+		}
+	}
+	if hiddenParent.isNamed() && countEligibleNamedFieldTargets(scratch.nodes, scratch.fieldIDs, spanStart, fieldEnd) > 1 {
+		return true
+	}
+	if !flattenedSpanHasAnyDirectField(scratch.nodes, scratch.fieldIDs, scratch.fieldSources, spanStart, fieldEnd) {
+		return false
+	}
+	if fieldEnd-spanStart != 1 {
+		return true
+	}
+	child := scratch.nodes[spanStart]
+	return child == nil || !nodeHasDirectFieldID(child, fid)
 }
 
 func (p *Parser) buildReduceChildrenNoAliasNoFieldsStreaming(entries []stackEntry, start, end int, parentSymbol Symbol, symbolMeta []SymbolMetadata, arena *nodeArena) ([]*Node, []FieldID, []uint8, reduceChildPath) {
@@ -3079,134 +3073,112 @@ func applyFieldToFlattenedSpan(children []*Node, fieldIDs []FieldID, fieldSource
 	}
 	inherited := source == fieldSourceInherited
 	conflictCount, multipleKinds := flattenedSpanConflictSummary(children, fieldIDs, start, end, fid)
-	override := !multipleKinds && conflictCount >= 2
-	if override {
-		for j := start; j < end; j++ {
-			if children[j] == nil || children[j].isExtra() || children[j].isMissing() {
-				continue
-			}
-			if inherited && fieldIDs[j] != 0 && fieldIDs[j] != fid && fieldSourceAt(fieldSources, j) == fieldSourceDirect {
-				continue
-			}
-			fieldIDs[j] = fid
-			if fieldSources != nil {
-				fieldSources[j] = source
-			}
-		}
+	if !multipleKinds && conflictCount >= 2 {
+		assignFieldToFlattenedSpanTargets(children, fieldIDs, fieldSources, start, end, fid, source, inherited, false, false)
 		return
 	}
 	if !multipleKinds && conflictCount == 1 && preferNamed {
-		for j := start; j < end; j++ {
-			if children[j] == nil || children[j].isExtra() || children[j].isMissing() || !children[j].isNamed() {
-				continue
-			}
-			if inherited && fieldIDs[j] != 0 && fieldIDs[j] != fid && fieldSourceAt(fieldSources, j) == fieldSourceDirect {
-				continue
-			}
-			fieldIDs[j] = fid
-			if fieldSources != nil {
-				fieldSources[j] = source
-			}
+		if assignFieldToFlattenedSpanTargets(children, fieldIDs, fieldSources, start, end, fid, source, inherited, true, true) {
 			return
 		}
 	}
-	alreadyAssigned := false
-	for j := start; j < end; j++ {
-		if fieldIDs[j] == fid {
-			alreadyAssigned = true
-			break
-		}
+	if flattenedSpanHasFieldID(fieldIDs, start, end, fid) {
+		return
 	}
-	if source == fieldSourceDirect && alreadyAssigned {
-		first := -1
-		for j := start; j < end; j++ {
-			if fieldIDs[j] != fid {
-				continue
-			}
-			if first < 0 {
-				first = j
-			}
-		}
-	}
-	if inherited && !preferNamed && !alreadyAssigned {
+	if inherited && !preferNamed {
 		if countEligibleNamedFieldTargets(children, fieldIDs, start, end) > 1 {
 			return
 		}
 	}
+	if source == fieldSourceDirect {
+		applyDirectFieldToUnassignedFlattenedSpan(children, fieldIDs, fieldSources, start, end, fid, source, preferNamed)
+		return
+	}
+	assignFirstInheritedFieldToFlattenedSpan(children, fieldIDs, fieldSources, start, end, fid, source, preferNamed, inherited)
+}
+
+func assignFieldToFlattenedSpanTargets(children []*Node, fieldIDs []FieldID, fieldSources []uint8, start, end int, fid FieldID, source uint8, inherited, requireNamed, firstOnly bool) bool {
+	assigned := false
+	for j := start; j < end; j++ {
+		if !flattenedFieldTargetEligible(children[j], requireNamed) {
+			continue
+		}
+		if inherited && fieldIDs[j] != 0 && fieldIDs[j] != fid && fieldSourceAt(fieldSources, j) == fieldSourceDirect {
+			continue
+		}
+		assignFlattenedField(fieldIDs, fieldSources, j, fid, source)
+		assigned = true
+		if firstOnly {
+			return true
+		}
+	}
+	return assigned
+}
+
+func applyDirectFieldToUnassignedFlattenedSpan(children []*Node, fieldIDs []FieldID, fieldSources []uint8, start, end int, fid FieldID, source uint8, preferNamed bool) {
 	namedTargets := 0
 	totalTargets := 0
 	allowAnonymousSingleDirectTarget := false
-	if source == fieldSourceDirect && !alreadyAssigned {
-		namedTargets = countEligibleNamedFieldTargets(children, fieldIDs, start, end)
-		totalTargets = countEligibleFieldTargets(children, fieldIDs, start, end)
-		allowAnonymousSingleDirectTarget = namedTargets == 0 && totalTargets == 1
+	namedTargets = countEligibleNamedFieldTargets(children, fieldIDs, start, end)
+	totalTargets = countEligibleFieldTargets(children, fieldIDs, start, end)
+	allowAnonymousSingleDirectTarget = namedTargets == 0 && totalTargets == 1
+	switch {
+	case allowAnonymousSingleDirectTarget:
+		assignFirstUnassignedFlattenedField(children, fieldIDs, fieldSources, start, end, fid, source, false)
+	case namedTargets > 1:
+		assignAllUnassignedFlattenedFields(children, fieldIDs, fieldSources, start, end, fid, source, true)
+	case namedTargets == 1 && totalTargets > 1:
+		assignAllUnassignedFlattenedFields(children, fieldIDs, fieldSources, start, end, fid, source, false)
+	case namedTargets == 1:
+		assignAllUnassignedFlattenedFields(children, fieldIDs, fieldSources, start, end, fid, source, true)
+	default:
+		assignFirstUnassignedFlattenedField(children, fieldIDs, fieldSources, start, end, fid, source, preferNamed)
 	}
-	for j := start; !alreadyAssigned && j < end; j++ {
+}
+
+func assignFirstInheritedFieldToFlattenedSpan(children []*Node, fieldIDs []FieldID, fieldSources []uint8, start, end int, fid FieldID, source uint8, preferNamed, inherited bool) {
+	for j := start; j < end; j++ {
 		if fieldIDs[j] != 0 || children[j] == nil || children[j].isExtra() || children[j].isMissing() {
 			continue
 		}
-		if preferNamed && !allowAnonymousSingleDirectTarget && !children[j].isNamed() {
+		if preferNamed && !children[j].isNamed() {
 			continue
 		}
 		if inherited && nodeHasDirectFieldID(children[j], fid) && end-start != 1 {
 			continue
 		}
-		if source == fieldSourceDirect {
-			if namedTargets == 0 && totalTargets == 1 {
-				for k := start; k < end; k++ {
-					if children[k] == nil || children[k].isExtra() || children[k].isMissing() || fieldIDs[k] != 0 {
-						continue
-					}
-					fieldIDs[k] = fid
-					if fieldSources != nil {
-						fieldSources[k] = source
-					}
-					break
-				}
-				break
-			}
-			if namedTargets > 1 {
-				for k := start; k < end; k++ {
-					if children[k] == nil || children[k].isExtra() || children[k].isMissing() || !children[k].isNamed() || fieldIDs[k] != 0 {
-						continue
-					}
-					fieldIDs[k] = fid
-					if fieldSources != nil {
-						fieldSources[k] = source
-					}
-				}
-				break
-			}
-			if namedTargets == 1 && totalTargets > 1 {
-				for k := start; k < end; k++ {
-					if children[k] == nil || children[k].isExtra() || children[k].isMissing() || fieldIDs[k] != 0 {
-						continue
-					}
-					fieldIDs[k] = fid
-					if fieldSources != nil {
-						fieldSources[k] = source
-					}
-				}
-				break
-			}
-			if namedTargets == 1 {
-				for k := start; k < end; k++ {
-					if children[k] == nil || children[k].isExtra() || children[k].isMissing() || !children[k].isNamed() || fieldIDs[k] != 0 {
-						continue
-					}
-					fieldIDs[k] = fid
-					if fieldSources != nil {
-						fieldSources[k] = source
-					}
-				}
-				break
-			}
-		}
-		fieldIDs[j] = fid
-		if fieldSources != nil {
-			fieldSources[j] = source
-		}
+		assignFlattenedField(fieldIDs, fieldSources, j, fid, source)
 		break
+	}
+}
+
+func assignFirstUnassignedFlattenedField(children []*Node, fieldIDs []FieldID, fieldSources []uint8, start, end int, fid FieldID, source uint8, requireNamed bool) {
+	for k := start; k < end; k++ {
+		if fieldIDs[k] != 0 || !flattenedFieldTargetEligible(children[k], requireNamed) {
+			continue
+		}
+		assignFlattenedField(fieldIDs, fieldSources, k, fid, source)
+		break
+	}
+}
+
+func assignAllUnassignedFlattenedFields(children []*Node, fieldIDs []FieldID, fieldSources []uint8, start, end int, fid FieldID, source uint8, requireNamed bool) {
+	for k := start; k < end; k++ {
+		if fieldIDs[k] != 0 || !flattenedFieldTargetEligible(children[k], requireNamed) {
+			continue
+		}
+		assignFlattenedField(fieldIDs, fieldSources, k, fid, source)
+	}
+}
+
+func flattenedFieldTargetEligible(child *Node, requireNamed bool) bool {
+	return child != nil && !child.isExtra() && !child.isMissing() && (!requireNamed || child.isNamed())
+}
+
+func assignFlattenedField(fieldIDs []FieldID, fieldSources []uint8, idx int, fid FieldID, source uint8) {
+	fieldIDs[idx] = fid
+	if fieldSources != nil {
+		fieldSources[idx] = source
 	}
 }
 

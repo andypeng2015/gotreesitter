@@ -681,138 +681,181 @@ func scalaFindNextTemplateBodyMemberStart(source []byte, pos, limit int) (int, s
 }
 
 func scalaFindTemplateBodyMemberEnd(source []byte, start, limit int) int {
-	if start+1 < limit && source[start] == '/' {
-		switch source[start+1] {
-		case '/':
-			end := start + 2
-			for end < limit && source[end] != '\n' && source[end] != '\r' {
-				end++
-			}
-			return trimTrailingHorizontalAndVerticalTrivia(source, start, end)
-		case '*':
-			end := start + 2
-			for end+1 < limit {
-				if source[end] == '*' && source[end+1] == '/' {
-					end += 2
-					return trimTrailingHorizontalAndVerticalTrivia(source, start, end)
-				}
-				end++
-			}
-			return trimTrailingHorizontalAndVerticalTrivia(source, start, limit)
-		}
+	if end, ok := scalaTemplateBodyLeadingCommentEnd(source, start, limit); ok {
+		return end
 	}
-	braceDepth := 0
-	parenDepth := 0
-	bracketDepth := 0
-	inLineComment := false
-	inBlockComment := false
-	var stringQuote byte
-	tripleQuote := false
-	lineStart := false
+	var scan scalaTemplateMemberEndScan
 	for i := start + 1; i < limit; i++ {
 		ch := source[i]
 		next := byte(0)
 		if i+1 < limit {
 			next = source[i+1]
 		}
-		if inLineComment {
-			if ch == '\n' {
-				inLineComment = false
-				lineStart = true
-			}
+		if scan.consumeTriviaOrString(source, &i, limit, ch, next) {
 			continue
 		}
-		if inBlockComment {
-			if ch == '*' && next == '/' {
-				inBlockComment = false
-				i++
-				continue
-			}
-			if ch == '\n' {
-				lineStart = true
-			}
-			continue
-		}
-		if stringQuote != 0 {
-			if tripleQuote {
-				if i+2 < limit && source[i] == stringQuote && source[i+1] == stringQuote && source[i+2] == stringQuote {
-					stringQuote = 0
-					tripleQuote = false
-					i += 2
-				}
-				continue
-			}
-			if ch == '\\' {
-				i++
-				continue
-			}
-			if ch == stringQuote {
-				stringQuote = 0
-			}
-			continue
-		}
-		if braceDepth == 0 && parenDepth == 0 && bracketDepth == 0 && ch == '/' && (next == '/' || next == '*') {
+		if scan.atTopLevel() && scalaStartsLineOrBlockComment(source, i, limit) {
 			return trimTrailingHorizontalAndVerticalTrivia(source, start, i)
 		}
-		if lineStart {
-			j := skipHorizontalTrivia(source, i, limit)
-			if braceDepth == 0 && parenDepth == 0 && bracketDepth == 0 {
-				switch {
-				case j < limit && source[j] == '}':
-					return j
-				case j+1 < limit && source[j] == '/' && (source[j+1] == '/' || source[j+1] == '*'):
-					return trimTrailingHorizontalAndVerticalTrivia(source, start, i)
-				default:
-					if _, ok := scalaTemplateMemberKindAt(source, j, limit); ok {
-						return trimTrailingHorizontalAndVerticalTrivia(source, start, i)
-					}
-				}
+		if scan.lineStart {
+			if end, ok := scalaTemplateBodyMemberEndAtLineStart(source, start, i, limit, scan); ok {
+				return end
 			}
-			lineStart = false
+			scan.lineStart = false
 		}
-		switch {
-		case ch == '/' && next == '/':
-			inLineComment = true
-			i++
+		if scan.startTriviaOrString(source, &i, limit, ch, next) {
 			continue
-		case ch == '/' && next == '*':
-			inBlockComment = true
-			i++
-			continue
-		case ch == '"' || ch == '\'':
-			if i+2 < limit && source[i+1] == ch && source[i+2] == ch {
-				stringQuote = ch
-				tripleQuote = true
-				i += 2
-				continue
-			}
-			stringQuote = ch
-			tripleQuote = false
-			continue
-		case ch == '{':
-			braceDepth++
-		case ch == '}':
-			if braceDepth > 0 {
-				braceDepth--
-			}
-		case ch == '(':
-			parenDepth++
-		case ch == ')':
-			if parenDepth > 0 {
-				parenDepth--
-			}
-		case ch == '[':
-			bracketDepth++
-		case ch == ']':
-			if bracketDepth > 0 {
-				bracketDepth--
-			}
 		}
+		scan.updateDepth(ch)
 		if ch == '\n' {
-			lineStart = true
+			scan.lineStart = true
 		}
 	}
 	return trimTrailingHorizontalAndVerticalTrivia(source, start, limit)
+}
+
+type scalaTemplateMemberEndScan struct {
+	braceDepth     int
+	parenDepth     int
+	bracketDepth   int
+	inLineComment  bool
+	inBlockComment bool
+	stringQuote    byte
+	tripleQuote    bool
+	lineStart      bool
+}
+
+func (scan scalaTemplateMemberEndScan) atTopLevel() bool {
+	return scan.braceDepth == 0 && scan.parenDepth == 0 && scan.bracketDepth == 0
+}
+
+func (scan *scalaTemplateMemberEndScan) consumeTriviaOrString(source []byte, i *int, limit int, ch, next byte) bool {
+	if scan.inLineComment {
+		if ch == '\n' {
+			scan.inLineComment = false
+			scan.lineStart = true
+		}
+		return true
+	}
+	if scan.inBlockComment {
+		if ch == '*' && next == '/' {
+			scan.inBlockComment = false
+			*i = *i + 1
+			return true
+		}
+		if ch == '\n' {
+			scan.lineStart = true
+		}
+		return true
+	}
+	if scan.stringQuote == 0 {
+		return false
+	}
+	if scan.tripleQuote {
+		if *i+2 < limit && source[*i] == scan.stringQuote && source[*i+1] == scan.stringQuote && source[*i+2] == scan.stringQuote {
+			scan.stringQuote = 0
+			scan.tripleQuote = false
+			*i += 2
+		}
+		return true
+	}
+	if ch == '\\' {
+		*i = *i + 1
+		return true
+	}
+	if ch == scan.stringQuote {
+		scan.stringQuote = 0
+	}
+	return true
+}
+
+func (scan *scalaTemplateMemberEndScan) startTriviaOrString(source []byte, i *int, limit int, ch, next byte) bool {
+	switch {
+	case ch == '/' && next == '/':
+		scan.inLineComment = true
+		*i = *i + 1
+		return true
+	case ch == '/' && next == '*':
+		scan.inBlockComment = true
+		*i = *i + 1
+		return true
+	case ch == '"' || ch == '\'':
+		scan.stringQuote = ch
+		scan.tripleQuote = *i+2 < limit && source[*i+1] == ch && source[*i+2] == ch
+		if scan.tripleQuote {
+			*i += 2
+		}
+		return true
+	default:
+		return false
+	}
+}
+
+func (scan *scalaTemplateMemberEndScan) updateDepth(ch byte) {
+	switch ch {
+	case '{':
+		scan.braceDepth++
+	case '}':
+		if scan.braceDepth > 0 {
+			scan.braceDepth--
+		}
+	case '(':
+		scan.parenDepth++
+	case ')':
+		if scan.parenDepth > 0 {
+			scan.parenDepth--
+		}
+	case '[':
+		scan.bracketDepth++
+	case ']':
+		if scan.bracketDepth > 0 {
+			scan.bracketDepth--
+		}
+	}
+}
+
+func scalaTemplateBodyLeadingCommentEnd(source []byte, start, limit int) (int, bool) {
+	if !scalaStartsLineOrBlockComment(source, start, limit) {
+		return 0, false
+	}
+	if source[start+1] == '/' {
+		end := start + 2
+		for end < limit && source[end] != '\n' && source[end] != '\r' {
+			end++
+		}
+		return trimTrailingHorizontalAndVerticalTrivia(source, start, end), true
+	}
+	end := start + 2
+	for end+1 < limit {
+		if source[end] == '*' && source[end+1] == '/' {
+			end += 2
+			return trimTrailingHorizontalAndVerticalTrivia(source, start, end), true
+		}
+		end++
+	}
+	return trimTrailingHorizontalAndVerticalTrivia(source, start, limit), true
+}
+
+func scalaStartsLineOrBlockComment(source []byte, pos, limit int) bool {
+	return pos+1 < limit && source[pos] == '/' && (source[pos+1] == '/' || source[pos+1] == '*')
+}
+
+func scalaTemplateBodyMemberEndAtLineStart(source []byte, start, i, limit int, scan scalaTemplateMemberEndScan) (int, bool) {
+	j := skipHorizontalTrivia(source, i, limit)
+	if !scan.atTopLevel() {
+		return 0, false
+	}
+	switch {
+	case j < limit && source[j] == '}':
+		return j, true
+	case scalaStartsLineOrBlockComment(source, j, limit):
+		return trimTrailingHorizontalAndVerticalTrivia(source, start, i), true
+	default:
+		if _, ok := scalaTemplateMemberKindAt(source, j, limit); ok {
+			return trimTrailingHorizontalAndVerticalTrivia(source, start, i), true
+		}
+		return 0, false
+	}
 }
 
 func scalaTemplateMemberKindAt(source []byte, pos, limit int) (scalaTemplateMemberKind, bool) {
