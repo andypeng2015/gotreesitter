@@ -53,7 +53,7 @@ NO_DEFAULT_EXCLUDES=0
 # Generated code, binary blobs, worktrees, CGO harness, test data.
 DEFAULT_EXCLUDES=(
   "grammars/grammar_blobs/**"
-  "grammars/*_register.go"
+  "grammars/markdown_injection_register.go"
   "grammars/embedded_grammars_gen.go"
   "grammars/zzz_scanner_attachments.go"
   "cgo_harness/**"

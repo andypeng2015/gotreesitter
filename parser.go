@@ -22,7 +22,7 @@ type Parser struct {
 	reuseCursor                         reuseCursor
 	reuseScratch                        reuseScratch
 	reuseMu                             sync.Mutex
-	reparseFactory                      normalizationTokenSourceFactory
+	reparseFactory                      TokenSourceFactory
 	recoveryParser                      *Parser
 	skipRecoveryReparse                 bool
 	fullArenaHint                       uint32

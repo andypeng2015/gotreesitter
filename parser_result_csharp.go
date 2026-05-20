@@ -493,7 +493,7 @@ func csharpRecoverNamespaceNodeFromRange(source []byte, start, end uint32, lang 
 	if lang == nil || arena == nil || start >= end || int(end) > len(source) {
 		return nil, false
 	}
-	tree, err := parseWithSnippetParserTimed(lang, source[start:end], snippetTimeoutMicros)
+	tree, err := parseWithSnippetParser(lang, source[start:end], snippetTimeoutMicros)
 	if err != nil || tree == nil || tree.RootNode() == nil {
 		if tree != nil {
 			tree.Release()

@@ -18,6 +18,7 @@
 //
 // Other flags:
 //
+//	-lr-split      Enable LR(1) state splitting before generation
 //	-validate      Check grammar for issues without generating
 //	-report        Show generation report with conflict diagnostics
 //	-list          List available built-in grammars
@@ -65,6 +66,7 @@ func main() {
 	validate := flag.Bool("validate", false, "validate grammar without generating")
 	report := flag.Bool("report", false, "show generation report with conflict diagnostics")
 	list := flag.Bool("list", false, "list available built-in grammars")
+	lrSplit := flag.Bool("lr-split", false, "enable LR(1) state splitting before generation")
 	flag.Parse()
 
 	if *list {
@@ -156,6 +158,10 @@ func main() {
 			os.Exit(1)
 		}
 		g = fn()
+	}
+
+	if *lrSplit {
+		g.EnableLRSplitting = true
 	}
 
 	// Highlight query mode.
