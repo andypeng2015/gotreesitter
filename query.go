@@ -693,19 +693,6 @@ func (c *QueryCursor) nextMatchRaw() (QueryMatch, bool) {
 				continue
 			}
 
-			// Push children in reverse order so leftmost is visited first.
-			if !c.hasMaxStartDepth || depth < c.maxStartDepth {
-				for i := nodeChildCountNoMaterialize(n) - 1; i >= 0; i-- {
-					child := nodeChildAtForReason(n, i, materializeForQuery)
-					if child != nil && c.nodeIntersectsRanges(child) {
-						c.worklist = append(c.worklist, queryCursorWorkItem{
-							node:  child,
-							depth: depth + 1,
-						})
-					}
-				}
-			}
-
 			c.currentNode = n
 			c.currentNodeDepth = depth
 			c.currentCandidates = q.rootPatternCandidates(c.lang.PublicSymbol(n.Symbol()))
@@ -728,10 +715,29 @@ func (c *QueryCursor) nextMatchRaw() (QueryMatch, bool) {
 		}
 
 		// Exhausted candidates for this node; advance to the next node.
+		c.pushCurrentNodeChildren()
 		c.currentNode = nil
 		c.currentNodeDepth = 0
 		c.currentCandidates = nil
 		c.candidateIdx = 0
+	}
+}
+
+func (c *QueryCursor) pushCurrentNodeChildren() {
+	n := c.currentNode
+	if n == nil || (c.hasMaxStartDepth && c.currentNodeDepth >= c.maxStartDepth) {
+		return
+	}
+	nextDepth := c.currentNodeDepth + 1
+	// Push children in reverse order so leftmost is visited first.
+	for i := nodeChildCountNoMaterialize(n) - 1; i >= 0; i-- {
+		child := nodeChildAtForReason(n, i, materializeForQuery)
+		if child != nil && c.nodeIntersectsRanges(child) {
+			c.worklist = append(c.worklist, queryCursorWorkItem{
+				node:  child,
+				depth: nextDepth,
+			})
+		}
 	}
 }
 

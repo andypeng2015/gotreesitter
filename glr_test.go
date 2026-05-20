@@ -228,6 +228,75 @@ func TestQueryMatcherUsesLazyFinalChildRefs(t *testing.T) {
 	}
 }
 
+func TestQueryCursorDefersFinalChildRefsUntilCurrentNodeExhausted(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	arena.finalChildRefs = true
+	leaf := newCompactFullLeafInArena(arena, 1, true, 2, 3, Point{Column: 2}, Point{Column: 3})
+	leaf.parseState = 13
+	parent := newPendingParentInArena(arena, 2, true, 5, []stackEntry{newStackEntryCompactFullLeaf(leaf.parseState, leaf)}, 2, 3, Point{Column: 2}, Point{Column: 3}, false)
+	parent.parseState = 14
+
+	entry := newStackEntryPendingParent(parent.parseState, parent)
+	node := materializeStackEntryPendingParent(arena, &entry, pendingParentMaterializeForFinalTree)
+	if node == nil {
+		t.Fatal("materialized parent = nil")
+	}
+	lang := &Language{
+		SymbolNames: []string{"", "leaf", "parent"},
+		SymbolMetadata: []SymbolMetadata{
+			{},
+			{Named: true, Visible: true},
+			{Named: true, Visible: true},
+		},
+	}
+	query, err := NewQuery(`(parent) @p`, lang)
+	if err != nil {
+		t.Fatalf("NewQuery: %v", err)
+	}
+	cursor := query.Exec(node, lang, nil)
+	match, ok := cursor.NextMatch()
+	if !ok {
+		t.Fatal("NextMatch returned !ok")
+	}
+	if len(match.Captures) != 1 || match.Captures[0].Node != node {
+		t.Fatalf("captures = %#v, want parent node capture", match.Captures)
+	}
+	if got := arena.finalChildRefsMaterializedParents; got != 0 {
+		t.Fatalf("final child ref range materialized parents = %d, want 0", got)
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 0 {
+		t.Fatalf("final child ref single children materialized = %d, want 0", got)
+	}
+}
+
+func TestAlternativeFieldMatchesUsesLazyFinalChildRefs(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	arena.finalChildRefs = true
+	leaf := newCompactFullLeafInArena(arena, 1, true, 2, 3, Point{Column: 2}, Point{Column: 3})
+	leaf.parseState = 13
+	parent := newPendingParentInArena(arena, 2, true, 5, []stackEntry{newStackEntryCompactFullLeaf(leaf.parseState, leaf)}, 2, 3, Point{Column: 2}, Point{Column: 3}, false)
+	parent.parseState = 14
+
+	entry := newStackEntryPendingParent(parent.parseState, parent)
+	node := materializeStackEntryPendingParent(arena, &entry, pendingParentMaterializeForFinalTree)
+	if node == nil {
+		t.Fatal("materialized parent = nil")
+	}
+	node.fieldIDs = []FieldID{1}
+	child := nodeChildAtForReason(node, 0, materializeForQuery)
+	if child == nil {
+		t.Fatal("nodeChildAtForReason = nil")
+	}
+	lang := &Language{FieldNames: []string{"", "name"}}
+	query := &Query{}
+	if !query.alternativeFieldMatches(&alternativeSymbol{field: 1}, child, nil, -1, lang) {
+		t.Fatal("alternativeFieldMatches = false, want true")
+	}
+	if got := arena.finalChildRefsMaterializedParents; got != 0 {
+		t.Fatalf("final child ref range materialized parents = %d, want 0", got)
+	}
+}
+
 func TestLazyFinalChildRefsParentAndSiblingAvoidRangeMaterialization(t *testing.T) {
 	arena := newNodeArena(arenaClassFull)
 	arena.finalChildRefs = true

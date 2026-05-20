@@ -502,7 +502,9 @@ func (q *Query) alternativeFieldMatches(alt *alternativeSymbol, node *Node, pare
 			return false
 		}
 		childIdx = -1
-		for i, child := range parent.children {
+		childCount := nodeChildCountNoMaterialize(parent)
+		for i := 0; i < childCount; i++ {
+			child := nodeChildAtForReason(parent, i, materializeForQuery)
 			if child == node {
 				childIdx = i
 				break
