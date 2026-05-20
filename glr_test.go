@@ -107,6 +107,27 @@ func TestMaterializationReasonCountersClassifyNonParentReasons(t *testing.T) {
 	}
 }
 
+func TestPendingParentRejectCountersClassifyReasons(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+
+	arena.recordPendingParentRejected(pendingParentRejectAlias)
+	arena.recordPendingParentRejected(pendingParentRejectFields)
+	arena.recordPendingParentRejected(pendingParentRejectChild)
+
+	if got := arena.pendingParentRejectedAlias; got != 1 {
+		t.Fatalf("pendingParentRejectedAlias = %d, want 1", got)
+	}
+	if got := arena.pendingParentRejectedFields; got != 1 {
+		t.Fatalf("pendingParentRejectedFields = %d, want 1", got)
+	}
+	if got := arena.pendingParentRejectedChild; got != 1 {
+		t.Fatalf("pendingParentRejectedChild = %d, want 1", got)
+	}
+	if got := arena.pendingParentRejectedRawSpan; got != 0 {
+		t.Fatalf("pendingParentRejectedRawSpan = %d, want 0", got)
+	}
+}
+
 func TestCompactCheckpointLeafStackEntryUsesNoTreePrefix(t *testing.T) {
 	leaf := newCompactCheckpointLeafInArena(nil, 9, true, 13, 21, externalScannerCheckpointRef{})
 	entry := newStackEntryCompactCheckpointLeaf(4, leaf)

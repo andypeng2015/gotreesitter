@@ -142,6 +142,15 @@ type pythonRuntimeBenchStats struct {
 	pendingParentDropped                 uint64
 	pendingParentsFlattened              uint64
 	pendingChildRefsFlattened            uint64
+	pendingParentCandidates              uint64
+	pendingParentRejectedEmpty           uint64
+	pendingParentRejectedChildLimit      uint64
+	pendingParentRejectedAlias           uint64
+	pendingParentRejectedRawSpan         uint64
+	pendingParentRejectedFields          uint64
+	pendingParentRejectedChild           uint64
+	pendingParentRejectedSpan            uint64
+	pendingParentRejectedFill            uint64
 	checkpointLeafFullNodesAvoided       uint64
 	resultSelectionNanos                 int64
 	transientParentMaterializeNanos      int64
@@ -340,6 +349,15 @@ func (s *pythonRuntimeBenchStats) add(rt gotreesitter.ParseRuntime, breakdown go
 	s.pendingParentDropped += rt.PendingParentDropped
 	s.pendingParentsFlattened += rt.PendingParentsFlattened
 	s.pendingChildRefsFlattened += rt.PendingChildRefsFlattened
+	s.pendingParentCandidates += rt.PendingParentCandidates
+	s.pendingParentRejectedEmpty += rt.PendingParentRejectedEmpty
+	s.pendingParentRejectedChildLimit += rt.PendingParentRejectedChildLimit
+	s.pendingParentRejectedAlias += rt.PendingParentRejectedAlias
+	s.pendingParentRejectedRawSpan += rt.PendingParentRejectedRawSpan
+	s.pendingParentRejectedFields += rt.PendingParentRejectedFields
+	s.pendingParentRejectedChild += rt.PendingParentRejectedChild
+	s.pendingParentRejectedSpan += rt.PendingParentRejectedSpan
+	s.pendingParentRejectedFill += rt.PendingParentRejectedFill
 	s.checkpointLeafFullNodesAvoided += rt.CheckpointLeafFullNodesAvoided
 	s.resultSelectionNanos += rt.ResultSelectionNanos
 	s.transientParentMaterializeNanos += rt.TransientParentMaterializationNanos
@@ -709,6 +727,15 @@ func (s pythonRuntimeBenchStats) report(b *testing.B) {
 		b.ReportMetric(float64(s.pendingParentDropped)/tokens, "pending_parent_dropped/token")
 		b.ReportMetric(float64(s.pendingParentsFlattened)/tokens, "pending_parent_flattened/token")
 		b.ReportMetric(float64(s.pendingChildRefsFlattened)/tokens, "pending_child_refs_flattened/token")
+		b.ReportMetric(float64(s.pendingParentCandidates)/tokens, "pending_parent_candidate/token")
+		b.ReportMetric(float64(s.pendingParentRejectedEmpty)/tokens, "pending_parent_reject_empty/token")
+		b.ReportMetric(float64(s.pendingParentRejectedChildLimit)/tokens, "pending_parent_reject_child_limit/token")
+		b.ReportMetric(float64(s.pendingParentRejectedAlias)/tokens, "pending_parent_reject_alias/token")
+		b.ReportMetric(float64(s.pendingParentRejectedRawSpan)/tokens, "pending_parent_reject_raw_span/token")
+		b.ReportMetric(float64(s.pendingParentRejectedFields)/tokens, "pending_parent_reject_fields/token")
+		b.ReportMetric(float64(s.pendingParentRejectedChild)/tokens, "pending_parent_reject_child/token")
+		b.ReportMetric(float64(s.pendingParentRejectedSpan)/tokens, "pending_parent_reject_span/token")
+		b.ReportMetric(float64(s.pendingParentRejectedFill)/tokens, "pending_parent_reject_fill/token")
 	}
 	if s.resultSelectionNanos != 0 || s.transientParentMaterializeNanos != 0 || s.resultTreeBuildNanos != 0 || s.transientChildMaterializeNanos != 0 {
 		ops := float64(s.ops)

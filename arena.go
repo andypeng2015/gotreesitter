@@ -128,6 +128,15 @@ type nodeArena struct {
 	pendingParentDropped                            uint64
 	pendingParentsFlattened                         uint64
 	pendingChildRefsFlattened                       uint64
+	pendingParentCandidates                         uint64
+	pendingParentRejectedEmpty                      uint64
+	pendingParentRejectedChildLimit                 uint64
+	pendingParentRejectedAlias                      uint64
+	pendingParentRejectedRawSpan                    uint64
+	pendingParentRejectedFields                     uint64
+	pendingParentRejectedChild                      uint64
+	pendingParentRejectedSpan                       uint64
+	pendingParentRejectedFill                       uint64
 	checkpointLeafFullNodesAvoided                  uint64
 	leafNodesConstructed                            uint64
 	parentNodesConstructed                          uint64
@@ -666,6 +675,15 @@ func (a *nodeArena) reset() {
 	a.pendingParentDropped = 0
 	a.pendingParentsFlattened = 0
 	a.pendingChildRefsFlattened = 0
+	a.pendingParentCandidates = 0
+	a.pendingParentRejectedEmpty = 0
+	a.pendingParentRejectedChildLimit = 0
+	a.pendingParentRejectedAlias = 0
+	a.pendingParentRejectedRawSpan = 0
+	a.pendingParentRejectedFields = 0
+	a.pendingParentRejectedChild = 0
+	a.pendingParentRejectedSpan = 0
+	a.pendingParentRejectedFill = 0
 	a.checkpointLeafFullNodesAvoided = 0
 	a.leafNodesConstructed = 0
 	a.parentNodesConstructed = 0
@@ -1417,6 +1435,43 @@ func (a *nodeArena) recordPendingParentMaterialized(reason materializeReason) {
 		a.pendingParentMaterializedForEdit++
 	case materializeForCheckpointRebuild:
 		a.pendingParentMaterializedForCheckpointRebuild++
+	}
+}
+
+type pendingParentRejectReason uint8
+
+const (
+	pendingParentRejectEmpty pendingParentRejectReason = iota
+	pendingParentRejectChildLimit
+	pendingParentRejectAlias
+	pendingParentRejectRawSpan
+	pendingParentRejectFields
+	pendingParentRejectChild
+	pendingParentRejectSpan
+	pendingParentRejectFill
+)
+
+func (a *nodeArena) recordPendingParentRejected(reason pendingParentRejectReason) {
+	if a == nil {
+		return
+	}
+	switch reason {
+	case pendingParentRejectEmpty:
+		a.pendingParentRejectedEmpty++
+	case pendingParentRejectChildLimit:
+		a.pendingParentRejectedChildLimit++
+	case pendingParentRejectAlias:
+		a.pendingParentRejectedAlias++
+	case pendingParentRejectRawSpan:
+		a.pendingParentRejectedRawSpan++
+	case pendingParentRejectFields:
+		a.pendingParentRejectedFields++
+	case pendingParentRejectChild:
+		a.pendingParentRejectedChild++
+	case pendingParentRejectSpan:
+		a.pendingParentRejectedSpan++
+	case pendingParentRejectFill:
+		a.pendingParentRejectedFill++
 	}
 }
 

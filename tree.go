@@ -231,6 +231,15 @@ type ParseRuntime struct {
 	PendingParentDropped                            uint64
 	PendingParentsFlattened                         uint64
 	PendingChildRefsFlattened                       uint64
+	PendingParentCandidates                         uint64
+	PendingParentRejectedEmpty                      uint64
+	PendingParentRejectedChildLimit                 uint64
+	PendingParentRejectedAlias                      uint64
+	PendingParentRejectedRawSpan                    uint64
+	PendingParentRejectedFields                     uint64
+	PendingParentRejectedChild                      uint64
+	PendingParentRejectedSpan                       uint64
+	PendingParentRejectedFill                       uint64
 	CheckpointLeafFullNodesAvoided                  uint64
 	LeafNodesConstructed                            uint64
 	ParentNodesConstructed                          uint64

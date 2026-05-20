@@ -1045,13 +1045,27 @@ func (p *Parser) tryPushPendingNoFieldParent(s *glrStack, act ParseAction, tok T
 	if p == nil || !p.usePendingFullParents() || p.language == nil || s == nil {
 		return false
 	}
-	if act.ChildCount == 0 || act.ChildCount > 32 || len(p.reduceAliasSequence(act.ProductionID)) != 0 {
+	if arena != nil {
+		arena.pendingParentCandidates++
+	}
+	if act.ChildCount == 0 {
+		arena.recordPendingParentRejected(pendingParentRejectEmpty)
+		return false
+	}
+	if act.ChildCount > 32 {
+		arena.recordPendingParentRejected(pendingParentRejectChildLimit)
+		return false
+	}
+	if len(p.reduceAliasSequence(act.ProductionID)) != 0 {
+		arena.recordPendingParentRejected(pendingParentRejectAlias)
 		return false
 	}
 	if p.forceRawSpanAll || (int(act.Symbol) < len(p.forceRawSpanTable) && p.forceRawSpanTable[act.Symbol]) {
+		arena.recordPendingParentRejected(pendingParentRejectRawSpan)
 		return false
 	}
 	if p.reduceProductionHasFields(act.ProductionID) {
+		arena.recordPendingParentRejected(pendingParentRejectFields)
 		return false
 	}
 	symbolMeta := p.language.SymbolMetadata
@@ -1061,12 +1075,14 @@ func (p *Parser) tryPushPendingNoFieldParent(s *glrStack, act ParseAction, tok T
 	for i := start; i < reducedEnd; i++ {
 		count, _, childHasError, ok := pendingNoFieldChildCount(entries[i], parentVisible, symbolMeta)
 		if !ok {
+			arena.recordPendingParentRejected(pendingParentRejectChild)
 			return false
 		}
 		childCount += count
 		hasError = hasError || childHasError
 	}
 	if childCount == 0 {
+		arena.recordPendingParentRejected(pendingParentRejectEmpty)
 		return false
 	}
 	var first, last stackEntry
@@ -1074,6 +1090,7 @@ func (p *Parser) tryPushPendingNoFieldParent(s *glrStack, act ParseAction, tok T
 		first = firstEntry
 		last = lastEntry
 	} else {
+		arena.recordPendingParentRejected(pendingParentRejectSpan)
 		return false
 	}
 	startByte := stackEntryNodeStartByte(first)
@@ -1109,6 +1126,7 @@ func (p *Parser) tryPushPendingNoFieldParent(s *glrStack, act ParseAction, tok T
 		flattenedChildRefs += refs
 	}
 	if out != childCount {
+		arena.recordPendingParentRejected(pendingParentRejectFill)
 		return false
 	}
 	if arena != nil {

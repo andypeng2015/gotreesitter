@@ -1565,6 +1565,15 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		parseRuntime.PendingParentDropped = arena.pendingParentDropped
 		parseRuntime.PendingParentsFlattened = arena.pendingParentsFlattened
 		parseRuntime.PendingChildRefsFlattened = arena.pendingChildRefsFlattened
+		parseRuntime.PendingParentCandidates = arena.pendingParentCandidates
+		parseRuntime.PendingParentRejectedEmpty = arena.pendingParentRejectedEmpty
+		parseRuntime.PendingParentRejectedChildLimit = arena.pendingParentRejectedChildLimit
+		parseRuntime.PendingParentRejectedAlias = arena.pendingParentRejectedAlias
+		parseRuntime.PendingParentRejectedRawSpan = arena.pendingParentRejectedRawSpan
+		parseRuntime.PendingParentRejectedFields = arena.pendingParentRejectedFields
+		parseRuntime.PendingParentRejectedChild = arena.pendingParentRejectedChild
+		parseRuntime.PendingParentRejectedSpan = arena.pendingParentRejectedSpan
+		parseRuntime.PendingParentRejectedFill = arena.pendingParentRejectedFill
 		parseRuntime.CheckpointLeafFullNodesAvoided = arena.checkpointLeafFullNodesAvoided
 		parseRuntime.LeafNodesConstructed = arena.leafNodesConstructed
 		parseRuntime.ParentNodesConstructed = arena.parentNodesConstructed
