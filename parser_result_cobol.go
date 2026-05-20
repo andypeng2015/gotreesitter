@@ -31,11 +31,12 @@ func normalizeCobolLeadingAreaStart(root *Node, source []byte, lang *Language) {
 		n.startPoint = startPoint
 	}
 	setNodeStartTo(root)
-	if len(root.children) == 0 {
+	if resultChildCount(root) == 0 {
 		return
 	}
 	def := (*Node)(nil)
-	for _, child := range root.children {
+	for i := 0; i < resultChildCount(root); i++ {
+		child := resultChildAt(root, i)
 		if child != nil && !child.IsExtra() && child.Type(lang) == "program_definition" {
 			def = child
 			break
@@ -45,10 +46,11 @@ func normalizeCobolLeadingAreaStart(root *Node, source []byte, lang *Language) {
 		return
 	}
 	setNodeStartTo(def)
-	if len(def.children) == 0 {
+	if resultChildCount(def) == 0 {
 		return
 	}
-	for _, child := range def.children {
+	for i := 0; i < resultChildCount(def); i++ {
+		child := resultChildAt(def, i)
 		if child != nil && !child.IsExtra() && child.Type(lang) == "identification_division" {
 			setNodeStartTo(child)
 			break
@@ -57,11 +59,12 @@ func normalizeCobolLeadingAreaStart(root *Node, source []byte, lang *Language) {
 }
 
 func normalizeCobolTopLevelDefinitionEnd(root *Node, source []byte, lang *Language) {
-	if root == nil || lang == nil || (lang.Name != "cobol" && lang.Name != "COBOL") || root.Type(lang) != "start" || len(root.children) == 0 {
+	if root == nil || lang == nil || (lang.Name != "cobol" && lang.Name != "COBOL") || root.Type(lang) != "start" || resultChildCount(root) == 0 {
 		return
 	}
 	def := (*Node)(nil)
-	for _, child := range root.children {
+	for i := 0; i < resultChildCount(root); i++ {
+		child := resultChildAt(root, i)
 		if child != nil && !child.IsExtra() && child.Type(lang) == "program_definition" {
 			def = child
 			break
@@ -79,11 +82,12 @@ func normalizeCobolTopLevelDefinitionEnd(root *Node, source []byte, lang *Langua
 }
 
 func normalizeCobolDivisionSiblingEnds(root *Node, source []byte, lang *Language) {
-	if root == nil || lang == nil || (lang.Name != "cobol" && lang.Name != "COBOL") || root.Type(lang) != "start" || len(root.children) == 0 {
+	if root == nil || lang == nil || (lang.Name != "cobol" && lang.Name != "COBOL") || root.Type(lang) != "start" || resultChildCount(root) == 0 {
 		return
 	}
 	def := (*Node)(nil)
-	for _, child := range root.children {
+	for i := 0; i < resultChildCount(root); i++ {
+		child := resultChildAt(root, i)
 		if child != nil && !child.IsExtra() && child.Type(lang) == "program_definition" {
 			def = child
 			break
@@ -92,9 +96,10 @@ func normalizeCobolDivisionSiblingEnds(root *Node, source []byte, lang *Language
 	if def == nil {
 		return
 	}
-	for i := 0; i+1 < len(def.children); i++ {
-		cur := def.children[i]
-		next := def.children[i+1]
+	childCount := resultChildCount(def)
+	for i := 0; i+1 < childCount; i++ {
+		cur := resultChildAt(def, i)
+		next := resultChildAt(def, i+1)
 		if cur == nil || next == nil || cur.IsExtra() || next.IsExtra() {
 			continue
 		}

@@ -9,12 +9,13 @@ func normalizeHaskellCompatibility(root *Node, source []byte, lang *Language) {
 	normalizeHaskellQuasiquoteStarts(root, source, lang)
 }
 func normalizeHaskellImportsSpan(root *Node, source []byte, lang *Language) {
-	if root == nil || len(root.children) < 2 || len(source) == 0 || lang == nil || lang.Name != "haskell" {
+	childCount := resultChildCount(root)
+	if root == nil || childCount < 2 || len(source) == 0 || lang == nil || lang.Name != "haskell" {
 		return
 	}
-	for i := 0; i+1 < len(root.children); i++ {
-		left := root.children[i]
-		right := root.children[i+1]
+	for i := 0; i+1 < childCount; i++ {
+		left := resultChildAt(root, i)
+		right := resultChildAt(root, i+1)
 		if left == nil || right == nil {
 			continue
 		}
@@ -37,11 +38,12 @@ func normalizeHaskellImportsSpan(root *Node, source []byte, lang *Language) {
 }
 
 func normalizeHaskellZeroWidthTokens(root *Node, lang *Language) {
-	if root == nil || lang == nil || lang.Name != "haskell" || len(root.children) == 0 {
+	if root == nil || lang == nil || lang.Name != "haskell" || resultChildCount(root) == 0 {
 		return
 	}
-	filtered := root.children[:0]
-	for _, child := range root.children {
+	children := resultDenseChildrenForMutation(root)
+	filtered := children[:0]
+	for _, child := range children {
 		if child == nil {
 			continue
 		}
@@ -54,13 +56,14 @@ func normalizeHaskellZeroWidthTokens(root *Node, lang *Language) {
 }
 
 func normalizeHaskellRootImportField(root *Node, lang *Language) {
-	if root == nil || lang == nil || lang.Name != "haskell" || len(root.children) == 0 {
+	if root == nil || lang == nil || lang.Name != "haskell" || resultChildCount(root) == 0 {
 		return
 	}
 	if len(lang.FieldNames) == 0 {
 		return
 	}
-	for i, child := range root.children {
+	children := resultDenseChildrenForMutation(root)
+	for i, child := range children {
 		if child == nil {
 			continue
 		}
@@ -74,13 +77,13 @@ func normalizeHaskellRootImportField(root *Node, lang *Language) {
 		if fid == 0 {
 			continue
 		}
-		if len(root.fieldIDs) < len(root.children) {
-			fieldIDs := make([]FieldID, len(root.children))
+		if len(root.fieldIDs) < len(children) {
+			fieldIDs := make([]FieldID, len(children))
 			copy(fieldIDs, root.fieldIDs)
 			root.fieldIDs = fieldIDs
 		}
-		if len(root.fieldSources) < len(root.children) {
-			fieldSources := make([]uint8, len(root.children))
+		if len(root.fieldSources) < len(children) {
+			fieldSources := make([]uint8, len(children))
 			copy(fieldSources, root.fieldSources)
 			root.fieldSources = fieldSources
 		}
@@ -93,7 +96,8 @@ func normalizeHaskellDeclarationsSpan(root *Node, source []byte, lang *Language)
 	if root == nil || lang == nil || lang.Name != "haskell" || len(source) == 0 {
 		return
 	}
-	for _, child := range root.children {
+	for i := 0; i < resultChildCount(root); i++ {
+		child := resultChildAt(root, i)
 		if child == nil || child.Type(lang) != "declarations" {
 			continue
 		}
@@ -117,9 +121,9 @@ func normalizeHaskellLocalBindsStarts(root *Node, source []byte, lang *Language)
 		if n == nil {
 			return
 		}
-		if n.Type(lang) == "let_in" && len(n.children) >= 2 {
-			letNode := n.children[0]
-			localBinds := n.children[1]
+		if n.Type(lang) == "let_in" && resultChildCount(n) >= 2 {
+			letNode := resultChildAt(n, 0)
+			localBinds := resultChildAt(n, 1)
 			if letNode != nil && localBinds != nil && letNode.Type(lang) == "let" && localBinds.Type(lang) == "local_binds" && letNode.endByte < localBinds.startByte && localBinds.startByte <= uint32(len(source)) {
 				gap := source[letNode.endByte:localBinds.startByte]
 				if len(gap) > 0 && bytesAreTrivia(gap) && !bytesContainLineBreak(gap) {
@@ -128,8 +132,8 @@ func normalizeHaskellLocalBindsStarts(root *Node, source []byte, lang *Language)
 				}
 			}
 		}
-		for _, child := range n.children {
-			walk(child)
+		for i := 0; i < resultChildCount(n); i++ {
+			walk(resultChildAt(n, i))
 		}
 	}
 	walk(root)
@@ -155,8 +159,8 @@ func normalizeHaskellQuasiquoteStarts(root *Node, source []byte, lang *Language)
 				}
 			}
 		}
-		for _, child := range n.children {
-			walk(child)
+		for i := 0; i < resultChildCount(n); i++ {
+			walk(resultChildAt(n, i))
 		}
 	}
 	walk(root)
