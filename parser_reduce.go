@@ -1219,6 +1219,15 @@ func (p *Parser) recordPendingFieldRejectShape(arena *nodeArena, act ParseAction
 			shape := pendingParentFieldRejectHiddenChildPlain
 			if n := stackEntryNode(entry); hiddenTreeHasFieldIDs(n) {
 				shape = pendingParentFieldRejectHiddenChildWithFields
+			} else {
+				switch pendingPlainHiddenVisibleDescendantCount(entry, symbolMeta) {
+				case 0:
+					shape = pendingParentFieldRejectHiddenChildPlainEmpty
+				case 1:
+					shape = pendingParentFieldRejectHiddenChildPlainOne
+				default:
+					shape = pendingParentFieldRejectHiddenChildPlainMany
+				}
 			}
 			arena.recordPendingParentFieldRejected(shape)
 			return
@@ -1236,6 +1245,30 @@ func symbolVisibleForPending(sym Symbol, symbolMeta []SymbolMetadata) bool {
 
 func stackEntryVisibleForPending(entry stackEntry, symbolMeta []SymbolMetadata) bool {
 	return symbolVisibleForPending(stackEntryNodeSymbol(entry), symbolMeta)
+}
+
+func pendingPlainHiddenVisibleDescendantCount(entry stackEntry, symbolMeta []SymbolMetadata) int {
+	if !stackEntryHasNode(entry) || stackEntryNodeIsMissing(entry) {
+		return 0
+	}
+	if stackEntryVisibleForPending(entry, symbolMeta) {
+		return 1
+	}
+	if parent := stackEntryPendingParent(entry); parent != nil {
+		count := 0
+		for _, child := range parent.childEntries() {
+			count += pendingPlainHiddenVisibleDescendantCount(child, symbolMeta)
+		}
+		return count
+	}
+	if node := stackEntryNode(entry); node != nil && !hiddenTreeHasFieldIDs(node) {
+		count := 0
+		for _, child := range node.children {
+			count += pendingPlainHiddenVisibleDescendantCount(newStackEntryNode(child.parseState, child), symbolMeta)
+		}
+		return count
+	}
+	return 0
 }
 
 func pendingNoFieldChildCount(entry stackEntry, parentVisible bool, symbolMeta []SymbolMetadata) (count int, hasPayload bool, hasError bool, ok bool) {

@@ -214,6 +214,9 @@ type nodeArena struct {
 	noTreePlaceholderNodesConstructed   uint64
 
 	pendingParentRejectedFieldsHiddenChildPlain      uint64
+	pendingParentRejectedFieldsHiddenChildPlainEmpty uint64
+	pendingParentRejectedFieldsHiddenChildPlainOne   uint64
+	pendingParentRejectedFieldsHiddenChildPlainMany  uint64
 	pendingParentRejectedFieldsHiddenChildWithFields uint64
 }
 
@@ -706,6 +709,9 @@ func (a *nodeArena) reset() {
 	a.pendingParentRejectedFieldsInherited = 0
 	a.pendingParentRejectedFieldsHiddenChild = 0
 	a.pendingParentRejectedFieldsHiddenChildPlain = 0
+	a.pendingParentRejectedFieldsHiddenChildPlainEmpty = 0
+	a.pendingParentRejectedFieldsHiddenChildPlainOne = 0
+	a.pendingParentRejectedFieldsHiddenChildPlainMany = 0
 	a.pendingParentRejectedFieldsHiddenChildWithFields = 0
 	a.pendingParentRejectedFieldsChild = 0
 	a.pendingParentRejectedFieldsAllVisibleDirect = 0
@@ -1493,6 +1499,9 @@ const (
 	pendingParentFieldRejectInherited
 	pendingParentFieldRejectHiddenChild
 	pendingParentFieldRejectHiddenChildPlain
+	pendingParentFieldRejectHiddenChildPlainEmpty
+	pendingParentFieldRejectHiddenChildPlainOne
+	pendingParentFieldRejectHiddenChildPlainMany
 	pendingParentFieldRejectHiddenChildWithFields
 	pendingParentFieldRejectChild
 	pendingParentFieldRejectAllVisibleDirect
@@ -1540,6 +1549,18 @@ func (s *PendingParentFieldRejectStats) increment(shape pendingParentFieldReject
 	case pendingParentFieldRejectHiddenChildPlain:
 		s.HiddenChild++
 		s.HiddenChildPlain++
+	case pendingParentFieldRejectHiddenChildPlainEmpty:
+		s.HiddenChild++
+		s.HiddenChildPlain++
+		s.HiddenChildPlainEmpty++
+	case pendingParentFieldRejectHiddenChildPlainOne:
+		s.HiddenChild++
+		s.HiddenChildPlain++
+		s.HiddenChildPlainOne++
+	case pendingParentFieldRejectHiddenChildPlainMany:
+		s.HiddenChild++
+		s.HiddenChildPlain++
+		s.HiddenChildPlainMany++
 	case pendingParentFieldRejectHiddenChildWithFields:
 		s.HiddenChild++
 		s.HiddenChildWithFields++
@@ -1594,6 +1615,18 @@ func (a *nodeArena) recordPendingParentFieldRejected(shape pendingParentFieldRej
 	case pendingParentFieldRejectHiddenChildPlain:
 		a.pendingParentRejectedFieldsHiddenChild++
 		a.pendingParentRejectedFieldsHiddenChildPlain++
+	case pendingParentFieldRejectHiddenChildPlainEmpty:
+		a.pendingParentRejectedFieldsHiddenChild++
+		a.pendingParentRejectedFieldsHiddenChildPlain++
+		a.pendingParentRejectedFieldsHiddenChildPlainEmpty++
+	case pendingParentFieldRejectHiddenChildPlainOne:
+		a.pendingParentRejectedFieldsHiddenChild++
+		a.pendingParentRejectedFieldsHiddenChildPlain++
+		a.pendingParentRejectedFieldsHiddenChildPlainOne++
+	case pendingParentFieldRejectHiddenChildPlainMany:
+		a.pendingParentRejectedFieldsHiddenChild++
+		a.pendingParentRejectedFieldsHiddenChildPlain++
+		a.pendingParentRejectedFieldsHiddenChildPlainMany++
 	case pendingParentFieldRejectHiddenChildWithFields:
 		a.pendingParentRejectedFieldsHiddenChild++
 		a.pendingParentRejectedFieldsHiddenChildWithFields++

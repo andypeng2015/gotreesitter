@@ -276,6 +276,9 @@ type pythonPendingParentRejectStats struct {
 	fieldsInherited        uint64
 	fieldsHidden           uint64
 	fieldsHiddenPlain      uint64
+	fieldsHiddenPlainEmpty uint64
+	fieldsHiddenPlainOne   uint64
+	fieldsHiddenPlainMany  uint64
 	fieldsHiddenWithFields uint64
 	fieldsChild            uint64
 	fieldsAllVisible       uint64
@@ -303,6 +306,9 @@ func addPendingParentFieldRejectStats(dst *gotreesitter.PendingParentFieldReject
 	dst.Inherited += src.Inherited
 	dst.HiddenChild += src.HiddenChild
 	dst.HiddenChildPlain += src.HiddenChildPlain
+	dst.HiddenChildPlainEmpty += src.HiddenChildPlainEmpty
+	dst.HiddenChildPlainOne += src.HiddenChildPlainOne
+	dst.HiddenChildPlainMany += src.HiddenChildPlainMany
 	dst.HiddenChildWithFields += src.HiddenChildWithFields
 	dst.Child += src.Child
 	dst.AllVisibleDirect += src.AllVisibleDirect
@@ -327,6 +333,9 @@ func reportPendingParentFieldRejectStats(b *testing.B, s gotreesitter.PendingPar
 	b.ReportMetric(float64(s.Inherited)/tokens, prefix+"_inherited/token")
 	b.ReportMetric(float64(s.HiddenChild)/tokens, prefix+"_hidden_child/token")
 	b.ReportMetric(float64(s.HiddenChildPlain)/tokens, prefix+"_hidden_child_plain/token")
+	b.ReportMetric(float64(s.HiddenChildPlainEmpty)/tokens, prefix+"_hidden_child_plain_empty/token")
+	b.ReportMetric(float64(s.HiddenChildPlainOne)/tokens, prefix+"_hidden_child_plain_one/token")
+	b.ReportMetric(float64(s.HiddenChildPlainMany)/tokens, prefix+"_hidden_child_plain_many/token")
 	b.ReportMetric(float64(s.HiddenChildWithFields)/tokens, prefix+"_hidden_child_with_fields/token")
 	b.ReportMetric(float64(s.Child)/tokens, prefix+"_child/token")
 	b.ReportMetric(float64(s.AllVisibleDirect)/tokens, prefix+"_all_visible_direct/token")
@@ -426,6 +435,9 @@ func (s *pythonRuntimeBenchStats) add(rt gotreesitter.ParseRuntime, breakdown go
 	s.pendingParentRejects.fieldsInherited += rt.PendingParentRejectedFieldsInherited
 	s.pendingParentRejects.fieldsHidden += rt.PendingParentRejectedFieldsHiddenChild
 	s.pendingParentRejects.fieldsHiddenPlain += rt.PendingParentRejectedFieldsHiddenChildPlain
+	s.pendingParentRejects.fieldsHiddenPlainEmpty += rt.PendingParentRejectedFieldsHiddenChildPlainEmpty
+	s.pendingParentRejects.fieldsHiddenPlainOne += rt.PendingParentRejectedFieldsHiddenChildPlainOne
+	s.pendingParentRejects.fieldsHiddenPlainMany += rt.PendingParentRejectedFieldsHiddenChildPlainMany
 	s.pendingParentRejects.fieldsHiddenWithFields += rt.PendingParentRejectedFieldsHiddenChildWithFields
 	s.pendingParentRejects.fieldsChild += rt.PendingParentRejectedFieldsChild
 	s.pendingParentRejects.fieldsAllVisible += rt.PendingParentRejectedFieldsAllVisibleDirect
@@ -815,6 +827,9 @@ func (s pythonRuntimeBenchStats) report(b *testing.B) {
 		b.ReportMetric(float64(s.pendingParentRejects.fieldsInherited)/tokens, "pending_parent_reject_fields_inherited/token")
 		b.ReportMetric(float64(s.pendingParentRejects.fieldsHidden)/tokens, "pending_parent_reject_fields_hidden_child/token")
 		b.ReportMetric(float64(s.pendingParentRejects.fieldsHiddenPlain)/tokens, "pending_parent_reject_fields_hidden_child_plain/token")
+		b.ReportMetric(float64(s.pendingParentRejects.fieldsHiddenPlainEmpty)/tokens, "pending_parent_reject_fields_hidden_child_plain_empty/token")
+		b.ReportMetric(float64(s.pendingParentRejects.fieldsHiddenPlainOne)/tokens, "pending_parent_reject_fields_hidden_child_plain_one/token")
+		b.ReportMetric(float64(s.pendingParentRejects.fieldsHiddenPlainMany)/tokens, "pending_parent_reject_fields_hidden_child_plain_many/token")
 		b.ReportMetric(float64(s.pendingParentRejects.fieldsHiddenWithFields)/tokens, "pending_parent_reject_fields_hidden_child_with_fields/token")
 		b.ReportMetric(float64(s.pendingParentRejects.fieldsChild)/tokens, "pending_parent_reject_fields_child/token")
 		b.ReportMetric(float64(s.pendingParentRejects.fieldsAllVisible)/tokens, "pending_parent_reject_fields_all_visible_direct/token")

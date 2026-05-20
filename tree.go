@@ -145,6 +145,9 @@ type PendingParentFieldRejectStats struct {
 	Inherited             uint64
 	HiddenChild           uint64
 	HiddenChildPlain      uint64
+	HiddenChildPlainEmpty uint64
+	HiddenChildPlainOne   uint64
+	HiddenChildPlainMany  uint64
 	HiddenChildWithFields uint64
 	Child                 uint64
 	AllVisibleDirect      uint64
@@ -269,6 +272,9 @@ type ParseRuntime struct {
 	PendingParentRejectedFieldsInherited             uint64
 	PendingParentRejectedFieldsHiddenChild           uint64
 	PendingParentRejectedFieldsHiddenChildPlain      uint64
+	PendingParentRejectedFieldsHiddenChildPlainEmpty uint64
+	PendingParentRejectedFieldsHiddenChildPlainOne   uint64
+	PendingParentRejectedFieldsHiddenChildPlainMany  uint64
 	PendingParentRejectedFieldsHiddenChildWithFields uint64
 	PendingParentRejectedFieldsChild                 uint64
 	PendingParentRejectedFieldsAllVisibleDirect      uint64
