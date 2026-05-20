@@ -472,6 +472,125 @@ func TestCompareAcceptedStackAliasPreferenceIncludesCompactRefs(t *testing.T) {
 	}
 }
 
+func TestCompareAcceptedStackAliasPreferenceIncludesGSSCompactRefs(t *testing.T) {
+	lang := &Language{
+		SymbolNames: []string{"EOF", "identifier", "alias_identifier", "root"},
+		SymbolMetadata: []SymbolMetadata{
+			{},
+			{Visible: true, Named: true},
+			{Visible: true, Named: true},
+			{Visible: true, Named: true},
+		},
+		AliasSequences: [][]Symbol{{2}},
+	}
+	parser := NewParser(lang)
+	arena := newNodeArena(arenaClassFull)
+	var scratch gssScratch
+
+	normalLeaf := newLeafNodeInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	aliasLeaf := newCompactFullLeafInArena(arena, 2, true, 0, 1, Point{}, Point{Column: 1})
+	normalStack := glrStack{entries: []stackEntry{{state: 0}, newStackEntryNode(1, normalLeaf)}}
+	aliasGSSStack := glrStack{
+		gss: buildGSSStack([]stackEntry{{state: 0}, newStackEntryCompactFullLeaf(1, aliasLeaf)}, &scratch),
+	}
+	if got := compareAcceptedStackAliasPreference(parser, aliasGSSStack, normalStack); got != 1 {
+		t.Fatalf("gss compact alias preference = %d, want 1", got)
+	}
+	if got := compareAcceptedStackAliasPreference(parser, normalStack, aliasGSSStack); got != -1 {
+		t.Fatalf("reverse gss compact alias preference = %d, want -1", got)
+	}
+
+	normalParent := newParentNodeInArena(arena, 3, true, []*Node{normalLeaf}, nil, 0)
+	aliasParent := newPendingParentInArena(arena, 3, true, 0, []stackEntry{newStackEntryCompactFullLeaf(1, aliasLeaf)}, 0, 1, Point{}, Point{Column: 1}, false)
+	parentNormalGSS := glrStack{
+		gss: buildGSSStack([]stackEntry{{state: 0}, newStackEntryNode(2, normalParent)}, &scratch),
+	}
+	parentAliasGSS := glrStack{
+		gss: buildGSSStack([]stackEntry{{state: 0}, newStackEntryPendingParent(2, aliasParent)}, &scratch),
+	}
+	if got := compareAcceptedStackAliasPreference(parser, parentAliasGSS, parentNormalGSS); got != 1 {
+		t.Fatalf("gss pending alias preference = %d, want 1", got)
+	}
+	if got := arena.compactFullLeafMaterialized; got != 0 {
+		t.Fatalf("compact leaf materialized during alias preference = %d, want 0", got)
+	}
+	if got := arena.pendingParentMaterialized; got != 0 {
+		t.Fatalf("pending parent materialized during alias preference = %d, want 0", got)
+	}
+}
+
+func TestCompareAcceptedStackAliasPreferencePreservesGSSResultOrder(t *testing.T) {
+	lang := &Language{
+		SymbolNames: []string{"EOF", "identifier", "alias_identifier", "property", "alias_property"},
+		SymbolMetadata: []SymbolMetadata{
+			{},
+			{Visible: true, Named: true},
+			{Visible: true, Named: true},
+			{Visible: true, Named: true},
+			{Visible: true, Named: true},
+		},
+		AliasSequences: [][]Symbol{{2}, {4}},
+	}
+	parser := NewParser(lang)
+	arena := newNodeArena(arenaClassFull)
+	var scratch gssScratch
+
+	bottomAlias := newCompactFullLeafInArena(arena, 2, true, 0, 1, Point{}, Point{Column: 1})
+	bottomNormal := newLeafNodeInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	topNormal := newLeafNodeInArena(arena, 3, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	topAlias := newCompactFullLeafInArena(arena, 4, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	preferBottomStack := glrStack{
+		gss: buildGSSStack([]stackEntry{
+			{state: 0},
+			newStackEntryCompactFullLeaf(1, bottomAlias),
+			newStackEntryNode(2, topNormal),
+		}, &scratch),
+	}
+	preferTopStack := glrStack{
+		gss: buildGSSStack([]stackEntry{
+			{state: 0},
+			newStackEntryNode(1, bottomNormal),
+			newStackEntryCompactFullLeaf(2, topAlias),
+		}, &scratch),
+	}
+	if got := compareAcceptedStackAliasPreference(parser, preferBottomStack, preferTopStack); got != 1 {
+		t.Fatalf("gss alias preference order = %d, want 1", got)
+	}
+}
+
+func TestCompareAcceptedStackAliasPreferenceKeepsWideNodeFallback(t *testing.T) {
+	lang := &Language{
+		SymbolNames: []string{"EOF", "identifier", "alias_identifier"},
+		SymbolMetadata: []SymbolMetadata{
+			{},
+			{Visible: true, Named: true},
+			{Visible: true, Named: true},
+		},
+		AliasSequences: [][]Symbol{{2}},
+	}
+	parser := NewParser(lang)
+	arena := newNodeArena(arenaClassFull)
+	var scratch gssScratch
+
+	aEntries := []stackEntry{{state: 0}}
+	bEntries := []stackEntry{{state: 0}}
+	for i := 0; i < 9; i++ {
+		symA, symB := Symbol(1), Symbol(1)
+		if i == 8 {
+			symA = 2
+		}
+		aNode := newLeafNodeInArena(arena, symA, true, uint32(i), uint32(i+1), Point{Column: uint32(i)}, Point{Column: uint32(i + 1)})
+		bNode := newLeafNodeInArena(arena, symB, true, uint32(i), uint32(i+1), Point{Column: uint32(i)}, Point{Column: uint32(i + 1)})
+		aEntries = append(aEntries, newStackEntryNode(StateID(i+1), aNode))
+		bEntries = append(bEntries, newStackEntryNode(StateID(i+1), bNode))
+	}
+	aStack := glrStack{gss: buildGSSStack(aEntries, &scratch)}
+	bStack := glrStack{gss: buildGSSStack(bEntries, &scratch)}
+	if got := compareAcceptedStackAliasPreference(parser, aStack, bStack); got != 1 {
+		t.Fatalf("wide node alias preference = %d, want 1", got)
+	}
+}
+
 func TestCompactCheckpointLeafStackEntryUsesNoTreePrefix(t *testing.T) {
 	leaf := newCompactCheckpointLeafInArena(nil, 9, true, 13, 21, externalScannerCheckpointRef{})
 	entry := newStackEntryCompactCheckpointLeaf(4, leaf)

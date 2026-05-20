@@ -314,6 +314,32 @@ func compareAcceptedStackAliasPreference(p *Parser, a, b glrStack) int {
 	if len(a.entries) > 0 && len(b.entries) > 0 {
 		return compareStackEntryAliasPreferenceSlices(p, a.entries, b.entries)
 	}
+	aCount := stackMaterializingResultEntryCount(a)
+	if aCount == 0 || aCount != stackMaterializingResultEntryCount(b) {
+		return 0
+	}
+	const maxBufferedAliasPreferenceEntries = 8
+	if aCount > maxBufferedAliasPreferenceEntries {
+		if !stackHasCompactResultPayload(a) && !stackHasCompactResultPayload(b) {
+			return compareAcceptedStackNodeAliasPreference(p, a, b)
+		}
+		return 0
+	}
+	var aBuf, bBuf [maxBufferedAliasPreferenceEntries]stackEntry
+	aEntries, aOK := stackMaterializingResultEntries(a, aBuf[:0], aCount)
+	bEntries, bOK := stackMaterializingResultEntries(b, bBuf[:0], aCount)
+	if !aOK || !bOK {
+		return 0
+	}
+	for i := 0; i < aCount; i++ {
+		if cmp := compareStackEntryAliasPreference(p, aEntries[i], bEntries[i]); cmp != 0 {
+			return cmp
+		}
+	}
+	return 0
+}
+
+func compareAcceptedStackNodeAliasPreference(p *Parser, a, b glrStack) int {
 	aNodes := resultNodesFromStack(a)
 	bNodes := resultNodesFromStack(b)
 	if len(aNodes) != len(bNodes) {
@@ -372,6 +398,76 @@ func nextMaterializingResultEntry(entries []stackEntry, start int) (stackEntry, 
 
 func stackEntryMaterializesForResult(entry stackEntry) bool {
 	return stackEntryNode(entry) != nil || stackEntryCompactFullLeaf(entry) != nil || stackEntryPendingParent(entry) != nil
+}
+
+func stackEntryHasCompactResultPayload(entry stackEntry) bool {
+	return stackEntryCompactFullLeaf(entry) != nil || stackEntryPendingParent(entry) != nil
+}
+
+func stackHasCompactResultPayload(s glrStack) bool {
+	if len(s.entries) > 0 {
+		for i := range s.entries {
+			if stackEntryHasCompactResultPayload(s.entries[i]) {
+				return true
+			}
+		}
+		return false
+	}
+	for n := s.gss.head; n != nil; n = n.prev {
+		if stackEntryHasCompactResultPayload(n.entry) {
+			return true
+		}
+	}
+	return false
+}
+
+func stackMaterializingResultEntryCount(s glrStack) int {
+	if len(s.entries) > 0 {
+		return countMaterializingResultEntries(s.entries)
+	}
+	if s.gss.head == nil {
+		return 0
+	}
+	count := 0
+	for n := s.gss.head; n != nil; n = n.prev {
+		if stackEntryMaterializesForResult(n.entry) {
+			count++
+		}
+	}
+	return count
+}
+
+func stackMaterializingResultEntries(s glrStack, dst []stackEntry, materializingCount int) ([]stackEntry, bool) {
+	if materializingCount == 0 || cap(dst) < materializingCount {
+		return nil, false
+	}
+	dst = dst[:materializingCount]
+	if len(s.entries) > 0 {
+		index := 0
+		for i := range s.entries {
+			if !stackEntryMaterializesForResult(s.entries[i]) {
+				continue
+			}
+			if index >= materializingCount {
+				return nil, false
+			}
+			dst[index] = s.entries[i]
+			index++
+		}
+		return dst, index == materializingCount
+	}
+	index := materializingCount - 1
+	for n := s.gss.head; n != nil; n = n.prev {
+		if !stackEntryMaterializesForResult(n.entry) {
+			continue
+		}
+		if index < 0 {
+			return nil, false
+		}
+		dst[index] = n.entry
+		index--
+	}
+	return dst, index == -1
 }
 
 func resultNodesFromStack(s glrStack) []*Node {
