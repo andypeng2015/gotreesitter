@@ -122,6 +122,13 @@ Useful narrow-run knobs:
 - `GTS_REAL_CORPUS_BENCH_ALLOW_MISMATCH=1` for timing-only diagnosis when the
   selected corpus exposes a known structural mismatch.
 
+The gotreesitter incremental lanes also report parser attribution counters:
+`edit_ns/op`, `parse_wall_ns/op`, `reuse_ns/op`, `reparse_ns/op`,
+`unattributed_ns/op`, reused subtree/byte counts, reuse rejection counts, GLR
+stack iteration counts, recovery counts, and survivor-node counts. The no-edit
+lane reports zero parser work when the unchanged-tree fast path returns the
+previous tree.
+
 ## Run Parity Tests In Docker Sandbox
 
 This keeps heavy parity runs isolated from your host/WSL memory space and

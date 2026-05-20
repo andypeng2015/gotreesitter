@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	gotreesitter "github.com/odvcencio/gotreesitter"
 	"github.com/odvcencio/gotreesitter/grammars"
@@ -50,6 +51,53 @@ type realCorpusRuntimeTotals struct {
 	finalChildRefSingleAccesses       uint64
 	finalChildRefSingleMaterialized   uint64
 	normalizationRewrites             uint64
+}
+
+type realCorpusIncrementalProfileTotals struct {
+	editNanos                          int64
+	parseWallNanos                     int64
+	reuseNanos                         int64
+	reparseNanos                       int64
+	reusedSubtrees                     uint64
+	reusedBytes                        uint64
+	newNodes                           uint64
+	reuseUnsupported                   uint64
+	reuseRejectDirty                   uint64
+	reuseRejectAncestorDirtyBeforeEdit uint64
+	reuseRejectHasError                uint64
+	reuseRejectInvalidSpan             uint64
+	reuseRejectOutOfBounds             uint64
+	reuseRejectRootNonLeafChanged      uint64
+	reuseRejectLargeNonLeaf            uint64
+	recoverSearches                    uint64
+	recoverStateChecks                 uint64
+	recoverStateSkips                  uint64
+	recoverSymbolSkips                 uint64
+	recoverLookups                     uint64
+	recoverHits                        uint64
+	maxStacksSeen                      int
+	entryScratchPeak                   uint64
+	tokensConsumed                     uint64
+	singleStackIterations              int
+	multiStackIterations               int
+	singleStackTokens                  uint64
+	multiStackTokens                   uint64
+	singleStackGSSNodes                uint64
+	multiStackGSSNodes                 uint64
+	gssNodesAllocated                  uint64
+	gssNodesRetained                   uint64
+	gssNodesDroppedSameToken           uint64
+	parentNodesAllocated               uint64
+	parentNodesRetained                uint64
+	parentNodesDroppedSameToken        uint64
+	leafNodesAllocated                 uint64
+	leafNodesRetained                  uint64
+	leafNodesDroppedSameToken          uint64
+	mergeStacksIn                      uint64
+	mergeStacksOut                     uint64
+	mergeSlotsUsed                     uint64
+	globalCullStacksIn                 uint64
+	globalCullStacksOut                uint64
 }
 
 type realCorpusGoIncrementalState struct {
@@ -614,13 +662,22 @@ func benchmarkRealCorpusGoParseIncrementalSingleByteEdit(b *testing.B, cases []r
 	b.ResetTimer()
 
 	var totals realCorpusRuntimeTotals
+	var profileTotals realCorpusIncrementalProfileTotals
 	for i := 0; i < b.N; i++ {
 		for stateIndex := range states {
 			state := &states[stateIndex]
 			toggleRealCorpusEditByte(state.src, state.tc)
+			editStart := time.Now()
 			state.tree.Edit(state.tc.goEdit)
-			newTree := parseRealCorpusGoIncremental(b, realCorpusCaseWithSource(state.tc.realCorpusBenchmarkCase, state.src), parser, state.tree)
-			totals.add(newTree.ParseRuntime())
+			profileTotals.addEdit(time.Since(editStart))
+			oldTree := state.tree
+			parseStart := time.Now()
+			newTree, profile := parseRealCorpusGoIncrementalProfiled(b, realCorpusCaseWithSource(state.tc.realCorpusBenchmarkCase, state.src), parser, state.tree)
+			profileTotals.addParseWall(time.Since(parseStart))
+			profileTotals.add(profile)
+			if newTree != oldTree {
+				totals.add(newTree.ParseRuntime())
+			}
 			if newTree != state.tree {
 				releaseGoTree(state.tree)
 			}
@@ -628,6 +685,7 @@ func benchmarkRealCorpusGoParseIncrementalSingleByteEdit(b *testing.B, cases []r
 		}
 	}
 	totals.report(b, realCorpusCasesFromIncremental(cases), b.N)
+	profileTotals.report(b, b.N)
 }
 
 func benchmarkRealCorpusCParseIncrementalSingleByteEdit(b *testing.B, cases []realCorpusIncrementalCase) {
@@ -653,12 +711,18 @@ func benchmarkRealCorpusCParseIncrementalSingleByteEdit(b *testing.B, cases []re
 	b.SetBytes(totalRealCorpusIncrementalBytes(cases))
 	b.ResetTimer()
 
+	var editNanos int64
+	var parseWallNanos int64
 	for i := 0; i < b.N; i++ {
 		for stateIndex := range states {
 			state := &states[stateIndex]
 			toggleRealCorpusEditByte(state.src, state.tc)
+			editStart := time.Now()
 			state.tree.Edit(&state.tc.cEdit)
+			editNanos += time.Since(editStart).Nanoseconds()
+			parseStart := time.Now()
 			newTree := parseRealCorpusCIncremental(b, parser, state.src, state.tree)
+			parseWallNanos += time.Since(parseStart).Nanoseconds()
 			if newTree != state.tree {
 				state.tree.Close()
 			}
@@ -666,6 +730,10 @@ func benchmarkRealCorpusCParseIncrementalSingleByteEdit(b *testing.B, cases []re
 		}
 	}
 	reportRealCorpusCaseMetrics(b, realCorpusCasesFromIncremental(cases))
+	if b.N > 0 {
+		b.ReportMetric(float64(editNanos)/float64(b.N), "edit_ns/op")
+		b.ReportMetric(float64(parseWallNanos)/float64(b.N), "parse_wall_ns/op")
+	}
 }
 
 func benchmarkRealCorpusGoParseIncrementalNoEdit(b *testing.B, cases []realCorpusBenchmarkCase) {
@@ -688,11 +756,18 @@ func benchmarkRealCorpusGoParseIncrementalNoEdit(b *testing.B, cases []realCorpu
 	b.ResetTimer()
 
 	var totals realCorpusRuntimeTotals
+	var profileTotals realCorpusIncrementalProfileTotals
 	for i := 0; i < b.N; i++ {
 		for stateIndex := range states {
 			state := &states[stateIndex]
-			newTree := parseRealCorpusGoIncremental(b, state.tc, parser, state.tree)
-			totals.add(newTree.ParseRuntime())
+			oldTree := state.tree
+			parseStart := time.Now()
+			newTree, profile := parseRealCorpusGoIncrementalProfiled(b, state.tc, parser, state.tree)
+			profileTotals.addParseWall(time.Since(parseStart))
+			profileTotals.add(profile)
+			if newTree != oldTree {
+				totals.add(newTree.ParseRuntime())
+			}
 			if newTree != state.tree {
 				releaseGoTree(state.tree)
 			}
@@ -700,6 +775,7 @@ func benchmarkRealCorpusGoParseIncrementalNoEdit(b *testing.B, cases []realCorpu
 		}
 	}
 	totals.report(b, cases, b.N)
+	profileTotals.report(b, b.N)
 }
 
 func benchmarkRealCorpusCParseIncrementalNoEdit(b *testing.B, cases []realCorpusBenchmarkCase) {
@@ -722,10 +798,13 @@ func benchmarkRealCorpusCParseIncrementalNoEdit(b *testing.B, cases []realCorpus
 	b.SetBytes(totalRealCorpusBenchmarkBytes(cases))
 	b.ResetTimer()
 
+	var parseWallNanos int64
 	for i := 0; i < b.N; i++ {
 		for stateIndex := range states {
 			state := &states[stateIndex]
+			parseStart := time.Now()
 			newTree := parseRealCorpusCIncremental(b, parser, state.tc.source, state.tree)
+			parseWallNanos += time.Since(parseStart).Nanoseconds()
 			if newTree != state.tree {
 				state.tree.Close()
 			}
@@ -733,6 +812,9 @@ func benchmarkRealCorpusCParseIncrementalNoEdit(b *testing.B, cases []realCorpus
 		}
 	}
 	reportRealCorpusCaseMetrics(b, cases)
+	if b.N > 0 {
+		b.ReportMetric(float64(parseWallNanos)/float64(b.N), "parse_wall_ns/op")
+	}
 }
 
 func parseRealCorpusGoFull(tb testing.TB, tc realCorpusBenchmarkCase, parser *gotreesitter.Parser) *gotreesitter.Tree {
@@ -771,6 +853,26 @@ func parseRealCorpusGoIncremental(tb testing.TB, tc realCorpusBenchmarkCase, par
 	}
 	requireCompleteRealCorpusGoTree(tb, tc, tree, "gotreesitter incremental", err)
 	return tree
+}
+
+func parseRealCorpusGoIncrementalProfiled(tb testing.TB, tc realCorpusBenchmarkCase, parser *gotreesitter.Parser, oldTree *gotreesitter.Tree) (*gotreesitter.Tree, gotreesitter.IncrementalParseProfile) {
+	tb.Helper()
+	var tree *gotreesitter.Tree
+	var profile gotreesitter.IncrementalParseProfile
+	var err error
+	switch tc.report.Backend {
+	case grammars.ParseBackendTokenSource:
+		if tc.entry.TokenSourceFactory == nil {
+			tb.Fatalf("token source backend without factory for %q", tc.name)
+		}
+		tree, profile, err = parser.ParseIncrementalWithTokenSourceProfiled(tc.source, oldTree, tc.entry.TokenSourceFactory(tc.source, tc.goLang))
+	case grammars.ParseBackendDFA, grammars.ParseBackendDFAPartial:
+		tree, profile, err = parser.ParseIncrementalProfiled(tc.source, oldTree)
+	default:
+		tb.Fatalf("unsupported incremental backend %q for %q", tc.report.Backend, tc.name)
+	}
+	requireCompleteRealCorpusGoTree(tb, tc, tree, "gotreesitter incremental", err)
+	return tree, profile
 }
 
 func requireCompleteRealCorpusGoTree(tb testing.TB, tc realCorpusBenchmarkCase, tree *gotreesitter.Tree, phase string, err error) {
@@ -869,6 +971,65 @@ func (t *realCorpusRuntimeTotals) add(rt gotreesitter.ParseRuntime) {
 	t.normalizationRewrites += rt.NormalizationNodesRewritten
 }
 
+func (t *realCorpusIncrementalProfileTotals) addEdit(d time.Duration) {
+	t.editNanos += d.Nanoseconds()
+}
+
+func (t *realCorpusIncrementalProfileTotals) addParseWall(d time.Duration) {
+	t.parseWallNanos += d.Nanoseconds()
+}
+
+func (t *realCorpusIncrementalProfileTotals) add(profile gotreesitter.IncrementalParseProfile) {
+	t.reuseNanos += profile.ReuseCursorNanos
+	t.reparseNanos += profile.ReparseNanos
+	t.reusedSubtrees += profile.ReusedSubtrees
+	t.reusedBytes += profile.ReusedBytes
+	t.newNodes += profile.NewNodesAllocated
+	if profile.ReuseUnsupported {
+		t.reuseUnsupported++
+	}
+	t.reuseRejectDirty += profile.ReuseRejectDirty
+	t.reuseRejectAncestorDirtyBeforeEdit += profile.ReuseRejectAncestorDirtyBeforeEdit
+	t.reuseRejectHasError += profile.ReuseRejectHasError
+	t.reuseRejectInvalidSpan += profile.ReuseRejectInvalidSpan
+	t.reuseRejectOutOfBounds += profile.ReuseRejectOutOfBounds
+	t.reuseRejectRootNonLeafChanged += profile.ReuseRejectRootNonLeafChanged
+	t.reuseRejectLargeNonLeaf += profile.ReuseRejectLargeNonLeaf
+	t.recoverSearches += profile.RecoverSearches
+	t.recoverStateChecks += profile.RecoverStateChecks
+	t.recoverStateSkips += profile.RecoverStateSkips
+	t.recoverSymbolSkips += profile.RecoverSymbolSkips
+	t.recoverLookups += profile.RecoverLookups
+	t.recoverHits += profile.RecoverHits
+	if profile.MaxStacksSeen > t.maxStacksSeen {
+		t.maxStacksSeen = profile.MaxStacksSeen
+	}
+	if profile.EntryScratchPeak > t.entryScratchPeak {
+		t.entryScratchPeak = profile.EntryScratchPeak
+	}
+	t.tokensConsumed += profile.TokensConsumed
+	t.singleStackIterations += profile.SingleStackIterations
+	t.multiStackIterations += profile.MultiStackIterations
+	t.singleStackTokens += profile.SingleStackTokens
+	t.multiStackTokens += profile.MultiStackTokens
+	t.singleStackGSSNodes += profile.SingleStackGSSNodes
+	t.multiStackGSSNodes += profile.MultiStackGSSNodes
+	t.gssNodesAllocated += profile.GSSNodesAllocated
+	t.gssNodesRetained += profile.GSSNodesRetained
+	t.gssNodesDroppedSameToken += profile.GSSNodesDroppedSameToken
+	t.parentNodesAllocated += profile.ParentNodesAllocated
+	t.parentNodesRetained += profile.ParentNodesRetained
+	t.parentNodesDroppedSameToken += profile.ParentNodesDroppedSameToken
+	t.leafNodesAllocated += profile.LeafNodesAllocated
+	t.leafNodesRetained += profile.LeafNodesRetained
+	t.leafNodesDroppedSameToken += profile.LeafNodesDroppedSameToken
+	t.mergeStacksIn += profile.MergeStacksIn
+	t.mergeStacksOut += profile.MergeStacksOut
+	t.mergeSlotsUsed += profile.MergeSlotsUsed
+	t.globalCullStacksIn += profile.GlobalCullStacksIn
+	t.globalCullStacksOut += profile.GlobalCullStacksOut
+}
+
 func (t realCorpusRuntimeTotals) report(b *testing.B, cases []realCorpusBenchmarkCase, benchN int) {
 	reportRealCorpusCaseMetrics(b, cases)
 	if benchN == 0 {
@@ -888,6 +1049,62 @@ func (t realCorpusRuntimeTotals) report(b *testing.B, cases []realCorpusBenchmar
 	b.ReportMetric(float64(t.finalChildRefSingleAccesses)/n, "final_child_ref_single_accesses/op")
 	b.ReportMetric(float64(t.finalChildRefSingleMaterialized)/n, "final_child_ref_single_mat/op")
 	b.ReportMetric(float64(t.normalizationRewrites)/n, "normalization_rewrites/op")
+}
+
+func (t realCorpusIncrementalProfileTotals) report(b *testing.B, benchN int) {
+	if benchN == 0 {
+		return
+	}
+	n := float64(benchN)
+	b.ReportMetric(float64(t.editNanos)/n, "edit_ns/op")
+	b.ReportMetric(float64(t.parseWallNanos)/n, "parse_wall_ns/op")
+	b.ReportMetric(float64(t.reuseNanos)/n, "reuse_ns/op")
+	b.ReportMetric(float64(t.reparseNanos)/n, "reparse_ns/op")
+	unattributedNanos := t.parseWallNanos - t.reuseNanos - t.reparseNanos
+	if unattributedNanos < 0 {
+		unattributedNanos = 0
+	}
+	b.ReportMetric(float64(unattributedNanos)/n, "unattributed_ns/op")
+	b.ReportMetric(float64(t.reusedSubtrees)/n, "reused_subtrees/op")
+	b.ReportMetric(float64(t.reusedBytes)/n, "reused_B/op")
+	b.ReportMetric(float64(t.newNodes)/n, "new_nodes/op")
+	b.ReportMetric(float64(t.reuseUnsupported)/n, "reuse_unsupported/op")
+	b.ReportMetric(float64(t.reuseRejectDirty)/n, "reuse_reject_dirty/op")
+	b.ReportMetric(float64(t.reuseRejectAncestorDirtyBeforeEdit)/n, "reuse_reject_ancestor_dirty/op")
+	b.ReportMetric(float64(t.reuseRejectHasError)/n, "reuse_reject_error/op")
+	b.ReportMetric(float64(t.reuseRejectInvalidSpan)/n, "reuse_reject_invalid_span/op")
+	b.ReportMetric(float64(t.reuseRejectOutOfBounds)/n, "reuse_reject_oob/op")
+	b.ReportMetric(float64(t.reuseRejectRootNonLeafChanged)/n, "reuse_reject_root_nonleaf/op")
+	b.ReportMetric(float64(t.reuseRejectLargeNonLeaf)/n, "reuse_reject_large_nonleaf/op")
+	b.ReportMetric(float64(t.recoverSearches)/n, "recover_searches/op")
+	b.ReportMetric(float64(t.recoverStateChecks)/n, "recover_state_checks/op")
+	b.ReportMetric(float64(t.recoverStateSkips)/n, "recover_state_skips/op")
+	b.ReportMetric(float64(t.recoverSymbolSkips)/n, "recover_symbol_skips/op")
+	b.ReportMetric(float64(t.recoverLookups)/n, "recover_lookups/op")
+	b.ReportMetric(float64(t.recoverHits)/n, "recover_hits/op")
+	b.ReportMetric(float64(t.maxStacksSeen), "max_stacks_peak")
+	b.ReportMetric(float64(t.entryScratchPeak), "entry_scratch_peak")
+	b.ReportMetric(float64(t.tokensConsumed)/n, "incr_tokens/op")
+	b.ReportMetric(float64(t.singleStackIterations)/n, "single_stack_iterations/op")
+	b.ReportMetric(float64(t.multiStackIterations)/n, "multi_stack_iterations/op")
+	b.ReportMetric(float64(t.singleStackTokens)/n, "single_stack_tokens/op")
+	b.ReportMetric(float64(t.multiStackTokens)/n, "multi_stack_tokens/op")
+	b.ReportMetric(float64(t.singleStackGSSNodes)/n, "single_stack_gss_nodes/op")
+	b.ReportMetric(float64(t.multiStackGSSNodes)/n, "multi_stack_gss_nodes/op")
+	b.ReportMetric(float64(t.gssNodesAllocated)/n, "gss_nodes_alloc/op")
+	b.ReportMetric(float64(t.gssNodesRetained)/n, "gss_nodes_retained/op")
+	b.ReportMetric(float64(t.gssNodesDroppedSameToken)/n, "gss_nodes_dropped/op")
+	b.ReportMetric(float64(t.parentNodesAllocated)/n, "parent_nodes_alloc/op")
+	b.ReportMetric(float64(t.parentNodesRetained)/n, "parent_nodes_retained/op")
+	b.ReportMetric(float64(t.parentNodesDroppedSameToken)/n, "parent_nodes_dropped/op")
+	b.ReportMetric(float64(t.leafNodesAllocated)/n, "leaf_nodes_alloc/op")
+	b.ReportMetric(float64(t.leafNodesRetained)/n, "leaf_nodes_retained/op")
+	b.ReportMetric(float64(t.leafNodesDroppedSameToken)/n, "leaf_nodes_dropped/op")
+	b.ReportMetric(float64(t.mergeStacksIn)/n, "merge_stacks_in/op")
+	b.ReportMetric(float64(t.mergeStacksOut)/n, "merge_stacks_out/op")
+	b.ReportMetric(float64(t.mergeSlotsUsed)/n, "merge_slots_used/op")
+	b.ReportMetric(float64(t.globalCullStacksIn)/n, "global_cull_stacks_in/op")
+	b.ReportMetric(float64(t.globalCullStacksOut)/n, "global_cull_stacks_out/op")
 }
 
 func reportRealCorpusCaseMetrics(b *testing.B, cases []realCorpusBenchmarkCase) {
