@@ -941,6 +941,14 @@ func TestReplaceChildRangeWithSingleNodeKeepsFinalRefsLazy(t *testing.T) {
 		t.Fatal("root = nil")
 	}
 	replacement := newLeafNodeInArena(arena, 9, true, 1, 3, Point{Column: 1}, Point{Column: 3})
+	replaceChildRangeWithSingleNode(root, 3, 2, replacement)
+	if got := arena.finalChildRefsMaterializedParents; got != 0 {
+		t.Fatalf("final child ref range materialized parents after invalid replace = %d, want 0", got)
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 0 {
+		t.Fatalf("final child ref single children after invalid replace = %d, want 0", got)
+	}
+
 	replaceChildRangeWithSingleNode(root, 1, 3, replacement)
 
 	if got := arena.finalChildRefsMaterializedParents; got != 0 {

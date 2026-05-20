@@ -29,13 +29,14 @@ func replaceChildRangeWithSingleNode(parent *Node, start, end int, replacement *
 	if parent == nil || replacement == nil {
 		return
 	}
+	childCount := resultChildCount(parent)
+	if start < 0 || start >= end || end > childCount {
+		return
+	}
 	if resultMutableChildrenForMutation(parent).ReplaceFinalRefRangeWithNode(start, end, replacement) {
 		return
 	}
-	children := resultDenseChildrenForMutation(parent)
-	if start < 0 || start >= end || end > len(children) {
-		return
-	}
+	children := resultDenseChildrenFallbackForMutation(parent)
 	oldLen := len(children)
 	newChildren := make([]*Node, 0, oldLen-(end-start)+1)
 	newChildren = append(newChildren, children[:start]...)

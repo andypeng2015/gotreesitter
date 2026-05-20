@@ -22,7 +22,7 @@ func resultChildAt(n *Node, i int) *Node {
 	return nodeChildAtForReason(n, i, materializeForNormalization)
 }
 
-func resultDenseChildrenForMutation(n *Node) []*Node {
+func resultDenseChildrenFallbackForMutation(n *Node) []*Node {
 	if perfCountersEnabled {
 		perfRecordDenseMutationChildrenCall()
 		if nodeHasFinalChildRefs(n) {
