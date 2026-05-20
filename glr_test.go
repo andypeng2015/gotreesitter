@@ -141,6 +141,8 @@ func TestPendingParentFieldRejectCountersClassifyShapes(t *testing.T) {
 		{"no-ids", pendingParentFieldRejectNoIDs, func(s PendingParentFieldRejectStats) uint64 { return s.NoIDs }},
 		{"inherited", pendingParentFieldRejectInherited, func(s PendingParentFieldRejectStats) uint64 { return s.Inherited }},
 		{"hidden-child", pendingParentFieldRejectHiddenChild, func(s PendingParentFieldRejectStats) uint64 { return s.HiddenChild }},
+		{"hidden-child-plain", pendingParentFieldRejectHiddenChildPlain, func(s PendingParentFieldRejectStats) uint64 { return s.HiddenChildPlain }},
+		{"hidden-child-with-fields", pendingParentFieldRejectHiddenChildWithFields, func(s PendingParentFieldRejectStats) uint64 { return s.HiddenChildWithFields }},
 		{"child", pendingParentFieldRejectChild, func(s PendingParentFieldRejectStats) uint64 { return s.Child }},
 		{"all-visible-direct", pendingParentFieldRejectAllVisibleDirect, func(s PendingParentFieldRejectStats) uint64 { return s.AllVisibleDirect }},
 		{"unknown", pendingParentFieldRejectUnknown, func(s PendingParentFieldRejectStats) uint64 { return s.Unknown }},
@@ -193,7 +195,7 @@ func TestMaterializePendingPayloadEntriesPropagatesFieldRejectShape(t *testing.T
 	arena.pendingParentLastRejectReason = pendingParentRejectFields
 	arena.pendingParentLastFieldRejectShape = pendingParentFieldRejectAllVisibleDirect
 	arena.pendingParentActiveRejectReason = pendingParentRejectAlias
-	arena.pendingParentActiveFieldRejectShape = pendingParentFieldRejectHiddenChild
+	arena.pendingParentActiveFieldRejectShape = pendingParentFieldRejectHiddenChildPlain
 
 	materializePendingPayloadEntries(entries, 0, len(entries), arena)
 
@@ -209,7 +211,7 @@ func TestMaterializePendingPayloadEntriesPropagatesFieldRejectShape(t *testing.T
 	if got := arena.pendingParentActiveRejectReason; got != pendingParentRejectAlias {
 		t.Fatalf("active reject reason restored = %d, want alias", got)
 	}
-	if got := arena.pendingParentActiveFieldRejectShape; got != pendingParentFieldRejectHiddenChild {
+	if got := arena.pendingParentActiveFieldRejectShape; got != pendingParentFieldRejectHiddenChildPlain {
 		t.Fatalf("active field reject shape restored = %d, want hidden-child", got)
 	}
 }
@@ -230,7 +232,7 @@ func TestMaterializeStackEntryPayloadTracksActiveParentReject(t *testing.T) {
 
 	parent := newPendingParentInArena(arena, 10, true, 7, nil, 0, 0, Point{}, Point{}, false)
 	parentEntry := newStackEntryPendingParent(5, parent)
-	arena.pendingParentActiveFieldRejectShape = pendingParentFieldRejectHiddenChild
+	arena.pendingParentActiveFieldRejectShape = pendingParentFieldRejectHiddenChildWithFields
 	node = materializeStackEntryPayload(arena, &parentEntry, compactFullLeafMaterializeForParentReduce, pendingParentMaterializeForParentReduce)
 	if node == nil {
 		t.Fatal("materialized pending parent = nil")
@@ -238,8 +240,8 @@ func TestMaterializeStackEntryPayloadTracksActiveParentReject(t *testing.T) {
 	if got := arena.pendingParentMaterializedForParentReject.Fields; got != 1 {
 		t.Fatalf("pending parent active parent reject fields = %d, want 1", got)
 	}
-	if got := arena.pendingParentMaterializedForFieldReject.HiddenChild; got != 1 {
-		t.Fatalf("pending parent active field reject hidden-child = %d, want 1", got)
+	if got := arena.pendingParentMaterializedForFieldReject.HiddenChildWithFields; got != 1 {
+		t.Fatalf("pending parent active field reject hidden-child-with-fields = %d, want 1", got)
 	}
 }
 

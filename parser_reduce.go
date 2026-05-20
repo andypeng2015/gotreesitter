@@ -1216,7 +1216,11 @@ func (p *Parser) recordPendingFieldRejectShape(arena *nodeArena, act ParseAction
 			return
 		}
 		if !stackEntryVisibleForPending(entry, symbolMeta) {
-			arena.recordPendingParentFieldRejected(pendingParentFieldRejectHiddenChild)
+			shape := pendingParentFieldRejectHiddenChildPlain
+			if n := stackEntryNode(entry); hiddenTreeHasFieldIDs(n) {
+				shape = pendingParentFieldRejectHiddenChildWithFields
+			}
+			arena.recordPendingParentFieldRejected(shape)
 			return
 		}
 	}

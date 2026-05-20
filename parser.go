@@ -1578,6 +1578,8 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		parseRuntime.PendingParentRejectedFieldsNoIDs = arena.pendingParentRejectedFieldsNoIDs
 		parseRuntime.PendingParentRejectedFieldsInherited = arena.pendingParentRejectedFieldsInherited
 		parseRuntime.PendingParentRejectedFieldsHiddenChild = arena.pendingParentRejectedFieldsHiddenChild
+		parseRuntime.PendingParentRejectedFieldsHiddenChildPlain = arena.pendingParentRejectedFieldsHiddenChildPlain
+		parseRuntime.PendingParentRejectedFieldsHiddenChildWithFields = arena.pendingParentRejectedFieldsHiddenChildWithFields
 		parseRuntime.PendingParentRejectedFieldsChild = arena.pendingParentRejectedFieldsChild
 		parseRuntime.PendingParentRejectedFieldsAllVisibleDirect = arena.pendingParentRejectedFieldsAllVisibleDirect
 		parseRuntime.PendingParentRejectedChild = arena.pendingParentRejectedChild

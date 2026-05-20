@@ -597,7 +597,7 @@ func (s *javaRuntimeStats) add(rt gotreesitter.ParseRuntime) {
 
 func (s javaRuntimeStats) summary() string {
 	return fmt.Sprintf(
-		"tokens=%d nodes=%d parent_alloc=%d parent_retained=%d parent_dropped_same_token=%d leaf_alloc=%d leaf_retained=%d leaf_dropped_same_token=%d transient_child_slices_alloc=%d transient_child_slices_materialized=%d transient_child_ptrs_alloc=%d transient_child_ptrs_materialized=%d transient_parent_alloc=%d transient_parent_materialized=%d transient_parent_dropped=%d gss_alloc=%d gss_retained=%d gss_dropped_same_token=%d single_gss=%d multi_gss=%d single_iters=%d multi_iters=%d merge_in=%d merge_out=%d merge_slots=%d global_cull_in=%d global_cull_out=%d pending_created=%d pending_materialized=%d pending_materialized_parent=%d pending_materialized_parent_reject_fields=%d pending_materialized_field_hidden_child=%d pending_materialized_field_all_visible_direct=%d pending_dropped=%d pending_flattened=%d pending_child_refs_flattened=%d pending_candidates=%d max_stacks=%d max_arena_bytes=%d max_scratch_bytes=%d max_gss_bytes=%d max_entry_scratch_bytes=%d",
+		"tokens=%d nodes=%d parent_alloc=%d parent_retained=%d parent_dropped_same_token=%d leaf_alloc=%d leaf_retained=%d leaf_dropped_same_token=%d transient_child_slices_alloc=%d transient_child_slices_materialized=%d transient_child_ptrs_alloc=%d transient_child_ptrs_materialized=%d transient_parent_alloc=%d transient_parent_materialized=%d transient_parent_dropped=%d gss_alloc=%d gss_retained=%d gss_dropped_same_token=%d single_gss=%d multi_gss=%d single_iters=%d multi_iters=%d merge_in=%d merge_out=%d merge_slots=%d global_cull_in=%d global_cull_out=%d pending_created=%d pending_materialized=%d pending_materialized_parent=%d pending_materialized_parent_reject_fields=%d pending_materialized_field_hidden_child=%d pending_materialized_field_hidden_child_plain=%d pending_materialized_field_hidden_child_with_fields=%d pending_materialized_field_all_visible_direct=%d pending_dropped=%d pending_flattened=%d pending_child_refs_flattened=%d pending_candidates=%d max_stacks=%d max_arena_bytes=%d max_scratch_bytes=%d max_gss_bytes=%d max_entry_scratch_bytes=%d",
 		s.tokensConsumed,
 		s.nodesAllocated,
 		s.parentNodesAllocated,
@@ -630,6 +630,8 @@ func (s javaRuntimeStats) summary() string {
 		s.pendingParentMatParent,
 		s.pendingParentRejects.Fields,
 		s.pendingParentFieldRejects.HiddenChild,
+		s.pendingParentFieldRejects.HiddenChildPlain,
+		s.pendingParentFieldRejects.HiddenChildWithFields,
 		s.pendingParentFieldRejects.AllVisibleDirect,
 		s.pendingParentDropped,
 		s.pendingParentFlattened,
