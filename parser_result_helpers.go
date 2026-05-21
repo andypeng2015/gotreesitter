@@ -576,6 +576,17 @@ func setNodeEndTo(n *Node, end uint32, source []byte) {
 
 func advancePointByBytes(start Point, b []byte) Point {
 	p := start
+	if len(b) < 256 {
+		for _, c := range b {
+			if c == '\n' {
+				p.Row++
+				p.Column = 0
+				continue
+			}
+			p.Column++
+		}
+		return p
+	}
 	lastNewline := bytes.LastIndexByte(b, '\n')
 	if lastNewline < 0 {
 		p.Column += uint32(len(b))
