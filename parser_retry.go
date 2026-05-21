@@ -321,10 +321,6 @@ func effectiveParseMergePerKeyCap(lang *Language, mergePerKeyCap int, incrementa
 	if lang == nil || incremental {
 		return mergePerKeyCap
 	}
-	fullSourceLen := 0
-	if len(sourceLen) > 0 {
-		fullSourceLen = sourceLen[0]
-	}
 	switch lang.Name {
 	case "c":
 		// C's declaration/expression recovery can keep many redundant
@@ -360,16 +356,12 @@ func effectiveParseMergePerKeyCap(lang *Language, mergePerKeyCap int, incrementa
 	case "java":
 		// Giant generated string/switch-heavy Java sources can retain millions
 		// of redundant GLR survivors under the default per-key budget. Keep one
-		// steady-state survivor for large full parses; smaller annotation-heavy
-		// files still need two survivors to retain the declaration branch.
+		// steady-state survivor for full parses.
 		// Accepted-error retries can still widen this cap when a file proves the
 		// steady-state budget is insufficient.
 		// Preserve explicit env overrides for diagnosis and parity experiments.
-		if !parseMaxMergePerKeyEnvConfigured() && fullSourceLen >= javaTightMergeCapSourceLen && mergePerKeyCap > 1 {
+		if !parseMaxMergePerKeyEnvConfigured() && mergePerKeyCap > 1 {
 			return 1
-		}
-		if !parseMaxMergePerKeyEnvConfigured() && mergePerKeyCap > 2 {
-			return 2
 		}
 	}
 	return mergePerKeyCap
