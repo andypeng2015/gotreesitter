@@ -294,11 +294,18 @@ type Language struct {
 	lexAsciiOnce         sync.Once
 	keywordLexAsciiTable [][128]int32
 	keywordLexAsciiOnce  sync.Once
+	lexModeStarts        []lexModeStart
+	lexModeStartOnce     sync.Once
 }
 
 type symbolNameNamedKey struct {
 	name  string
 	named bool
+}
+
+type lexModeStart struct {
+	lexState                uint32
+	afterWhitespaceLexState uint32
 }
 
 const lexAsciiNoMatch = int32(0x7FFF_FFFF)
@@ -328,6 +335,23 @@ func (l *Language) KeywordLexAsciiTable() [][128]int32 {
 		l.keywordLexAsciiTable = buildLexAsciiTable(l.KeywordLexStates)
 	})
 	return l.keywordLexAsciiTable
+}
+
+func (l *Language) LexModeStarts() []lexModeStart {
+	if l == nil || len(l.LexModes) == 0 {
+		return nil
+	}
+	l.lexModeStartOnce.Do(func() {
+		starts := make([]lexModeStart, len(l.LexModes))
+		for i, mode := range l.LexModes {
+			starts[i] = lexModeStart{
+				lexState:                mode.LexStateIndex(),
+				afterWhitespaceLexState: mode.AfterWhitespaceLexStateIndex(),
+			}
+		}
+		l.lexModeStarts = starts
+	})
+	return l.lexModeStarts
 }
 
 func buildLexAsciiTable(states []LexState) [][128]int32 {
