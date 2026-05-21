@@ -42,6 +42,16 @@ func normalizePythonCompatibilityWithParser(root *Node, source []byte, parser *P
 		return normalizeCollapsedNamedLeafChildrenWithStats(root, lang, "pass_statement", "pass")
 	})
 	parser.runNormalizationPass(func() bool {
+		return sourceFlags.wildcardImport
+	}, func() normalizationPassCounters {
+		return normalizeCollapsedNamedLeafChildrenBySourceWithStats(root, source, lang, "wildcard_import", "*")
+	})
+	parser.runNormalizationPass(func() bool {
+		return sourceFlags.asPattern
+	}, func() normalizationPassCounters {
+		return normalizePythonAsPatternTargetIdentifiers(root, source, lang)
+	})
+	parser.runNormalizationPass(func() bool {
 		return sourceFlags.continuationEscape
 	}, func() normalizationPassCounters {
 		return normalizePythonStringContinuationEscapes(root, source, lang)
@@ -53,6 +63,8 @@ type pythonCompatibilitySourceFlags struct {
 	printChevron       bool
 	fStringPattern     bool
 	passWord           bool
+	wildcardImport     bool
+	asPattern          bool
 	continuationEscape bool
 }
 
@@ -63,6 +75,10 @@ func pythonCompatibilitySourceFlagsFor(source []byte) pythonCompatibilitySourceF
 			flags.continuationEscape = true
 		}
 		switch source[i] {
+		case '*':
+			flags.wildcardImport = true
+			i++
+			continue
 		case '#':
 			next := pythonSkipLineComment(source, i+1)
 			if !flags.continuationEscape && pythonSourceRangeContainsContinuationEscape(source, i, next) {
@@ -118,9 +134,62 @@ func pythonCompatibilitySourceFlagsFor(source []byte) pythonCompatibilitySourceF
 		if !flags.passWord && pythonSourceWordAt(source, i, "pass") {
 			flags.passWord = true
 		}
+		if !flags.asPattern && pythonSourceWordAt(source, i, "as") {
+			flags.asPattern = true
+		}
 		i++
 	}
 	return flags
+}
+
+func normalizePythonAsPatternTargetIdentifiers(root *Node, source []byte, lang *Language) normalizationPassCounters {
+	var counters normalizationPassCounters
+	if root == nil || lang == nil || len(source) == 0 {
+		return counters
+	}
+	parentSym, ok := symbolByName(lang, "as_pattern_target")
+	if !ok {
+		return counters
+	}
+	identifierSym, ok := symbolByName(lang, "identifier")
+	if !ok {
+		return counters
+	}
+	identifierNamed := false
+	if int(identifierSym) < len(lang.SymbolMetadata) {
+		identifierNamed = lang.SymbolMetadata[identifierSym].Named
+	}
+	var walk func(*Node)
+	walk = func(n *Node) {
+		if n == nil {
+			return
+		}
+		counters.nodesVisited++
+		childCount := resultChildCount(n)
+		if n.symbol == parentSym && childCount == 0 && pythonSourceRangeIsIdentifier(source, n.startByte, n.endByte) {
+			child := newLeafNodeInArena(n.ownerArena, identifierSym, identifierNamed, n.startByte, n.endByte, n.startPoint, n.endPoint)
+			n.children = cloneNodeSliceInArena(n.ownerArena, []*Node{child})
+			counters.nodesRewritten++
+			childCount = 1
+		}
+		for i := 0; i < childCount; i++ {
+			walk(resultChildAt(n, i))
+		}
+	}
+	walk(root)
+	return counters
+}
+
+func pythonSourceRangeIsIdentifier(source []byte, start, end uint32) bool {
+	if start >= end || int(end) > len(source) {
+		return false
+	}
+	for i := start; i < end; i++ {
+		if !pythonIdentifierByte(source[i]) {
+			return false
+		}
+	}
+	return true
 }
 
 func pythonSourceRangeContainsContinuationEscape(source []byte, start, end int) bool {

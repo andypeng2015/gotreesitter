@@ -166,6 +166,48 @@ func TestParseJavaCollapsedModifierAndWildcardChildren(t *testing.T) {
 	}
 }
 
+func TestParsePythonCollapsedWildcardImportChild(t *testing.T) {
+	src := "from os import *\n"
+	tree, lang := parseLanguageSample(t, "python", src)
+	t.Cleanup(tree.Release)
+
+	root := tree.RootNode()
+	wildcard := firstNodeByTypeAndText(root, lang, []byte(src), "wildcard_import", "*")
+	if wildcard == nil {
+		t.Fatalf("missing Python wildcard_import node: %s", root.SExpr(lang))
+	}
+	if got, want := wildcard.ChildCount(), 1; got != want {
+		t.Fatalf("wildcard_import.ChildCount() = %d, want %d; root=%s", got, want, root.SExpr(lang))
+	}
+	if child := wildcard.Child(0); child == nil || child.Type(lang) != "*" {
+		if child == nil {
+			t.Fatalf("wildcard_import child = nil; root=%s", root.SExpr(lang))
+		}
+		t.Fatalf("wildcard_import child type = %q, want *; root=%s", child.Type(lang), root.SExpr(lang))
+	}
+}
+
+func TestParsePythonCollapsedAsPatternTargetIdentifier(t *testing.T) {
+	src := "with manager() as target:\n    pass\n"
+	tree, lang := parseLanguageSample(t, "python", src)
+	t.Cleanup(tree.Release)
+
+	root := tree.RootNode()
+	target := firstNodeByTypeAndText(root, lang, []byte(src), "as_pattern_target", "target")
+	if target == nil {
+		t.Fatalf("missing Python as_pattern_target node: %s", root.SExpr(lang))
+	}
+	if got, want := target.ChildCount(), 1; got != want {
+		t.Fatalf("as_pattern_target.ChildCount() = %d, want %d; root=%s", got, want, root.SExpr(lang))
+	}
+	if child := target.Child(0); child == nil || child.Type(lang) != "identifier" {
+		if child == nil {
+			t.Fatalf("as_pattern_target child = nil; root=%s", root.SExpr(lang))
+		}
+		t.Fatalf("as_pattern_target child type = %q, want identifier; root=%s", child.Type(lang), root.SExpr(lang))
+	}
+}
+
 func firstNodeByTypeAndText(root *gotreesitter.Node, lang *gotreesitter.Language, source []byte, typ, text string) *gotreesitter.Node {
 	if root == nil {
 		return nil
