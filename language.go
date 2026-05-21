@@ -277,6 +277,7 @@ type Language struct {
 	// Lazily-built lookup maps for O(1) name resolution.
 	symbolNameMap            map[string]Symbol
 	symbolNameNamedMap       map[symbolNameNamedKey]Symbol
+	visibleSymbolNameMap     map[symbolNameNamedKey]Symbol
 	tokenSymbolNameMap       map[string][]Symbol
 	publicSymbolMap          []Symbol // internal symbol → canonical public symbol
 	publicNamedSymbolMap     []Symbol // internal symbol -> canonical public named symbol
@@ -407,6 +408,15 @@ func (l *Language) symbolByNameAndNamed(name string, named bool) (Symbol, bool) 
 	return sym, ok
 }
 
+func (l *Language) visibleSymbolByNameAndNamed(name string, named bool) (Symbol, bool) {
+	if name == "_" {
+		return 0, true
+	}
+	l.buildSymbolMaps()
+	sym, ok := l.visibleSymbolNameMap[symbolNameNamedKey{name: name, named: named}]
+	return sym, ok
+}
+
 func (l *Language) symbolByNamePreferNamed(name string) (Symbol, bool) {
 	if sym, ok := l.symbolByNameAndNamed(name, true); ok {
 		return sym, true
@@ -466,6 +476,7 @@ func (l *Language) buildSymbolMaps() {
 	l.symbolMapOnce.Do(func() {
 		l.symbolNameMap = make(map[string]Symbol, len(l.SymbolNames))
 		l.symbolNameNamedMap = make(map[symbolNameNamedKey]Symbol, len(l.SymbolNames))
+		l.visibleSymbolNameMap = make(map[symbolNameNamedKey]Symbol, len(l.SymbolNames))
 		l.tokenSymbolNameMap = make(map[string][]Symbol)
 		l.publicSymbolMap = make([]Symbol, len(l.SymbolNames))
 		l.publicNamedSymbolMap = make([]Symbol, len(l.SymbolNames))
@@ -495,6 +506,11 @@ func (l *Language) buildSymbolMaps() {
 			key := symbolNameNamedKey{name: sn, named: named}
 			if _, exists := l.symbolNameNamedMap[key]; !exists {
 				l.symbolNameNamedMap[key] = sym
+			}
+			if i < len(l.SymbolMetadata) && l.SymbolMetadata[i].Visible {
+				if _, exists := l.visibleSymbolNameMap[key]; !exists {
+					l.visibleSymbolNameMap[key] = sym
+				}
 			}
 			if i < tokenCount {
 				l.tokenSymbolNameMap[sn] = append(l.tokenSymbolNameMap[sn], sym)

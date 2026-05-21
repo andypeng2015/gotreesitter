@@ -869,17 +869,7 @@ func findVisibleSymbolByName(lang *Language, name string, named bool) (Symbol, b
 	if lang == nil {
 		return 0, false
 	}
-	for i, symName := range lang.SymbolNames {
-		if symName != name || i >= len(lang.SymbolMetadata) {
-			continue
-		}
-		meta := lang.SymbolMetadata[i]
-		if !meta.Visible || meta.Named != named {
-			continue
-		}
-		return Symbol(i), true
-	}
-	return 0, false
+	return lang.visibleSymbolByNameAndNamed(name, named)
 }
 
 func normalizeSQLRecoveredMissingNull(root *Node, arena *nodeArena, lang *Language) {
