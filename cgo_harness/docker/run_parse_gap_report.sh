@@ -21,6 +21,7 @@ LABEL="parse-gap"
 OUT_ROOT="$REPO_ROOT/harness_out/parse_gap"
 ALLOW_PARITY_FAIL=0
 TIME_PARITY_FAILURES=0
+GATE_ONLY=0
 BUILD_IMAGE=1
 
 usage() {
@@ -47,6 +48,7 @@ Options:
   --gomemlimit <value>      GOMEMLIMIT inside container (default: 3GiB)
   --allow-parity-fail       Write rows for parity-blocked samples and exit zero unless modes fail
   --time-parity-failures    Also run timing modes for parity-blocked samples
+  --gate-only               Run parse/highlight/query correctness gates only
   --no-build                Skip Docker image build in underlying runner
   -h, --help                Show this help
 
@@ -76,6 +78,7 @@ while [[ $# -gt 0 ]]; do
     --gomemlimit) GOMEMLIMIT_VALUE="$2"; shift 2 ;;
     --allow-parity-fail) ALLOW_PARITY_FAIL=1; shift ;;
     --time-parity-failures) TIME_PARITY_FAILURES=1; shift ;;
+    --gate-only) GATE_ONLY=1; shift ;;
     --no-build) BUILD_IMAGE=0; shift ;;
     -h|--help)
       usage
@@ -151,6 +154,7 @@ fi
   echo "count=$COUNT"
   echo "allow_parity_fail=$ALLOW_PARITY_FAIL"
   echo "time_parity_failures=$TIME_PARITY_FAILURES"
+  echo "gate_only=$GATE_ONLY"
 } >"$OUT_DIR/wrapper-metadata.txt"
 
 allow_arg_text=""
@@ -160,6 +164,10 @@ fi
 time_parity_arg_text=""
 if [[ "$TIME_PARITY_FAILURES" == "1" ]]; then
   time_parity_arg_text="--time-parity-failures"
+fi
+gate_only_arg_text=""
+if [[ "$GATE_ONLY" == "1" ]]; then
+  gate_only_arg_text="--gate-only"
 fi
 
 inner_cmd=$(cat <<EOF
@@ -187,7 +195,8 @@ env \
     --count '$COUNT' \
     --out '/workspace/$OUT_REL' \
     $allow_arg_text \
-    $time_parity_arg_text
+    $time_parity_arg_text \
+    $gate_only_arg_text
 EOF
 )
 

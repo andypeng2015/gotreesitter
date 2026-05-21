@@ -193,6 +193,7 @@ type metadata struct {
 	Modes              []string          `json:"modes"`
 	Languages          []string          `json:"languages"`
 	Count              int               `json:"count"`
+	GateOnly           bool              `json:"gate_only"`
 	CorpusManifest     string            `json:"corpus_manifest,omitempty"`
 	CorpusManifestSHA  string            `json:"corpus_manifest_sha256,omitempty"`
 	QueryManifest      string            `json:"query_manifest,omitempty"`
@@ -220,6 +221,7 @@ func main() {
 		countFlag       int
 		allowParityFail bool
 		timeParityFails bool
+		gateOnly        bool
 		arenaBreakdown  bool
 	)
 	flag.StringVar(&langsFlag, "langs", "go,python,rust,java,c", "comma-separated languages to include")
@@ -232,6 +234,7 @@ func main() {
 	flag.IntVar(&countFlag, "count", 10, "iterations per sample/mode")
 	flag.BoolVar(&allowParityFail, "allow-parity-fail", false, "write parity failures but exit zero")
 	flag.BoolVar(&timeParityFails, "time-parity-failures", false, "run timing modes even when correctness gates fail")
+	flag.BoolVar(&gateOnly, "gate-only", false, "run only parse/highlight/query correctness gates and skip timing modes")
 	flag.BoolVar(&arenaBreakdown, "arena-breakdown", true, "enable detailed gotreesitter arena breakdown while measuring")
 	flag.Parse()
 
@@ -247,7 +250,7 @@ func main() {
 		fatalf("no languages selected")
 	}
 	modes := splitCSV(modesFlag)
-	if len(modes) == 0 {
+	if len(modes) == 0 && !gateOnly {
 		fatalf("no modes selected")
 	}
 	outDir := resolvePath(repoRoot, outFlag)
@@ -322,6 +325,17 @@ func main() {
 			continue
 		}
 		parity := computeParity(r, s.Source, queryByLang[s.Language])
+		if gateOnly {
+			if parity.Error != "" {
+				parityFailures++
+			}
+			row := gateRow(common, s, countFlag, parity)
+			rows = append(rows, row)
+			if err := enc.Encode(row); err != nil {
+				fatalf("write results: %v", err)
+			}
+			continue
+		}
 		if parity.Error != "" {
 			parityFailures++
 			row := gateRow(common, s, countFlag, parity)
@@ -366,6 +380,7 @@ func main() {
 		Modes:              modes,
 		Languages:          langs,
 		Count:              countFlag,
+		GateOnly:           gateOnly,
 		CorpusManifest:     relOrAbs(repoRoot, corpusPath),
 		CorpusManifestSHA:  sha256File(corpusPath),
 		QueryManifest:      relOrAbs(repoRoot, queryPath),
@@ -1307,6 +1322,10 @@ func errorRow(common commonFields, s sample, mode string, count int, err error) 
 }
 
 func gateRow(common commonFields, s sample, count int, parity paritySummary) reportRow {
+	blocker := "unclassified"
+	if parity.Error != "" {
+		blocker = "parity_blocked"
+	}
 	return reportRow{
 		Schema:      resultSchema,
 		Repo:        common.Repo,
@@ -1325,7 +1344,7 @@ func gateRow(common commonFields, s sample, count int, parity paritySummary) rep
 		RSSKB:       maxRSSKB(),
 		Parity:      parity,
 		Error:       parity.Error,
-		Blocker:     "parity_blocked",
+		Blocker:     blocker,
 	}
 }
 
