@@ -1,5 +1,7 @@
 package gotreesitter
 
+import "bytes"
+
 func isCobolLanguage(lang *Language) bool {
 	return lang != nil && (lang.Name == "cobol" || lang.Name == "COBOL")
 }
@@ -574,13 +576,12 @@ func setNodeEndTo(n *Node, end uint32, source []byte) {
 
 func advancePointByBytes(start Point, b []byte) Point {
 	p := start
-	for _, c := range b {
-		if c == '\n' {
-			p.Row++
-			p.Column = 0
-			continue
-		}
-		p.Column++
+	lastNewline := bytes.LastIndexByte(b, '\n')
+	if lastNewline < 0 {
+		p.Column += uint32(len(b))
+		return p
 	}
+	p.Row += uint32(bytes.Count(b, []byte{'\n'}))
+	p.Column = uint32(len(b) - lastNewline - 1)
 	return p
 }
