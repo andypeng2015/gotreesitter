@@ -42,33 +42,42 @@ func normalizeJavaScriptTypeScriptStatementKeywordLeaves(root *Node, source []by
 	default:
 		return
 	}
+	ifStmtSym, hasIfStmt := symbolByName(lang, "if_statement")
+	whileStmtSym, hasWhileStmt := symbolByName(lang, "while_statement")
+	ifSym, ifNamed, hasIf := symbolMeta(lang, "if")
+	whileSym, whileNamed, hasWhile := symbolMeta(lang, "while")
+	closeBraceSym, hasCloseBrace := symbolByName(lang, "}")
+	if (!hasIfStmt || !hasIf) && (!hasWhileStmt || !hasWhile) {
+		return
+	}
 
 	walkResultTree(root, func(n *Node) {
-		var keyword string
-		switch n.Type(lang) {
-		case "if_statement":
-			keyword = "if"
-		case "while_statement":
-			keyword = "while"
-		default:
+		if hasIfStmt && hasIf && n.symbol == ifStmtSym {
+			normalizeJavaScriptTypeScriptStatementKeywordLeafWithSymbol(n, source, "if", ifSym, ifNamed, closeBraceSym, hasCloseBrace)
 			return
 		}
-		normalizeJavaScriptTypeScriptStatementKeywordLeaf(n, source, lang, keyword)
+		if hasWhileStmt && hasWhile && n.symbol == whileStmtSym {
+			normalizeJavaScriptTypeScriptStatementKeywordLeafWithSymbol(n, source, "while", whileSym, whileNamed, closeBraceSym, hasCloseBrace)
+		}
 	})
 }
 
 func normalizeJavaScriptTypeScriptStatementKeywordLeaf(n *Node, source []byte, lang *Language, keyword string) {
-	end := n.startByte + uint32(len(keyword))
-	if int(end) > len(source) || !bytes.Equal(source[n.startByte:end], []byte(keyword)) {
-		return
-	}
 	keywordSym, ok := symbolByName(lang, keyword)
 	if !ok {
 		return
 	}
+	normalizeJavaScriptTypeScriptStatementKeywordLeafWithSymbol(n, source, keyword, keywordSym, symbolIsNamed(lang, keywordSym), 0, false)
+}
+
+func normalizeJavaScriptTypeScriptStatementKeywordLeafWithSymbol(n *Node, source []byte, keyword string, keywordSym Symbol, keywordNamed bool, closeBraceSym Symbol, hasCloseBrace bool) {
+	end := n.startByte + uint32(len(keyword))
+	if int(end) > len(source) || !bytes.Equal(source[n.startByte:end], []byte(keyword)) {
+		return
+	}
 	childCount := resultChildCount(n)
 	if childCount == 0 {
-		keywordNode := newLeafNodeInArena(n.ownerArena, keywordSym, symbolIsNamed(lang, keywordSym), n.startByte, end, n.startPoint, advancePointByBytes(n.startPoint, source[n.startByte:end]))
+		keywordNode := newLeafNodeInArena(n.ownerArena, keywordSym, keywordNamed, n.startByte, end, n.startPoint, advancePointByBytes(n.startPoint, source[n.startByte:end]))
 		replaceNodeChildrenUnfielded(n, cloneNodeSliceInArena(n.ownerArena, []*Node{keywordNode}))
 		return
 	}
@@ -76,13 +85,13 @@ func normalizeJavaScriptTypeScriptStatementKeywordLeaf(n *Node, source []byte, l
 	if first != nil && first.symbol == keywordSym && first.startByte == n.startByte && first.endByte == end {
 		return
 	}
-	keywordNode := newLeafNodeInArena(n.ownerArena, keywordSym, symbolIsNamed(lang, keywordSym), n.startByte, end, n.startPoint, advancePointByBytes(n.startPoint, source[n.startByte:end]))
+	keywordNode := newLeafNodeInArena(n.ownerArena, keywordSym, keywordNamed, n.startByte, end, n.startPoint, advancePointByBytes(n.startPoint, source[n.startByte:end]))
 
 	children := make([]*Node, 0, childCount+1)
 	for i := 0; i < childCount; i++ {
 		children = append(children, resultChildAt(n, i))
 	}
-	if first != nil && first.Type(lang) == "}" {
+	if first != nil && hasCloseBrace && first.symbol == closeBraceSym {
 		children[0] = keywordNode
 		if len(n.fieldIDs) == childCount {
 			n.fieldIDs[0] = 0
