@@ -94,6 +94,127 @@ func TestNormalizeJavaScriptTopLevelExpressionStatementBoundsSnapToChildren(t *t
 	}
 }
 
+func TestNormalizeJavaScriptEmptyStatementRestoresSemicolonChild(t *testing.T) {
+	lang := &Language{
+		Name:        "javascript",
+		SymbolNames: []string{"EOF", "program", "empty_statement", ";"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF", Visible: false, Named: false},
+			{Name: "program", Visible: true, Named: true},
+			{Name: "empty_statement", Visible: true, Named: true},
+			{Name: ";", Visible: true, Named: false},
+		},
+	}
+
+	arena := newNodeArena(arenaClassFull)
+	stmt := newLeafNodeInArena(arena, 2, true, 0, 1, Point{}, Point{Column: 1})
+	root := newParentNodeInArena(arena, 1, true, []*Node{stmt}, nil, 0)
+
+	normalizeJavaScriptCompatibility(root, []byte(";"), lang)
+
+	if got, want := resultChildCount(stmt), 1; got != want {
+		t.Fatalf("empty_statement child count = %d, want %d", got, want)
+	}
+	child := resultChildAt(stmt, 0)
+	if child == nil {
+		t.Fatal("empty_statement child is nil")
+	}
+	if got, want := child.Type(lang), ";"; got != want {
+		t.Fatalf("empty_statement child type = %q, want %q", got, want)
+	}
+}
+
+func TestNormalizeJavaScriptStatementKeywordRestoresWhileLeaf(t *testing.T) {
+	lang := &Language{
+		Name:        "javascript",
+		SymbolNames: []string{"EOF", "program", "while_statement", "while", "parenthesized_expression", "statement_block", "}"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF", Visible: false, Named: false},
+			{Name: "program", Visible: true, Named: true},
+			{Name: "while_statement", Visible: true, Named: true},
+			{Name: "while", Visible: true, Named: false},
+			{Name: "parenthesized_expression", Visible: true, Named: true},
+			{Name: "statement_block", Visible: true, Named: true},
+			{Name: "}", Visible: true, Named: false},
+		},
+	}
+
+	arena := newNodeArena(arenaClassFull)
+	source := []byte("while (x) {}")
+	strayClose := newLeafNodeInArena(arena, 6, false, 11, 12, Point{Column: 11}, Point{Column: 12})
+	condition := newLeafNodeInArena(arena, 4, true, 6, 9, Point{Column: 6}, Point{Column: 9})
+	body := newLeafNodeInArena(arena, 5, true, 10, 12, Point{Column: 10}, Point{Column: 12})
+	stmt := newParentNodeInArena(arena, 2, true, []*Node{strayClose, condition, body}, nil, 0)
+	stmt.startByte = 0
+	stmt.startPoint = Point{}
+	stmt.endByte = 12
+	stmt.endPoint = Point{Column: 12}
+	root := newParentNodeInArena(arena, 1, true, []*Node{stmt}, nil, 0)
+
+	normalizeJavaScriptCompatibility(root, source, lang)
+
+	first := resultChildAt(stmt, 0)
+	if first == nil {
+		t.Fatal("while_statement first child is nil")
+	}
+	if got, want := first.Type(lang), "while"; got != want {
+		t.Fatalf("while_statement first child type = %q, want %q", got, want)
+	}
+	if got, want := resultChildCount(stmt), 3; got != want {
+		t.Fatalf("while_statement child count = %d, want %d", got, want)
+	}
+}
+
+func TestNormalizeJavaScriptStatementKeywordRestoresFinalRefWhileLeaf(t *testing.T) {
+	lang := &Language{
+		Name:        "javascript",
+		SymbolNames: []string{"EOF", "program", "while_statement", "while", "parenthesized_expression", "statement_block", "}"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF", Visible: false, Named: false},
+			{Name: "program", Visible: true, Named: true},
+			{Name: "while_statement", Visible: true, Named: true},
+			{Name: "while", Visible: true, Named: false},
+			{Name: "parenthesized_expression", Visible: true, Named: true},
+			{Name: "statement_block", Visible: true, Named: true},
+			{Name: "}", Visible: true, Named: false},
+		},
+	}
+
+	arena := newNodeArena(arenaClassFull)
+	arena.finalChildRefs = true
+	source := []byte("while (x) {}")
+	strayClose := newCompactFullLeafInArena(arena, 6, false, 11, 12, Point{Column: 11}, Point{Column: 12})
+	condition := newCompactFullLeafInArena(arena, 4, true, 6, 9, Point{Column: 6}, Point{Column: 9})
+	body := newCompactFullLeafInArena(arena, 5, true, 10, 12, Point{Column: 10}, Point{Column: 12})
+	stmt := newPendingParentInArena(arena, 2, true, 0, []stackEntry{
+		newStackEntryCompactFullLeaf(strayClose.parseState, strayClose),
+		newStackEntryCompactFullLeaf(condition.parseState, condition),
+		newStackEntryCompactFullLeaf(body.parseState, body),
+	}, 0, 12, Point{}, Point{Column: 12}, false)
+	rootParent := newPendingParentInArena(arena, 1, true, 0, []stackEntry{
+		newStackEntryPendingParent(stmt.parseState, stmt),
+	}, 0, 12, Point{}, Point{Column: 12}, false)
+	rootEntry := newStackEntryPendingParent(rootParent.parseState, rootParent)
+	root := materializeStackEntryPendingParent(arena, &rootEntry, pendingParentMaterializeForFinalTree)
+
+	normalizeJavaScriptCompatibility(root, source, lang)
+
+	child := root.Child(0)
+	if child == nil {
+		t.Fatal("program child is nil")
+	}
+	first := resultChildAt(child, 0)
+	if first == nil {
+		t.Fatal("while_statement first child is nil")
+	}
+	if got, want := first.Type(lang), "while"; got != want {
+		t.Fatalf("while_statement first child type = %q, want %q", got, want)
+	}
+	if got, want := resultChildCount(child), 3; got != want {
+		t.Fatalf("while_statement child count = %d, want %d", got, want)
+	}
+}
+
 func TestNormalizeJavaScriptTopLevelDeclarationBoundsSnapToChildren(t *testing.T) {
 	lang := &Language{
 		Name:        "javascript",

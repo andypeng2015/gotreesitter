@@ -4,6 +4,8 @@ import "bytes"
 
 func normalizeJavaScriptCompatibility(root *Node, source []byte, lang *Language) {
 	normalizeJavaScriptProgramStart(root, lang)
+	normalizeCollapsedNamedLeafChildrenBySource(root, source, lang, "empty_statement", ";")
+	normalizeJavaScriptTypeScriptStatementKeywordLeaves(root, source, lang)
 	normalizeJavaScriptTypeScriptOptionalChainLeaves(root, lang)
 	normalizeJavaScriptTypeScriptCallPrecedence(root, lang)
 	normalizeJavaScriptTypeScriptUnaryPrecedence(root, lang)
@@ -13,9 +15,12 @@ func normalizeJavaScriptCompatibility(root *Node, source []byte, lang *Language)
 	normalizeJavaScriptTopLevelDeclarationBounds(root, lang)
 	normalizeJavaScriptTopLevelObjectLiterals(root, lang)
 	normalizeJavaScriptProgramEnd(root, source, lang)
+	normalizeJavaScriptTypeScriptStatementKeywordLeaves(root, source, lang)
 }
 
 func normalizeTypeScriptTreeCompatibility(root *Node, source []byte, lang *Language) {
+	normalizeCollapsedNamedLeafChildrenBySource(root, source, lang, "empty_statement", ";")
+	normalizeJavaScriptTypeScriptStatementKeywordLeaves(root, source, lang)
 	normalizeJavaScriptTypeScriptOptionalChainLeaves(root, lang)
 	normalizeJavaScriptTypeScriptCallPrecedence(root, lang)
 	normalizeJavaScriptTypeScriptUnaryPrecedence(root, lang)
@@ -25,6 +30,107 @@ func normalizeTypeScriptTreeCompatibility(root *Node, source []byte, lang *Langu
 	normalizeTypeScriptCompatibility(root, source, lang)
 	normalizeJavaScriptTopLevelExpressionStatementBounds(root, lang)
 	normalizeCollapsedNamedLeafChildren(root, lang, "existential_type", "*")
+	normalizeJavaScriptTypeScriptStatementKeywordLeaves(root, source, lang)
+}
+
+func normalizeJavaScriptTypeScriptStatementKeywordLeaves(root *Node, source []byte, lang *Language) {
+	if root == nil || lang == nil || len(source) == 0 {
+		return
+	}
+	switch lang.Name {
+	case "javascript", "typescript", "tsx":
+	default:
+		return
+	}
+
+	walkResultTree(root, func(n *Node) {
+		var keyword string
+		switch n.Type(lang) {
+		case "if_statement":
+			keyword = "if"
+		case "while_statement":
+			keyword = "while"
+		default:
+			return
+		}
+		normalizeJavaScriptTypeScriptStatementKeywordLeaf(n, source, lang, keyword)
+	})
+}
+
+func normalizeJavaScriptTypeScriptStatementKeywordLeaf(n *Node, source []byte, lang *Language, keyword string) {
+	end := n.startByte + uint32(len(keyword))
+	if int(end) > len(source) || !bytes.Equal(source[n.startByte:end], []byte(keyword)) {
+		return
+	}
+	keywordSym, ok := symbolByName(lang, keyword)
+	if !ok {
+		return
+	}
+	childCount := resultChildCount(n)
+	if childCount == 0 {
+		keywordNode := newLeafNodeInArena(n.ownerArena, keywordSym, symbolIsNamed(lang, keywordSym), n.startByte, end, n.startPoint, advancePointByBytes(n.startPoint, source[n.startByte:end]))
+		replaceNodeChildrenUnfielded(n, cloneNodeSliceInArena(n.ownerArena, []*Node{keywordNode}))
+		return
+	}
+	first := resultChildAt(n, 0)
+	if first != nil && first.symbol == keywordSym && first.startByte == n.startByte && first.endByte == end {
+		return
+	}
+	keywordNode := newLeafNodeInArena(n.ownerArena, keywordSym, symbolIsNamed(lang, keywordSym), n.startByte, end, n.startPoint, advancePointByBytes(n.startPoint, source[n.startByte:end]))
+
+	children := make([]*Node, 0, childCount+1)
+	for i := 0; i < childCount; i++ {
+		children = append(children, resultChildAt(n, i))
+	}
+	if first != nil && first.Type(lang) == "}" {
+		children[0] = keywordNode
+		if len(n.fieldIDs) == childCount {
+			n.fieldIDs[0] = 0
+		}
+		if len(n.fieldSources) == childCount {
+			n.fieldSources[0] = fieldSourceNone
+		}
+	} else if first == nil || first.startByte > n.startByte {
+		children = append([]*Node{keywordNode}, children...)
+		n.fieldIDs = prependFieldID(n.ownerArena, n.fieldIDs, childCount)
+		n.fieldSources = prependFieldSource(n.ownerArena, n.fieldSources, childCount)
+	} else {
+		children[0] = keywordNode
+		if len(n.fieldIDs) == childCount {
+			n.fieldIDs[0] = 0
+		}
+		if len(n.fieldSources) == childCount {
+			n.fieldSources[0] = fieldSourceNone
+		}
+	}
+	n.children = cloneNodeSliceInArena(n.ownerArena, children)
+	if n.ownerArena != nil {
+		n.ownerArena.clearFinalChildRefs(n)
+	}
+	populateParentNode(n, n.children)
+}
+
+func prependFieldID(arena *nodeArena, fieldIDs []FieldID, oldLen int) []FieldID {
+	if len(fieldIDs) != oldLen {
+		return nil
+	}
+	out := make([]FieldID, oldLen+1)
+	copy(out[1:], fieldIDs)
+	return cloneFieldIDSliceInArena(arena, out)
+}
+
+func prependFieldSource(arena *nodeArena, fieldSources []uint8, oldLen int) []uint8 {
+	if len(fieldSources) != oldLen {
+		return nil
+	}
+	out := make([]uint8, oldLen+1)
+	copy(out[1:], fieldSources)
+	if arena != nil {
+		buf := arena.allocFieldSourceSlice(len(out))
+		copy(buf, out)
+		return buf
+	}
+	return out
 }
 
 func normalizeJavaScriptTopLevelObjectLiterals(root *Node, lang *Language) {
@@ -106,6 +212,11 @@ func normalizeJavaScriptTopLevelExpressionStatementBounds(root *Node, lang *Lang
 	default:
 		return
 	}
+	if normalizeJavaScriptTopLevelBoundsFinalRefs(root, lang, func(name string) bool {
+		return name == "expression_statement"
+	}) {
+		return
+	}
 	for _, child := range root.children {
 		if child == nil || child.Type(lang) != "expression_statement" || len(child.children) == 0 {
 			continue
@@ -128,6 +239,22 @@ func normalizeJavaScriptTopLevelDeclarationBounds(root *Node, lang *Language) {
 	switch lang.Name {
 	case "javascript", "typescript", "tsx":
 	default:
+		return
+	}
+	if normalizeJavaScriptTopLevelBoundsFinalRefs(root, lang, func(name string) bool {
+		switch name {
+		case "lexical_declaration",
+			"variable_declaration",
+			"function_declaration",
+			"generator_function_declaration",
+			"class_declaration",
+			"import_statement",
+			"export_statement":
+			return true
+		default:
+			return false
+		}
+	}) {
 		return
 	}
 	for _, child := range root.children {
@@ -153,6 +280,83 @@ func normalizeJavaScriptTopLevelDeclarationBounds(root *Node, lang *Language) {
 		child.startPoint = first.startPoint
 		child.endByte = last.endByte
 		child.endPoint = last.endPoint
+	}
+}
+
+func normalizeJavaScriptTopLevelBoundsFinalRefs(root *Node, lang *Language, match func(string) bool) bool {
+	view := resultMutableChildrenForMutation(root)
+	if !view.hasFinalChildRefs() {
+		return false
+	}
+	for i := 0; i < view.Len(); i++ {
+		entry, ok := view.Entry(i)
+		if !ok || !match(symbolTypeName(lang, stackEntryNodeSymbol(entry))) {
+			continue
+		}
+		first, last, ok := firstAndLastStackEntryChild(root.ownerArena, entry)
+		if !ok {
+			continue
+		}
+		setStackEntryStart(entry, stackEntryNodeStartByte(first), stackEntryNodeStartPoint(first))
+		setStackEntryEnd(entry, stackEntryNodeEndByte(last), stackEntryNodeEndPoint(last))
+	}
+	return true
+}
+
+func firstAndLastStackEntryChild(arena *nodeArena, entry stackEntry) (stackEntry, stackEntry, bool) {
+	childCount := stackEntryNodeChildCount(entry)
+	if childCount == 0 {
+		return stackEntry{}, stackEntry{}, false
+	}
+	childAt := func(i int) (stackEntry, bool) {
+		if parent := stackEntryPendingParent(entry); parent != nil {
+			child := parent.childEntry(arena, i)
+			return child, stackEntryHasNode(child)
+		}
+		if node := stackEntryNode(entry); node != nil {
+			return nodeChildEntryAtNoMaterialize(node, i)
+		}
+		return stackEntry{}, false
+	}
+	firstIdx := 0
+	first, ok := childAt(firstIdx)
+	for !ok && firstIdx+1 < childCount {
+		firstIdx++
+		first, ok = childAt(firstIdx)
+	}
+	if !ok {
+		return stackEntry{}, stackEntry{}, false
+	}
+	lastIdx := childCount - 1
+	last, ok := childAt(lastIdx)
+	for !ok && lastIdx > firstIdx {
+		lastIdx--
+		last, ok = childAt(lastIdx)
+	}
+	if !ok {
+		return stackEntry{}, stackEntry{}, false
+	}
+	return first, last, true
+}
+
+func setStackEntryStart(entry stackEntry, startByte uint32, startPoint Point) {
+	if node := stackEntryNode(entry); node != nil {
+		node.startByte = startByte
+		node.startPoint = startPoint
+		return
+	}
+	if node := stackEntryNoTreeNode(entry); node != nil {
+		node.startByte = startByte
+		return
+	}
+	if leaf := stackEntryCompactFullLeaf(entry); leaf != nil {
+		leaf.startByte = startByte
+		leaf.startPoint = startPoint
+		return
+	}
+	if parent := stackEntryPendingParent(entry); parent != nil {
+		parent.startByte = startByte
+		parent.startPoint = startPoint
 	}
 }
 
@@ -247,6 +451,9 @@ func normalizeJavaScriptTypeScriptOptionalChainLeaves(root *Node, lang *Language
 	default:
 		return
 	}
+	if _, ok := symbolByName(lang, "optional_chain"); !ok {
+		return
+	}
 
 	walkResultTree(root, func(n *Node) {
 		if n.Type(lang) == "optional_chain" && len(n.children) == 1 {
@@ -269,6 +476,9 @@ func normalizeJavaScriptTypeScriptCallPrecedence(root *Node, lang *Language) {
 	switch lang.Name {
 	case "javascript", "typescript", "tsx":
 	default:
+		return
+	}
+	if _, ok := symbolByName(lang, "call_expression"); !ok {
 		return
 	}
 
@@ -404,6 +614,9 @@ func normalizeJavaScriptTypeScriptUnaryPrecedence(root *Node, lang *Language) {
 	default:
 		return
 	}
+	if _, ok := symbolByName(lang, "unary_expression"); !ok {
+		return
+	}
 
 	rewriteResultTreeChildrenPostorder(root, func(n *Node) *Node {
 		return rewriteJavaScriptTypeScriptUnaryPrecedence(n, lang)
@@ -444,6 +657,9 @@ func normalizeJavaScriptTypeScriptBinaryPrecedence(root *Node, lang *Language) {
 	switch lang.Name {
 	case "javascript", "typescript", "tsx":
 	default:
+		return
+	}
+	if _, ok := symbolByName(lang, "binary_expression"); !ok {
 		return
 	}
 

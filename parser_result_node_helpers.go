@@ -67,6 +67,9 @@ func replaceNodeChildrenUnfielded(n *Node, children []*Node) {
 	n.children = children
 	n.fieldIDs = nil
 	n.fieldSources = nil
+	if n.ownerArena != nil {
+		n.ownerArena.clearFinalChildRefs(n)
+	}
 	populateParentNode(n, n.children)
 }
 

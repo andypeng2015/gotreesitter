@@ -231,12 +231,13 @@ func effectiveFullParseInitialMaxStacks(lang *Language, initialMaxStacks int) in
 			initialMaxStacks = 2
 		}
 	case "javascript":
-		// Large JavaScript corpora behave more like TypeScript than TSX here:
-		// the default cap of 8 preserves too many equivalent branches and burns
-		// time without improving the chosen tree. Keep the built-in default at 2
-		// and rely on retry widening for genuinely harder files.
+		// Large JavaScript UMD/runtime bundles need enough survivors to keep the
+		// outer call-expression branch alive through long function arguments.
+		// Cap 2 is fast on small samples but misrecovers large bundles as ERROR;
+		// cap 6 preserves the C-compatible tree without jumping to TSX's wider
+		// ambiguity profile.
 		if initialMaxStacks == maxGLRStacks {
-			initialMaxStacks = 2
+			initialMaxStacks = 6
 		}
 	case "tsx":
 		// React-heavy TSX still needs a wider steady-state budget than plain
