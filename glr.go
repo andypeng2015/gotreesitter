@@ -362,12 +362,12 @@ func stackHash(s glrStack) uint64 {
 }
 
 const (
-	// glrNodeEquivCacheSize is sized to fit comfortably in L2 (8192 × 32 B = 256 KiB).
+	// glrNodeEquivCacheSize is sized to fit comfortably in L2 (16384 × 32 B = 512 KiB).
 	// The previous 131072 entries (4 MiB) scattered random reads into L3/DRAM and made
 	// lookupNodeEquivCache the #1 CPU hotspot (~23% flat on BenchmarkSelfParseWarmReuse).
-	// Shrinking to 8K trades a few more collisions for cache-resident accesses — net
-	// ~25-32% wall-time reduction across Go/TypeScript/Python parse benchmarks.
-	glrNodeEquivCacheSize = 8192
+	// 16K keeps the table cache-resident while reducing collision pressure on the
+	// Java/C/Rust/TypeScript real-corpus matrix relative to 8K; 4K loses too many hits.
+	glrNodeEquivCacheSize = 16384
 	// Depth is part of the cache key. Keep it bounded so large recursive
 	// comparisons cannot alias through a narrowing conversion.
 	glrNodeEquivCacheMaxDepth = 1<<16 - 1
