@@ -80,7 +80,10 @@ func rustRecoverFunctionItemFromRange(source []byte, start, end uint32, p *Parse
 		return nil, false
 	}
 	start, end = rustTrimSpaceBounds(source, start, end)
-	if start >= end || !rustHasPrefixAt(source, start, "fn") {
+	if start >= end {
+		return nil, false
+	}
+	if _, ok := rustFunctionKeywordStart(source, start, end); !ok {
 		return nil, false
 	}
 	openBrace, ok := rustFindTopLevelByte(source, start, end, '{')
@@ -181,9 +184,9 @@ func rustExtractRecoveredFunctionHeaderNodes(root *Node, lang *Language, arena *
 	if fnItem == nil {
 		return nil, false
 	}
-	out := make([]*Node, 0, fnItem.NamedChildCount())
-	for i := 0; i < fnItem.NamedChildCount(); i++ {
-		child := fnItem.NamedChild(i)
+	out := make([]*Node, 0, fnItem.ChildCount())
+	for i := 0; i < fnItem.ChildCount(); i++ {
+		child := fnItem.Child(i)
 		if child == nil || child.Type(lang) == "block" {
 			continue
 		}
@@ -238,7 +241,7 @@ func rustRecoverRustBlockChunkNodesFromRange(source []byte, start, end uint32, p
 		if node, ok := rustRecoverLoopStatementFromRange(source, trimmedStart, trimmedEnd, p, arena); ok {
 			return []*Node{node}, true
 		}
-	case rustHasPrefixAt(source, trimmedStart, "fn"):
+	case rustRangeStartsFunctionItem(source, trimmedStart, trimmedEnd):
 		if node, ok := rustRecoverFunctionItemFromRange(source, trimmedStart, trimmedEnd, p, arena); ok {
 			return []*Node{node}, true
 		}
@@ -332,10 +335,55 @@ func rustRecoveredNodesNeedFunctionFallback(source []byte, start, end uint32, la
 		return false
 	}
 	start, end = rustTrimSpaceBounds(source, start, end)
-	if start >= end || !rustHasPrefixAt(source, start, "fn") {
+	if start >= end {
+		return false
+	}
+	if _, ok := rustFunctionKeywordStart(source, start, end); !ok {
 		return false
 	}
 	return len(nodes) != 1 || nodes[0] == nil || nodes[0].Type(lang) != "function_item"
+}
+
+func rustFunctionKeywordStart(source []byte, start, end uint32) (uint32, bool) {
+	start, end = rustTrimSpaceBounds(source, start, end)
+	if start >= end {
+		return 0, false
+	}
+	if rustKeywordAt(source, start, end, "fn") {
+		return start, true
+	}
+	if !rustKeywordAt(source, start, end, "pub") {
+		return 0, false
+	}
+	cursor := start + 3
+	if cursor < end && source[cursor] == '(' {
+		closeParen := rustFindMatchingDelimiter(source, int(cursor), '(', ')')
+		if closeParen < 0 || uint32(closeParen+1) > end {
+			return 0, false
+		}
+		cursor = uint32(closeParen + 1)
+	}
+	cursor = rustSkipSpaceBytes(source, cursor)
+	if rustKeywordAt(source, cursor, end, "fn") {
+		return cursor, true
+	}
+	return 0, false
+}
+
+func rustRangeStartsFunctionItem(source []byte, start, end uint32) bool {
+	_, ok := rustFunctionKeywordStart(source, start, end)
+	return ok
+}
+
+func rustKeywordAt(source []byte, pos, end uint32, keyword string) bool {
+	kwEnd := pos + uint32(len(keyword))
+	if pos >= end || kwEnd > end || !rustHasPrefixAt(source, pos, keyword) {
+		return false
+	}
+	if pos > 0 && rustIsIdentByte(source[pos-1]) {
+		return false
+	}
+	return kwEnd >= end || !rustIsIdentByte(source[kwEnd])
 }
 
 func rustRecoverRustSpecialPatternNodeFromRange(source []byte, start, end uint32, p *Parser, arena *nodeArena) (*Node, bool) {

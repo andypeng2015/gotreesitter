@@ -905,7 +905,45 @@ func rustBuildRecoveredTriviaNode(arena *nodeArena, source []byte, lang *Languag
 	if !ok {
 		return nil, false
 	}
-	return newLeafNodeInArena(
+	tokenName := ""
+	switch typeName {
+	case "line_comment":
+		if node, ok := rustBuildRecoveredDocLineCommentNode(arena, source, lang, start, end); ok {
+			return node, true
+		}
+		tokenName = "//"
+	case "block_comment":
+		tokenName = "/*"
+	}
+	if tokenName != "" && start+uint32(len(tokenName)) <= end {
+		if tokenSym, ok := symbolByName(lang, tokenName); ok {
+			tokenEnd := start + uint32(len(tokenName))
+			token := newLeafNodeInArena(
+				arena,
+				tokenSym,
+				rustNamedForSymbol(lang, tokenSym),
+				start,
+				tokenEnd,
+				advancePointByBytes(Point{}, source[:start]),
+				advancePointByBytes(Point{}, source[:tokenEnd]),
+			)
+			node := newParentNodeInArena(
+				arena,
+				sym,
+				rustNamedForSymbol(lang, sym),
+				[]*Node{token},
+				nil,
+				0,
+			)
+			node.startByte = start
+			node.startPoint = token.startPoint
+			node.endByte = end
+			node.endPoint = advancePointByBytes(Point{}, source[:end])
+			node.setExtra(true)
+			return node, true
+		}
+	}
+	node := newLeafNodeInArena(
 		arena,
 		sym,
 		rustNamedForSymbol(lang, sym),
@@ -913,7 +951,111 @@ func rustBuildRecoveredTriviaNode(arena *nodeArena, source []byte, lang *Languag
 		end,
 		advancePointByBytes(Point{}, source[:start]),
 		advancePointByBytes(Point{}, source[:end]),
-	), true
+	)
+	node.setExtra(true)
+	return node, true
+}
+
+func rustBuildRecoveredDocLineCommentNode(arena *nodeArena, source []byte, lang *Language, start, end uint32) (*Node, bool) {
+	if !rustLineCommentIsDoc(source, start, end) {
+		return nil, false
+	}
+	lineCommentSym, ok := symbolByName(lang, "line_comment")
+	if !ok {
+		return nil, false
+	}
+	slashSlashSym, ok := symbolByName(lang, "//")
+	if !ok {
+		return nil, false
+	}
+	markerName := "outer_doc_comment_marker"
+	markerToken := "/"
+	if source[start+2] == '!' {
+		markerName = "inner_doc_comment_marker"
+		markerToken = "!"
+	}
+	markerSym, ok := symbolByName(lang, markerName)
+	if !ok {
+		return nil, false
+	}
+	markerTokenSym, ok := symbolByName(lang, markerToken)
+	if !ok {
+		return nil, false
+	}
+	docCommentSym, ok := symbolByName(lang, "doc_comment")
+	if !ok {
+		return nil, false
+	}
+
+	slashSlashEnd := start + 2
+	markerEnd := start + 3
+	slashSlash := newLeafNodeInArena(
+		arena,
+		slashSlashSym,
+		rustNamedForSymbol(lang, slashSlashSym),
+		start,
+		slashSlashEnd,
+		advancePointByBytes(Point{}, source[:start]),
+		advancePointByBytes(Point{}, source[:slashSlashEnd]),
+	)
+	markerTokenNode := newLeafNodeInArena(
+		arena,
+		markerTokenSym,
+		rustNamedForSymbol(lang, markerTokenSym),
+		slashSlashEnd,
+		markerEnd,
+		advancePointByBytes(Point{}, source[:slashSlashEnd]),
+		advancePointByBytes(Point{}, source[:markerEnd]),
+	)
+	marker := newParentNodeInArena(
+		arena,
+		markerSym,
+		rustNamedForSymbol(lang, markerSym),
+		[]*Node{markerTokenNode},
+		nil,
+		0,
+	)
+	marker.startByte = slashSlashEnd
+	marker.startPoint = markerTokenNode.startPoint
+	marker.endByte = markerEnd
+	marker.endPoint = markerTokenNode.endPoint
+
+	doc := newLeafNodeInArena(
+		arena,
+		docCommentSym,
+		rustNamedForSymbol(lang, docCommentSym),
+		markerEnd,
+		end,
+		advancePointByBytes(Point{}, source[:markerEnd]),
+		advancePointByBytes(Point{}, source[:end]),
+	)
+	node := newParentNodeInArena(
+		arena,
+		lineCommentSym,
+		rustNamedForSymbol(lang, lineCommentSym),
+		[]*Node{slashSlash, marker, doc},
+		rustDocCommentFieldIDs(arena, lang, markerName),
+		0,
+	)
+	node.startByte = start
+	node.startPoint = slashSlash.startPoint
+	node.endByte = end
+	node.endPoint = doc.endPoint
+	node.setExtra(true)
+	return node, true
+}
+
+func rustDocCommentFieldIDs(arena *nodeArena, lang *Language, markerName string) []FieldID {
+	fieldName := "outer"
+	if markerName == "inner_doc_comment_marker" {
+		fieldName = "inner"
+	}
+	fid, ok := lang.FieldByName(fieldName)
+	if !ok {
+		return nil
+	}
+	docFID, _ := lang.FieldByName("doc")
+	return cloneFieldIDSliceInArena(arena, []FieldID{0, fid, docFID})
 }
 
 func rustRefreshRecoveredErrorFlags(node *Node) bool {

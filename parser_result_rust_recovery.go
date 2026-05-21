@@ -8,10 +8,101 @@ func normalizeRustCompatibility(root *Node, source []byte, p *Parser, lang *Lang
 	normalizeRustTokenBindingPatterns(root, source, lang)
 	normalizeRustRecoveredTokenTrees(root, source, lang)
 	normalizeRustSourceFileRoot(root, source, lang)
+	normalizeRustDocCommentRanges(root, source, lang)
 	normalizeCollapsedNamedLeafChildrenBySource(root, source, lang, "boolean_literal", "true", "false")
 	normalizeCollapsedNamedLeafChildrenBySource(root, source, lang, "empty_statement", ";")
 	normalizeCollapsedNamedLeafChildrenBySource(root, source, lang, "remaining_field_pattern", "..")
 	normalizeCollapsedNamedLeafChildrenBySource(root, source, lang, "range_expression", "..", "..=")
+}
+
+func normalizeRustDocCommentRanges(root *Node, source []byte, lang *Language) {
+	if root == nil || lang == nil || lang.Name != "rust" || len(source) == 0 {
+		return
+	}
+	walkResultTreePostorder(root, func(node *Node) {
+		if node == nil || node.Type(lang) != "line_comment" || int(node.endByte) > len(source) {
+			return
+		}
+		if !rustLineCommentIsDoc(source, node.startByte, node.endByte) {
+			return
+		}
+		rustNormalizeDocCommentMarkerField(node, source, lang)
+		if int(node.endByte) >= len(source) || source[node.endByte] != '\n' {
+			return
+		}
+		nextEnd := node.endByte + 1
+		node.endByte = nextEnd
+		node.endPoint = advancePointByBytes(Point{}, source[:nextEnd])
+		for i := 0; i < resultChildCount(node); i++ {
+			child := resultChildAt(node, i)
+			if child == nil || child.Type(lang) != "doc_comment" {
+				continue
+			}
+			child.endByte = nextEnd
+			child.endPoint = node.endPoint
+		}
+	})
+}
+
+func rustNormalizeDocCommentMarkerField(node *Node, source []byte, lang *Language) {
+	if node == nil || lang == nil || !rustLineCommentIsDoc(source, node.startByte, node.endByte) {
+		return
+	}
+	markerFieldName := "outer"
+	if source[node.startByte+2] == '!' {
+		markerFieldName = "inner"
+	}
+	markerFID, ok := lang.FieldByName(markerFieldName)
+	if !ok {
+		return
+	}
+	docFID, _ := lang.FieldByName("doc")
+	childCount := resultChildCount(node)
+	if childCount == 0 {
+		return
+	}
+	if len(node.fieldIDs) != childCount {
+		node.fieldIDs = cloneFieldIDSliceInArena(node.ownerArena, make([]FieldID, childCount))
+	}
+	for i := 0; i < childCount; i++ {
+		child := resultChildAt(node, i)
+		if child == nil {
+			continue
+		}
+		childType := child.Type(lang)
+		if childType == "outer_doc_comment_marker" || childType == "inner_doc_comment_marker" {
+			rustEnsureDocCommentMarkerToken(child, source, lang)
+			node.fieldIDs[i] = markerFID
+			continue
+		}
+		if childType == "doc_comment" {
+			node.fieldIDs[i] = docFID
+		}
+	}
+}
+
+func rustEnsureDocCommentMarkerToken(marker *Node, source []byte, lang *Language) {
+	if marker == nil || lang == nil || resultChildCount(marker) != 0 || marker.startByte >= marker.endByte || int(marker.endByte) > len(source) {
+		return
+	}
+	tokenName := string(source[marker.startByte:marker.endByte])
+	if tokenName != "/" && tokenName != "!" {
+		return
+	}
+	tokenSym, ok := symbolByName(lang, tokenName)
+	if !ok {
+		return
+	}
+	token := newLeafNodeInArena(
+		marker.ownerArena,
+		tokenSym,
+		rustNamedForSymbol(lang, tokenSym),
+		marker.startByte,
+		marker.endByte,
+		marker.startPoint,
+		marker.endPoint,
+	)
+	replaceNodeChildrenUnfielded(marker, []*Node{token})
 }
 
 func normalizeRustTokenBindingPatterns(root *Node, source []byte, lang *Language) {
@@ -580,10 +671,7 @@ func rustSplitLeadingTopLevelCommentSpans(source []byte, start, end uint32) [][2
 	for cursor < end {
 		switch {
 		case cursor+1 < end && source[cursor] == '/' && source[cursor+1] == '/':
-			commentEnd := cursor + 2
-			for commentEnd < end && source[commentEnd] != '\n' {
-				commentEnd++
-			}
+			commentEnd := rustLineCommentEnd(source, cursor, end)
 			spans = append(spans, [2]uint32{cursor, commentEnd})
 			cursor = rustSkipSpaceBytes(source, commentEnd)
 		case cursor+1 < end && source[cursor] == '/' && source[cursor+1] == '*':
@@ -636,6 +724,10 @@ func rustTopLevelChunkSpans(source []byte) [][2]uint32 {
 			}
 			continue
 		}
+		if next, ok := rustSkipCommentAt(source, i, uint32(len(source))); ok {
+			i = next - 1
+			continue
+		}
 		switch b {
 		case '"':
 			inString = true
@@ -680,9 +772,32 @@ func rustTopLevelChunkSpans(source []byte) [][2]uint32 {
 	return spans
 }
 
+func rustSkipCommentAt(source []byte, pos, end uint32) (uint32, bool) {
+	if pos+1 >= end || int(end) > len(source) || source[pos] != '/' {
+		return pos, false
+	}
+	switch source[pos+1] {
+	case '/':
+		cursor := pos + 2
+		for cursor < end && source[cursor] != '\n' {
+			cursor++
+		}
+		return cursor, true
+	case '*':
+		commentEnd := rustFindBlockCommentEnd(source, pos+2, end)
+		if commentEnd > pos+1 {
+			return commentEnd, true
+		}
+	}
+	return pos, false
+}
+
 func rustRecoverTopLevelChunkNodesFromRange(source []byte, start, end uint32, p *Parser, arena *nodeArena) ([]*Node, bool) {
 	if p == nil || p.language == nil || start >= end || int(end) > len(source) {
 		return nil, false
+	}
+	if node, ok := rustRecoverTopLevelTriviaNodeFromRange(source, start, end, p.language, arena); ok {
+		return []*Node{node}, true
 	}
 	chunk := source[start:end]
 	tree, err := p.parseForRecovery(chunk)
@@ -701,10 +816,52 @@ func rustRecoverTopLevelChunkNodesFromRange(source []byte, start, end uint32, p 
 	if node, ok := rustRecoverClosureExpressionStatementFromRange(source, start, end, p, arena); ok {
 		return []*Node{node}, true
 	}
+	trimmedStart, trimmedEnd := rustTrimSpaceBounds(source, start, end)
+	if trimmedStart < trimmedEnd && rustHasPrefixAt(source, trimmedStart, "impl") {
+		if node, ok := rustRecoverImplItemFromRange(source, trimmedStart, trimmedEnd, p, arena); ok {
+			return []*Node{node}, true
+		}
+	}
 	if node, ok := rustRecoverFunctionItemFromRange(source, start, end, p, arena); ok {
 		return []*Node{node}, true
 	}
 	return nil, false
+}
+
+func rustRecoverTopLevelTriviaNodeFromRange(source []byte, start, end uint32, lang *Language, arena *nodeArena) (*Node, bool) {
+	start, end = rustTrimSpaceBounds(source, start, end)
+	if start >= end || int(end) > len(source) {
+		return nil, false
+	}
+	switch {
+	case start+1 < end && source[start] == '/' && source[start+1] == '/':
+		commentEnd := rustLineCommentEnd(source, start, end)
+		if commentEnd != end {
+			return nil, false
+		}
+		return rustBuildRecoveredTriviaNode(arena, source, lang, start, end, "line_comment")
+	case start+1 < end && source[start] == '/' && source[start+1] == '*':
+		commentEnd := rustFindBlockCommentEnd(source, start+2, end)
+		if commentEnd == end {
+			return rustBuildRecoveredTriviaNode(arena, source, lang, start, end, "block_comment")
+		}
+	}
+	return nil, false
+}
+
+func rustLineCommentEnd(source []byte, start, end uint32) uint32 {
+	commentEnd := start + 2
+	for commentEnd < end && source[commentEnd] != '\n' {
+		commentEnd++
+	}
+	if rustLineCommentIsDoc(source, start, commentEnd) && commentEnd < end && source[commentEnd] == '\n' {
+		commentEnd++
+	}
+	return commentEnd
+}
+
+func rustLineCommentIsDoc(source []byte, start, end uint32) bool {
+	return start+2 < end && source[start] == '/' && source[start+1] == '/' && (source[start+2] == '/' || source[start+2] == '!')
 }
 
 func rustExtractRecoveredTopLevelNodes(root *Node, lang *Language, arena *nodeArena) []*Node {

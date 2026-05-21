@@ -78,6 +78,39 @@ func TestParseAsmImmediateIntStaysInt(t *testing.T) {
 	}
 }
 
+func TestParseRustRecoveredTopLevelImplItem(t *testing.T) {
+	src := `
+pub type ExplicitSelf = Spanned<SelfKind>;
+
+impl Arg {
+    pub fn to_self(&self) -> Option<ExplicitSelf> {
+        if let PatKind::Ident(BindingMode::ByValue(mutbl), ident, _) = self.pat.node {
+            if ident.node.name == keywords::SelfValue.name() {
+                return match self.ty.node {
+                    TyKind::ImplicitSelf => Some(respan(self.pat.span, SelfKind::Value(mutbl))),
+                    _ => None,
+                };
+            }
+        }
+        None
+    }
+}
+`
+	tree, lang := parseLanguageSample(t, "rust", src)
+	t.Cleanup(tree.Release)
+
+	root := tree.RootNode()
+	if got, want := root.Type(lang), "source_file"; got != want {
+		t.Fatalf("root type = %q, want %q", got, want)
+	}
+	if root.HasError() {
+		t.Fatalf("rust impl recovery left root with errors: %s", root.SExpr(lang))
+	}
+	if impl := findNamedChild(lang, root, "impl_item"); impl == nil {
+		t.Fatalf("expected recovered impl_item, got %s", root.SExpr(lang))
+	}
+}
+
 func TestParseFennelImmediateNumberStaysNumber(t *testing.T) {
 	src := grammars.ParseSmokeSample("fennel")
 	tree, lang := parseLanguageSample(t, "fennel", src)
