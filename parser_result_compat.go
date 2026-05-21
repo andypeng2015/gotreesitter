@@ -39,7 +39,7 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) {
 		normalizeBashGeneratedCommandAssignments(ctx.root, ctx.source, ctx.lang)
 		normalizeBashCommandNameArguments(ctx.root, ctx.lang)
 	case "c":
-		normalizeCCompatibility(ctx.root, ctx.source, ctx.lang)
+		normalizeCCompatibilityWithParser(ctx.root, ctx.source, ctx.parser, ctx.lang)
 	case "c_sharp":
 		normalizeCSharpCompatibility(ctx.root, ctx.source, ctx.parser, ctx.lang)
 	case "caddy":

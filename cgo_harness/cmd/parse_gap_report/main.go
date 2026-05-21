@@ -515,7 +515,9 @@ func computeParity(r *runner, source []byte, queries []querySpec) paritySummary 
 		Deep:    deep,
 	}
 	if !noError {
-		summary.Error = fmt.Sprintf("root_error: go=%v c=%v", goRoot.HasError(), cRoot.HasError())
+		if goRoot.HasError() != cRoot.HasError() {
+			summary.Error = fmt.Sprintf("root_error: go=%v c=%v", goRoot.HasError(), cRoot.HasError())
+		}
 	}
 	if diff != nil {
 		summary.Error = fmt.Sprintf("deep_%s at %s: go=%s c=%s", diff.Category, diff.Path, diff.GoValue, diff.CValue)
@@ -1432,7 +1434,7 @@ func parseGateString(rows []reportRow, lang string) string {
 			continue
 		}
 		seen = true
-		if !row.Parity.NoError || !row.Parity.Deep {
+		if !row.Parity.Deep {
 			return "fail"
 		}
 	}

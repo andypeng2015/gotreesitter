@@ -3,7 +3,12 @@ package gotreesitter
 import "strings"
 
 func normalizeCCompatibility(root *Node, source []byte, lang *Language) {
+	normalizeCCompatibilityWithParser(root, source, nil, lang)
+}
+
+func normalizeCCompatibilityWithParser(root *Node, source []byte, p *Parser, lang *Language) {
 	normalizeCTranslationUnitRoot(root, lang)
+	normalizeCRecoveredTopLevelChunks(root, source, p, lang)
 	normalizeCPreprocessorDirectiveShapes(root, source, lang)
 	normalizeCDeclarationBounds(root, source, lang)
 	normalizeCBuiltinPrimitiveTypeIdentifiers(root, source, lang)
@@ -14,6 +19,417 @@ func normalizeCCompatibility(root *Node, source []byte, lang *Language) {
 	normalizeCPreprocNewlineSpans(root, source, lang)
 	normalizeCPointerAssignmentPrecedence(root, lang)
 	normalizeCCollapsedKeywordChildren(root, source, lang)
+}
+
+func normalizeCRecoveredTopLevelChunks(root *Node, source []byte, p *Parser, lang *Language) {
+	if root == nil || p == nil || lang == nil || p.skipRecoveryReparse || root.ownerArena == nil || len(source) == 0 {
+		return
+	}
+	if lang.Name != "c" || root.Type(lang) != "ERROR" {
+		return
+	}
+	spans := cTopLevelChunkSpans(source)
+	if len(spans) == 0 {
+		return
+	}
+	children := make([]*Node, 0, len(spans))
+	for _, span := range spans {
+		for _, part := range cSplitLeadingTopLevelCommentSpans(source, span[0], span[1]) {
+			nodes, ok := cRecoverTopLevelChunkNodesFromRange(source, part[0], part[1], p, root.ownerArena)
+			if !ok || len(nodes) == 0 {
+				return
+			}
+			children = append(children, nodes...)
+		}
+	}
+	if len(children) == 0 {
+		return
+	}
+	sym, ok := symbolByName(lang, "translation_unit")
+	if !ok {
+		return
+	}
+	retagResultRoot(root, sym, symbolIsNamed(lang, sym))
+	replaceNodeChildrenUnfielded(root, cloneNodeSliceIfArena(root.ownerArena, children))
+	root.productionID = 0
+	root.setHasError(false)
+	for _, child := range root.children {
+		if child != nil && child.HasError() {
+			root.setHasError(true)
+			break
+		}
+	}
+	extendNodeToTrailingWhitespace(root, source)
+}
+
+func cRecoverTopLevelChunkNodesFromRange(source []byte, start, end uint32, p *Parser, arena *nodeArena) ([]*Node, bool) {
+	start, end = rustTrimSpaceBounds(source, start, end)
+	if p == nil || p.language == nil || start >= end || int(end) > len(source) {
+		return nil, false
+	}
+	if node, ok := cRecoverCommentNodeFromRange(source, start, end, p.language, arena); ok {
+		return []*Node{node}, true
+	}
+	tree, err := p.parseForRecovery(source[start:end])
+	if err != nil || tree == nil || tree.RootNode() == nil {
+		if tree != nil {
+			tree.Release()
+		}
+		return nil, false
+	}
+	defer tree.Release()
+
+	startPoint := advancePointByBytes(Point{}, source[:start])
+	offsetRoot := tree.RootNodeWithOffset(start, startPoint)
+	if offsetRoot == nil || offsetRoot.Type(p.language) != "translation_unit" {
+		if offsetRoot != nil && offsetRoot.Type(p.language) == "ERROR" {
+			if node, ok := cRecoverTypedefStructDefinitionFromErrorRoot(offsetRoot, source, start, end, p.language, arena); ok {
+				return []*Node{node}, true
+			}
+		}
+		return nil, false
+	}
+	out := make([]*Node, 0, offsetRoot.ChildCount())
+	for i := 0; i < offsetRoot.ChildCount(); i++ {
+		child := offsetRoot.Child(i)
+		if child == nil {
+			continue
+		}
+		if arena != nil {
+			out = append(out, cloneTreeNodesIntoArena(child, arena))
+		} else {
+			out = append(out, child)
+		}
+	}
+	return out, len(out) > 0
+}
+
+func cRecoverCommentNodeFromRange(source []byte, start, end uint32, lang *Language, arena *nodeArena) (*Node, bool) {
+	start, end = rustTrimSpaceBounds(source, start, end)
+	if start >= end || int(end) > len(source) {
+		return nil, false
+	}
+	switch {
+	case start+1 < end && source[start] == '/' && source[start+1] == '/':
+		commentEnd := start + 2
+		for commentEnd < end && source[commentEnd] != '\n' {
+			commentEnd++
+		}
+		if commentEnd != end {
+			return nil, false
+		}
+	case start+1 < end && source[start] == '/' && source[start+1] == '*':
+		if rustFindBlockCommentEnd(source, start+2, end) != end {
+			return nil, false
+		}
+	default:
+		return nil, false
+	}
+	commentSym, ok := symbolByName(lang, "comment")
+	if !ok {
+		return nil, false
+	}
+	node := cLeaf(arena, lang, commentSym, start, end, source)
+	node.setExtra(true)
+	return node, true
+}
+
+func cSplitLeadingTopLevelCommentSpans(source []byte, start, end uint32) [][2]uint32 {
+	start, end = rustTrimSpaceBounds(source, start, end)
+	if start >= end {
+		return nil
+	}
+	var spans [][2]uint32
+	cursor := start
+	for cursor < end {
+		switch {
+		case cursor+1 < end && source[cursor] == '/' && source[cursor+1] == '/':
+			commentEnd := cursor + 2
+			for commentEnd < end && source[commentEnd] != '\n' {
+				commentEnd++
+			}
+			spans = append(spans, [2]uint32{cursor, commentEnd})
+			cursor = rustSkipSpaceBytes(source, commentEnd)
+		case cursor+1 < end && source[cursor] == '/' && source[cursor+1] == '*':
+			commentEnd := rustFindBlockCommentEnd(source, cursor+2, end)
+			if commentEnd <= cursor+1 {
+				return [][2]uint32{{start, end}}
+			}
+			spans = append(spans, [2]uint32{cursor, commentEnd})
+			cursor = rustSkipSpaceBytes(source, commentEnd)
+		default:
+			if cursor < end {
+				spans = append(spans, [2]uint32{cursor, end})
+			}
+			return spans
+		}
+	}
+	if len(spans) == 0 {
+		spans = append(spans, [2]uint32{start, end})
+	}
+	return spans
+}
+
+func cRecoverTypedefStructDefinitionFromErrorRoot(root *Node, source []byte, start, end uint32, lang *Language, arena *nodeArena) (*Node, bool) {
+	if root == nil || lang == nil || start >= end || int(end) > len(source) {
+		return nil, false
+	}
+	start, end = rustTrimSpaceBounds(source, start, end)
+	if !rustKeywordAt(source, start, end, "typedef") {
+		return nil, false
+	}
+	var structSpec *Node
+	for i := 0; i < root.ChildCount(); i++ {
+		child := root.Child(i)
+		if child != nil && child.Type(lang) == "struct_specifier" {
+			structSpec = child
+			break
+		}
+	}
+	if structSpec == nil || structSpec.endByte >= end {
+		return nil, false
+	}
+	semicolon := cFindByteAtTopLevel(source, structSpec.endByte, end, ';')
+	if semicolon == 0 {
+		return nil, false
+	}
+
+	typeDefSym, ok := symbolByName(lang, "type_definition")
+	if !ok {
+		return nil, false
+	}
+	typedefSym, ok := symbolByName(lang, "typedef")
+	if !ok {
+		return nil, false
+	}
+	commaSym, ok := symbolByName(lang, ",")
+	if !ok {
+		return nil, false
+	}
+	typeIdentSym, ok := symbolByName(lang, "type_identifier")
+	if !ok {
+		return nil, false
+	}
+	semiSym, ok := symbolByName(lang, ";")
+	if !ok {
+		return nil, false
+	}
+
+	children := make([]*Node, 0, 8)
+	children = append(children, cLeaf(arena, lang, typedefSym, start, start+7, source))
+	children = append(children, cloneTreeNodesIntoArena(structSpec, arena))
+
+	cursor := rustSkipSpaceBytes(source, structSpec.endByte)
+	if cursor >= semicolon || source[cursor] != ',' {
+		return nil, false
+	}
+	errNode := newParentNodeInArena(
+		arena,
+		errorSymbol,
+		true,
+		[]*Node{cLeaf(arena, lang, commaSym, cursor, cursor+1, source)},
+		nil,
+		0,
+	)
+	errNode.startByte = cursor
+	errNode.startPoint = advancePointByBytes(Point{}, source[:cursor])
+	errNode.endByte = cursor + 1
+	errNode.endPoint = advancePointByBytes(Point{}, source[:cursor+1])
+	errNode.setExtra(true)
+	errNode.setHasError(true)
+	children = append(children, errNode)
+	cursor = rustSkipSpaceBytes(source, cursor+1)
+
+	for cursor < semicolon {
+		nameStart := cursor
+		for cursor < semicolon && rustIsIdentByte(source[cursor]) {
+			cursor++
+		}
+		if nameStart == cursor {
+			return nil, false
+		}
+		children = append(children, cLeaf(arena, lang, typeIdentSym, nameStart, cursor, source))
+		cursor = rustSkipSpaceBytes(source, cursor)
+		if cursor < semicolon {
+			if source[cursor] != ',' {
+				return nil, false
+			}
+			children = append(children, cLeaf(arena, lang, commaSym, cursor, cursor+1, source))
+			cursor = rustSkipSpaceBytes(source, cursor+1)
+		}
+	}
+	children = append(children, cLeaf(arena, lang, semiSym, semicolon, semicolon+1, source))
+
+	typeDef := newParentNodeInArena(
+		arena,
+		typeDefSym,
+		symbolIsNamed(lang, typeDefSym),
+		children,
+		cTypeDefinitionFieldIDs(arena, lang, children),
+		0,
+	)
+	typeDef.startByte = start
+	typeDef.startPoint = advancePointByBytes(Point{}, source[:start])
+	typeDef.endByte = semicolon + 1
+	typeDef.endPoint = advancePointByBytes(Point{}, source[:semicolon+1])
+	typeDef.setHasError(true)
+	return typeDef, true
+}
+
+func cTypeDefinitionFieldIDs(arena *nodeArena, lang *Language, children []*Node) []FieldID {
+	typeFID, ok := lang.FieldByName("type")
+	if !ok || len(children) < 2 {
+		return nil
+	}
+	fieldIDs := make([]FieldID, len(children))
+	fieldIDs[1] = typeFID
+	if declaratorFID, ok := lang.FieldByName("declarator"); ok {
+		for i, child := range children {
+			if child != nil && child.Type(lang) == "type_identifier" {
+				fieldIDs[i] = declaratorFID
+			}
+		}
+	}
+	return cloneFieldIDSliceInArena(arena, fieldIDs)
+}
+
+func cLeaf(arena *nodeArena, lang *Language, sym Symbol, start, end uint32, source []byte) *Node {
+	return newLeafNodeInArena(
+		arena,
+		sym,
+		symbolIsNamed(lang, sym),
+		start,
+		end,
+		advancePointByBytes(Point{}, source[:start]),
+		advancePointByBytes(Point{}, source[:end]),
+	)
+}
+
+func cFindByteAtTopLevel(source []byte, start, end uint32, want byte) uint32 {
+	parenDepth := 0
+	bracketDepth := 0
+	inString := byte(0)
+	escaped := false
+	for i := start; i < end; i++ {
+		b := source[i]
+		if inString != 0 {
+			if escaped {
+				escaped = false
+				continue
+			}
+			if b == '\\' {
+				escaped = true
+				continue
+			}
+			if b == inString {
+				inString = 0
+			}
+			continue
+		}
+		if next, ok := rustSkipCommentAt(source, i, end); ok {
+			i = next - 1
+			continue
+		}
+		switch b {
+		case '"', '\'':
+			inString = b
+		case '(':
+			parenDepth++
+		case ')':
+			if parenDepth > 0 {
+				parenDepth--
+			}
+		case '[':
+			bracketDepth++
+		case ']':
+			if bracketDepth > 0 {
+				bracketDepth--
+			}
+		default:
+			if b == want && parenDepth == 0 && bracketDepth == 0 {
+				return i
+			}
+		}
+	}
+	return 0
+}
+
+func cTopLevelChunkSpans(source []byte) [][2]uint32 {
+	var spans [][2]uint32
+	start := uint32(0)
+	for start < uint32(len(source)) && rustIsSpaceByte(source[start]) {
+		start++
+	}
+	if start >= uint32(len(source)) {
+		return nil
+	}
+	braceDepth := 0
+	parenDepth := 0
+	bracketDepth := 0
+	inString := byte(0)
+	escaped := false
+	for i := start; i < uint32(len(source)); i++ {
+		b := source[i]
+		if inString != 0 {
+			if escaped {
+				escaped = false
+				continue
+			}
+			if b == '\\' {
+				escaped = true
+				continue
+			}
+			if b == inString {
+				inString = 0
+			}
+			continue
+		}
+		if next, ok := rustSkipCommentAt(source, i, uint32(len(source))); ok {
+			i = next - 1
+			continue
+		}
+		switch b {
+		case '"', '\'':
+			inString = b
+		case '{':
+			braceDepth++
+		case '}':
+			if braceDepth > 0 {
+				braceDepth--
+				if braceDepth == 0 && parenDepth == 0 && bracketDepth == 0 {
+					next := rustSkipSpaceBytes(source, i+1)
+					if next >= uint32(len(source)) || source[next] != ';' && source[next] != ',' {
+						spans = append(spans, [2]uint32{start, i + 1})
+						start = next
+					}
+				}
+			}
+		case '(':
+			parenDepth++
+		case ')':
+			if parenDepth > 0 {
+				parenDepth--
+			}
+		case '[':
+			bracketDepth++
+		case ']':
+			if bracketDepth > 0 {
+				bracketDepth--
+			}
+		case ';':
+			if braceDepth == 0 && parenDepth == 0 && bracketDepth == 0 {
+				spans = append(spans, [2]uint32{start, i + 1})
+				start = rustSkipSpaceBytes(source, i+1)
+			}
+		}
+	}
+	if start < uint32(len(source)) {
+		start = rustSkipSpaceBytes(source, start)
+		if start < uint32(len(source)) {
+			return nil
+		}
+	}
+	return spans
 }
 
 func normalizeCCollapsedKeywordChildren(root *Node, source []byte, lang *Language) {
