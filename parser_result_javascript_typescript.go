@@ -15,7 +15,6 @@ func normalizeJavaScriptCompatibility(root *Node, source []byte, lang *Language)
 	normalizeJavaScriptTopLevelDeclarationBounds(root, lang)
 	normalizeJavaScriptTopLevelObjectLiterals(root, lang)
 	normalizeJavaScriptProgramEnd(root, source, lang)
-	normalizeJavaScriptTypeScriptStatementKeywordLeaves(root, source, lang)
 }
 
 func normalizeTypeScriptTreeCompatibility(root *Node, source []byte, lang *Language) {
@@ -30,7 +29,6 @@ func normalizeTypeScriptTreeCompatibility(root *Node, source []byte, lang *Langu
 	normalizeTypeScriptCompatibility(root, source, lang)
 	normalizeJavaScriptTopLevelExpressionStatementBounds(root, lang)
 	normalizeCollapsedNamedLeafChildren(root, lang, "existential_type", "*")
-	normalizeJavaScriptTypeScriptStatementKeywordLeaves(root, source, lang)
 }
 
 func normalizeJavaScriptTypeScriptStatementKeywordLeaves(root *Node, source []byte, lang *Language) {
