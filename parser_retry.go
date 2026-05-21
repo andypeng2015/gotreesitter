@@ -326,6 +326,14 @@ func effectiveParseMergePerKeyCap(lang *Language, mergePerKeyCap int, incrementa
 		fullSourceLen = sourceLen[0]
 	}
 	switch lang.Name {
+	case "c":
+		// C's declaration/expression recovery can keep many redundant
+		// same-key survivors alive on large full parses. One survivor matches
+		// the parity corpus while removing most merge-equivalence churn; keep
+		// explicit env overrides available for grammar diagnosis.
+		if !parseMaxMergePerKeyEnvConfigured() && mergePerKeyCap > 1 {
+			return 1
+		}
 	case "json":
 		// JSON recovery has a small conflict surface, but retaining many
 		// alternatives per merge key makes equivalence checks dominate full
