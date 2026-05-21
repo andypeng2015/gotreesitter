@@ -160,6 +160,24 @@ func TestNormalizeGoSourceFileRootRetagsRecoveredTopLevelChildren(t *testing.T) 
 	}
 }
 
+func TestNormalizeGoStatementListTrailingExtrasStopsBeforeComment(t *testing.T) {
+	source := []byte("stmt\n// trailing comment\n")
+	arena := newNodeArena(arenaClassFull)
+	stmt := newLeafNodeInArena(arena, 3, true, 0, 4, Point{}, Point{Column: 4})
+	list := newParentNodeInArena(arena, 2, true, []*Node{stmt}, nil, 0)
+	list.endByte = uint32(len(source))
+	list.endPoint = advancePointByBytes(Point{}, source)
+
+	normalizeGoStatementListTrailingExtras(list, source, goCompatibilitySymbols{statementList: 2})
+
+	if got, want := list.EndByte(), uint32(5); got != want {
+		t.Fatalf("statement_list.EndByte = %d, want %d", got, want)
+	}
+	if got, want := list.EndPoint(), (Point{Row: 1, Column: 0}); got != want {
+		t.Fatalf("statement_list.EndPoint = %+v, want %+v", got, want)
+	}
+}
+
 func TestNormalizeResultCompatibilityDispatchesUppercaseCobol(t *testing.T) {
 	lang := &Language{
 		Name:        "COBOL",

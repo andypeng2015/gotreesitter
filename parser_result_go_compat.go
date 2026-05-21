@@ -24,6 +24,7 @@ func normalizeGoCompatibilityInRanges(root *Node, source []byte, lang *Language,
 	if root == nil || lang == nil || lang.Name != "go" || len(source) == 0 {
 		return
 	}
+	normalizeCollapsedNamedLeafChildrenBySource(root, source, lang, "dot", ".")
 	syms, ok := goCompatibilitySymbolsForLanguage(lang)
 	if !ok {
 		return
@@ -33,28 +34,13 @@ func normalizeGoCompatibilityInRanges(root *Node, source []byte, lang *Language,
 
 func goCompatibilitySymbolsForLanguage(lang *Language) (goCompatibilitySymbols, bool) {
 	var syms goCompatibilitySymbols
-	var ok bool
-	if syms.semicolon, ok = symbolByName(lang, ";"); !ok {
-		return syms, false
-	}
-	if syms.expressionCase, ok = symbolByName(lang, "expression_case"); !ok {
-		return syms, false
-	}
-	if syms.defaultCase, ok = symbolByName(lang, "default_case"); !ok {
-		return syms, false
-	}
-	if syms.typeCase, ok = symbolByName(lang, "type_case"); !ok {
-		return syms, false
-	}
-	if syms.communicationCase, ok = symbolByName(lang, "communication_case"); !ok {
-		return syms, false
-	}
-	if syms.statementList, ok = symbolByName(lang, "statement_list"); !ok {
-		return syms, false
-	}
-	if syms.statementListTail, ok = symbolByName(lang, "statement_list_repeat1"); !ok {
-		return syms, false
-	}
+	syms.semicolon, _ = symbolByName(lang, ";")
+	syms.expressionCase, _ = symbolByName(lang, "expression_case")
+	syms.defaultCase, _ = symbolByName(lang, "default_case")
+	syms.typeCase, _ = symbolByName(lang, "type_case")
+	syms.communicationCase, _ = symbolByName(lang, "communication_case")
+	syms.statementList, _ = symbolByName(lang, "statement_list")
+	syms.statementListTail, _ = symbolByName(lang, "statement_list_repeat1")
 	syms.addSemicolonContainer(lang, "source_file")
 	syms.addSemicolonContainer(lang, "statement_list")
 	syms.addSemicolonContainer(lang, "statement_list_repeat1")
@@ -93,14 +79,14 @@ func (s goCompatibilitySymbols) isSemicolonContainer(sym Symbol) bool {
 func (s goCompatibilitySymbols) isCase(sym Symbol) bool {
 	switch sym {
 	case s.expressionCase, s.defaultCase, s.typeCase, s.communicationCase:
-		return true
+		return sym != 0
 	default:
 		return false
 	}
 }
 
 func (s goCompatibilitySymbols) isStatementList(sym Symbol) bool {
-	return sym == s.statementList || sym == s.statementListTail
+	return (s.statementList != 0 && sym == s.statementList) || (s.statementListTail != 0 && sym == s.statementListTail)
 }
 
 func normalizeGoCompatibilitySubtree(n *Node, source []byte, syms goCompatibilitySymbols, incrementalRanges []Range) {
@@ -114,6 +100,7 @@ func normalizeGoCompatibilitySubtree(n *Node, source []byte, syms goCompatibilit
 	for i := 0; i < resultChildCount(n); i++ {
 		normalizeGoCompatibilitySubtree(resultChildAt(n, i), source, syms, incrementalRanges)
 	}
+	normalizeGoStatementListTrailingExtras(n, source, syms)
 }
 
 func goNodeOverlapsAnyRange(n *Node, ranges []Range) bool {
@@ -129,7 +116,7 @@ func goNodeOverlapsAnyRange(n *Node, ranges []Range) bool {
 }
 
 func normalizeGoSemicolonContainer(n *Node, source []byte, syms goCompatibilitySymbols) {
-	if !syms.isSemicolonContainer(n.symbol) {
+	if syms.semicolon == 0 || !syms.isSemicolonContainer(n.symbol) {
 		return
 	}
 	view := resultMutableChildrenForMutation(n)
@@ -225,6 +212,41 @@ func normalizeGoStatementListBoundary(curr, next *Node, source []byte, syms goCo
 	if target > curr.endByte {
 		extendNodeEndTo(curr, target, source)
 	}
+}
+
+func normalizeGoStatementListTrailingExtras(n *Node, source []byte, syms goCompatibilitySymbols) {
+	childCount := resultChildCount(n)
+	if !syms.isStatementList(n.symbol) || childCount == 0 || int(n.endByte) > len(source) {
+		return
+	}
+	last := resultChildAt(n, childCount-1)
+	if last == nil || last.endByte >= n.endByte {
+		return
+	}
+	target := goTrailingTriviaBeforeExtra(last.endByte, n.endByte, source)
+	if target > last.endByte && target < n.endByte {
+		setNodeEndTo(n, target, source)
+	}
+}
+
+func goTrailingTriviaBeforeExtra(start, end uint32, source []byte) uint32 {
+	if start >= end || int(end) > len(source) {
+		return start
+	}
+	for cursor := start; cursor < end; cursor++ {
+		switch source[cursor] {
+		case ' ', '\t', '\n', '\r':
+			continue
+		default:
+			for newline := start; newline < cursor; newline++ {
+				if source[newline] == '\n' {
+					return newline + 1
+				}
+			}
+			return cursor
+		}
+	}
+	return end
 }
 
 func normalizeGoCaseSiblingBoundary(curr, next *Node, source []byte, syms goCompatibilitySymbols) {

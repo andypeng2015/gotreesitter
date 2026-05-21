@@ -136,6 +136,36 @@ func TestParseGoImport(t *testing.T) {
 	}
 }
 
+func TestParseGoDotImportAliasKeepsAnonymousDotChild(t *testing.T) {
+	tree, lang := parseGo(t, "package main\n\nimport . \"unicode\"\n")
+	root := tree.RootNode()
+
+	spec := findNamedChild(lang, root, "import_spec")
+	if spec == nil {
+		t.Fatal("no import_spec found")
+	}
+	dot := findNamedChild(lang, spec, "dot")
+	if dot == nil {
+		t.Fatal("no dot alias found in import_spec")
+	}
+	if got, want := dot.ChildCount(), 1; got != want {
+		t.Fatalf("dot.ChildCount() = %d, want %d", got, want)
+	}
+	child := dot.Child(0)
+	if child == nil {
+		t.Fatal("dot.Child(0) = nil")
+	}
+	if child.IsNamed() {
+		t.Fatal("restored dot token should be anonymous")
+	}
+	if got, want := child.Type(lang), "."; got != want {
+		t.Fatalf("dot child type = %q, want %q", got, want)
+	}
+	if got, want := child.Text(tree.Source()), "."; got != want {
+		t.Fatalf("dot child text = %q, want %q", got, want)
+	}
+}
+
 func TestParseGoFile(t *testing.T) {
 	src := `package main
 
