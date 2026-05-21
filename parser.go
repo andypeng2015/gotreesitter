@@ -2517,6 +2517,9 @@ type parseCaps struct {
 func (p *Parser) configureParseCaps(source []byte, reuse *reuseCursor, arenaClass arenaClass, scratch *parserScratch, maxStacksOverride, maxNodesOverride, maxMergePerKeyOverride int) parseCaps {
 	maxStacks, retryPass := resolveParseMaxStacks(parseMaxGLRStacksValue(), maxStacksOverride, p.maxConflictWidth)
 	mergePerKeyCap := effectiveParseMergePerKeyCap(p.language, parseMaxMergePerKeyValue(), reuse != nil, len(source))
+	if javaFullParseNeedsAnnotationDeclarationMergeWidth(p.language, source, reuse) && mergePerKeyCap < maxStacksPerMergeKey {
+		mergePerKeyCap = maxStacksPerMergeKey
+	}
 	if maxMergePerKeyOverride > mergePerKeyCap {
 		mergePerKeyCap = maxMergePerKeyOverride
 	}
@@ -2539,6 +2542,14 @@ func (p *Parser) configureParseCaps(source []byte, reuse *reuseCursor, arenaClas
 		maxDepth:            parseStackDepth(len(source)),
 		maxNodes:            maxNodes,
 	}
+}
+
+func javaFullParseNeedsAnnotationDeclarationMergeWidth(lang *Language, source []byte, reuse *reuseCursor) bool {
+	return lang != nil &&
+		lang.Name == "java" &&
+		reuse == nil &&
+		!parseMaxMergePerKeyEnvConfigured() &&
+		bytes.Contains(source, []byte("@interface"))
 }
 
 func (p *Parser) tuneParseGLRCaps(maxStacks, mergePerKeyCap int, reuse *reuseCursor) (int, int) {

@@ -639,6 +639,22 @@ func TestEffectiveParseMergePerKeyCapJavaExplicitOverride(t *testing.T) {
 	}
 }
 
+func TestJavaAnnotationInterfaceSourceUsesWideMergeCap(t *testing.T) {
+	t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "")
+	ResetParseEnvConfigCacheForTests()
+	defer ResetParseEnvConfigCacheForTests()
+
+	if !javaFullParseNeedsAnnotationDeclarationMergeWidth(&Language{Name: "java"}, []byte("@interface Demo {}"), nil) {
+		t.Fatal("javaFullParseNeedsAnnotationDeclarationMergeWidth = false, want true")
+	}
+	if javaFullParseNeedsAnnotationDeclarationMergeWidth(&Language{Name: "java"}, []byte("class Demo {}"), nil) {
+		t.Fatal("javaFullParseNeedsAnnotationDeclarationMergeWidth(class) = true, want false")
+	}
+	if javaFullParseNeedsAnnotationDeclarationMergeWidth(&Language{Name: "java"}, []byte("@interface Demo {}"), &reuseCursor{}) {
+		t.Fatal("javaFullParseNeedsAnnotationDeclarationMergeWidth(incremental) = true, want false")
+	}
+}
+
 func TestNoteRepeatedReduceChainSignatureDetectsCycle(t *testing.T) {
 	sig := reduceChainSignature{
 		state:        2016,

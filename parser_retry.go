@@ -356,7 +356,9 @@ func effectiveParseMergePerKeyCap(lang *Language, mergePerKeyCap int, incrementa
 	case "java":
 		// Giant generated string/switch-heavy Java sources can retain millions
 		// of redundant GLR survivors under the default per-key budget. Keep one
-		// steady-state survivor for full parses.
+		// steady-state survivor for full parses. Annotation declaration sources
+		// are widened earlier from source text because cap=1 can discard the
+		// top-level @interface declaration branch before result selection.
 		// Accepted-error retries can still widen this cap when a file proves the
 		// steady-state budget is insufficient.
 		// Preserve explicit env overrides for diagnosis and parity experiments.
@@ -447,6 +449,9 @@ func fullParseRetryMergePerKeyOverride(tree *Tree, sourceLen int, initialMaxStac
 	case ParseStopAccepted, ParseStopNoStacksAlive, ParseStopNodeLimit:
 	default:
 		return 0
+	}
+	if tree.language != nil && tree.language.Name == "java" && rt.StopReason == ParseStopAccepted && retryTreeHasError(tree) {
+		return javaFullParseRetryMaxMergePerKey
 	}
 	if initialMaxStacks <= 0 {
 		initialMaxStacks = maxGLRStacks
