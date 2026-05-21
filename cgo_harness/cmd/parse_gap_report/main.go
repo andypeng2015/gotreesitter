@@ -129,17 +129,39 @@ type paritySummary struct {
 
 type runtimeStats struct {
 	Tokens                  uint64 `json:"tokens,omitempty"`
+	Iterations              int    `json:"iterations,omitempty"`
 	NodesAllocated          int    `json:"nodes_allocated,omitempty"`
 	FinalNodes              uint64 `json:"final_nodes,omitempty"`
 	GSSNodes                uint64 `json:"gss_nodes,omitempty"`
+	MaxStacksSeen           int    `json:"max_stacks_seen,omitempty"`
+	SingleStackIterations   int    `json:"single_stack_iterations,omitempty"`
+	MultiStackIterations    int    `json:"multi_stack_iterations,omitempty"`
+	SingleStackTokens       uint64 `json:"single_stack_tokens,omitempty"`
+	MultiStackTokens        uint64 `json:"multi_stack_tokens,omitempty"`
+	MergeStacksIn           uint64 `json:"merge_stacks_in,omitempty"`
+	MergeStacksOut          uint64 `json:"merge_stacks_out,omitempty"`
+	MergeSlotsUsed          uint64 `json:"merge_slots_used,omitempty"`
+	GlobalCullStacksIn      uint64 `json:"global_cull_stacks_in,omitempty"`
+	GlobalCullStacksOut     uint64 `json:"global_cull_stacks_out,omitempty"`
 	ArenaLiveB              int64  `json:"arena_live_b,omitempty"`
 	ArenaCapacityB          int64  `json:"arena_capacity_b,omitempty"`
 	ArenaCapacityWaste      uint64 `json:"arena_capacity_waste,omitempty"`
 	FinalChildRangeDrains   uint64 `json:"final_child_range_drains,omitempty"`
 	PublicNodesMaterialized uint64 `json:"public_nodes_materialized,omitempty"`
 	DenseFallbacks          uint64 `json:"dense_fallbacks,omitempty"`
+	ResultSelectionNS       int64  `json:"result_selection_ns,omitempty"`
 	ResultBuildNS           int64  `json:"result_build_ns,omitempty"`
+	ResultCompatibilityNS   int64  `json:"result_compatibility_ns,omitempty"`
+	ResultParentLinkNS      int64  `json:"result_parent_link_ns,omitempty"`
+	ResultFinalizeRootNS    int64  `json:"result_finalize_root_ns,omitempty"`
+	ResultExtendTrailingNS  int64  `json:"result_extend_trailing_ns,omitempty"`
+	ResultNormalizeRootNS   int64  `json:"result_normalize_root_start_ns,omitempty"`
+	TransientParentMatNS    int64  `json:"transient_parent_materialize_ns,omitempty"`
+	TransientChildMatNS     int64  `json:"transient_child_materialize_ns,omitempty"`
 	NormalizationNS         int64  `json:"normalization_ns,omitempty"`
+	NormalizationPassesRun  uint64 `json:"normalization_passes_run,omitempty"`
+	NormalizationNodes      uint64 `json:"normalization_nodes_visited,omitempty"`
+	NormalizationRewrites   uint64 `json:"normalization_nodes_rewritten,omitempty"`
 	ParseWallNS             int64  `json:"parse_wall_ns,omitempty"`
 	ParserLoopNS            int64  `json:"parser_loop_ns,omitempty"`
 	TokenNextNS             int64  `json:"token_next_ns,omitempty"`
@@ -149,6 +171,21 @@ type runtimeStats struct {
 	GLRCullNS               int64  `json:"glr_cull_ns,omitempty"`
 	QueryCaptures           uint64 `json:"query_captures,omitempty"`
 	CursorNodes             uint64 `json:"cursor_nodes,omitempty"`
+	MergeCalls              uint64 `json:"merge_calls,omitempty"`
+	MergeDeadPruned         uint64 `json:"merge_dead_pruned,omitempty"`
+	MergeReplacements       uint64 `json:"merge_replacements,omitempty"`
+	StackEquivalentCalls    uint64 `json:"stack_equivalent_calls,omitempty"`
+	StackEquivalentTrue     uint64 `json:"stack_equivalent_true,omitempty"`
+	StackCompareCalls       uint64 `json:"stack_compare_calls,omitempty"`
+	ForkCount               uint64 `json:"fork_count,omitempty"`
+	ConflictRR              uint64 `json:"conflict_rr,omitempty"`
+	ConflictRS              uint64 `json:"conflict_rs,omitempty"`
+	ConflictOther           uint64 `json:"conflict_other,omitempty"`
+	LexBytes                uint64 `json:"lex_bytes,omitempty"`
+	LexTokens               uint64 `json:"lex_tokens,omitempty"`
+	ReduceChainSteps        uint64 `json:"reduce_chain_steps,omitempty"`
+	ReduceChainMaxLen       uint64 `json:"reduce_chain_max_len,omitempty"`
+	ParentChildPointers     uint64 `json:"parent_child_pointers,omitempty"`
 	NoTreeReduceNodes       uint64 `json:"notree_reduce_nodes,omitempty"`
 	NoTreeLeafNodes         uint64 `json:"notree_leaf_nodes,omitempty"`
 	CloneTreePublicNodes    uint64 `json:"clone_tree_public_nodes,omitempty"`
@@ -223,6 +260,7 @@ func main() {
 		timeParityFails bool
 		gateOnly        bool
 		arenaBreakdown  bool
+		phaseTiming     bool
 	)
 	flag.StringVar(&langsFlag, "langs", "go,python,rust,java,c", "comma-separated languages to include")
 	flag.StringVar(&modesFlag, "modes", "cgo_full,go_full,go_no_tree", "comma-separated modes")
@@ -236,6 +274,7 @@ func main() {
 	flag.BoolVar(&timeParityFails, "time-parity-failures", false, "run timing modes even when correctness gates fail")
 	flag.BoolVar(&gateOnly, "gate-only", false, "run only parse/highlight/query correctness gates and skip timing modes")
 	flag.BoolVar(&arenaBreakdown, "arena-breakdown", true, "enable detailed gotreesitter arena breakdown while measuring")
+	flag.BoolVar(&phaseTiming, "phase-timing", false, "enable gotreesitter parser phase timing while measuring")
 	flag.Parse()
 
 	if countFlag <= 0 {
@@ -298,6 +337,12 @@ func main() {
 
 	gotreesitter.EnableArenaBreakdown(arenaBreakdown)
 	defer gotreesitter.EnableArenaBreakdown(false)
+	if phaseTiming {
+		if err := os.Setenv("GOT_PARSE_PHASE_TIMING", "1"); err != nil {
+			fatalf("enable phase timing: %v", err)
+		}
+		gotreesitter.ResetParseEnvConfigCacheForTests()
+	}
 
 	common := commonRowFields(repoRoot)
 	resultsPath := filepath.Join(outDir, "results.jsonl")
@@ -708,6 +753,21 @@ func statsFromGoTree(tree *gotreesitter.Tree, queryCaptures, cursorNodes uint64)
 	stats.NodeEditCompactRefs = perf.NodeEditCompactRefs
 	stats.NodeEditPublicFallbacks = subUint64(perf.NodeEditMarked, perf.NodeEditCompactRefs)
 	stats.MutationChildRefCOW = perf.MutationChildRefCOW
+	stats.MergeCalls = perf.MergeCalls
+	stats.MergeDeadPruned = perf.MergeDeadPruned
+	stats.MergeReplacements = perf.MergeReplacements
+	stats.StackEquivalentCalls = perf.StackEquivalentCalls
+	stats.StackEquivalentTrue = perf.StackEquivalentTrue
+	stats.StackCompareCalls = perf.StackCompareCalls
+	stats.ForkCount = perf.ForkCount
+	stats.ConflictRR = perf.ConflictRR
+	stats.ConflictRS = perf.ConflictRS
+	stats.ConflictOther = perf.ConflictOther
+	stats.LexBytes = perf.LexBytes
+	stats.LexTokens = perf.LexTokens
+	stats.ReduceChainSteps = perf.ReduceChainSteps
+	stats.ReduceChainMaxLen = perf.ReduceChainMaxLen
+	stats.ParentChildPointers = perf.ParentChildPointers
 	return stats
 }
 
@@ -722,14 +782,36 @@ func statsFromRuntime(rt gotreesitter.ParseRuntime) runtimeStats {
 	publicMaterialized := rt.CompactFullLeafMaterialized + rt.PendingParentMaterialized + rt.FinalChildRefSingleChildMaterializedChildren
 	return runtimeStats{
 		Tokens:                  rt.TokensConsumed,
+		Iterations:              rt.Iterations,
 		NodesAllocated:          rt.NodesAllocated,
 		FinalNodes:              rt.FinalNodes,
 		GSSNodes:                rt.GSSNodesAllocated,
+		MaxStacksSeen:           rt.MaxStacksSeen,
+		SingleStackIterations:   rt.SingleStackIterations,
+		MultiStackIterations:    rt.MultiStackIterations,
+		SingleStackTokens:       rt.SingleStackTokens,
+		MultiStackTokens:        rt.MultiStackTokens,
+		MergeStacksIn:           rt.MergeStacksIn,
+		MergeStacksOut:          rt.MergeStacksOut,
+		MergeSlotsUsed:          rt.MergeSlotsUsed,
+		GlobalCullStacksIn:      rt.GlobalCullStacksIn,
+		GlobalCullStacksOut:     rt.GlobalCullStacksOut,
 		ArenaCapacityB:          rt.ArenaBytesAllocated,
 		FinalChildRangeDrains:   rt.FinalChildRefMaterializedChildren,
 		PublicNodesMaterialized: publicMaterialized,
+		ResultSelectionNS:       rt.ResultSelectionNanos,
 		ResultBuildNS:           rt.ResultTreeBuildNanos,
+		ResultCompatibilityNS:   rt.ResultCompatibilityNanos,
+		ResultParentLinkNS:      rt.ResultParentLinkNanos,
+		ResultFinalizeRootNS:    rt.ResultFinalizeRootNanos,
+		ResultExtendTrailingNS:  rt.ResultExtendTrailingNanos,
+		ResultNormalizeRootNS:   rt.ResultNormalizeRootStartNanos,
+		TransientParentMatNS:    rt.TransientParentMaterializationNanos,
+		TransientChildMatNS:     rt.TransientChildMaterializationNanos,
 		NormalizationNS:         rt.NormalizationNanos,
+		NormalizationPassesRun:  rt.NormalizationPassesRun,
+		NormalizationNodes:      rt.NormalizationNodesVisited,
+		NormalizationRewrites:   rt.NormalizationNodesRewritten,
 		ParseWallNS:             rt.ParseWallNanos,
 		ParserLoopNS:            rt.ParserLoopNanos,
 		TokenNextNS:             rt.TokenNextNanos,

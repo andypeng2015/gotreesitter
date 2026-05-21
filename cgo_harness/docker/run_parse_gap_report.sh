@@ -23,6 +23,7 @@ ALLOW_PARITY_FAIL=0
 TIME_PARITY_FAILURES=0
 GATE_ONLY=0
 BUILD_IMAGE=1
+PHASE_TIMING=0
 
 usage() {
   cat <<'EOF'
@@ -49,6 +50,7 @@ Options:
   --allow-parity-fail       Write rows for parity-blocked samples and exit zero unless modes fail
   --time-parity-failures    Also run timing modes for parity-blocked samples
   --gate-only               Run parse/highlight/query correctness gates only
+  --phase-timing            Enable parser phase/subphase timing in report rows
   --no-build                Skip Docker image build in underlying runner
   -h, --help                Show this help
 
@@ -79,6 +81,7 @@ while [[ $# -gt 0 ]]; do
     --allow-parity-fail) ALLOW_PARITY_FAIL=1; shift ;;
     --time-parity-failures) TIME_PARITY_FAILURES=1; shift ;;
     --gate-only) GATE_ONLY=1; shift ;;
+    --phase-timing) PHASE_TIMING=1; shift ;;
     --no-build) BUILD_IMAGE=0; shift ;;
     -h|--help)
       usage
@@ -155,6 +158,7 @@ fi
   echo "allow_parity_fail=$ALLOW_PARITY_FAIL"
   echo "time_parity_failures=$TIME_PARITY_FAILURES"
   echo "gate_only=$GATE_ONLY"
+  echo "phase_timing=$PHASE_TIMING"
 } >"$OUT_DIR/wrapper-metadata.txt"
 
 allow_arg_text=""
@@ -169,12 +173,19 @@ gate_only_arg_text=""
 if [[ "$GATE_ONLY" == "1" ]]; then
   gate_only_arg_text="--gate-only"
 fi
+phase_timing_arg_text=""
+phase_timing_env_text="GOT_PARSE_PHASE_TIMING='0'"
+if [[ "$PHASE_TIMING" == "1" ]]; then
+  phase_timing_arg_text="--phase-timing"
+  phase_timing_env_text="GOT_PARSE_PHASE_TIMING='1'"
+fi
 
 inner_cmd=$(cat <<EOF
 cd /workspace/cgo_harness
 env \
   GOMAXPROCS='$GOMAXPROCS_VALUE' \
   GOMEMLIMIT='$GOMEMLIMIT_VALUE' \
+  $phase_timing_env_text \
   GTS_PARSE_GAP_DOCKER_IMAGE='$IMAGE_TAG' \
   GTS_PARSE_GAP_CPUS='$CPUS_LIMIT' \
   GTS_PARSE_GAP_MEMORY='$MEMORY_LIMIT' \
@@ -182,6 +193,7 @@ env \
 env \
   GOMAXPROCS='$GOMAXPROCS_VALUE' \
   GOMEMLIMIT='$GOMEMLIMIT_VALUE' \
+  $phase_timing_env_text \
   GTS_PARSE_GAP_DOCKER_IMAGE='$IMAGE_TAG' \
   GTS_PARSE_GAP_CPUS='$CPUS_LIMIT' \
   GTS_PARSE_GAP_MEMORY='$MEMORY_LIMIT' \
@@ -196,7 +208,8 @@ env \
     --out '/workspace/$OUT_REL' \
     $allow_arg_text \
     $time_parity_arg_text \
-    $gate_only_arg_text
+    $gate_only_arg_text \
+    $phase_timing_arg_text
 EOF
 )
 
