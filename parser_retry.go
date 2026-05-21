@@ -322,6 +322,14 @@ func effectiveParseMergePerKeyCap(lang *Language, mergePerKeyCap int, incrementa
 		return mergePerKeyCap
 	}
 	switch lang.Name {
+	case "go":
+		// Go keeps a few semantically distinct alternatives alive on real
+		// corpus files, but the sixth per-key survivor only added merge churn
+		// in the Aspect-shaped workload. Keep this conservative so fallthrough
+		// and type-conversion parity cases are not pruned.
+		if !parseMaxMergePerKeyEnvConfigured() && mergePerKeyCap > 5 {
+			return 5
+		}
 	case "c":
 		// C's declaration/expression recovery can keep many redundant
 		// same-key survivors alive on large full parses. One survivor matches
@@ -353,6 +361,23 @@ func effectiveParseMergePerKeyCap(lang *Language, mergePerKeyCap int, incrementa
 		if mergePerKeyCap > 4 {
 			return 4
 		}
+	case "starlark":
+		// Bazel/Starlark BUILD files and .bzl files accumulate many same-key
+		// alternatives around call-heavy top-level forms. One survivor matches
+		// the current parse/highlight/query gates and removes the merge phase
+		// as the dominant full-parse cost on Aspect-shaped workloads.
+		if !parseMaxMergePerKeyEnvConfigured() && mergePerKeyCap > 1 {
+			return 1
+		}
+	case "typescript", "tsx":
+		// TypeScript-family sources in repository indexing workloads are
+		// import/query heavy and frequently fork around expression/import
+		// ambiguity. Small Aspect-shaped files stay stable with one same-key
+		// survivor, while large parser.ts-class sources need the wider default
+		// to avoid expensive recovery/result paths.
+		if !parseMaxMergePerKeyEnvConfigured() && mergePerKeyCap > 1 && typescriptFullParseCanUseTightMergeCap(sourceLen...) {
+			return 1
+		}
 	case "java":
 		// Giant generated string/switch-heavy Java sources can retain millions
 		// of redundant GLR survivors under the default per-key budget. Keep one
@@ -367,6 +392,10 @@ func effectiveParseMergePerKeyCap(lang *Language, mergePerKeyCap int, incrementa
 		}
 	}
 	return mergePerKeyCap
+}
+
+func typescriptFullParseCanUseTightMergeCap(sourceLen ...int) bool {
+	return len(sourceLen) == 0 || sourceLen[0] <= 64*1024
 }
 
 func fullParseUsesDeterministicExternalConflicts(lang *Language) bool {
