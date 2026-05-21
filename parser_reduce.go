@@ -799,7 +799,9 @@ func (p *Parser) applyReduceActionFromGSS(s *glrStack, act ParseAction, tok Toke
 		parent.endPoint = span.endPoint
 	}
 	// Extend parent span to cover invisible children dropped by buildReduceChildren.
-	extendParentSpanToWindow(parent, windowEntries, window.start, window.reducedEnd, p.language.SymbolMetadata, p.language.SymbolNames)
+	if reduceChildPathMayDropSpan(childPath) {
+		extendParentSpanToWindow(parent, windowEntries, window.start, window.reducedEnd, p.language.SymbolMetadata, p.language.SymbolNames)
+	}
 	*nodeCount++
 
 	gotoState := p.lookupGoto(window.topState, act.Symbol)
@@ -1020,7 +1022,9 @@ func (p *Parser) applyReduceActionFromGSSTransientParents(s *glrStack, act Parse
 		parent.startPoint = span.startPoint
 		parent.endPoint = span.endPoint
 	}
-	extendParentSpanToWindow(parent, windowEntries, 0, reducedEnd, p.language.SymbolMetadata, p.language.SymbolNames)
+	if reduceChildPathMayDropSpan(childPath) {
+		extendParentSpanToWindow(parent, windowEntries, 0, reducedEnd, p.language.SymbolMetadata, p.language.SymbolNames)
+	}
 	*nodeCount++
 
 	gotoState := p.lookupGoto(topState, act.Symbol)
@@ -2661,6 +2665,15 @@ func reduceChildPathForLen(n int, nonEmptyPath reduceChildPath) reduceChildPath 
 	return nonEmptyPath
 }
 
+func reduceChildPathMayDropSpan(path reduceChildPath) bool {
+	switch path {
+	case reduceChildPathAllVisible, reduceChildPathNoAlias, reduceChildPathFastGSS:
+		return false
+	default:
+		return true
+	}
+}
+
 func reduceEntriesContainHiddenFieldIDs(entries []stackEntry, start, end int, symbolMeta []SymbolMetadata) bool {
 	for i := start; i < end; i++ {
 		n := stackEntryNode(entries[i])
@@ -3407,7 +3420,9 @@ func (p *Parser) applyReduceAction(s *glrStack, act ParseAction, tok Token, anyR
 		parent.endPoint = span.endPoint
 	}
 	// Extend parent span to cover invisible children dropped by buildReduceChildren.
-	extendParentSpanToWindow(parent, entries, window.start, window.reducedEnd, p.language.SymbolMetadata, p.language.SymbolNames)
+	if reduceChildPathMayDropSpan(childPath) {
+		extendParentSpanToWindow(parent, entries, window.start, window.reducedEnd, p.language.SymbolMetadata, p.language.SymbolNames)
+	}
 	*nodeCount++
 
 	gotoState := p.lookupGoto(window.topState, act.Symbol)
@@ -3522,7 +3537,9 @@ func (p *Parser) applyReduceActionTransientParents(s *glrStack, act ParseAction,
 		parent.startPoint = span.startPoint
 		parent.endPoint = span.endPoint
 	}
-	extendParentSpanToWindow(parent, entries, window.start, window.reducedEnd, p.language.SymbolMetadata, p.language.SymbolNames)
+	if reduceChildPathMayDropSpan(childPath) {
+		extendParentSpanToWindow(parent, entries, window.start, window.reducedEnd, p.language.SymbolMetadata, p.language.SymbolNames)
+	}
 	*nodeCount++
 
 	gotoState := p.lookupGoto(window.topState, act.Symbol)
