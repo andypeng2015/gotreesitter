@@ -918,14 +918,17 @@ func rustBuildRecoveredTriviaNode(arena *nodeArena, source []byte, lang *Languag
 	if tokenName != "" && start+uint32(len(tokenName)) <= end {
 		if tokenSym, ok := symbolByName(lang, tokenName); ok {
 			tokenEnd := start + uint32(len(tokenName))
+			startPoint := advancePointByBytes(Point{}, source[:start])
+			tokenEndPoint := advancePointByBytes(startPoint, source[start:tokenEnd])
+			endPoint := advancePointByBytes(tokenEndPoint, source[tokenEnd:end])
 			token := newLeafNodeInArena(
 				arena,
 				tokenSym,
 				rustNamedForSymbol(lang, tokenSym),
 				start,
 				tokenEnd,
-				advancePointByBytes(Point{}, source[:start]),
-				advancePointByBytes(Point{}, source[:tokenEnd]),
+				startPoint,
+				tokenEndPoint,
 			)
 			node := newParentNodeInArena(
 				arena,
@@ -938,19 +941,21 @@ func rustBuildRecoveredTriviaNode(arena *nodeArena, source []byte, lang *Languag
 			node.startByte = start
 			node.startPoint = token.startPoint
 			node.endByte = end
-			node.endPoint = advancePointByBytes(Point{}, source[:end])
+			node.endPoint = endPoint
 			node.setExtra(true)
 			return node, true
 		}
 	}
+	startPoint := advancePointByBytes(Point{}, source[:start])
+	endPoint := advancePointByBytes(startPoint, source[start:end])
 	node := newLeafNodeInArena(
 		arena,
 		sym,
 		rustNamedForSymbol(lang, sym),
 		start,
 		end,
-		advancePointByBytes(Point{}, source[:start]),
-		advancePointByBytes(Point{}, source[:end]),
+		startPoint,
+		endPoint,
 	)
 	node.setExtra(true)
 	return node, true
@@ -989,14 +994,18 @@ func rustBuildRecoveredDocLineCommentNode(arena *nodeArena, source []byte, lang 
 
 	slashSlashEnd := start + 2
 	markerEnd := start + 3
+	startPoint := advancePointByBytes(Point{}, source[:start])
+	slashSlashEndPoint := advancePointByBytes(startPoint, source[start:slashSlashEnd])
+	markerEndPoint := advancePointByBytes(slashSlashEndPoint, source[slashSlashEnd:markerEnd])
+	endPoint := advancePointByBytes(markerEndPoint, source[markerEnd:end])
 	slashSlash := newLeafNodeInArena(
 		arena,
 		slashSlashSym,
 		rustNamedForSymbol(lang, slashSlashSym),
 		start,
 		slashSlashEnd,
-		advancePointByBytes(Point{}, source[:start]),
-		advancePointByBytes(Point{}, source[:slashSlashEnd]),
+		startPoint,
+		slashSlashEndPoint,
 	)
 	markerTokenNode := newLeafNodeInArena(
 		arena,
@@ -1004,8 +1013,8 @@ func rustBuildRecoveredDocLineCommentNode(arena *nodeArena, source []byte, lang 
 		rustNamedForSymbol(lang, markerTokenSym),
 		slashSlashEnd,
 		markerEnd,
-		advancePointByBytes(Point{}, source[:slashSlashEnd]),
-		advancePointByBytes(Point{}, source[:markerEnd]),
+		slashSlashEndPoint,
+		markerEndPoint,
 	)
 	marker := newParentNodeInArena(
 		arena,
@@ -1026,8 +1035,8 @@ func rustBuildRecoveredDocLineCommentNode(arena *nodeArena, source []byte, lang 
 		rustNamedForSymbol(lang, docCommentSym),
 		markerEnd,
 		end,
-		advancePointByBytes(Point{}, source[:markerEnd]),
-		advancePointByBytes(Point{}, source[:end]),
+		markerEndPoint,
+		endPoint,
 	)
 	node := newParentNodeInArena(
 		arena,

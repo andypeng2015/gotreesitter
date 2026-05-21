@@ -1,6 +1,7 @@
 package gotreesitter
 
 func normalizeRustCompatibility(root *Node, source []byte, p *Parser, lang *Language) {
+	normalizeRustSourceFileRoot(root, source, lang)
 	normalizeRustRecoveredPatternStatementsRoot(root, source, p)
 	normalizeRustRecoveredFunctionItems(root, source, lang)
 	normalizeRustRecoveredStructExpressionRoot(root, source, lang)
@@ -19,8 +20,13 @@ func normalizeRustDocCommentRanges(root *Node, source []byte, lang *Language) {
 	if root == nil || lang == nil || lang.Name != "rust" || len(source) == 0 {
 		return
 	}
+	lineCommentSym, ok := symbolByName(lang, "line_comment")
+	if !ok {
+		return
+	}
+	docCommentSym, _ := symbolByName(lang, "doc_comment")
 	walkResultTreePostorder(root, func(node *Node) {
-		if node == nil || node.Type(lang) != "line_comment" || int(node.endByte) > len(source) {
+		if node == nil || node.symbol != lineCommentSym || int(node.endByte) > len(source) {
 			return
 		}
 		if !rustLineCommentIsDoc(source, node.startByte, node.endByte) {
@@ -35,7 +41,7 @@ func normalizeRustDocCommentRanges(root *Node, source []byte, lang *Language) {
 		node.endPoint = advancePointByBytes(Point{}, source[:nextEnd])
 		for i := 0; i < resultChildCount(node); i++ {
 			child := resultChildAt(node, i)
-			if child == nil || child.Type(lang) != "doc_comment" {
+			if child == nil || child.symbol != docCommentSym {
 				continue
 			}
 			child.endByte = nextEnd
@@ -113,6 +119,22 @@ func normalizeRustTokenBindingPatterns(root *Node, source []byte, lang *Language
 	if !ok {
 		return
 	}
+	tokenTreePatternSym, ok := symbolByName(lang, "token_tree_pattern")
+	if !ok {
+		return
+	}
+	metavariableSym, ok := symbolByName(lang, "metavariable")
+	if !ok {
+		return
+	}
+	colonSym, ok := symbolByName(lang, ":")
+	if !ok {
+		return
+	}
+	identifierSym, ok := symbolByName(lang, "identifier")
+	if !ok {
+		return
+	}
 	fragmentSpecifierSym, ok := symbolByName(lang, "fragment_specifier")
 	if !ok {
 		return
@@ -121,7 +143,7 @@ func normalizeRustTokenBindingPatterns(root *Node, source []byte, lang *Language
 	fragmentSpecifierNamed := symbolIsNamed(lang, fragmentSpecifierSym)
 
 	walkResultTreePostorder(root, func(node *Node) {
-		if node.Type(lang) != "token_tree_pattern" || len(node.children) < 3 {
+		if node.symbol != tokenTreePatternSym || len(node.children) < 3 {
 			return
 		}
 		for i := 0; i+2 < len(node.children); i++ {
@@ -131,7 +153,7 @@ func normalizeRustTokenBindingPatterns(root *Node, source []byte, lang *Language
 			if meta == nil || colon == nil || frag == nil {
 				continue
 			}
-			if meta.Type(lang) != "metavariable" || colon.Type(lang) != ":" || frag.Type(lang) != "identifier" {
+			if meta.symbol != metavariableSym || colon.symbol != colonSym || frag.symbol != identifierSym {
 				continue
 			}
 			if !rustFragmentSpecifierFollowsColon(meta, colon, frag, source) {
@@ -159,9 +181,14 @@ func normalizeRustRecoveredTokenTrees(root *Node, source []byte, lang *Language)
 	if root == nil || lang == nil || lang.Name != "rust" || len(source) == 0 {
 		return
 	}
+	tokenTreeSym, ok := symbolByName(lang, "token_tree")
+	if !ok {
+		return
+	}
 
+	changed := false
 	walkResultTreePostorder(root, func(node *Node) {
-		if node.Type(lang) != "token_tree" || !node.HasError() {
+		if node.symbol != tokenTreeSym || !node.HasError() {
 			return
 		}
 		recovered, ok := rustBuildRecoveredTokenTree(node.ownerArena, source, lang, node.startByte, node.endByte)
@@ -169,22 +196,35 @@ func normalizeRustRecoveredTokenTrees(root *Node, source []byte, lang *Language)
 			return
 		}
 		*node = *recovered
+		changed = true
 	})
-	rustRefreshRecoveredErrorFlags(root)
+	if changed {
+		rustRefreshRecoveredErrorFlags(root)
+	}
 }
 
 func normalizeRustDotRangeExpressions(root *Node, source []byte, lang *Language) {
 	if root == nil || lang == nil || lang.Name != "rust" || len(source) == 0 {
 		return
 	}
+	rangeExpressionSym, ok := symbolByName(lang, "range_expression")
+	if !ok {
+		return
+	}
+	assignmentExpressionSym, ok := symbolByName(lang, "assignment_expression")
+	if !ok {
+		return
+	}
+	changed := false
 	var walk func(*Node)
 	walk = func(node *Node) {
 		if node == nil {
 			return
 		}
-		if node.Type(lang) == "range_expression" || node.Type(lang) == "assignment_expression" {
+		if node.symbol == rangeExpressionSym || node.symbol == assignmentExpressionSym {
 			if recovered, ok := rustBuildCanonicalDotRangeNode(node.ownerArena, source, lang, node.startByte, node.endByte); ok && recovered != nil {
 				*node = *recovered
+				changed = true
 				return
 			}
 		}
@@ -193,7 +233,9 @@ func normalizeRustDotRangeExpressions(root *Node, source []byte, lang *Language)
 		}
 	}
 	walk(root)
-	rustRefreshRecoveredErrorFlags(root)
+	if changed {
+		rustRefreshRecoveredErrorFlags(root)
+	}
 }
 
 func normalizeRustRecoveredPatternStatementsRoot(root *Node, source []byte, p *Parser) {
