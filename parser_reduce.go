@@ -785,6 +785,105 @@ func (p *Parser) chainSingleReduceActionsProfiled(s *glrStack, tok Token, anyRed
 }
 
 func (p *Parser) chainSingleReduceActionsClassifiedProfiled(s *glrStack, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, deferParentLinks bool, trackChildErrors *bool) bool {
+	if len(p.reduceChainHints) != 0 {
+		if hint, ok := p.reduceChainHintFor(s.top().state, tok.Symbol); ok {
+			return p.chainSingleReduceActionsClassifiedHintedProfiled(s, tok, hint, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
+		}
+	}
+	return p.chainSingleReduceActionsClassifiedProfiledDefault(s, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
+}
+
+func (p *Parser) chainSingleReduceActionsClassifiedHintedProfiled(s *glrStack, tok Token, hint reduceChainHint, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, deferParentLinks bool, trackChildErrors *bool) bool {
+	if perfCountersEnabled {
+		perfRecordReduceChainHintCandidate()
+		perfRecordReduceChainHintTaken()
+	}
+	actions := p.classifiedActions
+	chainLen := 0
+	classHits := 0
+	chainStartState := s.top().state
+	chainStart := time.Now()
+	for chainLen < int(hint.maxSteps) {
+		currentState := s.top().state
+		actionIdx := p.lookupActionIndex(currentState, tok.Symbol)
+		if actionIdx == 0 || int(actionIdx) >= len(actions) {
+			if reduceChainHintTerminalMatches(hint, currentState, classifiedParseActionNoAction) {
+				if perfCountersEnabled {
+					perfRecordReduceChainHintTerminalOK()
+				}
+			} else if perfCountersEnabled {
+				perfRecordReduceChainHintTerminalMismatch()
+			}
+			p.ambiguityProfile.recordReduceChainRun(chainStartState, tok.Symbol, currentState, classifiedParseActionNoAction, chainLen, chainLen, classHits, time.Since(chainStart).Nanoseconds(), reduceChainStopNoAction)
+			return false
+		}
+		classHits++
+
+		classified := actions[actionIdx]
+		if classified.class != classifiedParseActionSingleReduce {
+			if reduceChainHintTerminalMatches(hint, currentState, classified.class) {
+				if perfCountersEnabled {
+					perfRecordReduceChainHintTerminalOK()
+				}
+			} else if reduceChainHintTerminalStateAllowed(hint, currentState) {
+				if perfCountersEnabled {
+					perfRecordReduceChainHintUnexpected()
+				}
+			} else if perfCountersEnabled {
+				perfRecordReduceChainHintTerminalMismatch()
+			}
+			stop := reduceChainStopMulti
+			switch classified.class {
+			case classifiedParseActionSingleShift:
+				if perfCountersEnabled {
+					perfRecordReduceChainBreakShift()
+				}
+				stop = reduceChainStopShift
+			case classifiedParseActionSingleAccept:
+				if perfCountersEnabled {
+					perfRecordReduceChainBreakAccept()
+				}
+				stop = reduceChainStopAccept
+			default:
+				if perfCountersEnabled {
+					perfRecordReduceChainBreakMulti()
+				}
+			}
+			p.ambiguityProfile.recordReduceChainRun(chainStartState, tok.Symbol, currentState, classified.class, chainLen, chainLen, classHits, time.Since(chainStart).Nanoseconds(), stop)
+			return false
+		}
+
+		next := classified.action
+		chainLen++
+		if perfCountersEnabled {
+			perfRecordReduceChainStep(chainLen)
+			perfRecordReduceChainHintSteps(1)
+		}
+		reduceStart := time.Now()
+		p.applyReduceActionDispatch(s, next, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
+		p.ambiguityProfile.recordReduceChainStep(currentState, tok.Symbol, next, chainLen, time.Since(reduceStart).Nanoseconds())
+		if s.dead || s.accepted || s.shifted {
+			if perfCountersEnabled {
+				perfRecordReduceChainHintDead()
+			}
+			switch {
+			case s.accepted:
+				p.ambiguityProfile.recordReduceChainRun(chainStartState, tok.Symbol, reduceChainTerminalState(s, currentState), classifiedParseActionSingleReduce, chainLen, chainLen, classHits, time.Since(chainStart).Nanoseconds(), reduceChainStopAccept)
+			case s.shifted:
+				p.ambiguityProfile.recordReduceChainRun(chainStartState, tok.Symbol, reduceChainTerminalState(s, currentState), classifiedParseActionSingleReduce, chainLen, chainLen, classHits, time.Since(chainStart).Nanoseconds(), reduceChainStopShift)
+			default:
+				p.ambiguityProfile.recordReduceChainRun(chainStartState, tok.Symbol, reduceChainTerminalState(s, currentState), classifiedParseActionSingleReduce, chainLen, chainLen, classHits, time.Since(chainStart).Nanoseconds(), reduceChainStopDead)
+			}
+			return false
+		}
+	}
+	if perfCountersEnabled {
+		perfRecordReduceChainHintLimit()
+	}
+	return p.chainSingleReduceActionsClassifiedProfiledDefault(s, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
+}
+
+func (p *Parser) chainSingleReduceActionsClassifiedProfiledDefault(s *glrStack, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, deferParentLinks bool, trackChildErrors *bool) bool {
 	const maxInlineReduceChain = 256
 	actions := p.classifiedActions
 	chainLen := 0
