@@ -128,6 +128,54 @@ func TestTypeScriptRepetitionShiftConflictChoiceRejectsOtherState(t *testing.T) 
 	}
 }
 
+func TestRustRepetitionShiftConflictChoiceAllowsTopLevelItemStarts(t *testing.T) {
+	lang := &Language{SymbolNames: []string{"end", "pub", "#", "impl", "fn", "source_file_repeat1"}}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 5, ChildCount: 2},
+		{Type: ParseActionShift, State: 2039, Repetition: true},
+	}
+
+	for _, sym := range []Symbol{1, 2, 3, 4} {
+		chosen, ok := rustRepetitionShiftConflictChoice(lang, Token{Symbol: sym}, 7, actions)
+		if !ok {
+			t.Fatalf("rustRepetitionShiftConflictChoice(%q) = false, want true", lang.SymbolNames[sym])
+		}
+		if chosen.Type != ParseActionShift || chosen.State != 2039 || !chosen.Repetition {
+			t.Fatalf("rustRepetitionShiftConflictChoice(%q) picked %+v, want repetition shift", lang.SymbolNames[sym], chosen)
+		}
+	}
+}
+
+func TestRustRepetitionShiftConflictChoiceRejectsOtherState(t *testing.T) {
+	lang := &Language{SymbolNames: []string{"end", "pub", "source_file_repeat1"}}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 2, ChildCount: 2},
+		{Type: ParseActionShift, State: 2039, Repetition: true},
+	}
+
+	if _, ok := rustRepetitionShiftConflictChoice(lang, Token{Symbol: 1}, 8, actions); ok {
+		t.Fatal("rustRepetitionShiftConflictChoice = true, want false")
+	}
+}
+
+func TestRustRepetitionShiftConflictChoiceAllowsTokenTreeRepeat(t *testing.T) {
+	lang := &Language{SymbolNames: []string{"end", "identifier", ",", "delim_token_tree_repeat1"}}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 3, ChildCount: 2},
+		{Type: ParseActionShift, State: 246, Repetition: true},
+	}
+
+	for _, sym := range []Symbol{1, 2} {
+		chosen, ok := rustRepetitionShiftConflictChoice(lang, Token{Symbol: sym}, 83, actions)
+		if !ok {
+			t.Fatalf("rustRepetitionShiftConflictChoice(%q) = false, want true", lang.SymbolNames[sym])
+		}
+		if chosen.Type != ParseActionShift || chosen.State != 246 || !chosen.Repetition {
+			t.Fatalf("rustRepetitionShiftConflictChoice(%q) picked %+v, want repetition shift", lang.SymbolNames[sym], chosen)
+		}
+	}
+}
+
 func TestJavaRepetitionShiftConflictChoiceAllowsStringLiteralContinuation(t *testing.T) {
 	lang := &Language{SymbolNames: []string{"end", "escape_sequence", "string_fragment", "_string_literal_repeat1"}}
 	actions := []ParseAction{

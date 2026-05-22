@@ -2206,6 +2206,12 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 								chosen, choice = next, true
 							}
 						}
+					case "rust":
+						if !p.noTreeBenchmarkOnly {
+							if next, ok := rustRepetitionShiftConflictChoice(p.language, tok, currentState, actions); ok {
+								chosen, choice = next, true
+							}
+						}
 					case "typescript":
 						if next, ok := typescriptRepetitionShiftConflictChoice(p.language, tok, currentState, actions); ok {
 							chosen, choice = next, true
@@ -3136,6 +3142,33 @@ func typescriptRepetitionShiftConflictChoice(lang *Language, tok Token, state St
 		}
 	case 3817:
 		if !symbolHasName(lang, tok.Symbol, "case") {
+			return ParseAction{}, false
+		}
+	default:
+		return ParseAction{}, false
+	}
+	return repetitionShiftConflictChoice(actions)
+}
+
+func rustRepetitionShiftConflictChoice(lang *Language, tok Token, state StateID, actions []ParseAction) (ParseAction, bool) {
+	if lang == nil {
+		return ParseAction{}, false
+	}
+	switch state {
+	case 7:
+		switch {
+		case symbolHasName(lang, tok.Symbol, "pub"):
+		case symbolHasName(lang, tok.Symbol, "#"):
+		case symbolHasName(lang, tok.Symbol, "impl"):
+		case symbolHasName(lang, tok.Symbol, "fn"):
+		default:
+			return ParseAction{}, false
+		}
+	case 83:
+		switch {
+		case symbolHasName(lang, tok.Symbol, "identifier"):
+		case symbolHasName(lang, tok.Symbol, ","):
+		default:
 			return ParseAction{}, false
 		}
 	default:
