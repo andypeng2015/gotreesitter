@@ -2,6 +2,48 @@ package gotreesitter
 
 import "testing"
 
+func TestBuildReduceChainHintsUsesLanguageMetadata(t *testing.T) {
+	t.Setenv("GOT_GLR_REDUCE_CHAIN_HINTS", "1")
+	ResetParseEnvConfigCacheForTests()
+	t.Cleanup(ResetParseEnvConfigCacheForTests)
+
+	lang := &Language{
+		Name:        "python",
+		StateCount:  10,
+		SymbolCount: 10,
+		SymbolNames: []string{
+			"", "", "", "", "", "", "", "", "", "",
+		},
+		ReduceChainHints: []ReduceChainHint{{
+			StartState:     StateID(3),
+			Lookahead:      Symbol(2),
+			TerminalStates: []StateID{StateID(4), StateID(5)},
+			TerminalAction: ReduceChainTerminalSingleShift,
+			MaxSteps:       7,
+		}},
+	}
+
+	got := buildReduceChainHints(lang)
+	if len(got) != 1 {
+		t.Fatalf("hint count = %d, want 1", len(got))
+	}
+	hint := got[0]
+	if hint.startState != StateID(3) || hint.lookahead != Symbol(2) || hint.maxSteps != 7 {
+		t.Fatalf("hint = %+v, want state=3 lookahead=2 maxSteps=7", hint)
+	}
+	if hint.terminalAction != classifiedParseActionSingleShift {
+		t.Fatalf("terminal action = %d, want single shift", hint.terminalAction)
+	}
+	if len(hint.terminalStates) != 2 || hint.terminalStates[0] != StateID(4) || hint.terminalStates[1] != StateID(5) {
+		t.Fatalf("terminal states = %v, want [4 5]", hint.terminalStates)
+	}
+
+	lang.ReduceChainHints[0].TerminalStates[0] = StateID(9)
+	if hint.terminalStates[0] != StateID(4) {
+		t.Fatalf("internal hint terminal states alias language metadata: got %v", hint.terminalStates)
+	}
+}
+
 func TestBuildSingleTokenWrapperSymbols(t *testing.T) {
 	lang := &Language{
 		SymbolMetadata: []SymbolMetadata{

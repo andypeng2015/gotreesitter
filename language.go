@@ -182,6 +182,31 @@ type IncrementalReuseExternalScanner interface {
 	SupportsIncrementalReuse() bool
 }
 
+// ReduceChainTerminalAction describes the action class expected after a
+// generated reduce-chain hint finishes applying deterministic reductions.
+type ReduceChainTerminalAction uint8
+
+const (
+	ReduceChainTerminalNoAction ReduceChainTerminalAction = iota
+	ReduceChainTerminalSingleReduce
+	ReduceChainTerminalSingleShift
+	ReduceChainTerminalSingleAccept
+	ReduceChainTerminalSingleOther
+	ReduceChainTerminalMulti
+)
+
+// ReduceChainHint describes a terminal-verified parser hot path for a
+// deterministic reduce chain. The runtime still applies normal reduce
+// semantics and stops before the terminal action; this metadata only lets it
+// avoid repeated generic action dispatch for approved state/lookahead pairs.
+type ReduceChainHint struct {
+	StartState     StateID
+	Lookahead      Symbol
+	TerminalStates []StateID
+	TerminalAction ReduceChainTerminalAction
+	MaxSteps       uint16
+}
+
 // Language holds all data needed to parse a specific language.
 // It mirrors tree-sitter's TSLanguage C struct, translated into
 // idiomatic Go types with slice-based tables instead of raw pointers.
@@ -214,6 +239,10 @@ type Language struct {
 	SmallParseTable    []uint16   // compressed sparse table
 	SmallParseTableMap []uint32   // state -> offset into SmallParseTable
 	ParseActions       []ParseActionEntry
+
+	// ReduceChainHints are optional generated hot-path hints for deterministic
+	// reduce runs. They are only consumed when reduce-chain hints are enabled.
+	ReduceChainHints []ReduceChainHint
 
 	// Lex tables
 	LexModes            []LexMode

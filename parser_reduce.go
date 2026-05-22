@@ -74,28 +74,85 @@ func buildReduceChainHints(lang *Language) []reduceChainHint {
 	if lang == nil || !parseReduceChainHintsEnabled() {
 		return nil
 	}
+	if len(lang.ReduceChainHints) != 0 {
+		return buildReduceChainHintsFromMetadata(lang, lang.ReduceChainHints)
+	}
+	return buildReduceChainHintsFromMetadata(lang, defaultReduceChainHintMetadata(lang))
+}
+
+func buildReduceChainHintsFromMetadata(lang *Language, hints []ReduceChainHint) []reduceChainHint {
+	out := make([]reduceChainHint, 0, len(hints))
+	for i := range hints {
+		hint := hints[i]
+		terminalAction, ok := reduceChainTerminalActionClass(hint.TerminalAction)
+		if !ok || hint.MaxSteps == 0 || !reduceChainHintInRange(lang, hint) {
+			continue
+		}
+		out = append(out, reduceChainHint{
+			startState:     hint.StartState,
+			lookahead:      hint.Lookahead,
+			terminalStates: append([]StateID(nil), hint.TerminalStates...),
+			terminalAction: terminalAction,
+			maxSteps:       hint.MaxSteps,
+		})
+	}
+	return out
+}
+
+func reduceChainTerminalActionClass(action ReduceChainTerminalAction) (classifiedParseActionClass, bool) {
+	switch action {
+	case ReduceChainTerminalNoAction:
+		return classifiedParseActionNoAction, true
+	case ReduceChainTerminalSingleReduce:
+		return classifiedParseActionSingleReduce, true
+	case ReduceChainTerminalSingleShift:
+		return classifiedParseActionSingleShift, true
+	case ReduceChainTerminalSingleAccept:
+		return classifiedParseActionSingleAccept, true
+	case ReduceChainTerminalSingleOther:
+		return classifiedParseActionSingleOther, true
+	case ReduceChainTerminalMulti:
+		return classifiedParseActionMulti, true
+	default:
+		return classifiedParseActionNoAction, false
+	}
+}
+
+func reduceChainHintInRange(lang *Language, hint ReduceChainHint) bool {
+	if lang == nil || uint32(hint.StartState) >= lang.StateCount || uint32(hint.Lookahead) >= lang.SymbolCount || len(hint.TerminalStates) == 0 {
+		return false
+	}
+	for _, state := range hint.TerminalStates {
+		if uint32(state) >= lang.StateCount {
+			return false
+		}
+	}
+	return true
+}
+
+func defaultReduceChainHintMetadata(lang *Language) []ReduceChainHint {
 	switch lang.Name {
 	case "python":
 		if !languageSymbolNameMatches(lang, Symbol(101), "_newline") {
 			return nil
 		}
-		return []reduceChainHint{{
-			startState:     StateID(1101),
-			lookahead:      Symbol(101),
-			terminalStates: []StateID{StateID(2336), StateID(2361), StateID(2098), StateID(2460)},
-			terminalAction: classifiedParseActionSingleShift,
-			maxSteps:       10,
+		return []ReduceChainHint{{
+			StartState:     StateID(1101),
+			Lookahead:      Symbol(101),
+			TerminalStates: []StateID{StateID(2336), StateID(2361), StateID(2098), StateID(2460)},
+			TerminalAction: ReduceChainTerminalSingleShift,
+			MaxSteps:       10,
 		}}
 	case "rust":
 		if !languageSymbolNameMatches(lang, Symbol(5), ")") {
 			return nil
 		}
-		return []reduceChainHint{{
-			startState:     StateID(205),
-			lookahead:      Symbol(5),
-			terminalStates: []StateID{StateID(98), StateID(132), StateID(133)},
-			terminalAction: classifiedParseActionSingleShift,
-			maxSteps:       32,
+		return []ReduceChainHint{{
+			StartState:     StateID(205),
+			Lookahead:      Symbol(5),
+			TerminalStates: []StateID{StateID(98), StateID(132), StateID(133)},
+			TerminalAction: ReduceChainTerminalSingleShift,
+			MaxSteps:       32,
 		}}
 	default:
 		return nil
