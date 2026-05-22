@@ -236,7 +236,9 @@ type langScore struct {
 	goCursor            int64
 	goEdit              int64
 	goNoop              int64
+	goFullRuntime       runtimeStats
 	goNoTreeRuntime     runtimeStats
+	goQueryRuntime      runtimeStats
 	fullRatio           float64
 	noTreeRatio         float64
 	queryRatio          float64
@@ -375,6 +377,12 @@ func scoreRows(rows []reportRow) []langScore {
 		s.fullOverNoTree = ratio(s.goFull, s.goNoTree)
 		if nt := agg.modes["go_no_tree"]; nt != nil {
 			s.goNoTreeRuntime = nt.runtime
+		}
+		if gf := agg.modes["go_full"]; gf != nil {
+			s.goFullRuntime = gf.runtime
+		}
+		if gq := agg.modes["go_parse_query"]; gq != nil {
+			s.goQueryRuntime = gq.runtime
 		}
 		if gf := agg.modes["go_full"]; gf != nil {
 			r := gf.runtime
@@ -661,6 +669,7 @@ func render(scores []langScore) {
 			printHotEquivTable("equivalence-state buckets", s.hotEquivStates)
 		}
 	}
+	printActiveReduceChainHints(scores)
 	printReduceChainHintCandidates(scores)
 
 	fmt.Println()
@@ -1052,6 +1061,83 @@ type reduceChainHintCandidate struct {
 	classHits      uint64
 	maxLen         int
 	ns             int64
+}
+
+type activeReduceChainHint struct {
+	lang       string
+	mode       string
+	taken      uint64
+	steps      uint64
+	ok         uint64
+	mismatch   uint64
+	limit      uint64
+	dead       uint64
+	unexpected uint64
+}
+
+func printActiveReduceChainHints(scores []langScore) {
+	active := collectActiveReduceChainHints(scores)
+	if len(active) == 0 {
+		return
+	}
+	sort.Slice(active, func(i, j int) bool {
+		if active[i].taken == active[j].taken {
+			if active[i].lang == active[j].lang {
+				return active[i].mode < active[j].mode
+			}
+			return active[i].lang < active[j].lang
+		}
+		return active[i].taken > active[j].taken
+	})
+	fmt.Println()
+	fmt.Println("## Active Reduce-Chain Hints")
+	fmt.Println()
+	fmt.Println("| lang | mode | taken | steps | terminal_ok | ok% | mismatch | limit | dead | unexpected |")
+	fmt.Println("| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
+	for _, h := range active {
+		fmt.Printf("| %s | `%s` | %d | %d | %d | %.1f%% | %d | %d | %d | %d |\n",
+			h.lang,
+			h.mode,
+			h.taken,
+			h.steps,
+			h.ok,
+			100*safeRatioUint(h.ok, h.taken),
+			h.mismatch,
+			h.limit,
+			h.dead,
+			h.unexpected,
+		)
+	}
+}
+
+func collectActiveReduceChainHints(scores []langScore) []activeReduceChainHint {
+	out := []activeReduceChainHint{}
+	for _, s := range scores {
+		for _, mode := range []struct {
+			name string
+			r    runtimeStats
+		}{
+			{name: "go_full", r: s.goFullRuntime},
+			{name: "go_no_tree", r: s.goNoTreeRuntime},
+			{name: "go_parse_query", r: s.goQueryRuntime},
+		} {
+			if mode.r.ReduceChainHintTaken == 0 {
+				continue
+			}
+			out = append(out, activeReduceChainHint{
+				lang:       s.lang,
+				mode:       mode.name,
+				taken:      mode.r.ReduceChainHintTaken,
+				steps:      mode.r.ReduceChainHintSteps,
+				ok:         mode.r.ReduceChainHintTerminalOK,
+				mismatch:   mode.r.ReduceChainHintTerminalMismatch,
+				limit:      mode.r.ReduceChainHintLimit,
+				dead:       mode.r.ReduceChainHintDead,
+				unexpected: mode.r.ReduceChainHintUnexpected,
+			})
+		}
+	}
+	return out
 }
 
 func printReduceChainHintCandidates(scores []langScore) {
