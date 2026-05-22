@@ -4,13 +4,10 @@ func normalizeIniSectionStarts(root *Node, lang *Language) {
 	if root == nil || lang == nil || lang.Name != "ini" {
 		return
 	}
-	var walk func(*Node)
-	walk = func(n *Node) {
-		if n == nil {
-			return
-		}
+	walkResultTree(root, func(n *Node) {
 		if n.Type(lang) == "section" {
-			for _, child := range n.children {
+			for i := 0; i < resultChildCount(n); i++ {
+				child := resultChildAt(n, i)
 				if child == nil {
 					continue
 				}
@@ -21,9 +18,5 @@ func normalizeIniSectionStarts(root *Node, lang *Language) {
 				break
 			}
 		}
-		for _, child := range n.children {
-			walk(child)
-		}
-	}
-	walk(root)
+	})
 }

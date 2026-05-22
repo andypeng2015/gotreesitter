@@ -19,8 +19,9 @@ type reuseCursor struct {
 	stack []reuseFrame
 	next  *Node
 
-	topLevel      []*Node
-	topLevelIndex int
+	topLevelParent *Node
+	topLevelIndex  int
+	topLevelEnd    int
 
 	cachedStart      uint32
 	cachedStartValid bool
@@ -77,21 +78,26 @@ func (c *reuseCursor) reset(oldTree *Tree, source []byte, scratch *reuseScratch)
 
 	root := oldTree.RootNode()
 	c.stack = append(c.stack, reuseFrame{node: root})
-	c.topLevel = nil
+	c.topLevelParent = nil
 	c.topLevelIndex = 0
-	if c.hasEdits && root != nil && len(root.children) > 0 {
+	c.topLevelEnd = 0
+	childCount := nodeChildCountNoMaterialize(root)
+	if c.hasEdits && root != nil && childCount > 0 {
 		firstAffected := -1
-		for i, child := range root.children {
-			if child == nil {
+		for i := 0; i < childCount; i++ {
+			entry, ok := nodeChildEntryAtNoMaterialize(root, i)
+			if !ok {
 				continue
 			}
-			if child.endByte > c.minEditAt {
+			if stackEntryNodeEndByte(entry) > c.minEditAt {
 				firstAffected = i
 				break
 			}
 		}
-		if firstAffected >= 0 && firstAffected+1 < len(root.children) {
-			c.topLevel = root.children[firstAffected+1:]
+		if firstAffected >= 0 && firstAffected+1 < childCount {
+			c.topLevelParent = root
+			c.topLevelIndex = firstAffected + 1
+			c.topLevelEnd = childCount
 		}
 	}
 	return c
@@ -111,7 +117,7 @@ func (c *reuseCursor) commitScratch(scratch *reuseScratch) {
 // Backing arrays (stack, cached) are kept to avoid re-allocation next parse.
 func (c *reuseCursor) releaseNodeRefs() {
 	c.next = nil
-	c.topLevel = nil
+	c.topLevelParent = nil
 	c.oldSource = nil
 	c.newSource = nil
 	if cap(c.stack) > 0 {
@@ -181,33 +187,38 @@ func (c *reuseCursor) candidates(start uint32) []*Node {
 }
 
 func (c *reuseCursor) collectTopLevelCandidates(start uint32) bool {
-	if c == nil || len(c.topLevel) == 0 {
+	if c == nil || c.topLevelParent == nil || c.topLevelIndex >= c.topLevelEnd {
 		return false
 	}
-	for c.topLevelIndex < len(c.topLevel) {
-		n := c.topLevel[c.topLevelIndex]
-		if n == nil {
+	for c.topLevelIndex < c.topLevelEnd {
+		entry, ok := nodeChildEntryAtNoMaterialize(c.topLevelParent, c.topLevelIndex)
+		if !ok || !stackEntryHasNode(entry) {
 			c.topLevelIndex++
 			continue
 		}
-		if n.startByte < start {
+		childStart := stackEntryNodeStartByte(entry)
+		if childStart < start {
 			c.topLevelIndex++
 			continue
 		}
-		if n.startByte > start {
+		if childStart > start {
 			return false
 		}
-		for c.topLevelIndex < len(c.topLevel) {
-			n = c.topLevel[c.topLevelIndex]
-			if n == nil {
+		for c.topLevelIndex < c.topLevelEnd {
+			entry, ok = nodeChildEntryAtNoMaterialize(c.topLevelParent, c.topLevelIndex)
+			if !ok || !stackEntryHasNode(entry) {
 				c.topLevelIndex++
 				continue
 			}
-			if n.startByte != start {
+			if stackEntryNodeStartByte(entry) != start {
 				return true
 			}
 			c.topLevelIndex++
-			if c.reusableIndexedNode(n) {
+			if !c.reusableIndexedEntry(entry) {
+				continue
+			}
+			n := nodeChildAtForReason(c.topLevelParent, c.topLevelIndex-1, materializeForEdit)
+			if n != nil {
 				c.cached = append(c.cached, n)
 			}
 		}
@@ -216,31 +227,30 @@ func (c *reuseCursor) collectTopLevelCandidates(start uint32) bool {
 	return false
 }
 
-func (c *reuseCursor) reusableIndexedNode(cur *Node) bool {
-	if cur == nil {
+func (c *reuseCursor) reusableIndexedEntry(entry stackEntry) bool {
+	if !stackEntryHasNode(entry) {
 		return false
 	}
-	// Top-level candidates are children of root which is always dirty when
-	// edits are present. Only reuse them when their byte content is identical
-	// in old and new source — shifted positions may differ.
-	if c.hasEdits && !nodeBytesEqual(cur.startByte, cur.endByte, c.oldSource, c.newSource) {
+	start := stackEntryNodeStartByte(entry)
+	end := stackEntryNodeEndByte(entry)
+	if c.hasEdits && !nodeBytesEqual(start, end, c.oldSource, c.newSource) {
 		c.rejectDirty++
 		return false
 	}
-	dirtyHere := cur.dirty()
-	if dirtyHere && nodeBytesEqual(cur.startByte, cur.endByte, c.oldSource, c.newSource) {
-		cur.setDirty(false)
+	dirtyHere := stackEntryNodeDirty(entry)
+	if dirtyHere && nodeBytesEqual(start, end, c.oldSource, c.newSource) {
+		setStackEntryDirty(entry, false)
 		dirtyHere = false
 	}
-	if cur.hasError() {
+	if stackEntryNodeHasError(entry) {
 		c.rejectHasError++
 		return false
 	}
-	if cur.endByte <= cur.startByte {
+	if end <= start {
 		c.rejectInvalidSpan++
 		return false
 	}
-	if cur.endByte > c.sourceLen {
+	if end > c.sourceLen {
 		c.rejectOutOfBounds++
 		return false
 	}
@@ -292,13 +302,22 @@ func (c *reuseCursor) advance() *Node {
 
 		childUnderDirty := frame.underDirty || dirtyHere
 
-		children := cur.children
+		childCount := nodeChildCountNoMaterialize(cur)
 		if perfCountersEnabled {
-			perfRecordReusePushed(len(children))
+			perfRecordReusePushed(childCount)
 		}
-		for i := len(children) - 1; i >= 0; i-- {
+		for i := childCount - 1; i >= 0; i-- {
+			if entry, ok := nodeChildEntryAtNoMaterialize(cur, i); ok &&
+				c.cachedStartValid &&
+				stackEntryNodeEndByte(entry) <= c.cachedStart {
+				continue
+			}
+			child := nodeChildAtForReason(cur, i, materializeForEdit)
+			if child == nil {
+				continue
+			}
 			c.stack = append(c.stack, reuseFrame{
-				node:       children[i],
+				node:       child,
 				underDirty: childUnderDirty,
 			})
 		}

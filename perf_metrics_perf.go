@@ -11,114 +11,85 @@ const (
 )
 
 type perfCountersData struct {
-	mergeCalls             atomic.Uint64
-	mergeDeadPruned        atomic.Uint64
-	mergePerKeyOverflow    atomic.Uint64
-	mergeReplacements      atomic.Uint64
-	stackEquivalentCalls   atomic.Uint64
-	stackEquivalentTrue    atomic.Uint64
-	stackEqHashMissSkips   atomic.Uint64
-	stackCompareCalls      atomic.Uint64
-	conflictRR             atomic.Uint64
-	conflictRS             atomic.Uint64
-	conflictOther          atomic.Uint64
-	forkCount              atomic.Uint64
-	firstConflictToken     atomic.Uint64
-	maxConcurrentStacks    atomic.Uint64
-	lexBytes               atomic.Uint64
-	lexTokens              atomic.Uint64
-	reuseNodesVisited      atomic.Uint64
-	reuseNodesPushed       atomic.Uint64
-	reuseNodesPopped       atomic.Uint64
-	reuseCandidatesChecked atomic.Uint64
-	reuseSuccesses         atomic.Uint64
-	reuseLeafSuccesses     atomic.Uint64
-	reuseNonLeafChecks     atomic.Uint64
-	reuseNonLeafSuccesses  atomic.Uint64
-	reuseNonLeafBytes      atomic.Uint64
-	reuseNonLeafNoGoto     atomic.Uint64
-	reuseNonLeafNoGotoTerm atomic.Uint64
-	reuseNonLeafNoGotoNt   atomic.Uint64
-	reuseNonLeafStateMiss  atomic.Uint64
-	reuseNonLeafStateZero  atomic.Uint64
-	mergeHashZero          atomic.Uint64
-	globalCapCulls         atomic.Uint64
-	globalCapCullDropped   atomic.Uint64
-	reduceChainSteps       atomic.Uint64
-	reduceChainMaxLen      atomic.Uint64
-	reduceChainBreakMulti  atomic.Uint64
-	reduceChainBreakShift  atomic.Uint64
-	reduceChainBreakAccept atomic.Uint64
-	parentChildPointers    atomic.Uint64
-	reduceChildrenFastGSS  atomic.Uint64
-	reduceChildrenAllVis   atomic.Uint64
-	reduceChildrenNoAlias  atomic.Uint64
-	reduceChildrenScratch  atomic.Uint64
-	reduceScratchNoAlias   atomic.Uint64
-	reduceScratchGeneral   atomic.Uint64
-	extraNodes             atomic.Uint64
-	errorNodes             atomic.Uint64
-	mergeStacksInHist      [perfMergeHistBins]atomic.Uint64
-	mergeAliveHist         [perfMergeHistBins]atomic.Uint64
-	mergeOutHist           [perfMergeHistBins]atomic.Uint64
-	forkActionsHist        [perfForkHistBins]atomic.Uint64
+	mergeCalls                      atomic.Uint64
+	mergeDeadPruned                 atomic.Uint64
+	mergePerKeyOverflow             atomic.Uint64
+	mergeReplacements               atomic.Uint64
+	stackEquivalentCalls            atomic.Uint64
+	stackEquivalentTrue             atomic.Uint64
+	stackEqHashMissSkips            atomic.Uint64
+	stackCompareCalls               atomic.Uint64
+	conflictRR                      atomic.Uint64
+	conflictRS                      atomic.Uint64
+	conflictOther                   atomic.Uint64
+	forkCount                       atomic.Uint64
+	firstConflictToken              atomic.Uint64
+	maxConcurrentStacks             atomic.Uint64
+	lexBytes                        atomic.Uint64
+	lexTokens                       atomic.Uint64
+	reuseNodesVisited               atomic.Uint64
+	reuseNodesPushed                atomic.Uint64
+	reuseNodesPopped                atomic.Uint64
+	reuseCandidatesChecked          atomic.Uint64
+	reuseSuccesses                  atomic.Uint64
+	reuseLeafSuccesses              atomic.Uint64
+	reuseNonLeafChecks              atomic.Uint64
+	reuseNonLeafSuccesses           atomic.Uint64
+	reuseNonLeafBytes               atomic.Uint64
+	reuseNonLeafNoGoto              atomic.Uint64
+	reuseNonLeafNoGotoTerm          atomic.Uint64
+	reuseNonLeafNoGotoNt            atomic.Uint64
+	reuseNonLeafStateMiss           atomic.Uint64
+	reuseNonLeafStateZero           atomic.Uint64
+	mergeHashZero                   atomic.Uint64
+	globalCapCulls                  atomic.Uint64
+	globalCapCullDropped            atomic.Uint64
+	reduceChainSteps                atomic.Uint64
+	reduceChainMaxLen               atomic.Uint64
+	reduceChainBreakMulti           atomic.Uint64
+	reduceChainBreakShift           atomic.Uint64
+	reduceChainBreakAccept          atomic.Uint64
+	reduceChainHintCandidates       atomic.Uint64
+	reduceChainHintTaken            atomic.Uint64
+	reduceChainHintSteps            atomic.Uint64
+	reduceChainHintTerminalOK       atomic.Uint64
+	reduceChainHintTerminalMismatch atomic.Uint64
+	reduceChainHintLimit            atomic.Uint64
+	reduceChainHintDead             atomic.Uint64
+	reduceChainHintUnexpected       atomic.Uint64
+	parentChildPointers             atomic.Uint64
+	reduceChildrenFastGSS           atomic.Uint64
+	reduceChildrenAllVis            atomic.Uint64
+	reduceChildrenNoAlias           atomic.Uint64
+	reduceChildrenScratch           atomic.Uint64
+	reduceScratchNoAlias            atomic.Uint64
+	reduceScratchGeneral            atomic.Uint64
+	extraNodes                      atomic.Uint64
+	errorNodes                      atomic.Uint64
+	mergeStacksInHist               [perfMergeHistBins]atomic.Uint64
+	mergeAliveHist                  [perfMergeHistBins]atomic.Uint64
+	mergeOutHist                    [perfMergeHistBins]atomic.Uint64
+	forkActionsHist                 [perfForkHistBins]atomic.Uint64
+	cloneTreeCalls                  atomic.Uint64
+	cloneTreePublicNodes            atomic.Uint64
+	cloneTreeFinalRefs              atomic.Uint64
+	cloneTreeCompactCopies          atomic.Uint64
+	cloneTreeChildRefs              atomic.Uint64
+	cloneOffsetCalls                atomic.Uint64
+	cloneOffsetPublicNodes          atomic.Uint64
+	cloneOffsetCopies               atomic.Uint64
+	cloneOffsetShifted              atomic.Uint64
+	nodeEditCalls                   atomic.Uint64
+	nodeEditNoopCalls               atomic.Uint64
+	nodeEditCompactRefs             atomic.Uint64
+	nodeEditShifted                 atomic.Uint64
+	nodeEditMarked                  atomic.Uint64
+	denseMutationCalls              atomic.Uint64
+	denseMutationDrains             atomic.Uint64
+	mutationChildRefCOW             atomic.Uint64
 }
 
 var perfCounters perfCountersData
-
-type PerfCounters struct {
-	MergeCalls             uint64
-	MergeDeadPruned        uint64
-	MergePerKeyOverflow    uint64
-	MergeReplacements      uint64
-	StackEquivalentCalls   uint64
-	StackEquivalentTrue    uint64
-	StackEqHashMissSkips   uint64
-	StackCompareCalls      uint64
-	ConflictRR             uint64
-	ConflictRS             uint64
-	ConflictOther          uint64
-	ForkCount              uint64
-	FirstConflictToken     uint64
-	MaxConcurrentStacks    uint64
-	LexBytes               uint64
-	LexTokens              uint64
-	ReuseNodesVisited      uint64
-	ReuseNodesPushed       uint64
-	ReuseNodesPopped       uint64
-	ReuseCandidatesChecked uint64
-	ReuseSuccesses         uint64
-	ReuseLeafSuccesses     uint64
-	ReuseNonLeafChecks     uint64
-	ReuseNonLeafSuccesses  uint64
-	ReuseNonLeafBytes      uint64
-	ReuseNonLeafNoGoto     uint64
-	ReuseNonLeafNoGotoTerm uint64
-	ReuseNonLeafNoGotoNt   uint64
-	ReuseNonLeafStateMiss  uint64
-	ReuseNonLeafStateZero  uint64
-	MergeHashZero          uint64
-	GlobalCapCulls         uint64
-	GlobalCapCullDropped   uint64
-	ReduceChainSteps       uint64
-	ReduceChainMaxLen      uint64
-	ReduceChainBreakMulti  uint64
-	ReduceChainBreakShift  uint64
-	ReduceChainBreakAccept uint64
-	ParentChildPointers    uint64
-	ReduceChildrenFastGSS  uint64
-	ReduceChildrenAllVis   uint64
-	ReduceChildrenNoAlias  uint64
-	ReduceChildrenScratch  uint64
-	ReduceScratchNoAlias   uint64
-	ReduceScratchGeneral   uint64
-	ExtraNodes             uint64
-	ErrorNodes             uint64
-	MergeStacksInHist      [perfMergeHistBins]uint64
-	MergeAliveHist         [perfMergeHistBins]uint64
-	MergeOutHist           [perfMergeHistBins]uint64
-	ForkActionsHist        [perfForkHistBins]uint64
-}
 
 func ResetPerfCounters() {
 	perfCounters.mergeCalls.Store(0)
@@ -151,6 +122,14 @@ func ResetPerfCounters() {
 	perfCounters.reuseNonLeafNoGotoNt.Store(0)
 	perfCounters.reuseNonLeafStateMiss.Store(0)
 	perfCounters.reuseNonLeafStateZero.Store(0)
+	perfCounters.reduceChainHintCandidates.Store(0)
+	perfCounters.reduceChainHintTaken.Store(0)
+	perfCounters.reduceChainHintSteps.Store(0)
+	perfCounters.reduceChainHintTerminalOK.Store(0)
+	perfCounters.reduceChainHintTerminalMismatch.Store(0)
+	perfCounters.reduceChainHintLimit.Store(0)
+	perfCounters.reduceChainHintDead.Store(0)
+	perfCounters.reduceChainHintUnexpected.Store(0)
 	perfCounters.parentChildPointers.Store(0)
 	perfCounters.reduceChildrenFastGSS.Store(0)
 	perfCounters.reduceChildrenAllVis.Store(0)
@@ -180,6 +159,23 @@ func ResetPerfCounters() {
 	for i := range perfCounters.forkActionsHist {
 		perfCounters.forkActionsHist[i].Store(0)
 	}
+	perfCounters.cloneTreeCalls.Store(0)
+	perfCounters.cloneTreePublicNodes.Store(0)
+	perfCounters.cloneTreeFinalRefs.Store(0)
+	perfCounters.cloneTreeCompactCopies.Store(0)
+	perfCounters.cloneTreeChildRefs.Store(0)
+	perfCounters.cloneOffsetCalls.Store(0)
+	perfCounters.cloneOffsetPublicNodes.Store(0)
+	perfCounters.cloneOffsetCopies.Store(0)
+	perfCounters.cloneOffsetShifted.Store(0)
+	perfCounters.nodeEditCalls.Store(0)
+	perfCounters.nodeEditNoopCalls.Store(0)
+	perfCounters.nodeEditCompactRefs.Store(0)
+	perfCounters.nodeEditShifted.Store(0)
+	perfCounters.nodeEditMarked.Store(0)
+	perfCounters.denseMutationCalls.Store(0)
+	perfCounters.denseMutationDrains.Store(0)
+	perfCounters.mutationChildRefCOW.Store(0)
 }
 
 func PerfCountersSnapshot() PerfCounters {
@@ -228,6 +224,14 @@ func PerfCountersSnapshot() PerfCounters {
 	out.ReduceChainBreakMulti = perfCounters.reduceChainBreakMulti.Load()
 	out.ReduceChainBreakShift = perfCounters.reduceChainBreakShift.Load()
 	out.ReduceChainBreakAccept = perfCounters.reduceChainBreakAccept.Load()
+	out.ReduceChainHintCandidates = perfCounters.reduceChainHintCandidates.Load()
+	out.ReduceChainHintTaken = perfCounters.reduceChainHintTaken.Load()
+	out.ReduceChainHintSteps = perfCounters.reduceChainHintSteps.Load()
+	out.ReduceChainHintTerminalOK = perfCounters.reduceChainHintTerminalOK.Load()
+	out.ReduceChainHintTerminalMismatch = perfCounters.reduceChainHintTerminalMismatch.Load()
+	out.ReduceChainHintLimit = perfCounters.reduceChainHintLimit.Load()
+	out.ReduceChainHintDead = perfCounters.reduceChainHintDead.Load()
+	out.ReduceChainHintUnexpected = perfCounters.reduceChainHintUnexpected.Load()
 	out.ParentChildPointers = perfCounters.parentChildPointers.Load()
 	out.ReduceChildrenFastGSS = perfCounters.reduceChildrenFastGSS.Load()
 	out.ReduceChildrenAllVis = perfCounters.reduceChildrenAllVis.Load()
@@ -243,6 +247,23 @@ func PerfCountersSnapshot() PerfCounters {
 	for i := range out.ForkActionsHist {
 		out.ForkActionsHist[i] = perfCounters.forkActionsHist[i].Load()
 	}
+	out.CloneTreeCalls = perfCounters.cloneTreeCalls.Load()
+	out.CloneTreePublicNodes = perfCounters.cloneTreePublicNodes.Load()
+	out.CloneTreeFinalRefs = perfCounters.cloneTreeFinalRefs.Load()
+	out.CloneTreeCompactCopies = perfCounters.cloneTreeCompactCopies.Load()
+	out.CloneTreeChildRefs = perfCounters.cloneTreeChildRefs.Load()
+	out.CloneOffsetCalls = perfCounters.cloneOffsetCalls.Load()
+	out.CloneOffsetPublicNodes = perfCounters.cloneOffsetPublicNodes.Load()
+	out.CloneOffsetCopies = perfCounters.cloneOffsetCopies.Load()
+	out.CloneOffsetShifted = perfCounters.cloneOffsetShifted.Load()
+	out.NodeEditCalls = perfCounters.nodeEditCalls.Load()
+	out.NodeEditNoopCalls = perfCounters.nodeEditNoopCalls.Load()
+	out.NodeEditCompactRefs = perfCounters.nodeEditCompactRefs.Load()
+	out.NodeEditShifted = perfCounters.nodeEditShifted.Load()
+	out.NodeEditMarked = perfCounters.nodeEditMarked.Load()
+	out.DenseMutationCalls = perfCounters.denseMutationCalls.Load()
+	out.DenseMutationDrains = perfCounters.denseMutationDrains.Load()
+	out.MutationChildRefCOW = perfCounters.mutationChildRefCOW.Load()
 	return out
 }
 
@@ -431,6 +452,40 @@ func perfRecordReduceChainBreakAccept() {
 	perfCounters.reduceChainBreakAccept.Add(1)
 }
 
+func perfRecordReduceChainHintCandidate() {
+	perfCounters.reduceChainHintCandidates.Add(1)
+}
+
+func perfRecordReduceChainHintTaken() {
+	perfCounters.reduceChainHintTaken.Add(1)
+}
+
+func perfRecordReduceChainHintSteps(n int) {
+	if n > 0 {
+		perfCounters.reduceChainHintSteps.Add(uint64(n))
+	}
+}
+
+func perfRecordReduceChainHintTerminalOK() {
+	perfCounters.reduceChainHintTerminalOK.Add(1)
+}
+
+func perfRecordReduceChainHintTerminalMismatch() {
+	perfCounters.reduceChainHintTerminalMismatch.Add(1)
+}
+
+func perfRecordReduceChainHintLimit() {
+	perfCounters.reduceChainHintLimit.Add(1)
+}
+
+func perfRecordReduceChainHintDead() {
+	perfCounters.reduceChainHintDead.Add(1)
+}
+
+func perfRecordReduceChainHintUnexpected() {
+	perfCounters.reduceChainHintUnexpected.Add(1)
+}
+
 func perfRecordParentChildren(count int) {
 	if count > 0 {
 		perfCounters.parentChildPointers.Add(uint64(count))
@@ -479,6 +534,80 @@ func perfRecordExtraNode() {
 
 func perfRecordErrorNode() {
 	perfCounters.errorNodes.Add(1)
+}
+
+func perfRecordCloneTreeCall() {
+	perfCounters.cloneTreeCalls.Add(1)
+}
+
+func perfRecordCloneTreePublicNode() {
+	perfCounters.cloneTreePublicNodes.Add(1)
+}
+
+func perfRecordCloneTreeFinalRefs(n int) {
+	if n > 0 {
+		perfCounters.cloneTreeFinalRefs.Add(uint64(n))
+	}
+}
+
+func perfRecordCloneTreeCompactCopy() {
+	perfCounters.cloneTreeCompactCopies.Add(1)
+}
+
+func perfRecordCloneTreeChildRefs(n int) {
+	if n > 0 {
+		perfCounters.cloneTreeChildRefs.Add(uint64(n))
+	}
+}
+
+func perfRecordCloneOffsetCall() {
+	perfCounters.cloneOffsetCalls.Add(1)
+}
+
+func perfRecordCloneOffsetPublicNode() {
+	perfCounters.cloneOffsetPublicNodes.Add(1)
+}
+
+func perfRecordCloneOffsetCompactCopy() {
+	perfCounters.cloneOffsetCopies.Add(1)
+}
+
+func perfRecordCloneOffsetShifted() {
+	perfCounters.cloneOffsetShifted.Add(1)
+}
+
+func perfRecordNodeEditCall() {
+	perfCounters.nodeEditCalls.Add(1)
+}
+
+func perfRecordNodeEditNoopCall() {
+	perfCounters.nodeEditNoopCalls.Add(1)
+}
+
+func perfRecordNodeEditCompactRef() {
+	perfCounters.nodeEditCompactRefs.Add(1)
+}
+
+func perfRecordNodeEditShifted() {
+	perfCounters.nodeEditShifted.Add(1)
+}
+
+func perfRecordNodeEditMarked() {
+	perfCounters.nodeEditMarked.Add(1)
+}
+
+func perfRecordDenseMutationChildrenCall() {
+	perfCounters.denseMutationCalls.Add(1)
+}
+
+func perfRecordDenseMutationChildrenDrain() {
+	perfCounters.denseMutationDrains.Add(1)
+}
+
+func perfRecordMutationChildRefCopyOnWrite(n int) {
+	if n > 0 {
+		perfCounters.mutationChildRefCOW.Add(uint64(n))
+	}
 }
 
 func perfMergeHistBin(n int) int {

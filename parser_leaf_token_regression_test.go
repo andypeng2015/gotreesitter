@@ -78,6 +78,39 @@ func TestParseAsmImmediateIntStaysInt(t *testing.T) {
 	}
 }
 
+func TestParseRustRecoveredTopLevelImplItem(t *testing.T) {
+	src := `
+pub type ExplicitSelf = Spanned<SelfKind>;
+
+impl Arg {
+    pub fn to_self(&self) -> Option<ExplicitSelf> {
+        if let PatKind::Ident(BindingMode::ByValue(mutbl), ident, _) = self.pat.node {
+            if ident.node.name == keywords::SelfValue.name() {
+                return match self.ty.node {
+                    TyKind::ImplicitSelf => Some(respan(self.pat.span, SelfKind::Value(mutbl))),
+                    _ => None,
+                };
+            }
+        }
+        None
+    }
+}
+`
+	tree, lang := parseLanguageSample(t, "rust", src)
+	t.Cleanup(tree.Release)
+
+	root := tree.RootNode()
+	if got, want := root.Type(lang), "source_file"; got != want {
+		t.Fatalf("root type = %q, want %q", got, want)
+	}
+	if root.HasError() {
+		t.Fatalf("rust impl recovery left root with errors: %s", root.SExpr(lang))
+	}
+	if impl := findNamedChild(lang, root, "impl_item"); impl == nil {
+		t.Fatalf("expected recovered impl_item, got %s", root.SExpr(lang))
+	}
+}
+
 func TestParseFennelImmediateNumberStaysNumber(t *testing.T) {
 	src := grammars.ParseSmokeSample("fennel")
 	tree, lang := parseLanguageSample(t, "fennel", src)
@@ -129,6 +162,98 @@ func TestParseMesonCommandArgumentPrefersVariableunit(t *testing.T) {
 	if got, want := arg.Type(lang), "variableunit"; got != want {
 		t.Fatalf("meson command argument type = %q, want %q", got, want)
 	}
+}
+
+func TestParseJavaCollapsedModifierAndWildcardChildren(t *testing.T) {
+	src := "package p;\n\nimport com.example.*;\n\nclass X { private X() {} }\n"
+	tree, lang := parseLanguageSample(t, "java", src)
+	t.Cleanup(tree.Release)
+
+	root := tree.RootNode()
+	modifiers := firstNodeByTypeAndText(root, lang, []byte(src), "modifiers", "private")
+	if modifiers == nil {
+		t.Fatalf("missing Java private modifiers node: %s", root.SExpr(lang))
+	}
+	if got, want := modifiers.ChildCount(), 1; got != want {
+		t.Fatalf("modifiers.ChildCount() = %d, want %d; root=%s", got, want, root.SExpr(lang))
+	}
+	if child := modifiers.Child(0); child == nil || child.Type(lang) != "private" {
+		if child == nil {
+			t.Fatalf("modifiers child = nil; root=%s", root.SExpr(lang))
+		}
+		t.Fatalf("modifiers child type = %q, want private; root=%s", child.Type(lang), root.SExpr(lang))
+	}
+
+	asterisk := firstNodeByTypeAndText(root, lang, []byte(src), "asterisk", "*")
+	if asterisk == nil {
+		t.Fatalf("missing Java asterisk node: %s", root.SExpr(lang))
+	}
+	if got, want := asterisk.ChildCount(), 1; got != want {
+		t.Fatalf("asterisk.ChildCount() = %d, want %d; root=%s", got, want, root.SExpr(lang))
+	}
+	if child := asterisk.Child(0); child == nil || child.Type(lang) != "*" {
+		if child == nil {
+			t.Fatalf("asterisk child = nil; root=%s", root.SExpr(lang))
+		}
+		t.Fatalf("asterisk child type = %q, want *; root=%s", child.Type(lang), root.SExpr(lang))
+	}
+}
+
+func TestParsePythonCollapsedWildcardImportChild(t *testing.T) {
+	src := "from os import *\n"
+	tree, lang := parseLanguageSample(t, "python", src)
+	t.Cleanup(tree.Release)
+
+	root := tree.RootNode()
+	wildcard := firstNodeByTypeAndText(root, lang, []byte(src), "wildcard_import", "*")
+	if wildcard == nil {
+		t.Fatalf("missing Python wildcard_import node: %s", root.SExpr(lang))
+	}
+	if got, want := wildcard.ChildCount(), 1; got != want {
+		t.Fatalf("wildcard_import.ChildCount() = %d, want %d; root=%s", got, want, root.SExpr(lang))
+	}
+	if child := wildcard.Child(0); child == nil || child.Type(lang) != "*" {
+		if child == nil {
+			t.Fatalf("wildcard_import child = nil; root=%s", root.SExpr(lang))
+		}
+		t.Fatalf("wildcard_import child type = %q, want *; root=%s", child.Type(lang), root.SExpr(lang))
+	}
+}
+
+func TestParsePythonCollapsedAsPatternTargetIdentifier(t *testing.T) {
+	src := "with manager() as target:\n    pass\n"
+	tree, lang := parseLanguageSample(t, "python", src)
+	t.Cleanup(tree.Release)
+
+	root := tree.RootNode()
+	target := firstNodeByTypeAndText(root, lang, []byte(src), "as_pattern_target", "target")
+	if target == nil {
+		t.Fatalf("missing Python as_pattern_target node: %s", root.SExpr(lang))
+	}
+	if got, want := target.ChildCount(), 1; got != want {
+		t.Fatalf("as_pattern_target.ChildCount() = %d, want %d; root=%s", got, want, root.SExpr(lang))
+	}
+	if child := target.Child(0); child == nil || child.Type(lang) != "identifier" {
+		if child == nil {
+			t.Fatalf("as_pattern_target child = nil; root=%s", root.SExpr(lang))
+		}
+		t.Fatalf("as_pattern_target child type = %q, want identifier; root=%s", child.Type(lang), root.SExpr(lang))
+	}
+}
+
+func firstNodeByTypeAndText(root *gotreesitter.Node, lang *gotreesitter.Language, source []byte, typ, text string) *gotreesitter.Node {
+	if root == nil {
+		return nil
+	}
+	if root.Type(lang) == typ && root.Text(source) == text {
+		return root
+	}
+	for _, child := range root.Children() {
+		if got := firstNodeByTypeAndText(child, lang, source, typ, text); got != nil {
+			return got
+		}
+	}
+	return nil
 }
 
 func TestParseJavaScriptJSXSelfClosingAttributeExpression(t *testing.T) {

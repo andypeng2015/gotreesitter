@@ -24,35 +24,15 @@ func (p *Parser) tryTokenInvariantLeafEdit(source []byte, oldTree *Tree, ts Toke
 	if leaf == nil || !leaf.containsByteRange(edit.StartByte, edit.OldEndByte) {
 		leaf = root.DescendantForByteRange(edit.StartByte, edit.OldEndByte)
 	}
-	if leaf == nil || leaf.ChildCount() != 0 || leaf.hasError() || leaf.isMissing() || leaf.isExtra() {
+	if leaf == nil || leaf.ChildCount() != 0 || leaf.hasError() || leaf.isMissing() {
 		return nil, false
 	}
 	start := time.Time{}
 	if timing != nil {
 		start = time.Now()
 	}
-	tok, ok := scanLeafTokenWithoutMutatingSource(ts, leaf)
-	if !ok {
-		restoreState, ok := snapshotTokenSourceState(ts)
-		if !ok {
-			return nil, false
-		}
-		defer restoreState()
-		stateful, ok := ts.(parserStateTokenSource)
-		if !ok {
-			return nil, false
-		}
-		stateful.SetParserState(leaf.preGotoState)
-		stateful.SetGLRStates(nil)
-		if skipper, ok := ts.(PointSkippableTokenSource); ok {
-			tok = skipper.SkipToByteWithPoint(leaf.startByte, leaf.startPoint)
-		} else if skipper, ok := ts.(ByteSkippableTokenSource); ok {
-			tok = skipper.SkipToByte(leaf.startByte)
-		} else {
-			return nil, false
-		}
-	}
-	if tok.Symbol != leaf.symbol || tok.StartByte != leaf.startByte || tok.EndByte != leaf.endByte {
+	tok, ok := p.scanTokenInvariantEditedLeaf(source, ts, leaf)
+	if !ok || tok.Symbol != leaf.symbol || tok.StartByte != leaf.startByte || tok.EndByte != leaf.endByte {
 		return nil, false
 	}
 	tree := reuseTreeWithNewSource(oldTree, source, leaf)
@@ -82,6 +62,140 @@ func (p *Parser) tryTokenInvariantLeafEdit(source []byte, oldTree *Tree, ts Toke
 		timing.singleStackTokens = 1
 	}
 	return tree, true
+}
+
+func (p *Parser) tokenInvariantLeafEditCandidate(source []byte, oldTree *Tree) (*Node, InputEdit, bool) {
+	if p == nil || oldTree == nil || oldTree.RootNode() == nil || oldTree.language != p.language {
+		return nil, InputEdit{}, false
+	}
+	if len(oldTree.edits) != 1 {
+		return nil, InputEdit{}, false
+	}
+	edit := oldTree.edits[0]
+	if !inputEditPreservesTokenExtent(edit) {
+		return nil, InputEdit{}, false
+	}
+	if len(source) != len(oldTree.source) {
+		return nil, InputEdit{}, false
+	}
+	return oldTree.RootNode(), edit, true
+}
+
+func inputEditPreservesTokenExtent(edit InputEdit) bool {
+	if edit.NewEndByte-edit.StartByte != edit.OldEndByte-edit.StartByte {
+		return false
+	}
+	return edit.NewEndPoint == edit.OldEndPoint && edit.OldEndByte > edit.StartByte
+}
+
+func tokenInvariantEditedLeaf(root *Node, oldTree *Tree, edit InputEdit) *Node {
+	if root == nil || oldTree == nil {
+		return nil
+	}
+	leaf := oldTree.lastEditedLeaf
+	if leaf == nil || !leaf.containsByteRange(edit.StartByte, edit.OldEndByte) {
+		leaf = root.DescendantForByteRange(edit.StartByte, edit.OldEndByte)
+	}
+	if !tokenInvariantLeafReusable(leaf) {
+		return nil
+	}
+	return leaf
+}
+
+func tokenInvariantLeafReusable(leaf *Node) bool {
+	return leaf != nil && leaf.ChildCount() == 0 && !leaf.hasError() && !leaf.isMissing()
+}
+
+func tokenInvariantReuseStart(timing *incrementalParseTiming) time.Time {
+	if timing != nil {
+		return time.Now()
+	}
+	return time.Time{}
+}
+
+func (p *Parser) scanTokenInvariantEditedLeaf(source []byte, ts TokenSource, leaf *Node) (Token, bool) {
+	tok, ok := scanLeafTokenWithoutMutatingSource(ts, leaf)
+	if ok {
+		return tok, true
+	}
+	if tok, ok = p.scanLeafTokenWithFreshSource(source, leaf); ok {
+		return tok, true
+	}
+
+	restoreState, ok := snapshotTokenSourceState(ts)
+	if !ok {
+		return Token{}, false
+	}
+	defer restoreState()
+
+	stateful, ok := ts.(parserStateTokenSource)
+	if !ok {
+		return Token{}, false
+	}
+	stateful.SetParserState(leaf.preGotoState)
+	stateful.SetGLRStates(nil)
+	return skipTokenSourceToLeaf(ts, leaf)
+}
+
+func (p *Parser) scanLeafTokenWithFreshSource(source []byte, leaf *Node) (Token, bool) {
+	if p == nil || p.reparseFactory == nil || leaf == nil {
+		return Token{}, false
+	}
+	fresh, err := p.reparseFactory(source)
+	if err != nil || fresh == nil {
+		return Token{}, false
+	}
+	release := manageTokenSourceLifetime(fresh)
+	defer release()
+
+	ts := p.wrapIncludedRanges(fresh)
+	if stateful, ok := ts.(parserStateTokenSource); ok {
+		stateful.SetParserState(leaf.preGotoState)
+		stateful.SetGLRStates(nil)
+	}
+	return skipTokenSourceToLeaf(ts, leaf)
+}
+
+func skipTokenSourceToLeaf(ts TokenSource, leaf *Node) (Token, bool) {
+	if skipper, ok := ts.(PointSkippableTokenSource); ok {
+		return skipper.SkipToByteWithPoint(leaf.startByte, leaf.startPoint), true
+	}
+	if skipper, ok := ts.(ByteSkippableTokenSource); ok {
+		return skipper.SkipToByte(leaf.startByte), true
+	}
+	return Token{}, false
+}
+
+func tokenMatchesLeaf(tok Token, leaf *Node) bool {
+	return leaf != nil && tok.Symbol == leaf.symbol && tok.StartByte == leaf.startByte && tok.EndByte == leaf.endByte
+}
+
+func setTokenInvariantReuseRuntime(tree *Tree, source []byte, tok Token) {
+	tree.setParseRuntime(ParseRuntime{
+		StopReason:       ParseStopAccepted,
+		SourceLen:        uint32(len(source)),
+		TokensConsumed:   1,
+		LastTokenEndByte: tok.EndByte,
+		LastTokenSymbol:  tok.Symbol,
+		ExpectedEOFByte:  uint32(len(source)),
+		RootEndByte:      tree.root.EndByte(),
+		MaxStacksSeen:    1,
+	})
+}
+
+func recordTokenInvariantReuseTiming(timing *incrementalParseTiming, source []byte, tok Token, start time.Time) {
+	if timing != nil {
+		timing.reuseNanos += time.Since(start).Nanoseconds()
+		timing.reusedSubtrees++
+		timing.reusedBytes += uint64(len(source))
+		timing.maxStacksSeen = 1
+		timing.stopReason = ParseStopAccepted
+		timing.tokensConsumed = 1
+		timing.lastTokenEndByte = tok.EndByte
+		timing.expectedEOFByte = uint32(len(source))
+		timing.singleStackIterations = 1
+		timing.singleStackTokens = 1
+	}
 }
 
 func scanLeafTokenWithoutMutatingSource(ts TokenSource, leaf *Node) (Token, bool) {

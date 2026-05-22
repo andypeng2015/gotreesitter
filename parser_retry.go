@@ -16,6 +16,7 @@ const (
 	// bounded retry to preserve the declaration branch.
 	javaFullParseRetryMaxGLRStacks   = 64
 	javaFullParseRetryMaxMergePerKey = 6
+	javaTightMergeCapSourceLen       = 256 * 1024
 	// Retry node-limit full parses with a bounded larger node budget instead of
 	// globally raising the default cap for every parse.
 	fullParseRetryNodeLimitScale = 2
@@ -230,12 +231,13 @@ func effectiveFullParseInitialMaxStacks(lang *Language, initialMaxStacks int) in
 			initialMaxStacks = 2
 		}
 	case "javascript":
-		// Large JavaScript corpora behave more like TypeScript than TSX here:
-		// the default cap of 8 preserves too many equivalent branches and burns
-		// time without improving the chosen tree. Keep the built-in default at 2
-		// and rely on retry widening for genuinely harder files.
+		// Large JavaScript UMD/runtime bundles need enough survivors to keep the
+		// outer call-expression branch alive through long function arguments.
+		// Cap 2 is fast on small samples but misrecovers large bundles as ERROR;
+		// cap 6 preserves the C-compatible tree without jumping to TSX's wider
+		// ambiguity profile.
 		if initialMaxStacks == maxGLRStacks {
-			initialMaxStacks = 2
+			initialMaxStacks = 6
 		}
 	case "tsx":
 		// React-heavy TSX still needs a wider steady-state budget than plain
@@ -315,11 +317,27 @@ func fullParseInitialMaxStacks(lang *Language, conflictWidth int) int {
 	return initialMaxStacks
 }
 
-func effectiveParseMergePerKeyCap(lang *Language, mergePerKeyCap int, incremental bool) int {
+func effectiveParseMergePerKeyCap(lang *Language, mergePerKeyCap int, incremental bool, sourceLen ...int) int {
 	if lang == nil || incremental {
 		return mergePerKeyCap
 	}
 	switch lang.Name {
+	case "go":
+		// Go keeps a few semantically distinct alternatives alive on real
+		// corpus files, but the sixth per-key survivor only added merge churn
+		// in the Aspect-shaped workload. Keep this conservative so fallthrough
+		// and type-conversion parity cases are not pruned.
+		if !parseMaxMergePerKeyEnvConfigured() && mergePerKeyCap > 5 {
+			return 5
+		}
+	case "c":
+		// C's declaration/expression recovery can keep many redundant
+		// same-key survivors alive on large full parses. One survivor matches
+		// the parity corpus while removing most merge-equivalence churn; keep
+		// explicit env overrides available for grammar diagnosis.
+		if !parseMaxMergePerKeyEnvConfigured() && mergePerKeyCap > 1 {
+			return 1
+		}
 	case "json":
 		// JSON recovery has a small conflict surface, but retaining many
 		// alternatives per merge key makes equivalence checks dominate full
@@ -343,19 +361,41 @@ func effectiveParseMergePerKeyCap(lang *Language, mergePerKeyCap int, incrementa
 		if mergePerKeyCap > 4 {
 			return 4
 		}
+	case "starlark":
+		// Bazel/Starlark BUILD files and .bzl files accumulate many same-key
+		// alternatives around call-heavy top-level forms. One survivor matches
+		// the current parse/highlight/query gates and removes the merge phase
+		// as the dominant full-parse cost on Aspect-shaped workloads.
+		if !parseMaxMergePerKeyEnvConfigured() && mergePerKeyCap > 1 {
+			return 1
+		}
+	case "typescript", "tsx":
+		// TypeScript-family sources in repository indexing workloads are
+		// import/query heavy and frequently fork around expression/import
+		// ambiguity. Small Aspect-shaped files stay stable with one same-key
+		// survivor, while large parser.ts-class sources need the wider default
+		// to avoid expensive recovery/result paths.
+		if !parseMaxMergePerKeyEnvConfigured() && mergePerKeyCap > 1 && typescriptFullParseCanUseTightMergeCap(sourceLen...) {
+			return 1
+		}
 	case "java":
-		// Giant generated switch/case bodies can retain many equivalent Java GLR
-		// survivors under the default per-key budget. Keep the Java full-parse
-		// cap narrow, but retain two survivors so common top-level annotations
-		// do not lose the declaration branch to expression-shaped alternatives.
+		// Giant generated string/switch-heavy Java sources can retain millions
+		// of redundant GLR survivors under the default per-key budget. Keep one
+		// steady-state survivor for full parses. Annotation declaration sources
+		// are widened earlier from source text because cap=1 can discard the
+		// top-level @interface declaration branch before result selection.
 		// Accepted-error retries can still widen this cap when a file proves the
 		// steady-state budget is insufficient.
 		// Preserve explicit env overrides for diagnosis and parity experiments.
-		if !parseMaxMergePerKeyEnvConfigured() && mergePerKeyCap > 2 {
-			return 2
+		if !parseMaxMergePerKeyEnvConfigured() && mergePerKeyCap > 1 {
+			return 1
 		}
 	}
 	return mergePerKeyCap
+}
+
+func typescriptFullParseCanUseTightMergeCap(sourceLen ...int) bool {
+	return len(sourceLen) == 0 || sourceLen[0] <= 64*1024
 }
 
 func fullParseUsesDeterministicExternalConflicts(lang *Language) bool {
@@ -438,6 +478,9 @@ func fullParseRetryMergePerKeyOverride(tree *Tree, sourceLen int, initialMaxStac
 	case ParseStopAccepted, ParseStopNoStacksAlive, ParseStopNodeLimit:
 	default:
 		return 0
+	}
+	if tree.language != nil && tree.language.Name == "java" && rt.StopReason == ParseStopAccepted && retryTreeHasError(tree) {
+		return javaFullParseRetryMaxMergePerKey
 	}
 	if initialMaxStacks <= 0 {
 		initialMaxStacks = maxGLRStacks

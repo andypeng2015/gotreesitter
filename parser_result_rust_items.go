@@ -512,9 +512,9 @@ func rustExtractRecoveredImplHeaderNodes(root *Node, lang *Language, arena *node
 	if implItem == nil {
 		return nil, false
 	}
-	out := make([]*Node, 0, implItem.NamedChildCount())
-	for i := 0; i < implItem.NamedChildCount(); i++ {
-		child := implItem.NamedChild(i)
+	out := make([]*Node, 0, implItem.ChildCount())
+	for i := 0; i < implItem.ChildCount(); i++ {
+		child := implItem.Child(i)
 		if child == nil || child.Type(lang) == "declaration_list" {
 			continue
 		}
@@ -554,7 +554,7 @@ func rustRecoverImplBodyChunkNodesFromRange(source []byte, start, end uint32, p 
 	if trimmedStart >= trimmedEnd {
 		return nil, false
 	}
-	if rustHasPrefixAt(source, trimmedStart, "fn") {
+	if _, ok := rustFunctionKeywordStart(source, trimmedStart, trimmedEnd); ok {
 		if node, ok := rustRecoverFunctionItemFromRange(source, trimmedStart, trimmedEnd, p, arena); ok {
 			return []*Node{node}, true
 		}

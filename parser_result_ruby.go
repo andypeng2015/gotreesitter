@@ -5,13 +5,15 @@ func normalizeRubyTopLevelModuleBounds(root *Node, source []byte, lang *Language
 		return
 	}
 	end := lastNonTriviaByteEnd(source)
-	for _, child := range root.children {
+	for i := 0; i < resultChildCount(root); i++ {
+		child := resultChildAt(root, i)
 		if child == nil || child.IsExtra() || child.Type(lang) != "module" {
 			continue
 		}
-		if len(child.children) > 0 && child.children[0] != nil && child.startByte < child.children[0].startByte {
-			child.startByte = child.children[0].startByte
-			child.startPoint = child.children[0].startPoint
+		firstChild := resultChildAt(child, 0)
+		if firstChild != nil && child.startByte < firstChild.startByte {
+			child.startByte = firstChild.startByte
+			child.startPoint = firstChild.startPoint
 		}
 		if child.endByte == root.endByte && end > child.startByte && end < child.endByte {
 			child.endByte = end
@@ -24,34 +26,28 @@ func normalizeRubyThenStarts(root *Node, lang *Language) {
 	if root == nil || lang == nil || lang.Name != "ruby" {
 		return
 	}
-	var walk func(*Node)
-	walk = func(n *Node) {
-		if n == nil {
-			return
-		}
+	walkResultTree(root, func(n *Node) {
 		switch n.Type(lang) {
 		case "elsif", "if", "unless", "when":
 			normalizeRubyThenChildStarts(n, lang)
 		}
-		for _, child := range n.children {
-			walk(child)
-		}
-	}
-	walk(root)
+	})
 }
 
 func normalizeRubyThenChildStarts(parent *Node, lang *Language) {
-	if parent == nil || lang == nil || len(parent.children) < 2 {
+	childCount := resultChildCount(parent)
+	if parent == nil || lang == nil || childCount < 2 {
 		return
 	}
-	for i, child := range parent.children {
+	for i := 0; i < childCount; i++ {
+		child := resultChildAt(parent, i)
 		if child == nil || child.Type(lang) != "then" || i == 0 {
 			continue
 		}
 		prev := (*Node)(nil)
 		for j := i - 1; j >= 0; j-- {
-			if parent.children[j] != nil {
-				prev = parent.children[j]
+			if candidate := resultChildAt(parent, j); candidate != nil {
+				prev = candidate
 				break
 			}
 		}

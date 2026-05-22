@@ -301,8 +301,14 @@ func TestDeferredParentLinksWireOnAccess(t *testing.T) {
 	if got := first.Parent(); got != parent {
 		t.Fatalf("first.Parent() = %p, want %p", got, parent)
 	}
+	if second.parent != nil {
+		t.Fatal("first.Parent should not wire untouched sibling")
+	}
 	if got := first.NextSibling(); got != second {
 		t.Fatalf("first.NextSibling() = %p, want %p", got, second)
+	}
+	if second.parent != nil {
+		t.Fatal("first.NextSibling should not wire returned sibling")
 	}
 	if got := second.PrevSibling(); got != first {
 		t.Fatalf("second.PrevSibling() = %p, want %p", got, first)
@@ -333,8 +339,8 @@ func TestFinalizeResultRootDefersJavaParentLinks(t *testing.T) {
 	if got := child.Parent(); got != root {
 		t.Fatalf("child.Parent() = %p, want %p", got, root)
 	}
-	if arena.parentLinksDeferred {
-		t.Fatal("expected parent link access to clear deferred flag")
+	if !arena.parentLinksDeferred {
+		t.Fatal("expected targeted parent access to keep deferred flag")
 	}
 }
 

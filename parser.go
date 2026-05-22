@@ -22,11 +22,13 @@ type Parser struct {
 	reuseCursor                         reuseCursor
 	reuseScratch                        reuseScratch
 	reuseMu                             sync.Mutex
-	reparseFactory                      normalizationTokenSourceFactory
+	reparseFactory                      TokenSourceFactory
 	recoveryParser                      *Parser
 	skipRecoveryReparse                 bool
 	fullArenaHint                       uint32
 	pendingFullArenaHint                uint32
+	compactFullArenaHint                uint32
+	finalChildRefArenaHint              uint32
 	incrementalArenaHint                uint32
 	fullGSSHint                         uint32
 	incrementalGSSHint                  uint32
@@ -49,6 +51,9 @@ type Parser struct {
 	smallBase                           int
 	smallLookup                         [][]smallActionPair
 	smallTokenLookup                    [][]uint16
+	classifiedActions                   []classifiedParseAction
+	reduceChainHints                    []reduceChainHint
+	reduceChainHintByState              []int
 	reduceAliasSeq                      [][]Symbol
 	aliasTargetSymbol                   []bool
 	singleTokenWrapperSymbol            []bool
@@ -62,6 +67,7 @@ type Parser struct {
 	compactNoTreeShiftLeaves            bool
 	compactFullShiftLeaves              bool
 	pendingFullParents                  bool
+	finalChildRefs                      bool
 	skipInvisibleFullLeafCheckpoints    bool
 	transientReduceChildren             bool
 	transientReduceScratchNoAlias       bool
@@ -73,6 +79,7 @@ type Parser struct {
 	currentExternalTokenCheckpointValid bool
 	normalizationStats                  normalizationStats
 	materializationTiming               *parseMaterializationTiming
+	reduceTiming                        *parseMaterializationTiming
 }
 
 var snippetParserPools sync.Map
@@ -109,109 +116,185 @@ const (
 // ReuseCursorNanos includes reuse-cursor setup and subtree-candidate checks.
 // ReparseNanos includes the remainder of incremental parsing/rebuild work.
 type IncrementalParseProfile struct {
-	ReuseCursorNanos                   int64
-	ReparseNanos                       int64
-	ReusedSubtrees                     uint64
-	ReusedBytes                        uint64
-	NewNodesAllocated                  uint64
-	ReuseUnsupported                   bool
-	ReuseUnsupportedReason             string
-	ReuseRejectDirty                   uint64
-	ReuseRejectAncestorDirtyBeforeEdit uint64
-	ReuseRejectHasError                uint64
-	ReuseRejectInvalidSpan             uint64
-	ReuseRejectOutOfBounds             uint64
-	ReuseRejectRootNonLeafChanged      uint64
-	ReuseRejectLargeNonLeaf            uint64
-	RecoverSearches                    uint64
-	RecoverStateChecks                 uint64
-	RecoverStateSkips                  uint64
-	RecoverSymbolSkips                 uint64
-	RecoverLookups                     uint64
-	RecoverHits                        uint64
-	MaxStacksSeen                      int
-	EntryScratchPeak                   uint64
-	StopReason                         ParseStopReason
-	TokensConsumed                     uint64
-	LastTokenEndByte                   uint32
-	ExpectedEOFByte                    uint32
-	ArenaBytesAllocated                int64
-	ScratchBytesAllocated              int64
-	EntryScratchBytesAllocated         int64
-	GSSBytesAllocated                  int64
-	SingleStackIterations              int
-	MultiStackIterations               int
-	SingleStackTokens                  uint64
-	MultiStackTokens                   uint64
-	SingleStackGSSNodes                uint64
-	MultiStackGSSNodes                 uint64
-	GSSNodesAllocated                  uint64
-	GSSNodesRetained                   uint64
-	GSSNodesDroppedSameToken           uint64
-	ParentNodesAllocated               uint64
-	ParentNodesRetained                uint64
-	ParentNodesDroppedSameToken        uint64
-	LeafNodesAllocated                 uint64
-	LeafNodesRetained                  uint64
-	LeafNodesDroppedSameToken          uint64
-	MergeStacksIn                      uint64
-	MergeStacksOut                     uint64
-	MergeSlotsUsed                     uint64
-	GlobalCullStacksIn                 uint64
-	GlobalCullStacksOut                uint64
+	ReuseCursorNanos                    int64
+	ReparseNanos                        int64
+	ReusedSubtrees                      uint64
+	ReusedBytes                         uint64
+	NewNodesAllocated                   uint64
+	ReuseUnsupported                    bool
+	ReuseUnsupportedReason              string
+	ReuseRejectDirty                    uint64
+	ReuseRejectAncestorDirtyBeforeEdit  uint64
+	ReuseRejectHasError                 uint64
+	ReuseRejectInvalidSpan              uint64
+	ReuseRejectOutOfBounds              uint64
+	ReuseRejectRootNonLeafChanged       uint64
+	ReuseRejectLargeNonLeaf             uint64
+	RecoverSearches                     uint64
+	RecoverStateChecks                  uint64
+	RecoverStateSkips                   uint64
+	RecoverSymbolSkips                  uint64
+	RecoverLookups                      uint64
+	RecoverHits                         uint64
+	MaxStacksSeen                       int
+	EntryScratchPeak                    uint64
+	StopReason                          ParseStopReason
+	TokensConsumed                      uint64
+	LastTokenEndByte                    uint32
+	ExpectedEOFByte                     uint32
+	ArenaBytesAllocated                 int64
+	ScratchBytesAllocated               int64
+	EntryScratchBytesAllocated          int64
+	GSSBytesAllocated                   int64
+	SingleStackIterations               int
+	MultiStackIterations                int
+	SingleStackTokens                   uint64
+	MultiStackTokens                    uint64
+	SingleStackGSSNodes                 uint64
+	MultiStackGSSNodes                  uint64
+	GSSNodesAllocated                   uint64
+	GSSNodesRetained                    uint64
+	GSSNodesDroppedSameToken            uint64
+	ParentNodesAllocated                uint64
+	ParentNodesRetained                 uint64
+	ParentNodesDroppedSameToken         uint64
+	LeafNodesAllocated                  uint64
+	LeafNodesRetained                   uint64
+	LeafNodesDroppedSameToken           uint64
+	MergeStacksIn                       uint64
+	MergeStacksOut                      uint64
+	MergeSlotsUsed                      uint64
+	GlobalCullStacksIn                  uint64
+	GlobalCullStacksOut                 uint64
+	ParserLoopNanos                     int64
+	TokenNextNanos                      int64
+	ActionDispatchNanos                 int64
+	ActionLookupNanos                   int64
+	GLRMergeNanos                       int64
+	GLRCullNanos                        int64
+	ResultSelectionNanos                int64
+	TransientParentMaterializationNanos int64
+	ResultTreeBuildNanos                int64
+	TransientChildMaterializationNanos  int64
+	ResultPythonKeywordRepairNanos      int64
+	ResultPythonRootRepairNanos         int64
+	ResultFinalizeRootNanos             int64
+	ResultExtendTrailingNanos           int64
+	ResultNormalizeRootStartNanos       int64
+	ResultCompatibilityNanos            int64
+	ResultParentLinkNanos               int64
+	ReduceRangeNanos                    int64
+	ReducePendingParentNanos            int64
+	ReduceChildBuildNanos               int64
+	ReduceParentBuildNanos              int64
+	ReduceSpanNanos                     int64
+	ReduceStackPushNanos                int64
+	ReduceNoTreeBuildNanos              int64
+	ActionExtraShiftNanos               int64
+	ActionNoActionNanos                 int64
+	ActionNoActionRelexNanos            int64
+	ActionNoActionMissingNanos          int64
+	ActionNoActionRecoverNanos          int64
+	ActionNoActionErrorNanos            int64
+	ActionConflictChoiceNanos           int64
+	ActionConflictForkNanos             int64
+	ActionSingleShiftNanos              int64
+	ActionSingleReduceNanos             int64
+	ActionSingleAcceptNanos             int64
+	ActionSingleRecoverNanos            int64
+	ActionSingleOtherNanos              int64
+	NormalizationNanos                  int64
 }
 
 type incrementalParseTiming struct {
-	totalNanos                         int64
-	reuseNanos                         int64
-	reusedSubtrees                     uint64
-	reusedBytes                        uint64
-	newNodes                           uint64
-	reuseUnsupported                   bool
-	reuseUnsupportedReason             string
-	reuseRejectDirty                   uint64
-	reuseRejectAncestorDirtyBeforeEdit uint64
-	reuseRejectHasError                uint64
-	reuseRejectInvalidSpan             uint64
-	reuseRejectOutOfBounds             uint64
-	reuseRejectRootNonLeafChanged      uint64
-	reuseRejectLargeNonLeaf            uint64
-	recoverSearches                    uint64
-	recoverStateChecks                 uint64
-	recoverStateSkips                  uint64
-	recoverSymbolSkips                 uint64
-	recoverLookups                     uint64
-	recoverHits                        uint64
-	maxStacksSeen                      int
-	entryScratchPeak                   uint64
-	stopReason                         ParseStopReason
-	tokensConsumed                     uint64
-	lastTokenEndByte                   uint32
-	expectedEOFByte                    uint32
-	arenaBytesAllocated                int64
-	scratchBytesAllocated              int64
-	entryScratchBytesAllocated         uint64
-	gssBytesAllocated                  uint64
-	singleStackIterations              int
-	multiStackIterations               int
-	singleStackTokens                  uint64
-	multiStackTokens                   uint64
-	singleStackGSSNodes                uint64
-	multiStackGSSNodes                 uint64
-	gssNodesAllocated                  uint64
-	gssNodesRetained                   uint64
-	gssNodesDroppedSameToken           uint64
-	parentNodesAllocated               uint64
-	parentNodesRetained                uint64
-	parentNodesDroppedSameToken        uint64
-	leafNodesAllocated                 uint64
-	leafNodesRetained                  uint64
-	leafNodesDroppedSameToken          uint64
-	mergeStacksIn                      uint64
-	mergeStacksOut                     uint64
-	mergeSlotsUsed                     uint64
-	globalCullStacksIn                 uint64
-	globalCullStacksOut                uint64
+	totalNanos                          int64
+	reuseNanos                          int64
+	reusedSubtrees                      uint64
+	reusedBytes                         uint64
+	newNodes                            uint64
+	reuseUnsupported                    bool
+	reuseUnsupportedReason              string
+	reuseRejectDirty                    uint64
+	reuseRejectAncestorDirtyBeforeEdit  uint64
+	reuseRejectHasError                 uint64
+	reuseRejectInvalidSpan              uint64
+	reuseRejectOutOfBounds              uint64
+	reuseRejectRootNonLeafChanged       uint64
+	reuseRejectLargeNonLeaf             uint64
+	recoverSearches                     uint64
+	recoverStateChecks                  uint64
+	recoverStateSkips                   uint64
+	recoverSymbolSkips                  uint64
+	recoverLookups                      uint64
+	recoverHits                         uint64
+	maxStacksSeen                       int
+	entryScratchPeak                    uint64
+	stopReason                          ParseStopReason
+	tokensConsumed                      uint64
+	lastTokenEndByte                    uint32
+	expectedEOFByte                     uint32
+	arenaBytesAllocated                 int64
+	scratchBytesAllocated               int64
+	entryScratchBytesAllocated          uint64
+	gssBytesAllocated                   uint64
+	singleStackIterations               int
+	multiStackIterations                int
+	singleStackTokens                   uint64
+	multiStackTokens                    uint64
+	singleStackGSSNodes                 uint64
+	multiStackGSSNodes                  uint64
+	gssNodesAllocated                   uint64
+	gssNodesRetained                    uint64
+	gssNodesDroppedSameToken            uint64
+	parentNodesAllocated                uint64
+	parentNodesRetained                 uint64
+	parentNodesDroppedSameToken         uint64
+	leafNodesAllocated                  uint64
+	leafNodesRetained                   uint64
+	leafNodesDroppedSameToken           uint64
+	mergeStacksIn                       uint64
+	mergeStacksOut                      uint64
+	mergeSlotsUsed                      uint64
+	globalCullStacksIn                  uint64
+	globalCullStacksOut                 uint64
+	parserLoopNanos                     int64
+	tokenNextNanos                      int64
+	actionDispatchNanos                 int64
+	actionLookupNanos                   int64
+	glrMergeNanos                       int64
+	glrCullNanos                        int64
+	resultSelectionNanos                int64
+	transientParentMaterializationNanos int64
+	resultTreeBuildNanos                int64
+	transientChildMaterializationNanos  int64
+	resultPythonKeywordRepairNanos      int64
+	resultPythonRootRepairNanos         int64
+	resultFinalizeRootNanos             int64
+	resultExtendTrailingNanos           int64
+	resultNormalizeRootStartNanos       int64
+	resultCompatibilityNanos            int64
+	resultParentLinkNanos               int64
+	reduceRangeNanos                    int64
+	reducePendingParentNanos            int64
+	reduceChildBuildNanos               int64
+	reduceParentBuildNanos              int64
+	reduceSpanNanos                     int64
+	reduceStackPushNanos                int64
+	reduceNoTreeBuildNanos              int64
+	actionExtraShiftNanos               int64
+	actionNoActionNanos                 int64
+	actionNoActionRelexNanos            int64
+	actionNoActionMissingNanos          int64
+	actionNoActionRecoverNanos          int64
+	actionNoActionErrorNanos            int64
+	actionConflictChoiceNanos           int64
+	actionConflictForkNanos             int64
+	actionSingleShiftNanos              int64
+	actionSingleReduceNanos             int64
+	actionSingleAcceptNanos             int64
+	actionSingleRecoverNanos            int64
+	actionSingleOtherNanos              int64
+	normalizationNanos                  int64
 }
 
 type parseReuseState struct {
@@ -233,7 +316,7 @@ func NewParser(lang *Language) *Parser {
 			}
 			p.forceRawSpanTable[i] = true
 		}
-		if lang.Name == "cobol" || lang.Name == "COBOL" {
+		if isCobolLanguage(lang) {
 			for i, name := range lang.SymbolNames {
 				if !strings.HasSuffix(name, "_division") &&
 					!strings.Contains(name, "_statement") &&
@@ -259,6 +342,9 @@ func NewParser(lang *Language) *Parser {
 			p.smallTokenLookup = buildSmallTokenLookup(lang)
 			p.smallLookup = buildSmallLookup(lang, p.smallTokenLookup)
 		}
+		p.classifiedActions = buildClassifiedParseActions(lang)
+		p.reduceChainHints = buildReduceChainHints(lang)
+		p.reduceChainHintByState = buildReduceChainHintIndex(p.reduceChainHints)
 		p.reduceAliasSeq = buildReduceAliasSequences(lang)
 		p.aliasTargetSymbol = buildAliasTargetSymbols(lang)
 		p.singleTokenWrapperSymbol = buildSingleTokenWrapperSymbols(lang)
@@ -319,6 +405,8 @@ func resetSnippetParser(parser *Parser) {
 	parser.skipRecoveryReparse = false
 	parser.fullArenaHint = 0
 	parser.pendingFullArenaHint = 0
+	parser.compactFullArenaHint = 0
+	parser.finalChildRefArenaHint = 0
 	parser.incrementalArenaHint = 0
 	parser.fullGSSHint = 0
 	parser.incrementalGSSHint = 0
@@ -331,6 +419,7 @@ func resetSnippetParser(parser *Parser) {
 	parser.compactNoTreeShiftLeaves = false
 	parser.compactFullShiftLeaves = false
 	parser.pendingFullParents = false
+	parser.finalChildRefs = false
 	parser.skipInvisibleFullLeafCheckpoints = false
 	parser.noResultCompatibilityBenchmarkOnly = false
 	parser.timeoutMicros = 0
@@ -827,17 +916,7 @@ func findVisibleSymbolByName(lang *Language, name string, named bool) (Symbol, b
 	if lang == nil {
 		return 0, false
 	}
-	for i, symName := range lang.SymbolNames {
-		if symName != name || i >= len(lang.SymbolMetadata) {
-			continue
-		}
-		meta := lang.SymbolMetadata[i]
-		if !meta.Visible || meta.Named != named {
-			continue
-		}
-		return Symbol(i), true
-	}
-	return 0, false
+	return lang.visibleSymbolByNameAndNamed(name, named)
 }
 
 func normalizeSQLRecoveredMissingNull(root *Node, arena *nodeArena, lang *Language) {
@@ -1004,82 +1083,25 @@ func (p *Parser) tryRecoverTrailingEOFSuffix(s *glrStack, tok Token, nodeCount *
 		if firstDrop == 0 {
 			continue
 		}
-		cuts := []int{firstDrop}
-		if !node.isNamed() {
-			cut := firstDrop + 1
-			for cut < len(entries) {
-				trailing := stackEntryNode(entries[cut])
-				if trailing == nil || !trailing.isExtra() {
-					break
-				}
-				cut++
-			}
-			if cut > firstDrop && cut <= len(entries) {
-				cuts = append(cuts, cut)
-			}
-		}
-		for _, cut := range cuts {
+		for _, cut := range trailingEOFSuffixCuts(entries, firstDrop, node) {
 			prefix := s.cloneWithScratch(gssScratch)
 			if !prefix.truncate(cut) {
 				continue
 			}
-			prefixEOF := tok
-			switch {
-			case cut > 0 && stackEntryNode(entries[cut-1]) != nil:
-				last := stackEntryNode(entries[cut-1])
-				prefixEOF.StartByte = last.endByte
-				prefixEOF.EndByte = last.endByte
-				prefixEOF.StartPoint = last.endPoint
-				prefixEOF.EndPoint = last.endPoint
-			default:
-				prefixEOF.StartByte = node.startByte
-				prefixEOF.EndByte = node.startByte
-				prefixEOF.StartPoint = node.startPoint
-				prefixEOF.EndPoint = node.startPoint
-			}
-			insertedMissing := false
-			if !p.tryAdvanceEOFOnSingleStack(&prefix, prefixEOF, nodeCount, arena, entryScratch, gssScratch, tmpEntries) {
-				if !p.tryInsertMissingSingleShiftAtEOF(&prefix, prefixEOF, nodeCount, arena, entryScratch, gssScratch) {
-					continue
-				}
-				insertedMissing = true
-				if !p.tryAdvanceEOFOnSingleStack(&prefix, prefixEOF, nodeCount, arena, entryScratch, gssScratch, tmpEntries) {
-					continue
-				}
+			prefixEOF := eofTokenForTrailingCut(tok, entries, cut, node)
+			insertedMissing, advanced := p.advanceTrailingEOFPrefix(&prefix, prefixEOF, nodeCount, arena, entryScratch, gssScratch, tmpEntries)
+			if !advanced {
+				continue
 			}
 
-			nodes := nodesFromStack(prefix)
-			if p.hasRootSymbol && len(nodes) == 1 && nodes[0] != nil && nodes[0].symbol == p.rootSymbol {
-				nodes = append([]*Node(nil), nodes[0].children...)
-			}
+			nodes := p.trailingEOFNodesFromPrefix(prefix)
 			if insertedMissing || cut > firstDrop {
 				nodes = trimTrailingRecoveryEOFErrors(nodes, tok.StartByte)
 				for _, n := range nodes {
 					trimRecoveryWhitespaceTail(n, source)
 				}
 			}
-			recovered := false
-			for i := cut; i < len(entries); i++ {
-				trailing := stackEntryNode(entries[i])
-				if trailing == nil {
-					continue
-				}
-				if trailing.symbol == errorSymbol && trailing.startByte == tok.StartByte && trailing.endByte == tok.EndByte {
-					continue
-				}
-				if !recovered && !trailing.isExtra() {
-					errNode := newParentNodeInArena(arena, errorSymbol, true, []*Node{trailing}, nil, 0)
-					errNode.setHasError(true)
-					errNode.setExtra(true)
-					nodes = append(nodes, errNode)
-					recovered = true
-					if nodeCount != nil {
-						*nodeCount = *nodeCount + 1
-					}
-					continue
-				}
-				nodes = append(nodes, trailing)
-			}
+			nodes, recovered := appendTrailingEOFRecoveryNodes(nodes, entries, cut, tok, arena, nodeCount)
 			if recovered || insertedMissing || cut > firstDrop {
 				return nodes, true
 			}
@@ -1088,13 +1110,94 @@ func (p *Parser) tryRecoverTrailingEOFSuffix(s *glrStack, tok Token, nodeCount *
 	return nil, false
 }
 
+func trailingEOFSuffixCuts(entries []stackEntry, firstDrop int, node *Node) []int {
+	cuts := []int{firstDrop}
+	if node == nil || node.isNamed() {
+		return cuts
+	}
+	cut := firstDrop + 1
+	for cut < len(entries) {
+		trailing := stackEntryNode(entries[cut])
+		if trailing == nil || !trailing.isExtra() {
+			break
+		}
+		cut++
+	}
+	if cut > firstDrop && cut <= len(entries) {
+		cuts = append(cuts, cut)
+	}
+	return cuts
+}
+
+func eofTokenForTrailingCut(tok Token, entries []stackEntry, cut int, fallback *Node) Token {
+	prefixEOF := tok
+	if cut > 0 {
+		if last := stackEntryNode(entries[cut-1]); last != nil {
+			prefixEOF.StartByte = last.endByte
+			prefixEOF.EndByte = last.endByte
+			prefixEOF.StartPoint = last.endPoint
+			prefixEOF.EndPoint = last.endPoint
+			return prefixEOF
+		}
+	}
+	prefixEOF.StartByte = fallback.startByte
+	prefixEOF.EndByte = fallback.startByte
+	prefixEOF.StartPoint = fallback.startPoint
+	prefixEOF.EndPoint = fallback.startPoint
+	return prefixEOF
+}
+
+func (p *Parser) advanceTrailingEOFPrefix(prefix *glrStack, prefixEOF Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry) (bool, bool) {
+	if p.tryAdvanceEOFOnSingleStack(prefix, prefixEOF, nodeCount, arena, entryScratch, gssScratch, tmpEntries) {
+		return false, true
+	}
+	if !p.tryInsertMissingSingleShiftAtEOF(prefix, prefixEOF, nodeCount, arena, entryScratch, gssScratch) {
+		return false, false
+	}
+	if !p.tryAdvanceEOFOnSingleStack(prefix, prefixEOF, nodeCount, arena, entryScratch, gssScratch, tmpEntries) {
+		return false, false
+	}
+	return true, true
+}
+
+func (p *Parser) trailingEOFNodesFromPrefix(prefix glrStack) []*Node {
+	nodes := nodesFromStack(prefix)
+	if p.hasRootSymbol && len(nodes) == 1 && nodes[0] != nil && nodes[0].symbol == p.rootSymbol {
+		return append([]*Node(nil), nodes[0].children...)
+	}
+	return nodes
+}
+
+func appendTrailingEOFRecoveryNodes(nodes []*Node, entries []stackEntry, cut int, tok Token, arena *nodeArena, nodeCount *int) ([]*Node, bool) {
+	recovered := false
+	for i := cut; i < len(entries); i++ {
+		trailing := stackEntryNode(entries[i])
+		if trailing == nil {
+			continue
+		}
+		if trailing.symbol == errorSymbol && trailing.startByte == tok.StartByte && trailing.endByte == tok.EndByte {
+			continue
+		}
+		if !recovered && !trailing.isExtra() {
+			errNode := newParentNodeInArena(arena, errorSymbol, true, []*Node{trailing}, nil, 0)
+			errNode.setHasError(true)
+			errNode.setExtra(true)
+			nodes = append(nodes, errNode)
+			recovered = true
+			if nodeCount != nil {
+				*nodeCount = *nodeCount + 1
+			}
+			continue
+		}
+		nodes = append(nodes, trailing)
+	}
+	return nodes, recovered
+}
+
 func (p *Parser) parseIncrementalInternal(source []byte, oldTree *Tree, ts TokenSource, timing *incrementalParseTiming) *Tree {
 	// Fast path: unchanged source and no recorded edits.
 	if canReuseUnchangedTree(source, oldTree, p.language) {
 		return oldTree
-	}
-	if oldTree != nil {
-		oldTree.ensureParentLinks()
 	}
 	if tree, ok := p.tryTokenInvariantLeafEdit(source, oldTree, ts, timing); ok {
 		return tree
@@ -1121,7 +1224,12 @@ func (p *Parser) parseIncrementalInternal(source []byte, oldTree *Tree, ts Token
 		return tree
 	}
 	if oldTree != nil {
-		oldTree.ensureExternalScannerCheckpoints()
+		oldTree.ensureParentLinks()
+	}
+	if oldTree != nil {
+		if languageUsesExternalScannerCheckpoints(p.language) {
+			oldTree.ensureExternalScannerCheckpoints()
+		}
 	}
 
 	p.reuseMu.Lock()
@@ -1358,6 +1466,377 @@ func resolveParseMaxStacks(configuredMaxStacks, maxStacksOverride, conflictWidth
 	return maxStacks, retryPass
 }
 
+func captureParseArenaStats(parseRuntime *ParseRuntime, arena *nodeArena, arenaBreakdown **ArenaBreakdown, preMaterializationFieldRejectCandidates, preMaterializationFieldRejectSameKeyCandidates, preMaterializationFieldRejectOverflowCandidates uint64) bool {
+	if parseRuntime == nil || arena == nil {
+		return false
+	}
+	arena.finalizeCompactFullLeafDropped()
+	arena.finalizePendingParentDropped()
+	parseRuntime.ArenaBytesAllocated = arena.allocatedBytes
+	parseRuntime.MemoryBudgetBytes = arena.budgetBytes
+	parseRuntime.ExternalScannerCheckpointRecords = arena.externalScannerCheckpointRecords
+	parseRuntime.ExternalScannerCheckpointSlotsAllocated = arena.externalScannerCheckpointSlotsAllocated()
+	parseRuntime.ExternalScannerCheckpointBytesAllocated = arena.externalScannerCheckpointBytesAllocated()
+	parseRuntime.ExternalScannerSnapshotBytesAllocated = arena.externalScannerSnapshotPayloadBytes
+	parseRuntime.ExternalScannerCheckpointLeafNodes = arena.externalScannerCheckpointLeafNodes
+	parseRuntime.CompactFullLeafCreated = arena.compactFullLeafCreated
+	parseRuntime.CompactFullLeafMaterialized = arena.compactFullLeafMaterialized
+	parseRuntime.CompactFullLeafMaterializedForParentReduce = arena.compactFullLeafMaterializedForParentReduce
+	parseRuntime.CompactFullLeafMaterializedForParentReject = arena.compactFullLeafMaterializedForParentReject
+	parseRuntime.CompactFullLeafMaterializedForFinalTree = arena.compactFullLeafMaterializedForFinalTree
+	parseRuntime.CompactFullLeafMaterializedForNormalization = arena.compactFullLeafMaterializedForNormalization
+	parseRuntime.CompactFullLeafMaterializedForRecovery = arena.compactFullLeafMaterializedForRecovery
+	parseRuntime.CompactFullLeafMaterializedForQuery = arena.compactFullLeafMaterializedForQuery
+	parseRuntime.CompactFullLeafMaterializedForCursor = arena.compactFullLeafMaterializedForCursor
+	parseRuntime.CompactFullLeafMaterializedForParentAPI = arena.compactFullLeafMaterializedForParentAPI
+	parseRuntime.CompactFullLeafMaterializedForEdit = arena.compactFullLeafMaterializedForEdit
+	parseRuntime.CompactFullLeafMaterializedForCheckpointRebuild = arena.compactFullLeafMaterializedForCheckpointRebuild
+	parseRuntime.CompactFullLeafMaterializedForFieldRejectPayload = arena.compactFullLeafMaterializedForFieldRejectPayload
+	parseRuntime.CompactFullLeafDropped = arena.compactFullLeafDropped
+	parseRuntime.PendingParentCreated = arena.pendingParentCreated
+	parseRuntime.PendingParentMaterialized = arena.pendingParentMaterialized
+	parseRuntime.PendingParentMaterializedForParentReduce = arena.pendingParentMaterializedForParentReduce
+	parseRuntime.PendingParentMaterializedForParentReject = arena.pendingParentMaterializedForParentReject
+	parseRuntime.PendingParentMaterializedForFieldReject = arena.pendingParentMaterializedForFieldReject
+	parseRuntime.PendingParentMaterializedForFieldRejectPayload = arena.pendingParentMaterializedForFieldRejectPayload
+	parseRuntime.PendingParentMaterializedForFinalTree = arena.pendingParentMaterializedForFinalTree
+	parseRuntime.PendingParentMaterializedForNormalization = arena.pendingParentMaterializedForNormalization
+	parseRuntime.PendingParentMaterializedForRecovery = arena.pendingParentMaterializedForRecovery
+	parseRuntime.PendingParentMaterializedForQuery = arena.pendingParentMaterializedForQuery
+	parseRuntime.PendingParentMaterializedForCursor = arena.pendingParentMaterializedForCursor
+	parseRuntime.PendingParentMaterializedForParentAPI = arena.pendingParentMaterializedForParentAPI
+	parseRuntime.PendingParentMaterializedForEdit = arena.pendingParentMaterializedForEdit
+	parseRuntime.PendingParentMaterializedForCheckpointRebuild = arena.pendingParentMaterializedForCheckpointRebuild
+	parseRuntime.PendingParentDropped = arena.pendingParentDropped
+	parseRuntime.PendingParentsFlattened = arena.pendingParentsFlattened
+	parseRuntime.PendingChildRefsFlattened = arena.pendingChildRefsFlattened
+	parseRuntime.PendingChildEntriesAllocated = arena.pendingChildEntriesAllocated
+	parseRuntime.PendingChildEntryCapacity = arena.pendingChildEntryCapacity()
+	parseRuntime.PendingChildEntryWaste = arena.pendingChildEntryWaste()
+	parseRuntime.PendingParentCandidates = arena.pendingParentCandidates
+	parseRuntime.PendingParentRejectedEmpty = arena.pendingParentRejectedEmpty
+	parseRuntime.PendingParentRejectedChildLimit = arena.pendingParentRejectedChildLimit
+	parseRuntime.PendingParentRejectedAlias = arena.pendingParentRejectedAlias
+	parseRuntime.PendingParentRejectedRawSpan = arena.pendingParentRejectedRawSpan
+	parseRuntime.PendingParentRejectedFields = arena.pendingParentRejectedFields
+	parseRuntime.PendingParentRejectedFieldsParentHidden = arena.pendingParentRejectedFieldsParentHidden
+	parseRuntime.PendingParentRejectedFieldsNoIDs = arena.pendingParentRejectedFieldsNoIDs
+	parseRuntime.PendingParentRejectedFieldsInherited = arena.pendingParentRejectedFieldsInherited
+	parseRuntime.PendingParentRejectedFieldsHiddenChild = arena.pendingParentRejectedFieldsHiddenChild
+	parseRuntime.PendingParentRejectedFieldsHiddenChildPlain = arena.pendingParentRejectedFieldsHiddenChildPlain
+	parseRuntime.PendingParentRejectedFieldsHiddenChildPlainEmpty = arena.pendingParentRejectedFieldsHiddenChildPlainEmpty
+	parseRuntime.PendingParentRejectedFieldsHiddenChildPlainOne = arena.pendingParentRejectedFieldsHiddenChildPlainOne
+	parseRuntime.PendingParentRejectedFieldsHiddenChildPlainMany = arena.pendingParentRejectedFieldsHiddenChildPlainMany
+	parseRuntime.PendingParentRejectedFieldsHiddenChildWithFields = arena.pendingParentRejectedFieldsHiddenChildWithFields
+	parseRuntime.PendingParentRejectedFieldsChild = arena.pendingParentRejectedFieldsChild
+	parseRuntime.PendingParentRejectedFieldsAllVisibleDirect = arena.pendingParentRejectedFieldsAllVisibleDirect
+	parseRuntime.PendingParentRejectedChild = arena.pendingParentRejectedChild
+	parseRuntime.PendingParentRejectedSpan = arena.pendingParentRejectedSpan
+	parseRuntime.PendingParentRejectedFill = arena.pendingParentRejectedFill
+	parseRuntime.FinalChildRefParents = arena.finalChildRefParents
+	parseRuntime.FinalChildRefs = arena.finalChildRefsCreated
+	parseRuntime.FinalChildRefMaterializedParents = arena.finalChildRefsMaterializedParents
+	parseRuntime.FinalChildRefMaterializedChildren = arena.finalChildRefsMaterializedChildren
+	parseRuntime.FinalChildRefSingleChildAccesses = arena.finalChildRefsSingleChildAccesses
+	parseRuntime.FinalChildRefSingleChildMaterializedChildren = arena.finalChildRefsSingleChildMaterializedChildren
+	parseRuntime.PreMaterializationFieldRejectCandidates = preMaterializationFieldRejectCandidates
+	parseRuntime.PreMaterializationFieldRejectSameKeyCandidates = preMaterializationFieldRejectSameKeyCandidates
+	parseRuntime.PreMaterializationFieldRejectOverflowCandidates = preMaterializationFieldRejectOverflowCandidates
+	parseRuntime.CheckpointLeafFullNodesAvoided = arena.checkpointLeafFullNodesAvoided
+	parseRuntime.LeafNodesConstructed = arena.leafNodesConstructed
+	parseRuntime.ParentNodesConstructed = arena.parentNodesConstructed
+	parseRuntime.NoTreeReduceNodesConstructed = arena.noTreeReduceNodesConstructed
+	parseRuntime.NoTreeLeafNodesConstructed = arena.noTreeLeafNodesConstructed
+	if arena.breakdownEnabled && arenaBreakdown != nil {
+		*arenaBreakdown = arena.collectArenaBreakdown()
+	}
+	return true
+}
+
+func captureParseScratchStats(parseRuntime *ParseRuntime, scratch *parserScratch, arena *nodeArena, arenaBreakdown **ArenaBreakdown) bool {
+	if parseRuntime == nil || scratch == nil {
+		return false
+	}
+	parseRuntime.ScratchBytesAllocated = scratch.allocatedBytes()
+	parseRuntime.EntryScratchBytesAllocated = scratch.entries.allocatedBytes
+	parseRuntime.GSSBytesAllocated = scratch.gss.allocatedBytes
+	parseRuntime.TransientChildSlicesAllocated = scratch.transientChildren.slicesAllocated
+	parseRuntime.TransientChildPointersAllocated = scratch.transientChildren.pointersAllocated
+	parseRuntime.TransientChildSlicesMaterialized = scratch.transientChildren.slicesMaterialized
+	parseRuntime.TransientChildPointersMaterialized = scratch.transientChildren.pointersMaterialized
+	parseRuntime.TransientParentNodesAllocated = scratch.transientParents.nodesAllocated
+	parseRuntime.TransientParentNodesMaterialized = scratch.transientParents.nodesMaterialized
+	if arena != nil && arena.breakdownEnabled && arenaBreakdown != nil {
+		if *arenaBreakdown == nil {
+			*arenaBreakdown = &ArenaBreakdown{}
+		}
+		(*arenaBreakdown).MergeScratchBytesAllocated = scratch.merge.allocatedBytes()
+	}
+	return true
+}
+
+func parseStopReasonWithTokenSourceEOF(stopReason ParseStopReason, tokenSourceEOFEarly bool) ParseStopReason {
+	if tokenSourceEOFEarly && (stopReason == ParseStopAccepted || stopReason == ParseStopNone) {
+		return ParseStopTokenSourceEOF
+	}
+	return stopReason
+}
+
+func recordParseRuntimeLoopStats(parseRuntime *ParseRuntime, scratch *parserScratch, iterationsUsed, nodeCount, peakStackDepth, maxStacksSeen, singleStackIterations, multiStackIterations int, singleStackTokens, multiStackTokens uint64) {
+	if parseRuntime == nil {
+		return
+	}
+	parseRuntime.Iterations = iterationsUsed
+	parseRuntime.NodesAllocated = nodeCount
+	parseRuntime.PeakStackDepth = peakStackDepth
+	parseRuntime.MaxStacksSeen = maxStacksSeen
+	parseRuntime.SingleStackIterations = singleStackIterations
+	parseRuntime.MultiStackIterations = multiStackIterations
+	parseRuntime.SingleStackTokens = singleStackTokens
+	parseRuntime.MultiStackTokens = multiStackTokens
+	if scratch == nil {
+		return
+	}
+	parseRuntime.SingleStackGSSNodes = scratch.gss.singleStackAllocs
+	parseRuntime.MultiStackGSSNodes = scratch.gss.multiStackAllocs
+	parseRuntime.GSSNodesAllocated = scratch.audit.totalGSSAllocated
+	parseRuntime.GSSNodesRetained = scratch.audit.totalGSSRetained
+	parseRuntime.GSSNodesDroppedSameToken = scratch.audit.totalGSSDropped
+	parseRuntime.ParentNodesAllocated = scratch.audit.totalParentAllocated
+	parseRuntime.ParentNodesRetained = scratch.audit.totalParentRetained
+	parseRuntime.ParentNodesDroppedSameToken = scratch.audit.totalParentDropped
+	parseRuntime.LeafNodesAllocated = scratch.audit.totalLeafAllocated
+	parseRuntime.LeafNodesRetained = scratch.audit.totalLeafRetained
+	parseRuntime.LeafNodesDroppedSameToken = scratch.audit.totalLeafDropped
+	parseRuntime.ChildSlicesAllocated = scratch.audit.totalChildSlicesAllocated
+	parseRuntime.ChildSlicesRetained = scratch.audit.totalChildSlicesRetained
+	parseRuntime.ChildSlicesDroppedSameToken = scratch.audit.totalChildSlicesDropped
+	parseRuntime.ChildPointersAllocated = scratch.audit.totalChildPointersAllocated
+	parseRuntime.ChildPointersRetained = scratch.audit.totalChildPointersRetained
+	parseRuntime.ChildPointersDroppedSameToken = scratch.audit.totalChildPointersDropped
+	parseRuntime.ReduceChildFastGSS = scratch.audit.reduceChildPathRuntime(reduceChildPathFastGSS)
+	parseRuntime.ReduceChildAllVisible = scratch.audit.reduceChildPathRuntime(reduceChildPathAllVisible)
+	parseRuntime.ReduceChildNoAlias = scratch.audit.reduceChildPathRuntime(reduceChildPathNoAlias)
+	parseRuntime.ReduceChildScratchGeneral = scratch.audit.reduceChildPathRuntime(reduceChildPathScratchGeneral)
+	parseRuntime.ReduceChildScratchNoAlias = scratch.audit.reduceChildPathRuntime(reduceChildPathScratchNoAlias)
+	parseRuntime.MergeStacksIn = scratch.audit.mergeStacksIn
+	parseRuntime.MergeStacksOut = scratch.audit.mergeStacksOut
+	parseRuntime.MergeSlotsUsed = scratch.audit.mergeSlotsUsed
+	parseRuntime.GlobalCullStacksIn = scratch.audit.globalCullStacksIn
+	parseRuntime.GlobalCullStacksOut = scratch.audit.globalCullStacksOut
+	parseRuntime.EquivCacheLookups = scratch.audit.equivCacheLookups
+	parseRuntime.EquivCacheHits = scratch.audit.equivCacheHits
+	parseRuntime.EquivCacheStores = scratch.audit.equivCacheStores
+	parseRuntime.EquivCacheMisses = scratch.audit.equivCacheMisses
+	parseRuntime.EquivCacheEpochMisses = scratch.audit.equivCacheEpochMisses
+	parseRuntime.EquivCacheKeyMisses = scratch.audit.equivCacheKeyMisses
+	parseRuntime.EquivCacheVersionMisses = scratch.audit.equivCacheVersionMisses
+	parseRuntime.EquivSkipError = scratch.audit.equivSkipError
+	parseRuntime.EquivSkipLeaf = scratch.audit.equivSkipLeaf
+	parseRuntime.EquivSkipFieldMismatch = scratch.audit.equivSkipFieldMismatch
+	parseRuntime.EquivExactCalls = scratch.audit.equivExactCalls
+	parseRuntime.EquivExactTrue = scratch.audit.equivExactTrue
+	parseRuntime.EquivFrontierCalls = scratch.audit.equivFrontierCalls
+	parseRuntime.EquivFrontierTrue = scratch.audit.equivFrontierTrue
+	parseRuntime.EquivExactChildCompares = scratch.audit.equivExactChildCompares
+	parseRuntime.EquivFrontierChildScans = scratch.audit.equivFrontierChildScans
+	parseRuntime.EquivFrontierCandidateCompares = scratch.audit.equivFrontierCandidateCompares
+	parseRuntime.EquivStateStats = scratch.audit.equivStateStats()
+}
+
+func recordParseRuntimeMaterializationTiming(parseRuntime *ParseRuntime, timingRef *parseMaterializationTiming, timing parseMaterializationTiming) {
+	if parseRuntime == nil || timingRef == nil {
+		return
+	}
+	parseRuntime.ResultSelectionNanos = timing.resultSelectionNanos
+	parseRuntime.TransientParentMaterializationNanos = timing.transientParentMaterializeNanos
+	parseRuntime.ResultTreeBuildNanos = timing.resultTreeBuildNanos
+	parseRuntime.TransientChildMaterializationNanos = timing.transientChildMaterializationNanos
+	parseRuntime.ResultPythonKeywordRepairNanos = timing.pythonKeywordRepairNanos
+	parseRuntime.ResultPythonRootRepairNanos = timing.pythonRootRepairNanos
+	parseRuntime.ResultFinalizeRootNanos = timing.resultFinalizeRootNanos
+	parseRuntime.ResultExtendTrailingNanos = timing.resultExtendTrailingNanos
+	parseRuntime.ResultNormalizeRootStartNanos = timing.resultNormalizeRootStartNanos
+	parseRuntime.ResultCompatibilityNanos = timing.resultCompatibilityNanos
+	parseRuntime.ResultParentLinkNanos = timing.resultParentLinkNanos
+	if timing.reduceRangeNanos != 0 ||
+		timing.reducePendingParentNanos != 0 ||
+		timing.reduceChildBuildNanos != 0 ||
+		timing.reduceParentBuildNanos != 0 ||
+		timing.reduceSpanNanos != 0 ||
+		timing.reduceStackPushNanos != 0 ||
+		timing.reduceNoTreeBuildNanos != 0 {
+		parseRuntime.ReduceTiming = &ParseReduceTiming{
+			RangeNanos:         timing.reduceRangeNanos,
+			PendingParentNanos: timing.reducePendingParentNanos,
+			ChildBuildNanos:    timing.reduceChildBuildNanos,
+			ParentBuildNanos:   timing.reduceParentBuildNanos,
+			SpanNanos:          timing.reduceSpanNanos,
+			StackPushNanos:     timing.reduceStackPushNanos,
+			NoTreeBuildNanos:   timing.reduceNoTreeBuildNanos,
+		}
+	}
+	if timing.actionExtraShiftNanos != 0 ||
+		timing.actionNoActionNanos != 0 ||
+		timing.actionNoActionRelexNanos != 0 ||
+		timing.actionNoActionMissingNanos != 0 ||
+		timing.actionNoActionRecoverNanos != 0 ||
+		timing.actionNoActionErrorNanos != 0 ||
+		timing.actionConflictChoiceNanos != 0 ||
+		timing.actionConflictForkNanos != 0 ||
+		timing.actionSingleShiftNanos != 0 ||
+		timing.actionSingleReduceNanos != 0 ||
+		timing.actionSingleAcceptNanos != 0 ||
+		timing.actionSingleRecoverNanos != 0 ||
+		timing.actionSingleOtherNanos != 0 {
+		parseRuntime.ActionTiming = &ParseActionTiming{
+			ExtraShiftNanos:      timing.actionExtraShiftNanos,
+			NoActionNanos:        timing.actionNoActionNanos,
+			NoActionRelexNanos:   timing.actionNoActionRelexNanos,
+			NoActionMissingNanos: timing.actionNoActionMissingNanos,
+			NoActionRecoverNanos: timing.actionNoActionRecoverNanos,
+			NoActionErrorNanos:   timing.actionNoActionErrorNanos,
+			ConflictChoiceNanos:  timing.actionConflictChoiceNanos,
+			ConflictForkNanos:    timing.actionConflictForkNanos,
+			SingleShiftNanos:     timing.actionSingleShiftNanos,
+			SingleReduceNanos:    timing.actionSingleReduceNanos,
+			SingleAcceptNanos:    timing.actionSingleAcceptNanos,
+			SingleRecoverNanos:   timing.actionSingleRecoverNanos,
+			SingleOtherNanos:     timing.actionSingleOtherNanos,
+		}
+	}
+}
+
+func recordParseRuntimePhaseTiming(parseRuntime *ParseRuntime, timingRef *parseMaterializationTiming, parseStart time.Time, parserLoopNanos, tokenNextNanos, actionDispatchNanos, actionLookupNanos, glrMergeNanos, glrCullNanos int64) {
+	if parseRuntime == nil || timingRef == nil {
+		return
+	}
+	parseRuntime.ParseWallNanos = time.Since(parseStart).Nanoseconds()
+	parseRuntime.ParserLoopNanos = parserLoopNanos
+	parseRuntime.TokenNextNanos = tokenNextNanos
+	parseRuntime.ActionDispatchNanos = actionDispatchNanos
+	parseRuntime.ActionLookupNanos = actionLookupNanos
+	parseRuntime.GLRMergeNanos = glrMergeNanos
+	parseRuntime.GLRCullNanos = glrCullNanos
+}
+
+func recordParseRuntimeTokenStats(parseRuntime *ParseRuntime, tokensConsumed uint64, lastTokenEndByte uint32, lastTokenSymbol Symbol, lastTokenWasEOF, tokenSourceEOFEarly bool) {
+	if parseRuntime == nil {
+		return
+	}
+	parseRuntime.TokensConsumed = tokensConsumed
+	parseRuntime.LastTokenEndByte = lastTokenEndByte
+	parseRuntime.LastTokenSymbol = lastTokenSymbol
+	parseRuntime.LastTokenWasEOF = lastTokenWasEOF
+	parseRuntime.TokenSourceEOFEarly = tokenSourceEOFEarly
+}
+
+func recordParseRuntimeRootStats(parseRuntime *ParseRuntime, tree *Tree, expectedEOFByte uint32, collectFinalStats bool, lang *Language) {
+	if parseRuntime == nil {
+		return
+	}
+	parseRuntime.RootEndByte = 0
+	parseRuntime.Truncated = false
+	if tree == nil || tree.RootNode() == nil {
+		return
+	}
+	root := tree.RootNode()
+	parseRuntime.RootEndByte = root.EndByte()
+	parseRuntime.Truncated = parseRuntime.RootEndByte < expectedEOFByte
+	if !collectFinalStats {
+		return
+	}
+	finalStats := collectFinalTreeMaterializationStats(root, lang)
+	parseRuntime.FinalNodes = finalStats.nodes
+	parseRuntime.FinalParentNodes = finalStats.parentNodes
+	parseRuntime.FinalLeafNodes = finalStats.leafNodes
+	parseRuntime.FinalFieldedParentNodes = finalStats.fieldedParentNodes
+	parseRuntime.FinalUnfieldedParentNodes = finalStats.unfieldedParentNodes
+	parseRuntime.FinalVisibleParentNodes = finalStats.visibleParentNodes
+	parseRuntime.FinalHiddenParentNodes = finalStats.hiddenParentNodes
+	parseRuntime.FinalCheckpointLeafNodes = finalStats.checkpointLeafNodes
+	parseRuntime.FinalChildSlices = finalStats.childSlices
+	parseRuntime.FinalChildPointers = finalStats.childPointers
+	parseRuntime.FinalFieldIDElements = finalStats.fieldIDElements
+	parseRuntime.FinalFieldSourceElements = finalStats.fieldSourceElements
+}
+
+func copyParseRuntimeToTiming(timing *incrementalParseTiming, parseRuntime ParseRuntime) {
+	if timing == nil {
+		return
+	}
+	timing.stopReason = parseRuntime.StopReason
+	timing.tokensConsumed = parseRuntime.TokensConsumed
+	timing.lastTokenEndByte = parseRuntime.LastTokenEndByte
+	timing.expectedEOFByte = parseRuntime.ExpectedEOFByte
+	timing.arenaBytesAllocated = parseRuntime.ArenaBytesAllocated
+	timing.scratchBytesAllocated = parseRuntime.ScratchBytesAllocated
+	timing.entryScratchBytesAllocated = uint64(parseRuntime.EntryScratchBytesAllocated)
+	timing.gssBytesAllocated = uint64(parseRuntime.GSSBytesAllocated)
+	timing.singleStackIterations = parseRuntime.SingleStackIterations
+	timing.multiStackIterations = parseRuntime.MultiStackIterations
+	timing.singleStackTokens = parseRuntime.SingleStackTokens
+	timing.multiStackTokens = parseRuntime.MultiStackTokens
+	timing.singleStackGSSNodes = parseRuntime.SingleStackGSSNodes
+	timing.multiStackGSSNodes = parseRuntime.MultiStackGSSNodes
+	timing.gssNodesAllocated = parseRuntime.GSSNodesAllocated
+	timing.gssNodesRetained = parseRuntime.GSSNodesRetained
+	timing.gssNodesDroppedSameToken = parseRuntime.GSSNodesDroppedSameToken
+	timing.parentNodesAllocated = parseRuntime.ParentNodesAllocated
+	timing.parentNodesRetained = parseRuntime.ParentNodesRetained
+	timing.parentNodesDroppedSameToken = parseRuntime.ParentNodesDroppedSameToken
+	timing.leafNodesAllocated = parseRuntime.LeafNodesAllocated
+	timing.leafNodesRetained = parseRuntime.LeafNodesRetained
+	timing.leafNodesDroppedSameToken = parseRuntime.LeafNodesDroppedSameToken
+	timing.mergeStacksIn = parseRuntime.MergeStacksIn
+	timing.mergeStacksOut = parseRuntime.MergeStacksOut
+	timing.mergeSlotsUsed = parseRuntime.MergeSlotsUsed
+	timing.globalCullStacksIn = parseRuntime.GlobalCullStacksIn
+	timing.globalCullStacksOut = parseRuntime.GlobalCullStacksOut
+	timing.parserLoopNanos = parseRuntime.ParserLoopNanos
+	timing.tokenNextNanos = parseRuntime.TokenNextNanos
+	timing.actionDispatchNanos = parseRuntime.ActionDispatchNanos
+	timing.actionLookupNanos = parseRuntime.ActionLookupNanos
+	timing.glrMergeNanos = parseRuntime.GLRMergeNanos
+	timing.glrCullNanos = parseRuntime.GLRCullNanos
+	timing.resultSelectionNanos = parseRuntime.ResultSelectionNanos
+	timing.transientParentMaterializationNanos = parseRuntime.TransientParentMaterializationNanos
+	timing.resultTreeBuildNanos = parseRuntime.ResultTreeBuildNanos
+	timing.transientChildMaterializationNanos = parseRuntime.TransientChildMaterializationNanos
+	timing.resultPythonKeywordRepairNanos = parseRuntime.ResultPythonKeywordRepairNanos
+	timing.resultPythonRootRepairNanos = parseRuntime.ResultPythonRootRepairNanos
+	timing.resultFinalizeRootNanos = parseRuntime.ResultFinalizeRootNanos
+	timing.resultExtendTrailingNanos = parseRuntime.ResultExtendTrailingNanos
+	timing.resultNormalizeRootStartNanos = parseRuntime.ResultNormalizeRootStartNanos
+	timing.resultCompatibilityNanos = parseRuntime.ResultCompatibilityNanos
+	timing.resultParentLinkNanos = parseRuntime.ResultParentLinkNanos
+	if reduceTiming := parseRuntime.ReduceTiming; reduceTiming != nil {
+		timing.reduceRangeNanos = reduceTiming.RangeNanos
+		timing.reducePendingParentNanos = reduceTiming.PendingParentNanos
+		timing.reduceChildBuildNanos = reduceTiming.ChildBuildNanos
+		timing.reduceParentBuildNanos = reduceTiming.ParentBuildNanos
+		timing.reduceSpanNanos = reduceTiming.SpanNanos
+		timing.reduceStackPushNanos = reduceTiming.StackPushNanos
+		timing.reduceNoTreeBuildNanos = reduceTiming.NoTreeBuildNanos
+	}
+	if actionTiming := parseRuntime.ActionTiming; actionTiming != nil {
+		timing.actionExtraShiftNanos = actionTiming.ExtraShiftNanos
+		timing.actionNoActionNanos = actionTiming.NoActionNanos
+		timing.actionNoActionRelexNanos = actionTiming.NoActionRelexNanos
+		timing.actionNoActionMissingNanos = actionTiming.NoActionMissingNanos
+		timing.actionNoActionRecoverNanos = actionTiming.NoActionRecoverNanos
+		timing.actionNoActionErrorNanos = actionTiming.NoActionErrorNanos
+		timing.actionConflictChoiceNanos = actionTiming.ConflictChoiceNanos
+		timing.actionConflictForkNanos = actionTiming.ConflictForkNanos
+		timing.actionSingleShiftNanos = actionTiming.SingleShiftNanos
+		timing.actionSingleReduceNanos = actionTiming.SingleReduceNanos
+		timing.actionSingleAcceptNanos = actionTiming.SingleAcceptNanos
+		timing.actionSingleRecoverNanos = actionTiming.SingleRecoverNanos
+		timing.actionSingleOtherNanos = actionTiming.SingleOtherNanos
+	}
+	timing.normalizationNanos = parseRuntime.NormalizationNanos
+}
+
 // parseInternal is the core GLR parsing loop shared by Parse and
 // ParseWithTokenSource.
 //
@@ -1369,26 +1848,8 @@ func resolveParseMaxStacks(configuredMaxStacks, maxStacksOverride, conflictWidth
 // merged; distinct alternatives are preserved.
 func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor, oldTree *Tree, arenaClass arenaClass, timing *incrementalParseTiming, maxStacksOverride int, maxNodesOverride int, maxMergePerKeyOverride int, deterministicExternalConflicts bool) *Tree {
 	parseStart := time.Now()
-	prevCompactNoTreeShiftLeaves := p.compactNoTreeShiftLeaves
-	prevCompactFullShiftLeaves := p.compactFullShiftLeaves
-	prevPendingFullParents := p.pendingFullParents
-	prevSkipInvisibleFullLeafCheckpoints := p.skipInvisibleFullLeafCheckpoints
-	prevTransientReduceChildren := p.transientReduceChildren
-	prevTransientReduceScratchNoAlias := p.transientReduceScratchNoAlias
-	prevTransientChildren := p.transientChildren
-	p.compactNoTreeShiftLeaves = p.noTreeBenchmarkOnly && parseShouldCompactNoTreeShiftLeaves(len(source))
-	p.compactFullShiftLeaves = parseShouldUseCompactFullShiftLeaves(p, source, reuse, oldTree, arenaClass)
-	p.pendingFullParents = parseShouldUsePendingFullParents(p, source, reuse, oldTree, arenaClass)
-	p.skipInvisibleFullLeafCheckpoints = parseShouldSkipInvisibleFullLeafCheckpoints(p, source, reuse, oldTree, arenaClass)
-	defer func() {
-		p.compactNoTreeShiftLeaves = prevCompactNoTreeShiftLeaves
-		p.compactFullShiftLeaves = prevCompactFullShiftLeaves
-		p.pendingFullParents = prevPendingFullParents
-		p.skipInvisibleFullLeafCheckpoints = prevSkipInvisibleFullLeafCheckpoints
-		p.transientReduceChildren = prevTransientReduceChildren
-		p.transientReduceScratchNoAlias = prevTransientReduceScratchNoAlias
-		p.transientChildren = prevTransientChildren
-	}()
+	parseFlags := p.applyParseModeFlags(source, reuse, oldTree, arenaClass)
+	defer p.restoreParseModeFlags(parseFlags)
 	p.clearCurrentExternalTokenCheckpoint()
 	p.resetNormalizationStats()
 	if p.logger != nil {
@@ -1396,25 +1857,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	}
 	deferParentLinks := reuse == nil && oldTree == nil
 	scratch := acquireParserScratch()
-	p.transientReduceChildren = p.shouldUseTransientReduceChildren(source, reuse, oldTree, arenaClass)
-	if p.transientReduceChildren {
-		p.transientChildren = &scratch.transientChildren
-	} else {
-		p.transientChildren = nil
-	}
-	scratch.merge.beginEquivEpoch()
-	transientReduceParents := p.shouldUseTransientReduceParents(source, reuse, oldTree, arenaClass)
-	p.transientReduceScratchNoAlias = p.transientReduceChildren && transientReduceParents && parseShouldUseTransientReduceScratchNoAlias(len(source))
-	// Python's generated grammar-test style files can spend most parse time
-	// recursively comparing near-equivalent GLR survivors. Limit the shallower
-	// merge equivalence to bounded inputs; very large generated wrappers have a
-	// different failure mode and regress with this path.
-	scratch.merge.pythonShallow = p != nil && p.language != nil && p.language.Name == "python" && len(source) <= 512*1024
-	if deferParentLinks {
-		scratch.gss.initialCap = p.fullGSSHintCapacity()
-	} else {
-		scratch.gss.initialCap = p.incrementalGSSHintCapacity()
-	}
+	transientReduceParents := p.configureParseScratch(scratch, source, reuse, oldTree, arenaClass, deferParentLinks)
 	defer releaseParserScratch(scratch, deferParentLinks)
 	p.reduceScratch = &scratch.reduce
 	if transientReduceParents {
@@ -1431,9 +1874,12 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 
 	arena := acquireNodeArena(arenaClass)
 	arena.skipChildClear = reuse == nil && oldTree == nil
+	arena.finalChildRefs = p.finalChildRefs
 	arena.audit = nil
-	if scratch.audit.enabled {
+	if scratch.audit.enabled || scratch.audit.equivEnabled {
 		scratch.merge.audit = &scratch.audit
+	}
+	if scratch.audit.enabled {
 		scratch.gss.audit = &scratch.audit
 		arena.audit = &scratch.audit
 	}
@@ -1452,50 +1898,40 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	}
 	var materializationTiming parseMaterializationTiming
 	var materializationTimingRef *parseMaterializationTiming
-	if parseShouldCaptureFullMaterializationTiming(p, source, reuse, oldTree, arenaClass) {
+	if timing != nil || parseShouldCaptureMaterializationTiming(p, source, reuse, oldTree, arenaClass) || (p != nil && p.noTreeBenchmarkOnly && (parseReduceTimingEnabled() || parseActionTimingEnabled())) {
 		materializationTimingRef = &materializationTiming
 	}
+	phaseTiming := materializationTimingRef != nil
+	var actionTiming *parseMaterializationTiming
+	if materializationTimingRef != nil && parseActionTimingEnabled() {
+		actionTiming = materializationTimingRef
+	}
+	recordActionTiming := func(state StateID, lookahead Symbol, actions []ParseAction, kind ambiguityActionTimingKind, nanos int64) {
+		if nanos <= 0 || p == nil || p.ambiguityProfile == nil {
+			return
+		}
+		p.ambiguityProfile.recordActionTiming(state, lookahead, actions, kind, nanos)
+	}
+	var parserLoopNanos int64
+	var tokenNextNanos int64
+	var actionDispatchNanos int64
+	var actionLookupNanos int64
+	var glrMergeNanos int64
+	var glrCullNanos int64
 	prevMaterializationTiming := p.materializationTiming
+	prevReduceTiming := p.reduceTiming
 	p.materializationTiming = materializationTimingRef
+	if materializationTimingRef != nil && parseReduceTimingEnabled() {
+		p.reduceTiming = materializationTimingRef
+	} else {
+		p.reduceTiming = nil
+	}
 	defer func() {
 		p.materializationTiming = prevMaterializationTiming
+		p.reduceTiming = prevReduceTiming
 	}()
-	if arenaClass == arenaClassFull {
-		defer func() {
-			if !p.noTreeBenchmarkOnly {
-				if p.pendingFullParents {
-					p.recordPendingFullArenaUsage(arena.used)
-				} else {
-					p.recordFullArenaUsage(arena.used)
-				}
-			}
-			p.recordFullGSSUsage(scratch.gss.usedTotal)
-		}()
-	} else {
-		defer func() {
-			p.recordIncrementalArenaUsage(arena.used)
-			p.recordIncrementalGSSUsage(scratch.gss.usedTotal)
-		}()
-	}
-	switch arenaClass {
-	case arenaClassFull:
-		target := parseFullArenaNodeCapacity(len(source), p.fullArenaHintCapacity())
-		if p.pendingFullParents {
-			target = parsePendingFullArenaNodeCapacity(len(source), p.pendingFullArenaHintCapacity())
-		}
-		if p.noTreeBenchmarkOnly {
-			target = parseNoTreeArenaNodeCapacity(len(source))
-		}
-		arena.ensureExactNodeCapacity(target)
-		if !p.noTreeBenchmarkOnly && languageUsesExternalScannerCheckpoints(p.language) {
-			arena.ensureExternalScannerCheckpointCapacity(parseFullExternalScannerCheckpointCapacity(len(source), target))
-		}
-		scratch.entries.ensureInitialCap(parseFullEntryScratchCapacity(len(source)))
-	case arenaClassIncremental:
-		target := parseIncrementalArenaNodeCapacity(len(source), p.incrementalArenaHintCapacity())
-		arena.ensureNodeCapacity(target)
-		scratch.entries.ensureInitialCap(parseIncrementalEntryScratchCapacity(len(source)))
-	}
+	defer p.recordParseArenaUsageOnReturn(arenaClass, arena, scratch)()
+	p.ensureParseInitialCapacity(source, arenaClass, arena, scratch)
 	memoryBudget := parseMemoryBudgetForParser(p, len(source))
 	arena.setBudget(memoryBudget)
 	scratch.setBudget(memoryBudget)
@@ -1513,6 +1949,10 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	multiStackIterations := 0
 	var singleStackTokens uint64
 	var multiStackTokens uint64
+	preMaterializationDiag := parsePreMaterializationDiagEnabled()
+	var preMaterializationFieldRejectCandidates uint64
+	var preMaterializationFieldRejectSameKeyCandidates uint64
+	var preMaterializationFieldRejectOverflowCandidates uint64
 	expectedEOFByte := uint32(len(source))
 	if len(p.included) > 0 {
 		expectedEOFByte = p.included[len(p.included)-1].EndByte
@@ -1526,64 +1966,27 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	}
 	arenaStatsCaptured := false
 	var arenaBreakdown *ArenaBreakdown
-	captureArenaStats := func() {
-		if arenaStatsCaptured || arena == nil {
-			return
-		}
-		arena.finalizeCompactFullLeafDropped()
-		arena.finalizePendingParentDropped()
-		parseRuntime.ArenaBytesAllocated = arena.allocatedBytes
-		parseRuntime.MemoryBudgetBytes = arena.budgetBytes
-		parseRuntime.ExternalScannerCheckpointRecords = arena.externalScannerCheckpointRecords
-		parseRuntime.ExternalScannerCheckpointSlotsAllocated = arena.externalScannerCheckpointSlotsAllocated()
-		parseRuntime.ExternalScannerCheckpointBytesAllocated = arena.externalScannerCheckpointBytesAllocated()
-		parseRuntime.ExternalScannerSnapshotBytesAllocated = arena.externalScannerSnapshotPayloadBytes
-		parseRuntime.ExternalScannerCheckpointLeafNodes = arena.externalScannerCheckpointLeafNodes
-		parseRuntime.CompactFullLeafCreated = arena.compactFullLeafCreated
-		parseRuntime.CompactFullLeafMaterialized = arena.compactFullLeafMaterialized
-		parseRuntime.CompactFullLeafMaterializedForParentReduce = arena.compactFullLeafMaterializedForParentReduce
-		parseRuntime.CompactFullLeafMaterializedForFinalTree = arena.compactFullLeafMaterializedForFinalTree
-		parseRuntime.CompactFullLeafDropped = arena.compactFullLeafDropped
-		parseRuntime.PendingParentCreated = arena.pendingParentCreated
-		parseRuntime.PendingParentMaterialized = arena.pendingParentMaterialized
-		parseRuntime.PendingParentMaterializedForParentReduce = arena.pendingParentMaterializedForParentReduce
-		parseRuntime.PendingParentMaterializedForFinalTree = arena.pendingParentMaterializedForFinalTree
-		parseRuntime.PendingParentDropped = arena.pendingParentDropped
-		parseRuntime.PendingParentsFlattened = arena.pendingParentsFlattened
-		parseRuntime.PendingChildRefsFlattened = arena.pendingChildRefsFlattened
-		parseRuntime.CheckpointLeafFullNodesAvoided = arena.checkpointLeafFullNodesAvoided
-		parseRuntime.LeafNodesConstructed = arena.leafNodesConstructed
-		parseRuntime.ParentNodesConstructed = arena.parentNodesConstructed
-		parseRuntime.NoTreeReduceNodesConstructed = arena.noTreeReduceNodesConstructed
-		parseRuntime.NoTreeLeafNodesConstructed = arena.noTreeLeafNodesConstructed
-		if arena.breakdownEnabled {
-			arenaBreakdown = arena.collectArenaBreakdown()
-		}
-		arenaStatsCaptured = true
-	}
 	scratchStatsCaptured := false
-	captureScratchStats := func() {
-		if scratchStatsCaptured || scratch == nil {
+	captureArenaStats := func() {
+		if arenaStatsCaptured {
 			return
 		}
-		parseRuntime.ScratchBytesAllocated = scratch.allocatedBytes()
-		parseRuntime.EntryScratchBytesAllocated = scratch.entries.allocatedBytes
-		parseRuntime.GSSBytesAllocated = scratch.gss.allocatedBytes
-		parseRuntime.TransientChildSlicesAllocated = scratch.transientChildren.slicesAllocated
-		parseRuntime.TransientChildPointersAllocated = scratch.transientChildren.pointersAllocated
-		parseRuntime.TransientChildSlicesMaterialized = scratch.transientChildren.slicesMaterialized
-		parseRuntime.TransientChildPointersMaterialized = scratch.transientChildren.pointersMaterialized
-		parseRuntime.TransientParentNodesAllocated = scratch.transientParents.nodesAllocated
-		parseRuntime.TransientParentNodesMaterialized = scratch.transientParents.nodesMaterialized
-		if arena != nil && arena.breakdownEnabled {
-			if arenaBreakdown == nil {
-				arenaBreakdown = &ArenaBreakdown{}
-			}
-			arenaBreakdown.MergeScratchBytesAllocated = scratch.merge.allocatedBytes()
+		if captureParseArenaStats(&parseRuntime, arena, &arenaBreakdown, preMaterializationFieldRejectCandidates, preMaterializationFieldRejectSameKeyCandidates, preMaterializationFieldRejectOverflowCandidates) {
+			arenaStatsCaptured = true
 		}
-		scratchStatsCaptured = true
+	}
+	captureScratchStats := func() {
+		if scratchStatsCaptured {
+			return
+		}
+		if captureParseScratchStats(&parseRuntime, scratch, arena, &arenaBreakdown) {
+			scratchStatsCaptured = true
+		}
 	}
 	finalizeTree := func(tree *Tree, stopReason ParseStopReason) *Tree {
+		if phaseTiming && parserLoopNanos == 0 {
+			parserLoopNanos = time.Since(parseStart).Nanoseconds()
+		}
 		if p.transientReduceChildren && tree != nil {
 			materializeStart := time.Time{}
 			if materializationTimingRef != nil {
@@ -1597,85 +2000,12 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		scratch.audit.finishParse(stacks)
 		captureArenaStats()
 		captureScratchStats()
-		if tokenSourceEOFEarly && (stopReason == ParseStopAccepted || stopReason == ParseStopNone) {
-			stopReason = ParseStopTokenSourceEOF
-		}
-		parseRuntime.StopReason = stopReason
-		parseRuntime.Iterations = iterationsUsed
-		parseRuntime.NodesAllocated = nodeCount
-		parseRuntime.PeakStackDepth = peakStackDepth
-		parseRuntime.MaxStacksSeen = maxStacksSeen
-		parseRuntime.SingleStackIterations = singleStackIterations
-		parseRuntime.MultiStackIterations = multiStackIterations
-		parseRuntime.SingleStackTokens = singleStackTokens
-		parseRuntime.MultiStackTokens = multiStackTokens
-		parseRuntime.SingleStackGSSNodes = scratch.gss.singleStackAllocs
-		parseRuntime.MultiStackGSSNodes = scratch.gss.multiStackAllocs
-		parseRuntime.GSSNodesAllocated = scratch.audit.totalGSSAllocated
-		parseRuntime.GSSNodesRetained = scratch.audit.totalGSSRetained
-		parseRuntime.GSSNodesDroppedSameToken = scratch.audit.totalGSSDropped
-		parseRuntime.ParentNodesAllocated = scratch.audit.totalParentAllocated
-		parseRuntime.ParentNodesRetained = scratch.audit.totalParentRetained
-		parseRuntime.ParentNodesDroppedSameToken = scratch.audit.totalParentDropped
-		parseRuntime.LeafNodesAllocated = scratch.audit.totalLeafAllocated
-		parseRuntime.LeafNodesRetained = scratch.audit.totalLeafRetained
-		parseRuntime.LeafNodesDroppedSameToken = scratch.audit.totalLeafDropped
-		parseRuntime.ChildSlicesAllocated = scratch.audit.totalChildSlicesAllocated
-		parseRuntime.ChildSlicesRetained = scratch.audit.totalChildSlicesRetained
-		parseRuntime.ChildSlicesDroppedSameToken = scratch.audit.totalChildSlicesDropped
-		parseRuntime.ChildPointersAllocated = scratch.audit.totalChildPointersAllocated
-		parseRuntime.ChildPointersRetained = scratch.audit.totalChildPointersRetained
-		parseRuntime.ChildPointersDroppedSameToken = scratch.audit.totalChildPointersDropped
-		parseRuntime.ReduceChildFastGSS = scratch.audit.reduceChildPathRuntime(reduceChildPathFastGSS)
-		parseRuntime.ReduceChildAllVisible = scratch.audit.reduceChildPathRuntime(reduceChildPathAllVisible)
-		parseRuntime.ReduceChildNoAlias = scratch.audit.reduceChildPathRuntime(reduceChildPathNoAlias)
-		parseRuntime.ReduceChildScratchGeneral = scratch.audit.reduceChildPathRuntime(reduceChildPathScratchGeneral)
-		parseRuntime.ReduceChildScratchNoAlias = scratch.audit.reduceChildPathRuntime(reduceChildPathScratchNoAlias)
-		parseRuntime.MergeStacksIn = scratch.audit.mergeStacksIn
-		parseRuntime.MergeStacksOut = scratch.audit.mergeStacksOut
-		parseRuntime.MergeSlotsUsed = scratch.audit.mergeSlotsUsed
-		parseRuntime.GlobalCullStacksIn = scratch.audit.globalCullStacksIn
-		parseRuntime.GlobalCullStacksOut = scratch.audit.globalCullStacksOut
-		if materializationTimingRef != nil {
-			parseRuntime.ResultSelectionNanos = materializationTiming.resultSelectionNanos
-			parseRuntime.TransientParentMaterializationNanos = materializationTiming.transientParentMaterializeNanos
-			parseRuntime.ResultTreeBuildNanos = materializationTiming.resultTreeBuildNanos
-			parseRuntime.TransientChildMaterializationNanos = materializationTiming.transientChildMaterializationNanos
-			parseRuntime.ResultPythonKeywordRepairNanos = materializationTiming.pythonKeywordRepairNanos
-			parseRuntime.ResultPythonRootRepairNanos = materializationTiming.pythonRootRepairNanos
-			parseRuntime.ResultFinalizeRootNanos = materializationTiming.resultFinalizeRootNanos
-			parseRuntime.ResultExtendTrailingNanos = materializationTiming.resultExtendTrailingNanos
-			parseRuntime.ResultNormalizeRootStartNanos = materializationTiming.resultNormalizeRootStartNanos
-			parseRuntime.ResultCompatibilityNanos = materializationTiming.resultCompatibilityNanos
-			parseRuntime.ResultParentLinkNanos = materializationTiming.resultParentLinkNanos
-		}
-		parseRuntime.TokensConsumed = perfTokensConsumed
-		parseRuntime.LastTokenEndByte = lastTokenEndByte
-		parseRuntime.LastTokenSymbol = lastTokenSymbol
-		parseRuntime.LastTokenWasEOF = lastTokenWasEOF
-		parseRuntime.TokenSourceEOFEarly = tokenSourceEOFEarly
-		parseRuntime.RootEndByte = 0
-		parseRuntime.Truncated = false
-		if tree != nil && tree.RootNode() != nil {
-			root := tree.RootNode()
-			parseRuntime.RootEndByte = root.EndByte()
-			parseRuntime.Truncated = parseRuntime.RootEndByte < expectedEOFByte
-			if scratch.audit.enabled || (arena != nil && arena.breakdownEnabled) {
-				finalStats := collectFinalTreeMaterializationStats(root, p.language)
-				parseRuntime.FinalNodes = finalStats.nodes
-				parseRuntime.FinalParentNodes = finalStats.parentNodes
-				parseRuntime.FinalLeafNodes = finalStats.leafNodes
-				parseRuntime.FinalFieldedParentNodes = finalStats.fieldedParentNodes
-				parseRuntime.FinalUnfieldedParentNodes = finalStats.unfieldedParentNodes
-				parseRuntime.FinalVisibleParentNodes = finalStats.visibleParentNodes
-				parseRuntime.FinalHiddenParentNodes = finalStats.hiddenParentNodes
-				parseRuntime.FinalCheckpointLeafNodes = finalStats.checkpointLeafNodes
-				parseRuntime.FinalChildSlices = finalStats.childSlices
-				parseRuntime.FinalChildPointers = finalStats.childPointers
-				parseRuntime.FinalFieldIDElements = finalStats.fieldIDElements
-				parseRuntime.FinalFieldSourceElements = finalStats.fieldSourceElements
-			}
-		}
+		parseRuntime.StopReason = parseStopReasonWithTokenSourceEOF(stopReason, tokenSourceEOFEarly)
+		recordParseRuntimeLoopStats(&parseRuntime, scratch, iterationsUsed, nodeCount, peakStackDepth, maxStacksSeen, singleStackIterations, multiStackIterations, singleStackTokens, multiStackTokens)
+		recordParseRuntimePhaseTiming(&parseRuntime, materializationTimingRef, parseStart, parserLoopNanos, tokenNextNanos, actionDispatchNanos, actionLookupNanos, glrMergeNanos, glrCullNanos)
+		recordParseRuntimeMaterializationTiming(&parseRuntime, materializationTimingRef, materializationTiming)
+		recordParseRuntimeTokenStats(&parseRuntime, perfTokensConsumed, lastTokenEndByte, lastTokenSymbol, lastTokenWasEOF, tokenSourceEOFEarly)
+		recordParseRuntimeRootStats(&parseRuntime, tree, expectedEOFByte, scratch.audit.enabled || (arena != nil && arena.breakdownEnabled), p.language)
 		p.copyNormalizationStats(&parseRuntime)
 		if tree != nil {
 			tree.setParseRuntime(parseRuntime)
@@ -1683,36 +2013,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				tree.setArenaBreakdown(arenaBreakdown)
 			}
 		}
-		if timing != nil {
-			timing.stopReason = parseRuntime.StopReason
-			timing.tokensConsumed = parseRuntime.TokensConsumed
-			timing.lastTokenEndByte = parseRuntime.LastTokenEndByte
-			timing.expectedEOFByte = parseRuntime.ExpectedEOFByte
-			timing.arenaBytesAllocated = parseRuntime.ArenaBytesAllocated
-			timing.scratchBytesAllocated = parseRuntime.ScratchBytesAllocated
-			timing.entryScratchBytesAllocated = uint64(parseRuntime.EntryScratchBytesAllocated)
-			timing.gssBytesAllocated = uint64(parseRuntime.GSSBytesAllocated)
-			timing.singleStackIterations = parseRuntime.SingleStackIterations
-			timing.multiStackIterations = parseRuntime.MultiStackIterations
-			timing.singleStackTokens = parseRuntime.SingleStackTokens
-			timing.multiStackTokens = parseRuntime.MultiStackTokens
-			timing.singleStackGSSNodes = parseRuntime.SingleStackGSSNodes
-			timing.multiStackGSSNodes = parseRuntime.MultiStackGSSNodes
-			timing.gssNodesAllocated = parseRuntime.GSSNodesAllocated
-			timing.gssNodesRetained = parseRuntime.GSSNodesRetained
-			timing.gssNodesDroppedSameToken = parseRuntime.GSSNodesDroppedSameToken
-			timing.parentNodesAllocated = parseRuntime.ParentNodesAllocated
-			timing.parentNodesRetained = parseRuntime.ParentNodesRetained
-			timing.parentNodesDroppedSameToken = parseRuntime.ParentNodesDroppedSameToken
-			timing.leafNodesAllocated = parseRuntime.LeafNodesAllocated
-			timing.leafNodesRetained = parseRuntime.LeafNodesRetained
-			timing.leafNodesDroppedSameToken = parseRuntime.LeafNodesDroppedSameToken
-			timing.mergeStacksIn = parseRuntime.MergeStacksIn
-			timing.mergeStacksOut = parseRuntime.MergeStacksOut
-			timing.mergeSlotsUsed = parseRuntime.MergeSlotsUsed
-			timing.globalCullStacksIn = parseRuntime.GlobalCullStacksIn
-			timing.globalCullStacksOut = parseRuntime.GlobalCullStacksOut
-		}
+		copyParseRuntimeToTiming(timing, parseRuntime)
 		if p.logger != nil {
 			p.logf(
 				ParserLogParse,
@@ -1725,7 +2026,10 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		}
 		return tree
 	}
-	finalize := func(stacks []glrStack, stopReason ParseStopReason) *Tree {
+	finalize := func(treeStacks []glrStack, stopReason ParseStopReason) *Tree {
+		if phaseTiming && parserLoopNanos == 0 {
+			parserLoopNanos = time.Since(parseStart).Nanoseconds()
+		}
 		if p.noTreeBenchmarkOnly {
 			rootEndByte := expectedEOFByte
 			if stopReason != ParseStopAccepted && stopReason != ParseStopNone {
@@ -1734,21 +2038,35 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			tree := p.buildNoTreeBenchmarkResult(source, arena, rootEndByte)
 			return finalizeTree(tree, stopReason)
 		}
-		// trackChildErrors flips true whenever parsing creates a missing/error
-		// node. If it stayed false, every final stack has error rank zero, so
-		// the expensive tree walk in stackResultErrorRank cannot affect choice.
-		if len(stacks) == 0 {
+		if len(treeStacks) == 0 {
 			captureArenaStats()
 		}
-		tree := p.buildResultFromGLR(stacks, source, arena, oldTree, &reuseState, &scratch.nodeLinks, scratch.reduce.transientParents, scratch.reduce.transientChildren, !trackChildErrors, materializationTimingRef)
+		tree := p.buildResultFromGLR(
+			treeStacks,
+			source,
+			arena,
+			oldTree,
+			&reuseState,
+			&scratch.nodeLinks,
+			scratch.reduce.transientParents,
+			scratch.reduce.transientChildren,
+			!trackChildErrors,
+			materializationTimingRef,
+		)
 		return finalizeTree(tree, stopReason)
 	}
 	finalizeErrorTree := func(stopReason ParseStopReason) *Tree {
+		if phaseTiming && parserLoopNanos == 0 {
+			parserLoopNanos = time.Since(parseStart).Nanoseconds()
+		}
 		captureArenaStats()
 		arena.Release()
 		return finalizeTree(parseErrorTree(source, p.language), stopReason)
 	}
 	finalizeRecoveredNodes := func(nodes []*Node) *Tree {
+		if phaseTiming && parserLoopNanos == 0 {
+			parserLoopNanos = time.Since(parseStart).Nanoseconds()
+		}
 		materializeTransientParentNodes(nodes, arena, scratch.reduce.transientParents, scratch.reduce.transientChildren)
 		tree := p.buildResultFromNodes(nodes, source, arena, oldTree, &reuseState, &scratch.nodeLinks)
 		if root := tree.RootNode(); root != nil {
@@ -1764,69 +2082,22 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		if p.noTreeBenchmarkOnly {
 			return nil, false
 		}
-		if nodes, ok := p.tryRecoverTrailingEOFSuffix(s, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, source); ok {
-			return finalizeRecoveredNodes(nodes), true
+		nodes, ok := p.tryRecoverTrailingEOFSuffix(s, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, source)
+		if !ok {
+			return nil, false
 		}
-		return nil, false
+		return finalizeRecoveredNodes(nodes), true
 	}
 
-	var stacksBuf [4]glrStack
-	stacks = stacksBuf[:1]
-	initialStackCap := 64 * 1024
-	if reuse != nil {
-		// Incremental reparses often borrow scratch slabs from an earlier full
-		// parse. Preallocating that full retained capacity forces large memclr
-		// work on every edit; keep incremental stack preallocation modest.
-		initialStackCap = defaultStackEntrySlabCap
-	}
-	stacks[0] = newGLRStackWithScratchCap(p.language.InitialState, &scratch.entries, initialStackCap)
-	stacks[0].recoverabilityKnown = true
-	stacks[0].mayRecover = p.stateCanRecover(p.language.InitialState)
-	maxStacksSeen = len(stacks)
-	if timing != nil && timing.maxStacksSeen < len(stacks) {
-		timing.maxStacksSeen = len(stacks)
-	}
-	maxStacks, retryPass := resolveParseMaxStacks(parseMaxGLRStacksValue(), maxStacksOverride, p.maxConflictWidth)
-	mergePerKeyCap := effectiveParseMergePerKeyCap(p.language, parseMaxMergePerKeyValue(), reuse != nil)
-	if maxMergePerKeyOverride > mergePerKeyCap {
-		mergePerKeyCap = maxMergePerKeyOverride
-	}
-	if mergePerKeyCap > maxStacksPerMergeKeyCeiling {
-		mergePerKeyCap = maxStacksPerMergeKeyCeiling
-	}
-	if reuse == nil && p.language != nil && p.language.Name == "bash" {
-		if maxStacks < 256 {
-			maxStacks = 256
-		}
-		if mergePerKeyCap < 256 {
-			mergePerKeyCap = 256
-		}
-	}
-	if reuse == nil && p.language != nil && p.language.Name == "c_sharp" {
-		// C# member-access vs qualified-name ambiguity needs a slightly
-		// wider per-key survivor budget on full parses to match the C runtime.
-		if mergePerKeyCap < 16 {
-			mergePerKeyCap = 16
-		}
-	}
-	if reuse != nil {
-		// Incremental reparses benefit from tighter GLR retention because
-		// edits are localized and we prioritize latency over broad ambiguity fanout.
-		maxStacks, mergePerKeyCap = tuneIncrementalGLRCaps(maxStacks, mergePerKeyCap)
-	}
-	scratch.merge.perKeyCap = mergePerKeyCap
-	langName := ""
-	if p.language != nil {
-		langName = p.language.Name
-	}
-	maxStackCullTrigger := glrStackCullTrigger(maxStacks, arenaClass, langName)
-
-	maxIter := parseIterations(len(source))
-	maxDepth := parseStackDepth(len(source))
-	maxNodes := parseNodeLimitForLanguage(len(source), p.language)
-	if maxNodesOverride > maxNodes {
-		maxNodes = maxNodesOverride
-	}
+	stacks, maxStacksSeen = p.newInitialParseStacks(scratch, reuse, timing)
+	caps := p.configureParseCaps(source, reuse, arenaClass, scratch, maxStacksOverride, maxNodesOverride, maxMergePerKeyOverride)
+	maxStacks := caps.maxStacks
+	retryPass := caps.retryPass
+	mergePerKeyCap := caps.mergePerKeyCap
+	maxStackCullTrigger := caps.maxStackCullTrigger
+	maxIter := caps.maxIter
+	maxDepth := caps.maxDepth
+	maxNodes := caps.maxNodes
 	parseRuntime.IterationLimit = maxIter
 	parseRuntime.StackDepthLimit = maxDepth
 	parseRuntime.NodeLimit = maxNodes
@@ -1836,48 +2107,12 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	var tok Token
 	var nextBranchOrder uint64 = 1
 
-	// Per-primary-stack infinite-reduce detection.
 	var lastReduceState StateID
 	lastReduceDepth := -1
 	var consecutiveReduces int
-	var lastMissingShiftState StateID
-	lastMissingShiftDepth := -1
-	var lastMissingShiftSymbol Symbol
-	var lastMissingShiftStartByte uint32
-	var lastMissingShiftEndByte uint32
-	var consecutiveMissingShifts int
+	missingShift := parseMissingShiftTracker{lastDepth: -1}
 	tryMissingSingleShift := func(stackIndex int, s *glrStack, currentState StateID) bool {
-		missingShiftDepth := s.depth()
-		if lastMissingShiftState == currentState &&
-			lastMissingShiftDepth == missingShiftDepth &&
-			lastMissingShiftSymbol == tok.Symbol &&
-			lastMissingShiftStartByte == tok.StartByte &&
-			lastMissingShiftEndByte == tok.EndByte &&
-			consecutiveMissingShifts >= maxConsecutiveMissingSingleShifts {
-			if p.glrTrace {
-				fmt.Printf("  stack[%d] SKIP missing-shift cycle state=%d sym=%d byte=%d..%d count=%d\n",
-					stackIndex, currentState, tok.Symbol, tok.StartByte, tok.EndByte, consecutiveMissingShifts)
-			}
-			return false
-		}
-		if !p.tryInsertMissingSingleShift(s, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors) {
-			return false
-		}
-		if lastMissingShiftState == currentState &&
-			lastMissingShiftDepth == missingShiftDepth &&
-			lastMissingShiftSymbol == tok.Symbol &&
-			lastMissingShiftStartByte == tok.StartByte &&
-			lastMissingShiftEndByte == tok.EndByte {
-			consecutiveMissingShifts++
-		} else {
-			lastMissingShiftState = currentState
-			lastMissingShiftDepth = missingShiftDepth
-			lastMissingShiftSymbol = tok.Symbol
-			lastMissingShiftStartByte = tok.StartByte
-			lastMissingShiftEndByte = tok.EndByte
-			consecutiveMissingShifts = 1
-		}
-		return true
+		return missingShift.tryInsert(p, stackIndex, s, currentState, tok, &nodeCount, arena, scratch, &trackChildErrors)
 	}
 
 	for iter := 0; iter < maxIter; iter++ {
@@ -1901,79 +2136,26 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		if len(stacks) > maxStacksSeen {
 			maxStacksSeen = len(stacks)
 		}
-		// Fast-path the overwhelmingly common non-GLR case with one live stack.
 		if len(stacks) == 1 {
 			if stacks[0].dead {
 				return finalize(stacks, ParseStopNoStacksAlive)
 			}
+			scratch.gss.singleStackMode = true
+			clearParseStackEntryCaches(stacks)
 		} else {
-			if arena.budgetExhausted() {
-				return finalize(stacks, ParseStopMemoryBudget)
-			}
-			if scratch.budgetExhausted() {
-				return finalize(stacks, ParseStopMemoryBudget)
-			}
-			allDead := true
-			for i := range stacks {
-				if !stacks[i].dead {
-					allDead = false
-					break
+			prep := p.prepareParseStacksForIteration(stacks, scratch, arena, arenaClass, maxStacks, maxStackCullTrigger, phaseTiming, &glrMergeNanos, &glrCullNanos)
+			stacks = prep.stacks
+			if prep.stopped {
+				if prep.errorTree {
+					return finalizeErrorTree(prep.stopReason)
 				}
-			}
-			if allDead {
-				return finalize(stacks, ParseStopNoStacksAlive)
-			}
-			// Prune dead stacks and collapse only truly duplicate stack versions.
-			scratch.merge.language = p.language
-			stacks = mergeStacksWithScratch(stacks, &scratch.merge)
-			if len(stacks) == 0 {
-				return finalizeErrorTree(ParseStopNoStacksAlive)
+				return finalize(stacks, prep.stopReason)
 			}
 		}
-		// Cap the number of parallel stacks to prevent combinatorial explosion.
-		// Keep the most promising stacks instead of truncating by insertion
-		// order, which can discard viable parses on highly-ambiguous inputs.
-		if len(stacks) > maxStackCullTrigger {
-			if p.glrTrace {
-				fmt.Printf("[GLR] CAP CULL: %d stacks → keep %d (trigger=%d)\n", len(stacks), maxStacks, maxStackCullTrigger)
-				for ci := range stacks {
-					fmt.Printf("  pre-cull[%d]: st=%d dead=%v shift=%v dep=%d score=%d byte=%d\n",
-						ci, stacks[ci].top().state, stacks[ci].dead, stacks[ci].shifted, stacks[ci].depth(), stacks[ci].score, stacks[ci].byteOffset)
-				}
-			}
-			if perfCountersEnabled {
-				perfRecordGlobalCapCull(len(stacks), maxStacks)
-			}
-			cullIn := len(stacks)
-			cullLang := stackCullLanguageForArena(p.language, arenaClass)
-			stacks = retainTopStacksForLanguageWithScratch(stacks, maxStacks, cullLang, &scratch.stackPick, &scratch.stackKeep, &scratch.stackCull, &scratch.stateKeep)
-			scratch.audit.recordGlobalCull(cullIn, len(stacks))
-			if p.glrTrace {
-				fmt.Printf("[GLR] after cull:\n")
-				for ci := range stacks {
-					fmt.Printf("  kept[%d]: st=%d dead=%v shift=%v dep=%d score=%d byte=%d\n",
-						ci, stacks[ci].top().state, stacks[ci].dead, stacks[ci].shifted, stacks[ci].depth(), stacks[ci].score, stacks[ci].byteOffset)
-				}
-			}
-		}
-
-		// Keep the most promising stack in slot 0 because several parser
-		// heuristics (lex-mode selection, reduce-loop detection, depth cap)
-		// currently key off the primary stack.
-		if len(stacks) > 1 {
-			p.promotePrimaryStack(stacks)
-		}
-		scratch.gss.singleStackMode = len(stacks) == 1
 		if scratch.gss.singleStackMode {
 			singleStackIterations++
 		} else {
 			multiStackIterations++
-		}
-		for i := range stacks {
-			stacks[i].cacheEntries = false
-			if stacks[i].gss.head != nil {
-				stacks[i].entries = nil
-			}
 		}
 
 		// Safety: if the primary stack has grown beyond the depth cap,
@@ -1995,43 +2177,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			return finalize(stacks, ParseStopMemoryBudget)
 		}
 
-		// Use the primary (first) stack's state for DFA lex mode selection.
-		// Pass all active GLR stack states so external scanner valid symbols
-		// are computed as the union across all stacks.
-		if stateful, ok := ts.(parserStateTokenSource); ok {
-			stateful.SetParserState(stacks[0].top().state)
-			if len(stacks) > 1 {
-				if p.language != nil && (p.language.Name == "yaml" || p.language.Name == "c_sharp") && p.language.ExternalScanner != nil {
-					// External scanners are stateful. Until scanner state is
-					// tracked per GLR stack, drive tokenization from the primary
-					// stack state only to avoid over-admitting tokens from state unions.
-					// C#'s optional semicolon scanner is especially sensitive here:
-					// unioning GLR external states can make zero-width semicolons
-					// valid across too many recovery branches.
-					if len(scratch.glrStates) > 0 {
-						scratch.glrStates = scratch.glrStates[:0]
-					}
-					stateful.SetGLRStates(nil)
-				} else {
-					glrBuf := scratch.glrStates[:0]
-					if cap(glrBuf) < len(stacks) {
-						glrBuf = make([]StateID, 0, len(stacks))
-					}
-					for si := range stacks {
-						if !stacks[si].dead {
-							glrBuf = append(glrBuf, stacks[si].top().state)
-						}
-					}
-					scratch.glrStates = glrBuf
-					stateful.SetGLRStates(glrBuf)
-				}
-			} else {
-				if len(scratch.glrStates) > 0 {
-					scratch.glrStates = scratch.glrStates[:0]
-				}
-				stateful.SetGLRStates(nil)
-			}
-		}
+		p.updateParserStateTokenSource(ts, stacks, scratch)
 
 		// --- Token acquisition and incremental reuse ---
 		if needToken {
@@ -2041,7 +2187,13 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			} else {
 				multiStackTokens++
 			}
-			tok = ts.Next()
+			if phaseTiming {
+				tokenStart := time.Now()
+				tok = ts.Next()
+				tokenNextNanos += time.Since(tokenStart).Nanoseconds()
+			} else {
+				tok = ts.Next()
+			}
 			p.updateCurrentExternalTokenCheckpoint(ts, tok)
 			if p.logger != nil {
 				p.logf(ParserLogLex, "token sym=%d start=%d end=%d", tok.Symbol, tok.StartByte, tok.EndByte)
@@ -2053,60 +2205,30 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			if lastTokenWasEOF && tok.EndByte < expectedEOFByte {
 				tokenSourceEOFEarly = true
 			}
-			// Clear per-stack shifted flags so all stacks process the
-			// new token.
 			for si := range stacks {
 				stacks[si].shifted = false
 			}
-			lastMissingShiftDepth = -1
-			consecutiveMissingShifts = 0
+			missingShift.resetForToken()
 		}
 
-		// Incremental parsing fast-path: when there is a single active stack,
-		// try to reuse an unchanged subtree starting at the current token.
 		if reuse != nil && len(stacks) == 1 && !stacks[0].dead && tok.Symbol != 0 {
-			if timing != nil {
-				reuseStart := time.Now()
-				nextTok, reusedBytes, ok := p.tryReuseSubtree(&stacks[0], tok, ts, reuse, &scratch.entries, &scratch.gss)
-				timing.reuseNanos += time.Since(reuseStart).Nanoseconds()
-				if ok {
-					timing.reusedSubtrees++
-					timing.reusedBytes += uint64(reusedBytes)
-					reuseState.markReused(stackEntryNode(stacks[0].top()), arena)
-					tok = nextTok
-					needToken = false
-					consecutiveReduces = 0
-					continue
-				}
-			} else {
-				if nextTok, _, ok := p.tryReuseSubtree(&stacks[0], tok, ts, reuse, &scratch.entries, &scratch.gss); ok {
-					reuseState.markReused(stackEntryNode(stacks[0].top()), arena)
-					tok = nextTok
-					needToken = false
-					consecutiveReduces = 0
-					continue
-				}
+			if nextTok, ok := p.tryReuseCurrentParseSubtree(&stacks[0], tok, ts, reuse, scratch, arena, &reuseState, timing); ok {
+				tok = nextTok
+				needToken = false
+				consecutiveReduces = 0
+				continue
 			}
 		}
 
-		// --- Action application for all alive stacks ---
-		// Process all alive stacks for this token.
-		// We iterate by index because forks may append to `stacks`.
 		numStacks := len(stacks)
 		anyReduced := false
 		forceAdvanceAfterReduce := false
-
+		dispatchStart := time.Time{}
+		if phaseTiming {
+			dispatchStart = time.Now()
+		}
 		if p.glrTrace {
-			symName := "?"
-			if int(tok.Symbol) < len(p.language.SymbolNames) {
-				symName = p.language.SymbolNames[tok.Symbol]
-			}
-			fmt.Printf("[GLR] iter=%d tok=%s(%d)[%d-%d] stacks=%d needTok=%v\n",
-				iter, symName, tok.Symbol, tok.StartByte, tok.EndByte, len(stacks), needToken)
-			for si := range stacks {
-				fmt.Printf("  s[%d]: st=%d dead=%v shift=%v dep=%d byte=%d\n",
-					si, stacks[si].top().state, stacks[si].dead, stacks[si].shifted, stacks[si].depth(), stacks[si].byteOffset)
-			}
+			p.traceParseIteration(iter, tok, stacks, needToken)
 		}
 		parseActions := p.language.ParseActions
 		for si := 0; si < numStacks; si++ {
@@ -2114,227 +2236,230 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			if s.dead || s.shifted {
 				continue
 			}
-
 			currentState := s.top().state
 		retryAction:
+			actionStart := time.Time{}
+			if phaseTiming {
+				actionStart = time.Now()
+			}
 			actionIdx := p.lookupActionIndex(currentState, tok.Symbol)
 			var actions []ParseAction
 			if actionIdx != 0 && int(actionIdx) < len(parseActions) {
 				actions = parseActions[actionIdx].Actions
 			}
-			if p.glrTrace {
-				fmt.Printf("  stack[%d] state=%d actionIdx=%d actions=%d\n", si, currentState, actionIdx, len(actions))
-				for ai, a := range actions {
-					fmt.Printf("    action[%d]: type=%d state=%d sym=%d cnt=%d prec=%d\n",
-						ai, a.Type, a.State, a.Symbol, a.ChildCount, a.DynamicPrecedence)
-				}
+			if phaseTiming {
+				actionLookupNanos += time.Since(actionStart).Nanoseconds()
 			}
+			p.traceStackActions(si, currentState, tok.Symbol, actions)
 			if p.ambiguityProfile != nil {
 				p.ambiguityProfile.record(currentState, tok.Symbol, actions, numStacks)
 			}
-			// --- Extra token handling (comments, whitespace) ---
-			if len(actions) > 0 &&
-				actions[0].Type == ParseActionShift && actions[0].Extra {
-				named := p.isNamedSymbol(tok.Symbol)
-				targetState := extraShiftTargetState(currentState, actions[0])
-				if p.useCompactNoTreeShiftLeaf() && !p.shiftTokenIsMissingError(tok) {
-					if cp, ok := p.currentExternalNoTreeLeafCheckpointRef(arena, tok); ok {
-						leaf := newCompactCheckpointLeafInArena(arena, tok.Symbol, named, tok.StartByte, tok.EndByte, cp)
-						leaf.setExtra(true)
-						leaf.preGotoState = currentState
-						leaf.parseState = targetState
-						p.pushStackCompactCheckpointLeaf(s, targetState, leaf, &scratch.entries, &scratch.gss)
-					} else {
-						leaf := newNoTreeLeafNodeInArena(arena, tok.Symbol, named,
-							tok.StartByte, tok.EndByte, tok.StartPoint, tok.EndPoint)
-						leaf.setExtra(true)
-						leaf.preGotoState = currentState
-						leaf.parseState = targetState
-						p.pushStackNoTreeNode(s, targetState, leaf, &scratch.entries, &scratch.gss)
-					}
-				} else {
-					leaf := newLeafNodeInArena(arena, tok.Symbol, named,
-						tok.StartByte, tok.EndByte, tok.StartPoint, tok.EndPoint)
-					if tok.Missing {
-						leaf.setMissing(true)
-						leaf.setHasError(true)
-					}
-					leaf.setExtra(true)
-					leaf.preGotoState = currentState
-					leaf.parseState = targetState
-					p.recordCurrentExternalLeafCheckpoint(leaf, tok)
-					p.pushStackNode(s, targetState, leaf, &scratch.entries, &scratch.gss)
+			if len(actions) > 0 && actions[0].Type == ParseActionShift && actions[0].Extra {
+				actionKindStart := time.Time{}
+				if actionTiming != nil {
+					actionKindStart = time.Now()
 				}
+				p.applyExtraShiftAction(s, currentState, actions[0], tok, arena, scratch)
 				nodeCount++
 				needToken = true
+				if actionTiming != nil {
+					ns := time.Since(actionKindStart).Nanoseconds()
+					actionTiming.actionExtraShiftNanos += ns
+					recordActionTiming(currentState, tok.Symbol, actions, ambiguityActionExtraShift, ns)
+				}
 				continue
 			}
-
-			// --- No action: error handling ---
 			if len(actions) == 0 {
-				sameState := len(stacks) == 1
-				if !sameState {
-					sameState = true
-					for sj := range stacks {
-						if stacks[sj].dead {
-							continue
-						}
-						if stacks[sj].top().state != currentState {
-							sameState = false
-							break
-						}
-					}
+				noActionStart := time.Time{}
+				if actionTiming != nil {
+					noActionStart = time.Now()
 				}
+				recordNoActionTiming := func() int64 {
+					if actionTiming == nil {
+						return 0
+					}
+					ns := time.Since(noActionStart).Nanoseconds()
+					actionTiming.actionNoActionNanos += ns
+					recordActionTiming(currentState, tok.Symbol, actions, ambiguityActionNoAction, ns)
+					return ns
+				}
+				sameState := parseStacksShareState(stacks, currentState)
 				if tok.Symbol == 0 {
-					// A stale DFA lookahead can surface as a zero-width EOF token
-					// after a reduce chain changes the current state. Re-lex once
-					// before accepting EOF so multiline constructs can continue.
 					if sameState {
 						if reTok, ok := p.tryRelexCurrentStateDFA(tok, currentState, ts); ok {
 							tok = reTok
 							needToken = false
+							if actionTiming != nil {
+								ns := recordNoActionTiming()
+								actionTiming.actionNoActionRelexNanos += ns
+							}
 							goto retryAction
 						}
 					}
-					if tok.StartByte == tok.EndByte {
-						// True EOF. If this is the only stack, return result when
-						// the stack is in a state that can represent a complete root.
-						if len(stacks) == 1 {
-							if p.canFinalizeNoActionEOF(s) {
-								return finalize(stacks, ParseStopAccepted)
-							}
-							if tree, ok := tryFinalizeTrailingEOFSuffix(s, tok); ok {
-								return tree
-							}
-							s.dead = true
-							continue
+					if tok.StartByte != tok.EndByte {
+						needToken = true
+						if actionTiming != nil {
+							recordNoActionTiming()
 						}
-						// Multiple stacks at EOF: this one is done.
-						// Mark dead so merge picks the best remaining.
-						s.dead = true
 						continue
 					}
-					// Zero-symbol width token: skip.
-					needToken = true
+					if len(stacks) == 1 {
+						if p.canFinalizeNoActionEOF(s) {
+							if actionTiming != nil {
+								recordNoActionTiming()
+							}
+							if phaseTiming {
+								actionDispatchNanos += time.Since(dispatchStart).Nanoseconds()
+							}
+							return finalize(stacks, ParseStopAccepted)
+						}
+						if tree, ok := tryFinalizeTrailingEOFSuffix(s, tok); ok {
+							if actionTiming != nil {
+								recordNoActionTiming()
+							}
+							if phaseTiming {
+								actionDispatchNanos += time.Since(dispatchStart).Nanoseconds()
+							}
+							return tree
+						}
+					}
+					s.dead = true
+					if actionTiming != nil {
+						ns := recordNoActionTiming()
+						actionTiming.actionNoActionErrorNanos += ns
+					}
 					continue
 				}
 				if tok.StartByte == tok.EndByte {
-					// Layout and recovery helpers can emit zero-width internal
-					// tokens (for example indentation markers). If the current
-					// state cannot act on one, skipping it matches tree-sitter
-					// better than materializing a zero-width error node that can
-					// later corrupt reduce-child counting.
 					needToken = true
+					if actionTiming != nil {
+						recordNoActionTiming()
+					}
 					continue
 				}
-				// A token can be lexed under a pre-reduce DFA mode and become
-				// invalid after all live stacks converge on the same reduced state.
-				// Re-lex once under that current state before broader recovery.
 				if sameState {
 					if reTok, ok := p.tryRelexCurrentStateDFA(tok, currentState, ts); ok {
 						tok = reTok
 						needToken = false
+						if actionTiming != nil {
+							ns := recordNoActionTiming()
+							actionTiming.actionNoActionRelexNanos += ns
+						}
 						goto retryAction
 					}
-				}
-
-				// Before killing a stack, try re-lexing with the broad
-				// (state-0) lex mode. If the current lex mode's DFA
-				// produced a token that's not valid in this state (e.g.,
-				// an IMMTOKEN catch-all consumed a keyword), the broad
-				// DFA may produce the correct token.
-				if sameState {
 					if reTok, ok := p.tryRelexBroadDFA(tok, currentState, ts); ok {
 						tok = reTok
 						needToken = false
+						if actionTiming != nil {
+							ns := recordNoActionTiming()
+							actionTiming.actionNoActionRelexNanos += ns
+						}
 						goto retryAction
 					}
 				}
-
-				// When multiple alternatives exist, drop no-action stacks
-				// immediately instead of running deep recovery scans.
 				if len(stacks) > 1 {
 					if p.glrTrace {
 						fmt.Printf("  stack[%d] KILLED: no action for sym=%d in state=%d (multiple stacks)\n", si, tok.Symbol, currentState)
 					}
 					s.dead = true
+					if actionTiming != nil {
+						ns := recordNoActionTiming()
+						actionTiming.actionNoActionErrorNanos += ns
+					}
 					continue
 				}
-
-				// Try grammar-directed recovery by searching the stack for
-				// the nearest state that can recover on this lookahead.
 				if tryMissingSingleShift(si, s, currentState) {
 					anyReduced = true
 					needToken = false
 					consecutiveReduces = 0
+					if actionTiming != nil {
+						ns := recordNoActionTiming()
+						actionTiming.actionNoActionMissingNanos += ns
+					}
 					continue
 				}
 				if depth, recoverAct, ok := p.findRecoverActionOnStack(s, tok.Symbol, timing); ok {
 					if !s.truncate(depth + 1) {
 						s.dead = true
+						if actionTiming != nil {
+							ns := recordNoActionTiming()
+							actionTiming.actionNoActionErrorNanos += ns
+						}
 						continue
 					}
 					p.applyAction(s, recoverAct, tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
 					needToken = true
+					if actionTiming != nil {
+						ns := recordNoActionTiming()
+						actionTiming.actionNoActionRecoverNanos += ns
+					}
 					continue
 				}
-
-				// Only stack: error recovery — wrap token in error node.
 				if s.depth() == 0 {
+					if actionTiming != nil {
+						ns := recordNoActionTiming()
+						actionTiming.actionNoActionErrorNanos += ns
+					}
+					if phaseTiming {
+						actionDispatchNanos += time.Since(dispatchStart).Nanoseconds()
+					}
 					return finalize(stacks, ParseStopNoStacksAlive)
 				}
 				p.pushOrExtendErrorNode(s, currentState, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors)
 				needToken = true
+				if actionTiming != nil {
+					ns := recordNoActionTiming()
+					actionTiming.actionNoActionErrorNanos += ns
+				}
 				continue
 			}
-
-			// --- GLR: fork for multiple actions ---
-			// For single-action entries (the common case), no fork occurs.
-			// For multi-action entries, clone the stack for each alternative.
 			if len(actions) > 1 {
-				if reuse == nil && p.language != nil && p.language.Name == "java" {
-					if chosen, ok := p.javaSwitchArrowConflictChoice(s, tok, actions); ok {
-						p.applyAction(s, chosen, tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
-						continue
-					}
+				conflictStart := time.Time{}
+				if actionTiming != nil {
+					conflictStart = time.Now()
 				}
-				if reuse == nil && p.language != nil && p.language.Name == "java" {
-					if chosen, ok := javaRepetitionShiftConflictChoice(p.language, source, tok, currentState, actions); ok {
-						p.applyAction(s, chosen, tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
-						continue
-					}
-				}
-				if reuse == nil && p.language != nil && p.language.Name == "c_sharp" {
-					if chosen, ok := csharpRepetitionShiftConflictChoice(p.language, tok, actions); ok {
-						p.applyAction(s, chosen, tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
-						continue
-					}
-				}
-				if reuse == nil && p.language != nil && p.language.Name == "go" && maxStacksSeen > 1 && currentState == 3 && tok.Symbol == 15 {
-					if chosen, ok := repetitionShiftConflictChoice(actions); ok {
-						p.applyAction(s, chosen, tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
-						continue
-					}
-				}
-				// Current external-scanner integration shares one scanner payload
-				// across all GLR stacks. Forking stacks while mutating shared
-				// scanner state can diverge from C runtime behavior. Until
-				// per-stack scanner state is modeled, keep external-scanner
-				// parses deterministic at conflicts.
-				if deterministicExternalConflicts && p.language != nil && p.language.Name == "yaml" && p.language.ExternalScanner != nil {
-					chosen := actions[0]
-					for ai := 1; ai < len(actions); ai++ {
-						cand := actions[ai]
-						if cand.Type == ParseActionShift {
-							chosen = cand
-							break
+				var chosen ParseAction
+				choice := false
+				if reuse == nil && p.language != nil {
+					switch p.language.Name {
+					case "java":
+						if next, ok := p.javaSwitchArrowConflictChoice(s, tok, actions); ok {
+							chosen, choice = next, true
+						} else if next, ok := javaRepetitionShiftConflictChoice(p.language, source, tok, currentState, actions); ok {
+							chosen, choice = next, true
 						}
-						if chosen.Type == ParseActionReduce && cand.Type == ParseActionReduce &&
-							cand.DynamicPrecedence > chosen.DynamicPrecedence {
-							chosen = cand
+					case "c_sharp":
+						if next, ok := csharpRepetitionShiftConflictChoice(p.language, tok, actions); ok {
+							chosen, choice = next, true
+						}
+					case "go":
+						if maxStacksSeen > 1 && currentState == 3 && tok.Symbol == 15 {
+							if next, ok := repetitionShiftConflictChoice(actions); ok {
+								chosen, choice = next, true
+							}
+						}
+					case "rust":
+						if !p.noTreeBenchmarkOnly {
+							if next, ok := rustRepetitionShiftConflictChoice(p.language, tok, currentState, actions); ok {
+								chosen, choice = next, true
+							}
+						}
+					case "typescript":
+						if next, ok := typescriptRepetitionShiftConflictChoice(p.language, tok, currentState, actions); ok {
+							chosen, choice = next, true
 						}
 					}
+				}
+				if !choice && deterministicExternalConflicts && p.language != nil && p.language.Name == "yaml" && p.language.ExternalScanner != nil {
+					chosen, choice = deterministicExternalConflictAction(actions), true
+				}
+				if choice {
 					p.applyAction(s, chosen, tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
+					if actionTiming != nil {
+						ns := time.Since(conflictStart).Nanoseconds()
+						actionTiming.actionConflictChoiceNanos += ns
+						recordActionTiming(currentState, tok.Symbol, actions, ambiguityActionConflictChoice, ns)
+					}
 					continue
 				}
 				if perfCountersEnabled {
@@ -2347,126 +2472,128 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					default:
 						perfRecordConflictOther()
 					}
-				}
-				if perfCountersEnabled {
 					perfRecordFork(len(actions), perfTokensConsumed)
 				}
-				// Deep-stack GLR forks can trigger pathological clone volumes on
-				// very large inputs. At extreme depths, take the primary action
-				// to keep parsing bounded.
+				if preMaterializationDiag {
+					candidates, sameKey, overflow := p.observePreMaterializationFieldRejectFork(s, actions, scratch.tmpEntries, mergePerKeyCap)
+					preMaterializationFieldRejectCandidates += candidates
+					preMaterializationFieldRejectSameKeyCandidates += sameKey
+					preMaterializationFieldRejectOverflowCandidates += overflow
+				}
 				if s.depth() > maxForkCloneDepth {
-					act := actions[0]
-					p.applyAction(s, act, tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
+					p.applyAction(s, actions[0], tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
+					if actionTiming != nil {
+						ns := time.Since(conflictStart).Nanoseconds()
+						actionTiming.actionConflictForkNanos += ns
+						recordActionTiming(currentState, tok.Symbol, actions, ambiguityActionConflictFork, ns)
+					}
 					continue
 				}
-				// Copy the current stack value before appending forks.
-				// Appending can reallocate `stacks`, which would invalidate `s`.
 				base := *s
 				if p.glrTrace {
-					fmt.Printf("[GLR] FORK: %d actions from state=%d\n", len(actions), currentState)
-					for ai, a := range actions {
-						symName := "?"
-						if int(a.Symbol) < len(p.language.SymbolNames) {
-							symName = p.language.SymbolNames[a.Symbol]
-						}
-						fmt.Printf("  action[%d]: type=%d state=%d sym=%s(%d) cnt=%d prec=%d\n",
-							ai, a.Type, a.State, symName, a.Symbol, a.ChildCount, a.DynamicPrecedence)
-					}
+					p.traceParseFork(currentState, actions)
 				}
 				for ai := 1; ai < len(actions); ai++ {
 					fork := base.cloneWithScratch(&scratch.gss)
 					fork.branchOrder = nextBranchOrder
 					nextBranchOrder++
-					act := actions[ai]
-					p.applyAction(&fork, act, tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
+					p.applyAction(&fork, actions[ai], tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
 					if p.glrTrace {
 						fmt.Printf("[GLR] fork[%d] after action[%d]: st=%d dead=%v shift=%v dep=%d byte=%d\n",
 							len(stacks), ai, fork.top().state, fork.dead, fork.shifted, fork.depth(), fork.byteOffset)
 					}
 					stacks = append(stacks, fork)
 				}
-				// Re-acquire the pointer after possible reallocation.
 				s = &stacks[si]
-				act := actions[0]
-				p.applyAction(s, act, tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
+				p.applyAction(s, actions[0], tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
 				if p.glrTrace {
 					fmt.Printf("[GLR] orig[%d] after action[0]: st=%d dead=%v shift=%v dep=%d byte=%d\n",
 						si, s.top().state, s.dead, s.shifted, s.depth(), s.byteOffset)
 				}
+				if actionTiming != nil {
+					ns := time.Since(conflictStart).Nanoseconds()
+					actionTiming.actionConflictForkNanos += ns
+					recordActionTiming(currentState, tok.Symbol, actions, ambiguityActionConflictFork, ns)
+				}
+				continue
+			}
+			act := actions[0]
+			actionKindStart := time.Time{}
+			if actionTiming != nil {
+				actionKindStart = time.Now()
+			}
+			disableBashReduceChain := p.language != nil && p.language.Name == "bash" && s.gss.head != nil
+			if act.Type == ParseActionReduce && !disableBashReduceChain {
+				if p.applyActionWithReduceChain(s, act, tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors) {
+					forceAdvanceAfterReduce = true
+				}
+				if actionTiming != nil {
+					ns := time.Since(actionKindStart).Nanoseconds()
+					actionTiming.actionSingleReduceNanos += ns
+					recordActionTiming(currentState, tok.Symbol, actions, ambiguityActionSingleReduce, ns)
+				}
 			} else {
-				act := actions[0]
-				disableBashReduceChain := p.language != nil && p.language.Name == "bash" && s.gss.head != nil
-				if act.Type == ParseActionReduce && !disableBashReduceChain {
-					if p.applyActionWithReduceChain(s, act, tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors) {
-						forceAdvanceAfterReduce = true
+				switch act.Type {
+				case ParseActionShift:
+					p.applyShiftAction(s, act, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors)
+					if actionTiming != nil {
+						ns := time.Since(actionKindStart).Nanoseconds()
+						actionTiming.actionSingleShiftNanos += ns
+						recordActionTiming(currentState, tok.Symbol, actions, ambiguityActionSingleShift, ns)
 					}
-				} else {
+				case ParseActionAccept:
+					p.applyAcceptAction(s)
+					if actionTiming != nil {
+						ns := time.Since(actionKindStart).Nanoseconds()
+						actionTiming.actionSingleAcceptNanos += ns
+						recordActionTiming(currentState, tok.Symbol, actions, ambiguityActionSingleAccept, ns)
+					}
+				case ParseActionRecover:
+					p.applyRecoverAction(s, act, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors)
+					if actionTiming != nil {
+						ns := time.Since(actionKindStart).Nanoseconds()
+						actionTiming.actionSingleRecoverNanos += ns
+						recordActionTiming(currentState, tok.Symbol, actions, ambiguityActionSingleRecover, ns)
+					}
+				default:
 					p.applyAction(s, act, tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
+					if actionTiming != nil {
+						ns := time.Since(actionKindStart).Nanoseconds()
+						actionTiming.actionSingleOtherNanos += ns
+						recordActionTiming(currentState, tok.Symbol, actions, ambiguityActionSingleOther, ns)
+					}
 				}
 			}
 		}
+		if phaseTiming {
+			actionDispatchNanos += time.Since(dispatchStart).Nanoseconds()
+		}
 
-		// GLR all-dead recovery: when multiple stacks exist and ALL of
-		// them die on the current token, resurrect the best one and do
-		// error recovery instead of abandoning the parse entirely. This
-		// handles grammars where a reduce/shift conflict produces forks
-		// that all converge to a state without an action for the next
-		// token (e.g., trailing commas in jq objects).
-		//
-		// Only activate during retry passes (maxStacksOverride > 0) to
-		// avoid suppressing the first-pass → retry escalation path. On
-		// the first pass, letting all stacks die triggers a retry at a
-		// higher stack cap, which often produces cleaner trees.
-		if numStacks > 1 && retryPass {
-			allDead := true
-			for si := 0; si < len(stacks); si++ {
-				if !stacks[si].dead {
-					allDead = false
-					break
-				}
+		if numStacks > 1 && retryPass && allParseStacksDead(stacks) {
+			bestIdx := bestRetryRecoveryStack(stacks)
+			stacks[bestIdx].dead = false
+			stacks[0] = stacks[bestIdx]
+			stacks = stacks[:1]
+			if p.glrTrace {
+				fmt.Printf("[GLR] ALL-DEAD RECOVERY: resurrect stack (was [%d]) st=%d dep=%d byte=%d\n",
+					bestIdx, stacks[0].top().state, stacks[0].depth(), stacks[0].byteOffset)
 			}
-			if allDead {
-				// Find the best stack to resurrect.
-				bestIdx := 0
-				for si := 1; si < len(stacks); si++ {
-					if stacks[si].score > stacks[bestIdx].score {
-						bestIdx = si
-					} else if stacks[si].score == stacks[bestIdx].score && stacks[si].depth() < stacks[bestIdx].depth() {
-						bestIdx = si
-					}
-				}
-				s := &stacks[bestIdx]
-				s.dead = false
 
-				// Collapse to single stack so subsequent iterations use
-				// single-stack error recovery paths.
-				stacks[0] = *s
-				stacks = stacks[:1]
-
-				if p.glrTrace {
-					fmt.Printf("[GLR] ALL-DEAD RECOVERY: resurrect stack (was [%d]) st=%d dep=%d byte=%d\n",
-						bestIdx, stacks[0].top().state, stacks[0].depth(), stacks[0].byteOffset)
-				}
-
-				currentState := stacks[0].top().state
-				if tryMissingSingleShift(bestIdx, &stacks[0], currentState) {
-					anyReduced = true
-					needToken = false
-					consecutiveReduces = 0
-				} else
-				// Try grammar-directed recovery first.
-				if depth, recoverAct, ok := p.findRecoverActionOnStack(&stacks[0], tok.Symbol, timing); ok {
-					if stacks[0].truncate(depth + 1) {
-						p.applyAction(&stacks[0], recoverAct, tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
-						needToken = true
-					} else {
-						stacks[0].dead = true
-					}
-				} else if stacks[0].depth() > 0 {
-					// Wrap the problematic token in an error node.
-					p.pushOrExtendErrorNode(&stacks[0], currentState, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors)
+			currentState := stacks[0].top().state
+			if tryMissingSingleShift(bestIdx, &stacks[0], currentState) {
+				anyReduced = true
+				needToken = false
+				consecutiveReduces = 0
+			} else if depth, recoverAct, ok := p.findRecoverActionOnStack(&stacks[0], tok.Symbol, timing); ok {
+				if stacks[0].truncate(depth + 1) {
+					p.applyAction(&stacks[0], recoverAct, tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
 					needToken = true
+				} else {
+					stacks[0].dead = true
 				}
+			} else if stacks[0].depth() > 0 {
+				p.pushOrExtendErrorNode(&stacks[0], currentState, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors)
+				needToken = true
 			}
 		}
 
@@ -2476,9 +2603,10 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		// the current lookahead). Otherwise, advance to next token.
 		if anyReduced {
 			needToken = tok.NoLookahead || forceAdvanceAfterReduce
-
-			// Infinite-reduce detection (for the primary stack).
-			if !tok.NoLookahead && len(stacks) > 0 && !stacks[0].dead {
+			if tok.NoLookahead {
+				lastReduceDepth = -1
+				consecutiveReduces = 0
+			} else if len(stacks) > 0 && !stacks[0].dead {
 				topState := stacks[0].top().state
 				topDepth := stacks[0].depth()
 				if topState == lastReduceState && topDepth == lastReduceDepth {
@@ -2489,7 +2617,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					consecutiveReduces = 1
 				}
 				if consecutiveReduces > maxConsecutivePrimaryReduces {
-					if tok.Symbol == 0 && tok.StartByte == tok.EndByte && !tok.NoLookahead && len(stacks) == 1 {
+					if tok.Symbol == 0 && tok.StartByte == tok.EndByte && len(stacks) == 1 {
 						if tree, ok := tryFinalizeTrailingEOFSuffix(&stacks[0], tok); ok {
 							return tree
 						}
@@ -2502,26 +2630,569 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					lastReduceDepth = -1
 					consecutiveReduces = 0
 				}
-			} else if tok.NoLookahead {
-				lastReduceDepth = -1
-				consecutiveReduces = 0
 			}
 		} else {
 			needToken = true
 			lastReduceDepth = -1
 			consecutiveReduces = 0
 		}
-
-		// Check for accept on any stack. Keep all accepted branches so the
-		// final GLR chooser can rank them instead of short-circuiting on the
-		// first accepted stack encountered.
 		if accepted := compactAcceptedStacks(stacks); len(accepted) > 0 {
 			return finalize(accepted, ParseStopAccepted)
 		}
 	}
 
-	// Iteration limit reached.
 	return finalize(stacks, ParseStopIterationLimit)
+}
+
+type parseModeFlags struct {
+	compactNoTreeShiftLeaves         bool
+	compactFullShiftLeaves           bool
+	pendingFullParents               bool
+	finalChildRefs                   bool
+	skipInvisibleFullLeafCheckpoints bool
+	transientReduceChildren          bool
+	transientReduceScratchNoAlias    bool
+	transientChildren                *transientChildScratch
+}
+
+func (p *Parser) applyParseModeFlags(source []byte, reuse *reuseCursor, oldTree *Tree, arenaClass arenaClass) parseModeFlags {
+	prev := parseModeFlags{
+		compactNoTreeShiftLeaves:         p.compactNoTreeShiftLeaves,
+		compactFullShiftLeaves:           p.compactFullShiftLeaves,
+		pendingFullParents:               p.pendingFullParents,
+		finalChildRefs:                   p.finalChildRefs,
+		skipInvisibleFullLeafCheckpoints: p.skipInvisibleFullLeafCheckpoints,
+		transientReduceChildren:          p.transientReduceChildren,
+		transientReduceScratchNoAlias:    p.transientReduceScratchNoAlias,
+		transientChildren:                p.transientChildren,
+	}
+	p.compactNoTreeShiftLeaves = p.noTreeBenchmarkOnly && parseShouldCompactNoTreeShiftLeaves(len(source))
+	p.compactFullShiftLeaves = parseShouldUseCompactFullShiftLeaves(p, source, reuse, oldTree, arenaClass)
+	p.pendingFullParents = parseShouldUsePendingFullParents(p, source, reuse, oldTree, arenaClass)
+	p.finalChildRefs = parseShouldUseFinalChildRefs(p, source, reuse, oldTree, arenaClass)
+	p.skipInvisibleFullLeafCheckpoints = parseShouldSkipInvisibleFullLeafCheckpoints(p, source, reuse, oldTree, arenaClass)
+	return prev
+}
+
+func (p *Parser) restoreParseModeFlags(prev parseModeFlags) {
+	p.compactNoTreeShiftLeaves = prev.compactNoTreeShiftLeaves
+	p.compactFullShiftLeaves = prev.compactFullShiftLeaves
+	p.pendingFullParents = prev.pendingFullParents
+	p.finalChildRefs = prev.finalChildRefs
+	p.skipInvisibleFullLeafCheckpoints = prev.skipInvisibleFullLeafCheckpoints
+	p.transientReduceChildren = prev.transientReduceChildren
+	p.transientReduceScratchNoAlias = prev.transientReduceScratchNoAlias
+	p.transientChildren = prev.transientChildren
+}
+
+func (p *Parser) configureParseScratch(scratch *parserScratch, source []byte, reuse *reuseCursor, oldTree *Tree, arenaClass arenaClass, deferParentLinks bool) bool {
+	p.transientReduceChildren = p.shouldUseTransientReduceChildren(source, reuse, oldTree, arenaClass)
+	if p.transientReduceChildren {
+		p.transientChildren = &scratch.transientChildren
+	} else {
+		p.transientChildren = nil
+	}
+	scratch.merge.beginEquivEpoch()
+	transientReduceParents := p.shouldUseTransientReduceParents(source, reuse, oldTree, arenaClass)
+	p.transientReduceScratchNoAlias = p.transientReduceChildren && transientReduceParents && parseShouldUseTransientReduceScratchNoAlias(len(source))
+	scratch.merge.pythonShallow = p.language != nil && p.language.Name == "python" && len(source) <= 512*1024
+	if deferParentLinks {
+		scratch.gss.initialCap = p.fullGSSHintCapacity()
+	} else {
+		scratch.gss.initialCap = p.incrementalGSSHintCapacity()
+	}
+	return transientReduceParents
+}
+
+func (p *Parser) recordParseArenaUsageOnReturn(arenaClass arenaClass, arena *nodeArena, scratch *parserScratch) func() {
+	if arenaClass == arenaClassFull {
+		return func() {
+			if !p.noTreeBenchmarkOnly {
+				switch {
+				case p.finalChildRefs:
+					p.recordFinalChildRefArenaUsage(arena.used)
+				case p.compactFullShiftLeaves:
+					p.recordCompactFullArenaUsage(arena.used)
+				case p.pendingFullParents:
+					p.recordPendingFullArenaUsage(arena.used)
+				default:
+					p.recordFullArenaUsage(arena.used)
+				}
+			}
+			p.recordFullGSSUsage(scratch.gss.usedTotal)
+		}
+	}
+	return func() {
+		p.recordIncrementalArenaUsage(arena.used)
+		p.recordIncrementalGSSUsage(scratch.gss.usedTotal)
+	}
+}
+
+func (p *Parser) ensureParseInitialCapacity(source []byte, arenaClass arenaClass, arena *nodeArena, scratch *parserScratch) {
+	switch arenaClass {
+	case arenaClassFull:
+		p.ensureFullParseInitialCapacity(source, arena, scratch)
+	case arenaClassIncremental:
+		target := parseIncrementalArenaNodeCapacity(len(source), p.incrementalArenaHintCapacity())
+		arena.ensureNodeCapacity(target)
+		scratch.entries.ensureInitialCap(parseIncrementalEntryScratchCapacity(len(source)))
+	}
+}
+
+func (p *Parser) ensureFullParseInitialCapacity(source []byte, arena *nodeArena, scratch *parserScratch) {
+	target := parseFullArenaNodeCapacity(len(source), p.fullArenaHintCapacity())
+	checkpointCapacityTarget := target
+	switch {
+	case p.finalChildRefs:
+		target = parseFinalChildRefArenaNodeCapacity(len(source), p.finalChildRefArenaHintCapacity())
+		checkpointCapacityTarget = parseFullArenaInitialNodeCapacity(len(source))
+	case p.compactFullShiftLeaves:
+		target = parseCompactFullArenaNodeCapacity(len(source), p.compactFullArenaHintCapacity())
+		checkpointCapacityTarget = parseFullArenaInitialNodeCapacity(len(source))
+	case p.pendingFullParents:
+		target = parsePendingFullArenaNodeCapacity(len(source), p.pendingFullArenaHintCapacity())
+		checkpointCapacityTarget = target
+	}
+	if p.noTreeBenchmarkOnly {
+		target = parseNoTreeArenaNodeCapacity(len(source))
+		checkpointCapacityTarget = target
+	}
+	arena.ensureExactNodeCapacity(target)
+	if !p.noTreeBenchmarkOnly && languageUsesExternalScannerCheckpoints(p.language) {
+		arena.ensureExternalScannerCheckpointCapacity(parseFullExternalScannerCheckpointCapacity(len(source), checkpointCapacityTarget))
+	}
+	scratch.entries.ensureInitialCap(parseFullEntryScratchCapacity(len(source)))
+}
+
+func (p *Parser) newInitialParseStacks(scratch *parserScratch, reuse *reuseCursor, timing *incrementalParseTiming) ([]glrStack, int) {
+	var stacksBuf [4]glrStack
+	stacks := stacksBuf[:1]
+	initialStackCap := 64 * 1024
+	if reuse != nil {
+		initialStackCap = defaultStackEntrySlabCap
+	}
+	stacks[0] = newGLRStackWithScratchCap(p.language.InitialState, &scratch.entries, initialStackCap)
+	stacks[0].recoverabilityKnown = true
+	stacks[0].mayRecover = p.stateCanRecover(p.language.InitialState)
+	if timing != nil && timing.maxStacksSeen < len(stacks) {
+		timing.maxStacksSeen = len(stacks)
+	}
+	return stacks, len(stacks)
+}
+
+type parseCaps struct {
+	maxStacks           int
+	retryPass           bool
+	mergePerKeyCap      int
+	maxStackCullTrigger int
+	maxIter             int
+	maxDepth            int
+	maxNodes            int
+}
+
+func (p *Parser) configureParseCaps(source []byte, reuse *reuseCursor, arenaClass arenaClass, scratch *parserScratch, maxStacksOverride, maxNodesOverride, maxMergePerKeyOverride int) parseCaps {
+	maxStacks, retryPass := resolveParseMaxStacks(parseMaxGLRStacksValue(), maxStacksOverride, p.maxConflictWidth)
+	mergePerKeyCap := effectiveParseMergePerKeyCap(p.language, parseMaxMergePerKeyValue(), reuse != nil, len(source))
+	if javaFullParseNeedsAnnotationDeclarationMergeWidth(p.language, source, reuse) && mergePerKeyCap < maxStacksPerMergeKey {
+		mergePerKeyCap = maxStacksPerMergeKey
+	}
+	if maxMergePerKeyOverride > mergePerKeyCap {
+		mergePerKeyCap = maxMergePerKeyOverride
+	}
+	if mergePerKeyCap > maxStacksPerMergeKeyCeiling {
+		mergePerKeyCap = maxStacksPerMergeKeyCeiling
+	}
+	maxStacks, mergePerKeyCap = p.tuneParseGLRCaps(maxStacks, mergePerKeyCap, reuse)
+	scratch.merge.perKeyCap = mergePerKeyCap
+
+	maxNodes := parseNodeLimitForLanguage(len(source), p.language)
+	if maxNodesOverride > maxNodes {
+		maxNodes = maxNodesOverride
+	}
+	return parseCaps{
+		maxStacks:           maxStacks,
+		retryPass:           retryPass,
+		mergePerKeyCap:      mergePerKeyCap,
+		maxStackCullTrigger: glrStackCullTrigger(maxStacks, arenaClass, languageName(p.language)),
+		maxIter:             parseIterations(len(source)),
+		maxDepth:            parseStackDepth(len(source)),
+		maxNodes:            maxNodes,
+	}
+}
+
+func javaFullParseNeedsAnnotationDeclarationMergeWidth(lang *Language, source []byte, reuse *reuseCursor) bool {
+	return lang != nil &&
+		lang.Name == "java" &&
+		reuse == nil &&
+		!parseMaxMergePerKeyEnvConfigured() &&
+		bytes.Contains(source, []byte("@interface"))
+}
+
+func (p *Parser) tuneParseGLRCaps(maxStacks, mergePerKeyCap int, reuse *reuseCursor) (int, int) {
+	if reuse == nil && p.language != nil && p.language.Name == "bash" {
+		if maxStacks < 256 {
+			maxStacks = 256
+		}
+		if mergePerKeyCap < 256 {
+			mergePerKeyCap = 256
+		}
+	}
+	if reuse == nil && p.language != nil && p.language.Name == "c_sharp" && mergePerKeyCap < 16 {
+		mergePerKeyCap = 16
+	}
+	if reuse != nil {
+		maxStacks, mergePerKeyCap = tuneIncrementalGLRCaps(maxStacks, mergePerKeyCap)
+	}
+	return maxStacks, mergePerKeyCap
+}
+
+func languageName(lang *Language) string {
+	if lang == nil {
+		return ""
+	}
+	return lang.Name
+}
+
+type parseStackPrepResult struct {
+	stacks     []glrStack
+	stopReason ParseStopReason
+	stopped    bool
+	errorTree  bool
+}
+
+func (p *Parser) prepareParseStacksForIteration(stacks []glrStack, scratch *parserScratch, arena *nodeArena, arenaClass arenaClass, maxStacks, maxStackCullTrigger int, phaseTiming bool, glrMergeNanos, glrCullNanos *int64) parseStackPrepResult {
+	result := parseStackPrepResult{stacks: stacks}
+	if len(stacks) == 1 {
+		if stacks[0].dead {
+			result.stop(ParseStopNoStacksAlive, false)
+			return result
+		}
+		scratch.gss.singleStackMode = true
+		clearParseStackEntryCaches(stacks)
+		return result
+	}
+	if arena.budgetExhausted() || scratch.budgetExhausted() {
+		result.stop(ParseStopMemoryBudget, false)
+		return result
+	}
+	if allParseStacksDead(stacks) {
+		result.stop(ParseStopNoStacksAlive, false)
+		return result
+	}
+	scratch.merge.language = p.language
+	if p.ambiguityProfile != nil {
+		p.ambiguityProfile.recordMergeBefore(stacks)
+	}
+	if phaseTiming && glrMergeNanos != nil {
+		mergeStart := time.Now()
+		result.stacks = mergeStacksWithScratch(stacks, &scratch.merge)
+		*glrMergeNanos += time.Since(mergeStart).Nanoseconds()
+	} else {
+		result.stacks = mergeStacksWithScratch(stacks, &scratch.merge)
+	}
+	if p.ambiguityProfile != nil {
+		p.ambiguityProfile.recordMergeAfter(result.stacks)
+	}
+	if len(result.stacks) == 0 {
+		result.stop(ParseStopNoStacksAlive, true)
+		return result
+	}
+	result.stacks = p.cullParseStacksForIteration(result.stacks, scratch, arenaClass, maxStacks, maxStackCullTrigger, phaseTiming, glrCullNanos)
+	if len(result.stacks) > 1 {
+		p.promotePrimaryStack(result.stacks)
+	}
+	scratch.gss.singleStackMode = len(result.stacks) == 1
+	clearParseStackEntryCaches(result.stacks)
+	return result
+}
+
+func (r *parseStackPrepResult) stop(reason ParseStopReason, errorTree bool) {
+	r.stopReason = reason
+	r.stopped = true
+	r.errorTree = errorTree
+}
+
+func allParseStacksDead(stacks []glrStack) bool {
+	for i := range stacks {
+		if !stacks[i].dead {
+			return false
+		}
+	}
+	return true
+}
+
+func (p *Parser) cullParseStacksForIteration(stacks []glrStack, scratch *parserScratch, arenaClass arenaClass, maxStacks, maxStackCullTrigger int, phaseTiming bool, glrCullNanos *int64) []glrStack {
+	if len(stacks) <= maxStackCullTrigger {
+		return stacks
+	}
+	if p.glrTrace {
+		p.traceParseStackCull("pre-cull", stacks, maxStacks, maxStackCullTrigger)
+	}
+	if perfCountersEnabled {
+		perfRecordGlobalCapCull(len(stacks), maxStacks)
+	}
+	cullIn := len(stacks)
+	cullLang := stackCullLanguageForArena(p.language, arenaClass)
+	if phaseTiming && glrCullNanos != nil {
+		cullStart := time.Now()
+		stacks = retainTopStacksForLanguageWithScratch(stacks, maxStacks, cullLang, &scratch.stackPick, &scratch.stackKeep, &scratch.stackCull)
+		*glrCullNanos += time.Since(cullStart).Nanoseconds()
+	} else {
+		stacks = retainTopStacksForLanguageWithScratch(stacks, maxStacks, cullLang, &scratch.stackPick, &scratch.stackKeep, &scratch.stackCull)
+	}
+	scratch.audit.recordGlobalCull(cullIn, len(stacks))
+	if p.glrTrace {
+		p.traceParseStackCull("kept", stacks, maxStacks, maxStackCullTrigger)
+	}
+	return stacks
+}
+
+func (p *Parser) traceParseStackCull(label string, stacks []glrStack, maxStacks, trigger int) {
+	if label == "pre-cull" {
+		fmt.Printf("[GLR] CAP CULL: %d stacks -> keep %d (trigger=%d)\n", len(stacks), maxStacks, trigger)
+	} else {
+		fmt.Printf("[GLR] after cull:\n")
+	}
+	for ci := range stacks {
+		fmt.Printf("  %s[%d]: st=%d dead=%v shift=%v dep=%d score=%d byte=%d\n",
+			label, ci, stacks[ci].top().state, stacks[ci].dead, stacks[ci].shifted, stacks[ci].depth(), stacks[ci].score, stacks[ci].byteOffset)
+	}
+}
+
+func clearParseStackEntryCaches(stacks []glrStack) {
+	for i := range stacks {
+		stacks[i].cacheEntries = false
+		if stacks[i].gss.head != nil {
+			stacks[i].entries = nil
+		}
+	}
+}
+
+type parseMissingShiftTracker struct {
+	lastState     StateID
+	lastDepth     int
+	lastSymbol    Symbol
+	lastStartByte uint32
+	lastEndByte   uint32
+	consecutive   int
+}
+
+func (t *parseMissingShiftTracker) resetForToken() {
+	t.lastDepth = -1
+	t.consecutive = 0
+}
+
+func (t *parseMissingShiftTracker) tryInsert(p *Parser, stackIndex int, s *glrStack, currentState StateID, tok Token, nodeCount *int, arena *nodeArena, scratch *parserScratch, trackChildErrors *bool) bool {
+	missingShiftDepth := s.depth()
+	if t.matches(currentState, missingShiftDepth, tok) && t.consecutive >= maxConsecutiveMissingSingleShifts {
+		if p.glrTrace {
+			fmt.Printf("  stack[%d] SKIP missing-shift cycle state=%d sym=%d byte=%d..%d count=%d\n",
+				stackIndex, currentState, tok.Symbol, tok.StartByte, tok.EndByte, t.consecutive)
+		}
+		return false
+	}
+	if !p.tryInsertMissingSingleShift(s, tok, nodeCount, arena, &scratch.entries, &scratch.gss, trackChildErrors) {
+		return false
+	}
+	if t.matches(currentState, missingShiftDepth, tok) {
+		t.consecutive++
+		return true
+	}
+	t.lastState = currentState
+	t.lastDepth = missingShiftDepth
+	t.lastSymbol = tok.Symbol
+	t.lastStartByte = tok.StartByte
+	t.lastEndByte = tok.EndByte
+	t.consecutive = 1
+	return true
+}
+
+func (t *parseMissingShiftTracker) matches(state StateID, depth int, tok Token) bool {
+	return t.lastState == state &&
+		t.lastDepth == depth &&
+		t.lastSymbol == tok.Symbol &&
+		t.lastStartByte == tok.StartByte &&
+		t.lastEndByte == tok.EndByte
+}
+
+func (p *Parser) tryReuseCurrentParseSubtree(s *glrStack, tok Token, ts TokenSource, reuse *reuseCursor, scratch *parserScratch, arena *nodeArena, reuseState *parseReuseState, timing *incrementalParseTiming) (Token, bool) {
+	if timing == nil {
+		nextTok, _, ok := p.tryReuseSubtree(s, tok, ts, reuse, &scratch.entries, &scratch.gss)
+		if ok {
+			reuseState.markReused(stackEntryNode(s.top()), arena)
+		}
+		return nextTok, ok
+	}
+	reuseStart := time.Now()
+	nextTok, reusedBytes, ok := p.tryReuseSubtree(s, tok, ts, reuse, &scratch.entries, &scratch.gss)
+	timing.reuseNanos += time.Since(reuseStart).Nanoseconds()
+	if !ok {
+		return nextTok, false
+	}
+	timing.reusedSubtrees++
+	timing.reusedBytes += uint64(reusedBytes)
+	reuseState.markReused(stackEntryNode(s.top()), arena)
+	return nextTok, true
+}
+
+func (p *Parser) traceParseIteration(iter int, tok Token, stacks []glrStack, needToken bool) {
+	symName := "?"
+	if int(tok.Symbol) < len(p.language.SymbolNames) {
+		symName = p.language.SymbolNames[tok.Symbol]
+	}
+	fmt.Printf("[GLR] iter=%d tok=%s(%d)[%d-%d] stacks=%d needTok=%v\n",
+		iter, symName, tok.Symbol, tok.StartByte, tok.EndByte, len(stacks), needToken)
+	for si := range stacks {
+		fmt.Printf("  s[%d]: st=%d dead=%v shift=%v dep=%d byte=%d\n",
+			si, stacks[si].top().state, stacks[si].dead, stacks[si].shifted, stacks[si].depth(), stacks[si].byteOffset)
+	}
+}
+
+func parseStacksShareState(stacks []glrStack, state StateID) bool {
+	if len(stacks) == 1 {
+		return true
+	}
+	for i := range stacks {
+		if stacks[i].dead {
+			continue
+		}
+		if stacks[i].top().state != state {
+			return false
+		}
+	}
+	return true
+}
+
+func (p *Parser) actionsForParseState(state StateID, symbol Symbol, parseActions []ParseActionEntry) []ParseAction {
+	actionIdx := p.lookupActionIndex(state, symbol)
+	if actionIdx == 0 || int(actionIdx) >= len(parseActions) {
+		return nil
+	}
+	return parseActions[actionIdx].Actions
+}
+
+func (p *Parser) traceStackActions(stackIndex int, state StateID, symbol Symbol, actions []ParseAction) {
+	if !p.glrTrace {
+		return
+	}
+	actionIdx := p.lookupActionIndex(state, symbol)
+	fmt.Printf("  stack[%d] state=%d actionIdx=%d actions=%d\n", stackIndex, state, actionIdx, len(actions))
+	for ai, action := range actions {
+		fmt.Printf("    action[%d]: type=%d state=%d sym=%d cnt=%d prec=%d\n",
+			ai, action.Type, action.State, action.Symbol, action.ChildCount, action.DynamicPrecedence)
+	}
+}
+
+func deterministicExternalConflictAction(actions []ParseAction) ParseAction {
+	chosen := actions[0]
+	for ai := 1; ai < len(actions); ai++ {
+		cand := actions[ai]
+		if cand.Type == ParseActionShift {
+			return cand
+		}
+		if chosen.Type == ParseActionReduce && cand.Type == ParseActionReduce && cand.DynamicPrecedence > chosen.DynamicPrecedence {
+			chosen = cand
+		}
+	}
+	return chosen
+}
+
+func (p *Parser) traceParseFork(currentState StateID, actions []ParseAction) {
+	fmt.Printf("[GLR] FORK: %d actions from state=%d\n", len(actions), currentState)
+	for ai, action := range actions {
+		symName := "?"
+		if int(action.Symbol) < len(p.language.SymbolNames) {
+			symName = p.language.SymbolNames[action.Symbol]
+		}
+		fmt.Printf("  action[%d]: type=%d state=%d sym=%s(%d) cnt=%d prec=%d\n",
+			ai, action.Type, action.State, symName, action.Symbol, action.ChildCount, action.DynamicPrecedence)
+	}
+}
+
+func bestRetryRecoveryStack(stacks []glrStack) int {
+	bestIdx := 0
+	for si := 1; si < len(stacks); si++ {
+		if stacks[si].score > stacks[bestIdx].score {
+			bestIdx = si
+			continue
+		}
+		if stacks[si].score == stacks[bestIdx].score && stacks[si].depth() < stacks[bestIdx].depth() {
+			bestIdx = si
+		}
+	}
+	return bestIdx
+}
+
+func (p *Parser) updateParserStateTokenSource(ts TokenSource, stacks []glrStack, scratch *parserScratch) {
+	stateful, ok := ts.(parserStateTokenSource)
+	if !ok || len(stacks) == 0 {
+		return
+	}
+	stateful.SetParserState(stacks[0].top().state)
+	if len(stacks) == 1 || p.usesPrimaryExternalScannerStateForGLR() {
+		clearGLRStateTokenSource(stateful, scratch)
+		return
+	}
+	glrBuf := scratch.glrStates[:0]
+	if cap(glrBuf) < len(stacks) {
+		glrBuf = make([]StateID, 0, len(stacks))
+	}
+	for si := range stacks {
+		if !stacks[si].dead {
+			glrBuf = append(glrBuf, stacks[si].top().state)
+		}
+	}
+	scratch.glrStates = glrBuf
+	stateful.SetGLRStates(glrBuf)
+}
+
+func (p *Parser) usesPrimaryExternalScannerStateForGLR() bool {
+	return p != nil &&
+		p.language != nil &&
+		(p.language.Name == "yaml" || p.language.Name == "c_sharp") &&
+		p.language.ExternalScanner != nil
+}
+
+func clearGLRStateTokenSource(stateful parserStateTokenSource, scratch *parserScratch) {
+	if scratch != nil && len(scratch.glrStates) > 0 {
+		scratch.glrStates = scratch.glrStates[:0]
+	}
+	stateful.SetGLRStates(nil)
+}
+
+func (p *Parser) applyExtraShiftAction(s *glrStack, currentState StateID, act ParseAction, tok Token, arena *nodeArena, scratch *parserScratch) {
+	named := p.isNamedSymbol(tok.Symbol)
+	targetState := extraShiftTargetState(currentState, act)
+	if p.useCompactNoTreeShiftLeaf() && !p.shiftTokenIsMissingError(tok) {
+		p.applyCompactExtraShiftAction(s, currentState, targetState, tok, named, arena, scratch)
+		return
+	}
+	leaf := newLeafNodeInArena(arena, tok.Symbol, named, tok.StartByte, tok.EndByte, tok.StartPoint, tok.EndPoint)
+	if tok.Missing {
+		leaf.setMissing(true)
+		leaf.setHasError(true)
+	}
+	leaf.setExtra(true)
+	leaf.preGotoState = currentState
+	leaf.parseState = targetState
+	p.recordCurrentExternalLeafCheckpoint(leaf, tok)
+	p.pushStackNode(s, targetState, leaf, &scratch.entries, &scratch.gss)
+}
+
+func (p *Parser) applyCompactExtraShiftAction(s *glrStack, currentState, targetState StateID, tok Token, named bool, arena *nodeArena, scratch *parserScratch) {
+	if cp, ok := p.currentExternalNoTreeLeafCheckpointRef(arena, tok); ok {
+		leaf := newCompactCheckpointLeafInArena(arena, tok.Symbol, named, tok.StartByte, tok.EndByte, cp)
+		leaf.setExtra(true)
+		leaf.preGotoState = currentState
+		leaf.parseState = targetState
+		p.pushStackCompactCheckpointLeaf(s, targetState, leaf, &scratch.entries, &scratch.gss)
+		return
+	}
+	leaf := newNoTreeLeafNodeInArena(arena, tok.Symbol, named, tok.StartByte, tok.EndByte, tok.StartPoint, tok.EndPoint)
+	leaf.setExtra(true)
+	leaf.preGotoState = currentState
+	leaf.parseState = targetState
+	p.pushStackNoTreeNode(s, targetState, leaf, &scratch.entries, &scratch.gss)
 }
 
 func (p *Parser) shouldUseTransientReduceChildren(source []byte, reuse *reuseCursor, oldTree *Tree, arenaClass arenaClass) bool {
@@ -2728,6 +3399,66 @@ func javaRepetitionShiftConflictChoice(lang *Language, source []byte, tok Token,
 		}
 	case 2:
 		if !symbolHasName(lang, tok.Symbol, "import") {
+			return ParseAction{}, false
+		}
+	default:
+		return ParseAction{}, false
+	}
+	return repetitionShiftConflictChoice(actions)
+}
+
+func typescriptRepetitionShiftConflictChoice(lang *Language, tok Token, state StateID, actions []ParseAction) (ParseAction, bool) {
+	if lang == nil {
+		return ParseAction{}, false
+	}
+	switch state {
+	case 9:
+		switch {
+		case symbolHasName(lang, tok.Symbol, "function"):
+		case symbolHasName(lang, tok.Symbol, "identifier"):
+		case symbolHasName(lang, tok.Symbol, "const"):
+		case symbolHasName(lang, tok.Symbol, "return"):
+		case symbolHasName(lang, tok.Symbol, "if"):
+		case symbolHasName(lang, tok.Symbol, "export"):
+		default:
+			return ParseAction{}, false
+		}
+	case 3817:
+		if !symbolHasName(lang, tok.Symbol, "case") {
+			return ParseAction{}, false
+		}
+	default:
+		return ParseAction{}, false
+	}
+	return repetitionShiftConflictChoice(actions)
+}
+
+func rustRepetitionShiftConflictChoice(lang *Language, tok Token, state StateID, actions []ParseAction) (ParseAction, bool) {
+	if lang == nil {
+		return ParseAction{}, false
+	}
+	switch state {
+	case 7:
+		switch {
+		case symbolHasName(lang, tok.Symbol, "pub"):
+		case symbolHasName(lang, tok.Symbol, "#"):
+		case symbolHasName(lang, tok.Symbol, "impl"):
+		case symbolHasName(lang, tok.Symbol, "fn"):
+		case symbolHasName(lang, tok.Symbol, "mod"):
+		case symbolHasName(lang, tok.Symbol, "use"):
+		default:
+			return ParseAction{}, false
+		}
+	case 83:
+		switch {
+		case symbolHasName(lang, tok.Symbol, "identifier"):
+		case symbolHasName(lang, tok.Symbol, ","):
+		case symbolHasName(lang, tok.Symbol, "("):
+		case symbolHasName(lang, tok.Symbol, "primitive_type"):
+		case symbolHasName(lang, tok.Symbol, "::"):
+		case symbolHasName(lang, tok.Symbol, "."):
+		case symbolHasName(lang, tok.Symbol, ";"):
+		default:
 			return ParseAction{}, false
 		}
 	default:
@@ -3019,15 +3750,95 @@ func compareStackCullKeys(lang *Language, a, b stackCullKey) int {
 	return 0
 }
 
+type preMaterializationFieldRejectKey struct {
+	state      StateID
+	byteOffset uint32
+}
+
+func (p *Parser) observePreMaterializationFieldRejectFork(s *glrStack, actions []ParseAction, tmp []stackEntry, perKeyCap int) (candidates, sameKeyCandidates, overflowCandidates uint64) {
+	if p == nil || s == nil || p.noTreeBenchmarkOnly || !p.usePendingFullParents() || len(actions) <= 1 {
+		return 0, 0, 0
+	}
+	if perKeyCap <= 0 {
+		perKeyCap = maxStacksPerMergeKey
+	}
+	type keyCount struct {
+		key   preMaterializationFieldRejectKey
+		count int
+	}
+	var fixed [8]keyCount
+	keys := fixed[:0]
+	for _, act := range actions {
+		if act.Type != ParseActionReduce || !p.reduceProductionHasEffectiveFields(int(act.ChildCount), act.ProductionID, nil) {
+			continue
+		}
+		key, ok := p.preMaterializationFieldRejectKey(s, act, tmp)
+		if !ok {
+			continue
+		}
+		candidates++
+		found := false
+		for i := range keys {
+			if keys[i].key == key {
+				keys[i].count++
+				found = true
+				break
+			}
+		}
+		if found {
+			continue
+		}
+		if len(keys) == cap(keys) {
+			next := make([]keyCount, len(keys), len(keys)*2)
+			copy(next, keys)
+			keys = next
+		}
+		keys = append(keys, keyCount{key: key, count: 1})
+	}
+	for i := range keys {
+		if keys[i].count <= 1 {
+			continue
+		}
+		sameKeyCandidates += uint64(keys[i].count)
+		if keys[i].count > perKeyCap {
+			overflowCandidates += uint64(keys[i].count - perKeyCap)
+		}
+	}
+	return candidates, sameKeyCandidates, overflowCandidates
+}
+
+func (p *Parser) preMaterializationFieldRejectKey(s *glrStack, act ParseAction, tmp []stackEntry) (preMaterializationFieldRejectKey, bool) {
+	if p == nil || s == nil {
+		return preMaterializationFieldRejectKey{}, false
+	}
+	entries, _ := s.entriesForRead(tmp)
+	window, ok := computeReduceRangeForFullPayloads(entries, int(act.ChildCount), p.usePendingFullParents())
+	if !ok {
+		return preMaterializationFieldRejectKey{}, false
+	}
+	targetState := window.topState
+	if gotoState := p.lookupGoto(window.topState, act.Symbol); gotoState != 0 {
+		targetState = gotoState
+	}
+	byteOffset := s.byteOffset
+	if window.actualEnd > window.start {
+		byteOffset = stackEntryNodeEndByte(entries[window.actualEnd-1])
+	}
+	return preMaterializationFieldRejectKey{
+		state:      targetState,
+		byteOffset: byteOffset,
+	}, true
+}
+
 func retainTopStacks(stacks []glrStack, keep int) []glrStack {
 	return retainTopStacksForLanguage(stacks, keep, nil)
 }
 
 func retainTopStacksForLanguage(stacks []glrStack, keep int, lang *Language) []glrStack {
-	return retainTopStacksForLanguageWithScratch(stacks, keep, lang, nil, nil, nil, nil)
+	return retainTopStacksForLanguageWithScratch(stacks, keep, lang, nil, nil, nil)
 }
 
-func retainTopStacksForLanguageWithScratch(stacks []glrStack, keep int, lang *Language, selectedBuf *[]int, chosenBuf *[]bool, keyBuf *[]stackCullKey, stateBuf *[]StateID) []glrStack {
+func retainTopStacksForLanguageWithScratch(stacks []glrStack, keep int, lang *Language, selectedBuf *[]int, chosenBuf *[]bool, keyBuf *[]stackCullKey) []glrStack {
 	if keep <= 0 {
 		return stacks[:0]
 	}
@@ -3035,7 +3846,7 @@ func retainTopStacksForLanguageWithScratch(stacks []glrStack, keep int, lang *La
 		return stacks
 	}
 	compareLang := lang
-	if keyBuf == nil || stateBuf == nil {
+	if keyBuf == nil {
 		// Preserve the former no-key fallback semantics. That path used the
 		// C#-specific comparator, but all other languages followed the generic
 		// stack comparator even if the keyed full-parse path has language
@@ -3045,10 +3856,10 @@ func retainTopStacksForLanguageWithScratch(stacks []glrStack, keep int, lang *La
 		}
 	}
 	keys := buildStackCullKeys(stacks, compareLang, keyBuf)
-	return retainTopStacksByKeys(stacks, keep, compareLang, keys, selectedBuf, chosenBuf, stateBuf)
+	return retainTopStacksByKeys(stacks, keep, compareLang, keys, selectedBuf, chosenBuf)
 }
 
-func retainTopStacksByKeys(stacks []glrStack, keep int, lang *Language, keys []stackCullKey, selectedBuf *[]int, chosenBuf *[]bool, stateBuf *[]StateID) []glrStack {
+func retainTopStacksByKeys(stacks []glrStack, keep int, lang *Language, keys []stackCullKey, selectedBuf *[]int, chosenBuf *[]bool) []glrStack {
 	// Preserve one strong representative per top state before filling the
 	// remaining cap. Otherwise a burst of near-duplicate stacks from one state
 	// can crowd out a shallower but semantically distinct branch.
@@ -3061,20 +3872,11 @@ func retainTopStacksByKeys(stacks []glrStack, keep int, lang *Language, keys []s
 	} else {
 		selected = make([]int, 0, len(stacks))
 	}
-	var states []StateID
-	if stateBuf != nil {
-		if cap(*stateBuf) < len(stacks) {
-			*stateBuf = make([]StateID, 0, len(stacks))
-		}
-		states = (*stateBuf)[:0]
-	} else {
-		states = make([]StateID, 0, len(stacks))
-	}
 	for i := range stacks {
 		state := keys[i].state
 		bestIdx := -1
-		for j := range states {
-			if states[j] == state {
+		for j, selectedIdx := range selected {
+			if keys[selectedIdx].state == state {
 				bestIdx = j
 				break
 			}
@@ -3085,7 +3887,6 @@ func retainTopStacksByKeys(stacks []glrStack, keep int, lang *Language, keys []s
 			}
 			continue
 		}
-		states = append(states, state)
 		selected = append(selected, i)
 	}
 	for i := 0; i < len(selected); i++ {
@@ -3097,12 +3898,10 @@ func retainTopStacksByKeys(stacks []glrStack, keep int, lang *Language, keys []s
 		}
 		if best != i {
 			selected[i], selected[best] = selected[best], selected[i]
-			states[i], states[best] = states[best], states[i]
 		}
 	}
 	if len(selected) > keep {
 		selected = selected[:keep]
-		states = states[:keep]
 	}
 
 	var chosen []bool

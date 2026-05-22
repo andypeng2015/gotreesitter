@@ -4,34 +4,34 @@ func normalizeErlangSourceFileForms(root *Node, lang *Language) {
 	if root == nil || lang == nil || lang.Name != "erlang" || root.Type(lang) != "source_file" {
 		return
 	}
-	formsOnlyID := FieldID(0)
-	for i, fieldName := range lang.FieldNames {
-		if fieldName == "forms_only" {
-			formsOnlyID = FieldID(i)
-			break
-		}
-	}
-	if formsOnlyID == 0 || !erlangSourceFileLooksLikeForms(root, lang) {
+	formsOnlyID, ok := lang.FieldByName("forms_only")
+	if !ok || !erlangSourceFileLooksLikeForms(root, lang) {
 		return
 	}
-	ensureNodeFieldStorage(root, len(root.children))
-	for i, child := range root.children {
-		if child == nil || child.IsExtra() {
+	view := resultMutableChildrenForMutation(root)
+	ensureNodeFieldStorage(root, view.Len())
+	for i := 0; i < view.Len(); i++ {
+		entry, ok := view.Entry(i)
+		if !ok || stackEntryNodeIsExtra(entry) {
 			continue
 		}
 		root.fieldIDs[i] = formsOnlyID
 		root.fieldSources[i] = fieldSourceDirect
-		normalizeErlangTopLevelFormBounds(child)
+		if stackEntryNodeChildCount(entry) > 0 {
+			normalizeErlangTopLevelFormBounds(view.Child(i))
+		}
 	}
 }
 
 func erlangSourceFileLooksLikeForms(root *Node, lang *Language) bool {
 	sawForm := false
-	for _, child := range root.children {
-		if child == nil || child.IsExtra() {
+	view := resultMutableChildrenForMutation(root)
+	for i := 0; i < view.Len(); i++ {
+		entry, ok := view.Entry(i)
+		if !ok || stackEntryNodeIsExtra(entry) {
 			continue
 		}
-		if !erlangIsTopLevelFormType(child.Type(lang)) {
+		if !erlangIsTopLevelFormType(symbolTypeName(lang, stackEntryNodeSymbol(entry))) {
 			return false
 		}
 		sawForm = true
@@ -78,11 +78,12 @@ func erlangIsTopLevelFormType(typ string) bool {
 }
 
 func normalizeErlangTopLevelFormBounds(node *Node) {
-	if node == nil || len(node.children) == 0 {
+	if node == nil || resultChildCount(node) == 0 {
 		return
 	}
 	var first, last *Node
-	for _, child := range node.children {
+	for i := 0; i < resultChildCount(node); i++ {
+		child := resultChildAt(node, i)
 		if child == nil || child.IsExtra() {
 			continue
 		}

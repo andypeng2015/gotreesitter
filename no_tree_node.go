@@ -40,11 +40,18 @@ type compactFullLeafSlab struct {
 	used int
 }
 
-type compactFullLeafMaterializeReason uint8
+type compactFullLeafMaterializeReason = materializeReason
 
 const (
-	compactFullLeafMaterializeForParentReduce compactFullLeafMaterializeReason = iota
-	compactFullLeafMaterializeForFinalTree
+	compactFullLeafMaterializeForParentReduce      compactFullLeafMaterializeReason = materializeForParentReduce
+	compactFullLeafMaterializeForFinalTree         compactFullLeafMaterializeReason = materializeForFinalTree
+	compactFullLeafMaterializeForNormalization     compactFullLeafMaterializeReason = materializeForNormalization
+	compactFullLeafMaterializeForRecovery          compactFullLeafMaterializeReason = materializeForRecovery
+	compactFullLeafMaterializeForQuery             compactFullLeafMaterializeReason = materializeForQuery
+	compactFullLeafMaterializeForCursor            compactFullLeafMaterializeReason = materializeForCursor
+	compactFullLeafMaterializeForParentAPI         compactFullLeafMaterializeReason = materializeForParentAPI
+	compactFullLeafMaterializeForEdit              compactFullLeafMaterializeReason = materializeForEdit
+	compactFullLeafMaterializeForCheckpointRebuild compactFullLeafMaterializeReason = materializeForCheckpointRebuild
 )
 
 const (
@@ -56,7 +63,7 @@ const (
 
 func newStackEntryNode(state StateID, node *Node) stackEntry {
 	return stackEntry{
-		node:  node,
+		node:  unsafe.Pointer(node),
 		state: state,
 		kind:  stackEntryKindNode,
 	}
@@ -64,7 +71,7 @@ func newStackEntryNode(state StateID, node *Node) stackEntry {
 
 func newStackEntryNoTreeNode(state StateID, node *noTreeNode) stackEntry {
 	return stackEntry{
-		node:  (*Node)(unsafe.Pointer(node)),
+		node:  unsafe.Pointer(node),
 		state: state,
 		kind:  stackEntryKindNoTreeNode,
 	}
@@ -72,7 +79,7 @@ func newStackEntryNoTreeNode(state StateID, node *noTreeNode) stackEntry {
 
 func newStackEntryCompactCheckpointLeaf(state StateID, leaf *compactCheckpointLeaf) stackEntry {
 	return stackEntry{
-		node:  (*Node)(unsafe.Pointer(leaf)),
+		node:  unsafe.Pointer(leaf),
 		state: state,
 		kind:  stackEntryKindNoTreeNode,
 	}
@@ -80,7 +87,7 @@ func newStackEntryCompactCheckpointLeaf(state StateID, leaf *compactCheckpointLe
 
 func newStackEntryCompactFullLeaf(state StateID, leaf *compactFullLeaf) stackEntry {
 	return stackEntry{
-		node:  (*Node)(unsafe.Pointer(leaf)),
+		node:  unsafe.Pointer(leaf),
 		state: state,
 		kind:  stackEntryKindCompactFullLeaf,
 	}
@@ -88,7 +95,7 @@ func newStackEntryCompactFullLeaf(state StateID, leaf *compactFullLeaf) stackEnt
 
 func newStackEntryPendingParent(state StateID, parent *pendingParent) stackEntry {
 	return stackEntry{
-		node:  (*Node)(unsafe.Pointer(parent)),
+		node:  unsafe.Pointer(parent),
 		state: state,
 		kind:  stackEntryKindPendingParent,
 	}
@@ -98,28 +105,39 @@ func stackEntryNode(e stackEntry) *Node {
 	if e.kind != stackEntryKindNode || e.node == nil {
 		return nil
 	}
-	return e.node
+	return (*Node)(e.node)
 }
 
 func stackEntryNoTreeNode(e stackEntry) *noTreeNode {
 	if e.kind != stackEntryKindNoTreeNode || e.node == nil {
 		return nil
 	}
-	return (*noTreeNode)(unsafe.Pointer(e.node))
+	return (*noTreeNode)(e.node)
 }
 
 func stackEntryCompactFullLeaf(e stackEntry) *compactFullLeaf {
 	if e.kind != stackEntryKindCompactFullLeaf || e.node == nil {
 		return nil
 	}
-	return (*compactFullLeaf)(unsafe.Pointer(e.node))
+	return (*compactFullLeaf)(e.node)
 }
 
 func stackEntryPendingParent(e stackEntry) *pendingParent {
 	if e.kind != stackEntryKindPendingParent || e.node == nil {
 		return nil
 	}
-	return (*pendingParent)(unsafe.Pointer(e.node))
+	return (*pendingParent)(e.node)
+}
+
+func setStackEntryNode(entry *stackEntry, node *Node) {
+	if entry == nil {
+		return
+	}
+	entry.node = unsafe.Pointer(node)
+	entry.kind = stackEntryKindNode
+	if node != nil {
+		entry.state = node.parseState
+	}
 }
 
 func (n *noTreeNode) hasFlag(flag nodeFlags) bool {
@@ -145,6 +163,8 @@ func (n *noTreeNode) isMissing() bool    { return n.hasFlag(nodeFlagMissing) }
 func (n *noTreeNode) setMissing(v bool)  { n.setFlag(nodeFlagMissing, v) }
 func (n *noTreeNode) hasError() bool     { return n.hasFlag(nodeFlagHasError) }
 func (n *noTreeNode) setHasError(v bool) { n.setFlag(nodeFlagHasError, v) }
+func (n *noTreeNode) dirty() bool        { return n.hasFlag(nodeFlagDirty) }
+func (n *noTreeNode) setDirty(v bool)    { n.setFlag(nodeFlagDirty, v) }
 
 func noTreeNodeBytesForCap(n int) int64 {
 	if n <= 0 {
@@ -438,12 +458,28 @@ func stackEntryNodeHasError(e stackEntry) bool {
 	return false
 }
 
-func stackEntryNodeChildCount(e stackEntry) int {
+func stackEntryNodeDirty(e stackEntry) bool {
 	if n := stackEntryNode(e); n != nil {
-		return len(n.children)
+		return n.dirty()
+	}
+	if n := stackEntryNoTreeNode(e); n != nil {
+		return n.dirty()
+	}
+	if n := stackEntryCompactFullLeaf(e); n != nil {
+		return n.dirty()
 	}
 	if n := stackEntryPendingParent(e); n != nil {
-		return len(n.childEntries())
+		return n.dirty()
+	}
+	return false
+}
+
+func stackEntryNodeChildCount(e stackEntry) int {
+	if n := stackEntryNode(e); n != nil {
+		return nodeChildCountNoMaterialize(n)
+	}
+	if n := stackEntryPendingParent(e); n != nil {
+		return n.childEntryCount()
 	}
 	return 0
 }
@@ -524,9 +560,15 @@ func materializeStackEntryCompactFullLeaf(arena *nodeArena, entry *stackEntry, r
 	if entry == nil {
 		return nil
 	}
-	leaf := stackEntryCompactFullLeaf(*entry)
+	node, updated := materializeStackEntryCompactFullLeafEntry(arena, *entry, reason)
+	*entry = updated
+	return node
+}
+
+func materializeStackEntryCompactFullLeafEntry(arena *nodeArena, entry stackEntry, reason compactFullLeafMaterializeReason) (*Node, stackEntry) {
+	leaf := stackEntryCompactFullLeaf(entry)
 	if leaf == nil {
-		return stackEntryNode(*entry)
+		return stackEntryNode(entry), entry
 	}
 	node := newLeafNodeInArena(arena, leaf.symbol, leaf.isNamed(), leaf.startByte, leaf.endByte, leaf.startPoint, leaf.endPoint)
 	node.flags = leaf.flags
@@ -541,17 +583,7 @@ func materializeStackEntryCompactFullLeaf(arena *nodeArena, entry *stackEntry, r
 			}
 		}
 	}
-	entry.node = node
-	entry.kind = stackEntryKindNode
-	entry.state = node.parseState
-	if arena != nil {
-		arena.compactFullLeafMaterialized++
-		switch reason {
-		case compactFullLeafMaterializeForParentReduce:
-			arena.compactFullLeafMaterializedForParentReduce++
-		case compactFullLeafMaterializeForFinalTree:
-			arena.compactFullLeafMaterializedForFinalTree++
-		}
-	}
-	return node
+	setStackEntryNode(&entry, node)
+	arena.recordCompactFullLeafMaterialized(reason)
+	return node, entry
 }

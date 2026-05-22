@@ -34,43 +34,25 @@ func normalizeHTMLRecoveredNestedCustomTags(root *Node, lang *Language) {
 	}
 	htmlExtendOpenElementChain(continuation, closeTok.startByte, closeTok.startPoint, lang)
 	endTagChildren := []*Node{closeTok, tagName, closeAngle}
-	if root.ownerArena != nil {
-		buf := root.ownerArena.allocNodeSlice(len(endTagChildren))
-		copy(buf, endTagChildren)
-		endTagChildren = buf
-	}
-	endTag := newParentNodeInArena(root.ownerArena, endTagSym, lang.SymbolMetadata[endTagSym].Named, endTagChildren, nil, 0)
+	endTagChildren = cloneNodeSliceIfArena(root.ownerArena, endTagChildren)
+	endTag := newParentNodeInArena(root.ownerArena, endTagSym, symbolIsNamed(lang, endTagSym), endTagChildren, nil, 0)
 	inner := continuation
 	for i := len(startTags) - 1; i >= 1; i-- {
 		children := []*Node{startTags[i], inner}
-		if root.ownerArena != nil {
-			buf := root.ownerArena.allocNodeSlice(len(children))
-			copy(buf, children)
-			children = buf
-		}
-		wrapper := newParentNodeInArena(root.ownerArena, elementSym, lang.SymbolMetadata[elementSym].Named, children, nil, 0)
+		children = cloneNodeSliceIfArena(root.ownerArena, children)
+		wrapper := newParentNodeInArena(root.ownerArena, elementSym, symbolIsNamed(lang, elementSym), children, nil, 0)
 		wrapper.endByte = closeTok.startByte
 		wrapper.endPoint = closeTok.startPoint
 		inner = wrapper
 	}
 	htmlExtendLeadingElementChain(inner, closeTok.startByte, closeTok.startPoint, lang)
 	outerChildren := []*Node{startTags[0], inner, endTag}
-	if root.ownerArena != nil {
-		buf := root.ownerArena.allocNodeSlice(len(outerChildren))
-		copy(buf, outerChildren)
-		outerChildren = buf
-	}
-	outer := newParentNodeInArena(root.ownerArena, elementSym, lang.SymbolMetadata[elementSym].Named, outerChildren, nil, 0)
-	root.children = []*Node{outer}
-	if root.ownerArena != nil {
-		buf := root.ownerArena.allocNodeSlice(1)
-		buf[0] = outer
-		root.children = buf
-	}
+	outerChildren = cloneNodeSliceIfArena(root.ownerArena, outerChildren)
+	outer := newParentNodeInArena(root.ownerArena, elementSym, symbolIsNamed(lang, elementSym), outerChildren, nil, 0)
+	root.children = cloneNodeSliceIfArena(root.ownerArena, []*Node{outer})
 	root.fieldIDs = nil
 	root.fieldSources = nil
-	root.symbol = documentSym
-	root.setNamed(lang.SymbolMetadata[documentSym].Named)
+	retagResultRoot(root, documentSym, symbolIsNamed(lang, documentSym))
 	root.setHasError(outer.HasError())
 }
 
@@ -99,8 +81,11 @@ func htmlRecoveredStartTag(node *Node, lang *Language) *Node {
 	if node.Type(lang) == "start_tag" {
 		return node
 	}
-	if node.Type(lang) == "ERROR" && len(node.children) == 1 && node.children[0] != nil && node.children[0].Type(lang) == "start_tag" {
-		return node.children[0]
+	if node.Type(lang) == "ERROR" && resultChildCount(node) == 1 {
+		child := resultChildAt(node, 0)
+		if child != nil && child.Type(lang) == "start_tag" {
+			return child
+		}
 	}
 	return nil
 }
@@ -110,7 +95,8 @@ func htmlExtendOpenElementChain(node *Node, endByte uint32, endPoint Point, lang
 		return
 	}
 	hasEndTag := false
-	for _, child := range node.children {
+	for i := 0; i < resultChildCount(node); i++ {
+		child := resultChildAt(node, i)
 		if child == nil {
 			continue
 		}
@@ -129,10 +115,11 @@ func htmlExtendLeadingElementChain(node *Node, endByte uint32, endPoint Point, l
 	for cur := node; cur != nil && lang != nil && cur.Type(lang) == "element"; {
 		cur.endByte = endByte
 		cur.endPoint = endPoint
-		if len(cur.children) < 2 || cur.children[1] == nil || cur.children[1].Type(lang) != "element" {
+		child := resultChildAt(cur, 1)
+		if resultChildCount(cur) < 2 || child == nil || child.Type(lang) != "element" {
 			return
 		}
-		cur = cur.children[1]
+		cur = child
 	}
 }
 
@@ -140,24 +127,18 @@ func normalizeHTMLRecoveredNestedCustomTagRanges(root *Node, source []byte, lang
 	if root == nil || lang == nil || lang.Name != "html" || len(source) == 0 {
 		return
 	}
-	var walk func(*Node)
-	walk = func(node *Node) {
-		if node == nil {
+	walkResultTreePostorder(root, func(node *Node) {
+		childCount := resultChildCount(node)
+		if node.Type(lang) != "element" || childCount < 2 {
 			return
 		}
-		for _, child := range node.children {
-			walk(child)
-		}
-		if node.Type(lang) != "element" || len(node.children) < 2 {
-			return
-		}
-		for i := 0; i+1 < len(node.children); i++ {
-			left := node.children[i]
-			right := node.children[i+1]
-			if left == nil || right == nil || left.Type(lang) != "element" || right.Type(lang) != "end_tag" || len(right.children) == 0 {
+		for i := 0; i+1 < childCount; i++ {
+			left := resultChildAt(node, i)
+			right := resultChildAt(node, i+1)
+			if left == nil || right == nil || left.Type(lang) != "element" || right.Type(lang) != "end_tag" || resultChildCount(right) == 0 {
 				continue
 			}
-			closeTok := right.children[0]
+			closeTok := resultChildAt(right, 0)
 			if closeTok == nil || closeTok.Type(lang) != "</" || left.endByte >= closeTok.startByte || closeTok.startByte > uint32(len(source)) {
 				continue
 			}
@@ -166,6 +147,5 @@ func normalizeHTMLRecoveredNestedCustomTagRanges(root *Node, source []byte, lang
 			}
 			htmlExtendLeadingElementChain(left, closeTok.startByte, closeTok.startPoint, lang)
 		}
-	}
-	walk(root)
+	})
 }

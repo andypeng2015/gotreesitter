@@ -24,8 +24,1641 @@ func TestCompactFullLeafSizeBudget(t *testing.T) {
 }
 
 func TestPendingParentSizeBudget(t *testing.T) {
-	if got := unsafe.Sizeof(pendingParent{}); got != 56 {
-		t.Fatalf("pendingParent size = %d, want 56", got)
+	if got := unsafe.Sizeof(pendingParent{}); got != 48 {
+		t.Fatalf("pendingParent size = %d, want 48", got)
+	}
+}
+
+func TestPendingChildEntrySizeBudget(t *testing.T) {
+	if got := unsafe.Sizeof(pendingChildEntry{}); got != 16 {
+		t.Fatalf("pendingChildEntry size = %d, want 16", got)
+	}
+	if stackEntryKindPendingParent > uint32(pendingChildEntryKindMask) {
+		t.Fatalf("pendingChildEntry kind mask = %d does not cover pending-parent kind %d", pendingChildEntryKindMask, stackEntryKindPendingParent)
+	}
+}
+
+func TestPendingChildEntryRoundTripsKindAndState(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	node := newLeafNodeInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	node.parseState = 11
+	noTree := newNoTreeLeafNodeInArena(arena, 2, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	noTree.parseState = 12
+	leaf := newCompactFullLeafInArena(arena, 3, true, 2, 3, Point{Column: 2}, Point{Column: 3})
+	leaf.parseState = 13
+	parent := newPendingParentInArena(arena, 4, true, 5, nil, 3, 4, Point{Column: 3}, Point{Column: 4}, false)
+	parent.parseState = 14
+
+	for _, tc := range []struct {
+		name  string
+		entry stackEntry
+	}{
+		{name: "node", entry: newStackEntryNode(node.parseState, node)},
+		{name: "no-tree", entry: newStackEntryNoTreeNode(noTree.parseState, noTree)},
+		{name: "leaf", entry: newStackEntryCompactFullLeaf(leaf.parseState, leaf)},
+		{name: "parent", entry: newStackEntryPendingParent(parent.parseState, parent)},
+	} {
+		got := newPendingChildEntry(tc.entry).stackEntry()
+		if got.node != tc.entry.node {
+			t.Fatalf("%s node = %p, want %p", tc.name, got.node, tc.entry.node)
+		}
+		if got.kind != tc.entry.kind {
+			t.Fatalf("%s kind = %d, want %d", tc.name, got.kind, tc.entry.kind)
+		}
+		if got.state != tc.entry.state {
+			t.Fatalf("%s state = %d, want %d", tc.name, got.state, tc.entry.state)
+		}
+	}
+}
+
+func TestPendingParentMaterializationCachesMaterializedChildRefs(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	leaf := newCompactFullLeafInArena(arena, 3, true, 2, 3, Point{Column: 2}, Point{Column: 3})
+	leaf.parseState = 13
+	parent := newPendingParentInArena(arena, 4, true, 5, []stackEntry{newStackEntryCompactFullLeaf(leaf.parseState, leaf)}, 2, 3, Point{Column: 2}, Point{Column: 3}, false)
+	parent.parseState = 14
+
+	entry := newStackEntryPendingParent(parent.parseState, parent)
+	if node := materializeStackEntryPendingParent(arena, &entry, pendingParentMaterializeForFinalTree); node == nil {
+		t.Fatal("first materialized node = nil")
+	}
+	if got := arena.compactFullLeafMaterialized; got != 1 {
+		t.Fatalf("compact leaf materialized after first pass = %d, want 1", got)
+	}
+
+	entry = newStackEntryPendingParent(parent.parseState, parent)
+	if node := materializeStackEntryPendingParent(arena, &entry, pendingParentMaterializeForFinalTree); node == nil {
+		t.Fatal("second materialized node = nil")
+	}
+	if got := arena.compactFullLeafMaterialized; got != 1 {
+		t.Fatalf("compact leaf materialized after second pass = %d, want 1", got)
+	}
+	if child := parent.childEntry(arena, 0); stackEntryNode(child) == nil {
+		t.Fatal("pending child ref was not updated to materialized node")
+	}
+}
+
+func TestPendingParentFinalChildRefsKeepCompactLeafLazy(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	arena.finalChildRefs = true
+	leaf := newCompactFullLeafInArena(arena, 3, true, 2, 3, Point{Column: 2}, Point{Column: 3})
+	leaf.parseState = 13
+	parent := newPendingParentInArena(arena, 4, true, 5, []stackEntry{newStackEntryCompactFullLeaf(leaf.parseState, leaf)}, 2, 3, Point{Column: 2}, Point{Column: 3}, false)
+	parent.parseState = 14
+
+	entry := newStackEntryPendingParent(parent.parseState, parent)
+	node := materializeStackEntryPendingParent(arena, &entry, pendingParentMaterializeForFinalTree)
+	if node == nil {
+		t.Fatal("materialized node = nil")
+	}
+	if got := arena.compactFullLeafMaterialized; got != 0 {
+		t.Fatalf("compact leaf materialized during final parent build = %d, want 0", got)
+	}
+	if got := len(node.children); got != 0 {
+		t.Fatalf("len(node.children) = %d, want lazy sidecar", got)
+	}
+	if got := node.ChildCount(); got != 1 {
+		t.Fatalf("ChildCount = %d, want 1 from sidecar", got)
+	}
+	if got := arena.finalChildRefsCreated; got != 1 {
+		t.Fatalf("finalChildRefsCreated = %d, want 1", got)
+	}
+
+	child := node.Child(0)
+	if child == nil {
+		t.Fatal("Child(0) = nil")
+	}
+	if got := child.Symbol(); got != 3 {
+		t.Fatalf("child symbol = %d, want 3", got)
+	}
+	if got := arena.compactFullLeafMaterializedForParentAPI; got != 1 {
+		t.Fatalf("compact leaf materialized for parent API = %d, want 1", got)
+	}
+	if got := len(node.children); got != 0 {
+		t.Fatalf("len(node.children) after Child(0) = %d, want lazy sidecar", got)
+	}
+	if got := arena.finalChildRefsMaterializedChildren; got != 0 {
+		t.Fatalf("final child ref range materialized children = %d, want 0", got)
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 1 {
+		t.Fatalf("final child ref single children materialized = %d, want 1", got)
+	}
+}
+
+func TestPendingParentFinalChildRefsSurviveParentLinkWiring(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	arena.finalChildRefs = true
+	leaf := newCompactFullLeafInArena(arena, 3, true, 2, 3, Point{Column: 2}, Point{Column: 3})
+	leaf.parseState = 13
+	inner := newPendingParentInArena(arena, 4, true, 5, []stackEntry{newStackEntryCompactFullLeaf(leaf.parseState, leaf)}, 2, 3, Point{Column: 2}, Point{Column: 3}, false)
+	inner.parseState = 14
+	outer := newPendingParentInArena(arena, 5, true, 6, []stackEntry{newStackEntryPendingParent(inner.parseState, inner)}, 2, 3, Point{Column: 2}, Point{Column: 3}, false)
+	outer.parseState = 15
+
+	entry := newStackEntryPendingParent(outer.parseState, outer)
+	outerNode := materializeStackEntryPendingParent(arena, &entry, pendingParentMaterializeForFinalTree)
+	if outerNode == nil {
+		t.Fatal("outer node = nil")
+	}
+	rootChildren := arena.allocNodeSlice(1)
+	rootChildren[0] = outerNode
+	root := newParentNodeInArenaNoLinksWithFieldSources(arena, 1, true, rootChildren, nil, nil, 0, false)
+	arena.deferParentLinks(root)
+	outerNode = root.Child(0)
+	if outerNode == nil {
+		t.Fatal("root.Child(0) = nil")
+	}
+	innerNode := outerNode.Child(0)
+	if innerNode == nil {
+		t.Fatal("outer.Child(0) = nil")
+	}
+	if got := innerNode.ChildCount(); got != 1 {
+		t.Fatalf("inner ChildCount before link wiring = %d, want 1", got)
+	}
+	if parent := innerNode.Parent(); parent != outerNode {
+		t.Fatalf("inner Parent = %p, want outer %p", parent, outerNode)
+	}
+	leafNode := innerNode.Child(0)
+	if leafNode == nil {
+		t.Fatal("inner.Child(0) = nil")
+	}
+	if parent := leafNode.Parent(); parent != innerNode {
+		t.Fatalf("leaf Parent = %p, want inner %p", parent, innerNode)
+	}
+}
+
+func TestQueryMatcherUsesLazyFinalChildRefs(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	arena.finalChildRefs = true
+	leaf := newCompactFullLeafInArena(arena, 1, true, 2, 3, Point{Column: 2}, Point{Column: 3})
+	leaf.parseState = 13
+	parent := newPendingParentInArena(arena, 2, true, 5, []stackEntry{newStackEntryCompactFullLeaf(leaf.parseState, leaf)}, 2, 3, Point{Column: 2}, Point{Column: 3}, false)
+	parent.parseState = 14
+
+	entry := newStackEntryPendingParent(parent.parseState, parent)
+	node := materializeStackEntryPendingParent(arena, &entry, pendingParentMaterializeForFinalTree)
+	if node == nil {
+		t.Fatal("materialized parent = nil")
+	}
+	lang := &Language{
+		SymbolNames: []string{"", "leaf", "parent"},
+		SymbolMetadata: []SymbolMetadata{
+			{},
+			{Named: true, Visible: true},
+			{Named: true, Visible: true},
+		},
+	}
+	query := &Query{}
+	steps := []QueryStep{
+		{symbol: 2, isNamed: true, depth: 0, quantifier: queryQuantifierOne},
+		{symbol: 1, isNamed: true, depth: 1, quantifier: queryQuantifierOne},
+	}
+	var captures []QueryCapture
+	if !query.matchStepsWithPredicates(steps, 0, node, lang, nil, nil, &captures) {
+		t.Fatal("query did not match compact final child")
+	}
+	if got := arena.finalChildRefsMaterializedParents; got != 0 {
+		t.Fatalf("final child ref range materialized parents = %d, want 0", got)
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 0 {
+		t.Fatalf("final child ref single children materialized during deferred Node.Edit = %d, want 0", got)
+	}
+}
+
+func TestQueryCursorDefersFinalChildRefsUntilCurrentNodeExhausted(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	arena.finalChildRefs = true
+	leaf := newCompactFullLeafInArena(arena, 1, true, 2, 3, Point{Column: 2}, Point{Column: 3})
+	leaf.parseState = 13
+	parent := newPendingParentInArena(arena, 2, true, 5, []stackEntry{newStackEntryCompactFullLeaf(leaf.parseState, leaf)}, 2, 3, Point{Column: 2}, Point{Column: 3}, false)
+	parent.parseState = 14
+
+	entry := newStackEntryPendingParent(parent.parseState, parent)
+	node := materializeStackEntryPendingParent(arena, &entry, pendingParentMaterializeForFinalTree)
+	if node == nil {
+		t.Fatal("materialized parent = nil")
+	}
+	lang := &Language{
+		SymbolNames: []string{"", "leaf", "parent"},
+		SymbolMetadata: []SymbolMetadata{
+			{},
+			{Named: true, Visible: true},
+			{Named: true, Visible: true},
+		},
+	}
+	query, err := NewQuery(`(parent) @p`, lang)
+	if err != nil {
+		t.Fatalf("NewQuery: %v", err)
+	}
+	cursor := query.Exec(node, lang, nil)
+	match, ok := cursor.NextMatch()
+	if !ok {
+		t.Fatal("NextMatch returned !ok")
+	}
+	if len(match.Captures) != 1 || match.Captures[0].Node != node {
+		t.Fatalf("captures = %#v, want parent node capture", match.Captures)
+	}
+	if got := arena.finalChildRefsMaterializedParents; got != 0 {
+		t.Fatalf("final child ref range materialized parents = %d, want 0", got)
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 0 {
+		t.Fatalf("final child ref single children materialized = %d, want 0", got)
+	}
+}
+
+func TestQueryCursorByteRangeSkipsOutOfRangeLazyFinalChildRefs(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	arena.finalChildRefs = true
+	left := newCompactFullLeafInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	left.parseState = 11
+	right := newCompactFullLeafInArena(arena, 1, true, 10, 11, Point{Column: 10}, Point{Column: 11})
+	right.parseState = 12
+	parent := newPendingParentInArena(arena, 2, true, 5, []stackEntry{
+		newStackEntryCompactFullLeaf(left.parseState, left),
+		newStackEntryCompactFullLeaf(right.parseState, right),
+	}, 0, 11, Point{}, Point{Column: 11}, false)
+	parent.parseState = 13
+
+	entry := newStackEntryPendingParent(parent.parseState, parent)
+	node := materializeStackEntryPendingParent(arena, &entry, pendingParentMaterializeForFinalTree)
+	if node == nil {
+		t.Fatal("materialized parent = nil")
+	}
+	lang := &Language{
+		SymbolNames: []string{"", "leaf", "parent"},
+		SymbolMetadata: []SymbolMetadata{
+			{},
+			{Named: true, Visible: true},
+			{Named: true, Visible: true},
+		},
+	}
+	query, err := NewQuery(`(leaf) @l`, lang)
+	if err != nil {
+		t.Fatalf("NewQuery: %v", err)
+	}
+	cursor := query.Exec(node, lang, []byte("a         b"))
+	cursor.SetByteRange(0, 2)
+	match, ok := cursor.NextMatch()
+	if !ok {
+		t.Fatal("NextMatch returned !ok")
+	}
+	if len(match.Captures) != 1 || match.Captures[0].Node.StartByte() != 0 {
+		t.Fatalf("captures = %#v, want left leaf only", match.Captures)
+	}
+	if _, ok := cursor.NextMatch(); ok {
+		t.Fatal("unexpected second match")
+	}
+	if got := arena.finalChildRefsMaterializedParents; got != 0 {
+		t.Fatalf("final child ref range materialized parents = %d, want 0", got)
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 1 {
+		t.Fatalf("final child ref single children materialized = %d, want 1", got)
+	}
+}
+
+func TestQueryMatcherSkipsNonCandidateLazyFinalChildRefs(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	arena.finalChildRefs = true
+	other := newCompactFullLeafInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	other.parseState = 11
+	wanted := newCompactFullLeafInArena(arena, 2, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	wanted.parseState = 12
+	parent := newPendingParentInArena(arena, 3, true, 4, []stackEntry{
+		newStackEntryCompactFullLeaf(other.parseState, other),
+		newStackEntryCompactFullLeaf(wanted.parseState, wanted),
+	}, 0, 2, Point{}, Point{Column: 2}, false)
+	parent.parseState = 13
+
+	entry := newStackEntryPendingParent(parent.parseState, parent)
+	node := materializeStackEntryPendingParent(arena, &entry, pendingParentMaterializeForFinalTree)
+	if node == nil {
+		t.Fatal("materialized parent = nil")
+	}
+	lang := &Language{
+		SymbolNames: []string{"", "other", "wanted", "parent"},
+		SymbolMetadata: []SymbolMetadata{
+			{},
+			{Named: true, Visible: true},
+			{Named: true, Visible: true},
+			{Named: true, Visible: true},
+		},
+	}
+	query, err := NewQuery(`(parent (wanted) @w)`, lang)
+	if err != nil {
+		t.Fatalf("NewQuery: %v", err)
+	}
+	cursor := query.Exec(node, lang, []byte("ow"))
+	match, ok := cursor.NextMatch()
+	if !ok {
+		t.Fatal("NextMatch returned !ok")
+	}
+	if len(match.Captures) != 1 || match.Captures[0].Node.Symbol() != 2 {
+		t.Fatalf("captures = %#v, want wanted child capture", match.Captures)
+	}
+	if got := arena.finalChildRefsMaterializedParents; got != 0 {
+		t.Fatalf("final child ref range materialized parents = %d, want 0", got)
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 1 {
+		t.Fatalf("final child ref single children materialized = %d, want 1", got)
+	}
+}
+
+func TestAlternativeFieldMatchesUsesLazyFinalChildRefs(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	arena.finalChildRefs = true
+	other := newCompactFullLeafInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	other.parseState = 13
+	leaf := newCompactFullLeafInArena(arena, 1, true, 2, 3, Point{Column: 2}, Point{Column: 3})
+	leaf.parseState = 14
+	parent := newPendingParentInArena(arena, 2, true, 5, []stackEntry{
+		newStackEntryCompactFullLeaf(other.parseState, other),
+		newStackEntryCompactFullLeaf(leaf.parseState, leaf),
+	}, 0, 3, Point{}, Point{Column: 3}, false)
+	parent.parseState = 15
+
+	entry := newStackEntryPendingParent(parent.parseState, parent)
+	node := materializeStackEntryPendingParent(arena, &entry, pendingParentMaterializeForFinalTree)
+	if node == nil {
+		t.Fatal("materialized parent = nil")
+	}
+	node.fieldIDs = []FieldID{0, 1}
+	child := nodeChildAtForReason(node, 1, materializeForQuery)
+	if child == nil {
+		t.Fatal("nodeChildAtForReason = nil")
+	}
+	lang := &Language{FieldNames: []string{"", "name"}}
+	query := &Query{}
+	if !query.alternativeFieldMatches(&alternativeSymbol{field: 1}, child, nil, -1, lang) {
+		t.Fatal("alternativeFieldMatches = false, want true")
+	}
+	if got := arena.finalChildRefsMaterializedParents; got != 0 {
+		t.Fatalf("final child ref range materialized parents = %d, want 0", got)
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 1 {
+		t.Fatalf("final child ref single children materialized = %d, want 1", got)
+	}
+}
+
+func TestLazyFinalChildRefsParentAndSiblingAvoidRangeMaterialization(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	arena.finalChildRefs = true
+	leftLeaf := newCompactFullLeafInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	leftLeaf.parseState = 11
+	innerLeaf := newCompactFullLeafInArena(arena, 2, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	innerLeaf.parseState = 12
+	inner := newPendingParentInArena(arena, 3, true, 6, []stackEntry{newStackEntryCompactFullLeaf(innerLeaf.parseState, innerLeaf)}, 1, 2, Point{Column: 1}, Point{Column: 2}, false)
+	inner.parseState = 13
+	outer := newPendingParentInArena(arena, 4, true, 7, []stackEntry{
+		newStackEntryCompactFullLeaf(leftLeaf.parseState, leftLeaf),
+		newStackEntryPendingParent(inner.parseState, inner),
+	}, 0, 2, Point{}, Point{Column: 2}, false)
+	outer.parseState = 14
+
+	entry := newStackEntryPendingParent(outer.parseState, outer)
+	outerNode := materializeStackEntryPendingParent(arena, &entry, pendingParentMaterializeForFinalTree)
+	if outerNode == nil {
+		t.Fatal("outer node = nil")
+	}
+	leftNode := outerNode.Child(0)
+	if leftNode == nil {
+		t.Fatal("outer.Child(0) = nil")
+	}
+	innerNode := leftNode.NextSibling()
+	if innerNode == nil {
+		t.Fatal("left.NextSibling() = nil")
+	}
+	if innerNode.Symbol() != 3 {
+		t.Fatalf("left.NextSibling symbol = %d, want 3", innerNode.Symbol())
+	}
+	if parent := innerNode.Parent(); parent != outerNode {
+		t.Fatalf("inner Parent = %p, want outer %p", parent, outerNode)
+	}
+	if prev := innerNode.PrevSibling(); prev != leftNode {
+		t.Fatalf("inner PrevSibling = %p, want left %p", prev, leftNode)
+	}
+	if got := arena.finalChildRefsMaterializedParents; got != 0 {
+		t.Fatalf("final child ref range materialized parents = %d, want 0", got)
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 2 {
+		t.Fatalf("final child ref single children materialized = %d, want 2", got)
+	}
+}
+
+func TestNamedChildAPIsSkipAnonymousLazyFinalChildRefs(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	arena.finalChildRefs = true
+	anon := newCompactFullLeafInArena(arena, 1, false, 0, 1, Point{}, Point{Column: 1})
+	anon.parseState = 11
+	named := newCompactFullLeafInArena(arena, 2, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	named.parseState = 12
+	parent := newPendingParentInArena(arena, 3, true, 4, []stackEntry{
+		newStackEntryCompactFullLeaf(anon.parseState, anon),
+		newStackEntryCompactFullLeaf(named.parseState, named),
+	}, 0, 2, Point{}, Point{Column: 2}, false)
+	parent.parseState = 13
+
+	entry := newStackEntryPendingParent(parent.parseState, parent)
+	root := materializeStackEntryPendingParent(arena, &entry, pendingParentMaterializeForFinalTree)
+	if root == nil {
+		t.Fatal("root = nil")
+	}
+	if got := root.NamedChildCount(); got != 1 {
+		t.Fatalf("NamedChildCount = %d, want 1", got)
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 0 {
+		t.Fatalf("final child ref single children after NamedChildCount = %d, want 0", got)
+	}
+	child := root.NamedChild(0)
+	if child == nil {
+		t.Fatal("NamedChild(0) = nil")
+	}
+	if got := child.Symbol(); got != 2 {
+		t.Fatalf("NamedChild(0).Symbol = %d, want 2", got)
+	}
+	if got := arena.finalChildRefsMaterializedParents; got != 0 {
+		t.Fatalf("final child ref range materialized parents = %d, want 0", got)
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 1 {
+		t.Fatalf("final child ref single children after NamedChild = %d, want 1", got)
+	}
+}
+
+func TestSExprSkipsAnonymousLazyFinalChildRefs(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	arena.finalChildRefs = true
+	anon := newCompactFullLeafInArena(arena, 1, false, 0, 1, Point{}, Point{Column: 1})
+	anon.parseState = 11
+	named := newCompactFullLeafInArena(arena, 2, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	named.parseState = 12
+	parent := newPendingParentInArena(arena, 3, true, 4, []stackEntry{
+		newStackEntryCompactFullLeaf(anon.parseState, anon),
+		newStackEntryCompactFullLeaf(named.parseState, named),
+	}, 0, 2, Point{}, Point{Column: 2}, false)
+	parent.parseState = 13
+
+	entry := newStackEntryPendingParent(parent.parseState, parent)
+	root := materializeStackEntryPendingParent(arena, &entry, pendingParentMaterializeForFinalTree)
+	if root == nil {
+		t.Fatal("root = nil")
+	}
+	lang := &Language{
+		SymbolNames: []string{"", "anon", "name", "parent"},
+		SymbolMetadata: []SymbolMetadata{
+			{},
+			{Named: false, Visible: true},
+			{Named: true, Visible: true},
+			{Named: true, Visible: true},
+		},
+	}
+	if got, want := root.SExpr(lang), "(parent (name))"; got != want {
+		t.Fatalf("SExpr = %q, want %q", got, want)
+	}
+	if got := arena.finalChildRefsMaterializedParents; got != 0 {
+		t.Fatalf("final child ref range materialized parents = %d, want 0", got)
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 1 {
+		t.Fatalf("final child ref single children after SExpr = %d, want 1", got)
+	}
+}
+
+func TestTreeCursorNamedNavigationSkipsAnonymousLazyFinalChildRefs(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	arena.finalChildRefs = true
+	anonLeft := newCompactFullLeafInArena(arena, 1, false, 0, 1, Point{}, Point{Column: 1})
+	anonLeft.parseState = 11
+	namedLeft := newCompactFullLeafInArena(arena, 2, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	namedLeft.parseState = 12
+	anonMiddle := newCompactFullLeafInArena(arena, 1, false, 2, 3, Point{Column: 2}, Point{Column: 3})
+	anonMiddle.parseState = 13
+	namedRight := newCompactFullLeafInArena(arena, 2, true, 3, 4, Point{Column: 3}, Point{Column: 4})
+	namedRight.parseState = 14
+	parent := newPendingParentInArena(arena, 3, true, 4, []stackEntry{
+		newStackEntryCompactFullLeaf(anonLeft.parseState, anonLeft),
+		newStackEntryCompactFullLeaf(namedLeft.parseState, namedLeft),
+		newStackEntryCompactFullLeaf(anonMiddle.parseState, anonMiddle),
+		newStackEntryCompactFullLeaf(namedRight.parseState, namedRight),
+	}, 0, 4, Point{}, Point{Column: 4}, false)
+	parent.parseState = 15
+
+	entry := newStackEntryPendingParent(parent.parseState, parent)
+	root := materializeStackEntryPendingParent(arena, &entry, pendingParentMaterializeForFinalTree)
+	if root == nil {
+		t.Fatal("root = nil")
+	}
+	cursor := NewTreeCursor(root, nil)
+	if !cursor.GotoFirstNamedChild() {
+		t.Fatal("GotoFirstNamedChild = false")
+	}
+	if got := cursor.CurrentNode().StartByte(); got != 1 {
+		t.Fatalf("first named StartByte = %d, want 1", got)
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 1 {
+		t.Fatalf("final child ref single children after first named = %d, want 1", got)
+	}
+	if !cursor.GotoNextNamedSibling() {
+		t.Fatal("GotoNextNamedSibling = false")
+	}
+	if got := cursor.CurrentNode().StartByte(); got != 3 {
+		t.Fatalf("next named StartByte = %d, want 3", got)
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 2 {
+		t.Fatalf("final child ref single children after next named = %d, want 2", got)
+	}
+	if !cursor.GotoPrevNamedSibling() {
+		t.Fatal("GotoPrevNamedSibling = false")
+	}
+	if got := cursor.CurrentNode().StartByte(); got != 1 {
+		t.Fatalf("previous named StartByte = %d, want 1", got)
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 2 {
+		t.Fatalf("final child ref single children after prev named = %d, want 2", got)
+	}
+	if got := arena.finalChildRefsMaterializedParents; got != 0 {
+		t.Fatalf("final child ref range materialized parents = %d, want 0", got)
+	}
+}
+
+func TestTreeCursorRangeSearchUsesLazyFinalChildHeaders(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	arena.finalChildRefs = true
+	children := make([]stackEntry, 4)
+	for i := range children {
+		leaf := newCompactFullLeafInArena(arena, 1, true, uint32(i), uint32(i+1), Point{Column: uint32(i)}, Point{Column: uint32(i + 1)})
+		leaf.parseState = StateID(10 + i)
+		children[i] = newStackEntryCompactFullLeaf(leaf.parseState, leaf)
+	}
+	parent := newPendingParentInArena(arena, 2, true, 4, children, 0, 4, Point{}, Point{Column: 4}, false)
+	parent.parseState = 15
+
+	entry := newStackEntryPendingParent(parent.parseState, parent)
+	root := materializeStackEntryPendingParent(arena, &entry, pendingParentMaterializeForFinalTree)
+	if root == nil {
+		t.Fatal("root = nil")
+	}
+	cursor := NewTreeCursor(root, nil)
+	if got := cursor.GotoFirstChildForByte(2); got != 2 {
+		t.Fatalf("GotoFirstChildForByte = %d, want 2", got)
+	}
+	if got := cursor.CurrentNode().StartByte(); got != 2 {
+		t.Fatalf("byte cursor StartByte = %d, want 2", got)
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 1 {
+		t.Fatalf("final child ref single children after byte search = %d, want 1", got)
+	}
+	cursor.Reset(root)
+	if got := cursor.GotoFirstChildForPoint(Point{Column: 2}); got != 2 {
+		t.Fatalf("GotoFirstChildForPoint = %d, want 2", got)
+	}
+	if got := cursor.CurrentNode().StartByte(); got != 2 {
+		t.Fatalf("point cursor StartByte = %d, want 2", got)
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 1 {
+		t.Fatalf("final child ref single children after point search = %d, want 1", got)
+	}
+	if got := arena.finalChildRefsMaterializedParents; got != 0 {
+		t.Fatalf("final child ref range materialized parents = %d, want 0", got)
+	}
+}
+
+func TestDescendantRangeUsesLazyFinalChildHeaders(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	arena.finalChildRefs = true
+	children := make([]stackEntry, 3)
+	for i := range children {
+		leaf := newCompactFullLeafInArena(arena, 1, true, uint32(i), uint32(i+1), Point{Column: uint32(i)}, Point{Column: uint32(i + 1)})
+		leaf.parseState = StateID(10 + i)
+		children[i] = newStackEntryCompactFullLeaf(leaf.parseState, leaf)
+	}
+	parent := newPendingParentInArena(arena, 2, true, 4, children, 0, 3, Point{}, Point{Column: 3}, false)
+	parent.parseState = 15
+
+	entry := newStackEntryPendingParent(parent.parseState, parent)
+	root := materializeStackEntryPendingParent(arena, &entry, pendingParentMaterializeForFinalTree)
+	if root == nil {
+		t.Fatal("root = nil")
+	}
+	if got := root.DescendantForByteRange(1, 2); got == nil || got.StartByte() != 1 {
+		t.Fatalf("DescendantForByteRange = %#v, want middle child", got)
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 1 {
+		t.Fatalf("final child ref single children after byte descendant = %d, want 1", got)
+	}
+	if got := arena.finalChildRefsMaterializedParents; got != 0 {
+		t.Fatalf("final child ref range materialized parents = %d, want 0", got)
+	}
+}
+
+func TestDescendantPointRangeUsesLazyFinalChildHeaders(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	arena.finalChildRefs = true
+	children := make([]stackEntry, 3)
+	for i := range children {
+		leaf := newCompactFullLeafInArena(arena, 1, true, uint32(i), uint32(i+1), Point{Column: uint32(i)}, Point{Column: uint32(i + 1)})
+		leaf.parseState = StateID(10 + i)
+		children[i] = newStackEntryCompactFullLeaf(leaf.parseState, leaf)
+	}
+	parent := newPendingParentInArena(arena, 2, true, 4, children, 0, 3, Point{}, Point{Column: 3}, false)
+	parent.parseState = 15
+
+	entry := newStackEntryPendingParent(parent.parseState, parent)
+	root := materializeStackEntryPendingParent(arena, &entry, pendingParentMaterializeForFinalTree)
+	if root == nil {
+		t.Fatal("root = nil")
+	}
+	if got := root.DescendantForPointRange(Point{Column: 1}, Point{Column: 2}); got == nil || got.StartByte() != 1 {
+		t.Fatalf("DescendantForPointRange = %#v, want middle child", got)
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 1 {
+		t.Fatalf("final child ref single children after point descendant = %d, want 1", got)
+	}
+	if got := arena.finalChildRefsMaterializedParents; got != 0 {
+		t.Fatalf("final child ref range materialized parents = %d, want 0", got)
+	}
+}
+
+func TestReuseCursorWalksLazyFinalChildRefs(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	arena.finalChildRefs = true
+	left := newCompactFullLeafInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	left.parseState = 11
+	right := newCompactFullLeafInArena(arena, 1, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	right.parseState = 12
+	parent := newPendingParentInArena(arena, 2, true, 4, []stackEntry{
+		newStackEntryCompactFullLeaf(left.parseState, left),
+		newStackEntryCompactFullLeaf(right.parseState, right),
+	}, 0, 2, Point{}, Point{Column: 2}, false)
+	parent.parseState = 13
+
+	entry := newStackEntryPendingParent(parent.parseState, parent)
+	root := materializeStackEntryPendingParent(arena, &entry, pendingParentMaterializeForFinalTree)
+	if root == nil {
+		t.Fatal("root = nil")
+	}
+	oldTree := &Tree{root: root, source: []byte("ab"), arena: arena}
+
+	var scratch reuseScratch
+	reuse := (&reuseCursor{}).reset(oldTree, []byte("abc"), &scratch)
+	if reuse == nil {
+		t.Fatal("reuse cursor reset returned nil")
+	}
+	candidates := reuse.candidates(1)
+	if len(candidates) != 1 || candidates[0].StartByte() != 1 {
+		t.Fatalf("candidates = %#v, want right child at byte 1", candidates)
+	}
+	if got := arena.finalChildRefsMaterializedParents; got != 0 {
+		t.Fatalf("final child ref range materialized parents = %d, want 0", got)
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 1 {
+		t.Fatalf("final child ref single children = %d, want only matching candidate materialized", got)
+	}
+}
+
+func TestReuseCursorTopLevelUsesLazyFinalChildRefs(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	arena.finalChildRefs = true
+	left := newCompactFullLeafInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	left.parseState = 11
+	mid := newCompactFullLeafInArena(arena, 1, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	mid.parseState = 12
+	right := newCompactFullLeafInArena(arena, 1, true, 2, 3, Point{Column: 2}, Point{Column: 3})
+	right.parseState = 13
+	parent := newPendingParentInArena(arena, 2, true, 4, []stackEntry{
+		newStackEntryCompactFullLeaf(left.parseState, left),
+		newStackEntryCompactFullLeaf(mid.parseState, mid),
+		newStackEntryCompactFullLeaf(right.parseState, right),
+	}, 0, 3, Point{}, Point{Column: 3}, false)
+	parent.parseState = 14
+
+	entry := newStackEntryPendingParent(parent.parseState, parent)
+	root := materializeStackEntryPendingParent(arena, &entry, pendingParentMaterializeForFinalTree)
+	if root == nil {
+		t.Fatal("root = nil")
+	}
+	oldTree := &Tree{
+		root:   root,
+		source: []byte("abc"),
+		arena:  arena,
+		edits: []InputEdit{{
+			StartByte: 0,
+		}},
+	}
+
+	var scratch reuseScratch
+	reuse := (&reuseCursor{}).reset(oldTree, []byte("abc"), &scratch)
+	if reuse == nil {
+		t.Fatal("reuse cursor reset returned nil")
+	}
+	candidates := reuse.candidates(2)
+	if len(candidates) != 1 || candidates[0].StartByte() != 2 {
+		t.Fatalf("top-level candidates = %#v, want right child at byte 2", candidates)
+	}
+	if got := arena.finalChildRefsMaterializedParents; got != 0 {
+		t.Fatalf("final child ref range materialized parents = %d, want 0", got)
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 1 {
+		t.Fatalf("final child ref single children = %d, want only matching top-level candidate materialized", got)
+	}
+}
+
+func TestReuseCursorTopLevelRejectsChangedFinalRefWithoutMaterialization(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	arena.finalChildRefs = true
+	left := newCompactFullLeafInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	left.parseState = 11
+	mid := newCompactFullLeafInArena(arena, 1, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	mid.parseState = 12
+	right := newCompactFullLeafInArena(arena, 1, true, 2, 3, Point{Column: 2}, Point{Column: 3})
+	right.parseState = 13
+	parent := newPendingParentInArena(arena, 2, true, 4, []stackEntry{
+		newStackEntryCompactFullLeaf(left.parseState, left),
+		newStackEntryCompactFullLeaf(mid.parseState, mid),
+		newStackEntryCompactFullLeaf(right.parseState, right),
+	}, 0, 3, Point{}, Point{Column: 3}, false)
+	parent.parseState = 14
+
+	entry := newStackEntryPendingParent(parent.parseState, parent)
+	root := materializeStackEntryPendingParent(arena, &entry, pendingParentMaterializeForFinalTree)
+	if root == nil {
+		t.Fatal("root = nil")
+	}
+	oldTree := &Tree{
+		root:   root,
+		source: []byte("abc"),
+		arena:  arena,
+		edits: []InputEdit{{
+			StartByte: 0,
+		}},
+	}
+
+	var scratch reuseScratch
+	reuse := (&reuseCursor{}).reset(oldTree, []byte("axc"), &scratch)
+	if reuse == nil {
+		t.Fatal("reuse cursor reset returned nil")
+	}
+	candidates := reuse.candidates(1)
+	if len(candidates) != 0 {
+		t.Fatalf("top-level candidates = %#v, want none for changed bytes", candidates)
+	}
+	if got := arena.finalChildRefsMaterializedParents; got != 0 {
+		t.Fatalf("final child ref range materialized parents = %d, want 0", got)
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 0 {
+		t.Fatalf("final child ref single children = %d, want changed candidate rejected without materialization", got)
+	}
+}
+
+func TestTreeEditKeepsUnaffectedFinalChildRefsLazy(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	arena.finalChildRefs = true
+	leftLeaf := newCompactFullLeafInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	leftLeaf.parseState = 11
+	rightLeaf := newCompactFullLeafInArena(arena, 2, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	rightLeaf.parseState = 12
+	parent := newPendingParentInArena(arena, 3, true, 4, []stackEntry{
+		newStackEntryCompactFullLeaf(leftLeaf.parseState, leftLeaf),
+		newStackEntryCompactFullLeaf(rightLeaf.parseState, rightLeaf),
+	}, 0, 2, Point{}, Point{Column: 2}, false)
+	parent.parseState = 13
+
+	entry := newStackEntryPendingParent(parent.parseState, parent)
+	root := materializeStackEntryPendingParent(arena, &entry, pendingParentMaterializeForFinalTree)
+	if root == nil {
+		t.Fatal("root = nil")
+	}
+	tree := &Tree{root: root, arena: arena}
+	tree.Edit(InputEdit{
+		StartByte:   1,
+		OldEndByte:  1,
+		NewEndByte:  2,
+		StartPoint:  Point{Column: 1},
+		OldEndPoint: Point{Column: 1},
+		NewEndPoint: Point{Column: 2},
+	})
+	if got := arena.finalChildRefsMaterializedParents; got != 0 {
+		t.Fatalf("final child ref range materialized parents = %d, want 0", got)
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 0 {
+		t.Fatalf("final child ref single children materialized during edit = %d, want 0", got)
+	}
+	if root.EndByte() != 3 {
+		t.Fatalf("root EndByte = %d, want 3", root.EndByte())
+	}
+	if left := root.Child(0); left == nil || left.EndByte() != 1 {
+		t.Fatalf("left child after edit = %#v, want unchanged end 1", left)
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 1 {
+		t.Fatalf("final child ref single children after left access = %d, want 1", got)
+	}
+	if right := root.Child(1); right == nil || right.StartByte() != 2 || right.EndByte() != 3 {
+		t.Fatalf("right child after edit = %#v, want shifted range [2,3)", right)
+	}
+}
+
+func TestResultMutableChildViewFilterFinalRefsCopyOnWrite(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	arena.finalChildRefs = true
+	left := newCompactFullLeafInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	left.parseState = 11
+	right := newCompactFullLeafInArena(arena, 2, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	right.parseState = 12
+	dropped := newCompactFullLeafInArena(arena, 3, true, 2, 3, Point{Column: 2}, Point{Column: 3})
+	dropped.parseState = 13
+	parent := newPendingParentInArena(arena, 4, true, 5, []stackEntry{
+		newStackEntryCompactFullLeaf(left.parseState, left),
+		newStackEntryCompactFullLeaf(right.parseState, right),
+		newStackEntryCompactFullLeaf(dropped.parseState, dropped),
+	}, 0, 3, Point{}, Point{Column: 3}, false)
+	parent.parseState = 14
+
+	entry := newStackEntryPendingParent(parent.parseState, parent)
+	root := materializeStackEntryPendingParent(arena, &entry, pendingParentMaterializeForFinalTree)
+	if root == nil {
+		t.Fatal("root = nil")
+	}
+	oldRange, ok := arena.finalChildRange(root)
+	if !ok {
+		t.Fatal("root did not start with final-child refs")
+	}
+	oldRefs := oldRange.refs(arena)
+
+	view := resultMutableChildrenForMutation(root)
+	if !view.FilterFinalRefs(func(_ int, entry stackEntry) bool {
+		return stackEntryNodeSymbol(entry) != dropped.symbol
+	}) {
+		t.Fatal("FilterFinalRefs returned false")
+	}
+	newRange, ok := arena.finalChildRange(root)
+	if !ok {
+		t.Fatal("root lost final-child refs")
+	}
+	if newRange == oldRange {
+		t.Fatal("FilterFinalRefs reused original child-ref range")
+	}
+	if got := root.ChildCount(); got != 2 {
+		t.Fatalf("root child count = %d, want 2", got)
+	}
+	if got := arena.finalChildRefsMaterializedParents; got != 0 {
+		t.Fatalf("final child ref range materialized parents = %d, want 0", got)
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 0 {
+		t.Fatalf("final child ref single children during filter = %d, want 0", got)
+	}
+
+	other := newCompactFullLeafInArena(arena, 9, true, 9, 10, Point{Column: 9}, Point{Column: 10})
+	other.parseState = 99
+	oldRefs[0] = newPendingChildEntry(newStackEntryCompactFullLeaf(other.parseState, other))
+	first := root.Child(0)
+	if first == nil || first.Symbol() != left.symbol || first.StartByte() != 0 {
+		t.Fatalf("first child after mutating old range = %#v, want original left child", first)
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 1 {
+		t.Fatalf("final child ref single children after first access = %d, want 1", got)
+	}
+}
+
+func TestReplaceChildRangeWithSingleNodeKeepsFinalRefsLazy(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	arena.finalChildRefs = true
+	left := newCompactFullLeafInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	left.parseState = 11
+	mid := newCompactFullLeafInArena(arena, 2, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	mid.parseState = 12
+	right := newCompactFullLeafInArena(arena, 3, true, 2, 3, Point{Column: 2}, Point{Column: 3})
+	right.parseState = 13
+	parent := newPendingParentInArena(arena, 4, true, 5, []stackEntry{
+		newStackEntryCompactFullLeaf(left.parseState, left),
+		newStackEntryCompactFullLeaf(mid.parseState, mid),
+		newStackEntryCompactFullLeaf(right.parseState, right),
+	}, 0, 3, Point{}, Point{Column: 3}, false)
+	parent.parseState = 14
+
+	entry := newStackEntryPendingParent(parent.parseState, parent)
+	root := materializeStackEntryPendingParent(arena, &entry, pendingParentMaterializeForFinalTree)
+	if root == nil {
+		t.Fatal("root = nil")
+	}
+	replacement := newLeafNodeInArena(arena, 9, true, 1, 3, Point{Column: 1}, Point{Column: 3})
+	replaceChildRangeWithSingleNode(root, 3, 2, replacement)
+	if got := arena.finalChildRefsMaterializedParents; got != 0 {
+		t.Fatalf("final child ref range materialized parents after invalid replace = %d, want 0", got)
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 0 {
+		t.Fatalf("final child ref single children after invalid replace = %d, want 0", got)
+	}
+
+	replaceChildRangeWithSingleNode(root, 1, 3, replacement)
+
+	if got := arena.finalChildRefsMaterializedParents; got != 0 {
+		t.Fatalf("final child ref range materialized parents = %d, want 0", got)
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 0 {
+		t.Fatalf("final child ref single children during replace = %d, want 0", got)
+	}
+	if !nodeHasFinalChildRefs(root) {
+		t.Fatal("replace dropped final-child refs")
+	}
+	if got := root.ChildCount(); got != 2 {
+		t.Fatalf("root child count = %d, want 2", got)
+	}
+	if got := root.Child(0); got == nil || got.Symbol() != left.symbol {
+		t.Fatalf("root child 0 = %#v, want left", got)
+	}
+	if got := root.Child(1); got != replacement {
+		t.Fatalf("root child 1 = %p, want replacement %p", got, replacement)
+	}
+}
+
+func TestTrimTrailingExtraTriviaRootFiltersFinalRefsWithoutDrain(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	arena.finalChildRefs = true
+	body := newCompactFullLeafInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	body.parseState = 11
+	trivia := newCompactFullLeafInArena(arena, 2, false, 1, 2, Point{Column: 1}, Point{Column: 2})
+	trivia.setExtra(true)
+	trivia.parseState = 12
+	parent := newPendingParentInArena(arena, 3, true, 4, []stackEntry{
+		newStackEntryCompactFullLeaf(body.parseState, body),
+		newStackEntryCompactFullLeaf(trivia.parseState, trivia),
+	}, 0, 2, Point{}, Point{Column: 2}, false)
+	parent.parseState = 13
+
+	entry := newStackEntryPendingParent(parent.parseState, parent)
+	root := materializeStackEntryPendingParent(arena, &entry, pendingParentMaterializeForFinalTree)
+	if root == nil {
+		t.Fatal("root = nil")
+	}
+	trimTrailingExtraTriviaRoot(root, []byte("a "))
+	if got := arena.finalChildRefsMaterializedParents; got != 0 {
+		t.Fatalf("final child ref range materialized parents = %d, want 0", got)
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 0 {
+		t.Fatalf("final child ref single children during trim = %d, want 0", got)
+	}
+	if !nodeHasFinalChildRefs(root) {
+		t.Fatal("trim dropped final-child refs")
+	}
+	if got := root.ChildCount(); got != 1 {
+		t.Fatalf("root child count after trim = %d, want 1", got)
+	}
+	child := root.Child(0)
+	if child == nil || child.Symbol() != body.symbol || child.EndByte() != 1 {
+		t.Fatalf("root child after trim = %#v, want body leaf", child)
+	}
+}
+
+func TestNodeEditNoopKeepsLazyFinalChildRefs(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	arena.finalChildRefs = true
+	leaf := newCompactFullLeafInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	leaf.parseState = 11
+	parent := newPendingParentInArena(arena, 2, true, 4, []stackEntry{
+		newStackEntryCompactFullLeaf(leaf.parseState, leaf),
+	}, 0, 1, Point{}, Point{Column: 1}, false)
+	parent.parseState = 12
+
+	entry := newStackEntryPendingParent(parent.parseState, parent)
+	root := materializeStackEntryPendingParent(arena, &entry, pendingParentMaterializeForFinalTree)
+	if root == nil {
+		t.Fatal("root = nil")
+	}
+	root.Edit(InputEdit{
+		StartByte:   1,
+		OldEndByte:  1,
+		NewEndByte:  1,
+		StartPoint:  Point{Column: 1},
+		OldEndPoint: Point{Column: 1},
+		NewEndPoint: Point{Column: 1},
+	})
+	if got := arena.finalChildRefsMaterializedParents; got != 0 {
+		t.Fatalf("final child ref range materialized parents = %d, want 0", got)
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 0 {
+		t.Fatalf("final child ref single children after noop Node.Edit = %d, want 0", got)
+	}
+}
+
+func TestNodeEditKeepsFinalChildRefsRangeLazy(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	arena.finalChildRefs = true
+	leftLeaf := newCompactFullLeafInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	leftLeaf.parseState = 11
+	rightLeaf := newCompactFullLeafInArena(arena, 2, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	rightLeaf.parseState = 12
+	parent := newPendingParentInArena(arena, 3, true, 4, []stackEntry{
+		newStackEntryCompactFullLeaf(leftLeaf.parseState, leftLeaf),
+		newStackEntryCompactFullLeaf(rightLeaf.parseState, rightLeaf),
+	}, 0, 2, Point{}, Point{Column: 2}, false)
+	parent.parseState = 13
+
+	entry := newStackEntryPendingParent(parent.parseState, parent)
+	root := materializeStackEntryPendingParent(arena, &entry, pendingParentMaterializeForFinalTree)
+	if root == nil {
+		t.Fatal("root = nil")
+	}
+	root.Edit(InputEdit{
+		StartByte:   1,
+		OldEndByte:  1,
+		NewEndByte:  2,
+		StartPoint:  Point{Column: 1},
+		OldEndPoint: Point{Column: 1},
+		NewEndPoint: Point{Column: 2},
+	})
+	if got := arena.finalChildRefsMaterializedParents; got != 0 {
+		t.Fatalf("final child ref range materialized parents = %d, want 0", got)
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 0 {
+		t.Fatalf("final child ref single children materialized during Node.Edit = %d, want 0", got)
+	}
+	if got := root.EndByte(); got != 3 {
+		t.Fatalf("root EndByte = %d, want 3", got)
+	}
+	if right := root.Child(1); right == nil || right.StartByte() != 2 || right.EndByte() != 3 {
+		t.Fatalf("right child after Node.Edit = %#v, want shifted range [2,3)", right)
+	}
+}
+
+func TestNodeEditMarksCompactFinalRefDirtyWithoutMaterialization(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	arena.finalChildRefs = true
+	leftLeaf := newCompactFullLeafInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	leftLeaf.parseState = 11
+	rightLeaf := newCompactFullLeafInArena(arena, 2, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	rightLeaf.parseState = 12
+	parent := newPendingParentInArena(arena, 3, true, 4, []stackEntry{
+		newStackEntryCompactFullLeaf(leftLeaf.parseState, leftLeaf),
+		newStackEntryCompactFullLeaf(rightLeaf.parseState, rightLeaf),
+	}, 0, 2, Point{}, Point{Column: 2}, false)
+	parent.parseState = 13
+
+	entry := newStackEntryPendingParent(parent.parseState, parent)
+	root := materializeStackEntryPendingParent(arena, &entry, pendingParentMaterializeForFinalTree)
+	if root == nil {
+		t.Fatal("root = nil")
+	}
+	root.Edit(InputEdit{
+		StartByte:   0,
+		OldEndByte:  1,
+		NewEndByte:  1,
+		StartPoint:  Point{},
+		OldEndPoint: Point{Column: 1},
+		NewEndPoint: Point{Column: 1},
+	})
+	if got := arena.finalChildRefsMaterializedParents; got != 0 {
+		t.Fatalf("final child ref range materialized parents = %d, want 0", got)
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 0 {
+		t.Fatalf("final child ref single children materialized during Node.Edit = %d, want 0", got)
+	}
+	if !root.HasChanges() {
+		t.Fatal("root HasChanges = false, want true")
+	}
+	left := root.Child(0)
+	if left == nil {
+		t.Fatal("left child after edit = nil")
+	}
+	if !left.HasChanges() {
+		t.Fatal("left child HasChanges = false, want compact dirty flag to materialize")
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 1 {
+		t.Fatalf("final child ref single children after left access = %d, want 1", got)
+	}
+}
+
+func TestNodeEditDeferredRootKeepsFinalChildRefsRangeLazy(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	arena.finalChildRefs = true
+	leftLeaf := newCompactFullLeafInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	leftLeaf.parseState = 11
+	rightLeaf := newCompactFullLeafInArena(arena, 2, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	rightLeaf.parseState = 12
+	parent := newPendingParentInArena(arena, 3, true, 4, []stackEntry{
+		newStackEntryCompactFullLeaf(leftLeaf.parseState, leftLeaf),
+		newStackEntryCompactFullLeaf(rightLeaf.parseState, rightLeaf),
+	}, 0, 2, Point{}, Point{Column: 2}, false)
+	parent.parseState = 13
+
+	entry := newStackEntryPendingParent(parent.parseState, parent)
+	root := materializeStackEntryPendingParent(arena, &entry, pendingParentMaterializeForFinalTree)
+	if root == nil {
+		t.Fatal("root = nil")
+	}
+	arena.deferParentLinks(root)
+
+	root.Edit(InputEdit{
+		StartByte:   1,
+		OldEndByte:  2,
+		NewEndByte:  3,
+		StartPoint:  Point{Column: 1},
+		OldEndPoint: Point{Column: 2},
+		NewEndPoint: Point{Column: 3},
+	})
+	if got := arena.finalChildRefsMaterializedParents; got != 0 {
+		t.Fatalf("final child ref range materialized parents = %d, want 0", got)
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 0 {
+		t.Fatalf("final child ref single children materialized during deferred Node.Edit = %d, want 0", got)
+	}
+	if got := root.EndByte(); got != 3 {
+		t.Fatalf("root EndByte = %d, want 3", got)
+	}
+}
+
+func TestNodeEditFromDeferredSubnodeWiresOnlyTargetPath(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	left := newLeafNodeInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	right := newLeafNodeInArena(arena, 2, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	children := arena.allocNodeSliceNoClear(2)
+	children[0] = left
+	children[1] = right
+	root := newParentNodeInArenaNoLinksWithFieldSources(arena, 3, true, children, nil, nil, 0, false)
+	arena.deferParentLinks(root)
+
+	if left.parent != nil || right.parent != nil {
+		t.Fatal("expected children to start unwired")
+	}
+	right.Edit(InputEdit{
+		StartByte:   1,
+		OldEndByte:  2,
+		NewEndByte:  3,
+		StartPoint:  Point{Column: 1},
+		OldEndPoint: Point{Column: 2},
+		NewEndPoint: Point{Column: 3},
+	})
+	if got := right.parent; got != root {
+		t.Fatalf("right parent = %p, want root %p", got, root)
+	}
+	if left.parent != nil {
+		t.Fatal("left parent should remain unwired")
+	}
+	if got := root.EndByte(); got != 3 {
+		t.Fatalf("root EndByte = %d, want 3", got)
+	}
+}
+
+func TestSiblingFallbackScanKeepsUnreturnedFinalChildRefsLazy(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	arena.finalChildRefs = true
+	leftLeaf := newCompactFullLeafInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	leftLeaf.parseState = 11
+	middleLeaf := newCompactFullLeafInArena(arena, 2, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	middleLeaf.parseState = 12
+	rightLeaf := newCompactFullLeafInArena(arena, 3, true, 2, 3, Point{Column: 2}, Point{Column: 3})
+	rightLeaf.parseState = 13
+	parent := newPendingParentInArena(arena, 4, true, 5, []stackEntry{
+		newStackEntryCompactFullLeaf(leftLeaf.parseState, leftLeaf),
+		newStackEntryCompactFullLeaf(middleLeaf.parseState, middleLeaf),
+		newStackEntryCompactFullLeaf(rightLeaf.parseState, rightLeaf),
+	}, 0, 3, Point{}, Point{Column: 3}, false)
+	parent.parseState = 14
+
+	entry := newStackEntryPendingParent(parent.parseState, parent)
+	root := materializeStackEntryPendingParent(arena, &entry, pendingParentMaterializeForFinalTree)
+	if root == nil {
+		t.Fatal("root = nil")
+	}
+	middle := root.Child(1)
+	if middle == nil {
+		t.Fatal("middle child nil")
+	}
+	middle.childIndex = -1
+
+	next := middle.NextSibling()
+	if next == nil || next.Symbol() != 3 {
+		t.Fatalf("next sibling = %#v, want symbol 3", next)
+	}
+	if got := arena.finalChildRefsMaterializedParents; got != 0 {
+		t.Fatalf("final child ref range materialized parents = %d, want 0", got)
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 2 {
+		t.Fatalf("single children after NextSibling = %d, want middle+right only", got)
+	}
+	prev := middle.PrevSibling()
+	if prev == nil || prev.Symbol() != 1 {
+		t.Fatalf("prev sibling = %#v, want symbol 1", prev)
+	}
+	if got := arena.finalChildRefsMaterializedParents; got != 0 {
+		t.Fatalf("final child ref range materialized parents after PrevSibling = %d, want 0", got)
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 3 {
+		t.Fatalf("single children after PrevSibling = %d, want all three", got)
+	}
+}
+
+func TestCloneTreeNodesIntoArenaKeepsFinalChildRefsRangeLazy(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	arena.finalChildRefs = true
+	leftLeaf := newCompactFullLeafInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	leftLeaf.parseState = 11
+	rightLeaf := newCompactFullLeafInArena(arena, 2, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	rightLeaf.parseState = 12
+	parent := newPendingParentInArena(arena, 3, true, 4, []stackEntry{
+		newStackEntryCompactFullLeaf(leftLeaf.parseState, leftLeaf),
+		newStackEntryCompactFullLeaf(rightLeaf.parseState, rightLeaf),
+	}, 0, 2, Point{}, Point{Column: 2}, false)
+	parent.parseState = 13
+
+	entry := newStackEntryPendingParent(parent.parseState, parent)
+	root := materializeStackEntryPendingParent(arena, &entry, pendingParentMaterializeForFinalTree)
+	if root == nil {
+		t.Fatal("root = nil")
+	}
+
+	cloneArena := newNodeArena(arenaClassFull)
+	clone := cloneTreeNodesIntoArena(root, cloneArena)
+	if clone == nil {
+		t.Fatal("clone = nil")
+	}
+	if clone == root {
+		t.Fatal("clone should be a distinct node")
+	}
+	if got := arena.finalChildRefsMaterializedParents; got != 0 {
+		t.Fatalf("final child ref range materialized parents = %d, want 0", got)
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 0 {
+		t.Fatalf("source final child ref single children materialized during clone = %d, want 0", got)
+	}
+	if !nodeHasFinalChildRefs(clone) {
+		t.Fatal("clone did not preserve lazy final-child refs")
+	}
+	if got := clone.ChildCount(); got != 2 {
+		t.Fatalf("clone child count = %d, want 2", got)
+	}
+	if clone.ownerArena != cloneArena {
+		t.Fatal("clone owner arena mismatch")
+	}
+	child := clone.Child(0)
+	if child == nil {
+		t.Fatal("clone first child = nil")
+	}
+	if child.ownerArena != cloneArena {
+		t.Fatal("clone child owner arena mismatch")
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 0 {
+		t.Fatalf("source final child ref single children after clone child access = %d, want 0", got)
+	}
+	if got := cloneArena.finalChildRefsSingleChildMaterializedChildren; got != 1 {
+		t.Fatalf("clone final child ref single children after child access = %d, want 1", got)
+	}
+}
+
+func TestCloneTreeNodesWithOffsetKeepsFinalChildRefsRangeLazy(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	arena.finalChildRefs = true
+	leftLeaf := newCompactFullLeafInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	leftLeaf.parseState = 11
+	rightLeaf := newCompactFullLeafInArena(arena, 2, true, 2, 6, Point{Row: 1}, Point{Row: 1, Column: 4})
+	rightLeaf.parseState = 12
+	parent := newPendingParentInArena(arena, 3, true, 4, []stackEntry{
+		newStackEntryCompactFullLeaf(leftLeaf.parseState, leftLeaf),
+		newStackEntryCompactFullLeaf(rightLeaf.parseState, rightLeaf),
+	}, 0, 6, Point{}, Point{Row: 1, Column: 4}, false)
+	parent.parseState = 13
+
+	entry := newStackEntryPendingParent(parent.parseState, parent)
+	root := materializeStackEntryPendingParent(arena, &entry, pendingParentMaterializeForFinalTree)
+	if root == nil {
+		t.Fatal("root = nil")
+	}
+
+	clone := cloneTreeNodesWithOffset(root, 10, Point{Row: 3, Column: 7})
+	if clone == nil {
+		t.Fatal("clone = nil")
+	}
+	if got := arena.finalChildRefsMaterializedParents; got != 0 {
+		t.Fatalf("final child ref range materialized parents = %d, want 0", got)
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 0 {
+		t.Fatalf("source final child ref single children materialized during offset clone = %d, want 0", got)
+	}
+	if !nodeHasFinalChildRefs(clone) {
+		t.Fatal("offset clone did not preserve lazy final-child refs")
+	}
+	first := clone.Child(0)
+	if first == nil {
+		t.Fatal("offset first child nil")
+	}
+	if first.ownerArena == arena {
+		t.Fatal("offset first child reused source arena")
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 0 {
+		t.Fatalf("source final child ref single children after offset clone child access = %d, want 0", got)
+	}
+	if got, want := first.StartByte(), uint32(10); got != want {
+		t.Fatalf("first child start byte = %d, want %d", got, want)
+	}
+	if got, want := first.StartPoint(), (Point{Row: 3, Column: 7}); got != want {
+		t.Fatalf("first child start point = %+v, want %+v", got, want)
+	}
+	second := clone.Child(1)
+	if second == nil {
+		t.Fatal("offset second child nil")
+	}
+	if got, want := second.StartByte(), uint32(12); got != want {
+		t.Fatalf("second child start byte = %d, want %d", got, want)
+	}
+	if got, want := second.StartPoint(), (Point{Row: 4}); got != want {
+		t.Fatalf("second child start point = %+v, want %+v", got, want)
+	}
+}
+
+func TestCloneNodeInArenaDropsSourceFinalChildSidecarID(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	arena.finalChildRefs = true
+	leftLeaf := newCompactFullLeafInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	leftLeaf.parseState = 11
+	rightLeaf := newCompactFullLeafInArena(arena, 2, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	rightLeaf.parseState = 12
+	parent := newPendingParentInArena(arena, 3, true, 4, []stackEntry{
+		newStackEntryCompactFullLeaf(leftLeaf.parseState, leftLeaf),
+		newStackEntryCompactFullLeaf(rightLeaf.parseState, rightLeaf),
+	}, 0, 2, Point{}, Point{Column: 2}, false)
+	parent.parseState = 13
+
+	entry := newStackEntryPendingParent(parent.parseState, parent)
+	root := materializeStackEntryPendingParent(arena, &entry, pendingParentMaterializeForFinalTree)
+	if root == nil {
+		t.Fatal("root = nil")
+	}
+	clone := cloneNodeInArena(arena, root)
+	if clone == nil {
+		t.Fatal("clone = nil")
+	}
+	if nodeHasFinalChildRefs(clone) {
+		t.Fatal("clone retained source final-child sidecar id")
+	}
+	if got := clone.ChildCount(); got != 2 {
+		t.Fatalf("clone ChildCount = %d, want 2", got)
+	}
+	if got := arena.finalChildRefsMaterializedParents; got != 0 {
+		t.Fatalf("final child ref range materialized parents = %d, want 0", got)
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 2 {
+		t.Fatalf("single children materialized = %d, want 2", got)
+	}
+	clone.children = nil
+	if got := clone.ChildCount(); got != 0 {
+		t.Fatalf("clone ChildCount after children rewrite = %d, want 0", got)
+	}
+}
+
+func TestMutationClonePatchesFinalChildRefsWithoutSourceMaterialization(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	arena.finalChildRefs = true
+	leftLeaf := newCompactFullLeafInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	leftLeaf.parseState = 11
+	rightLeaf := newCompactFullLeafInArena(arena, 2, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	rightLeaf.parseState = 12
+	parent := newPendingParentInArena(arena, 3, true, 4, []stackEntry{
+		newStackEntryCompactFullLeaf(leftLeaf.parseState, leftLeaf),
+		newStackEntryCompactFullLeaf(rightLeaf.parseState, rightLeaf),
+	}, 0, 2, Point{}, Point{Column: 2}, false)
+	parent.parseState = 13
+
+	entry := newStackEntryPendingParent(parent.parseState, parent)
+	root := materializeStackEntryPendingParent(arena, &entry, pendingParentMaterializeForFinalTree)
+	if root == nil {
+		t.Fatal("root = nil")
+	}
+
+	cloneArena := newNodeArena(arenaClassFull)
+	cloneArena.finalChildRefs = true
+	replacement := newLeafNodeInArena(cloneArena, 9, true, 1, 3, Point{Column: 1}, Point{Column: 3})
+	replacement.parseState = 19
+	clone := cloneNodeInArenaReplacingChildForMutation(cloneArena, root, 1, replacement)
+	if clone == nil {
+		t.Fatal("replacement clone = nil")
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 0 {
+		t.Fatalf("source single children materialized during replacement clone = %d, want 0", got)
+	}
+	if !nodeHasFinalChildRefs(clone) {
+		t.Fatal("replacement clone did not preserve lazy final-child refs")
+	}
+	if got := clone.ChildCount(); got != 2 {
+		t.Fatalf("replacement clone ChildCount = %d, want 2", got)
+	}
+	if got := clone.Child(1); got != replacement {
+		t.Fatalf("replacement child = %p, want %p", got, replacement)
+	}
+	if parent, index, ok := nodeParentLink(replacement); !ok || parent != clone || index != 1 {
+		t.Fatalf("replacement parent link = (%p, %d, %v), want (%p, 1, true)", parent, index, ok, clone)
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 0 {
+		t.Fatalf("source single children materialized after replacement access = %d, want 0", got)
+	}
+
+	appended := cloneNodeInArenaAppendingChildForMutation(cloneArena, root, replacement)
+	if appended == nil {
+		t.Fatal("append clone = nil")
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 0 {
+		t.Fatalf("source single children materialized during append clone = %d, want 0", got)
+	}
+	if !nodeHasFinalChildRefs(appended) {
+		t.Fatal("append clone did not preserve lazy final-child refs")
+	}
+	if got := appended.ChildCount(); got != 3 {
+		t.Fatalf("append clone ChildCount = %d, want 3", got)
+	}
+	if got := appended.Child(2); got != replacement {
+		t.Fatalf("appended child = %p, want %p", got, replacement)
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 0 {
+		t.Fatalf("source single children materialized after append access = %d, want 0", got)
+	}
+}
+
+func TestResultMutableChildViewSurroundFinalRefsKeepsChildrenLazy(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	arena.finalChildRefs = true
+	left := newCompactFullLeafInArena(arena, 1, true, 5, 6, Point{Column: 5}, Point{Column: 6})
+	left.parseState = 11
+	right := newCompactFullLeafInArena(arena, 2, true, 6, 7, Point{Column: 6}, Point{Column: 7})
+	right.parseState = 12
+	parent := newPendingParentInArena(arena, 3, true, 13, []stackEntry{
+		newStackEntryCompactFullLeaf(left.parseState, left),
+		newStackEntryCompactFullLeaf(right.parseState, right),
+	}, 5, 7, Point{Column: 5}, Point{Column: 7}, false)
+	parent.parseState = 14
+
+	entry := newStackEntryPendingParent(parent.parseState, parent)
+	root := materializeStackEntryPendingParent(arena, &entry, pendingParentMaterializeForFinalTree)
+	if root == nil {
+		t.Fatal("root = nil")
+	}
+	leading := newLeafNodeInArena(arena, 9, true, 0, 1, Point{}, Point{Column: 1})
+	trailing := newLeafNodeInArena(arena, 10, true, 8, 9, Point{Column: 8}, Point{Column: 9})
+	if !resultMutableChildrenForMutation(root).SurroundFinalRefs([]*Node{leading}, []*Node{trailing}) {
+		t.Fatal("SurroundFinalRefs returned false")
+	}
+	if got := root.ChildCount(); got != 4 {
+		t.Fatalf("root ChildCount = %d, want 4", got)
+	}
+	if got := arena.finalChildRefsMaterializedParents; got != 0 {
+		t.Fatalf("final child ref range materialized parents = %d, want 0", got)
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 0 {
+		t.Fatalf("single final child refs materialized during surround = %d, want 0", got)
+	}
+	if got := root.Child(0); got != leading {
+		t.Fatalf("leading child = %p, want %p", got, leading)
+	}
+	if got := root.Child(3); got != trailing {
+		t.Fatalf("trailing child = %p, want %p", got, trailing)
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 0 {
+		t.Fatalf("single final child refs after edge access = %d, want 0", got)
+	}
+	if got := root.Child(1); got == nil || got.Symbol() != left.symbol {
+		t.Fatalf("first compact child = %#v, want left symbol", got)
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 1 {
+		t.Fatalf("single final child refs after compact access = %d, want 1", got)
+	}
+}
+
+func TestPendingParentMaterializationPreservesFieldEntries(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	left := newLeafNodeInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	right := newLeafNodeInArena(arena, 2, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	parent := newPendingParentShellWithEntrySlotsInArena(arena, 4, true, 5, 2, 4, 0, 2, Point{}, Point{Column: 2}, false)
+	parent.setHasFieldEntries(true)
+	parent.setChildEntry(arena, 0, newStackEntryNode(6, left))
+	parent.setChildEntry(arena, 1, newStackEntryNode(7, right))
+	parent.setChildFieldEntry(arena, 1, 9, fieldSourceDirect)
+	parent.flags |= pendingParentFlagFieldEntries
+
+	entry := newStackEntryPendingParent(8, parent)
+	node := materializeStackEntryPendingParent(arena, &entry, pendingParentMaterializeForFinalTree)
+	if node == nil {
+		t.Fatal("materialized node = nil")
+	}
+	if len(node.fieldIDs) != 2 || node.fieldIDs[0] != 0 || node.fieldIDs[1] != 9 {
+		t.Fatalf("fieldIDs = %#v, want [0 9]", node.fieldIDs)
+	}
+	if len(node.fieldSources) != 2 || node.fieldSources[0] != fieldSourceNone || node.fieldSources[1] != fieldSourceDirect {
+		t.Fatalf("fieldSources = %#v, want [none direct]", node.fieldSources)
+	}
+	if node.flags&pendingParentFlagFieldEntries != 0 {
+		t.Fatalf("internal pending field flag leaked to materialized node flags: %08b", node.flags)
+	}
+}
+
+func TestPendingParentMaterializationRecomputesDirectFieldEntries(t *testing.T) {
+	lang := &Language{
+		FieldMapSlices: [][2]uint16{
+			{},
+			{},
+			{},
+			{},
+			{},
+			{0, 2},
+		},
+		FieldMapEntries: []FieldMapEntry{
+			{FieldID: 7, ChildIndex: 0},
+			{FieldID: 9, ChildIndex: 1},
+		},
+	}
+	parser := NewParser(lang)
+	arena := newNodeArena(arenaClassFull)
+	extra := newLeafNodeInArena(arena, 3, false, 0, 1, Point{}, Point{Column: 1})
+	extra.setExtra(true)
+	left := newLeafNodeInArena(arena, 1, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	right := newLeafNodeInArena(arena, 2, true, 2, 3, Point{Column: 2}, Point{Column: 3})
+	parent := newPendingParentShellWithEntrySlotsInArena(arena, 4, true, 5, 3, 3, 0, 3, Point{}, Point{Column: 3}, false)
+	parent.setHasDirectFieldEntries(true)
+	parent.setChildEntry(arena, 0, newStackEntryNode(6, extra))
+	parent.setChildEntry(arena, 1, newStackEntryNode(7, left))
+	parent.setChildEntry(arena, 2, newStackEntryNode(8, right))
+
+	entry := newStackEntryPendingParent(9, parent)
+	node := materializeStackEntryPendingParentWithParser(parser, arena, &entry, pendingParentMaterializeForFinalTree)
+	if node == nil {
+		t.Fatal("materialized node = nil")
+	}
+	if got := arena.pendingChildEntriesAllocated; got != 3 {
+		t.Fatalf("pendingChildEntriesAllocated = %d, want direct child slots only", got)
+	}
+	if len(node.fieldIDs) != 3 || node.fieldIDs[0] != 0 || node.fieldIDs[1] != 7 || node.fieldIDs[2] != 9 {
+		t.Fatalf("fieldIDs = %#v, want [0 7 9]", node.fieldIDs)
+	}
+	if len(node.fieldSources) != 3 || node.fieldSources[0] != fieldSourceNone || node.fieldSources[1] != fieldSourceDirect || node.fieldSources[2] != fieldSourceDirect {
+		t.Fatalf("fieldSources = %#v, want [none direct direct]", node.fieldSources)
+	}
+	if node.flags&pendingParentFlagDirectFieldEntry != 0 {
+		t.Fatalf("internal pending direct-field flag leaked to materialized node flags: %08b", node.flags)
+	}
+}
+
+func TestPendingDirectFieldParentFieldsRecomputableWithTrailingHidden(t *testing.T) {
+	parser := &Parser{language: &Language{
+		SymbolMetadata: []SymbolMetadata{
+			{},
+			{Visible: true},
+			{Visible: false},
+		},
+		FieldMapSlices: [][2]uint16{
+			{},
+			{},
+			{},
+			{},
+			{},
+			{0, 2},
+		},
+		FieldMapEntries: []FieldMapEntry{
+			{FieldID: 7, ChildIndex: 0},
+			{FieldID: 9, ChildIndex: 1},
+		},
+	}}
+	arena := newNodeArena(arenaClassFull)
+	left := newLeafNodeInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	right := newLeafNodeInArena(arena, 1, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	hidden := newParentNodeInArenaNoLinksWithFieldSources(arena, 2, false, nil, nil, nil, 5, false)
+	entries := []stackEntry{
+		newStackEntryNode(1, left),
+		newStackEntryNode(2, right),
+		newStackEntryNode(3, hidden),
+	}
+	rawFieldIDs := []FieldID{7, 9, 0}
+	rawInherited := []bool{false, false, false}
+	if !parser.pendingDirectFieldParentFieldsRecomputable(5, 2, entries, 0, len(entries), rawFieldIDs, rawInherited, parser.language.SymbolMetadata) {
+		t.Fatal("pendingDirectFieldParentFieldsRecomputable = false, want true for trailing hidden child")
+	}
+}
+
+func TestPendingDirectFieldParentFieldsRecomputableRejectsShiftedHidden(t *testing.T) {
+	parser := &Parser{language: &Language{
+		SymbolMetadata: []SymbolMetadata{
+			{},
+			{Visible: true},
+			{Visible: false},
+		},
+		FieldMapSlices: [][2]uint16{
+			{},
+			{},
+			{},
+			{},
+			{},
+			{0, 2},
+		},
+		FieldMapEntries: []FieldMapEntry{
+			{FieldID: 7, ChildIndex: 0},
+			{FieldID: 9, ChildIndex: 2},
+		},
+	}}
+	arena := newNodeArena(arenaClassFull)
+	left := newLeafNodeInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	hidden := newParentNodeInArenaNoLinksWithFieldSources(arena, 2, false, nil, nil, nil, 5, false)
+	right := newLeafNodeInArena(arena, 1, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	entries := []stackEntry{
+		newStackEntryNode(1, left),
+		newStackEntryNode(2, hidden),
+		newStackEntryNode(3, right),
+	}
+	rawFieldIDs := []FieldID{7, 0, 9}
+	rawInherited := []bool{false, false, false}
+	if parser.pendingDirectFieldParentFieldsRecomputable(5, 2, entries, 0, len(entries), rawFieldIDs, rawInherited, parser.language.SymbolMetadata) {
+		t.Fatal("pendingDirectFieldParentFieldsRecomputable = true, want false when hidden child shifts field map")
 	}
 }
 
@@ -80,6 +1713,547 @@ func TestCompactFullLeafStackEntryKeepsPointsAndMaterializes(t *testing.T) {
 	}
 	if got := arena.compactFullLeafMaterializedForParentReduce; got != 1 {
 		t.Fatalf("compactFullLeafMaterializedForParentReduce = %d, want 1", got)
+	}
+}
+
+func TestMaterializationReasonCountersClassifyNonParentReasons(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+
+	leaf := newCompactFullLeafInArena(arena, 9, true, 13, 21, Point{Row: 2, Column: 3}, Point{Row: 2, Column: 11})
+	leafEntry := newStackEntryCompactFullLeaf(4, leaf)
+	_ = materializeStackEntryCompactFullLeaf(arena, &leafEntry, compactFullLeafMaterializeForNormalization)
+	if got := arena.compactFullLeafMaterializedForNormalization; got != 1 {
+		t.Fatalf("compactFullLeafMaterializedForNormalization = %d, want 1", got)
+	}
+	if got := arena.compactFullLeafMaterializedForParentReduce; got != 0 {
+		t.Fatalf("compactFullLeafMaterializedForParentReduce = %d, want 0", got)
+	}
+
+	fallbackLeaf := newCompactFullLeafInArena(arena, 9, true, 22, 23, Point{Row: 3, Column: 0}, Point{Row: 3, Column: 1})
+	fallbackEntry := newStackEntryCompactFullLeaf(4, fallbackLeaf)
+	_ = materializeStackEntryPendingParent(arena, &fallbackEntry, pendingParentMaterializeForQuery)
+	if got := arena.compactFullLeafMaterializedForQuery; got != 1 {
+		t.Fatalf("compactFullLeafMaterializedForQuery = %d, want 1", got)
+	}
+	if got := arena.compactFullLeafMaterializedForParentReduce; got != 0 {
+		t.Fatalf("compactFullLeafMaterializedForParentReduce after fallback = %d, want 0", got)
+	}
+
+	parent := newPendingParentInArena(arena, 10, true, 7, nil, 0, 0, Point{}, Point{}, false)
+	parentEntry := newStackEntryPendingParent(5, parent)
+	_ = materializeStackEntryPendingParent(arena, &parentEntry, pendingParentMaterializeForQuery)
+	if got := arena.pendingParentMaterializedForQuery; got != 1 {
+		t.Fatalf("pendingParentMaterializedForQuery = %d, want 1", got)
+	}
+	if got := arena.pendingParentMaterializedForParentReduce; got != 0 {
+		t.Fatalf("pendingParentMaterializedForParentReduce = %d, want 0", got)
+	}
+}
+
+func TestPendingParentMaterializationPropagatesReasonToPayloads(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+
+	leaf := newCompactFullLeafInArena(arena, 9, true, 13, 21, Point{Row: 2, Column: 3}, Point{Row: 2, Column: 11})
+	leafEntry := newStackEntryCompactFullLeaf(4, leaf)
+	childParent := newPendingParentInArena(arena, 11, true, 8, []stackEntry{leafEntry}, 13, 21, Point{Row: 2, Column: 3}, Point{Row: 2, Column: 11}, false)
+	childEntry := newStackEntryPendingParent(5, childParent)
+	rootParent := newPendingParentInArena(arena, 10, true, 7, []stackEntry{childEntry}, 13, 21, Point{Row: 2, Column: 3}, Point{Row: 2, Column: 11}, false)
+	rootEntry := newStackEntryPendingParent(6, rootParent)
+
+	if node := materializeStackEntryPendingParent(arena, &rootEntry, pendingParentMaterializeForFinalTree); node == nil {
+		t.Fatal("materialized root = nil")
+	}
+	if got := arena.pendingParentMaterializedForFinalTree; got != 2 {
+		t.Fatalf("pendingParentMaterializedForFinalTree = %d, want 2", got)
+	}
+	if got := arena.pendingParentMaterializedForParentReduce; got != 0 {
+		t.Fatalf("pendingParentMaterializedForParentReduce = %d, want 0", got)
+	}
+	if got := arena.compactFullLeafMaterializedForFinalTree; got != 1 {
+		t.Fatalf("compactFullLeafMaterializedForFinalTree = %d, want 1", got)
+	}
+	if got := arena.compactFullLeafMaterializedForParentReduce; got != 0 {
+		t.Fatalf("compactFullLeafMaterializedForParentReduce = %d, want 0", got)
+	}
+}
+
+func TestPendingParentRejectCountersClassifyReasons(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+
+	arena.recordPendingParentRejected(pendingParentRejectAlias)
+	arena.recordPendingParentRejected(pendingParentRejectFields)
+	arena.recordPendingParentRejected(pendingParentRejectChild)
+
+	if got := arena.pendingParentRejectedAlias; got != 1 {
+		t.Fatalf("pendingParentRejectedAlias = %d, want 1", got)
+	}
+	if got := arena.pendingParentRejectedFields; got != 1 {
+		t.Fatalf("pendingParentRejectedFields = %d, want 1", got)
+	}
+	if got := arena.pendingParentRejectedChild; got != 1 {
+		t.Fatalf("pendingParentRejectedChild = %d, want 1", got)
+	}
+	if got := arena.pendingParentRejectedRawSpan; got != 0 {
+		t.Fatalf("pendingParentRejectedRawSpan = %d, want 0", got)
+	}
+	if got := arena.pendingParentLastRejectReason; got != pendingParentRejectChild {
+		t.Fatalf("pendingParentLastRejectReason = %d, want child", got)
+	}
+}
+
+func TestPendingParentFieldRejectCountersClassifyShapes(t *testing.T) {
+	cases := []struct {
+		name  string
+		shape pendingParentFieldRejectShape
+		got   func(PendingParentFieldRejectStats) uint64
+	}{
+		{"parent-hidden", pendingParentFieldRejectParentHidden, func(s PendingParentFieldRejectStats) uint64 { return s.ParentHidden }},
+		{"no-ids", pendingParentFieldRejectNoIDs, func(s PendingParentFieldRejectStats) uint64 { return s.NoIDs }},
+		{"inherited", pendingParentFieldRejectInherited, func(s PendingParentFieldRejectStats) uint64 { return s.Inherited }},
+		{"hidden-child", pendingParentFieldRejectHiddenChild, func(s PendingParentFieldRejectStats) uint64 { return s.HiddenChild }},
+		{"hidden-child-plain", pendingParentFieldRejectHiddenChildPlain, func(s PendingParentFieldRejectStats) uint64 { return s.HiddenChildPlain }},
+		{"hidden-child-plain-empty", pendingParentFieldRejectHiddenChildPlainEmpty, func(s PendingParentFieldRejectStats) uint64 { return s.HiddenChildPlainEmpty }},
+		{"hidden-child-plain-one", pendingParentFieldRejectHiddenChildPlainOne, func(s PendingParentFieldRejectStats) uint64 { return s.HiddenChildPlainOne }},
+		{"hidden-child-plain-many", pendingParentFieldRejectHiddenChildPlainMany, func(s PendingParentFieldRejectStats) uint64 { return s.HiddenChildPlainMany }},
+		{"hidden-child-with-fields", pendingParentFieldRejectHiddenChildWithFields, func(s PendingParentFieldRejectStats) uint64 { return s.HiddenChildWithFields }},
+		{"child", pendingParentFieldRejectChild, func(s PendingParentFieldRejectStats) uint64 { return s.Child }},
+		{"all-visible-direct", pendingParentFieldRejectAllVisibleDirect, func(s PendingParentFieldRejectStats) uint64 { return s.AllVisibleDirect }},
+		{"unknown", pendingParentFieldRejectUnknown, func(s PendingParentFieldRejectStats) uint64 { return s.Unknown }},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			arena := newNodeArena(arenaClassFull)
+			arena.recordPendingParentFieldRejected(tc.shape)
+			if got := arena.pendingParentLastFieldRejectShape; got != tc.shape {
+				t.Fatalf("pendingParentLastFieldRejectShape = %d, want %d", got, tc.shape)
+			}
+			stats := PendingParentFieldRejectStats{}
+			stats.increment(tc.shape)
+			if got := tc.got(stats); got != 1 {
+				t.Fatalf("field reject stats count = %d, want 1", got)
+			}
+		})
+	}
+}
+
+func TestParentRejectPayloadMaterializedCountersClassifyPayloadKind(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	arena.breakdownEnabled = true
+	leaf := newCompactFullLeafInArena(arena, 9, true, 13, 21, Point{Row: 2, Column: 3}, Point{Row: 2, Column: 11})
+	leafEntry := newStackEntryCompactFullLeaf(4, leaf)
+	arena.recordParentRejectPayloadMaterialized(leafEntry, pendingParentRejectFields)
+	if got := arena.compactFullLeafMaterializedForParentReject.Fields; got != 1 {
+		t.Fatalf("compact leaf parent reject fields = %d, want 1", got)
+	}
+
+	parent := newPendingParentInArena(arena, 10, true, 7, nil, 0, 0, Point{}, Point{}, false)
+	parentEntry := newStackEntryPendingParent(5, parent)
+	arena.recordParentRejectPayloadMaterialized(parentEntry, pendingParentRejectAlias)
+	if got := arena.pendingParentMaterializedForParentReject.Alias; got != 1 {
+		t.Fatalf("pending parent reject alias = %d, want 1", got)
+	}
+
+	arena.pendingParentActiveFieldRejectShape = pendingParentFieldRejectAllVisibleDirect
+	arena.recordParentRejectPayloadMaterialized(parentEntry, pendingParentRejectFields)
+	if got := arena.pendingParentMaterializedForFieldReject.AllVisibleDirect; got != 1 {
+		t.Fatalf("pending parent field reject all-visible-direct = %d, want 1", got)
+	}
+}
+
+func TestPendingParentFieldRejectPayloadStatsSplitVisibleShapes(t *testing.T) {
+	var stats PendingParentFieldRejectPayloadStats
+	stats.increment(pendingParentFieldRejectPayloadVisibleFinalLike)
+	if got := stats.Visible; got != 1 {
+		t.Fatalf("visible aggregate = %d, want 1", got)
+	}
+	if got := stats.VisibleFinalLike; got != 1 {
+		t.Fatalf("visible final-like = %d, want 1", got)
+	}
+	stats.increment(pendingParentFieldRejectPayloadVisibleNestedPayload)
+	if got := stats.Visible; got != 2 {
+		t.Fatalf("visible aggregate after nested = %d, want 2", got)
+	}
+	if got := stats.VisibleNestedPayload; got != 1 {
+		t.Fatalf("visible nested payload = %d, want 1", got)
+	}
+	stats.increment(pendingParentFieldRejectPayloadVisibleCompactLeaf)
+	if got := stats.VisibleCompactLeaf; got != 1 {
+		t.Fatalf("visible compact leaf = %d, want 1", got)
+	}
+	stats.increment(pendingParentFieldRejectPayloadVisibleFieldedDescendant)
+	if got := stats.VisibleFieldedDesc; got != 1 {
+		t.Fatalf("visible fielded descendant = %d, want 1", got)
+	}
+}
+
+func TestPendingParentFieldRejectPayloadShapeSplitsVisiblePendingParents(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	parser := &Parser{language: &Language{SymbolMetadata: []SymbolMetadata{
+		{},
+		{Name: "leaf", Visible: true, Named: true},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{Name: "parent", Visible: true, Named: true},
+	}}}
+	leaf := newLeafNodeInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	finalLike := newPendingParentInArena(arena, 10, true, 7, []stackEntry{newStackEntryNode(2, leaf)}, 0, 1, Point{}, Point{Column: 1}, false)
+	if got := parser.pendingParentFieldRejectPayloadShape(newStackEntryPendingParent(3, finalLike), arena); got != pendingParentFieldRejectPayloadVisibleFinalLike {
+		t.Fatalf("final-like visible payload shape = %d", got)
+	}
+	nestedLeaf := newCompactFullLeafInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	nested := newPendingParentInArena(arena, 10, true, 8, []stackEntry{newStackEntryCompactFullLeaf(4, nestedLeaf)}, 0, 1, Point{}, Point{Column: 1}, false)
+	if got := parser.pendingParentFieldRejectPayloadShape(newStackEntryPendingParent(5, nested), arena); got != pendingParentFieldRejectPayloadVisibleCompactLeaf {
+		t.Fatalf("compact-leaf visible payload shape = %d", got)
+	}
+	inner := newPendingParentInArena(arena, 10, true, 9, []stackEntry{newStackEntryNode(6, leaf)}, 0, 1, Point{}, Point{Column: 1}, false)
+	nestedParent := newPendingParentInArena(arena, 10, true, 10, []stackEntry{newStackEntryPendingParent(7, inner)}, 0, 1, Point{}, Point{Column: 1}, false)
+	if got := parser.pendingParentFieldRejectPayloadShape(newStackEntryPendingParent(8, nestedParent), arena); got != pendingParentFieldRejectPayloadVisibleNestedPayload {
+		t.Fatalf("nested-parent visible payload shape = %d", got)
+	}
+	fieldedChild := newParentNodeInArenaNoLinksWithFieldSources(arena, 10, true, []*Node{leaf}, []FieldID{3}, nil, 11, false)
+	fieldedParent := newPendingParentInArena(arena, 10, true, 12, []stackEntry{newStackEntryNode(9, fieldedChild)}, 0, 1, Point{}, Point{Column: 1}, false)
+	if got := parser.pendingParentFieldRejectPayloadShape(newStackEntryPendingParent(10, fieldedParent), arena); got != pendingParentFieldRejectPayloadVisibleFieldedDescendant {
+		t.Fatalf("fielded-desc visible payload shape = %d", got)
+	}
+}
+
+func TestMaterializePendingPayloadEntriesPropagatesFieldRejectShape(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	arena.breakdownEnabled = true
+	parent := newPendingParentInArena(arena, 10, true, 7, nil, 0, 0, Point{}, Point{}, false)
+	entries := []stackEntry{newStackEntryPendingParent(5, parent)}
+
+	arena.pendingParentLastRejectReason = pendingParentRejectFields
+	arena.pendingParentLastFieldRejectShape = pendingParentFieldRejectAllVisibleDirect
+	arena.pendingParentActiveRejectReason = pendingParentRejectAlias
+	arena.pendingParentActiveFieldRejectShape = pendingParentFieldRejectHiddenChildPlain
+	arena.pendingParentActiveFieldPayloadShape = pendingParentFieldRejectPayloadHiddenMany
+
+	materializePendingPayloadEntries(nil, entries, 0, len(entries), arena)
+
+	if got := stackEntryPendingParent(entries[0]); got != nil {
+		t.Fatalf("entry still pending parent = %p, want materialized node", got)
+	}
+	if got := arena.pendingParentMaterializedForParentReject.Fields; got != 1 {
+		t.Fatalf("pending parent materialized parent reject fields = %d, want 1", got)
+	}
+	if got := arena.pendingParentMaterializedForFieldReject.AllVisibleDirect; got != 1 {
+		t.Fatalf("pending parent materialized field reject all-visible-direct = %d, want 1", got)
+	}
+	if got := arena.pendingParentActiveRejectReason; got != pendingParentRejectAlias {
+		t.Fatalf("active reject reason restored = %d, want alias", got)
+	}
+	if got := arena.pendingParentActiveFieldRejectShape; got != pendingParentFieldRejectHiddenChildPlain {
+		t.Fatalf("active field reject shape restored = %d, want hidden-child", got)
+	}
+	if got := arena.pendingParentActiveFieldPayloadShape; got != pendingParentFieldRejectPayloadHiddenMany {
+		t.Fatalf("active field payload shape restored = %d, want hidden-many", got)
+	}
+}
+
+func TestMaterializeStackEntryPayloadTracksActiveParentReject(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	arena.breakdownEnabled = true
+	leaf := newCompactFullLeafInArena(arena, 9, true, 13, 21, Point{Row: 2, Column: 3}, Point{Row: 2, Column: 11})
+	entry := newStackEntryCompactFullLeaf(4, leaf)
+
+	arena.pendingParentActiveRejectReason = pendingParentRejectFields
+	node := materializeStackEntryPayload(arena, &entry, compactFullLeafMaterializeForParentReduce, pendingParentMaterializeForParentReduce)
+	if node == nil {
+		t.Fatal("materialized node = nil")
+	}
+	if got := arena.compactFullLeafMaterializedForParentReject.Fields; got != 1 {
+		t.Fatalf("compact leaf active parent reject fields = %d, want 1", got)
+	}
+
+	parent := newPendingParentInArena(arena, 10, true, 7, nil, 0, 0, Point{}, Point{}, false)
+	parentEntry := newStackEntryPendingParent(5, parent)
+	arena.pendingParentActiveFieldRejectShape = pendingParentFieldRejectHiddenChildWithFields
+	node = materializeStackEntryPayload(arena, &parentEntry, compactFullLeafMaterializeForParentReduce, pendingParentMaterializeForParentReduce)
+	if node == nil {
+		t.Fatal("materialized pending parent = nil")
+	}
+	if got := arena.pendingParentMaterializedForParentReject.Fields; got != 1 {
+		t.Fatalf("pending parent active parent reject fields = %d, want 1", got)
+	}
+	if got := arena.pendingParentMaterializedForFieldReject.HiddenChildWithFields; got != 1 {
+		t.Fatalf("pending parent active field reject hidden-child-with-fields = %d, want 1", got)
+	}
+}
+
+func TestMaterializePendingParentRecursionClassifiesNestedPendingPayloadShape(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	arena.breakdownEnabled = true
+	lang := &Language{SymbolMetadata: []SymbolMetadata{
+		{},
+		{Name: "leaf", Visible: true, Named: true},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{Name: "outer", Visible: true, Named: true},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{Name: "hidden", Visible: false, Named: false},
+	}}
+	parser := &Parser{language: lang}
+	leaf := newLeafNodeInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	hidden := newPendingParentInArena(arena, 20, false, 3, []stackEntry{newStackEntryNode(4, leaf)}, 0, 1, Point{}, Point{Column: 1}, false)
+	outer := newPendingParentInArena(arena, 10, true, 5, []stackEntry{newStackEntryPendingParent(6, hidden)}, 0, 1, Point{}, Point{Column: 1}, false)
+	entries := []stackEntry{newStackEntryPendingParent(7, outer)}
+
+	arena.pendingParentLastRejectReason = pendingParentRejectFields
+	arena.pendingParentLastFieldRejectShape = pendingParentFieldRejectAllVisibleDirect
+	materializePendingPayloadEntries(parser, entries, 0, len(entries), arena)
+
+	if got := arena.pendingParentMaterializedForFieldRejectPayload.Visible; got != 1 {
+		t.Fatalf("visible payload count = %d, want 1", got)
+	}
+	if got := arena.pendingParentMaterializedForFieldRejectPayload.HiddenOne; got != 1 {
+		t.Fatalf("hidden-one payload count = %d, want 1", got)
+	}
+}
+
+func TestMaterializePendingParentRecursionClassifiesNestedCompactLeafPayloadShape(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	arena.breakdownEnabled = true
+	lang := &Language{SymbolMetadata: []SymbolMetadata{
+		{},
+		{},
+		{Name: "hidden_leaf", Visible: false, Named: false},
+	}}
+	parser := &Parser{language: lang}
+	leaf := newCompactFullLeafInArena(arena, 2, false, 0, 1, Point{}, Point{Column: 1})
+	entries := []stackEntry{newStackEntryCompactFullLeaf(3, leaf)}
+
+	arena.pendingParentLastRejectReason = pendingParentRejectFields
+	arena.pendingParentLastFieldRejectShape = pendingParentFieldRejectHiddenChildPlainEmpty
+	materializePendingPayloadEntries(parser, entries, 0, len(entries), arena)
+
+	if got := arena.compactFullLeafMaterializedForParentReject.Fields; got != 1 {
+		t.Fatalf("compact leaf reject fields = %d, want 1", got)
+	}
+	if got := arena.compactFullLeafMaterializedForFieldRejectPayload.HiddenEmpty; got != 1 {
+		t.Fatalf("compact leaf hidden-empty payload count = %d, want 1", got)
+	}
+}
+
+func TestStackResultErrorRankIncludesCompactRefs(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	errorLeaf := newCompactFullLeafInArena(arena, errorSymbol, false, 0, 1, Point{}, Point{Column: 1})
+	leafStack := &glrStack{entries: []stackEntry{newStackEntryCompactFullLeaf(2, errorLeaf)}}
+	if got := stackResultErrorRank(leafStack, arena); got != 2 {
+		t.Fatalf("compact leaf error rank = %d, want 2", got)
+	}
+
+	child := newLeafNodeInArena(arena, errorSymbol, false, 0, 1, Point{}, Point{Column: 1})
+	parent := newPendingParentInArena(arena, 10, true, 7, []stackEntry{newStackEntryNode(3, child)}, 0, 1, Point{}, Point{Column: 1}, false)
+	parentStack := &glrStack{entries: []stackEntry{newStackEntryPendingParent(4, parent)}}
+	if got := stackResultErrorRank(parentStack, arena); got != 2 {
+		t.Fatalf("pending parent child error rank = %d, want 2", got)
+	}
+}
+
+func TestCompareAcceptedStackAliasPreferenceIncludesCompactRefs(t *testing.T) {
+	lang := &Language{
+		SymbolNames: []string{"EOF", "identifier", "alias_identifier", "root"},
+		SymbolMetadata: []SymbolMetadata{
+			{},
+			{Visible: true, Named: true},
+			{Visible: true, Named: true},
+			{Visible: true, Named: true},
+		},
+		AliasSequences: [][]Symbol{{2}},
+	}
+	parser := NewParser(lang)
+	arena := newNodeArena(arenaClassFull)
+
+	normalLeaf := newLeafNodeInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	aliasLeaf := newCompactFullLeafInArena(arena, 2, true, 0, 1, Point{}, Point{Column: 1})
+	normalStack := glrStack{entries: []stackEntry{newStackEntryNode(1, normalLeaf)}}
+	aliasStack := glrStack{entries: []stackEntry{newStackEntryCompactFullLeaf(1, aliasLeaf)}}
+	if got := compareAcceptedStackAliasPreference(parser, arena, aliasStack, normalStack); got != 1 {
+		t.Fatalf("compact alias preference = %d, want 1", got)
+	}
+	if got := compareAcceptedStackAliasPreference(parser, arena, normalStack, aliasStack); got != -1 {
+		t.Fatalf("reverse compact alias preference = %d, want -1", got)
+	}
+
+	normalParent := newParentNodeInArena(arena, 3, true, []*Node{normalLeaf}, nil, 0)
+	aliasParent := newPendingParentInArena(arena, 3, true, 0, []stackEntry{newStackEntryCompactFullLeaf(1, aliasLeaf)}, 0, 1, Point{}, Point{Column: 1}, false)
+	parentNormalStack := glrStack{entries: []stackEntry{newStackEntryNode(2, normalParent)}}
+	parentAliasStack := glrStack{entries: []stackEntry{newStackEntryPendingParent(2, aliasParent)}}
+	if got := compareAcceptedStackAliasPreference(parser, arena, parentAliasStack, parentNormalStack); got != 1 {
+		t.Fatalf("pending alias preference = %d, want 1", got)
+	}
+}
+
+func TestCompareAcceptedStackAliasPreferenceIncludesGSSCompactRefs(t *testing.T) {
+	lang := &Language{
+		SymbolNames: []string{"EOF", "identifier", "alias_identifier", "root"},
+		SymbolMetadata: []SymbolMetadata{
+			{},
+			{Visible: true, Named: true},
+			{Visible: true, Named: true},
+			{Visible: true, Named: true},
+		},
+		AliasSequences: [][]Symbol{{2}},
+	}
+	parser := NewParser(lang)
+	arena := newNodeArena(arenaClassFull)
+	var scratch gssScratch
+
+	normalLeaf := newLeafNodeInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	aliasLeaf := newCompactFullLeafInArena(arena, 2, true, 0, 1, Point{}, Point{Column: 1})
+	normalStack := glrStack{entries: []stackEntry{{state: 0}, newStackEntryNode(1, normalLeaf)}}
+	aliasGSSStack := glrStack{
+		gss: buildGSSStack([]stackEntry{{state: 0}, newStackEntryCompactFullLeaf(1, aliasLeaf)}, &scratch),
+	}
+	if got := compareAcceptedStackAliasPreference(parser, arena, aliasGSSStack, normalStack); got != 1 {
+		t.Fatalf("gss compact alias preference = %d, want 1", got)
+	}
+	if got := compareAcceptedStackAliasPreference(parser, arena, normalStack, aliasGSSStack); got != -1 {
+		t.Fatalf("reverse gss compact alias preference = %d, want -1", got)
+	}
+
+	normalParent := newParentNodeInArena(arena, 3, true, []*Node{normalLeaf}, nil, 0)
+	aliasParent := newPendingParentInArena(arena, 3, true, 0, []stackEntry{newStackEntryCompactFullLeaf(1, aliasLeaf)}, 0, 1, Point{}, Point{Column: 1}, false)
+	parentNormalGSS := glrStack{
+		gss: buildGSSStack([]stackEntry{{state: 0}, newStackEntryNode(2, normalParent)}, &scratch),
+	}
+	parentAliasGSS := glrStack{
+		gss: buildGSSStack([]stackEntry{{state: 0}, newStackEntryPendingParent(2, aliasParent)}, &scratch),
+	}
+	if got := compareAcceptedStackAliasPreference(parser, arena, parentAliasGSS, parentNormalGSS); got != 1 {
+		t.Fatalf("gss pending alias preference = %d, want 1", got)
+	}
+	if got := arena.compactFullLeafMaterialized; got != 0 {
+		t.Fatalf("compact leaf materialized during alias preference = %d, want 0", got)
+	}
+	if got := arena.pendingParentMaterialized; got != 0 {
+		t.Fatalf("pending parent materialized during alias preference = %d, want 0", got)
+	}
+}
+
+func TestCompareAcceptedStackAliasPreferencePreservesGSSResultOrder(t *testing.T) {
+	lang := &Language{
+		SymbolNames: []string{"EOF", "identifier", "alias_identifier", "property", "alias_property"},
+		SymbolMetadata: []SymbolMetadata{
+			{},
+			{Visible: true, Named: true},
+			{Visible: true, Named: true},
+			{Visible: true, Named: true},
+			{Visible: true, Named: true},
+		},
+		AliasSequences: [][]Symbol{{2}, {4}},
+	}
+	parser := NewParser(lang)
+	arena := newNodeArena(arenaClassFull)
+	var scratch gssScratch
+
+	bottomAlias := newCompactFullLeafInArena(arena, 2, true, 0, 1, Point{}, Point{Column: 1})
+	bottomNormal := newLeafNodeInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	topNormal := newLeafNodeInArena(arena, 3, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	topAlias := newCompactFullLeafInArena(arena, 4, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	preferBottomStack := glrStack{
+		gss: buildGSSStack([]stackEntry{
+			{state: 0},
+			newStackEntryCompactFullLeaf(1, bottomAlias),
+			newStackEntryNode(2, topNormal),
+		}, &scratch),
+	}
+	preferTopStack := glrStack{
+		gss: buildGSSStack([]stackEntry{
+			{state: 0},
+			newStackEntryNode(1, bottomNormal),
+			newStackEntryCompactFullLeaf(2, topAlias),
+		}, &scratch),
+	}
+	if got := compareAcceptedStackAliasPreference(parser, arena, preferBottomStack, preferTopStack); got != 1 {
+		t.Fatalf("gss alias preference order = %d, want 1", got)
+	}
+}
+
+func TestCompareAcceptedStackAliasPreferenceKeepsWideNodeFallback(t *testing.T) {
+	lang := &Language{
+		SymbolNames: []string{"EOF", "identifier", "alias_identifier"},
+		SymbolMetadata: []SymbolMetadata{
+			{},
+			{Visible: true, Named: true},
+			{Visible: true, Named: true},
+		},
+		AliasSequences: [][]Symbol{{2}},
+	}
+	parser := NewParser(lang)
+	arena := newNodeArena(arenaClassFull)
+	var scratch gssScratch
+
+	aEntries := []stackEntry{{state: 0}}
+	bEntries := []stackEntry{{state: 0}}
+	for i := 0; i < 9; i++ {
+		symA, symB := Symbol(1), Symbol(1)
+		if i == 8 {
+			symA = 2
+		}
+		aNode := newLeafNodeInArena(arena, symA, true, uint32(i), uint32(i+1), Point{Column: uint32(i)}, Point{Column: uint32(i + 1)})
+		bNode := newLeafNodeInArena(arena, symB, true, uint32(i), uint32(i+1), Point{Column: uint32(i)}, Point{Column: uint32(i + 1)})
+		aEntries = append(aEntries, newStackEntryNode(StateID(i+1), aNode))
+		bEntries = append(bEntries, newStackEntryNode(StateID(i+1), bNode))
+	}
+	aStack := glrStack{gss: buildGSSStack(aEntries, &scratch)}
+	bStack := glrStack{gss: buildGSSStack(bEntries, &scratch)}
+	if got := compareAcceptedStackAliasPreference(parser, arena, aStack, bStack); got != 1 {
+		t.Fatalf("wide node alias preference = %d, want 1", got)
+	}
+}
+
+func TestObservePreMaterializationFieldRejectForkCountsSameKey(t *testing.T) {
+	parser := &Parser{
+		language:           &Language{},
+		pendingFullParents: true,
+		reduceHasFields:    []bool{true},
+	}
+	arena := newNodeArena(arenaClassFull)
+	leaf := newLeafNodeInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	stack := &glrStack{
+		entries: []stackEntry{
+			{state: 7},
+			newStackEntryNode(8, leaf),
+		},
+		byteOffset: 1,
+	}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 2, ChildCount: 1, ProductionID: 0},
+		{Type: ParseActionReduce, Symbol: 3, ChildCount: 1, ProductionID: 0},
+	}
+
+	candidates, sameKey, overflow := parser.observePreMaterializationFieldRejectFork(stack, actions, nil, 1)
+	if candidates != 2 {
+		t.Fatalf("candidates = %d, want 2", candidates)
+	}
+	if sameKey != 2 {
+		t.Fatalf("sameKey = %d, want 2", sameKey)
+	}
+	if overflow != 1 {
+		t.Fatalf("overflow = %d, want 1", overflow)
 	}
 }
 

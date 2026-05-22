@@ -71,6 +71,7 @@ type nodeArena struct {
 	parentLinkMu        sync.Mutex
 	deferredParentRoot  *Node
 	parentLinksDeferred bool
+	finalChildRefs      bool
 	// skipChildClear allows reset() to skip child-slab pointer clearing when
 	// a parse did not borrow any external nodes (full parse without reuse).
 	skipChildClear bool
@@ -88,6 +89,7 @@ type nodeArena struct {
 	pendingChildEntrySlabCursor     int
 	compactCheckpointLeafSlabs      []compactCheckpointLeafSlab
 	compactCheckpointLeafSlabCursor int
+	finalChildSidecars              []finalChildSidecar
 
 	childSlabs                         []childSliceSlab
 	fieldSlabs                         []fieldSliceSlab
@@ -98,83 +100,136 @@ type nodeArena struct {
 	fieldSlabCursor                    int
 	fieldSourceSlabCursor              int
 
-	externalScannerCheckpointRecords           uint64
-	externalScannerSnapshotPayloadBytes        uint64
-	externalScannerLastSnapshotRef             externalScannerSnapshotRef
-	externalScannerCheckpointLeafNodes         uint64
-	compactFullLeafCreated                     uint64
-	compactFullLeafMaterialized                uint64
-	compactFullLeafMaterializedForParentReduce uint64
-	compactFullLeafMaterializedForFinalTree    uint64
-	compactFullLeafDropped                     uint64
-	pendingParentCreated                       uint64
-	pendingParentMaterialized                  uint64
-	pendingParentMaterializedForParentReduce   uint64
-	pendingParentMaterializedForFinalTree      uint64
-	pendingParentDropped                       uint64
-	pendingParentsFlattened                    uint64
-	pendingChildRefsFlattened                  uint64
-	checkpointLeafFullNodesAvoided             uint64
-	leafNodesConstructed                       uint64
-	parentNodesConstructed                     uint64
-	fieldedParentNodesConstructed              uint64
-	unfieldedParentNodesConstructed            uint64
-	parentConstructedChildLen0                 uint64
-	parentConstructedChildLen1                 uint64
-	parentConstructedChildLen2                 uint64
-	parentConstructedChildLen3                 uint64
-	parentConstructedChildLen4Plus             uint64
-	parentConstructedNoLinks                   uint64
-	parentConstructedWithLinks                 uint64
-	parentConstructedTrackErrors               uint64
-	parentConstructedFieldSources              uint64
-	parentReductionVisible                     uint64
-	parentReductionInvisible                   uint64
-	parentReductionVisibleFielded              uint64
-	parentReductionVisibleUnfielded            uint64
-	parentReductionInvisibleFielded            uint64
-	parentReductionInvisibleUnfielded          uint64
-	parentReductionVisibleChildPointers        uint64
-	parentReductionInvisibleChildPtrs          uint64
-	parentReductionVisibleChildLen0            uint64
-	parentReductionVisibleChildLen1            uint64
-	parentReductionVisibleChildLen2            uint64
-	parentReductionVisibleChildLen3            uint64
-	parentReductionVisibleChildLen4Plus        uint64
-	parentReductionInvisibleChildLen0          uint64
-	parentReductionInvisibleChildLen1          uint64
-	parentReductionInvisibleChildLen2          uint64
-	parentReductionInvisibleChildLen3          uint64
-	parentReductionInvisibleChildLen4P         uint64
-	reduceChildSlicesFastGSS                   uint64
-	reduceChildPointersFastGSS                 uint64
-	reduceChildSlicesAllVisible                uint64
-	reduceChildPointersAllVisible              uint64
-	reduceChildSlicesNoAlias                   uint64
-	reduceChildPointersNoAlias                 uint64
-	reduceChildSlicesScratchGeneral            uint64
-	reduceChildPointersScratchGeneral          uint64
-	reduceChildSlicesScratchNoAlias            uint64
-	reduceChildPointersScratchNoAlias          uint64
-	collapseRawUnaryAttempts                   uint64
-	collapseRawUnarySuccesses                  uint64
-	collapseRawUnaryMissShape                  uint64
-	collapseRawUnaryMissGrammar                uint64
-	collapseRawUnaryMissChild                  uint64
-	collapseRawUnaryMissRule                   uint64
-	collapseUnaryAttempts                      uint64
-	collapseUnarySuccesses                     uint64
-	collapseUnaryMissShape                     uint64
-	collapseUnaryMissGrammar                   uint64
-	collapseUnaryMissFielded                   uint64
-	collapseUnaryMissChild                     uint64
-	collapseUnaryMissRule                      uint64
-	collapseRuleSameSymbol                     uint64
-	collapseRuleInvisibleWrapper               uint64
-	collapseRuleNamedLeafAlias                 uint64
-	noTreeReduceNodesConstructed               uint64
-	noTreeLeafNodesConstructed                 uint64
-	noTreePlaceholderNodesConstructed          uint64
+	externalScannerCheckpointRecords                 uint64
+	externalScannerSnapshotPayloadBytes              uint64
+	externalScannerLastSnapshotRef                   externalScannerSnapshotRef
+	externalScannerCheckpointLeafNodes               uint64
+	compactFullLeafCreated                           uint64
+	compactFullLeafMaterialized                      uint64
+	compactFullLeafMaterializedForParentReduce       uint64
+	compactFullLeafMaterializedForFinalTree          uint64
+	compactFullLeafMaterializedForNormalization      uint64
+	compactFullLeafMaterializedForRecovery           uint64
+	compactFullLeafMaterializedForQuery              uint64
+	compactFullLeafMaterializedForCursor             uint64
+	compactFullLeafMaterializedForParentAPI          uint64
+	compactFullLeafMaterializedForEdit               uint64
+	compactFullLeafMaterializedForCheckpointRebuild  uint64
+	compactFullLeafMaterializedForParentReject       PendingParentRejectStats
+	compactFullLeafMaterializedForFieldRejectPayload PendingParentFieldRejectPayloadStats
+	compactFullLeafDropped                           uint64
+	pendingParentCreated                             uint64
+	pendingParentMaterialized                        uint64
+	pendingParentMaterializedForParentReduce         uint64
+	pendingParentMaterializedForFinalTree            uint64
+	pendingParentMaterializedForNormalization        uint64
+	pendingParentMaterializedForRecovery             uint64
+	pendingParentMaterializedForQuery                uint64
+	pendingParentMaterializedForCursor               uint64
+	pendingParentMaterializedForParentAPI            uint64
+	pendingParentMaterializedForEdit                 uint64
+	pendingParentMaterializedForCheckpointRebuild    uint64
+	pendingParentMaterializedForParentReject         PendingParentRejectStats
+	pendingParentMaterializedForFieldReject          PendingParentFieldRejectStats
+	pendingParentMaterializedForFieldRejectPayload   PendingParentFieldRejectPayloadStats
+	pendingParentDropped                             uint64
+	pendingParentsFlattened                          uint64
+	pendingChildRefsFlattened                        uint64
+	pendingChildEntriesAllocated                     uint64
+	pendingParentCandidates                          uint64
+	pendingParentRejectedEmpty                       uint64
+	pendingParentRejectedChildLimit                  uint64
+	pendingParentRejectedAlias                       uint64
+	pendingParentRejectedRawSpan                     uint64
+	pendingParentRejectedFields                      uint64
+	pendingParentRejectedFieldsParentHidden          uint64
+	pendingParentRejectedFieldsNoIDs                 uint64
+	pendingParentRejectedFieldsInherited             uint64
+	pendingParentRejectedFieldsHiddenChild           uint64
+	pendingParentRejectedFieldsChild                 uint64
+	pendingParentRejectedFieldsAllVisibleDirect      uint64
+	pendingParentRejectedChild                       uint64
+	pendingParentRejectedSpan                        uint64
+	pendingParentRejectedFill                        uint64
+	finalChildRefParents                             uint64
+	finalChildRefsCreated                            uint64
+	finalChildRefsMaterializedParents                uint64
+	finalChildRefsMaterializedChildren               uint64
+	finalChildRefsSingleChildAccesses                uint64
+	finalChildRefsSingleChildMaterializedChildren    uint64
+
+	pendingParentLastRejectReason        pendingParentRejectReason
+	pendingParentLastFieldRejectShape    pendingParentFieldRejectShape
+	pendingParentActiveFieldPayloadShape pendingParentFieldRejectPayloadShape
+	pendingParentActiveRejectReason      pendingParentRejectReason
+	pendingParentActiveFieldRejectShape  pendingParentFieldRejectShape
+	checkpointLeafFullNodesAvoided       uint64
+	leafNodesConstructed                 uint64
+	parentNodesConstructed               uint64
+	fieldedParentNodesConstructed        uint64
+	unfieldedParentNodesConstructed      uint64
+	parentConstructedChildLen0           uint64
+	parentConstructedChildLen1           uint64
+	parentConstructedChildLen2           uint64
+	parentConstructedChildLen3           uint64
+	parentConstructedChildLen4Plus       uint64
+	parentConstructedNoLinks             uint64
+	parentConstructedWithLinks           uint64
+	parentConstructedTrackErrors         uint64
+	parentConstructedFieldSources        uint64
+	parentReductionVisible               uint64
+	parentReductionInvisible             uint64
+	parentReductionVisibleFielded        uint64
+	parentReductionVisibleUnfielded      uint64
+	parentReductionInvisibleFielded      uint64
+	parentReductionInvisibleUnfielded    uint64
+	parentReductionVisibleChildPointers  uint64
+	parentReductionInvisibleChildPtrs    uint64
+	parentReductionVisibleChildLen0      uint64
+	parentReductionVisibleChildLen1      uint64
+	parentReductionVisibleChildLen2      uint64
+	parentReductionVisibleChildLen3      uint64
+	parentReductionVisibleChildLen4Plus  uint64
+	parentReductionInvisibleChildLen0    uint64
+	parentReductionInvisibleChildLen1    uint64
+	parentReductionInvisibleChildLen2    uint64
+	parentReductionInvisibleChildLen3    uint64
+	parentReductionInvisibleChildLen4P   uint64
+	reduceChildSlicesFastGSS             uint64
+	reduceChildPointersFastGSS           uint64
+	reduceChildSlicesAllVisible          uint64
+	reduceChildPointersAllVisible        uint64
+	reduceChildSlicesNoAlias             uint64
+	reduceChildPointersNoAlias           uint64
+	reduceChildSlicesScratchGeneral      uint64
+	reduceChildPointersScratchGeneral    uint64
+	reduceChildSlicesScratchNoAlias      uint64
+	reduceChildPointersScratchNoAlias    uint64
+	collapseRawUnaryAttempts             uint64
+	collapseRawUnarySuccesses            uint64
+	collapseRawUnaryMissShape            uint64
+	collapseRawUnaryMissGrammar          uint64
+	collapseRawUnaryMissChild            uint64
+	collapseRawUnaryMissRule             uint64
+	collapseUnaryAttempts                uint64
+	collapseUnarySuccesses               uint64
+	collapseUnaryMissShape               uint64
+	collapseUnaryMissGrammar             uint64
+	collapseUnaryMissFielded             uint64
+	collapseUnaryMissChild               uint64
+	collapseUnaryMissRule                uint64
+	collapseRuleSameSymbol               uint64
+	collapseRuleInvisibleWrapper         uint64
+	collapseRuleNamedLeafAlias           uint64
+	noTreeReduceNodesConstructed         uint64
+	noTreeLeafNodesConstructed           uint64
+	noTreePlaceholderNodesConstructed    uint64
+
+	pendingParentRejectedFieldsHiddenChildPlain      uint64
+	pendingParentRejectedFieldsHiddenChildPlainEmpty uint64
+	pendingParentRejectedFieldsHiddenChildPlainOne   uint64
+	pendingParentRejectedFieldsHiddenChildPlainMany  uint64
+	pendingParentRejectedFieldsHiddenChildWithFields uint64
 }
 
 type nodeSlab struct {
@@ -404,22 +459,46 @@ func (a *nodeArena) Release() {
 }
 
 func (a *nodeArena) reset() {
-	// Clear only the high-water range that could have been written since the
-	// previous reset. Slots past the high-water mark are either fresh from
-	// make() or were cleared by an earlier reset.
+	a.resetPrimaryNodes()
+	a.resetParentLinks()
+	a.finalChildRefs = false
+	a.externalScannerNodeCheckpoints.reset()
+	a.resetNodeSlabs()
+	a.resetNoTreeNodeSlabs()
+	a.resetCompactFullLeafSlabs()
+	a.resetPendingParentSlabs()
+	a.resetPendingChildEntrySlabs()
+	a.resetFinalChildSidecars()
+	a.resetCompactCheckpointLeafSlabs()
+	a.resetChildSlabs()
+	a.resetCounters()
+	a.resetFieldSlabs()
+	a.resetFieldSourceSlabs()
+	a.childSlabCursor = 0
+	a.fieldSlabCursor = 0
+	a.fieldSourceSlabCursor = 0
+	a.trimPrimaryNodeCapacity()
+	a.ensureDefaultSliceSlabs()
+	a.clearBudget()
+}
+
+func (a *nodeArena) resetPrimaryNodes() {
 	primaryUsed := a.used
 	if primaryUsed > len(a.nodes) {
 		primaryUsed = len(a.nodes)
 	}
 	clear(a.nodes[:primaryUsed])
 	a.used = 0
+}
+
+func (a *nodeArena) resetParentLinks() {
 	a.parentLinkMu.Lock()
 	a.deferredParentRoot = nil
 	a.parentLinksDeferred = false
 	a.parentLinkMu.Unlock()
-	// Checkpoint refs contain only integer fields, but stale refs must not
-	// remain visible when a node slot is reused.
-	a.externalScannerNodeCheckpoints.reset()
+}
+
+func (a *nodeArena) resetNodeSlabs() {
 	if len(a.nodeSlabs) > 0 {
 		retained := 0
 		keep := 0
@@ -459,6 +538,9 @@ func (a *nodeArena) reset() {
 		}
 	}
 	a.nodeSlabCursor = 0
+}
+
+func (a *nodeArena) resetNoTreeNodeSlabs() {
 	if len(a.noTreeNodeSlabs) > 0 {
 		retained := 0
 		keep := 0
@@ -483,6 +565,9 @@ func (a *nodeArena) reset() {
 		a.noTreeNodeSlabs[i].used = 0
 	}
 	a.noTreeNodeSlabCursor = 0
+}
+
+func (a *nodeArena) resetCompactFullLeafSlabs() {
 	if len(a.compactFullLeafSlabs) > 0 {
 		retained := 0
 		keep := 0
@@ -507,6 +592,9 @@ func (a *nodeArena) reset() {
 		a.compactFullLeafSlabs[i].used = 0
 	}
 	a.compactFullLeafSlabCursor = 0
+}
+
+func (a *nodeArena) resetPendingParentSlabs() {
 	if len(a.pendingParentSlabs) > 0 {
 		retained := 0
 		keep := 0
@@ -537,6 +625,9 @@ func (a *nodeArena) reset() {
 		slab.used = 0
 	}
 	a.pendingParentSlabCursor = 0
+}
+
+func (a *nodeArena) resetPendingChildEntrySlabs() {
 	if len(a.pendingChildEntrySlabs) > 0 {
 		retained := 0
 		keep := 0
@@ -565,6 +656,22 @@ func (a *nodeArena) reset() {
 		}
 	}
 	a.pendingChildEntrySlabCursor = 0
+}
+
+func (a *nodeArena) resetFinalChildSidecars() {
+	if cap(a.finalChildSidecars) > 0 {
+		if len(a.finalChildSidecars) > 0 {
+			clear(a.finalChildSidecars)
+		}
+		if limit := maxRetainedFinalChildSidecarCapacityForClass(a.class); cap(a.finalChildSidecars) > limit {
+			a.finalChildSidecars = make([]finalChildSidecar, 0, limit)
+		} else {
+			a.finalChildSidecars = a.finalChildSidecars[:0]
+		}
+	}
+}
+
+func (a *nodeArena) resetCompactCheckpointLeafSlabs() {
 	if len(a.compactCheckpointLeafSlabs) > 0 {
 		retained := 0
 		keep := 0
@@ -589,7 +696,9 @@ func (a *nodeArena) reset() {
 		a.compactCheckpointLeafSlabs[i].used = 0
 	}
 	a.compactCheckpointLeafSlabCursor = 0
+}
 
+func (a *nodeArena) resetChildSlabs() {
 	if len(a.childSlabs) > 0 {
 		retained := 0
 		keep := 0
@@ -621,6 +730,9 @@ func (a *nodeArena) reset() {
 		slab.used = 0
 	}
 	a.skipChildClear = false
+}
+
+func (a *nodeArena) resetCounters() {
 	a.audit = nil
 	a.externalScannerCheckpointRecords = 0
 	a.externalScannerSnapshotPayloadBytes = 0
@@ -630,14 +742,65 @@ func (a *nodeArena) reset() {
 	a.compactFullLeafMaterialized = 0
 	a.compactFullLeafMaterializedForParentReduce = 0
 	a.compactFullLeafMaterializedForFinalTree = 0
+	a.compactFullLeafMaterializedForNormalization = 0
+	a.compactFullLeafMaterializedForRecovery = 0
+	a.compactFullLeafMaterializedForQuery = 0
+	a.compactFullLeafMaterializedForCursor = 0
+	a.compactFullLeafMaterializedForParentAPI = 0
+	a.compactFullLeafMaterializedForEdit = 0
+	a.compactFullLeafMaterializedForCheckpointRebuild = 0
+	a.compactFullLeafMaterializedForParentReject = PendingParentRejectStats{}
+	a.compactFullLeafMaterializedForFieldRejectPayload = PendingParentFieldRejectPayloadStats{}
 	a.compactFullLeafDropped = 0
 	a.pendingParentCreated = 0
 	a.pendingParentMaterialized = 0
 	a.pendingParentMaterializedForParentReduce = 0
 	a.pendingParentMaterializedForFinalTree = 0
+	a.pendingParentMaterializedForNormalization = 0
+	a.pendingParentMaterializedForRecovery = 0
+	a.pendingParentMaterializedForQuery = 0
+	a.pendingParentMaterializedForCursor = 0
+	a.pendingParentMaterializedForParentAPI = 0
+	a.pendingParentMaterializedForEdit = 0
+	a.pendingParentMaterializedForCheckpointRebuild = 0
+	a.pendingParentMaterializedForParentReject = PendingParentRejectStats{}
+	a.pendingParentMaterializedForFieldReject = PendingParentFieldRejectStats{}
+	a.pendingParentMaterializedForFieldRejectPayload = PendingParentFieldRejectPayloadStats{}
 	a.pendingParentDropped = 0
 	a.pendingParentsFlattened = 0
 	a.pendingChildRefsFlattened = 0
+	a.pendingChildEntriesAllocated = 0
+	a.pendingParentCandidates = 0
+	a.pendingParentRejectedEmpty = 0
+	a.pendingParentRejectedChildLimit = 0
+	a.pendingParentRejectedAlias = 0
+	a.pendingParentRejectedRawSpan = 0
+	a.pendingParentRejectedFields = 0
+	a.pendingParentRejectedFieldsParentHidden = 0
+	a.pendingParentRejectedFieldsNoIDs = 0
+	a.pendingParentRejectedFieldsInherited = 0
+	a.pendingParentRejectedFieldsHiddenChild = 0
+	a.pendingParentRejectedFieldsHiddenChildPlain = 0
+	a.pendingParentRejectedFieldsHiddenChildPlainEmpty = 0
+	a.pendingParentRejectedFieldsHiddenChildPlainOne = 0
+	a.pendingParentRejectedFieldsHiddenChildPlainMany = 0
+	a.pendingParentRejectedFieldsHiddenChildWithFields = 0
+	a.pendingParentRejectedFieldsChild = 0
+	a.pendingParentRejectedFieldsAllVisibleDirect = 0
+	a.pendingParentRejectedChild = 0
+	a.pendingParentRejectedSpan = 0
+	a.pendingParentRejectedFill = 0
+	a.finalChildRefParents = 0
+	a.finalChildRefsCreated = 0
+	a.finalChildRefsMaterializedParents = 0
+	a.finalChildRefsMaterializedChildren = 0
+	a.finalChildRefsSingleChildAccesses = 0
+	a.finalChildRefsSingleChildMaterializedChildren = 0
+	a.pendingParentLastRejectReason = pendingParentRejectUnknown
+	a.pendingParentLastFieldRejectShape = pendingParentFieldRejectUnknown
+	a.pendingParentActiveFieldPayloadShape = pendingParentFieldRejectPayloadUnknown
+	a.pendingParentActiveRejectReason = pendingParentRejectUnknown
+	a.pendingParentActiveFieldRejectShape = pendingParentFieldRejectUnknown
 	a.checkpointLeafFullNodesAvoided = 0
 	a.leafNodesConstructed = 0
 	a.parentNodesConstructed = 0
@@ -699,6 +862,9 @@ func (a *nodeArena) reset() {
 	a.noTreeReduceNodesConstructed = 0
 	a.noTreeLeafNodesConstructed = 0
 	a.noTreePlaceholderNodesConstructed = 0
+}
+
+func (a *nodeArena) resetFieldSlabs() {
 	if len(a.fieldSlabs) > 0 {
 		retained := 0
 		keep := 0
@@ -725,6 +891,9 @@ func (a *nodeArena) reset() {
 	for i := range a.fieldSlabs {
 		a.fieldSlabs[i].used = 0
 	}
+}
+
+func (a *nodeArena) resetFieldSourceSlabs() {
 	if len(a.fieldSourceSlabs) > 0 {
 		retained := 0
 		keep := 0
@@ -751,10 +920,9 @@ func (a *nodeArena) reset() {
 	for i := range a.fieldSourceSlabs {
 		a.fieldSourceSlabs[i].used = 0
 	}
-	a.childSlabCursor = 0
-	a.fieldSlabCursor = 0
-	a.fieldSourceSlabCursor = 0
+}
 
+func (a *nodeArena) trimPrimaryNodeCapacity() {
 	if limit := maxRetainedNodeCapacityForClass(a.class); len(a.nodes) > limit {
 		// Drop the oversized primary array entirely. Setting to nil lets the GC
 		// collect it and the next parse will allocate a fresh slab of default
@@ -762,6 +930,9 @@ func (a *nodeArena) reset() {
 		a.nodes = nil
 		a.externalScannerNodeCheckpoints = externalScannerCheckpointSet{}
 	}
+}
+
+func (a *nodeArena) ensureDefaultSliceSlabs() {
 	if len(a.childSlabs) == 0 {
 		a.childSlabs = []childSliceSlab{{data: make([]*Node, defaultChildSliceCap(a.class))}}
 	}
@@ -771,7 +942,6 @@ func (a *nodeArena) reset() {
 	if len(a.fieldSourceSlabs) == 0 {
 		a.fieldSourceSlabs = []fieldSourceSliceSlab{{data: make([]uint8, defaultFieldSliceCap(a.class))}}
 	}
-	a.clearBudget()
 }
 
 func (a *nodeArena) allocNode() *Node {
@@ -921,16 +1091,24 @@ func (a *nodeArena) allocPendingParent() *pendingParent {
 	}
 }
 
-func (a *nodeArena) allocPendingChildEntries(n int) []stackEntry {
-	if n <= 0 {
-		return nil
+func (a *nodeArena) allocPendingChildEntries(n int) (pendingChildRange, []pendingChildEntry) {
+	return a.allocPendingChildEntryRange(n, n)
+}
+
+func (a *nodeArena) allocPendingChildEntryRange(logicalCount, slotCount int) (pendingChildRange, []pendingChildEntry) {
+	if logicalCount <= 0 || slotCount <= 0 {
+		return 0, nil
+	}
+	if slotCount < logicalCount {
+		panic("pending child entry slot count below logical count")
 	}
 	if a == nil {
-		return make([]stackEntry, n)
+		panic("pending child entry ranges require an arena")
 	}
+	a.pendingChildEntriesAllocated += uint64(slotCount)
 	if len(a.pendingChildEntrySlabs) == 0 {
-		capacity := max(defaultPendingChildEntrySlabCap(a.class), n)
-		a.pendingChildEntrySlabs = append(a.pendingChildEntrySlabs, pendingChildEntrySlab{data: make([]stackEntry, capacity)})
+		capacity := max(defaultPendingChildEntrySlabCap(a.class), slotCount)
+		a.pendingChildEntrySlabs = append(a.pendingChildEntrySlabs, pendingChildEntrySlab{data: make([]pendingChildEntry, capacity)})
 		a.allocatedBytes += pendingChildEntryBytesForCap(capacity)
 		a.pendingChildEntrySlabCursor = 0
 	}
@@ -940,20 +1118,27 @@ func (a *nodeArena) allocPendingChildEntries(n int) []stackEntry {
 	for i := a.pendingChildEntrySlabCursor; ; i++ {
 		if i >= len(a.pendingChildEntrySlabs) {
 			lastCap := len(a.pendingChildEntrySlabs[len(a.pendingChildEntrySlabs)-1].data)
-			capacity := max(lastCap*2, n)
-			a.pendingChildEntrySlabs = append(a.pendingChildEntrySlabs, pendingChildEntrySlab{data: make([]stackEntry, capacity)})
+			capacity := nextPendingChildEntrySlabCap(a.class, lastCap, slotCount)
+			a.pendingChildEntrySlabs = append(a.pendingChildEntrySlabs, pendingChildEntrySlab{data: make([]pendingChildEntry, capacity)})
 			a.allocatedBytes += pendingChildEntryBytesForCap(capacity)
 		}
 
 		slab := &a.pendingChildEntrySlabs[i]
-		if len(slab.data)-slab.used < n {
+		if len(slab.data)-slab.used < slotCount {
 			continue
 		}
 		start := slab.used
-		slab.used += n
+		slab.used += slotCount
 		a.pendingChildEntrySlabCursor = i
-		return slab.data[start:slab.used]
+		return newPendingChildRange(i, start, logicalCount), slab.data[start:slab.used]
 	}
+}
+
+func nextPendingChildEntrySlabCap(class arenaClass, lastCap, min int) int {
+	if class != arenaClassFull {
+		return max(lastCap*2, min)
+	}
+	return max(defaultPendingChildEntrySlabCap(class), min)
 }
 
 func (a *nodeArena) allocCompactCheckpointLeaf() *compactCheckpointLeaf {
@@ -1307,6 +1492,39 @@ func (a *nodeArena) pendingChildEntryBytesAllocated() int64 {
 	return total
 }
 
+func (a *nodeArena) pendingChildEntryCapacity() uint64 {
+	if a == nil {
+		return 0
+	}
+	var total uint64
+	for i := range a.pendingChildEntrySlabs {
+		total += uint64(len(a.pendingChildEntrySlabs[i].data))
+	}
+	return total
+}
+
+func (a *nodeArena) pendingChildEntryWaste() uint64 {
+	capacity := a.pendingChildEntryCapacity()
+	if capacity < a.pendingChildEntriesAllocated {
+		return 0
+	}
+	return capacity - a.pendingChildEntriesAllocated
+}
+
+func finalChildSidecarBytesForCap(n int) int64 {
+	if n <= 0 {
+		return 0
+	}
+	return int64(n) * int64(unsafe.Sizeof(finalChildSidecar{}))
+}
+
+func (a *nodeArena) finalChildSidecarBytesAllocated() int64 {
+	if a == nil {
+		return 0
+	}
+	return finalChildSidecarBytesForCap(cap(a.finalChildSidecars))
+}
+
 func (a *nodeArena) compactCheckpointLeafBytesAllocated() int64 {
 	if a == nil {
 		return 0
@@ -1327,6 +1545,7 @@ func (a *nodeArena) recomputeAllocatedBytes() {
 		a.compactFullLeafBytesAllocated() +
 		a.pendingParentBytesAllocated() +
 		a.pendingChildEntryBytesAllocated() +
+		a.finalChildSidecarBytesAllocated() +
 		a.compactCheckpointLeafBytesAllocated() +
 		a.childSliceBytesAllocated() +
 		a.fieldIDBytesAllocated() +
@@ -1336,6 +1555,288 @@ func (a *nodeArena) recomputeAllocatedBytes() {
 		total += a.externalScannerNodeCheckpointSlabs[i].checkpoints.bytesAllocated()
 	}
 	a.allocatedBytes = total
+}
+
+func (a *nodeArena) recordCompactFullLeafMaterialized(reason materializeReason) {
+	if a == nil {
+		return
+	}
+	a.compactFullLeafMaterialized++
+	switch reason {
+	case materializeForParentReduce:
+		a.compactFullLeafMaterializedForParentReduce++
+	case materializeForFinalTree:
+		a.compactFullLeafMaterializedForFinalTree++
+	case materializeForNormalization:
+		a.compactFullLeafMaterializedForNormalization++
+	case materializeForRecovery:
+		a.compactFullLeafMaterializedForRecovery++
+	case materializeForQuery:
+		a.compactFullLeafMaterializedForQuery++
+	case materializeForCursor:
+		a.compactFullLeafMaterializedForCursor++
+	case materializeForParentAPI:
+		a.compactFullLeafMaterializedForParentAPI++
+	case materializeForEdit:
+		a.compactFullLeafMaterializedForEdit++
+	case materializeForCheckpointRebuild:
+		a.compactFullLeafMaterializedForCheckpointRebuild++
+	}
+}
+
+func (a *nodeArena) recordPendingParentMaterialized(reason materializeReason) {
+	if a == nil {
+		return
+	}
+	a.pendingParentMaterialized++
+	switch reason {
+	case materializeForParentReduce:
+		a.pendingParentMaterializedForParentReduce++
+	case materializeForFinalTree:
+		a.pendingParentMaterializedForFinalTree++
+	case materializeForNormalization:
+		a.pendingParentMaterializedForNormalization++
+	case materializeForRecovery:
+		a.pendingParentMaterializedForRecovery++
+	case materializeForQuery:
+		a.pendingParentMaterializedForQuery++
+	case materializeForCursor:
+		a.pendingParentMaterializedForCursor++
+	case materializeForParentAPI:
+		a.pendingParentMaterializedForParentAPI++
+	case materializeForEdit:
+		a.pendingParentMaterializedForEdit++
+	case materializeForCheckpointRebuild:
+		a.pendingParentMaterializedForCheckpointRebuild++
+	}
+}
+
+type pendingParentRejectReason uint8
+
+const (
+	pendingParentRejectUnknown pendingParentRejectReason = iota
+	pendingParentRejectEmpty
+	pendingParentRejectChildLimit
+	pendingParentRejectAlias
+	pendingParentRejectRawSpan
+	pendingParentRejectFields
+	pendingParentRejectChild
+	pendingParentRejectSpan
+	pendingParentRejectFill
+)
+
+type pendingParentFieldRejectShape uint8
+
+const (
+	pendingParentFieldRejectUnknown pendingParentFieldRejectShape = iota
+	pendingParentFieldRejectParentHidden
+	pendingParentFieldRejectNoIDs
+	pendingParentFieldRejectInherited
+	pendingParentFieldRejectHiddenChild
+	pendingParentFieldRejectHiddenChildPlain
+	pendingParentFieldRejectHiddenChildPlainEmpty
+	pendingParentFieldRejectHiddenChildPlainOne
+	pendingParentFieldRejectHiddenChildPlainMany
+	pendingParentFieldRejectHiddenChildWithFields
+	pendingParentFieldRejectChild
+	pendingParentFieldRejectAllVisibleDirect
+)
+
+type pendingParentFieldRejectPayloadShape uint8
+
+const (
+	pendingParentFieldRejectPayloadUnknown pendingParentFieldRejectPayloadShape = iota
+	pendingParentFieldRejectPayloadVisible
+	pendingParentFieldRejectPayloadVisibleFinalLike
+	pendingParentFieldRejectPayloadVisibleNestedPayload
+	pendingParentFieldRejectPayloadVisibleCompactLeaf
+	pendingParentFieldRejectPayloadVisibleFieldedDescendant
+	pendingParentFieldRejectPayloadHiddenEmpty
+	pendingParentFieldRejectPayloadHiddenOne
+	pendingParentFieldRejectPayloadHiddenMany
+	pendingParentFieldRejectPayloadHiddenWithFields
+)
+
+func (s *PendingParentRejectStats) increment(reason pendingParentRejectReason) {
+	if s == nil {
+		return
+	}
+	switch reason {
+	case pendingParentRejectEmpty:
+		s.Empty++
+	case pendingParentRejectChildLimit:
+		s.ChildLimit++
+	case pendingParentRejectAlias:
+		s.Alias++
+	case pendingParentRejectRawSpan:
+		s.RawSpan++
+	case pendingParentRejectFields:
+		s.Fields++
+	case pendingParentRejectChild:
+		s.Child++
+	case pendingParentRejectSpan:
+		s.Span++
+	case pendingParentRejectFill:
+		s.Fill++
+	default:
+		s.Unknown++
+	}
+}
+
+func (s *PendingParentFieldRejectStats) increment(shape pendingParentFieldRejectShape) {
+	if s == nil {
+		return
+	}
+	switch shape {
+	case pendingParentFieldRejectParentHidden:
+		s.ParentHidden++
+	case pendingParentFieldRejectNoIDs:
+		s.NoIDs++
+	case pendingParentFieldRejectInherited:
+		s.Inherited++
+	case pendingParentFieldRejectHiddenChild:
+		s.HiddenChild++
+	case pendingParentFieldRejectHiddenChildPlain:
+		s.HiddenChild++
+		s.HiddenChildPlain++
+	case pendingParentFieldRejectHiddenChildPlainEmpty:
+		s.HiddenChild++
+		s.HiddenChildPlain++
+		s.HiddenChildPlainEmpty++
+	case pendingParentFieldRejectHiddenChildPlainOne:
+		s.HiddenChild++
+		s.HiddenChildPlain++
+		s.HiddenChildPlainOne++
+	case pendingParentFieldRejectHiddenChildPlainMany:
+		s.HiddenChild++
+		s.HiddenChildPlain++
+		s.HiddenChildPlainMany++
+	case pendingParentFieldRejectHiddenChildWithFields:
+		s.HiddenChild++
+		s.HiddenChildWithFields++
+	case pendingParentFieldRejectChild:
+		s.Child++
+	case pendingParentFieldRejectAllVisibleDirect:
+		s.AllVisibleDirect++
+	default:
+		s.Unknown++
+	}
+}
+
+func (s *PendingParentFieldRejectPayloadStats) increment(shape pendingParentFieldRejectPayloadShape) {
+	if s == nil {
+		return
+	}
+	switch shape {
+	case pendingParentFieldRejectPayloadVisible:
+		s.Visible++
+	case pendingParentFieldRejectPayloadVisibleFinalLike:
+		s.Visible++
+		s.VisibleFinalLike++
+	case pendingParentFieldRejectPayloadVisibleNestedPayload:
+		s.Visible++
+		s.VisibleNestedPayload++
+	case pendingParentFieldRejectPayloadVisibleCompactLeaf:
+		s.Visible++
+		s.VisibleCompactLeaf++
+	case pendingParentFieldRejectPayloadVisibleFieldedDescendant:
+		s.Visible++
+		s.VisibleFieldedDesc++
+	case pendingParentFieldRejectPayloadHiddenEmpty:
+		s.HiddenEmpty++
+	case pendingParentFieldRejectPayloadHiddenOne:
+		s.HiddenOne++
+	case pendingParentFieldRejectPayloadHiddenMany:
+		s.HiddenMany++
+	case pendingParentFieldRejectPayloadHiddenWithFields:
+		s.HiddenWithFields++
+	default:
+		s.Unknown++
+	}
+}
+
+func (a *nodeArena) recordPendingParentRejected(reason pendingParentRejectReason) {
+	if a == nil {
+		return
+	}
+	a.pendingParentLastRejectReason = reason
+	switch reason {
+	case pendingParentRejectEmpty:
+		a.pendingParentRejectedEmpty++
+	case pendingParentRejectChildLimit:
+		a.pendingParentRejectedChildLimit++
+	case pendingParentRejectAlias:
+		a.pendingParentRejectedAlias++
+	case pendingParentRejectRawSpan:
+		a.pendingParentRejectedRawSpan++
+	case pendingParentRejectFields:
+		a.pendingParentRejectedFields++
+	case pendingParentRejectChild:
+		a.pendingParentRejectedChild++
+	case pendingParentRejectSpan:
+		a.pendingParentRejectedSpan++
+	case pendingParentRejectFill:
+		a.pendingParentRejectedFill++
+	}
+}
+
+func (a *nodeArena) recordPendingParentFieldRejected(shape pendingParentFieldRejectShape) {
+	if a == nil {
+		return
+	}
+	a.pendingParentLastFieldRejectShape = shape
+	switch shape {
+	case pendingParentFieldRejectParentHidden:
+		a.pendingParentRejectedFieldsParentHidden++
+	case pendingParentFieldRejectNoIDs:
+		a.pendingParentRejectedFieldsNoIDs++
+	case pendingParentFieldRejectInherited:
+		a.pendingParentRejectedFieldsInherited++
+	case pendingParentFieldRejectHiddenChild:
+		a.pendingParentRejectedFieldsHiddenChild++
+	case pendingParentFieldRejectHiddenChildPlain:
+		a.pendingParentRejectedFieldsHiddenChild++
+		a.pendingParentRejectedFieldsHiddenChildPlain++
+	case pendingParentFieldRejectHiddenChildPlainEmpty:
+		a.pendingParentRejectedFieldsHiddenChild++
+		a.pendingParentRejectedFieldsHiddenChildPlain++
+		a.pendingParentRejectedFieldsHiddenChildPlainEmpty++
+	case pendingParentFieldRejectHiddenChildPlainOne:
+		a.pendingParentRejectedFieldsHiddenChild++
+		a.pendingParentRejectedFieldsHiddenChildPlain++
+		a.pendingParentRejectedFieldsHiddenChildPlainOne++
+	case pendingParentFieldRejectHiddenChildPlainMany:
+		a.pendingParentRejectedFieldsHiddenChild++
+		a.pendingParentRejectedFieldsHiddenChildPlain++
+		a.pendingParentRejectedFieldsHiddenChildPlainMany++
+	case pendingParentFieldRejectHiddenChildWithFields:
+		a.pendingParentRejectedFieldsHiddenChild++
+		a.pendingParentRejectedFieldsHiddenChildWithFields++
+	case pendingParentFieldRejectChild:
+		a.pendingParentRejectedFieldsChild++
+	case pendingParentFieldRejectAllVisibleDirect:
+		a.pendingParentRejectedFieldsAllVisibleDirect++
+	}
+}
+
+func (a *nodeArena) recordParentRejectPayloadMaterialized(entry stackEntry, reason pendingParentRejectReason) {
+	if a == nil {
+		return
+	}
+	if stackEntryCompactFullLeaf(entry) != nil {
+		a.compactFullLeafMaterializedForParentReject.increment(reason)
+		if reason == pendingParentRejectFields && a.breakdownEnabled {
+			a.compactFullLeafMaterializedForFieldRejectPayload.increment(a.pendingParentActiveFieldPayloadShape)
+		}
+		return
+	}
+	if stackEntryPendingParent(entry) != nil {
+		a.pendingParentMaterializedForParentReject.increment(reason)
+		if reason == pendingParentRejectFields && a.breakdownEnabled {
+			a.pendingParentMaterializedForFieldReject.increment(a.pendingParentActiveFieldRejectShape)
+			a.pendingParentMaterializedForFieldRejectPayload.increment(a.pendingParentActiveFieldPayloadShape)
+		}
+	}
 }
 
 func (a *nodeArena) finalizeCompactFullLeafDropped() {
@@ -1399,6 +1900,10 @@ func (a *nodeArena) collectArenaBreakdown() *ArenaBreakdown {
 		CompactFullLeafBytesAllocated:     a.compactFullLeafBytesAllocated(),
 		PendingParentBytesAllocated:       a.pendingParentBytesAllocated(),
 		PendingChildEntryBytesAllocated:   a.pendingChildEntryBytesAllocated(),
+		FinalChildSidecarBytesAllocated:   a.finalChildSidecarBytesAllocated(),
+		PendingChildEntriesAllocated:      a.pendingChildEntriesAllocated,
+		PendingChildEntryCapacity:         a.pendingChildEntryCapacity(),
+		PendingChildEntryWaste:            a.pendingChildEntryWaste(),
 		ChildSliceBytesAllocated:          a.childSliceBytesAllocated(),
 		FieldIDBytesAllocated:             a.fieldIDBytesAllocated(),
 		FieldSourceBytesAllocated:         a.fieldSourceBytesAllocated(),
@@ -1791,7 +2296,7 @@ func maxRetainedPendingParentCapacityForClass(class arenaClass) int {
 }
 
 func maxRetainedPendingChildEntryCapacityForClass(class arenaClass) int {
-	nodeSize := int(unsafe.Sizeof(stackEntry{}))
+	nodeSize := int(unsafe.Sizeof(pendingChildEntry{}))
 	if nodeSize <= 0 {
 		nodeSize = 1
 	}
@@ -1799,6 +2304,13 @@ func maxRetainedPendingChildEntryCapacityForClass(class arenaClass) int {
 		return max(maxRetainedFullSliceCap, defaultPendingChildEntrySlabCap(class))
 	}
 	return max(defaultPendingChildEntrySlabCap(class)*maxRetainedArenaFactor, maxRetainedIncrementalSliceCap)
+}
+
+func maxRetainedFinalChildSidecarCapacityForClass(class arenaClass) int {
+	if class == arenaClassFull {
+		return maxRetainedFullSliceCap
+	}
+	return maxRetainedIncrementalSliceCap
 }
 
 func maxRetainedCompactCheckpointLeafCapacityForClass(class arenaClass) int {

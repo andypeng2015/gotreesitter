@@ -17,12 +17,8 @@ func normalizeRustRecoveredStructExpressionRoot(root *Node, source []byte, lang 
 	if !ok {
 		return
 	}
-	root.children = cloneNodeSliceInArena(root.ownerArena, stmts)
-	root.fieldIDs = nil
-	root.fieldSources = nil
-	root.symbol = sourceFileSym
-	root.setNamed(rustNamedForSymbol(lang, sourceFileSym))
-	populateParentNode(root, root.children)
+	retagResultRoot(root, sourceFileSym, rustNamedForSymbol(lang, sourceFileSym))
+	replaceNodeChildrenUnfielded(root, cloneNodeSliceInArena(root.ownerArena, stmts))
 	root.setHasError(false)
 	if root.endByte < uint32(len(source)) && bytesAreTrivia(source[root.endByte:]) {
 		extendNodeEndTo(root, uint32(len(source)), source)
@@ -909,15 +905,166 @@ func rustBuildRecoveredTriviaNode(arena *nodeArena, source []byte, lang *Languag
 	if !ok {
 		return nil, false
 	}
-	return newLeafNodeInArena(
+	tokenName := ""
+	switch typeName {
+	case "line_comment":
+		if node, ok := rustBuildRecoveredDocLineCommentNode(arena, source, lang, start, end); ok {
+			return node, true
+		}
+		tokenName = "//"
+	case "block_comment":
+		tokenName = "/*"
+	}
+	if tokenName != "" && start+uint32(len(tokenName)) <= end {
+		if tokenSym, ok := symbolByName(lang, tokenName); ok {
+			tokenEnd := start + uint32(len(tokenName))
+			startPoint := advancePointByBytes(Point{}, source[:start])
+			tokenEndPoint := advancePointByBytes(startPoint, source[start:tokenEnd])
+			endPoint := advancePointByBytes(tokenEndPoint, source[tokenEnd:end])
+			token := newLeafNodeInArena(
+				arena,
+				tokenSym,
+				rustNamedForSymbol(lang, tokenSym),
+				start,
+				tokenEnd,
+				startPoint,
+				tokenEndPoint,
+			)
+			node := newParentNodeInArena(
+				arena,
+				sym,
+				rustNamedForSymbol(lang, sym),
+				[]*Node{token},
+				nil,
+				0,
+			)
+			node.startByte = start
+			node.startPoint = token.startPoint
+			node.endByte = end
+			node.endPoint = endPoint
+			node.setExtra(true)
+			return node, true
+		}
+	}
+	startPoint := advancePointByBytes(Point{}, source[:start])
+	endPoint := advancePointByBytes(startPoint, source[start:end])
+	node := newLeafNodeInArena(
 		arena,
 		sym,
 		rustNamedForSymbol(lang, sym),
 		start,
 		end,
-		advancePointByBytes(Point{}, source[:start]),
-		advancePointByBytes(Point{}, source[:end]),
-	), true
+		startPoint,
+		endPoint,
+	)
+	node.setExtra(true)
+	return node, true
+}
+
+func rustBuildRecoveredDocLineCommentNode(arena *nodeArena, source []byte, lang *Language, start, end uint32) (*Node, bool) {
+	if !rustLineCommentIsDoc(source, start, end) {
+		return nil, false
+	}
+	lineCommentSym, ok := symbolByName(lang, "line_comment")
+	if !ok {
+		return nil, false
+	}
+	slashSlashSym, ok := symbolByName(lang, "//")
+	if !ok {
+		return nil, false
+	}
+	markerName := "outer_doc_comment_marker"
+	markerToken := "/"
+	if source[start+2] == '!' {
+		markerName = "inner_doc_comment_marker"
+		markerToken = "!"
+	}
+	markerSym, ok := symbolByName(lang, markerName)
+	if !ok {
+		return nil, false
+	}
+	markerTokenSym, ok := symbolByName(lang, markerToken)
+	if !ok {
+		return nil, false
+	}
+	docCommentSym, ok := symbolByName(lang, "doc_comment")
+	if !ok {
+		return nil, false
+	}
+
+	slashSlashEnd := start + 2
+	markerEnd := start + 3
+	startPoint := advancePointByBytes(Point{}, source[:start])
+	slashSlashEndPoint := advancePointByBytes(startPoint, source[start:slashSlashEnd])
+	markerEndPoint := advancePointByBytes(slashSlashEndPoint, source[slashSlashEnd:markerEnd])
+	endPoint := advancePointByBytes(markerEndPoint, source[markerEnd:end])
+	slashSlash := newLeafNodeInArena(
+		arena,
+		slashSlashSym,
+		rustNamedForSymbol(lang, slashSlashSym),
+		start,
+		slashSlashEnd,
+		startPoint,
+		slashSlashEndPoint,
+	)
+	markerTokenNode := newLeafNodeInArena(
+		arena,
+		markerTokenSym,
+		rustNamedForSymbol(lang, markerTokenSym),
+		slashSlashEnd,
+		markerEnd,
+		slashSlashEndPoint,
+		markerEndPoint,
+	)
+	marker := newParentNodeInArena(
+		arena,
+		markerSym,
+		rustNamedForSymbol(lang, markerSym),
+		[]*Node{markerTokenNode},
+		nil,
+		0,
+	)
+	marker.startByte = slashSlashEnd
+	marker.startPoint = markerTokenNode.startPoint
+	marker.endByte = markerEnd
+	marker.endPoint = markerTokenNode.endPoint
+
+	doc := newLeafNodeInArena(
+		arena,
+		docCommentSym,
+		rustNamedForSymbol(lang, docCommentSym),
+		markerEnd,
+		end,
+		markerEndPoint,
+		endPoint,
+	)
+	node := newParentNodeInArena(
+		arena,
+		lineCommentSym,
+		rustNamedForSymbol(lang, lineCommentSym),
+		[]*Node{slashSlash, marker, doc},
+		rustDocCommentFieldIDs(arena, lang, markerName),
+		0,
+	)
+	node.startByte = start
+	node.startPoint = slashSlash.startPoint
+	node.endByte = end
+	node.endPoint = doc.endPoint
+	node.setExtra(true)
+	return node, true
+}
+
+func rustDocCommentFieldIDs(arena *nodeArena, lang *Language, markerName string) []FieldID {
+	fieldName := "outer"
+	if markerName == "inner_doc_comment_marker" {
+		fieldName = "inner"
+	}
+	fid, ok := lang.FieldByName(fieldName)
+	if !ok {
+		return nil
+	}
+	docFID, _ := lang.FieldByName("doc")
+	return cloneFieldIDSliceInArena(arena, []FieldID{0, fid, docFID})
 }
 
 func rustRefreshRecoveredErrorFlags(node *Node) bool {
@@ -1086,15 +1233,7 @@ func normalizeRustSourceFileRoot(root *Node, source []byte, lang *Language) {
 	if !ok || !rustRootLooksLikeTopLevel(root, lang) {
 		return
 	}
-	root.symbol = sourceFileSym
-	root.setNamed(rustNamedForSymbol(lang, sourceFileSym))
-	root.setHasError(false)
-	for _, child := range root.children {
-		if child != nil && (child.IsError() || child.HasError()) {
-			root.setHasError(true)
-			break
-		}
-	}
+	retagResultRootAndRefreshError(root, sourceFileSym, rustNamedForSymbol(lang, sourceFileSym))
 	if !root.hasError() && root.endByte < uint32(len(source)) && bytesAreTrivia(source[root.endByte:]) {
 		extendNodeEndTo(root, uint32(len(source)), source)
 	}
@@ -1175,7 +1314,7 @@ func rustNamedForSymbol(lang *Language, sym Symbol) bool {
 			return true
 		}
 	}
-	return int(sym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[sym].Named
+	return symbolIsNamed(lang, sym)
 }
 
 func rustTrimSpaceBounds(source []byte, start, end uint32) (uint32, uint32) {
@@ -1245,8 +1384,5 @@ func rustFragmentSpecifierFollowsColon(meta, colon, frag *Node, source []byte) b
 		return false
 	}
 	betweenMetaAndFrag := strings.TrimSpace(string(source[meta.endByte:frag.startByte]))
-	if !strings.Contains(betweenMetaAndFrag, ":") {
-		return false
-	}
-	return true
+	return strings.Contains(betweenMetaAndFrag, ":")
 }

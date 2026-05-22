@@ -208,3 +208,122 @@ func TestNormalizePythonStringContinuationEscapesAddsMissingChildren(t *testing.
 		t.Fatalf("content.children[1].endByte = %d, want %d", got, want)
 	}
 }
+
+func TestNormalizePythonStringContinuationEscapesKeepsExistingCompactChildLazy(t *testing.T) {
+	lang := &Language{
+		Name:        "python",
+		SymbolNames: []string{"EOF", "string_content", "escape_sequence"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF", Visible: false, Named: false},
+			{Name: "string_content", Visible: true, Named: true},
+			{Name: "escape_sequence", Visible: true, Named: true},
+		},
+	}
+
+	source := []byte("\\\nfoo")
+	arena := newNodeArena(arenaClassFull)
+	arena.finalChildRefs = true
+	escape := newCompactFullLeafInArena(arena, 2, true, 0, 2, Point{}, Point{Row: 1})
+	escape.parseState = 7
+	parent := newPendingParentInArena(arena, 1, true, 8, []stackEntry{
+		newStackEntryCompactFullLeaf(escape.parseState, escape),
+	}, 0, uint32(len(source)), Point{}, Point{Row: 1, Column: 3}, false)
+	parent.parseState = 9
+
+	entry := newStackEntryPendingParent(parent.parseState, parent)
+	content := materializeStackEntryPendingParent(arena, &entry, pendingParentMaterializeForFinalTree)
+	if content == nil {
+		t.Fatal("content = nil")
+	}
+	if !nodeHasFinalChildRefs(content) {
+		t.Fatal("content did not keep final-child refs")
+	}
+
+	normalizePythonStringContinuationEscapes(content, source, lang)
+
+	if got := arena.finalChildRefsMaterializedParents; got != 0 {
+		t.Fatalf("final child ref range materialized parents = %d, want 0", got)
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 0 {
+		t.Fatalf("single final child refs materialized = %d, want 0", got)
+	}
+	if !nodeHasFinalChildRefs(content) {
+		t.Fatal("normalization drained final-child refs")
+	}
+}
+
+func TestRepairPythonRootNodeNoopKeepsFinalChildRefsLazy(t *testing.T) {
+	lang := &Language{
+		Name:        "python",
+		SymbolNames: []string{"EOF", "module", "comment", "import_statement", "_simple_statements"},
+	}
+	arena := newNodeArena(arenaClassFull)
+	arena.finalChildRefs = true
+	comment := newCompactFullLeafInArena(arena, 2, true, 0, 5, Point{}, Point{Column: 5})
+	comment.parseState = 11
+	comment.setExtra(true)
+	stmt := newCompactFullLeafInArena(arena, 3, true, 6, 15, Point{Row: 1}, Point{Row: 1, Column: 9})
+	stmt.parseState = 12
+	parent := newPendingParentInArena(arena, 1, true, 13, []stackEntry{
+		newStackEntryCompactFullLeaf(comment.parseState, comment),
+		newStackEntryCompactFullLeaf(stmt.parseState, stmt),
+	}, 0, 15, Point{}, Point{Row: 1, Column: 9}, false)
+	parent.parseState = 14
+
+	entry := newStackEntryPendingParent(parent.parseState, parent)
+	root := materializeStackEntryPendingParent(arena, &entry, pendingParentMaterializeForFinalTree)
+	if root == nil {
+		t.Fatal("root = nil")
+	}
+	repaired := repairPythonRootNode(root, arena, lang)
+	if repaired != root {
+		t.Fatal("repairPythonRootNode changed a compact no-op root")
+	}
+	if got := arena.finalChildRefsMaterializedParents; got != 0 {
+		t.Fatalf("final child ref range materialized parents = %d, want 0", got)
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 0 {
+		t.Fatalf("single final child refs materialized = %d, want 0", got)
+	}
+	if !nodeHasFinalChildRefs(root) {
+		t.Fatal("root lost final-child refs")
+	}
+}
+
+func TestRepairPythonRootNodeClearsErrorWithoutDrainingFinalRefs(t *testing.T) {
+	lang := &Language{
+		Name:        "python",
+		SymbolNames: []string{"EOF", "module", "import_statement", "_simple_statements"},
+	}
+	arena := newNodeArena(arenaClassFull)
+	arena.finalChildRefs = true
+	stmt := newCompactFullLeafInArena(arena, 2, true, 0, 9, Point{}, Point{Column: 9})
+	stmt.parseState = 11
+	parent := newPendingParentInArena(arena, 1, true, 12, []stackEntry{
+		newStackEntryCompactFullLeaf(stmt.parseState, stmt),
+	}, 0, 9, Point{}, Point{Column: 9}, false)
+	parent.parseState = 13
+
+	entry := newStackEntryPendingParent(parent.parseState, parent)
+	root := materializeStackEntryPendingParent(arena, &entry, pendingParentMaterializeForFinalTree)
+	if root == nil {
+		t.Fatal("root = nil")
+	}
+	root.setHasError(true)
+	repaired := repairPythonRootNode(root, arena, lang)
+	if repaired == nil || repaired == root {
+		t.Fatalf("repairPythonRootNode returned %p, want a clone", repaired)
+	}
+	if repaired.HasError() {
+		t.Fatal("repaired root still has error")
+	}
+	if !nodeHasFinalChildRefs(repaired) {
+		t.Fatal("repaired root did not preserve final-child refs")
+	}
+	if got := arena.finalChildRefsMaterializedParents; got != 0 {
+		t.Fatalf("final child ref range materialized parents = %d, want 0", got)
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 0 {
+		t.Fatalf("single final child refs materialized = %d, want 0", got)
+	}
+}

@@ -162,6 +162,35 @@ func TestArenaResetRetainsFieldSlabsWithinBudget(t *testing.T) {
 	}
 }
 
+func TestArenaResetTrimsFinalChildSidecarsWithinBudget(t *testing.T) {
+	arena := newNodeArena(arenaClassIncremental)
+	limit := maxRetainedFinalChildSidecarCapacityForClass(arena.class)
+	if limit <= 0 {
+		t.Fatal("expected positive final child sidecar retention limit")
+	}
+
+	for i := 0; i < limit+128; i++ {
+		parent := arena.allocNode()
+		childRange, _ := arena.allocPendingChildEntries(1)
+		arena.attachFinalChildRefs(parent, childRange)
+	}
+	if cap(arena.finalChildSidecars) <= limit {
+		t.Fatalf("final child sidecar cap = %d, want > retention limit %d before reset", cap(arena.finalChildSidecars), limit)
+	}
+
+	arena.reset()
+
+	if got := len(arena.finalChildSidecars); got != 0 {
+		t.Fatalf("len(finalChildSidecars) after reset = %d, want 0", got)
+	}
+	if got := cap(arena.finalChildSidecars); got > limit {
+		t.Fatalf("cap(finalChildSidecars) after reset = %d, limit = %d", got, limit)
+	}
+	if got, wantMax := arena.finalChildSidecarBytesAllocated(), finalChildSidecarBytesForCap(limit); got > wantMax {
+		t.Fatalf("final child sidecar bytes after reset = %d, want <= %d", got, wantMax)
+	}
+}
+
 // TestChildSlabStalePointersAfterReset checks whether child slabs (which hold
 // []*Node) can retain stale pointers in the region [used:cap] after reset().
 // allocNodeSlice calls clear(out) on each allocation, zeroing [start:used].
@@ -285,9 +314,17 @@ func TestArenaByteBreakdownMatchesAllocatedBytes(t *testing.T) {
 	children[0] = left
 	children[1] = right
 	_ = newParentNodeInArenaNoLinksWithFieldSources(arena, Symbol(3), true, children, nil, nil, 0, false)
+	childRange, childEntries := arena.allocPendingChildEntries(1)
+	childEntries[0] = newPendingChildEntry(newStackEntryNode(left.parseState, left))
+	_ = newParentNodeInArenaWithFinalChildRefs(arena, Symbol(4), true, childRange, 0, false)
 
 	want := arena.nodeStructBytesAllocated() +
 		arena.noTreeNodeBytesAllocated() +
+		arena.compactFullLeafBytesAllocated() +
+		arena.pendingParentBytesAllocated() +
+		arena.pendingChildEntryBytesAllocated() +
+		arena.finalChildSidecarBytesAllocated() +
+		arena.compactCheckpointLeafBytesAllocated() +
 		arena.childSliceBytesAllocated() +
 		arena.fieldIDBytesAllocated() +
 		arena.fieldSourceBytesAllocated() +
@@ -296,6 +333,9 @@ func TestArenaByteBreakdownMatchesAllocatedBytes(t *testing.T) {
 		t.Fatalf("allocatedBytes = %d, breakdown sum = %d", got, want)
 	}
 	breakdown := arena.collectArenaBreakdown()
+	if got := breakdown.FinalChildSidecarBytesAllocated; got == 0 {
+		t.Fatal("FinalChildSidecarBytesAllocated = 0, want > 0")
+	}
 	if got, want := breakdown.NodeLiveCount, uint64(arena.used); got != want {
 		t.Fatalf("NodeLiveCount = %d, want %d", got, want)
 	}
@@ -333,6 +373,56 @@ func TestArenaByteBreakdownMatchesAllocatedBytes(t *testing.T) {
 	}
 	if got, want := breakdown.FieldSourceElementsConstructed, uint64(6); got != want {
 		t.Fatalf("fieldSourceElementsConstructed = %d, want %d", got, want)
+	}
+}
+
+func TestPendingChildEntryBreakdownReportsUsedCapacityAndWaste(t *testing.T) {
+	arena := newNodeArena(arenaClassIncremental)
+	_, first := arena.allocPendingChildEntries(3)
+	_, second := arena.allocPendingChildEntries(5)
+	if len(first) != 3 || len(second) != 5 {
+		t.Fatalf("pending child entries len = (%d,%d), want (3,5)", len(first), len(second))
+	}
+
+	breakdown := arena.collectArenaBreakdown()
+	if got, want := breakdown.PendingChildEntriesAllocated, uint64(8); got != want {
+		t.Fatalf("PendingChildEntriesAllocated = %d, want %d", got, want)
+	}
+	if breakdown.PendingChildEntryCapacity < breakdown.PendingChildEntriesAllocated {
+		t.Fatalf("PendingChildEntryCapacity = %d, allocated = %d", breakdown.PendingChildEntryCapacity, breakdown.PendingChildEntriesAllocated)
+	}
+	if got, want := breakdown.PendingChildEntryWaste, breakdown.PendingChildEntryCapacity-breakdown.PendingChildEntriesAllocated; got != want {
+		t.Fatalf("PendingChildEntryWaste = %d, want %d", got, want)
+	}
+}
+
+func TestPendingChildEntrySlabsUseFixedFullGrowth(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	slabCap := defaultPendingChildEntrySlabCap(arena.class)
+	for i := 0; i < slabCap+1; i++ {
+		_, _ = arena.allocPendingChildEntries(1)
+	}
+
+	if got := len(arena.pendingChildEntrySlabs); got != 2 {
+		t.Fatalf("pending child entry slabs = %d, want 2", got)
+	}
+	if got := len(arena.pendingChildEntrySlabs[1].data); got != slabCap {
+		t.Fatalf("second pending child entry slab cap = %d, want %d", got, slabCap)
+	}
+}
+
+func TestPendingChildEntrySlabsKeepGeometricIncrementalGrowth(t *testing.T) {
+	arena := newNodeArena(arenaClassIncremental)
+	slabCap := defaultPendingChildEntrySlabCap(arena.class)
+	for i := 0; i < slabCap+1; i++ {
+		_, _ = arena.allocPendingChildEntries(1)
+	}
+
+	if got := len(arena.pendingChildEntrySlabs); got != 2 {
+		t.Fatalf("pending child entry slabs = %d, want 2", got)
+	}
+	if got, want := len(arena.pendingChildEntrySlabs[1].data), slabCap*2; got != want {
+		t.Fatalf("second incremental pending child entry slab cap = %d, want %d", got, want)
 	}
 }
 

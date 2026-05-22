@@ -182,6 +182,31 @@ type IncrementalReuseExternalScanner interface {
 	SupportsIncrementalReuse() bool
 }
 
+// ReduceChainTerminalAction describes the action class expected after a
+// generated reduce-chain hint finishes applying deterministic reductions.
+type ReduceChainTerminalAction uint8
+
+const (
+	ReduceChainTerminalNoAction ReduceChainTerminalAction = iota
+	ReduceChainTerminalSingleReduce
+	ReduceChainTerminalSingleShift
+	ReduceChainTerminalSingleAccept
+	ReduceChainTerminalSingleOther
+	ReduceChainTerminalMulti
+)
+
+// ReduceChainHint describes a terminal-verified parser hot path for a
+// deterministic reduce chain. The runtime still applies normal reduce
+// semantics and stops before the terminal action; this metadata only lets it
+// avoid repeated generic action dispatch for approved state/lookahead pairs.
+type ReduceChainHint struct {
+	StartState     StateID
+	Lookahead      Symbol
+	TerminalStates []StateID
+	TerminalAction ReduceChainTerminalAction
+	MaxSteps       uint16
+}
+
 // Language holds all data needed to parse a specific language.
 // It mirrors tree-sitter's TSLanguage C struct, translated into
 // idiomatic Go types with slice-based tables instead of raw pointers.
@@ -214,6 +239,10 @@ type Language struct {
 	SmallParseTable    []uint16   // compressed sparse table
 	SmallParseTableMap []uint32   // state -> offset into SmallParseTable
 	ParseActions       []ParseActionEntry
+
+	// ReduceChainHints are optional generated hot-path hints for deterministic
+	// reduce runs. They are only consumed when reduce-chain hints are enabled.
+	ReduceChainHints []ReduceChainHint
 
 	// Lex tables
 	LexModes            []LexMode
@@ -275,10 +304,14 @@ type Language struct {
 	InitialState StateID
 
 	// Lazily-built lookup maps for O(1) name resolution.
-	symbolNameMap      map[string]Symbol
-	tokenSymbolNameMap map[string][]Symbol
-	publicSymbolMap    []Symbol // internal symbol → canonical public symbol
-	fieldNameMap       map[string]FieldID
+	symbolNameMap            map[string]Symbol
+	symbolNameNamedMap       map[symbolNameNamedKey]Symbol
+	visibleSymbolNameMap     map[symbolNameNamedKey]Symbol
+	tokenSymbolNameMap       map[string][]Symbol
+	publicSymbolMap          []Symbol // internal symbol → canonical public symbol
+	publicNamedSymbolMap     []Symbol // internal symbol -> canonical public named symbol
+	publicAnonymousSymbolMap []Symbol // internal symbol -> canonical public anonymous symbol
+	fieldNameMap             map[string]FieldID
 
 	symbolMapOnce sync.Once
 	fieldMapOnce  sync.Once
@@ -290,6 +323,18 @@ type Language struct {
 	lexAsciiOnce         sync.Once
 	keywordLexAsciiTable [][128]int32
 	keywordLexAsciiOnce  sync.Once
+	lexModeStarts        []lexModeStart
+	lexModeStartOnce     sync.Once
+}
+
+type symbolNameNamedKey struct {
+	name  string
+	named bool
+}
+
+type lexModeStart struct {
+	lexState                uint32
+	afterWhitespaceLexState uint32
 }
 
 const lexAsciiNoMatch = int32(0x7FFF_FFFF)
@@ -319,6 +364,23 @@ func (l *Language) KeywordLexAsciiTable() [][128]int32 {
 		l.keywordLexAsciiTable = buildLexAsciiTable(l.KeywordLexStates)
 	})
 	return l.keywordLexAsciiTable
+}
+
+func (l *Language) LexModeStarts() []lexModeStart {
+	if l == nil || len(l.LexModes) == 0 {
+		return nil
+	}
+	l.lexModeStartOnce.Do(func() {
+		starts := make([]lexModeStart, len(l.LexModes))
+		for i, mode := range l.LexModes {
+			starts[i] = lexModeStart{
+				lexState:                mode.LexStateIndex(),
+				afterWhitespaceLexState: mode.AfterWhitespaceLexStateIndex(),
+			}
+		}
+		l.lexModeStarts = starts
+	})
+	return l.lexModeStarts
 }
 
 func buildLexAsciiTable(states []LexState) [][128]int32 {
@@ -390,6 +452,31 @@ func (l *Language) SymbolByName(name string) (Symbol, bool) {
 	return sym, ok
 }
 
+func (l *Language) symbolByNameAndNamed(name string, named bool) (Symbol, bool) {
+	if name == "_" {
+		return 0, true
+	}
+	l.buildSymbolMaps()
+	sym, ok := l.symbolNameNamedMap[symbolNameNamedKey{name: name, named: named}]
+	return sym, ok
+}
+
+func (l *Language) visibleSymbolByNameAndNamed(name string, named bool) (Symbol, bool) {
+	if name == "_" {
+		return 0, true
+	}
+	l.buildSymbolMaps()
+	sym, ok := l.visibleSymbolNameMap[symbolNameNamedKey{name: name, named: named}]
+	return sym, ok
+}
+
+func (l *Language) symbolByNamePreferNamed(name string) (Symbol, bool) {
+	if sym, ok := l.symbolByNameAndNamed(name, true); ok {
+		return sym, true
+	}
+	return l.SymbolByName(name)
+}
+
 // TokenSymbolsByName returns all terminal token symbols whose display name
 // matches name. The returned symbols are in grammar order.
 func (l *Language) TokenSymbolsByName(name string) []Symbol {
@@ -414,11 +501,39 @@ func (l *Language) PublicSymbol(sym Symbol) Symbol {
 	return sym
 }
 
+// PublicSymbolForNamedness maps an internal symbol to the canonical public
+// symbol with the same display name and requested namedness. This lets query
+// matching distinguish named nodes from anonymous tokens that share text.
+func (l *Language) PublicSymbolForNamedness(sym Symbol, named bool) Symbol {
+	if l == nil {
+		return sym
+	}
+	l.buildSymbolMaps()
+	idx := int(sym)
+	if idx < 0 || idx >= len(l.SymbolNames) {
+		return sym
+	}
+	if named {
+		if idx < len(l.publicNamedSymbolMap) {
+			return l.publicNamedSymbolMap[idx]
+		}
+		return sym
+	}
+	if idx < len(l.publicAnonymousSymbolMap) {
+		return l.publicAnonymousSymbolMap[idx]
+	}
+	return sym
+}
+
 func (l *Language) buildSymbolMaps() {
 	l.symbolMapOnce.Do(func() {
 		l.symbolNameMap = make(map[string]Symbol, len(l.SymbolNames))
+		l.symbolNameNamedMap = make(map[symbolNameNamedKey]Symbol, len(l.SymbolNames))
+		l.visibleSymbolNameMap = make(map[symbolNameNamedKey]Symbol, len(l.SymbolNames))
 		l.tokenSymbolNameMap = make(map[string][]Symbol)
 		l.publicSymbolMap = make([]Symbol, len(l.SymbolNames))
+		l.publicNamedSymbolMap = make([]Symbol, len(l.SymbolNames))
+		l.publicAnonymousSymbolMap = make([]Symbol, len(l.SymbolNames))
 
 		tokenCount := int(l.TokenCount)
 		if tokenCount > len(l.SymbolNames) {
@@ -429,16 +544,49 @@ func (l *Language) buildSymbolMaps() {
 			sym := Symbol(i)
 			if sn == "" {
 				l.publicSymbolMap[i] = sym
+				l.publicNamedSymbolMap[i] = sym
+				l.publicAnonymousSymbolMap[i] = sym
 				continue
 			}
 			// Keep the first match so duplicate names remain deterministic.
 			if _, exists := l.symbolNameMap[sn]; !exists {
 				l.symbolNameMap[sn] = sym
 			}
-			// Map each symbol to the canonical (first) symbol with its name.
-			l.publicSymbolMap[i] = l.symbolNameMap[sn]
+			named := false
+			if i < len(l.SymbolMetadata) {
+				named = l.SymbolMetadata[i].Named
+			}
+			key := symbolNameNamedKey{name: sn, named: named}
+			if _, exists := l.symbolNameNamedMap[key]; !exists {
+				l.symbolNameNamedMap[key] = sym
+			}
+			if i < len(l.SymbolMetadata) && l.SymbolMetadata[i].Visible {
+				if _, exists := l.visibleSymbolNameMap[key]; !exists {
+					l.visibleSymbolNameMap[key] = sym
+				}
+			}
 			if i < tokenCount {
 				l.tokenSymbolNameMap[sn] = append(l.tokenSymbolNameMap[sn], sym)
+			}
+		}
+		for i, sn := range l.SymbolNames {
+			sym := Symbol(i)
+			if sn == "" {
+				l.publicSymbolMap[i] = sym
+				l.publicNamedSymbolMap[i] = sym
+				l.publicAnonymousSymbolMap[i] = sym
+				continue
+			}
+			l.publicSymbolMap[i] = l.symbolNameMap[sn]
+			if namedSym, exists := l.symbolNameNamedMap[symbolNameNamedKey{name: sn, named: true}]; exists {
+				l.publicNamedSymbolMap[i] = namedSym
+			} else {
+				l.publicNamedSymbolMap[i] = l.symbolNameMap[sn]
+			}
+			if anonSym, exists := l.symbolNameNamedMap[symbolNameNamedKey{name: sn, named: false}]; exists {
+				l.publicAnonymousSymbolMap[i] = anonSym
+			} else {
+				l.publicAnonymousSymbolMap[i] = l.symbolNameMap[sn]
 			}
 		}
 	})

@@ -8,14 +8,24 @@ import (
 )
 
 var (
-	parseNodeLimitScaleOnce sync.Once
-	parseNodeLimitScale     int
-	parseMemoryBudgetOnce   sync.Once
-	parseMemoryBudgetMBVal  int
-	parseMaxGLRStacksOnce   sync.Once
-	parseMaxGLRStacks       int
-	parseMaxMergePerKeyOnce sync.Once
-	parseMaxMergePerKey     int
+	parseNodeLimitScaleOnce    sync.Once
+	parseNodeLimitScale        int
+	parseMemoryBudgetOnce      sync.Once
+	parseMemoryBudgetMBVal     int
+	parseMaxGLRStacksOnce      sync.Once
+	parseMaxGLRStacks          int
+	parseMaxMergePerKeyOnce    sync.Once
+	parseMaxMergePerKey        int
+	preMaterializationDiagOnce sync.Once
+	preMaterializationDiag     bool
+	parsePhaseTimingOnce       sync.Once
+	parsePhaseTiming           bool
+	parseReduceTimingOnce      sync.Once
+	parseReduceTiming          bool
+	parseActionTimingOnce      sync.Once
+	parseActionTiming          bool
+	parseReduceChainHintsOnce  sync.Once
+	parseReduceChainHints      bool
 )
 
 // ResetParseEnvConfigCacheForTests clears memoized parser env config.
@@ -31,6 +41,16 @@ func ResetParseEnvConfigCacheForTests() {
 	parseMaxGLRStacks = 0
 	parseMaxMergePerKeyOnce = sync.Once{}
 	parseMaxMergePerKey = 0
+	preMaterializationDiagOnce = sync.Once{}
+	preMaterializationDiag = false
+	parsePhaseTimingOnce = sync.Once{}
+	parsePhaseTiming = false
+	parseReduceTimingOnce = sync.Once{}
+	parseReduceTiming = false
+	parseActionTimingOnce = sync.Once{}
+	parseActionTiming = false
+	parseReduceChainHintsOnce = sync.Once{}
+	parseReduceChainHints = false
 }
 
 func parseNodeLimitScaleFactor() int {
@@ -91,13 +111,72 @@ func parseTransientReduceParentsEnabled() bool {
 }
 
 func parseCompactFullLeavesEnabled() bool {
-	raw := strings.TrimSpace(os.Getenv("GOT_GLR_V2_COMPACT_FULL_LEAVES"))
-	return raw != "" && raw != "0" && !strings.EqualFold(raw, "false")
+	_, enabled := parseCompactFullLeavesEnv()
+	return enabled
 }
 
-func parsePendingParentsEnabled() bool {
+func parseCompactFullLeavesEnv() (configured bool, enabled bool) {
+	raw := strings.TrimSpace(os.Getenv("GOT_GLR_V2_COMPACT_FULL_LEAVES"))
+	if raw == "" {
+		return false, false
+	}
+	return true, raw != "0" && !strings.EqualFold(raw, "false")
+}
+
+func parsePendingParentsEnv() (configured bool, enabled bool) {
 	raw := strings.TrimSpace(os.Getenv("GOT_GLR_V2_PENDING_PARENTS"))
-	return raw != "" && raw != "0" && !strings.EqualFold(raw, "false")
+	if raw == "" {
+		return false, false
+	}
+	return true, raw != "0" && !strings.EqualFold(raw, "false")
+}
+
+func parseFinalChildRefsEnv() (configured bool, enabled bool) {
+	raw := strings.TrimSpace(os.Getenv("GOT_GLR_V2_FINAL_CHILD_REFS"))
+	if raw == "" {
+		return false, false
+	}
+	return true, raw != "0" && !strings.EqualFold(raw, "false")
+}
+
+func parsePreMaterializationDiagEnabled() bool {
+	preMaterializationDiagOnce.Do(func() {
+		raw := strings.TrimSpace(os.Getenv("GOT_GLR_V2_PRE_MATERIALIZATION_DIAG"))
+		preMaterializationDiag = raw != "" && raw != "0" && !strings.EqualFold(raw, "false")
+	})
+	return preMaterializationDiag
+}
+
+func parsePhaseTimingEnabled() bool {
+	parsePhaseTimingOnce.Do(func() {
+		raw := strings.TrimSpace(os.Getenv("GOT_PARSE_PHASE_TIMING"))
+		parsePhaseTiming = raw != "" && raw != "0" && !strings.EqualFold(raw, "false")
+	})
+	return parsePhaseTiming
+}
+
+func parseReduceTimingEnabled() bool {
+	parseReduceTimingOnce.Do(func() {
+		raw := strings.TrimSpace(os.Getenv("GOT_PARSE_REDUCE_TIMING"))
+		parseReduceTiming = raw != "" && raw != "0" && !strings.EqualFold(raw, "false")
+	})
+	return parseReduceTiming
+}
+
+func parseActionTimingEnabled() bool {
+	parseActionTimingOnce.Do(func() {
+		raw := strings.TrimSpace(os.Getenv("GOT_PARSE_ACTION_TIMING"))
+		parseActionTiming = raw != "" && raw != "0" && !strings.EqualFold(raw, "false")
+	})
+	return parseActionTiming
+}
+
+func parseReduceChainHintsEnabled() bool {
+	parseReduceChainHintsOnce.Do(func() {
+		raw := strings.TrimSpace(os.Getenv("GOT_GLR_REDUCE_CHAIN_HINTS"))
+		parseReduceChainHints = raw != "" && raw != "0" && !strings.EqualFold(raw, "false")
+	})
+	return parseReduceChainHints
 }
 
 func parseTransientReduceEnabled(envName string) bool {
@@ -128,7 +207,7 @@ func parseTransientReduceLanguageEnabled(lang *Language, envName string) bool {
 		raw = strings.TrimSpace(os.Getenv("GOT_TRANSIENT_REDUCE_LANGS"))
 	}
 	if raw == "" {
-		return strings.EqualFold(lang.Name, "python")
+		return false
 	}
 	return transientReduceLanguageListMatches(raw, lang.Name)
 }

@@ -100,6 +100,84 @@ func TestCSharpRepetitionShiftConflictChoiceRejectsOtherRepeats(t *testing.T) {
 	}
 }
 
+func TestTypeScriptRepetitionShiftConflictChoiceAllowsHotProgramRepeat(t *testing.T) {
+	lang := &Language{SymbolNames: []string{"end", "function", "identifier", "const", "return", "if", "export", "program_repeat1"}}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 7, ChildCount: 2},
+		{Type: ParseActionShift, State: 3693, Repetition: true},
+	}
+
+	for _, sym := range []Symbol{1, 2, 3, 4, 5, 6} {
+		chosen, ok := typescriptRepetitionShiftConflictChoice(lang, Token{Symbol: sym}, 9, actions)
+		if !ok {
+			t.Fatalf("typescriptRepetitionShiftConflictChoice(%q) = false, want true", lang.SymbolNames[sym])
+		}
+		if chosen.Type != ParseActionShift || chosen.State != 3693 || !chosen.Repetition {
+			t.Fatalf("typescriptRepetitionShiftConflictChoice(%q) picked %+v, want repetition shift", lang.SymbolNames[sym], chosen)
+		}
+	}
+}
+
+func TestTypeScriptRepetitionShiftConflictChoiceRejectsOtherState(t *testing.T) {
+	lang := &Language{SymbolNames: []string{"end", "function", "program_repeat1"}}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 2, ChildCount: 2},
+		{Type: ParseActionShift, State: 3693, Repetition: true},
+	}
+
+	if _, ok := typescriptRepetitionShiftConflictChoice(lang, Token{Symbol: 1}, 10, actions); ok {
+		t.Fatal("typescriptRepetitionShiftConflictChoice = true, want false")
+	}
+}
+
+func TestRustRepetitionShiftConflictChoiceAllowsTopLevelItemStarts(t *testing.T) {
+	lang := &Language{SymbolNames: []string{"end", "pub", "#", "impl", "fn", "mod", "use", "source_file_repeat1"}}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 7, ChildCount: 2},
+		{Type: ParseActionShift, State: 2039, Repetition: true},
+	}
+
+	for _, sym := range []Symbol{1, 2, 3, 4, 5, 6} {
+		chosen, ok := rustRepetitionShiftConflictChoice(lang, Token{Symbol: sym}, 7, actions)
+		if !ok {
+			t.Fatalf("rustRepetitionShiftConflictChoice(%q) = false, want true", lang.SymbolNames[sym])
+		}
+		if chosen.Type != ParseActionShift || chosen.State != 2039 || !chosen.Repetition {
+			t.Fatalf("rustRepetitionShiftConflictChoice(%q) picked %+v, want repetition shift", lang.SymbolNames[sym], chosen)
+		}
+	}
+}
+
+func TestRustRepetitionShiftConflictChoiceRejectsOtherState(t *testing.T) {
+	lang := &Language{SymbolNames: []string{"end", "pub", "source_file_repeat1"}}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 2, ChildCount: 2},
+		{Type: ParseActionShift, State: 2039, Repetition: true},
+	}
+
+	if _, ok := rustRepetitionShiftConflictChoice(lang, Token{Symbol: 1}, 8, actions); ok {
+		t.Fatal("rustRepetitionShiftConflictChoice = true, want false")
+	}
+}
+
+func TestRustRepetitionShiftConflictChoiceAllowsTokenTreeRepeat(t *testing.T) {
+	lang := &Language{SymbolNames: []string{"end", "identifier", ",", "(", "primitive_type", "::", ".", ";", "delim_token_tree_repeat1"}}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 8, ChildCount: 2},
+		{Type: ParseActionShift, State: 246, Repetition: true},
+	}
+
+	for _, sym := range []Symbol{1, 2, 3, 4, 5, 6, 7} {
+		chosen, ok := rustRepetitionShiftConflictChoice(lang, Token{Symbol: sym}, 83, actions)
+		if !ok {
+			t.Fatalf("rustRepetitionShiftConflictChoice(%q) = false, want true", lang.SymbolNames[sym])
+		}
+		if chosen.Type != ParseActionShift || chosen.State != 246 || !chosen.Repetition {
+			t.Fatalf("rustRepetitionShiftConflictChoice(%q) picked %+v, want repetition shift", lang.SymbolNames[sym], chosen)
+		}
+	}
+}
+
 func TestJavaRepetitionShiftConflictChoiceAllowsStringLiteralContinuation(t *testing.T) {
 	lang := &Language{SymbolNames: []string{"end", "escape_sequence", "string_fragment", "_string_literal_repeat1"}}
 	actions := []ParseAction{
@@ -340,6 +418,7 @@ func TestResetSnippetParserClearsTransientState(t *testing.T) {
 	parser.recoveryParser = NewParser(buildArithmeticLanguage())
 	parser.skipRecoveryReparse = true
 	parser.fullArenaHint = 123
+	parser.compactFullArenaHint = 456
 	parser.included = []Range{{StartByte: 1, EndByte: 2}}
 	parser.logger = func(kind ParserLogType, message string) {}
 	parser.glrTrace = true
@@ -360,6 +439,9 @@ func TestResetSnippetParserClearsTransientState(t *testing.T) {
 	}
 	if parser.fullArenaHint != 0 {
 		t.Fatal("resetSnippetParser did not clear fullArenaHint")
+	}
+	if parser.compactFullArenaHint != 0 {
+		t.Fatal("resetSnippetParser did not clear compactFullArenaHint")
 	}
 	if len(parser.included) != 0 {
 		t.Fatal("resetSnippetParser did not clear included ranges")
@@ -506,8 +588,8 @@ func TestEffectiveFullParseInitialMaxStacks(t *testing.T) {
 	if got := effectiveFullParseInitialMaxStacks(&Language{Name: "hcl"}, maxGLRStacks); got != 2 {
 		t.Fatalf("effectiveFullParseInitialMaxStacks(hcl) = %d, want 2", got)
 	}
-	if got := effectiveFullParseInitialMaxStacks(&Language{Name: "javascript"}, maxGLRStacks); got != 2 {
-		t.Fatalf("effectiveFullParseInitialMaxStacks(javascript) = %d, want 2", got)
+	if got := effectiveFullParseInitialMaxStacks(&Language{Name: "javascript"}, maxGLRStacks); got != 6 {
+		t.Fatalf("effectiveFullParseInitialMaxStacks(javascript) = %d, want 6", got)
 	}
 	if got := effectiveFullParseInitialMaxStacks(&Language{Name: "typescript"}, maxGLRStacks); got != 2 {
 		t.Fatalf("effectiveFullParseInitialMaxStacks(typescript) = %d, want 2", got)
@@ -557,6 +639,16 @@ func TestParseMaxMergePerKeyValue(t *testing.T) {
 	}
 }
 
+func TestParsePreMaterializationDiagEnabled(t *testing.T) {
+	t.Setenv("GOT_GLR_V2_PRE_MATERIALIZATION_DIAG", "1")
+	ResetParseEnvConfigCacheForTests()
+	defer ResetParseEnvConfigCacheForTests()
+
+	if !parsePreMaterializationDiagEnabled() {
+		t.Fatal("parsePreMaterializationDiagEnabled() = false, want true")
+	}
+}
+
 func TestEffectiveParseMergePerKeyCap(t *testing.T) {
 	t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "")
 	ResetParseEnvConfigCacheForTests()
@@ -565,17 +657,38 @@ func TestEffectiveParseMergePerKeyCap(t *testing.T) {
 	if got := effectiveParseMergePerKeyCap(&Language{Name: "javascript"}, maxStacksPerMergeKey, false); got != 4 {
 		t.Fatalf("effectiveParseMergePerKeyCap(javascript, default, full) = %d, want 4", got)
 	}
-	if got := effectiveParseMergePerKeyCap(&Language{Name: "java"}, maxStacksPerMergeKey, false); got != 2 {
-		t.Fatalf("effectiveParseMergePerKeyCap(java, default, full) = %d, want 2", got)
+	if got := effectiveParseMergePerKeyCap(&Language{Name: "go"}, maxStacksPerMergeKey, false); got != 5 {
+		t.Fatalf("effectiveParseMergePerKeyCap(go, default, full) = %d, want 5", got)
+	}
+	if got := effectiveParseMergePerKeyCap(&Language{Name: "starlark"}, maxStacksPerMergeKey, false); got != 1 {
+		t.Fatalf("effectiveParseMergePerKeyCap(starlark, default, full) = %d, want 1", got)
+	}
+	if got := effectiveParseMergePerKeyCap(&Language{Name: "typescript"}, maxStacksPerMergeKey, false); got != 1 {
+		t.Fatalf("effectiveParseMergePerKeyCap(typescript, default, full) = %d, want 1", got)
+	}
+	if got := effectiveParseMergePerKeyCap(&Language{Name: "typescript"}, maxStacksPerMergeKey, false, 128*1024); got != maxStacksPerMergeKey {
+		t.Fatalf("effectiveParseMergePerKeyCap(typescript, large default, full) = %d, want %d", got, maxStacksPerMergeKey)
+	}
+	if got := effectiveParseMergePerKeyCap(&Language{Name: "tsx"}, maxStacksPerMergeKey, false); got != 1 {
+		t.Fatalf("effectiveParseMergePerKeyCap(tsx, default, full) = %d, want 1", got)
+	}
+	if got := effectiveParseMergePerKeyCap(&Language{Name: "tsx"}, maxStacksPerMergeKey, false, 128*1024); got != maxStacksPerMergeKey {
+		t.Fatalf("effectiveParseMergePerKeyCap(tsx, large default, full) = %d, want %d", got, maxStacksPerMergeKey)
+	}
+	if got := effectiveParseMergePerKeyCap(&Language{Name: "java"}, maxStacksPerMergeKey, false); got != 1 {
+		t.Fatalf("effectiveParseMergePerKeyCap(java, default, full) = %d, want 1", got)
+	}
+	if got := effectiveParseMergePerKeyCap(&Language{Name: "java"}, maxStacksPerMergeKey, false, javaTightMergeCapSourceLen); got != 1 {
+		t.Fatalf("effectiveParseMergePerKeyCap(java, large default, full) = %d, want 1", got)
+	}
+	if got := effectiveParseMergePerKeyCap(&Language{Name: "c"}, maxStacksPerMergeKey, false); got != 1 {
+		t.Fatalf("effectiveParseMergePerKeyCap(c, default, full) = %d, want 1", got)
 	}
 	if got := effectiveParseMergePerKeyCap(&Language{Name: "json"}, maxStacksPerMergeKey, false); got != 1 {
 		t.Fatalf("effectiveParseMergePerKeyCap(json, default, full) = %d, want 1", got)
 	}
 	if got := effectiveParseMergePerKeyCap(&Language{Name: "kotlin"}, maxStacksPerMergeKey, false); got != 1 {
 		t.Fatalf("effectiveParseMergePerKeyCap(kotlin, default, full) = %d, want 1", got)
-	}
-	if got := effectiveParseMergePerKeyCap(&Language{Name: "typescript"}, maxStacksPerMergeKey, false); got != maxStacksPerMergeKey {
-		t.Fatalf("effectiveParseMergePerKeyCap(typescript, default, full) = %d, want %d", got, maxStacksPerMergeKey)
 	}
 	if got := effectiveParseMergePerKeyCap(&Language{Name: "json"}, 1, false); got != 1 {
 		t.Fatalf("effectiveParseMergePerKeyCap(json, 1, full) = %d, want 1", got)
@@ -595,11 +708,20 @@ func TestEffectiveParseMergePerKeyCap(t *testing.T) {
 	if got := effectiveParseMergePerKeyCap(&Language{Name: "javascript"}, maxStacksPerMergeKey, true); got != maxStacksPerMergeKey {
 		t.Fatalf("effectiveParseMergePerKeyCap(javascript, default, incremental) = %d, want %d", got, maxStacksPerMergeKey)
 	}
+	if got := effectiveParseMergePerKeyCap(&Language{Name: "starlark"}, maxStacksPerMergeKey, true); got != maxStacksPerMergeKey {
+		t.Fatalf("effectiveParseMergePerKeyCap(starlark, default, incremental) = %d, want %d", got, maxStacksPerMergeKey)
+	}
+	if got := effectiveParseMergePerKeyCap(&Language{Name: "typescript"}, maxStacksPerMergeKey, true); got != maxStacksPerMergeKey {
+		t.Fatalf("effectiveParseMergePerKeyCap(typescript, default, incremental) = %d, want %d", got, maxStacksPerMergeKey)
+	}
 	if got := effectiveParseMergePerKeyCap(&Language{Name: "java"}, maxStacksPerMergeKey, true); got != maxStacksPerMergeKey {
 		t.Fatalf("effectiveParseMergePerKeyCap(java, default, incremental) = %d, want %d", got, maxStacksPerMergeKey)
 	}
-	if got := effectiveParseMergePerKeyCap(&Language{Name: "tsx"}, maxStacksPerMergeKey, false); got != maxStacksPerMergeKey {
-		t.Fatalf("effectiveParseMergePerKeyCap(tsx, default, full) = %d, want %d", got, maxStacksPerMergeKey)
+	if got := effectiveParseMergePerKeyCap(&Language{Name: "c"}, maxStacksPerMergeKey, true); got != maxStacksPerMergeKey {
+		t.Fatalf("effectiveParseMergePerKeyCap(c, default, incremental) = %d, want %d", got, maxStacksPerMergeKey)
+	}
+	if got := effectiveParseMergePerKeyCap(&Language{Name: "tsx"}, maxStacksPerMergeKey, true); got != maxStacksPerMergeKey {
+		t.Fatalf("effectiveParseMergePerKeyCap(tsx, default, incremental) = %d, want %d", got, maxStacksPerMergeKey)
 	}
 }
 
@@ -610,6 +732,25 @@ func TestEffectiveParseMergePerKeyCapJavaExplicitOverride(t *testing.T) {
 
 	if got := effectiveParseMergePerKeyCap(&Language{Name: "java"}, 4, false); got != 4 {
 		t.Fatalf("effectiveParseMergePerKeyCap(java, explicit, full) = %d, want 4", got)
+	}
+	if got := effectiveParseMergePerKeyCap(&Language{Name: "c"}, 4, false); got != 4 {
+		t.Fatalf("effectiveParseMergePerKeyCap(c, explicit, full) = %d, want 4", got)
+	}
+}
+
+func TestJavaAnnotationInterfaceSourceUsesWideMergeCap(t *testing.T) {
+	t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "")
+	ResetParseEnvConfigCacheForTests()
+	defer ResetParseEnvConfigCacheForTests()
+
+	if !javaFullParseNeedsAnnotationDeclarationMergeWidth(&Language{Name: "java"}, []byte("@interface Demo {}"), nil) {
+		t.Fatal("javaFullParseNeedsAnnotationDeclarationMergeWidth = false, want true")
+	}
+	if javaFullParseNeedsAnnotationDeclarationMergeWidth(&Language{Name: "java"}, []byte("class Demo {}"), nil) {
+		t.Fatal("javaFullParseNeedsAnnotationDeclarationMergeWidth(class) = true, want false")
+	}
+	if javaFullParseNeedsAnnotationDeclarationMergeWidth(&Language{Name: "java"}, []byte("@interface Demo {}"), &reuseCursor{}) {
+		t.Fatal("javaFullParseNeedsAnnotationDeclarationMergeWidth(incremental) = true, want false")
 	}
 }
 
@@ -743,12 +884,57 @@ func TestParseFullArenaInitialNodeCapacityScalesForLargeSources(t *testing.T) {
 	}
 }
 
+func TestParseFullArenaInitialNodeCapacityPreallocatesMediumSources(t *testing.T) {
+	sourceLen := 192 * 1024
+	got := parseFullArenaInitialNodeCapacity(sourceLen)
+	want := sourceLen * 2 / 3
+	if got != want {
+		t.Fatalf("parseFullArenaInitialNodeCapacity(%d) = %d, want %d", sourceLen, got, want)
+	}
+}
+
 func TestParsePendingFullArenaInitialNodeCapacityUsesLowerLargeSourceFloor(t *testing.T) {
 	sourceLen := 2 * 1024 * 1024
 	got := parsePendingFullArenaInitialNodeCapacity(sourceLen)
 	want := sourceLen / 2
 	if got != want {
 		t.Fatalf("parsePendingFullArenaInitialNodeCapacity(%d) = %d, want %d", sourceLen, got, want)
+	}
+}
+
+func TestParsePendingFullArenaInitialNodeCapacityCapsHugeSourceFloor(t *testing.T) {
+	sourceLen := 3 * 1024 * 1024
+	got := parsePendingFullArenaInitialNodeCapacity(sourceLen)
+	want := 1_050_000
+	if got != want {
+		t.Fatalf("parsePendingFullArenaInitialNodeCapacity(%d) = %d, want %d", sourceLen, got, want)
+	}
+}
+
+func TestParseCompactFullArenaInitialNodeCapacityUsesCompactLargeSourceFloor(t *testing.T) {
+	sourceLen := 2 * 1024 * 1024
+	got := parseCompactFullArenaInitialNodeCapacity(sourceLen)
+	want := sourceLen / 4
+	if got != want {
+		t.Fatalf("parseCompactFullArenaInitialNodeCapacity(%d) = %d, want %d", sourceLen, got, want)
+	}
+}
+
+func TestParseCompactFullArenaInitialNodeCapacityCapsHugeSourceFloor(t *testing.T) {
+	sourceLen := 4 * 1024 * 1024
+	got := parseCompactFullArenaInitialNodeCapacity(sourceLen)
+	want := 750_000
+	if got != want {
+		t.Fatalf("parseCompactFullArenaInitialNodeCapacity(%d) = %d, want %d", sourceLen, got, want)
+	}
+}
+
+func TestParseFinalChildRefArenaInitialNodeCapacityUsesSmallerFloor(t *testing.T) {
+	sourceLen := 2 * 1024 * 1024
+	got := parseFinalChildRefArenaInitialNodeCapacity(sourceLen)
+	want := 64 * 1024
+	if got != want {
+		t.Fatalf("parseFinalChildRefArenaInitialNodeCapacity(%d) = %d, want %d", sourceLen, got, want)
 	}
 }
 
@@ -762,6 +948,26 @@ func TestParsePendingFullArenaNodeCapacityUsesCloseWarmHint(t *testing.T) {
 	}
 }
 
+func TestParseCompactFullArenaNodeCapacityUsesWarmHintBelowInitial(t *testing.T) {
+	sourceLen := 2 * 1024 * 1024
+	initial := parseCompactFullArenaInitialNodeCapacity(sourceLen)
+	hint := initial * 3 / 4
+	got := parseCompactFullArenaNodeCapacity(sourceLen, hint)
+	if got != hint {
+		t.Fatalf("parseCompactFullArenaNodeCapacity(%d, %d) = %d, want hint", sourceLen, hint, got)
+	}
+}
+
+func TestParseCompactFullArenaNodeCapacityRejectsTinyStaleHint(t *testing.T) {
+	sourceLen := 2 * 1024 * 1024
+	initial := parseCompactFullArenaInitialNodeCapacity(sourceLen)
+	hint := initial/2 - 1
+	got := parseCompactFullArenaNodeCapacity(sourceLen, hint)
+	if got != initial {
+		t.Fatalf("parseCompactFullArenaNodeCapacity(%d, %d) = %d, want initial %d", sourceLen, hint, got, initial)
+	}
+}
+
 func TestParsePendingFullArenaHintHeadroomIsTighterForLargeSources(t *testing.T) {
 	used := 1_200_000
 	got := parsePendingFullArenaHintHeadroom(used)
@@ -771,10 +977,167 @@ func TestParsePendingFullArenaHintHeadroomIsTighterForLargeSources(t *testing.T)
 	}
 }
 
+func TestParseCompactFullArenaHintHeadroomIsTighterForLargeSources(t *testing.T) {
+	used := 1_200_000
+	got := parseCompactFullArenaHintHeadroom(used)
+	want := 32 * 1024
+	if got != want {
+		t.Fatalf("parseCompactFullArenaHintHeadroom(%d) = %d, want %d", used, got, want)
+	}
+}
+
+func TestParseShouldUsePendingFullParentsDefaultsForLargePythonNoCompat(t *testing.T) {
+	source := make([]byte, 256*1024)
+	parser := &Parser{
+		language:                           &Language{Name: "python"},
+		noResultCompatibilityBenchmarkOnly: true,
+	}
+
+	if !parseShouldUsePendingFullParents(parser, source, nil, nil, arenaClassFull) {
+		t.Fatal("parseShouldUsePendingFullParents = false, want true for large Python no-compat")
+	}
+
+	t.Setenv("GOT_GLR_V2_PENDING_PARENTS", "0")
+	if parseShouldUsePendingFullParents(parser, source, nil, nil, arenaClassFull) {
+		t.Fatal("parseShouldUsePendingFullParents = true, want explicit env disable")
+	}
+}
+
+func TestParseShouldUsePendingFullParentsKeepsEnvOptInForOtherLargeSources(t *testing.T) {
+	source := make([]byte, 256*1024)
+	parser := &Parser{
+		language: &Language{Name: "java"},
+	}
+
+	if parseShouldUsePendingFullParents(parser, source, nil, nil, arenaClassFull) {
+		t.Fatal("parseShouldUsePendingFullParents = true, want false without env for Java")
+	}
+
+	t.Setenv("GOT_GLR_V2_PENDING_PARENTS", "1")
+	if !parseShouldUsePendingFullParents(parser, source, nil, nil, arenaClassFull) {
+		t.Fatal("parseShouldUsePendingFullParents = false, want env opt-in")
+	}
+}
+
+func TestParseShouldUseCompactFullShiftLeavesDefaultsForLargePythonNoCompat(t *testing.T) {
+	source := make([]byte, 256*1024)
+	parser := &Parser{
+		language:                           &Language{Name: "python"},
+		noResultCompatibilityBenchmarkOnly: true,
+	}
+
+	if !parseShouldUseCompactFullShiftLeaves(parser, source, nil, nil, arenaClassFull) {
+		t.Fatal("parseShouldUseCompactFullShiftLeaves = false, want true for large Python no-compat")
+	}
+
+	t.Setenv("GOT_GLR_V2_COMPACT_FULL_LEAVES", "0")
+	if parseShouldUseCompactFullShiftLeaves(parser, source, nil, nil, arenaClassFull) {
+		t.Fatal("parseShouldUseCompactFullShiftLeaves = true, want explicit env disable")
+	}
+}
+
+func TestParseShouldUseCompactFullShiftLeavesKeepsEnvOptInForOtherLargeSources(t *testing.T) {
+	source := make([]byte, 256*1024)
+	parser := &Parser{
+		language:                           &Language{Name: "java"},
+		noResultCompatibilityBenchmarkOnly: true,
+	}
+
+	if parseShouldUseCompactFullShiftLeaves(parser, source, nil, nil, arenaClassFull) {
+		t.Fatal("parseShouldUseCompactFullShiftLeaves = true, want false without env for Java")
+	}
+
+	t.Setenv("GOT_GLR_V2_COMPACT_FULL_LEAVES", "1")
+	if !parseShouldUseCompactFullShiftLeaves(parser, source, nil, nil, arenaClassFull) {
+		t.Fatal("parseShouldUseCompactFullShiftLeaves = false, want env opt-in")
+	}
+
+	parser.noResultCompatibilityBenchmarkOnly = false
+	if parseShouldUseCompactFullShiftLeaves(parser, source, nil, nil, arenaClassFull) {
+		t.Fatal("parseShouldUseCompactFullShiftLeaves = true, want no-compat-only gate")
+	}
+}
+
+func TestParseShouldUseFinalChildRefsDefaultsForLargePythonNoCompat(t *testing.T) {
+	source := make([]byte, 256*1024)
+	parser := &Parser{
+		language:                           &Language{Name: "python"},
+		pendingFullParents:                 true,
+		noResultCompatibilityBenchmarkOnly: true,
+	}
+	if !parseShouldUseFinalChildRefs(parser, source, nil, nil, arenaClassFull) {
+		t.Fatal("parseShouldUseFinalChildRefs = false, want default large Python no-compat pending full parse")
+	}
+
+	parser.pendingFullParents = false
+	if parseShouldUseFinalChildRefs(parser, source, nil, nil, arenaClassFull) {
+		t.Fatal("parseShouldUseFinalChildRefs = true, want pending-parent gate")
+	}
+
+	parser.pendingFullParents = true
+	parser.noResultCompatibilityBenchmarkOnly = false
+	if parseShouldUseFinalChildRefs(parser, source, nil, nil, arenaClassFull) {
+		t.Fatal("parseShouldUseFinalChildRefs = true, want no-compat-only gate")
+	}
+
+	parser.noResultCompatibilityBenchmarkOnly = true
+	t.Setenv("GOT_GLR_V2_FINAL_CHILD_REFS", "0")
+	if parseShouldUseFinalChildRefs(parser, source, nil, nil, arenaClassFull) {
+		t.Fatal("parseShouldUseFinalChildRefs = true, want explicit env disable")
+	}
+}
+
+func TestParserShouldDeferResultParentLinksForNoCompatBenchmark(t *testing.T) {
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	root := newLeafNodeInArena(arena, Symbol(1), true, 0, 1, Point{}, Point{Column: 1})
+	parser := &Parser{
+		language:                           &Language{Name: "go"},
+		noResultCompatibilityBenchmarkOnly: true,
+	}
+	if !parser.shouldDeferResultParentLinks(root) {
+		t.Fatal("shouldDeferResultParentLinks = false, want true for no-compat benchmark parse")
+	}
+
+	parser.noTreeBenchmarkOnly = true
+	if parser.shouldDeferResultParentLinks(root) {
+		t.Fatal("shouldDeferResultParentLinks = true, want false for no-tree benchmark parse")
+	}
+
+	parser.noTreeBenchmarkOnly = false
+	parser.noResultCompatibilityBenchmarkOnly = false
+	if parser.shouldDeferResultParentLinks(root) {
+		t.Fatal("shouldDeferResultParentLinks = true, want false for normal Go parse")
+	}
+
+	parser.language = &Language{Name: "java"}
+	if !parser.shouldDeferResultParentLinks(root) {
+		t.Fatal("shouldDeferResultParentLinks = false, want true for normal Java parse")
+	}
+}
+
+func TestParseFullEntryScratchCapacityCapsLargePrealloc(t *testing.T) {
+	got := parseFullEntryScratchCapacity(2 * 1024 * 1024)
+	want := 64 * 1024
+	if got != want {
+		t.Fatalf("parseFullEntryScratchCapacity large source = %d, want %d", got, want)
+	}
+}
+
 func TestParseFullArenaHintHeadroomIsBoundedForLargeSources(t *testing.T) {
 	used := 1_500_000
 	got := parseFullArenaHintHeadroom(used)
 	want := 64 * 1024
+	if got != want {
+		t.Fatalf("parseFullArenaHintHeadroom(%d) = %d, want %d", used, got, want)
+	}
+}
+
+func TestParseFullArenaHintHeadroomIsTighterForMediumSources(t *testing.T) {
+	used := 128 * 1024
+	got := parseFullArenaHintHeadroom(used)
+	want := used / 16
 	if got != want {
 		t.Fatalf("parseFullArenaHintHeadroom(%d) = %d, want %d", used, got, want)
 	}
@@ -833,5 +1196,23 @@ func TestParseShouldCaptureFullMaterializationTimingIsNarrow(t *testing.T) {
 	parser.language.Name = "go"
 	if parseShouldCaptureFullMaterializationTiming(parser, largeSource, nil, nil, arenaClassFull) {
 		t.Fatal("parseShouldCaptureFullMaterializationTiming = true for non-Python language")
+	}
+}
+
+func TestParseShouldCaptureMaterializationTimingEnv(t *testing.T) {
+	ResetParseEnvConfigCacheForTests()
+	defer ResetParseEnvConfigCacheForTests()
+	t.Setenv("GOT_PARSE_PHASE_TIMING", "1")
+	parser := &Parser{language: &Language{Name: "go"}}
+	source := []byte("package p\n")
+	if !parseShouldCaptureMaterializationTiming(parser, source, nil, nil, arenaClassFull) {
+		t.Fatal("parseShouldCaptureMaterializationTiming = false, want env-enabled full timing")
+	}
+	if !parseShouldCaptureMaterializationTiming(parser, source, &reuseCursor{}, nil, arenaClassIncremental) {
+		t.Fatal("parseShouldCaptureMaterializationTiming = false, want env-enabled incremental timing")
+	}
+	parser.noTreeBenchmarkOnly = true
+	if parseShouldCaptureMaterializationTiming(parser, source, nil, nil, arenaClassFull) {
+		t.Fatal("parseShouldCaptureMaterializationTiming = true for no-tree benchmark mode")
 	}
 }

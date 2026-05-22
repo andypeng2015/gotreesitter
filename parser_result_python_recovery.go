@@ -255,7 +255,9 @@ func flattenPythonModuleRepeat(node *Node, out []*Node, lang *Language) []*Node 
 		return out
 	}
 	if node.Type(lang) == "module_repeat1" {
-		for _, child := range node.children {
+		childCount := resultChildCount(node)
+		for i := 0; i < childCount; i++ {
+			child := resultChildAt(node, i)
 			out = flattenPythonModuleRepeat(child, out, lang)
 		}
 		return out

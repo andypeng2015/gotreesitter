@@ -9,12 +9,13 @@ func normalizeHaskellCompatibility(root *Node, source []byte, lang *Language) {
 	normalizeHaskellQuasiquoteStarts(root, source, lang)
 }
 func normalizeHaskellImportsSpan(root *Node, source []byte, lang *Language) {
-	if root == nil || len(root.children) < 2 || len(source) == 0 || lang == nil || lang.Name != "haskell" {
+	childCount := resultChildCount(root)
+	if root == nil || childCount < 2 || len(source) == 0 || lang == nil || lang.Name != "haskell" {
 		return
 	}
-	for i := 0; i+1 < len(root.children); i++ {
-		left := root.children[i]
-		right := root.children[i+1]
+	for i := 0; i+1 < childCount; i++ {
+		left := resultChildAt(root, i)
+		right := resultChildAt(root, i+1)
 		if left == nil || right == nil {
 			continue
 		}
@@ -37,52 +38,74 @@ func normalizeHaskellImportsSpan(root *Node, source []byte, lang *Language) {
 }
 
 func normalizeHaskellZeroWidthTokens(root *Node, lang *Language) {
-	if root == nil || lang == nil || lang.Name != "haskell" || len(root.children) == 0 {
+	if root == nil || lang == nil || lang.Name != "haskell" || resultChildCount(root) == 0 {
 		return
 	}
-	filtered := root.children[:0]
-	for _, child := range root.children {
+	tokenSym, hasTokenSym := symbolByName(lang, "_token1")
+	view := resultMutableChildrenForMutation(root)
+	if view.hasFinalChildRefs() && hasTokenSym {
+		changed := false
+		for i := 0; i < view.Len(); i++ {
+			entry, ok := view.Entry(i)
+			if ok && stackEntryNodeSymbol(entry) == tokenSym && stackEntryNodeStartByte(entry) == stackEntryNodeEndByte(entry) {
+				changed = true
+				break
+			}
+		}
+		if changed {
+			view.FilterFinalRefs(func(_ int, entry stackEntry) bool {
+				return stackEntryNodeSymbol(entry) != tokenSym || stackEntryNodeStartByte(entry) != stackEntryNodeEndByte(entry)
+			})
+		}
+		return
+	}
+	if !hasTokenSym {
+		return
+	}
+	children := resultChildSliceForMutation(root)
+	filtered := children[:0]
+	changed := false
+	for _, child := range children {
 		if child == nil {
+			changed = true
 			continue
 		}
-		if child.Type(lang) == "_token1" && child.startByte == child.endByte {
+		if child.symbol == tokenSym && child.startByte == child.endByte {
+			changed = true
 			continue
 		}
 		filtered = append(filtered, child)
 	}
-	root.children = filtered
+	if !changed {
+		return
+	}
+	root.children = cloneNodeSliceInArena(root.ownerArena, filtered)
+	root.fieldIDs = nil
+	root.fieldSources = nil
+	populateParentNode(root, root.children)
 }
 
 func normalizeHaskellRootImportField(root *Node, lang *Language) {
-	if root == nil || lang == nil || lang.Name != "haskell" || len(root.children) == 0 {
+	if root == nil || lang == nil || lang.Name != "haskell" || resultChildCount(root) == 0 {
 		return
 	}
 	if len(lang.FieldNames) == 0 {
 		return
 	}
-	for i, child := range root.children {
-		if child == nil {
+	view := resultMutableChildrenForMutation(root)
+	fieldStorageReady := len(root.fieldIDs) == view.Len() && len(root.fieldSources) == view.Len()
+	for i := 0; i < view.Len(); i++ {
+		entry, ok := view.Entry(i)
+		if !ok {
 			continue
 		}
-		fid := FieldID(0)
-		for j, name := range lang.FieldNames {
-			if name == child.Type(lang) {
-				fid = FieldID(j)
-				break
-			}
-		}
-		if fid == 0 {
+		fid, ok := lang.FieldByName(symbolTypeName(lang, stackEntryNodeSymbol(entry)))
+		if !ok {
 			continue
 		}
-		if len(root.fieldIDs) < len(root.children) {
-			fieldIDs := make([]FieldID, len(root.children))
-			copy(fieldIDs, root.fieldIDs)
-			root.fieldIDs = fieldIDs
-		}
-		if len(root.fieldSources) < len(root.children) {
-			fieldSources := make([]uint8, len(root.children))
-			copy(fieldSources, root.fieldSources)
-			root.fieldSources = fieldSources
+		if !fieldStorageReady {
+			ensureNodeFieldStorage(root, view.Len())
+			fieldStorageReady = true
 		}
 		root.fieldIDs[i] = fid
 		root.fieldSources[i] = fieldSourceInherited
@@ -93,7 +116,8 @@ func normalizeHaskellDeclarationsSpan(root *Node, source []byte, lang *Language)
 	if root == nil || lang == nil || lang.Name != "haskell" || len(source) == 0 {
 		return
 	}
-	for _, child := range root.children {
+	for i := 0; i < resultChildCount(root); i++ {
+		child := resultChildAt(root, i)
 		if child == nil || child.Type(lang) != "declarations" {
 			continue
 		}
@@ -112,14 +136,10 @@ func normalizeHaskellLocalBindsStarts(root *Node, source []byte, lang *Language)
 	if root == nil || lang == nil || lang.Name != "haskell" || len(source) == 0 {
 		return
 	}
-	var walk func(*Node)
-	walk = func(n *Node) {
-		if n == nil {
-			return
-		}
-		if n.Type(lang) == "let_in" && len(n.children) >= 2 {
-			letNode := n.children[0]
-			localBinds := n.children[1]
+	walkResultTree(root, func(n *Node) {
+		if n.Type(lang) == "let_in" && resultChildCount(n) >= 2 {
+			letNode := resultChildAt(n, 0)
+			localBinds := resultChildAt(n, 1)
 			if letNode != nil && localBinds != nil && letNode.Type(lang) == "let" && localBinds.Type(lang) == "local_binds" && letNode.endByte < localBinds.startByte && localBinds.startByte <= uint32(len(source)) {
 				gap := source[letNode.endByte:localBinds.startByte]
 				if len(gap) > 0 && bytesAreTrivia(gap) && !bytesContainLineBreak(gap) {
@@ -128,22 +148,14 @@ func normalizeHaskellLocalBindsStarts(root *Node, source []byte, lang *Language)
 				}
 			}
 		}
-		for _, child := range n.children {
-			walk(child)
-		}
-	}
-	walk(root)
+	})
 }
 
 func normalizeHaskellQuasiquoteStarts(root *Node, source []byte, lang *Language) {
 	if root == nil || lang == nil || lang.Name != "haskell" || len(source) == 0 {
 		return
 	}
-	var walk func(*Node)
-	walk = func(n *Node) {
-		if n == nil {
-			return
-		}
+	walkResultTree(root, func(n *Node) {
 		if n.Type(lang) == "quasiquote" && n.startByte > 0 {
 			start := int(n.startByte)
 			if source[start-1] == ' ' && start < len(source) && source[start] == '[' {
@@ -155,9 +167,5 @@ func normalizeHaskellQuasiquoteStarts(root *Node, source []byte, lang *Language)
 				}
 			}
 		}
-		for _, child := range n.children {
-			walk(child)
-		}
-	}
-	walk(root)
+	})
 }

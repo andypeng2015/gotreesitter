@@ -105,6 +105,12 @@ type pythonRuntimeBenchStats struct {
 	finalChildPointers                   uint64
 	finalFieldIDElements                 uint64
 	finalFieldSourceElements             uint64
+	finalChildRefParents                 uint64
+	finalChildRefs                       uint64
+	finalChildRefMaterializedParents     uint64
+	finalChildRefMaterializedChildren    uint64
+	finalChildRefSingleChildAccesses     uint64
+	finalChildRefSingleChildMaterialized uint64
 	gssNodesAllocated                    uint64
 	gssNodesRetained                     uint64
 	gssNodesDropped                      uint64
@@ -116,6 +122,7 @@ type pythonRuntimeBenchStats struct {
 	arenaCompactFullLeafBytesAllocated   int64
 	arenaPendingParentBytesAllocated     int64
 	arenaPendingChildEntryBytesAllocated int64
+	arenaFinalChildSidecarBytesAllocated int64
 	arenaChildSliceBytesAllocated        int64
 	arenaFieldIDBytesAllocated           int64
 	arenaFieldSourceBytesAllocated       int64
@@ -131,15 +138,30 @@ type pythonRuntimeBenchStats struct {
 	compactFullLeafCreated               uint64
 	compactFullLeafMaterialized          uint64
 	compactFullLeafMaterializedParent    uint64
+	compactFullLeafParentRejects         gotreesitter.PendingParentRejectStats
+	compactFullLeafFieldRejectPayloads   gotreesitter.PendingParentFieldRejectPayloadStats
 	compactFullLeafMaterializedFinal     uint64
+	compactFullLeafReasons               pythonMaterializeReasonStats
 	compactFullLeafDropped               uint64
 	pendingParentCreated                 uint64
 	pendingParentMaterialized            uint64
 	pendingParentMaterializedParent      uint64
+	pendingParentParentRejects           gotreesitter.PendingParentRejectStats
+	pendingParentFieldRejects            gotreesitter.PendingParentFieldRejectStats
+	pendingParentFieldRejectPayloads     gotreesitter.PendingParentFieldRejectPayloadStats
 	pendingParentMaterializedFinal       uint64
+	pendingParentReasons                 pythonMaterializeReasonStats
 	pendingParentDropped                 uint64
 	pendingParentsFlattened              uint64
 	pendingChildRefsFlattened            uint64
+	pendingChildEntriesAllocated         uint64
+	pendingChildEntryCapacity            uint64
+	pendingChildEntryWaste               uint64
+	pendingParentCandidates              uint64
+	pendingParentRejects                 pythonPendingParentRejectStats
+	preMatFieldRejectCandidates          uint64
+	preMatFieldRejectSameKey             uint64
+	preMatFieldRejectOverflow            uint64
 	checkpointLeafFullNodesAvoided       uint64
 	resultSelectionNanos                 int64
 	transientParentMaterializeNanos      int64
@@ -248,6 +270,118 @@ type pythonRuntimeBenchStats struct {
 	maxStacksSeen                        int
 }
 
+type pythonMaterializeReasonStats struct {
+	normalization   uint64
+	recovery        uint64
+	query           uint64
+	cursor          uint64
+	parentAPI       uint64
+	edit            uint64
+	checkpointBuild uint64
+}
+
+type pythonPendingParentRejectStats struct {
+	empty                  uint64
+	childLimit             uint64
+	alias                  uint64
+	rawSpan                uint64
+	fields                 uint64
+	fieldsParentHide       uint64
+	fieldsNoIDs            uint64
+	fieldsInherited        uint64
+	fieldsHidden           uint64
+	fieldsHiddenPlain      uint64
+	fieldsHiddenPlainEmpty uint64
+	fieldsHiddenPlainOne   uint64
+	fieldsHiddenPlainMany  uint64
+	fieldsHiddenWithFields uint64
+	fieldsChild            uint64
+	fieldsAllVisible       uint64
+	child                  uint64
+	span                   uint64
+	fill                   uint64
+}
+
+func addPendingParentRejectStats(dst *gotreesitter.PendingParentRejectStats, src gotreesitter.PendingParentRejectStats) {
+	dst.Unknown += src.Unknown
+	dst.Empty += src.Empty
+	dst.ChildLimit += src.ChildLimit
+	dst.Alias += src.Alias
+	dst.RawSpan += src.RawSpan
+	dst.Fields += src.Fields
+	dst.Child += src.Child
+	dst.Span += src.Span
+	dst.Fill += src.Fill
+}
+
+func addPendingParentFieldRejectStats(dst *gotreesitter.PendingParentFieldRejectStats, src gotreesitter.PendingParentFieldRejectStats) {
+	dst.Unknown += src.Unknown
+	dst.ParentHidden += src.ParentHidden
+	dst.NoIDs += src.NoIDs
+	dst.Inherited += src.Inherited
+	dst.HiddenChild += src.HiddenChild
+	dst.HiddenChildPlain += src.HiddenChildPlain
+	dst.HiddenChildPlainEmpty += src.HiddenChildPlainEmpty
+	dst.HiddenChildPlainOne += src.HiddenChildPlainOne
+	dst.HiddenChildPlainMany += src.HiddenChildPlainMany
+	dst.HiddenChildWithFields += src.HiddenChildWithFields
+	dst.Child += src.Child
+	dst.AllVisibleDirect += src.AllVisibleDirect
+}
+
+func addPendingParentFieldRejectPayloadStats(dst *gotreesitter.PendingParentFieldRejectPayloadStats, src gotreesitter.PendingParentFieldRejectPayloadStats) {
+	dst.Unknown += src.Unknown
+	dst.Visible += src.Visible
+	dst.VisibleFinalLike += src.VisibleFinalLike
+	dst.VisibleNestedPayload += src.VisibleNestedPayload
+	dst.VisibleCompactLeaf += src.VisibleCompactLeaf
+	dst.VisibleFieldedDesc += src.VisibleFieldedDesc
+	dst.HiddenEmpty += src.HiddenEmpty
+	dst.HiddenOne += src.HiddenOne
+	dst.HiddenMany += src.HiddenMany
+	dst.HiddenWithFields += src.HiddenWithFields
+}
+
+func reportPendingParentRejectStats(b *testing.B, s gotreesitter.PendingParentRejectStats, tokens float64, prefix string) {
+	b.ReportMetric(float64(s.Unknown)/tokens, prefix+"_unknown/token")
+	b.ReportMetric(float64(s.Empty)/tokens, prefix+"_empty/token")
+	b.ReportMetric(float64(s.ChildLimit)/tokens, prefix+"_child_limit/token")
+	b.ReportMetric(float64(s.Alias)/tokens, prefix+"_alias/token")
+	b.ReportMetric(float64(s.RawSpan)/tokens, prefix+"_raw_span/token")
+	b.ReportMetric(float64(s.Fields)/tokens, prefix+"_fields/token")
+	b.ReportMetric(float64(s.Child)/tokens, prefix+"_child/token")
+	b.ReportMetric(float64(s.Span)/tokens, prefix+"_span/token")
+	b.ReportMetric(float64(s.Fill)/tokens, prefix+"_fill/token")
+}
+
+func reportPendingParentFieldRejectStats(b *testing.B, s gotreesitter.PendingParentFieldRejectStats, tokens float64, prefix string) {
+	b.ReportMetric(float64(s.Unknown)/tokens, prefix+"_unknown/token")
+	b.ReportMetric(float64(s.ParentHidden)/tokens, prefix+"_parent_hidden/token")
+	b.ReportMetric(float64(s.NoIDs)/tokens, prefix+"_no_ids/token")
+	b.ReportMetric(float64(s.Inherited)/tokens, prefix+"_inherited/token")
+	b.ReportMetric(float64(s.HiddenChild)/tokens, prefix+"_hidden_child/token")
+	b.ReportMetric(float64(s.HiddenChildPlain)/tokens, prefix+"_hidden_child_plain/token")
+	b.ReportMetric(float64(s.HiddenChildPlainEmpty)/tokens, prefix+"_hidden_child_plain_empty/token")
+	b.ReportMetric(float64(s.HiddenChildPlainOne)/tokens, prefix+"_hidden_child_plain_one/token")
+	b.ReportMetric(float64(s.HiddenChildPlainMany)/tokens, prefix+"_hidden_child_plain_many/token")
+	b.ReportMetric(float64(s.HiddenChildWithFields)/tokens, prefix+"_hidden_child_with_fields/token")
+	b.ReportMetric(float64(s.Child)/tokens, prefix+"_child/token")
+	b.ReportMetric(float64(s.AllVisibleDirect)/tokens, prefix+"_all_visible_direct/token")
+}
+
+func reportPendingParentFieldRejectPayloadStats(b *testing.B, s gotreesitter.PendingParentFieldRejectPayloadStats, tokens float64, prefix string) {
+	b.ReportMetric(float64(s.Unknown)/tokens, prefix+"_unknown/token")
+	b.ReportMetric(float64(s.Visible)/tokens, prefix+"_visible/token")
+	b.ReportMetric(float64(s.VisibleFinalLike)/tokens, prefix+"_visible_final_like/token")
+	b.ReportMetric(float64(s.VisibleNestedPayload)/tokens, prefix+"_visible_nested_payload/token")
+	b.ReportMetric(float64(s.VisibleCompactLeaf)/tokens, prefix+"_visible_compact_leaf/token")
+	b.ReportMetric(float64(s.VisibleFieldedDesc)/tokens, prefix+"_visible_fielded_desc/token")
+	b.ReportMetric(float64(s.HiddenEmpty)/tokens, prefix+"_hidden_empty/token")
+	b.ReportMetric(float64(s.HiddenOne)/tokens, prefix+"_hidden_one/token")
+	b.ReportMetric(float64(s.HiddenMany)/tokens, prefix+"_hidden_many/token")
+	b.ReportMetric(float64(s.HiddenWithFields)/tokens, prefix+"_hidden_with_fields/token")
+}
+
 func (s *pythonRuntimeBenchStats) add(rt gotreesitter.ParseRuntime, breakdown gotreesitter.ArenaBreakdown, hasBreakdown bool) {
 	s.ops++
 	s.tokensConsumed += rt.TokensConsumed
@@ -288,6 +422,12 @@ func (s *pythonRuntimeBenchStats) add(rt gotreesitter.ParseRuntime, breakdown go
 	s.finalChildPointers += rt.FinalChildPointers
 	s.finalFieldIDElements += rt.FinalFieldIDElements
 	s.finalFieldSourceElements += rt.FinalFieldSourceElements
+	s.finalChildRefParents += rt.FinalChildRefParents
+	s.finalChildRefs += rt.FinalChildRefs
+	s.finalChildRefMaterializedParents += rt.FinalChildRefMaterializedParents
+	s.finalChildRefMaterializedChildren += rt.FinalChildRefMaterializedChildren
+	s.finalChildRefSingleChildAccesses += rt.FinalChildRefSingleChildAccesses
+	s.finalChildRefSingleChildMaterialized += rt.FinalChildRefSingleChildMaterializedChildren
 	s.gssNodesAllocated += rt.GSSNodesAllocated
 	s.gssNodesRetained += rt.GSSNodesRetained
 	s.gssNodesDropped += rt.GSSNodesDroppedSameToken
@@ -305,15 +445,60 @@ func (s *pythonRuntimeBenchStats) add(rt gotreesitter.ParseRuntime, breakdown go
 	s.compactFullLeafCreated += rt.CompactFullLeafCreated
 	s.compactFullLeafMaterialized += rt.CompactFullLeafMaterialized
 	s.compactFullLeafMaterializedParent += rt.CompactFullLeafMaterializedForParentReduce
+	addPendingParentFieldRejectPayloadStats(&s.compactFullLeafFieldRejectPayloads, rt.CompactFullLeafMaterializedForFieldRejectPayload)
 	s.compactFullLeafMaterializedFinal += rt.CompactFullLeafMaterializedForFinalTree
+	s.compactFullLeafReasons.normalization += rt.CompactFullLeafMaterializedForNormalization
+	s.compactFullLeafReasons.recovery += rt.CompactFullLeafMaterializedForRecovery
+	s.compactFullLeafReasons.query += rt.CompactFullLeafMaterializedForQuery
+	s.compactFullLeafReasons.cursor += rt.CompactFullLeafMaterializedForCursor
+	s.compactFullLeafReasons.parentAPI += rt.CompactFullLeafMaterializedForParentAPI
+	s.compactFullLeafReasons.edit += rt.CompactFullLeafMaterializedForEdit
+	s.compactFullLeafReasons.checkpointBuild += rt.CompactFullLeafMaterializedForCheckpointRebuild
 	s.compactFullLeafDropped += rt.CompactFullLeafDropped
 	s.pendingParentCreated += rt.PendingParentCreated
 	s.pendingParentMaterialized += rt.PendingParentMaterialized
 	s.pendingParentMaterializedParent += rt.PendingParentMaterializedForParentReduce
+	addPendingParentRejectStats(&s.compactFullLeafParentRejects, rt.CompactFullLeafMaterializedForParentReject)
+	addPendingParentRejectStats(&s.pendingParentParentRejects, rt.PendingParentMaterializedForParentReject)
+	addPendingParentFieldRejectStats(&s.pendingParentFieldRejects, rt.PendingParentMaterializedForFieldReject)
+	addPendingParentFieldRejectPayloadStats(&s.pendingParentFieldRejectPayloads, rt.PendingParentMaterializedForFieldRejectPayload)
 	s.pendingParentMaterializedFinal += rt.PendingParentMaterializedForFinalTree
+	s.pendingParentReasons.normalization += rt.PendingParentMaterializedForNormalization
+	s.pendingParentReasons.recovery += rt.PendingParentMaterializedForRecovery
+	s.pendingParentReasons.query += rt.PendingParentMaterializedForQuery
+	s.pendingParentReasons.cursor += rt.PendingParentMaterializedForCursor
+	s.pendingParentReasons.parentAPI += rt.PendingParentMaterializedForParentAPI
+	s.pendingParentReasons.edit += rt.PendingParentMaterializedForEdit
+	s.pendingParentReasons.checkpointBuild += rt.PendingParentMaterializedForCheckpointRebuild
 	s.pendingParentDropped += rt.PendingParentDropped
 	s.pendingParentsFlattened += rt.PendingParentsFlattened
 	s.pendingChildRefsFlattened += rt.PendingChildRefsFlattened
+	s.pendingChildEntriesAllocated += rt.PendingChildEntriesAllocated
+	s.pendingChildEntryCapacity += rt.PendingChildEntryCapacity
+	s.pendingChildEntryWaste += rt.PendingChildEntryWaste
+	s.pendingParentCandidates += rt.PendingParentCandidates
+	s.preMatFieldRejectCandidates += rt.PreMaterializationFieldRejectCandidates
+	s.preMatFieldRejectSameKey += rt.PreMaterializationFieldRejectSameKeyCandidates
+	s.preMatFieldRejectOverflow += rt.PreMaterializationFieldRejectOverflowCandidates
+	s.pendingParentRejects.empty += rt.PendingParentRejectedEmpty
+	s.pendingParentRejects.childLimit += rt.PendingParentRejectedChildLimit
+	s.pendingParentRejects.alias += rt.PendingParentRejectedAlias
+	s.pendingParentRejects.rawSpan += rt.PendingParentRejectedRawSpan
+	s.pendingParentRejects.fields += rt.PendingParentRejectedFields
+	s.pendingParentRejects.fieldsParentHide += rt.PendingParentRejectedFieldsParentHidden
+	s.pendingParentRejects.fieldsNoIDs += rt.PendingParentRejectedFieldsNoIDs
+	s.pendingParentRejects.fieldsInherited += rt.PendingParentRejectedFieldsInherited
+	s.pendingParentRejects.fieldsHidden += rt.PendingParentRejectedFieldsHiddenChild
+	s.pendingParentRejects.fieldsHiddenPlain += rt.PendingParentRejectedFieldsHiddenChildPlain
+	s.pendingParentRejects.fieldsHiddenPlainEmpty += rt.PendingParentRejectedFieldsHiddenChildPlainEmpty
+	s.pendingParentRejects.fieldsHiddenPlainOne += rt.PendingParentRejectedFieldsHiddenChildPlainOne
+	s.pendingParentRejects.fieldsHiddenPlainMany += rt.PendingParentRejectedFieldsHiddenChildPlainMany
+	s.pendingParentRejects.fieldsHiddenWithFields += rt.PendingParentRejectedFieldsHiddenChildWithFields
+	s.pendingParentRejects.fieldsChild += rt.PendingParentRejectedFieldsChild
+	s.pendingParentRejects.fieldsAllVisible += rt.PendingParentRejectedFieldsAllVisibleDirect
+	s.pendingParentRejects.child += rt.PendingParentRejectedChild
+	s.pendingParentRejects.span += rt.PendingParentRejectedSpan
+	s.pendingParentRejects.fill += rt.PendingParentRejectedFill
 	s.checkpointLeafFullNodesAvoided += rt.CheckpointLeafFullNodesAvoided
 	s.resultSelectionNanos += rt.ResultSelectionNanos
 	s.transientParentMaterializeNanos += rt.TransientParentMaterializationNanos
@@ -337,6 +522,7 @@ func (s *pythonRuntimeBenchStats) add(rt gotreesitter.ParseRuntime, breakdown go
 		s.arenaCompactFullLeafBytesAllocated += breakdown.CompactFullLeafBytesAllocated
 		s.arenaPendingParentBytesAllocated += breakdown.PendingParentBytesAllocated
 		s.arenaPendingChildEntryBytesAllocated += breakdown.PendingChildEntryBytesAllocated
+		s.arenaFinalChildSidecarBytesAllocated += breakdown.FinalChildSidecarBytesAllocated
 		s.arenaChildSliceBytesAllocated += breakdown.ChildSliceBytesAllocated
 		s.arenaFieldIDBytesAllocated += breakdown.FieldIDBytesAllocated
 		s.arenaFieldSourceBytesAllocated += breakdown.FieldSourceBytesAllocated
@@ -461,6 +647,14 @@ func (s pythonRuntimeBenchStats) report(b *testing.B) {
 	b.ReportMetric(float64(s.parentNodesConstructed)/tokens, "parent_full_nodes/token")
 	b.ReportMetric(float64(s.noTreeReduceNodesConstructed)/tokens, "notree_nodes/token")
 	b.ReportMetric(float64(s.noTreeLeafNodesConstructed)/tokens, "notree_leaf_nodes/token")
+	if s.finalChildRefParents != 0 || s.finalChildRefs != 0 || s.finalChildRefMaterializedParents != 0 || s.finalChildRefSingleChildAccesses != 0 {
+		b.ReportMetric(float64(s.finalChildRefParents)/tokens, "final_child_ref_parents/token")
+		b.ReportMetric(float64(s.finalChildRefs)/tokens, "final_child_refs/token")
+		b.ReportMetric(float64(s.finalChildRefMaterializedParents)/tokens, "final_child_ref_range_materialized_parents/token")
+		b.ReportMetric(float64(s.finalChildRefMaterializedChildren)/tokens, "final_child_ref_range_materialized_children/token")
+		b.ReportMetric(float64(s.finalChildRefSingleChildAccesses)/tokens, "final_child_ref_single_child_accesses/token")
+		b.ReportMetric(float64(s.finalChildRefSingleChildMaterialized)/tokens, "final_child_ref_single_child_materialized/token")
+	}
 	if s.finalNodes != 0 {
 		b.ReportMetric(float64(s.finalNodes)/tokens, "final_nodes/token")
 		b.ReportMetric(float64(s.finalParentNodes)/tokens, "final_parent_nodes/token")
@@ -624,6 +818,8 @@ func (s pythonRuntimeBenchStats) report(b *testing.B) {
 		b.ReportMetric(float64(s.arenaCompactFullLeafBytesAllocated)/tokens, "arena_compact_full_leaf_B/token")
 		b.ReportMetric(float64(s.arenaPendingParentBytesAllocated)/tokens, "arena_pending_parent_B/token")
 		b.ReportMetric(float64(s.arenaPendingChildEntryBytesAllocated)/tokens, "arena_pending_child_entry_B/token")
+		b.ReportMetric(float64(s.arenaFinalChildSidecarBytesAllocated)/tokens, "arena_final_child_sidecar_B/token")
+		b.ReportMetric(float64(s.arenaFinalChildSidecarBytesAllocated)/tokens, "final_child_sidecar_B/token")
 		b.ReportMetric(float64(s.arenaChildSliceBytesAllocated)/tokens, "arena_child_B/token")
 		b.ReportMetric(float64(s.arenaChildSliceBytesAllocated)/tokens, "child_slice_B/token")
 		b.ReportMetric(float64(s.arenaFieldIDBytesAllocated)/tokens, "arena_field_id_B/token")
@@ -657,7 +853,16 @@ func (s pythonRuntimeBenchStats) report(b *testing.B) {
 		b.ReportMetric(float64(s.compactFullLeafCreated)/tokens, "compact_full_leaf_created/token")
 		b.ReportMetric(float64(s.compactFullLeafMaterialized)/tokens, "compact_full_leaf_materialized/token")
 		b.ReportMetric(float64(s.compactFullLeafMaterializedParent)/tokens, "compact_full_leaf_materialized_parent/token")
+		reportPendingParentRejectStats(b, s.compactFullLeafParentRejects, tokens, "compact_full_leaf_materialized_parent_reject")
+		reportPendingParentFieldRejectPayloadStats(b, s.compactFullLeafFieldRejectPayloads, tokens, "compact_full_leaf_materialized_parent_reject_fields_payload")
 		b.ReportMetric(float64(s.compactFullLeafMaterializedFinal)/tokens, "compact_full_leaf_materialized_final/token")
+		b.ReportMetric(float64(s.compactFullLeafReasons.normalization)/tokens, "compact_full_leaf_materialized_normalization/token")
+		b.ReportMetric(float64(s.compactFullLeafReasons.recovery)/tokens, "compact_full_leaf_materialized_recovery/token")
+		b.ReportMetric(float64(s.compactFullLeafReasons.query)/tokens, "compact_full_leaf_materialized_query/token")
+		b.ReportMetric(float64(s.compactFullLeafReasons.cursor)/tokens, "compact_full_leaf_materialized_cursor/token")
+		b.ReportMetric(float64(s.compactFullLeafReasons.parentAPI)/tokens, "compact_full_leaf_materialized_parent_api/token")
+		b.ReportMetric(float64(s.compactFullLeafReasons.edit)/tokens, "compact_full_leaf_materialized_edit/token")
+		b.ReportMetric(float64(s.compactFullLeafReasons.checkpointBuild)/tokens, "compact_full_leaf_materialized_checkpoint_rebuild/token")
 		b.ReportMetric(float64(s.compactFullLeafDropped)/tokens, "compact_full_leaf_dropped/token")
 		b.ReportMetric(float64(s.checkpointLeafFullNodesAvoided)/tokens, "checkpoint_leaf_full_nodes_avoided/token")
 	}
@@ -665,10 +870,48 @@ func (s pythonRuntimeBenchStats) report(b *testing.B) {
 		b.ReportMetric(float64(s.pendingParentCreated)/tokens, "pending_parent_created/token")
 		b.ReportMetric(float64(s.pendingParentMaterialized)/tokens, "pending_parent_materialized/token")
 		b.ReportMetric(float64(s.pendingParentMaterializedParent)/tokens, "pending_parent_materialized_parent/token")
+		reportPendingParentRejectStats(b, s.pendingParentParentRejects, tokens, "pending_parent_materialized_parent_reject")
+		reportPendingParentFieldRejectStats(b, s.pendingParentFieldRejects, tokens, "pending_parent_materialized_parent_reject_fields")
+		reportPendingParentFieldRejectPayloadStats(b, s.pendingParentFieldRejectPayloads, tokens, "pending_parent_materialized_parent_reject_fields_payload")
 		b.ReportMetric(float64(s.pendingParentMaterializedFinal)/tokens, "pending_parent_materialized_final/token")
+		b.ReportMetric(float64(s.pendingParentReasons.normalization)/tokens, "pending_parent_materialized_normalization/token")
+		b.ReportMetric(float64(s.pendingParentReasons.recovery)/tokens, "pending_parent_materialized_recovery/token")
+		b.ReportMetric(float64(s.pendingParentReasons.query)/tokens, "pending_parent_materialized_query/token")
+		b.ReportMetric(float64(s.pendingParentReasons.cursor)/tokens, "pending_parent_materialized_cursor/token")
+		b.ReportMetric(float64(s.pendingParentReasons.parentAPI)/tokens, "pending_parent_materialized_parent_api/token")
+		b.ReportMetric(float64(s.pendingParentReasons.edit)/tokens, "pending_parent_materialized_edit/token")
+		b.ReportMetric(float64(s.pendingParentReasons.checkpointBuild)/tokens, "pending_parent_materialized_checkpoint_rebuild/token")
 		b.ReportMetric(float64(s.pendingParentDropped)/tokens, "pending_parent_dropped/token")
 		b.ReportMetric(float64(s.pendingParentsFlattened)/tokens, "pending_parent_flattened/token")
 		b.ReportMetric(float64(s.pendingChildRefsFlattened)/tokens, "pending_child_refs_flattened/token")
+		b.ReportMetric(float64(s.pendingChildEntriesAllocated)/tokens, "pending_child_entries_allocated/token")
+		b.ReportMetric(float64(s.pendingChildEntryCapacity)/tokens, "pending_child_entry_capacity/token")
+		b.ReportMetric(float64(s.pendingChildEntryWaste)/tokens, "pending_child_entry_waste/token")
+		b.ReportMetric(float64(s.pendingParentCandidates)/tokens, "pending_parent_candidate/token")
+		if s.preMatFieldRejectCandidates != 0 {
+			b.ReportMetric(float64(s.preMatFieldRejectCandidates)/tokens, "pre_materialization_field_reject_candidate/token")
+			b.ReportMetric(float64(s.preMatFieldRejectSameKey)/tokens, "pre_materialization_field_reject_same_key/token")
+			b.ReportMetric(float64(s.preMatFieldRejectOverflow)/tokens, "pre_materialization_field_reject_overflow/token")
+		}
+		b.ReportMetric(float64(s.pendingParentRejects.empty)/tokens, "pending_parent_reject_empty/token")
+		b.ReportMetric(float64(s.pendingParentRejects.childLimit)/tokens, "pending_parent_reject_child_limit/token")
+		b.ReportMetric(float64(s.pendingParentRejects.alias)/tokens, "pending_parent_reject_alias/token")
+		b.ReportMetric(float64(s.pendingParentRejects.rawSpan)/tokens, "pending_parent_reject_raw_span/token")
+		b.ReportMetric(float64(s.pendingParentRejects.fields)/tokens, "pending_parent_reject_fields/token")
+		b.ReportMetric(float64(s.pendingParentRejects.fieldsParentHide)/tokens, "pending_parent_reject_fields_parent_hidden/token")
+		b.ReportMetric(float64(s.pendingParentRejects.fieldsNoIDs)/tokens, "pending_parent_reject_fields_no_ids/token")
+		b.ReportMetric(float64(s.pendingParentRejects.fieldsInherited)/tokens, "pending_parent_reject_fields_inherited/token")
+		b.ReportMetric(float64(s.pendingParentRejects.fieldsHidden)/tokens, "pending_parent_reject_fields_hidden_child/token")
+		b.ReportMetric(float64(s.pendingParentRejects.fieldsHiddenPlain)/tokens, "pending_parent_reject_fields_hidden_child_plain/token")
+		b.ReportMetric(float64(s.pendingParentRejects.fieldsHiddenPlainEmpty)/tokens, "pending_parent_reject_fields_hidden_child_plain_empty/token")
+		b.ReportMetric(float64(s.pendingParentRejects.fieldsHiddenPlainOne)/tokens, "pending_parent_reject_fields_hidden_child_plain_one/token")
+		b.ReportMetric(float64(s.pendingParentRejects.fieldsHiddenPlainMany)/tokens, "pending_parent_reject_fields_hidden_child_plain_many/token")
+		b.ReportMetric(float64(s.pendingParentRejects.fieldsHiddenWithFields)/tokens, "pending_parent_reject_fields_hidden_child_with_fields/token")
+		b.ReportMetric(float64(s.pendingParentRejects.fieldsChild)/tokens, "pending_parent_reject_fields_child/token")
+		b.ReportMetric(float64(s.pendingParentRejects.fieldsAllVisible)/tokens, "pending_parent_reject_fields_all_visible_direct/token")
+		b.ReportMetric(float64(s.pendingParentRejects.child)/tokens, "pending_parent_reject_child/token")
+		b.ReportMetric(float64(s.pendingParentRejects.span)/tokens, "pending_parent_reject_span/token")
+		b.ReportMetric(float64(s.pendingParentRejects.fill)/tokens, "pending_parent_reject_fill/token")
 	}
 	if s.resultSelectionNanos != 0 || s.transientParentMaterializeNanos != 0 || s.resultTreeBuildNanos != 0 || s.transientChildMaterializeNanos != 0 {
 		ops := float64(s.ops)

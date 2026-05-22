@@ -40,6 +40,59 @@ func TestNormalizeHaskellZeroWidthTokensDropsEmptySeparators(t *testing.T) {
 	}
 }
 
+func TestNormalizeHaskellZeroWidthTokensFiltersFinalRefsWithoutDrain(t *testing.T) {
+	lang := &Language{
+		Name:        "haskell",
+		SymbolNames: []string{"EOF", "haskell", "pragma", "_token1", "haddock", "header"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF", Visible: false, Named: false},
+			{Name: "haskell", Visible: true, Named: true},
+			{Name: "pragma", Visible: true, Named: true},
+			{Name: "_token1", Visible: false, Named: false},
+			{Name: "haddock", Visible: true, Named: true},
+			{Name: "header", Visible: true, Named: true},
+		},
+	}
+
+	arena := newNodeArena(arenaClassFull)
+	arena.finalChildRefs = true
+	pragma := newCompactFullLeafInArena(arena, 2, true, 0, 4, Point{}, Point{Column: 4})
+	pragma.parseState = 12
+	sep := newCompactFullLeafInArena(arena, 3, false, 4, 4, Point{Column: 4}, Point{Column: 4})
+	sep.parseState = 13
+	header := newCompactFullLeafInArena(arena, 5, true, 12, 20, Point{Row: 1, Column: 7}, Point{Row: 2, Column: 8})
+	header.parseState = 15
+	parent := newPendingParentInArena(arena, 1, true, 0, []stackEntry{
+		newStackEntryCompactFullLeaf(pragma.parseState, pragma),
+		newStackEntryCompactFullLeaf(sep.parseState, sep),
+		newStackEntryCompactFullLeaf(header.parseState, header),
+	}, 0, 20, Point{}, Point{Row: 2, Column: 8}, false)
+	parent.parseState = 16
+	entry := newStackEntryPendingParent(parent.parseState, parent)
+	root := materializeStackEntryPendingParent(arena, &entry, pendingParentMaterializeForFinalTree)
+
+	normalizeHaskellZeroWidthTokens(root, lang)
+
+	if got := arena.finalChildRefsMaterializedParents; got != 0 {
+		t.Fatalf("final child ref range materialized parents = %d, want 0", got)
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 0 {
+		t.Fatalf("final child ref single children during normalize = %d, want 0", got)
+	}
+	if !nodeHasFinalChildRefs(root) {
+		t.Fatal("root lost final-child refs")
+	}
+	if got := root.ChildCount(); got != 2 {
+		t.Fatalf("root child count = %d, want 2", got)
+	}
+	if got := root.Child(0).Type(lang); got != "pragma" {
+		t.Fatalf("root child 0 = %q, want pragma", got)
+	}
+	if got := root.Child(1).Type(lang); got != "header" {
+		t.Fatalf("root child 1 = %q, want header", got)
+	}
+}
+
 func TestNormalizeHaskellRootImportFieldSetsImportsField(t *testing.T) {
 	lang := &Language{
 		Name:        "haskell",
@@ -80,6 +133,62 @@ func TestNormalizeHaskellRootImportFieldSetsImportsField(t *testing.T) {
 	}
 	if got, want := fieldSourceAt(root.fieldSources, 4), uint8(fieldSourceInherited); got != want {
 		t.Fatalf("fieldSources[4] = %d, want %d", got, want)
+	}
+}
+
+func TestNormalizeHaskellRootImportFieldSetsFinalRefFieldsWithoutDrain(t *testing.T) {
+	lang := &Language{
+		Name:        "haskell",
+		SymbolNames: []string{"EOF", "haskell", "pragma", "imports", "declarations"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF", Visible: false, Named: false},
+			{Name: "haskell", Visible: true, Named: true},
+			{Name: "pragma", Visible: true, Named: true},
+			{Name: "imports", Visible: true, Named: true},
+			{Name: "declarations", Visible: true, Named: true},
+		},
+		FieldNames: []string{"", "imports", "declarations"},
+	}
+
+	arena := newNodeArena(arenaClassFull)
+	arena.finalChildRefs = true
+	pragma := newCompactFullLeafInArena(arena, 2, true, 0, 4, Point{}, Point{Column: 4})
+	pragma.parseState = 12
+	imports := newCompactFullLeafInArena(arena, 3, true, 5, 12, Point{Row: 1}, Point{Row: 1, Column: 7})
+	imports.parseState = 13
+	declarations := newCompactFullLeafInArena(arena, 4, true, 13, 20, Point{Row: 2}, Point{Row: 2, Column: 7})
+	declarations.parseState = 14
+	parent := newPendingParentInArena(arena, 1, true, 0, []stackEntry{
+		newStackEntryCompactFullLeaf(pragma.parseState, pragma),
+		newStackEntryCompactFullLeaf(imports.parseState, imports),
+		newStackEntryCompactFullLeaf(declarations.parseState, declarations),
+	}, 0, 20, Point{}, Point{Row: 2, Column: 7}, false)
+	parent.parseState = 15
+	entry := newStackEntryPendingParent(parent.parseState, parent)
+	root := materializeStackEntryPendingParent(arena, &entry, pendingParentMaterializeForFinalTree)
+
+	normalizeHaskellRootImportField(root, lang)
+
+	if got := arena.finalChildRefsMaterializedParents; got != 0 {
+		t.Fatalf("final child ref range materialized parents = %d, want 0", got)
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 0 {
+		t.Fatalf("final child ref single children during normalize = %d, want 0", got)
+	}
+	if !nodeHasFinalChildRefs(root) {
+		t.Fatal("root lost final-child refs")
+	}
+	if got, want := root.fieldIDs[1], FieldID(1); got != want {
+		t.Fatalf("fieldIDs[1] = %d, want %d", got, want)
+	}
+	if got, want := fieldSourceAt(root.fieldSources, 1), uint8(fieldSourceInherited); got != want {
+		t.Fatalf("fieldSources[1] = %d, want %d", got, want)
+	}
+	if got, want := root.fieldIDs[2], FieldID(2); got != want {
+		t.Fatalf("fieldIDs[2] = %d, want %d", got, want)
+	}
+	if got, want := fieldSourceAt(root.fieldSources, 2), uint8(fieldSourceInherited); got != want {
+		t.Fatalf("fieldSources[2] = %d, want %d", got, want)
 	}
 }
 

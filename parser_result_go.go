@@ -23,26 +23,19 @@ func normalizeGoSourceFileRoot(root *Node, source []byte, p *Parser) {
 	if !rootLooksLikeGoTopLevel(root, lang) {
 		return
 	}
-	root.symbol = sym
-	root.setNamed(int(sym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[sym].Named)
-	root.setHasError(false)
-	for _, child := range root.children {
-		if child != nil && (child.IsError() || child.HasError()) {
-			root.setHasError(true)
-			break
-		}
-	}
+	retagResultRootAndRefreshError(root, sym, symbolIsNamed(lang, sym))
 	if root.endByte < uint32(len(source)) && bytesAreTrivia(source[root.endByte:]) {
 		extendNodeEndTo(root, uint32(len(source)), source)
 	}
 }
 
 func rootLooksLikeGoTopLevel(root *Node, lang *Language) bool {
-	if root == nil || lang == nil || len(root.children) == 0 {
+	if root == nil || lang == nil || resultChildCount(root) == 0 {
 		return false
 	}
 	sawTopLevel := false
-	for _, child := range root.children {
+	for i := 0; i < resultChildCount(root); i++ {
+		child := resultChildAt(root, i)
 		if child == nil {
 			continue
 		}
@@ -64,14 +57,14 @@ func rootLooksLikeGoTopLevel(root *Node, lang *Language) bool {
 }
 
 func recoverGoRootTopLevelChunks(root *Node, source []byte, p *Parser) {
-	if root == nil || p == nil || p.language == nil || p.skipRecoveryReparse || len(source) == 0 || len(root.children) == 0 {
+	if root == nil || p == nil || p.language == nil || p.skipRecoveryReparse || len(source) == 0 || resultChildCount(root) == 0 {
 		return
 	}
 	firstBad := firstGoNonTopLevelChildIndex(root, p.language)
 	if firstBad <= 0 {
 		return
 	}
-	start := goRootRecoveryStartByte(root.children[firstBad], source)
+	start := goRootRecoveryStartByte(resultChildAt(root, firstBad), source)
 	if int(start) >= len(source) {
 		return
 	}
@@ -79,8 +72,9 @@ func recoverGoRootTopLevelChunks(root *Node, source []byte, p *Parser) {
 	if !ok {
 		return
 	}
+	children := resultChildSliceForMutation(root)
 	newChildren := make([]*Node, 0, firstBad+len(recovered))
-	newChildren = append(newChildren, root.children[:firstBad]...)
+	newChildren = append(newChildren, children[:firstBad]...)
 	newChildren = append(newChildren, recovered...)
 	if !goChildrenLookLikeTopLevel(newChildren, p.language) {
 		return
@@ -88,20 +82,17 @@ func recoverGoRootTopLevelChunks(root *Node, source []byte, p *Parser) {
 	if arena := root.ownerArena; arena != nil {
 		buf := arena.allocNodeSlice(len(newChildren))
 		copy(buf, newChildren)
-		root.children = buf
-	} else {
-		root.children = newChildren
+		newChildren = buf
 	}
-	root.fieldIDs = nil
-	root.fieldSources = nil
-	populateParentNode(root, root.children)
+	replaceNodeChildrenUnfielded(root, newChildren)
 }
 
 func firstGoNonTopLevelChildIndex(root *Node, lang *Language) int {
 	if root == nil || lang == nil {
 		return -1
 	}
-	for i, child := range root.children {
+	for i := 0; i < resultChildCount(root); i++ {
+		child := resultChildAt(root, i)
 		if child == nil {
 			continue
 		}
@@ -416,7 +407,7 @@ condEndReady:
 	if !ok {
 		return nil, false
 	}
-	ifStmtNamed := int(ifStmtSym) < len(p.language.SymbolMetadata) && p.language.SymbolMetadata[ifStmtSym].Named
+	ifStmtNamed := symbolIsNamed(p.language, ifStmtSym)
 	ifLeafStart := advancePointByBytes(Point{}, source[:trimmedStart])
 	ifLeafEnd := advancePointByBytes(ifLeafStart, source[trimmedStart:trimmedStart+2])
 	ifLeaf := newLeafNodeInArena(arena, ifTokenSym, false, trimmedStart, trimmedStart+2, ifLeafStart, ifLeafEnd)
@@ -700,12 +691,12 @@ func goBuildRecoveredBlockNode(source []byte, openBrace, closeBrace uint32, body
 	if !ok {
 		return nil, false
 	}
-	blockNamed := int(blockSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[blockSym].Named
+	blockNamed := symbolIsNamed(lang, blockSym)
 	stmtListSym, ok := symbolByName(lang, "statement_list")
 	if !ok {
 		return nil, false
 	}
-	stmtListNamed := int(stmtListSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[stmtListSym].Named
+	stmtListNamed := symbolIsNamed(lang, stmtListSym)
 	openSym, ok := symbolByName(lang, "{")
 	if !ok {
 		return nil, false
@@ -745,8 +736,8 @@ func recomputeNodePointsFromBytes(n *Node, source []byte) {
 	if int(n.endByte) <= len(source) {
 		n.endPoint = advancePointByBytes(Point{}, source[:n.endByte])
 	}
-	for _, child := range n.children {
-		recomputeNodePointsFromBytes(child, source)
+	for i := 0; i < resultChildCount(n); i++ {
+		recomputeNodePointsFromBytes(resultChildAt(n, i), source)
 	}
 }
 
@@ -766,7 +757,8 @@ func shiftNodeBytes(n *Node, delta int64) bool {
 		}
 		cur.startByte = uint32(start)
 		cur.endByte = uint32(end)
-		for i, child := range cur.children {
+		for i := 0; i < resultChildCount(cur); i++ {
+			child := resultChildAt(cur, i)
 			if !walk(child) {
 				return false
 			}
@@ -790,230 +782,6 @@ func goSyntheticIfFieldIDs(arena *nodeArena, childCount int, lang *Language) []F
 		fieldIDs[2] = fid
 	}
 	return fieldIDs
-}
-
-func goShouldDropSemicolonNode(n *Node, source []byte) bool {
-	if n == nil {
-		return false
-	}
-	if n.startByte >= n.endByte || int(n.endByte) > len(source) {
-		return true
-	}
-	text := source[n.startByte:n.endByte]
-	if bytes.IndexByte(text, ';') >= 0 {
-		return false
-	}
-	return bytes.IndexByte(text, '\n') >= 0 || bytes.IndexByte(text, '\r') >= 0
-}
-
-func normalizeGoCompatibility(root *Node, source []byte, lang *Language) {
-	normalizeGoCompatibilityInRanges(root, source, lang, nil)
-}
-
-func nodeOverlapsAnyRange(n *Node, ranges []Range) bool {
-	if n == nil || len(ranges) == 0 {
-		return true
-	}
-	for _, r := range ranges {
-		if !(n.endByte < r.StartByte || r.EndByte < n.startByte) {
-			return true
-		}
-	}
-	return false
-}
-
-func normalizeGoCompatibilityInRanges(root *Node, source []byte, lang *Language, incrementalRanges []Range) {
-	if root == nil || lang == nil || lang.Name != "go" || len(source) == 0 {
-		return
-	}
-	semiSym, ok := symbolByName(lang, ";")
-	if !ok {
-		return
-	}
-	expressionCaseSym, ok := symbolByName(lang, "expression_case")
-	if !ok {
-		return
-	}
-	defaultCaseSym, ok := symbolByName(lang, "default_case")
-	if !ok {
-		return
-	}
-	typeCaseSym, ok := symbolByName(lang, "type_case")
-	if !ok {
-		return
-	}
-	communicationCaseSym, ok := symbolByName(lang, "communication_case")
-	if !ok {
-		return
-	}
-	statementListSym, ok := symbolByName(lang, "statement_list")
-	if !ok {
-		return
-	}
-	statementListRepeatSym, ok := symbolByName(lang, "statement_list_repeat1")
-	if !ok {
-		return
-	}
-	semiContainerSyms := make([]Symbol, 0, 8)
-	addSemiContainerSym := func(name string) {
-		if sym, found := symbolByName(lang, name); found {
-			semiContainerSyms = append(semiContainerSyms, sym)
-		}
-	}
-	addSemiContainerSym("source_file")
-	addSemiContainerSym("statement_list")
-	addSemiContainerSym("statement_list_repeat1")
-	addSemiContainerSym("import_declaration")
-	addSemiContainerSym("var_declaration")
-	addSemiContainerSym("const_declaration")
-	addSemiContainerSym("type_declaration")
-	addSemiContainerSym("import_spec_list")
-	addSemiContainerSym("var_spec_list")
-	addSemiContainerSym("const_spec_list")
-	addSemiContainerSym("field_declaration_list")
-	symbolIn := func(syms []Symbol, want Symbol) bool {
-		for _, sym := range syms {
-			if sym == want {
-				return true
-			}
-		}
-		return false
-	}
-	isCaseSym := func(sym Symbol) bool {
-		switch sym {
-		case expressionCaseSym, defaultCaseSym, typeCaseSym, communicationCaseSym:
-			return true
-		default:
-			return false
-		}
-	}
-	var walk func(*Node)
-	walk = func(n *Node) {
-		if n == nil {
-			return
-		}
-		if !nodeOverlapsAnyRange(n, incrementalRanges) {
-			return
-		}
-		if len(n.children) > 0 {
-			if symbolIn(semiContainerSyms, n.symbol) {
-				kept := n.children[:0]
-				changed := false
-				for _, child := range n.children {
-					if child != nil && child.symbol == semiSym && goShouldDropSemicolonNode(child, source) {
-						changed = true
-						continue
-					}
-					kept = append(kept, child)
-				}
-				if changed {
-					n.children = kept
-					n.fieldIDs = nil
-					n.fieldSources = nil
-					populateParentNode(n, n.children)
-				}
-			}
-			for i := 0; i+1 < len(n.children); i++ {
-				curr := n.children[i]
-				next := n.children[i+1]
-				if curr == nil || next == nil {
-					continue
-				}
-				if curr.symbol == statementListSym || curr.symbol == statementListRepeatSym {
-					if curr.endByte < next.startByte && int(next.startByte) <= len(source) {
-						gap := source[curr.endByte:next.startByte]
-						if bytesAreTrivia(gap) {
-							target := goTrailingNewlineBoundary(curr.endByte, next.startByte, source)
-							if target > curr.endByte {
-								extendNodeEndTo(curr, target, source)
-							}
-						}
-					}
-				}
-				if !isCaseSym(curr.symbol) {
-					continue
-				}
-				tail := goTrailingCaseStatementList(curr, statementListSym, statementListRepeatSym)
-				if tail == nil {
-					continue
-				}
-				if int(next.startByte) > len(source) {
-					continue
-				}
-				target, hasNewline := goTrailingTriviaBoundaryBefore(next.startByte, source)
-				if hasNewline {
-					if curr.endByte != target {
-						setNodeEndTo(curr, target, source)
-					}
-					switch {
-					case tail.endByte > target:
-						setNodeEndTo(tail, target, source)
-					case tail.endByte < target && bytesAreTrivia(source[tail.endByte:target]):
-						setNodeEndTo(tail, target, source)
-					}
-					continue
-				}
-				if curr.endByte > next.startByte {
-					setNodeEndTo(curr, next.startByte, source)
-				}
-				if tail.endByte > next.startByte {
-					setNodeEndTo(tail, next.startByte, source)
-				}
-			}
-		}
-		for _, child := range n.children {
-			walk(child)
-		}
-	}
-	walk(root)
-}
-
-func goTrailingNewlineBoundary(start, end uint32, source []byte) uint32 {
-	if start >= end || int(end) > len(source) || !bytesAreTrivia(source[start:end]) {
-		return start
-	}
-	gap := source[start:end]
-	if newline := bytes.LastIndexByte(gap, '\n'); newline >= 0 {
-		return start + uint32(newline+1)
-	}
-	return start
-}
-
-func goTrailingTriviaBoundaryBefore(end uint32, source []byte) (uint32, bool) {
-	if end == 0 || int(end) > len(source) {
-		return end, false
-	}
-	start := int(end)
-	for start > 0 {
-		switch source[start-1] {
-		case ' ', '\t', '\r', '\n':
-			start--
-		default:
-			goto gapReady
-		}
-	}
-gapReady:
-	gap := source[start:int(end)]
-	if newline := bytes.LastIndexByte(gap, '\n'); newline >= 0 {
-		return uint32(start + newline + 1), true
-	}
-	return end, false
-}
-
-func goTrailingCaseStatementList(n *Node, statementListSym, statementListRepeatSym Symbol) *Node {
-	if n == nil || len(n.children) == 0 {
-		return nil
-	}
-	last := n.children[len(n.children)-1]
-	if last == nil {
-		return nil
-	}
-	switch last.symbol {
-	case statementListSym, statementListRepeatSym:
-		return last
-	default:
-		return nil
-	}
 }
 
 func goTopLevelChunkStarts(source []byte, start uint32) []uint32 {
@@ -1185,8 +953,10 @@ func flattenRootSelfFragments(nodes []*Node, arena *nodeArena, rootSymbol Symbol
 		if node == nil {
 			continue
 		}
-		if node.symbol == rootSymbol && len(node.children) > 0 {
-			out = append(out, node.children...)
+		if node.symbol == rootSymbol && resultChildCount(node) > 0 {
+			for i := 0; i < resultChildCount(node); i++ {
+				out = append(out, resultChildAt(node, i))
+			}
 			changed = true
 			continue
 		}
@@ -1204,28 +974,36 @@ func flattenRootSelfFragments(nodes []*Node, arena *nodeArena, rootSymbol Symbol
 }
 
 func flattenInvisibleRootChildren(root *Node, arena *nodeArena, lang *Language) *Node {
-	if root == nil || lang == nil || len(root.children) == 0 {
+	childCount := resultChildCount(root)
+	if root == nil || lang == nil || childCount == 0 {
 		return root
 	}
 	changed := false
-	out := make([]*Node, 0, len(root.children))
-	for _, child := range root.children {
+	for i := 0; i < childCount; i++ {
+		if shouldFlattenInvisibleRootChild(resultChildAt(root, i), lang) {
+			changed = true
+			break
+		}
+	}
+	if !changed {
+		return root
+	}
+	children := resultChildSliceForMutation(root)
+	out := make([]*Node, 0, len(children))
+	for _, child := range children {
 		if child == nil {
 			continue
 		}
 		if shouldFlattenInvisibleRootChild(child, lang) {
-			for _, grandchild := range child.children {
+			for i := 0; i < resultChildCount(child); i++ {
+				grandchild := resultChildAt(child, i)
 				if grandchild != nil {
 					out = append(out, grandchild)
 				}
 			}
-			changed = true
 			continue
 		}
 		out = append(out, child)
-	}
-	if !changed {
-		return root
 	}
 	if arena != nil {
 		buf := arena.allocNodeSlice(len(out))
@@ -1239,11 +1017,8 @@ func flattenInvisibleRootChildren(root *Node, arena *nodeArena, lang *Language) 
 }
 
 func shouldFlattenInvisibleRootChild(child *Node, lang *Language) bool {
-	if child == nil || child.isExtra() || child.isNamed() || len(child.children) == 0 {
+	if child == nil || child.isExtra() || child.isNamed() || resultChildCount(child) == 0 {
 		return false
 	}
-	if idx := int(child.symbol); idx < len(lang.SymbolMetadata) {
-		return !lang.SymbolMetadata[idx].Visible
-	}
-	return false
+	return lang != nil && !symbolIsVisible(lang, child.symbol)
 }
