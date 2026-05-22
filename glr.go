@@ -447,6 +447,32 @@ func lookupNodeEquivCache(scratch *glrMergeScratch, a, b *Node, depth int) (bool
 	return entry.result, true
 }
 
+func lookupNodeEquivCacheNoAudit(scratch *glrMergeScratch, a, b *Node, depth int) (bool, bool) {
+	if scratch == nil || len(scratch.equivCache) == 0 || scratch.equivEpoch == 0 {
+		return false, false
+	}
+	if depth < 0 || depth > glrNodeEquivCacheMaxDepth {
+		return false, false
+	}
+	depthKey := uint16(depth)
+	ap := uintptr(unsafe.Pointer(a))
+	bp := uintptr(unsafe.Pointer(b))
+	if ap > bp {
+		a, b = b, a
+		ap, bp = bp, ap
+	}
+	entry := &scratch.equivCache[nodeEquivCacheIndex(a, b, depth)]
+	if entry.epoch != scratch.equivEpoch ||
+		entry.a != ap ||
+		entry.b != bp ||
+		entry.depth != depthKey ||
+		entry.aVersion != a.equivVersion ||
+		entry.bVersion != b.equivVersion {
+		return false, false
+	}
+	return entry.result, true
+}
+
 func storeNodeEquivCache(scratch *glrMergeScratch, a, b *Node, depth int, result bool) {
 	if scratch == nil || len(scratch.equivCache) == 0 || scratch.equivEpoch == 0 || a == nil || b == nil {
 		return
@@ -468,6 +494,31 @@ func storeNodeEquivCache(scratch *glrMergeScratch, a, b *Node, depth int, result
 	}
 	idx := nodeEquivCacheIndex(a, b, depth)
 	scratch.equivCache[idx] = glrNodeEquivCacheEntry{
+		a:        ap,
+		b:        bp,
+		aVersion: a.equivVersion,
+		bVersion: b.equivVersion,
+		epoch:    scratch.equivEpoch,
+		depth:    depthKey,
+		result:   result,
+	}
+}
+
+func storeNodeEquivCacheNoAudit(scratch *glrMergeScratch, a, b *Node, depth int, result bool) {
+	if scratch == nil || len(scratch.equivCache) == 0 || scratch.equivEpoch == 0 || a == nil || b == nil {
+		return
+	}
+	if depth < 0 || depth > glrNodeEquivCacheMaxDepth {
+		return
+	}
+	depthKey := uint16(depth)
+	ap := uintptr(unsafe.Pointer(a))
+	bp := uintptr(unsafe.Pointer(b))
+	if ap > bp {
+		a, b = b, a
+		ap, bp = bp, ap
+	}
+	scratch.equivCache[nodeEquivCacheIndex(a, b, depth)] = glrNodeEquivCacheEntry{
 		a:        ap,
 		b:        bp,
 		aVersion: a.equivVersion,
@@ -718,7 +769,10 @@ func stackEntryNodesEquivalentForLanguageWithScratch(scratch *glrMergeScratch, l
 		}
 		if len(a.children) == 0 || len(b.children) == 0 ||
 			a.flags&nodeFlagHasError != 0 || b.flags&nodeFlagHasError != 0 {
-			return stackEntryNodesExactlyEquivalentTerminal(activeEquivAudit(scratch), a, b)
+			if audit := activeEquivAudit(scratch); audit != nil {
+				return stackEntryNodesExactlyEquivalentTerminal(audit, a, b)
+			}
+			return stackEntryNodesExactlyEquivalentTerminalNoAudit(a, b)
 		}
 		return stackEntryNodesExactlyEquivalentWithScratch(scratch, a, b, 0)
 	}
@@ -845,6 +899,13 @@ func languageNeedsExactStackNodeEquivalence(lang *Language) bool {
 
 func stackEntryNodesExactlyEquivalentWithScratch(scratch *glrMergeScratch, a, b *Node, depth int) bool {
 	audit := activeEquivAudit(scratch)
+	if audit == nil {
+		return stackEntryNodesExactlyEquivalentNoAudit(scratch, a, b, depth)
+	}
+	return stackEntryNodesExactlyEquivalentWithAudit(scratch, audit, a, b, depth)
+}
+
+func stackEntryNodesExactlyEquivalentWithAudit(scratch *glrMergeScratch, audit *runtimeAudit, a, b *Node, depth int) bool {
 	if audit != nil {
 		audit.recordEquivExactCall()
 	}
@@ -934,6 +995,65 @@ func stackEntryNodesExactlyEquivalentWithScratch(scratch *glrMergeScratch, a, b 
 	return true
 }
 
+func stackEntryNodesExactlyEquivalentNoAudit(scratch *glrMergeScratch, a, b *Node, depth int) bool {
+	if a == b {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	if hit, ok := lookupNodeEquivCacheNoAudit(scratch, a, b, depth); ok {
+		return hit
+	}
+	if a.symbol != b.symbol ||
+		a.startByte != b.startByte ||
+		a.endByte != b.endByte ||
+		len(a.children) != len(b.children) ||
+		((a.flags^b.flags)&nodeStackEquivFlagMask) != 0 ||
+		a.parseState != b.parseState ||
+		a.preGotoState != b.preGotoState ||
+		a.productionID != b.productionID ||
+		len(a.fieldIDs) != len(b.fieldIDs) {
+		return false
+	}
+	if a.flags&nodeFlagHasError != 0 {
+		return true
+	}
+	for i := range a.fieldIDs {
+		if a.fieldIDs[i] != b.fieldIDs[i] {
+			return false
+		}
+	}
+	if len(a.children) == 0 {
+		return true
+	}
+	for i := range a.children {
+		ca := a.children[i]
+		cb := b.children[i]
+		if ca == cb {
+			continue
+		}
+		if ca == nil || cb == nil {
+			storeNodeEquivCacheNoAudit(scratch, a, b, depth, false)
+			return false
+		}
+		if len(ca.children) == 0 || len(cb.children) == 0 ||
+			ca.flags&nodeFlagHasError != 0 || cb.flags&nodeFlagHasError != 0 {
+			if !stackEntryNodesExactlyEquivalentTerminalNoAudit(ca, cb) {
+				storeNodeEquivCacheNoAudit(scratch, a, b, depth, false)
+				return false
+			}
+			continue
+		}
+		if !stackEntryNodesExactlyEquivalentNoAudit(scratch, ca, cb, depth+1) {
+			storeNodeEquivCacheNoAudit(scratch, a, b, depth, false)
+			return false
+		}
+	}
+	storeNodeEquivCacheNoAudit(scratch, a, b, depth, true)
+	return true
+}
+
 func stackEntryNodesExactlyEquivalentTerminal(audit *runtimeAudit, a, b *Node) bool {
 	if a == b {
 		return true
@@ -978,6 +1098,32 @@ func stackEntryNodesExactlyEquivalentTerminal(audit *runtimeAudit, a, b *Node) b
 		return true
 	}
 	return false
+}
+
+func stackEntryNodesExactlyEquivalentTerminalNoAudit(a, b *Node) bool {
+	if a == b {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	if a.symbol != b.symbol ||
+		a.startByte != b.startByte ||
+		a.endByte != b.endByte ||
+		len(a.children) != len(b.children) ||
+		((a.flags^b.flags)&nodeStackEquivFlagMask) != 0 ||
+		a.parseState != b.parseState ||
+		a.preGotoState != b.preGotoState ||
+		a.productionID != b.productionID ||
+		len(a.fieldIDs) != len(b.fieldIDs) {
+		return false
+	}
+	for i := range a.fieldIDs {
+		if a.fieldIDs[i] != b.fieldIDs[i] {
+			return false
+		}
+	}
+	return a.flags&nodeFlagHasError != 0 || len(a.children) == 0
 }
 
 func stackEntryNodesEquivalentFrontierWithScratch(scratch *glrMergeScratch, a, b *Node, depth int) bool {
