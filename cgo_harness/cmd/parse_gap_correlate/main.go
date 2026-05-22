@@ -223,32 +223,33 @@ type langAgg struct {
 }
 
 type langScore struct {
-	lang               string
-	samples            int
-	parityFailures     int
-	queryFailures      int
-	highlightFailures  int
-	bytes              int64
-	cgoFull            int64
-	goFull             int64
-	goNoTree           int64
-	goQuery            int64
-	goCursor           int64
-	goEdit             int64
-	goNoop             int64
-	goNoTreeRuntime    runtimeStats
-	fullRatio          float64
-	noTreeRatio        float64
-	queryRatio         float64
-	queryOverFull      float64
-	fullOverNoTree     float64
-	attrs              map[string]float64
-	hotAmbiguities     []hotGLRState
-	hotReduceChains    []hotGLRState
-	hotReduceChainRuns []hotGLRState
-	hotMergeStates     []hotGLRState
-	hotEquivStates     []hotGLRState
-	bucket             string
+	lang                string
+	samples             int
+	parityFailures      int
+	queryFailures       int
+	highlightFailures   int
+	bytes               int64
+	cgoFull             int64
+	goFull              int64
+	goNoTree            int64
+	goQuery             int64
+	goCursor            int64
+	goEdit              int64
+	goNoop              int64
+	goNoTreeRuntime     runtimeStats
+	fullRatio           float64
+	noTreeRatio         float64
+	queryRatio          float64
+	queryOverFull       float64
+	fullOverNoTree      float64
+	attrs               map[string]float64
+	hotAmbiguities      []hotGLRState
+	hotReduceChains     []hotGLRState
+	hotReduceChainRuns  []hotGLRState
+	hintReduceChainRuns []hotGLRState
+	hotMergeStates      []hotGLRState
+	hotEquivStates      []hotGLRState
+	bucket              string
 }
 
 func main() {
@@ -465,36 +466,11 @@ func scoreRows(rows []reportRow) []langScore {
 			s.attrs["result_build_share"] = float64(r.ResultBuildNS) / wall
 			s.attrs["result_compat_share"] = float64(r.ResultCompatibilityNS) / wall
 			s.attrs["normalization_share"] = float64(r.NormalizationNS) / wall
-			s.hotAmbiguities = topHotStates(r.HotAmbiguities, func(h hotGLRState) uint64 {
-				if h.ActionNS > 0 {
-					return uint64(h.ActionNS)
-				}
-				if h.StackInTotal > 0 {
-					return h.StackInTotal
-				}
-				return h.Hits
-			}, 5)
-			s.hotReduceChains = topHotStates(r.HotReduceChains, func(h hotGLRState) uint64 {
-				if h.ReduceChainNS > 0 {
-					return uint64(h.ReduceChainNS)
-				}
-				return h.ReduceChainSteps
-			}, 5)
-			s.hotReduceChainRuns = topHotStates(r.HotReduceChainRuns, func(h hotGLRState) uint64 {
-				if h.ReduceChainNS > 0 {
-					return uint64(h.ReduceChainNS)
-				}
-				if h.ReduceChainSteps > 0 {
-					return h.ReduceChainSteps
-				}
-				return h.ReduceChainRuns
-			}, 5)
-			s.hotMergeStates = topHotStates(r.HotMergeStates, func(h hotGLRState) uint64 {
-				return h.MergeStacksIn
-			}, 5)
-			s.hotEquivStates = topHotStates(r.HotEquivStates, func(h hotGLRState) uint64 {
-				return h.EquivCacheLookups + h.EquivExactCalls + h.EquivFrontierCalls
-			}, 5)
+		}
+		if gf := agg.modes["go_full"]; gf != nil && runtimeHasHotShapes(gf.runtime) {
+			assignHotShapes(&s, gf.runtime)
+		} else if nt := agg.modes["go_no_tree"]; nt != nil && runtimeHasHotShapes(nt.runtime) {
+			assignHotShapes(&s, nt.runtime)
 		}
 		s.bucket = classify(s)
 		scores = append(scores, s)
@@ -506,6 +482,46 @@ func scoreRows(rows []reportRow) []langScore {
 		return scores[i].fullRatio > scores[j].fullRatio
 	})
 	return scores
+}
+
+func runtimeHasHotShapes(r runtimeStats) bool {
+	return len(r.HotAmbiguities) > 0 || len(r.HotReduceChains) > 0 ||
+		len(r.HotReduceChainRuns) > 0 || len(r.HotMergeStates) > 0 ||
+		len(r.HotEquivStates) > 0
+}
+
+func assignHotShapes(s *langScore, r runtimeStats) {
+	s.hotAmbiguities = topHotStates(r.HotAmbiguities, func(h hotGLRState) uint64 {
+		if h.ActionNS > 0 {
+			return uint64(h.ActionNS)
+		}
+		if h.StackInTotal > 0 {
+			return h.StackInTotal
+		}
+		return h.Hits
+	}, 5)
+	s.hotReduceChains = topHotStates(r.HotReduceChains, func(h hotGLRState) uint64 {
+		if h.ReduceChainNS > 0 {
+			return uint64(h.ReduceChainNS)
+		}
+		return h.ReduceChainSteps
+	}, 5)
+	s.hotReduceChainRuns = topHotStates(r.HotReduceChainRuns, func(h hotGLRState) uint64 {
+		if h.ReduceChainNS > 0 {
+			return uint64(h.ReduceChainNS)
+		}
+		if h.ReduceChainSteps > 0 {
+			return h.ReduceChainSteps
+		}
+		return h.ReduceChainRuns
+	}, 5)
+	s.hintReduceChainRuns = aggregateHotStates(r.HotReduceChainRuns)
+	s.hotMergeStates = topHotStates(r.HotMergeStates, func(h hotGLRState) uint64 {
+		return h.MergeStacksIn
+	}, 5)
+	s.hotEquivStates = topHotStates(r.HotEquivStates, func(h hotGLRState) uint64 {
+		return h.EquivCacheLookups + h.EquivExactCalls + h.EquivFrontierCalls
+	}, 5)
 }
 
 func modeNS(agg *langAgg, mode string) int64 {
@@ -645,6 +661,7 @@ func render(scores []langScore) {
 			printHotEquivTable("equivalence-state buckets", s.hotEquivStates)
 		}
 	}
+	printReduceChainHintCandidates(scores)
 
 	fmt.Println()
 	fmt.Println("## Attention Buckets")
@@ -1023,6 +1040,143 @@ func printHotReduceChainRunTable(label string, rows []hotGLRState) {
 	fmt.Println()
 }
 
+type reduceChainHintCandidate struct {
+	lang           string
+	state          uint32
+	lookahead      uint16
+	lookaheadName  string
+	terminalAction string
+	terminalStates []uint32
+	runs           uint64
+	steps          uint64
+	classHits      uint64
+	maxLen         int
+	ns             int64
+}
+
+func printReduceChainHintCandidates(scores []langScore) {
+	candidates := collectReduceChainHintCandidates(scores)
+	if len(candidates) == 0 {
+		return
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].ns == candidates[j].ns {
+			if candidates[i].steps == candidates[j].steps {
+				if candidates[i].lang == candidates[j].lang {
+					return candidates[i].state < candidates[j].state
+				}
+				return candidates[i].lang < candidates[j].lang
+			}
+			return candidates[i].steps > candidates[j].steps
+		}
+		return candidates[i].ns > candidates[j].ns
+	})
+	if len(candidates) > 16 {
+		candidates = candidates[:16]
+	}
+	fmt.Println()
+	fmt.Println("## Reduce-Chain Hint Candidates")
+	fmt.Println()
+	fmt.Println("| lang | state | lookahead | lookahead_name | terminal_action | terminal_states | runs | steps | class_hits | avg_len | max_len | ns |")
+	fmt.Println("| --- | ---: | ---: | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |")
+	for _, c := range candidates {
+		fmt.Printf("| %s | %d | %d | `%s` | `%s` | `%s` | %d | %d | %d | %.2f | %d | %s |\n",
+			c.lang,
+			c.state,
+			c.lookahead,
+			escapePipes(c.lookaheadName),
+			escapePipes(c.terminalAction),
+			uint32ListText(c.terminalStates),
+			c.runs,
+			c.steps,
+			c.classHits,
+			safeRatioUint(c.steps, c.runs),
+			c.maxLen,
+			nsText(c.ns),
+		)
+	}
+}
+
+func collectReduceChainHintCandidates(scores []langScore) []reduceChainHintCandidate {
+	type key struct {
+		lang              string
+		state             uint32
+		lookahead         uint16
+		terminalAction    string
+		terminalActionCls uint8
+	}
+	type agg struct {
+		reduceChainHintCandidate
+		terminalSeen map[uint32]struct{}
+	}
+	byKey := map[key]*agg{}
+	for _, s := range scores {
+		for _, h := range s.hintReduceChainRuns {
+			if h.ReduceChainRuns == 0 || h.ReduceChainSteps == 0 {
+				continue
+			}
+			if h.ReduceChainStopShift != h.ReduceChainRuns {
+				continue
+			}
+			if h.ReduceChainStopMulti != 0 || h.ReduceChainStopNoAction != 0 ||
+				h.ReduceChainStopAccept != 0 || h.ReduceChainStopDead != 0 ||
+				h.ReduceChainStopCycle != 0 || h.ReduceChainStopLimit != 0 {
+				continue
+			}
+			terminalAction := h.ReduceChainTerminalActionName
+			if terminalAction == "" && h.ReduceChainTerminalActionClass != 0 {
+				terminalAction = classifiedActionClassName(h.ReduceChainTerminalActionClass)
+			}
+			if terminalAction != "single_shift" {
+				continue
+			}
+			k := key{
+				lang:              s.lang,
+				state:             h.State,
+				lookahead:         h.Lookahead,
+				terminalAction:    terminalAction,
+				terminalActionCls: h.ReduceChainTerminalActionClass,
+			}
+			dst := byKey[k]
+			if dst == nil {
+				dst = &agg{
+					reduceChainHintCandidate: reduceChainHintCandidate{
+						lang:           s.lang,
+						state:          h.State,
+						lookahead:      h.Lookahead,
+						lookaheadName:  h.LookaheadName,
+						terminalAction: terminalAction,
+					},
+					terminalSeen: map[uint32]struct{}{},
+				}
+				byKey[k] = dst
+			}
+			dst.runs += h.ReduceChainRuns
+			dst.steps += h.ReduceChainSteps
+			dst.classHits += h.ReduceChainClassHits
+			dst.ns += h.ReduceChainNS
+			if h.ReduceChainMaxLen > dst.maxLen {
+				dst.maxLen = h.ReduceChainMaxLen
+			}
+			if _, ok := dst.terminalSeen[h.ReduceChainTerminalState]; !ok {
+				dst.terminalSeen[h.ReduceChainTerminalState] = struct{}{}
+				dst.terminalStates = append(dst.terminalStates, h.ReduceChainTerminalState)
+			}
+		}
+	}
+	out := make([]reduceChainHintCandidate, 0, len(byKey))
+	for _, candidate := range byKey {
+		if candidate.runs < 8 || candidate.steps < 16 || candidate.maxLen > 32 {
+			continue
+		}
+		sort.Slice(candidate.terminalStates, func(i, j int) bool {
+			return candidate.terminalStates[i] < candidate.terminalStates[j]
+		})
+		out = append(out, candidate.reduceChainHintCandidate)
+	}
+	return out
+}
+
 func printHotEquivTable(label string, rows []hotGLRState) {
 	if len(rows) == 0 {
 		return
@@ -1055,6 +1209,17 @@ func printHotEquivTable(label string, rows []hotGLRState) {
 
 func escapePipes(s string) string {
 	return strings.ReplaceAll(s, "|", "\\|")
+}
+
+func uint32ListText(values []uint32) string {
+	if len(values) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(values))
+	for _, value := range values {
+		parts = append(parts, fmt.Sprintf("%d", value))
+	}
+	return strings.Join(parts, ",")
 }
 
 func classifiedActionClassName(class uint8) string {
