@@ -306,20 +306,12 @@ func (p *Parser) chainSingleReduceActions(s *glrStack, tok Token, anyReduced *bo
 	if s == nil || s.dead || s.accepted || s.shifted {
 		return false
 	}
+	if p.ambiguityProfile != nil {
+		return p.chainSingleReduceActionsProfiled(s, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
+	}
 	const maxInlineReduceChain = 256
 	parseActions := p.language.ParseActions
 	chainLen := 0
-	chainStartState := s.top().state
-	chainStart := time.Time{}
-	if p.ambiguityProfile != nil {
-		chainStart = time.Now()
-	}
-	recordChainRun := func(stop reduceChainStopReason) {
-		if p.ambiguityProfile == nil {
-			return
-		}
-		p.ambiguityProfile.recordReduceChainRun(chainStartState, tok.Symbol, chainLen, chainLen, time.Since(chainStart).Nanoseconds(), stop)
-	}
 	var lastSig reduceChainSignature
 	repeatedSigCount := 0
 	for chainLen < maxInlineReduceChain {
@@ -327,7 +319,6 @@ func (p *Parser) chainSingleReduceActions(s *glrStack, tok Token, anyReduced *bo
 		currentDepth := s.depth()
 		actionIdx := p.lookupActionIndex(currentState, tok.Symbol)
 		if actionIdx == 0 || int(actionIdx) >= len(parseActions) {
-			recordChainRun(reduceChainStopNoAction)
 			return false
 		}
 
@@ -336,7 +327,6 @@ func (p *Parser) chainSingleReduceActions(s *glrStack, tok Token, anyReduced *bo
 			if perfCountersEnabled {
 				perfRecordReduceChainBreakMulti()
 			}
-			recordChainRun(reduceChainStopMulti)
 			return false
 		}
 
@@ -350,29 +340,90 @@ func (p *Parser) chainSingleReduceActions(s *glrStack, tok Token, anyReduced *bo
 					fmt.Printf("      -> REDUCE-CHAIN CYCLE state=%d depth=%d sym=%d prod=%d count=%d\n",
 						currentState, currentDepth, next.Symbol, next.ProductionID, repeatedSigCount)
 				}
-				recordChainRun(reduceChainStopCycle)
 				return true
 			}
 			chainLen++
 			if perfCountersEnabled {
 				perfRecordReduceChainStep(chainLen)
 			}
-			reduceStart := time.Time{}
-			if p.ambiguityProfile != nil {
-				reduceStart = time.Now()
-			}
 			p.applyReduceActionDispatch(s, next, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
-			if p.ambiguityProfile != nil {
-				p.ambiguityProfile.recordReduceChainStep(currentState, tok.Symbol, next, chainLen, time.Since(reduceStart).Nanoseconds())
+			if s.dead || s.accepted || s.shifted {
+				return false
 			}
+		case ParseActionShift:
+			if perfCountersEnabled {
+				perfRecordReduceChainBreakShift()
+			}
+			return false
+		case ParseActionAccept:
+			if perfCountersEnabled {
+				perfRecordReduceChainBreakAccept()
+			}
+			return false
+		default:
+			if perfCountersEnabled {
+				perfRecordReduceChainBreakMulti()
+			}
+			return false
+		}
+	}
+	return false
+}
+
+func (p *Parser) chainSingleReduceActionsProfiled(s *glrStack, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, deferParentLinks bool, trackChildErrors *bool) bool {
+	const maxInlineReduceChain = 256
+	parseActions := p.language.ParseActions
+	chainLen := 0
+	chainStartState := s.top().state
+	chainStart := time.Now()
+	var lastSig reduceChainSignature
+	repeatedSigCount := 0
+	for chainLen < maxInlineReduceChain {
+		currentState := s.top().state
+		currentDepth := s.depth()
+		actionIdx := p.lookupActionIndex(currentState, tok.Symbol)
+		if actionIdx == 0 || int(actionIdx) >= len(parseActions) {
+			p.ambiguityProfile.recordReduceChainRun(chainStartState, tok.Symbol, chainLen, chainLen, time.Since(chainStart).Nanoseconds(), reduceChainStopNoAction)
+			return false
+		}
+
+		actions := parseActions[actionIdx].Actions
+		if len(actions) != 1 {
+			if perfCountersEnabled {
+				perfRecordReduceChainBreakMulti()
+			}
+			p.ambiguityProfile.recordReduceChainRun(chainStartState, tok.Symbol, chainLen, chainLen, time.Since(chainStart).Nanoseconds(), reduceChainStopMulti)
+			return false
+		}
+
+		next := actions[0]
+		switch next.Type {
+		case ParseActionReduce:
+			var repeated bool
+			repeatedSigCount, repeated = noteRepeatedReduceChainAction(&lastSig, repeatedSigCount, currentState, currentDepth, next)
+			if repeated {
+				if p != nil && p.glrTrace {
+					fmt.Printf("      -> REDUCE-CHAIN CYCLE state=%d depth=%d sym=%d prod=%d count=%d\n",
+						currentState, currentDepth, next.Symbol, next.ProductionID, repeatedSigCount)
+				}
+				p.ambiguityProfile.recordReduceChainRun(chainStartState, tok.Symbol, chainLen, chainLen, time.Since(chainStart).Nanoseconds(), reduceChainStopCycle)
+				return true
+			}
+			chainLen++
+			if perfCountersEnabled {
+				perfRecordReduceChainStep(chainLen)
+			}
+			reduceStart := time.Now()
+			p.applyReduceActionDispatch(s, next, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
+			p.ambiguityProfile.recordReduceChainStep(currentState, tok.Symbol, next, chainLen, time.Since(reduceStart).Nanoseconds())
 			if s.dead || s.accepted || s.shifted {
 				switch {
 				case s.accepted:
-					recordChainRun(reduceChainStopAccept)
+					p.ambiguityProfile.recordReduceChainRun(chainStartState, tok.Symbol, chainLen, chainLen, time.Since(chainStart).Nanoseconds(), reduceChainStopAccept)
 				case s.shifted:
-					recordChainRun(reduceChainStopShift)
+					p.ambiguityProfile.recordReduceChainRun(chainStartState, tok.Symbol, chainLen, chainLen, time.Since(chainStart).Nanoseconds(), reduceChainStopShift)
 				default:
-					recordChainRun(reduceChainStopDead)
+					p.ambiguityProfile.recordReduceChainRun(chainStartState, tok.Symbol, chainLen, chainLen, time.Since(chainStart).Nanoseconds(), reduceChainStopDead)
 				}
 				return false
 			}
@@ -380,23 +431,23 @@ func (p *Parser) chainSingleReduceActions(s *glrStack, tok Token, anyReduced *bo
 			if perfCountersEnabled {
 				perfRecordReduceChainBreakShift()
 			}
-			recordChainRun(reduceChainStopShift)
+			p.ambiguityProfile.recordReduceChainRun(chainStartState, tok.Symbol, chainLen, chainLen, time.Since(chainStart).Nanoseconds(), reduceChainStopShift)
 			return false
 		case ParseActionAccept:
 			if perfCountersEnabled {
 				perfRecordReduceChainBreakAccept()
 			}
-			recordChainRun(reduceChainStopAccept)
+			p.ambiguityProfile.recordReduceChainRun(chainStartState, tok.Symbol, chainLen, chainLen, time.Since(chainStart).Nanoseconds(), reduceChainStopAccept)
 			return false
 		default:
 			if perfCountersEnabled {
 				perfRecordReduceChainBreakMulti()
 			}
-			recordChainRun(reduceChainStopMulti)
+			p.ambiguityProfile.recordReduceChainRun(chainStartState, tok.Symbol, chainLen, chainLen, time.Since(chainStart).Nanoseconds(), reduceChainStopMulti)
 			return false
 		}
 	}
-	recordChainRun(reduceChainStopLimit)
+	p.ambiguityProfile.recordReduceChainRun(chainStartState, tok.Symbol, chainLen, chainLen, time.Since(chainStart).Nanoseconds(), reduceChainStopLimit)
 	return false
 }
 
