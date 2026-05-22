@@ -2250,6 +2250,13 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			if phaseTiming {
 				actionLookupNanos += time.Since(actionStart).Nanoseconds()
 			}
+			if parseStacksShareState(stacks[:numStacks], currentState) {
+				if reTok, ok := p.tryTypeScriptContextualPropertyKeyword(tok, currentState, source); ok {
+					tok = reTok
+					needToken = false
+					goto retryAction
+				}
+			}
 			p.traceStackActions(si, currentState, tok.Symbol, actions)
 			if p.ambiguityProfile != nil {
 				p.ambiguityProfile.record(currentState, tok.Symbol, actions, numStacks)
@@ -3431,6 +3438,69 @@ func typescriptRepetitionShiftConflictChoice(lang *Language, tok Token, state St
 		return ParseAction{}, false
 	}
 	return repetitionShiftConflictChoice(actions)
+}
+
+func (p *Parser) tryTypeScriptContextualPropertyKeyword(tok Token, state StateID, source []byte) (Token, bool) {
+	if p == nil || p.language == nil {
+		return Token{}, false
+	}
+	switch p.language.Name {
+	case "typescript", "tsx":
+	default:
+		return Token{}, false
+	}
+	if !symbolHasName(p.language, tok.Symbol, "property_identifier") && !(tok.Text == "readonly" && symbolHasName(p.language, tok.Symbol, "identifier")) {
+		return Token{}, false
+	}
+	if tok.Text == "" {
+		return Token{}, false
+	}
+	if !isTypeScriptContextualPropertyKeyword(tok.Text) {
+		return Token{}, false
+	}
+	if !typeScriptContextualKeywordHasFollowingOperand(tok, source) {
+		return Token{}, false
+	}
+	keywordSym, ok := p.language.SymbolByName(tok.Text)
+	if !ok || keywordSym == tok.Symbol {
+		return Token{}, false
+	}
+	actionIdx := p.lookupActionIndex(state, keywordSym)
+	if actionIdx == 0 || int(actionIdx) >= len(p.language.ParseActions) || len(p.language.ParseActions[actionIdx].Actions) == 0 {
+		return Token{}, false
+	}
+	tok.Symbol = keywordSym
+	return tok, true
+}
+
+func isTypeScriptContextualPropertyKeyword(text string) bool {
+	switch text {
+	case "abstract", "accessor", "any", "as", "bigint", "boolean", "class", "const", "declare", "enum", "export", "extends", "function", "import", "in", "infer", "interface", "keyof", "let", "module", "namespace", "never", "new", "number", "object", "override", "private", "protected", "public", "readonly", "static", "string", "symbol", "type", "typeof", "undefined", "unknown", "void":
+		return true
+	default:
+		return false
+	}
+}
+
+func typeScriptContextualKeywordHasFollowingOperand(tok Token, source []byte) bool {
+	pos := int(tok.EndByte)
+	for pos < len(source) {
+		switch source[pos] {
+		case ' ', '\t', '\n', '\r':
+			pos++
+			continue
+		}
+		break
+	}
+	if pos >= len(source) {
+		return false
+	}
+	switch source[pos] {
+	case '(', ')', '{', '}', ';', ',', ':':
+		return false
+	default:
+		return true
+	}
 }
 
 func rustRepetitionShiftConflictChoice(lang *Language, tok Token, state StateID, actions []ParseAction) (ParseAction, bool) {

@@ -11,65 +11,90 @@ type typeScriptNormalizationContext struct {
 	canRewriteClassDeclarations bool
 	canClearEnumBodyFields      bool
 
-	callSym                Symbol
-	callNamed              bool
-	instantiationExprSym   Symbol
-	instantiationExprNamed bool
-	typeArgsSym            Symbol
-	typeArgsNamed          bool
-	argsSym                Symbol
-	argsNamed              bool
-	predefinedTypeSym      Symbol
-	predefinedTypeNamed    bool
-	asExpressionSym        Symbol
-	asExpressionNamed      bool
-	functionFieldID        FieldID
-	typeArgsFieldID        FieldID
-	argumentsFieldID       FieldID
-	binaryExpressionSym    Symbol
-	assignmentExprSym      Symbol
-	assignmentExprNamed    bool
-	ternaryExprSym         Symbol
-	ternaryExprNamed       bool
-	unionTypeSym           Symbol
-	unionTypeNamed         bool
-	intersectionTypeSym    Symbol
-	intersectionTypeNamed  bool
-	objectTypeSym          Symbol
-	objectTypeNamed        bool
-	propertySignatureSym   Symbol
-	propertySignatureNamed bool
-	typeAnnotationSym      Symbol
-	typeAnnotationNamed    bool
-	objectSym              Symbol
-	pairSym                Symbol
-	propertyIdentifierSym  Symbol
-	colonSym               Symbol
-	greaterThanSym         Symbol
-	parenthesizedExprSym   Symbol
-	lessThanSym            Symbol
-	identifierSym          Symbol
-	memberExpressionSym    Symbol
-	sequenceExpressionSym  Symbol
-	typeIdentifierSym      Symbol
-	typeIdentifierNamed    bool
-	hasTypeIdentifierSym   bool
-	typeAssertionSym       Symbol
-	arrowFunctionSym       Symbol
-	typeParametersSym      Symbol
-	typeParametersNamed    bool
-	typeParameterSym       Symbol
-	typeParameterNamed     bool
-	expressionStatementSym Symbol
-	classSym               Symbol
-	classDeclarationSym    Symbol
-	classDeclarationNamed  bool
-	enumBodySym            Symbol
-	enumAssignmentSym      Symbol
-	importSym              Symbol
-	hasImportSym           bool
-	nameFieldID            FieldID
-	typeParametersFieldID  FieldID
+	callSym                    Symbol
+	callNamed                  bool
+	instantiationExprSym       Symbol
+	instantiationExprNamed     bool
+	typeArgsSym                Symbol
+	typeArgsNamed              bool
+	argsSym                    Symbol
+	argsNamed                  bool
+	predefinedTypeSym          Symbol
+	predefinedTypeNamed        bool
+	asExpressionSym            Symbol
+	asExpressionNamed          bool
+	functionFieldID            FieldID
+	typeArgsFieldID            FieldID
+	argumentsFieldID           FieldID
+	binaryExpressionSym        Symbol
+	assignmentExprSym          Symbol
+	assignmentExprNamed        bool
+	ternaryExprSym             Symbol
+	ternaryExprNamed           bool
+	unionTypeSym               Symbol
+	unionTypeNamed             bool
+	intersectionTypeSym        Symbol
+	intersectionTypeNamed      bool
+	objectTypeSym              Symbol
+	objectTypeNamed            bool
+	propertySignatureSym       Symbol
+	propertySignatureNamed     bool
+	publicFieldDefinitionSym   Symbol
+	abstractMethodSignatureSym Symbol
+	typeAnnotationSym          Symbol
+	typeAnnotationNamed        bool
+	methodDefinitionSym        Symbol
+	methodSignatureSym         Symbol
+	accessibilityModSym        Symbol
+	accessibilityModNamed      bool
+	objectSym                  Symbol
+	pairSym                    Symbol
+	propertyIdentifierSym      Symbol
+	propertyIdentifierNamed    bool
+	colonSym                   Symbol
+	publicSym                  Symbol
+	privateSym                 Symbol
+	protectedSym               Symbol
+	staticSym                  Symbol
+	readonlySym                Symbol
+	abstractSym                Symbol
+	asyncSym                   Symbol
+	getSym                     Symbol
+	setSym                     Symbol
+	numberSym                  Symbol
+	stringSym                  Symbol
+	stringFragmentSym          Symbol
+	greaterThanSym             Symbol
+	parenthesizedExprSym       Symbol
+	lessThanSym                Symbol
+	identifierSym              Symbol
+	memberExpressionSym        Symbol
+	sequenceExpressionSym      Symbol
+	typeIdentifierSym          Symbol
+	typeIdentifierNamed        bool
+	hasTypeIdentifierSym       bool
+	typeAssertionSym           Symbol
+	arrowFunctionSym           Symbol
+	typeParametersSym          Symbol
+	typeParametersNamed        bool
+	typeParameterSym           Symbol
+	typeParameterNamed         bool
+	expressionStatementSym     Symbol
+	classSym                   Symbol
+	classDeclarationSym        Symbol
+	classDeclarationNamed      bool
+	enumBodySym                Symbol
+	enumAssignmentSym          Symbol
+	importSym                  Symbol
+	hasImportSym               bool
+	typeQuerySym               Symbol
+	nameFieldID                FieldID
+	typeParametersFieldID      FieldID
+	parametersFieldID          FieldID
+	returnTypeFieldID          FieldID
+	typeFieldID                FieldID
+	bodyFieldID                FieldID
+	valueFieldID               FieldID
 }
 
 func normalizeTypeScriptCompatibility(root *Node, source []byte, lang *Language) {
@@ -81,6 +106,7 @@ func normalizeTypeScriptCompatibility(root *Node, source []byte, lang *Language)
 	walkResultTreeDenseFirst(root, func(n *Node) {
 		normalizeTypeScriptIdentifierKeywordAliases(n, &ctx)
 		normalizeTypeScriptImportKeywordNamedness(n, &ctx)
+		normalizeTypeScriptRecoveredMemberModifiers(n, &ctx)
 		if ctx.canClearEnumBodyFields && n.symbol == ctx.enumBodySym && len(n.fieldIDs) > 0 {
 			limit := len(n.children)
 			if len(n.fieldIDs) < limit {
@@ -166,6 +192,10 @@ func normalizeTypeScriptImportKeywordNamedness(node *Node, ctx *typeScriptNormal
 	if node == nil || ctx == nil || !ctx.hasImportSym || node.symbol != ctx.importSym {
 		return
 	}
+	if typeScriptNextNonspaceByte(ctx.source, node.endByte) == '(' {
+		node.setNamed(true)
+		return
+	}
 	node.setNamed(false)
 }
 
@@ -197,6 +227,10 @@ func normalizeTypeScriptRecoveredNamespaceRoot(root *Node, source []byte, lang *
 			continue
 		}
 		if child.Type(lang) != "namespace" {
+			if child.symbol == internalModuleSym {
+				normalizeTypeScriptRecoveredInternalModuleRoot(root, source, lang, child, i, stmtBlockSym, exprStmtSym, hasExprStmtSym, programSym, hasProgramSym)
+				return
+			}
 			if child.Type(lang) != "comment" {
 				return
 			}
@@ -290,6 +324,95 @@ func normalizeTypeScriptRecoveredNamespaceRoot(root *Node, source []byte, lang *
 		retagResultRoot(root, programSym, symbolIsNamed(lang, programSym))
 	}
 	replaceNodeChildrenUnfielded(root, newChildren)
+}
+
+func normalizeTypeScriptRecoveredInternalModuleRoot(root *Node, source []byte, lang *Language, module *Node, moduleIdx int, stmtBlockSym, exprStmtSym Symbol, hasExprStmtSym bool, programSym Symbol, hasProgramSym bool) {
+	if root == nil || module == nil || moduleIdx+1 >= len(root.children) {
+		return
+	}
+	openBrace := root.children[moduleIdx+1]
+	if openBrace == nil || openBrace.startByte >= openBrace.endByte || int(openBrace.endByte) > len(source) || string(source[openBrace.startByte:openBrace.endByte]) != "{" {
+		return
+	}
+
+	bodyChildren := make([]*Node, 0, len(root.children)-(moduleIdx+2))
+	for i := moduleIdx + 2; i < len(root.children); i++ {
+		child := root.children[i]
+		if child == nil || typeScriptWhitespaceOnlyRecoverySubtree(child, source) || typeScriptRecoveredNamespaceCloseBrace(child, source) {
+			continue
+		}
+		if countFlattenedHiddenChildren(child, lang.SymbolMetadata) > 0 {
+			count := countFlattenedHiddenChildren(child, lang.SymbolMetadata)
+			start := len(bodyChildren)
+			bodyChildren = append(bodyChildren, make([]*Node, count)...)
+			appendFlattenedHiddenChildren(bodyChildren[start:], 0, child, lang.SymbolMetadata)
+			continue
+		}
+		bodyChildren = append(bodyChildren, child)
+	}
+	if len(bodyChildren) == 0 {
+		return
+	}
+	if root.ownerArena != nil {
+		buf := root.ownerArena.allocNodeSlice(len(bodyChildren))
+		copy(buf, bodyChildren)
+		bodyChildren = buf
+	}
+
+	stmtBlockNamed := symbolIsNamed(lang, stmtBlockSym)
+	block := newParentNodeInArena(root.ownerArena, stmtBlockSym, stmtBlockNamed, bodyChildren, nil, 0)
+	block.startByte = openBrace.startByte
+	block.startPoint = openBrace.startPoint
+	last := bodyChildren[len(bodyChildren)-1]
+	block.endByte = last.endByte
+	block.endPoint = last.endPoint
+	populateParentNode(block, block.children)
+
+	moduleChildren := phpAllocChildren(root.ownerArena, len(module.children)+1)
+	copy(moduleChildren, module.children)
+	moduleChildren[len(module.children)] = block
+	rewrittenModule := cloneNodeInArena(root.ownerArena, module)
+	rewrittenModule.children = moduleChildren
+	rewrittenModule.endByte = block.endByte
+	rewrittenModule.endPoint = block.endPoint
+	populateParentNode(rewrittenModule, rewrittenModule.children)
+
+	wrapped := rewrittenModule
+	if hasExprStmtSym {
+		exprChildren := phpAllocChildren(root.ownerArena, 1)
+		exprChildren[0] = rewrittenModule
+		exprStmt := newParentNodeInArena(root.ownerArena, exprStmtSym, symbolIsNamed(lang, exprStmtSym), exprChildren, nil, 0)
+		exprStmt.startByte = rewrittenModule.startByte
+		exprStmt.startPoint = rewrittenModule.startPoint
+		exprStmt.endByte = rewrittenModule.endByte
+		exprStmt.endPoint = rewrittenModule.endPoint
+		populateParentNode(exprStmt, exprStmt.children)
+		wrapped = exprStmt
+	}
+
+	newChildren := make([]*Node, 0, moduleIdx+1)
+	for i := 0; i < moduleIdx; i++ {
+		if root.children[i] != nil {
+			newChildren = append(newChildren, root.children[i])
+		}
+	}
+	newChildren = append(newChildren, wrapped)
+	if root.ownerArena != nil {
+		buf := root.ownerArena.allocNodeSlice(len(newChildren))
+		copy(buf, newChildren)
+		newChildren = buf
+	}
+	if hasProgramSym {
+		retagResultRoot(root, programSym, symbolIsNamed(lang, programSym))
+	}
+	replaceNodeChildrenUnfielded(root, newChildren)
+}
+
+func typeScriptRecoveredNamespaceCloseBrace(node *Node, source []byte) bool {
+	if node == nil || node.startByte >= node.endByte || int(node.endByte) > len(source) {
+		return false
+	}
+	return string(source[node.startByte:node.endByte]) == "}"
 }
 
 func typeScriptWhitespaceOnlyRecoverySubtree(node *Node, source []byte) bool {
@@ -395,8 +518,52 @@ func newTypeScriptNormalizationContext(source []byte, lang *Language) (typeScrip
 			ctx.objectSym = syms[3]
 			ctx.pairSym = syms[4]
 			ctx.propertyIdentifierSym = syms[5]
+			ctx.propertyIdentifierNamed = symbolIsNamed(lang, ctx.propertyIdentifierSym)
 			ctx.colonSym = syms[6]
 		}
+	}
+
+	if syms, ok := languageSymbols(lang,
+		"method_definition",
+		"method_signature",
+		"accessibility_modifier",
+		"property_identifier",
+		"public_field_definition",
+		"abstract_method_signature",
+		"number",
+		"string",
+		"string_fragment",
+	); ok {
+		ctx.methodDefinitionSym = syms[0]
+		ctx.methodSignatureSym = syms[1]
+		ctx.accessibilityModSym = syms[2]
+		ctx.accessibilityModNamed = symbolIsNamed(lang, ctx.accessibilityModSym)
+		if ctx.propertyIdentifierSym == 0 {
+			ctx.propertyIdentifierSym = syms[3]
+			ctx.propertyIdentifierNamed = symbolIsNamed(lang, ctx.propertyIdentifierSym)
+		}
+		ctx.publicFieldDefinitionSym = syms[4]
+		ctx.abstractMethodSignatureSym = syms[5]
+		ctx.numberSym = syms[6]
+		ctx.stringSym = syms[7]
+		ctx.stringFragmentSym = syms[8]
+		ctx.publicSym, _ = lang.SymbolByName("public")
+		ctx.privateSym, _ = lang.SymbolByName("private")
+		ctx.protectedSym, _ = lang.SymbolByName("protected")
+		ctx.staticSym, _ = lang.SymbolByName("static")
+		ctx.readonlySym, _ = lang.SymbolByName("readonly")
+		ctx.abstractSym, _ = lang.SymbolByName("abstract")
+		ctx.asyncSym, _ = lang.SymbolByName("async")
+		ctx.getSym, _ = lang.SymbolByName("get")
+		ctx.setSym, _ = lang.SymbolByName("set")
+		if ctx.nameFieldID == 0 {
+			ctx.nameFieldID, _ = lang.FieldByName("name")
+		}
+		ctx.parametersFieldID, _ = lang.FieldByName("parameters")
+		ctx.returnTypeFieldID, _ = lang.FieldByName("return_type")
+		ctx.typeFieldID, _ = lang.FieldByName("type")
+		ctx.bodyFieldID, _ = lang.FieldByName("body")
+		ctx.valueFieldID, _ = lang.FieldByName("value")
 	}
 
 	if enumBodySym, ok := lang.SymbolByName("enum_body"); ok {
@@ -407,6 +574,7 @@ func newTypeScriptNormalizationContext(source []byte, lang *Language) (typeScrip
 		}
 	}
 	ctx.importSym, ctx.hasImportSym = lang.SymbolByName("import")
+	ctx.typeQuerySym, _ = lang.SymbolByName("type_query")
 
 	if syms, ok := visibleLanguageSymbols(lang, true,
 		"type_assertion",
@@ -446,6 +614,396 @@ func newTypeScriptNormalizationContext(source []byte, lang *Language) (typeScrip
 	}
 
 	return ctx, ctx.canRewriteGenericCalls || ctx.canRewriteInstantiatedCalls || ctx.canRewriteAsExpressions || ctx.canRewriteGenericArrows || ctx.canRewriteClassDeclarations || ctx.canClearEnumBodyFields
+}
+
+type typeScriptMemberTokenKind uint8
+
+const (
+	typeScriptMemberTokenIdentifier typeScriptMemberTokenKind = iota
+	typeScriptMemberTokenNumber
+	typeScriptMemberTokenString
+)
+
+type typeScriptMemberToken struct {
+	text       string
+	startByte  uint32
+	endByte    uint32
+	startPoint Point
+	endPoint   Point
+	kind       typeScriptMemberTokenKind
+}
+
+func normalizeTypeScriptRecoveredMemberModifiers(node *Node, ctx *typeScriptNormalizationContext) {
+	if node == nil || ctx == nil || ctx.lang == nil || ctx.accessibilityModSym == 0 || len(node.children) == 0 {
+		return
+	}
+	switch node.symbol {
+	case ctx.methodDefinitionSym, ctx.methodSignatureSym, ctx.abstractMethodSignatureSym, ctx.propertySignatureSym, ctx.publicFieldDefinitionSym:
+	default:
+		return
+	}
+	tokens, ok := scanTypeScriptMemberPrefixTokens(ctx.source, node.startByte, node.endByte)
+	if !ok || len(tokens) < 2 {
+		return
+	}
+	nameTok := tokens[len(tokens)-1]
+	for _, tok := range tokens[:len(tokens)-1] {
+		if !typeScriptMemberModifierSymbol(ctx, tok.text).ok {
+			return
+		}
+	}
+	suffix := typeScriptMemberSuffixChildren(node, nameTok.endByte)
+	if len(suffix) == 0 {
+		return
+	}
+
+	arena := node.ownerArena
+	newChildren := phpAllocChildren(arena, len(tokens)+len(suffix))
+	out := 0
+	nameIdx := -1
+	hasAbstract := false
+	for _, tok := range tokens[:len(tokens)-1] {
+		mod := typeScriptMemberModifierSymbol(ctx, tok.text)
+		if !mod.ok {
+			return
+		}
+		if tok.text == "abstract" {
+			hasAbstract = true
+		}
+		newChildren[out] = buildTypeScriptMemberModifierNode(arena, ctx, tok, mod)
+		if newChildren[out] == nil {
+			return
+		}
+		out++
+	}
+	nameNode := buildTypeScriptMemberNameNode(arena, ctx, nameTok)
+	if nameNode == nil {
+		return
+	}
+	nameIdx = out
+	newChildren[out] = nameNode
+	out++
+	copy(newChildren[out:], suffix)
+
+	node.children = newChildren
+	if node.ownerArena != nil {
+		node.ownerArena.clearFinalChildRefs(node)
+	}
+	if hasAbstract && node.symbol == ctx.methodSignatureSym && ctx.abstractMethodSignatureSym != 0 {
+		node.symbol = ctx.abstractMethodSignatureSym
+		node.setNamed(symbolIsNamed(ctx.lang, ctx.abstractMethodSignatureSym))
+	}
+	typeScriptAssignMemberFields(node, ctx, nameIdx)
+	populateParentNode(node, node.children)
+}
+
+func typeScriptAccessibilityTokenSymbol(ctx *typeScriptNormalizationContext, text string) Symbol {
+	if ctx == nil {
+		return 0
+	}
+	switch text {
+	case "public":
+		return ctx.publicSym
+	case "private":
+		return ctx.privateSym
+	case "protected":
+		return ctx.protectedSym
+	default:
+		return 0
+	}
+}
+
+type typeScriptMemberModifier struct {
+	sym           Symbol
+	accessibility bool
+	ok            bool
+}
+
+func typeScriptMemberModifierSymbol(ctx *typeScriptNormalizationContext, text string) typeScriptMemberModifier {
+	if ctx == nil {
+		return typeScriptMemberModifier{}
+	}
+	if sym := typeScriptAccessibilityTokenSymbol(ctx, text); sym != 0 {
+		return typeScriptMemberModifier{sym: sym, accessibility: true, ok: true}
+	}
+	var sym Symbol
+	switch text {
+	case "static":
+		sym = ctx.staticSym
+	case "readonly":
+		sym = ctx.readonlySym
+	case "abstract":
+		sym = ctx.abstractSym
+	case "async":
+		sym = ctx.asyncSym
+	case "get":
+		sym = ctx.getSym
+	case "set":
+		sym = ctx.setSym
+	default:
+		return typeScriptMemberModifier{}
+	}
+	if sym == 0 {
+		return typeScriptMemberModifier{}
+	}
+	return typeScriptMemberModifier{sym: sym, ok: true}
+}
+
+func buildTypeScriptMemberModifierNode(arena *nodeArena, ctx *typeScriptNormalizationContext, tok typeScriptMemberToken, mod typeScriptMemberModifier) *Node {
+	if mod.sym == 0 {
+		return nil
+	}
+	leaf := newLeafNodeInArena(arena, mod.sym, symbolIsNamed(ctx.lang, mod.sym), tok.startByte, tok.endByte, tok.startPoint, tok.endPoint)
+	if !mod.accessibility {
+		return leaf
+	}
+	children := phpAllocChildren(arena, 1)
+	children[0] = leaf
+	node := newParentNodeInArena(arena, ctx.accessibilityModSym, ctx.accessibilityModNamed, children, nil, 0)
+	populateParentNode(node, node.children)
+	return node
+}
+
+func buildTypeScriptMemberNameNode(arena *nodeArena, ctx *typeScriptNormalizationContext, tok typeScriptMemberToken) *Node {
+	switch tok.kind {
+	case typeScriptMemberTokenIdentifier:
+		return newLeafNodeInArena(arena, ctx.propertyIdentifierSym, ctx.propertyIdentifierNamed, tok.startByte, tok.endByte, tok.startPoint, tok.endPoint)
+	case typeScriptMemberTokenNumber:
+		return newLeafNodeInArena(arena, ctx.numberSym, true, tok.startByte, tok.endByte, tok.startPoint, tok.endPoint)
+	case typeScriptMemberTokenString:
+		return buildTypeScriptStringNameNode(arena, ctx, tok)
+	default:
+		return nil
+	}
+}
+
+func buildTypeScriptStringNameNode(arena *nodeArena, ctx *typeScriptNormalizationContext, tok typeScriptMemberToken) *Node {
+	if ctx.stringSym == 0 || ctx.stringFragmentSym == 0 || tok.endByte <= tok.startByte+1 {
+		return nil
+	}
+	fragmentStart := tok.startByte + 1
+	fragmentEnd := tok.endByte - 1
+	fragmentStartPoint := advancePointByBytes(tok.startPoint, ctx.source[tok.startByte:fragmentStart])
+	fragmentEndPoint := advancePointByBytes(fragmentStartPoint, ctx.source[fragmentStart:fragmentEnd])
+	fragment := newLeafNodeInArena(arena, ctx.stringFragmentSym, symbolIsNamed(ctx.lang, ctx.stringFragmentSym), fragmentStart, fragmentEnd, fragmentStartPoint, fragmentEndPoint)
+	children := phpAllocChildren(arena, 1)
+	children[0] = fragment
+	node := newParentNodeInArena(arena, ctx.stringSym, symbolIsNamed(ctx.lang, ctx.stringSym), children, nil, 0)
+	node.startByte = tok.startByte
+	node.endByte = tok.endByte
+	node.startPoint = tok.startPoint
+	node.endPoint = tok.endPoint
+	populateParentNode(node, node.children)
+	return node
+}
+
+func typeScriptMemberSuffixChildren(node *Node, nameEnd uint32) []*Node {
+	if node == nil {
+		return nil
+	}
+	out := make([]*Node, 0, len(node.children))
+	for _, child := range node.children {
+		if child == nil {
+			continue
+		}
+		if child.startByte >= nameEnd {
+			out = append(out, child)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	if node.ownerArena != nil {
+		buf := node.ownerArena.allocNodeSlice(len(out))
+		copy(buf, out)
+		out = buf
+	}
+	return out
+}
+
+func typeScriptAssignMemberFields(node *Node, ctx *typeScriptNormalizationContext, nameIdx int) {
+	if node == nil || ctx == nil || nameIdx < 0 || nameIdx >= len(node.children) {
+		return
+	}
+	if ctx.nameFieldID == 0 {
+		node.fieldIDs = nil
+		node.fieldSources = nil
+		return
+	}
+	var fieldIDs []FieldID
+	if node.ownerArena != nil {
+		fieldIDs = node.ownerArena.allocFieldIDSlice(len(node.children))
+	} else {
+		fieldIDs = make([]FieldID, len(node.children))
+	}
+	fieldIDs[nameIdx] = ctx.nameFieldID
+	for i, child := range node.children {
+		if i == nameIdx || child == nil {
+			continue
+		}
+		switch child.symbol {
+		case ctx.typeParametersSym:
+			fieldIDs[i] = ctx.typeParametersFieldID
+		case ctx.argsSym:
+			fieldIDs[i] = ctx.parametersFieldID
+		case ctx.typeAnnotationSym:
+			if node.symbol == ctx.methodDefinitionSym || node.symbol == ctx.methodSignatureSym || node.symbol == ctx.abstractMethodSignatureSym {
+				fieldIDs[i] = ctx.returnTypeFieldID
+			} else {
+				fieldIDs[i] = ctx.typeFieldID
+			}
+		default:
+			switch child.Type(ctx.lang) {
+			case "formal_parameters":
+				fieldIDs[i] = ctx.parametersFieldID
+			case "statement_block":
+				fieldIDs[i] = ctx.bodyFieldID
+			default:
+				if node.symbol == ctx.publicFieldDefinitionSym && child.startByte > node.children[nameIdx].endByte {
+					fieldIDs[i] = ctx.valueFieldID
+				}
+			}
+		}
+	}
+	node.fieldIDs = fieldIDs
+	node.fieldSources = defaultFieldSourcesInArena(node.ownerArena, fieldIDs)
+}
+
+func scanTypeScriptIdentifierAfter(source []byte, after uint32) (uint32, uint32, bool) {
+	pos := int(after)
+	for pos < len(source) {
+		switch source[pos] {
+		case ' ', '\t', '\n', '\r':
+			pos++
+			continue
+		}
+		break
+	}
+	if pos >= len(source) || !isTypeScriptIdentifierStartByte(source[pos]) {
+		return 0, 0, false
+	}
+	start := pos
+	pos++
+	for pos < len(source) {
+		ch := source[pos]
+		if ch == '_' || ch == '$' || (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') {
+			pos++
+			continue
+		}
+		break
+	}
+	return uint32(start), uint32(pos), true
+}
+
+func typeScriptNextNonspaceByte(source []byte, after uint32) byte {
+	pos := int(after)
+	for pos < len(source) {
+		switch source[pos] {
+		case ' ', '\t', '\n', '\r':
+			pos++
+			continue
+		default:
+			return source[pos]
+		}
+	}
+	return 0
+}
+
+func scanTypeScriptMemberPrefixTokens(source []byte, startByte, endByte uint32) ([]typeScriptMemberToken, bool) {
+	if int(startByte) >= len(source) || startByte >= endByte || int(endByte) > len(source) {
+		return nil, false
+	}
+	pos := int(startByte)
+	end := int(endByte)
+	var tokens []typeScriptMemberToken
+	for pos < end {
+		for pos < end {
+			switch source[pos] {
+			case ' ', '\t', '\n', '\r':
+				pos++
+				continue
+			}
+			break
+		}
+		if pos >= end {
+			break
+		}
+		switch ch := source[pos]; {
+		case isTypeScriptIdentifierStartByte(ch):
+			tokStart := pos
+			pos++
+			for pos < end {
+				next := source[pos]
+				if next == '_' || next == '$' || (next >= 'a' && next <= 'z') || (next >= 'A' && next <= 'Z') || (next >= '0' && next <= '9') {
+					pos++
+					continue
+				}
+				break
+			}
+			tokens = append(tokens, typeScriptMemberToken{
+				text:       string(source[tokStart:pos]),
+				startByte:  uint32(tokStart),
+				endByte:    uint32(pos),
+				startPoint: advancePointByBytes(Point{}, source[:tokStart]),
+				endPoint:   advancePointByBytes(Point{}, source[:pos]),
+				kind:       typeScriptMemberTokenIdentifier,
+			})
+		case ch >= '0' && ch <= '9':
+			tokStart := pos
+			pos++
+			for pos < end && source[pos] >= '0' && source[pos] <= '9' {
+				pos++
+			}
+			tokens = append(tokens, typeScriptMemberToken{
+				text:       string(source[tokStart:pos]),
+				startByte:  uint32(tokStart),
+				endByte:    uint32(pos),
+				startPoint: advancePointByBytes(Point{}, source[:tokStart]),
+				endPoint:   advancePointByBytes(Point{}, source[:pos]),
+				kind:       typeScriptMemberTokenNumber,
+			})
+		case ch == '\'' || ch == '"':
+			quote := ch
+			tokStart := pos
+			pos++
+			for pos < end {
+				if source[pos] == '\\' {
+					pos += 2
+					continue
+				}
+				if source[pos] == quote {
+					pos++
+					break
+				}
+				pos++
+			}
+			if pos > end || source[pos-1] != quote {
+				return nil, false
+			}
+			tokens = append(tokens, typeScriptMemberToken{
+				text:       string(source[tokStart:pos]),
+				startByte:  uint32(tokStart),
+				endByte:    uint32(pos),
+				startPoint: advancePointByBytes(Point{}, source[:tokStart]),
+				endPoint:   advancePointByBytes(Point{}, source[:pos]),
+				kind:       typeScriptMemberTokenString,
+			})
+		default:
+			return tokens, len(tokens) > 1
+		}
+		if pos >= end {
+			break
+		}
+		switch source[pos] {
+		case ' ', '\t', '\n', '\r':
+			continue
+		case '(', ':', '=', ';', '{', '}', '<', '?', '!':
+			return tokens, len(tokens) > 1
+		default:
+			return nil, false
+		}
+	}
+	return tokens, len(tokens) > 1
 }
 
 func rewriteTypeScriptGenericArrowTypeAssertion(node *Node, ctx *typeScriptNormalizationContext) *Node {

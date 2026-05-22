@@ -529,6 +529,12 @@ fi"
   if [[ -n "$effective_lr0_core_budget" ]]; then
     lr0_core_budget_env="GOT_LALR_LR0_CORE_BUDGET=$effective_lr0_core_budget"
   fi
+  local parser_stack_env=""
+  case "$grammar" in
+    typescript|tsx)
+      parser_stack_env="GOT_GLR_MAX_STACKS=64"
+      ;;
+  esac
   local generate_timeout_env=""
   if [[ -n "$effective_generate_timeout" ]]; then
     generate_timeout_env="GTS_GRAMMARGEN_REAL_CORPUS_GENERATE_TIMEOUT=$effective_generate_timeout"
@@ -563,6 +569,7 @@ cd /workspace
   GTS_GRAMMARGEN_REAL_CORPUS_FLOORS_PATH=/tmp/real_corpus_parity_floors.json \
   GTS_GRAMMARGEN_REAL_CORPUS_ONLY=$grammar \
   $lr0_core_budget_env \
+  $parser_stack_env \
   $generate_timeout_env \
   $lr_split_env \
   go test ./grammargen -run '^TestMultiGrammarImportRealCorpusParity\$' -count=1 -v -timeout $TIMEOUT_PER_GRAMMAR
