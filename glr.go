@@ -812,18 +812,19 @@ func stackEntryNodesExactlyEquivalentWithScratch(scratch *glrMergeScratch, a, b 
 		len(a.fieldIDs) != len(b.fieldIDs) {
 		return false
 	}
-	if hit, ok := lookupNodeEquivCache(scratch, a, b, depth); ok {
-		return hit
-	}
 	if a.flags&nodeFlagHasError != 0 {
-		storeNodeEquivCache(scratch, a, b, depth, true)
 		return true
 	}
 	for i := range a.fieldIDs {
 		if a.fieldIDs[i] != b.fieldIDs[i] {
-			storeNodeEquivCache(scratch, a, b, depth, false)
 			return false
 		}
+	}
+	if len(a.children) == 0 {
+		return true
+	}
+	if hit, ok := lookupNodeEquivCache(scratch, a, b, depth); ok {
+		return hit
 	}
 	for i := range a.children {
 		if !stackEntryNodesExactlyEquivalentWithScratch(scratch, a.children[i], b.children[i], depth+1) {
