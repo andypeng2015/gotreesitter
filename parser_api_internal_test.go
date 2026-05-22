@@ -100,6 +100,34 @@ func TestCSharpRepetitionShiftConflictChoiceRejectsOtherRepeats(t *testing.T) {
 	}
 }
 
+func TestTypeScriptRepetitionShiftConflictChoiceAllowsHotProgramRepeat(t *testing.T) {
+	lang := &Language{SymbolNames: []string{"end", "function", "program_repeat1"}}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 2, ChildCount: 2},
+		{Type: ParseActionShift, State: 3693, Repetition: true},
+	}
+
+	chosen, ok := typescriptRepetitionShiftConflictChoice(lang, Token{Symbol: 1}, 9, actions)
+	if !ok {
+		t.Fatal("typescriptRepetitionShiftConflictChoice = false, want true")
+	}
+	if chosen.Type != ParseActionShift || chosen.State != 3693 || !chosen.Repetition {
+		t.Fatalf("typescriptRepetitionShiftConflictChoice picked %+v, want repetition shift", chosen)
+	}
+}
+
+func TestTypeScriptRepetitionShiftConflictChoiceRejectsOtherState(t *testing.T) {
+	lang := &Language{SymbolNames: []string{"end", "function", "program_repeat1"}}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 2, ChildCount: 2},
+		{Type: ParseActionShift, State: 3693, Repetition: true},
+	}
+
+	if _, ok := typescriptRepetitionShiftConflictChoice(lang, Token{Symbol: 1}, 10, actions); ok {
+		t.Fatal("typescriptRepetitionShiftConflictChoice = true, want false")
+	}
+}
+
 func TestJavaRepetitionShiftConflictChoiceAllowsStringLiteralContinuation(t *testing.T) {
 	lang := &Language{SymbolNames: []string{"end", "escape_sequence", "string_fragment", "_string_literal_repeat1"}}
 	actions := []ParseAction{

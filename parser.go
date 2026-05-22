@@ -2206,6 +2206,10 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 								chosen, choice = next, true
 							}
 						}
+					case "typescript":
+						if next, ok := typescriptRepetitionShiftConflictChoice(p.language, tok, currentState, actions); ok {
+							chosen, choice = next, true
+						}
 					}
 				}
 				if !choice && deterministicExternalConflicts && p.language != nil && p.language.Name == "yaml" && p.language.ExternalScanner != nil {
@@ -3113,6 +3117,25 @@ func javaRepetitionShiftConflictChoice(lang *Language, source []byte, tok Token,
 		}
 	case 2:
 		if !symbolHasName(lang, tok.Symbol, "import") {
+			return ParseAction{}, false
+		}
+	default:
+		return ParseAction{}, false
+	}
+	return repetitionShiftConflictChoice(actions)
+}
+
+func typescriptRepetitionShiftConflictChoice(lang *Language, tok Token, state StateID, actions []ParseAction) (ParseAction, bool) {
+	if lang == nil {
+		return ParseAction{}, false
+	}
+	switch state {
+	case 9:
+		if !symbolHasName(lang, tok.Symbol, "function") {
+			return ParseAction{}, false
+		}
+	case 3817:
+		if !symbolHasName(lang, tok.Symbol, "case") {
 			return ParseAction{}, false
 		}
 	default:
