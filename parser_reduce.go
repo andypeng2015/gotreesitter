@@ -39,6 +39,31 @@ type reduceChainHint struct {
 	maxSteps       uint16
 }
 
+func buildReduceChainHintIndex(hints []reduceChainHint) []int {
+	if len(hints) == 0 {
+		return nil
+	}
+	maxState := StateID(0)
+	for _, hint := range hints {
+		if hint.startState > maxState {
+			maxState = hint.startState
+		}
+	}
+	index := make([]int, int(maxState)+1)
+	for i := range index {
+		index[i] = -1
+	}
+	for i, hint := range hints {
+		slot := int(hint.startState)
+		if index[slot] == -1 {
+			index[slot] = i
+		} else {
+			index[slot] = -2
+		}
+	}
+	return index
+}
+
 func buildClassifiedParseActions(lang *Language) []classifiedParseAction {
 	if lang == nil || len(lang.ParseActions) == 0 {
 		return nil
@@ -542,12 +567,26 @@ func (p *Parser) chainSingleReduceActionsClassified(s *glrStack, tok Token, anyR
 }
 
 func (p *Parser) reduceChainHintFor(state StateID, lookahead Symbol) (reduceChainHint, bool) {
-	for _, hint := range p.reduceChainHints {
-		if hint.startState == state && hint.lookahead == lookahead {
-			return hint, true
-		}
+	if int(state) >= len(p.reduceChainHintByState) {
+		return reduceChainHint{}, false
 	}
-	return reduceChainHint{}, false
+	hintIndex := p.reduceChainHintByState[int(state)]
+	if hintIndex == -2 {
+		for _, hint := range p.reduceChainHints {
+			if hint.startState == state && hint.lookahead == lookahead {
+				return hint, true
+			}
+		}
+		return reduceChainHint{}, false
+	}
+	if hintIndex < 0 || hintIndex >= len(p.reduceChainHints) {
+		return reduceChainHint{}, false
+	}
+	hint := p.reduceChainHints[hintIndex]
+	if hint.lookahead != lookahead {
+		return reduceChainHint{}, false
+	}
+	return hint, true
 }
 
 func reduceChainHintTerminalMatches(hint reduceChainHint, state StateID, class classifiedParseActionClass) bool {

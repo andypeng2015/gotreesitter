@@ -44,6 +44,32 @@ func TestBuildReduceChainHintsUsesLanguageMetadata(t *testing.T) {
 	}
 }
 
+func TestReduceChainHintForUsesStateIndex(t *testing.T) {
+	p := &Parser{
+		reduceChainHints: []reduceChainHint{
+			{startState: StateID(8), lookahead: Symbol(3), maxSteps: 4},
+			{startState: StateID(10), lookahead: Symbol(4), maxSteps: 5},
+			{startState: StateID(10), lookahead: Symbol(5), maxSteps: 6},
+		},
+	}
+	p.reduceChainHintByState = buildReduceChainHintIndex(p.reduceChainHints)
+
+	hint, ok := p.reduceChainHintFor(StateID(8), Symbol(3))
+	if !ok || hint.maxSteps != 4 {
+		t.Fatalf("hint for state=8 lookahead=3 = %+v, %v; want maxSteps=4, true", hint, ok)
+	}
+	hint, ok = p.reduceChainHintFor(StateID(10), Symbol(5))
+	if !ok || hint.maxSteps != 6 {
+		t.Fatalf("hint for duplicate state=10 lookahead=5 = %+v, %v; want maxSteps=6, true", hint, ok)
+	}
+	if _, ok := p.reduceChainHintFor(StateID(9), Symbol(3)); ok {
+		t.Fatal("unexpected hint for state without entry")
+	}
+	if _, ok := p.reduceChainHintFor(StateID(10), Symbol(6)); ok {
+		t.Fatal("unexpected hint for duplicate state with unmatched lookahead")
+	}
+}
+
 func TestBuildSingleTokenWrapperSymbols(t *testing.T) {
 	lang := &Language{
 		SymbolMetadata: []SymbolMetadata{
