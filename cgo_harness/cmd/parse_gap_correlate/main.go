@@ -83,6 +83,7 @@ type runtimeStats struct {
 type hotGLRState struct {
 	State             uint32 `json:"state"`
 	Lookahead         uint16 `json:"lookahead,omitempty"`
+	LookaheadName     string `json:"lookahead_name,omitempty"`
 	ActionCount       uint8  `json:"action_count,omitempty"`
 	ShiftCount        uint8  `json:"shift_count,omitempty"`
 	ReduceCount       uint8  `json:"reduce_count,omitempty"`
@@ -557,8 +558,8 @@ func printHotTable(label string, rows []hotGLRState, metric string) {
 		return
 	}
 	fmt.Printf("`%s`\n\n", label)
-	fmt.Println("| state | lookahead | actions | shifts | reduces | forks | multi_stack | stack_in | reduce_steps | merge_in | merge_out | metric |")
-	fmt.Println("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
+	fmt.Println("| state | lookahead | lookahead_name | actions | shifts | reduces | forks | multi_stack | stack_in | reduce_steps | merge_in | merge_out | metric |")
+	fmt.Println("| ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
 	for _, h := range rows {
 		var score uint64
 		switch metric {
@@ -569,9 +570,10 @@ func printHotTable(label string, rows []hotGLRState, metric string) {
 		default:
 			score = h.StackInTotal
 		}
-		fmt.Printf("| %d | %d | %d | %d | %d | %d | %d | %d | %d | %d | %d | %d |\n",
+		fmt.Printf("| %d | %d | `%s` | %d | %d | %d | %d | %d | %d | %d | %d | %d | %d |\n",
 			h.State,
 			h.Lookahead,
+			escapePipes(h.LookaheadName),
 			h.ActionCount,
 			h.ShiftCount,
 			h.ReduceCount,
@@ -585,6 +587,10 @@ func printHotTable(label string, rows []hotGLRState, metric string) {
 		)
 	}
 	fmt.Println()
+}
+
+func escapePipes(s string) string {
+	return strings.ReplaceAll(s, "|", "\\|")
 }
 
 func attrNames(scores []langScore) []string {

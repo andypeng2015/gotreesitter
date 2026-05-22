@@ -203,6 +203,7 @@ type runtimeStats struct {
 type hotGLRState struct {
 	State             uint32         `json:"state"`
 	Lookahead         uint16         `json:"lookahead,omitempty"`
+	LookaheadName     string         `json:"lookahead_name,omitempty"`
 	ActionCount       uint8          `json:"action_count,omitempty"`
 	ShiftCount        uint8          `json:"shift_count,omitempty"`
 	ReduceCount       uint8          `json:"reduce_count,omitempty"`
@@ -224,8 +225,10 @@ type hotGLRState struct {
 
 type hotGLRAction struct {
 	Type              uint8  `json:"type"`
+	TypeName          string `json:"type_name,omitempty"`
 	State             uint32 `json:"state,omitempty"`
 	Symbol            uint16 `json:"symbol,omitempty"`
+	SymbolName        string `json:"symbol_name,omitempty"`
 	ChildCount        uint8  `json:"child_count,omitempty"`
 	DynamicPrecedence int16  `json:"dynamic_precedence,omitempty"`
 	ProductionID      uint16 `json:"production_id,omitempty"`
@@ -836,14 +839,14 @@ func statsFromGoTree(r *runner, tree *gotreesitter.Tree, queryCaptures, cursorNo
 	stats.ReduceChainMaxLen = perf.ReduceChainMaxLen
 	stats.ParentChildPointers = perf.ParentChildPointers
 	if r != nil && r.profile != nil && r.hotShapeLimit > 0 {
-		stats.HotAmbiguities = hotGLRStatesFromProfile(r.profile.SnapshotTop(r.hotShapeLimit))
-		stats.HotReduceChains = hotGLRStatesFromProfile(r.profile.SnapshotTopReduceChains(r.hotShapeLimit))
-		stats.HotMergeStates = hotGLRStatesFromProfile(r.profile.SnapshotTopMergeStates(r.hotShapeLimit))
+		stats.HotAmbiguities = hotGLRStatesFromProfile(r.goLang, r.profile.SnapshotTop(r.hotShapeLimit))
+		stats.HotReduceChains = hotGLRStatesFromProfile(r.goLang, r.profile.SnapshotTopReduceChains(r.hotShapeLimit))
+		stats.HotMergeStates = hotGLRStatesFromProfile(r.goLang, r.profile.SnapshotTopMergeStates(r.hotShapeLimit))
 	}
 	return stats
 }
 
-func hotGLRStatesFromProfile(stats []gotreesitter.AmbiguityStat) []hotGLRState {
+func hotGLRStatesFromProfile(lang *gotreesitter.Language, stats []gotreesitter.AmbiguityStat) []hotGLRState {
 	if len(stats) == 0 {
 		return nil
 	}
@@ -852,6 +855,7 @@ func hotGLRStatesFromProfile(stats []gotreesitter.AmbiguityStat) []hotGLRState {
 		row := hotGLRState{
 			State:             uint32(stat.State),
 			Lookahead:         uint16(stat.Lookahead),
+			LookaheadName:     symbolName(lang, stat.Lookahead),
 			ActionCount:       stat.ActionCount,
 			ShiftCount:        stat.ShiftCount,
 			ReduceCount:       stat.ReduceCount,
@@ -874,8 +878,10 @@ func hotGLRStatesFromProfile(stats []gotreesitter.AmbiguityStat) []hotGLRState {
 			for _, action := range stat.Actions {
 				row.Actions = append(row.Actions, hotGLRAction{
 					Type:              uint8(action.Type),
+					TypeName:          parseActionTypeName(action.Type),
 					State:             uint32(action.State),
 					Symbol:            uint16(action.Symbol),
+					SymbolName:        symbolName(lang, action.Symbol),
 					ChildCount:        action.ChildCount,
 					DynamicPrecedence: action.DynamicPrecedence,
 					ProductionID:      action.ProductionID,
@@ -887,6 +893,32 @@ func hotGLRStatesFromProfile(stats []gotreesitter.AmbiguityStat) []hotGLRState {
 		out = append(out, row)
 	}
 	return out
+}
+
+func symbolName(lang *gotreesitter.Language, sym gotreesitter.Symbol) string {
+	if lang == nil {
+		return ""
+	}
+	idx := int(sym)
+	if idx < 0 || idx >= len(lang.SymbolNames) {
+		return ""
+	}
+	return lang.SymbolNames[idx]
+}
+
+func parseActionTypeName(t gotreesitter.ParseActionType) string {
+	switch t {
+	case gotreesitter.ParseActionShift:
+		return "shift"
+	case gotreesitter.ParseActionReduce:
+		return "reduce"
+	case gotreesitter.ParseActionAccept:
+		return "accept"
+	case gotreesitter.ParseActionRecover:
+		return "recover"
+	default:
+		return fmt.Sprintf("action_%d", t)
+	}
 }
 
 func subUint64(a, b uint64) uint64 {
