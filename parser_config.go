@@ -24,6 +24,8 @@ var (
 	parseReduceTiming          bool
 	parseActionTimingOnce      sync.Once
 	parseActionTiming          bool
+	parseReduceChainHintsOnce  sync.Once
+	parseReduceChainHints      bool
 )
 
 // ResetParseEnvConfigCacheForTests clears memoized parser env config.
@@ -47,6 +49,8 @@ func ResetParseEnvConfigCacheForTests() {
 	parseReduceTiming = false
 	parseActionTimingOnce = sync.Once{}
 	parseActionTiming = false
+	parseReduceChainHintsOnce = sync.Once{}
+	parseReduceChainHints = false
 }
 
 func parseNodeLimitScaleFactor() int {
@@ -165,6 +169,14 @@ func parseActionTimingEnabled() bool {
 		parseActionTiming = raw != "" && raw != "0" && !strings.EqualFold(raw, "false")
 	})
 	return parseActionTiming
+}
+
+func parseReduceChainHintsEnabled() bool {
+	parseReduceChainHintsOnce.Do(func() {
+		raw := strings.TrimSpace(os.Getenv("GOT_GLR_REDUCE_CHAIN_HINTS"))
+		parseReduceChainHints = raw != "" && raw != "0" && !strings.EqualFold(raw, "false")
+	})
+	return parseReduceChainHints
 }
 
 func parseTransientReduceEnabled(envName string) bool {

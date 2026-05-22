@@ -31,6 +31,14 @@ type classifiedParseAction struct {
 	action ParseAction
 }
 
+type reduceChainHint struct {
+	startState     StateID
+	lookahead      Symbol
+	terminalState  StateID
+	terminalAction classifiedParseActionClass
+	maxSteps       uint16
+}
+
 func buildClassifiedParseActions(lang *Language) []classifiedParseAction {
 	if lang == nil || len(lang.ParseActions) == 0 {
 		return nil
@@ -60,6 +68,35 @@ func classifyParseActionEntry(entry ParseActionEntry) classifiedParseAction {
 	default:
 		return classifiedParseAction{class: classifiedParseActionSingleOther, action: action}
 	}
+}
+
+func buildReduceChainHints(lang *Language) []reduceChainHint {
+	if lang == nil || !parseReduceChainHintsEnabled() {
+		return nil
+	}
+	switch lang.Name {
+	case "python":
+		if !languageSymbolNameMatches(lang, Symbol(101), "_newline") {
+			return nil
+		}
+		return []reduceChainHint{{
+			startState:     StateID(1101),
+			lookahead:      Symbol(101),
+			terminalState:  StateID(2336),
+			terminalAction: classifiedParseActionSingleShift,
+			maxSteps:       10,
+		}}
+	default:
+		return nil
+	}
+}
+
+func languageSymbolNameMatches(lang *Language, sym Symbol, name string) bool {
+	if lang == nil {
+		return false
+	}
+	idx := int(sym)
+	return idx >= 0 && idx < len(lang.SymbolNames) && lang.SymbolNames[idx] == name
 }
 
 func reduceChainTerminalState(s *glrStack, fallback StateID) StateID {
@@ -428,6 +465,101 @@ func (p *Parser) chainSingleReduceActions(s *glrStack, tok Token, anyReduced *bo
 }
 
 func (p *Parser) chainSingleReduceActionsClassified(s *glrStack, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, deferParentLinks bool, trackChildErrors *bool) bool {
+	if len(p.reduceChainHints) != 0 {
+		if hint, ok := p.reduceChainHintFor(s.top().state, tok.Symbol); ok {
+			return p.chainSingleReduceActionsClassifiedHinted(s, tok, hint, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
+		}
+	}
+	return p.chainSingleReduceActionsClassifiedDefault(s, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
+}
+
+func (p *Parser) reduceChainHintFor(state StateID, lookahead Symbol) (reduceChainHint, bool) {
+	for _, hint := range p.reduceChainHints {
+		if hint.startState == state && hint.lookahead == lookahead {
+			return hint, true
+		}
+	}
+	return reduceChainHint{}, false
+}
+
+func (p *Parser) lookupClassifiedAction(state StateID, lookahead Symbol) (classifiedParseAction, bool) {
+	actionIdx := p.lookupActionIndex(state, lookahead)
+	if actionIdx == 0 || int(actionIdx) >= len(p.classifiedActions) {
+		return classifiedParseAction{class: classifiedParseActionNoAction}, false
+	}
+	return p.classifiedActions[actionIdx], true
+}
+
+func (p *Parser) chainSingleReduceActionsClassifiedHinted(s *glrStack, tok Token, hint reduceChainHint, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, deferParentLinks bool, trackChildErrors *bool) bool {
+	if perfCountersEnabled {
+		perfRecordReduceChainHintCandidate()
+		perfRecordReduceChainHintTaken()
+	}
+	steps := 0
+	for steps < int(hint.maxSteps) {
+		currentState := s.top().state
+		classified, ok := p.lookupClassifiedAction(currentState, tok.Symbol)
+		if !ok {
+			if currentState == hint.terminalState && hint.terminalAction == classifiedParseActionNoAction {
+				if perfCountersEnabled {
+					perfRecordReduceChainHintTerminalOK()
+				}
+				return false
+			}
+			if perfCountersEnabled {
+				perfRecordReduceChainHintTerminalMismatch()
+			}
+			return false
+		}
+		if classified.class != classifiedParseActionSingleReduce {
+			if currentState == hint.terminalState && classified.class == hint.terminalAction {
+				if perfCountersEnabled {
+					perfRecordReduceChainHintTerminalOK()
+				}
+			} else if currentState != hint.terminalState {
+				if perfCountersEnabled {
+					perfRecordReduceChainHintTerminalMismatch()
+				}
+			} else if perfCountersEnabled {
+				perfRecordReduceChainHintUnexpected()
+			}
+			switch classified.class {
+			case classifiedParseActionSingleShift:
+				if perfCountersEnabled {
+					perfRecordReduceChainBreakShift()
+				}
+			case classifiedParseActionSingleAccept:
+				if perfCountersEnabled {
+					perfRecordReduceChainBreakAccept()
+				}
+			default:
+				if perfCountersEnabled {
+					perfRecordReduceChainBreakMulti()
+				}
+			}
+			return false
+		}
+
+		steps++
+		if perfCountersEnabled {
+			perfRecordReduceChainStep(steps)
+			perfRecordReduceChainHintSteps(1)
+		}
+		p.applyReduceActionDispatch(s, classified.action, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
+		if s.dead || s.accepted || s.shifted {
+			if perfCountersEnabled {
+				perfRecordReduceChainHintDead()
+			}
+			return false
+		}
+	}
+	if perfCountersEnabled {
+		perfRecordReduceChainHintLimit()
+	}
+	return p.chainSingleReduceActionsClassifiedDefault(s, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
+}
+
+func (p *Parser) chainSingleReduceActionsClassifiedDefault(s *glrStack, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, deferParentLinks bool, trackChildErrors *bool) bool {
 	const maxInlineReduceChain = 256
 	actions := p.classifiedActions
 	chainLen := 0

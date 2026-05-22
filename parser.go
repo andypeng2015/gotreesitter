@@ -52,6 +52,7 @@ type Parser struct {
 	smallLookup                         [][]smallActionPair
 	smallTokenLookup                    [][]uint16
 	classifiedActions                   []classifiedParseAction
+	reduceChainHints                    []reduceChainHint
 	reduceAliasSeq                      [][]Symbol
 	aliasTargetSymbol                   []bool
 	singleTokenWrapperSymbol            []bool
@@ -341,6 +342,7 @@ func NewParser(lang *Language) *Parser {
 			p.smallLookup = buildSmallLookup(lang, p.smallTokenLookup)
 		}
 		p.classifiedActions = buildClassifiedParseActions(lang)
+		p.reduceChainHints = buildReduceChainHints(lang)
 		p.reduceAliasSeq = buildReduceAliasSequences(lang)
 		p.aliasTargetSymbol = buildAliasTargetSymbols(lang)
 		p.singleTokenWrapperSymbol = buildSingleTokenWrapperSymbols(lang)

@@ -33,98 +33,106 @@ type paritySummary struct {
 }
 
 type runtimeStats struct {
-	Tokens                         uint64        `json:"tokens,omitempty"`
-	NodesAllocated                 int           `json:"nodes_allocated,omitempty"`
-	FinalNodes                     uint64        `json:"final_nodes,omitempty"`
-	GSSNodes                       uint64        `json:"gss_nodes,omitempty"`
-	MaxStacksSeen                  int           `json:"max_stacks_seen,omitempty"`
-	SingleStackTokens              uint64        `json:"single_stack_tokens,omitempty"`
-	MultiStackTokens               uint64        `json:"multi_stack_tokens,omitempty"`
-	MergeStacksIn                  uint64        `json:"merge_stacks_in,omitempty"`
-	MergeStacksOut                 uint64        `json:"merge_stacks_out,omitempty"`
-	ArenaLiveB                     int64         `json:"arena_live_b,omitempty"`
-	ArenaCapacityB                 int64         `json:"arena_capacity_b,omitempty"`
-	ArenaCapacityWaste             uint64        `json:"arena_capacity_waste,omitempty"`
-	FinalChildRangeDrains          uint64        `json:"final_child_range_drains,omitempty"`
-	PublicNodesMaterialized        uint64        `json:"public_nodes_materialized,omitempty"`
-	DenseFallbacks                 uint64        `json:"dense_fallbacks,omitempty"`
-	ResultSelectionNS              int64         `json:"result_selection_ns,omitempty"`
-	ResultBuildNS                  int64         `json:"result_build_ns,omitempty"`
-	ResultCompatibilityNS          int64         `json:"result_compatibility_ns,omitempty"`
-	ResultParentLinkNS             int64         `json:"result_parent_link_ns,omitempty"`
-	ResultFinalizeRootNS           int64         `json:"result_finalize_root_ns,omitempty"`
-	ResultExtendTrailingNS         int64         `json:"result_extend_trailing_ns,omitempty"`
-	NormalizationNS                int64         `json:"normalization_ns,omitempty"`
-	NormalizationNodes             uint64        `json:"normalization_nodes_visited,omitempty"`
-	NormalizationRewrites          uint64        `json:"normalization_nodes_rewritten,omitempty"`
-	ParseWallNS                    int64         `json:"parse_wall_ns,omitempty"`
-	ParserLoopNS                   int64         `json:"parser_loop_ns,omitempty"`
-	TokenNextNS                    int64         `json:"token_next_ns,omitempty"`
-	ActionDispatchNS               int64         `json:"action_dispatch_ns,omitempty"`
-	ActionLookupNS                 int64         `json:"action_lookup_ns,omitempty"`
-	GLRMergeNS                     int64         `json:"glr_merge_ns,omitempty"`
-	GLRCullNS                      int64         `json:"glr_cull_ns,omitempty"`
-	ReduceRangeNS                  int64         `json:"reduce_range_ns,omitempty"`
-	ReducePendingParentNS          int64         `json:"reduce_pending_parent_ns,omitempty"`
-	ReduceChildBuildNS             int64         `json:"reduce_child_build_ns,omitempty"`
-	ReduceParentBuildNS            int64         `json:"reduce_parent_build_ns,omitempty"`
-	ReduceSpanNS                   int64         `json:"reduce_span_ns,omitempty"`
-	ReduceStackPushNS              int64         `json:"reduce_stack_push_ns,omitempty"`
-	ReduceNoTreeBuildNS            int64         `json:"reduce_notree_build_ns,omitempty"`
-	ActionExtraShiftNS             int64         `json:"action_extra_shift_ns,omitempty"`
-	ActionNoActionNS               int64         `json:"action_no_action_ns,omitempty"`
-	ActionNoActionRelexNS          int64         `json:"action_no_action_relex_ns,omitempty"`
-	ActionNoActionMissingNS        int64         `json:"action_no_action_missing_ns,omitempty"`
-	ActionNoActionRecoverNS        int64         `json:"action_no_action_recover_ns,omitempty"`
-	ActionNoActionErrorNS          int64         `json:"action_no_action_error_ns,omitempty"`
-	ActionConflictChoiceNS         int64         `json:"action_conflict_choice_ns,omitempty"`
-	ActionConflictForkNS           int64         `json:"action_conflict_fork_ns,omitempty"`
-	ActionSingleShiftNS            int64         `json:"action_single_shift_ns,omitempty"`
-	ActionSingleReduceNS           int64         `json:"action_single_reduce_ns,omitempty"`
-	ActionSingleAcceptNS           int64         `json:"action_single_accept_ns,omitempty"`
-	ActionSingleRecoverNS          int64         `json:"action_single_recover_ns,omitempty"`
-	ActionSingleOtherNS            int64         `json:"action_single_other_ns,omitempty"`
-	MergeCalls                     uint64        `json:"merge_calls,omitempty"`
-	EquivCacheLookups              uint64        `json:"equiv_cache_lookups,omitempty"`
-	EquivCacheHits                 uint64        `json:"equiv_cache_hits,omitempty"`
-	EquivCacheStores               uint64        `json:"equiv_cache_stores,omitempty"`
-	EquivCacheMisses               uint64        `json:"equiv_cache_misses,omitempty"`
-	EquivCacheEpochMisses          uint64        `json:"equiv_cache_epoch_misses,omitempty"`
-	EquivCacheKeyMisses            uint64        `json:"equiv_cache_key_misses,omitempty"`
-	EquivCacheVersionMisses        uint64        `json:"equiv_cache_version_misses,omitempty"`
-	EquivSkipError                 uint64        `json:"equiv_skip_error,omitempty"`
-	EquivSkipLeaf                  uint64        `json:"equiv_skip_leaf,omitempty"`
-	EquivSkipFieldMismatch         uint64        `json:"equiv_skip_field_mismatch,omitempty"`
-	EquivExactCalls                uint64        `json:"equiv_exact_calls,omitempty"`
-	EquivExactTrue                 uint64        `json:"equiv_exact_true,omitempty"`
-	EquivFrontierCalls             uint64        `json:"equiv_frontier_calls,omitempty"`
-	EquivFrontierTrue              uint64        `json:"equiv_frontier_true,omitempty"`
-	EquivExactChildCompares        uint64        `json:"equiv_exact_child_compares,omitempty"`
-	EquivFrontierChildScans        uint64        `json:"equiv_frontier_child_scans,omitempty"`
-	EquivFrontierCandidateCompares uint64        `json:"equiv_frontier_candidate_compares,omitempty"`
-	ForkCount                      uint64        `json:"fork_count,omitempty"`
-	ConflictRR                     uint64        `json:"conflict_rr,omitempty"`
-	ConflictRS                     uint64        `json:"conflict_rs,omitempty"`
-	ConflictOther                  uint64        `json:"conflict_other,omitempty"`
-	LexBytes                       uint64        `json:"lex_bytes,omitempty"`
-	LexTokens                      uint64        `json:"lex_tokens,omitempty"`
-	ReduceChainSteps               uint64        `json:"reduce_chain_steps,omitempty"`
-	ReduceChainMaxLen              uint64        `json:"reduce_chain_max_len,omitempty"`
-	ReduceChainClassHits           uint64        `json:"reduce_chain_class_hits,omitempty"`
-	ReduceChainStopNoAction        uint64        `json:"reduce_chain_stop_no_action,omitempty"`
-	ReduceChainStopMulti           uint64        `json:"reduce_chain_stop_multi,omitempty"`
-	ReduceChainStopShift           uint64        `json:"reduce_chain_stop_shift,omitempty"`
-	ReduceChainStopAccept          uint64        `json:"reduce_chain_stop_accept,omitempty"`
-	ReduceChainStopDead            uint64        `json:"reduce_chain_stop_dead,omitempty"`
-	ReduceChainStopCycle           uint64        `json:"reduce_chain_stop_cycle,omitempty"`
-	ReduceChainStopLimit           uint64        `json:"reduce_chain_stop_limit,omitempty"`
-	NoTreeReduceNodes              uint64        `json:"notree_reduce_nodes,omitempty"`
-	NoTreeLeafNodes                uint64        `json:"notree_leaf_nodes,omitempty"`
-	HotAmbiguities                 []hotGLRState `json:"hot_ambiguities,omitempty"`
-	HotReduceChains                []hotGLRState `json:"hot_reduce_chains,omitempty"`
-	HotReduceChainRuns             []hotGLRState `json:"hot_reduce_chain_runs,omitempty"`
-	HotMergeStates                 []hotGLRState `json:"hot_merge_states,omitempty"`
-	HotEquivStates                 []hotGLRState `json:"hot_equiv_states,omitempty"`
+	Tokens                          uint64        `json:"tokens,omitempty"`
+	NodesAllocated                  int           `json:"nodes_allocated,omitempty"`
+	FinalNodes                      uint64        `json:"final_nodes,omitempty"`
+	GSSNodes                        uint64        `json:"gss_nodes,omitempty"`
+	MaxStacksSeen                   int           `json:"max_stacks_seen,omitempty"`
+	SingleStackTokens               uint64        `json:"single_stack_tokens,omitempty"`
+	MultiStackTokens                uint64        `json:"multi_stack_tokens,omitempty"`
+	MergeStacksIn                   uint64        `json:"merge_stacks_in,omitempty"`
+	MergeStacksOut                  uint64        `json:"merge_stacks_out,omitempty"`
+	ArenaLiveB                      int64         `json:"arena_live_b,omitempty"`
+	ArenaCapacityB                  int64         `json:"arena_capacity_b,omitempty"`
+	ArenaCapacityWaste              uint64        `json:"arena_capacity_waste,omitempty"`
+	FinalChildRangeDrains           uint64        `json:"final_child_range_drains,omitempty"`
+	PublicNodesMaterialized         uint64        `json:"public_nodes_materialized,omitempty"`
+	DenseFallbacks                  uint64        `json:"dense_fallbacks,omitempty"`
+	ResultSelectionNS               int64         `json:"result_selection_ns,omitempty"`
+	ResultBuildNS                   int64         `json:"result_build_ns,omitempty"`
+	ResultCompatibilityNS           int64         `json:"result_compatibility_ns,omitempty"`
+	ResultParentLinkNS              int64         `json:"result_parent_link_ns,omitempty"`
+	ResultFinalizeRootNS            int64         `json:"result_finalize_root_ns,omitempty"`
+	ResultExtendTrailingNS          int64         `json:"result_extend_trailing_ns,omitempty"`
+	NormalizationNS                 int64         `json:"normalization_ns,omitempty"`
+	NormalizationNodes              uint64        `json:"normalization_nodes_visited,omitempty"`
+	NormalizationRewrites           uint64        `json:"normalization_nodes_rewritten,omitempty"`
+	ParseWallNS                     int64         `json:"parse_wall_ns,omitempty"`
+	ParserLoopNS                    int64         `json:"parser_loop_ns,omitempty"`
+	TokenNextNS                     int64         `json:"token_next_ns,omitempty"`
+	ActionDispatchNS                int64         `json:"action_dispatch_ns,omitempty"`
+	ActionLookupNS                  int64         `json:"action_lookup_ns,omitempty"`
+	GLRMergeNS                      int64         `json:"glr_merge_ns,omitempty"`
+	GLRCullNS                       int64         `json:"glr_cull_ns,omitempty"`
+	ReduceRangeNS                   int64         `json:"reduce_range_ns,omitempty"`
+	ReducePendingParentNS           int64         `json:"reduce_pending_parent_ns,omitempty"`
+	ReduceChildBuildNS              int64         `json:"reduce_child_build_ns,omitempty"`
+	ReduceParentBuildNS             int64         `json:"reduce_parent_build_ns,omitempty"`
+	ReduceSpanNS                    int64         `json:"reduce_span_ns,omitempty"`
+	ReduceStackPushNS               int64         `json:"reduce_stack_push_ns,omitempty"`
+	ReduceNoTreeBuildNS             int64         `json:"reduce_notree_build_ns,omitempty"`
+	ActionExtraShiftNS              int64         `json:"action_extra_shift_ns,omitempty"`
+	ActionNoActionNS                int64         `json:"action_no_action_ns,omitempty"`
+	ActionNoActionRelexNS           int64         `json:"action_no_action_relex_ns,omitempty"`
+	ActionNoActionMissingNS         int64         `json:"action_no_action_missing_ns,omitempty"`
+	ActionNoActionRecoverNS         int64         `json:"action_no_action_recover_ns,omitempty"`
+	ActionNoActionErrorNS           int64         `json:"action_no_action_error_ns,omitempty"`
+	ActionConflictChoiceNS          int64         `json:"action_conflict_choice_ns,omitempty"`
+	ActionConflictForkNS            int64         `json:"action_conflict_fork_ns,omitempty"`
+	ActionSingleShiftNS             int64         `json:"action_single_shift_ns,omitempty"`
+	ActionSingleReduceNS            int64         `json:"action_single_reduce_ns,omitempty"`
+	ActionSingleAcceptNS            int64         `json:"action_single_accept_ns,omitempty"`
+	ActionSingleRecoverNS           int64         `json:"action_single_recover_ns,omitempty"`
+	ActionSingleOtherNS             int64         `json:"action_single_other_ns,omitempty"`
+	MergeCalls                      uint64        `json:"merge_calls,omitempty"`
+	EquivCacheLookups               uint64        `json:"equiv_cache_lookups,omitempty"`
+	EquivCacheHits                  uint64        `json:"equiv_cache_hits,omitempty"`
+	EquivCacheStores                uint64        `json:"equiv_cache_stores,omitempty"`
+	EquivCacheMisses                uint64        `json:"equiv_cache_misses,omitempty"`
+	EquivCacheEpochMisses           uint64        `json:"equiv_cache_epoch_misses,omitempty"`
+	EquivCacheKeyMisses             uint64        `json:"equiv_cache_key_misses,omitempty"`
+	EquivCacheVersionMisses         uint64        `json:"equiv_cache_version_misses,omitempty"`
+	EquivSkipError                  uint64        `json:"equiv_skip_error,omitempty"`
+	EquivSkipLeaf                   uint64        `json:"equiv_skip_leaf,omitempty"`
+	EquivSkipFieldMismatch          uint64        `json:"equiv_skip_field_mismatch,omitempty"`
+	EquivExactCalls                 uint64        `json:"equiv_exact_calls,omitempty"`
+	EquivExactTrue                  uint64        `json:"equiv_exact_true,omitempty"`
+	EquivFrontierCalls              uint64        `json:"equiv_frontier_calls,omitempty"`
+	EquivFrontierTrue               uint64        `json:"equiv_frontier_true,omitempty"`
+	EquivExactChildCompares         uint64        `json:"equiv_exact_child_compares,omitempty"`
+	EquivFrontierChildScans         uint64        `json:"equiv_frontier_child_scans,omitempty"`
+	EquivFrontierCandidateCompares  uint64        `json:"equiv_frontier_candidate_compares,omitempty"`
+	ForkCount                       uint64        `json:"fork_count,omitempty"`
+	ConflictRR                      uint64        `json:"conflict_rr,omitempty"`
+	ConflictRS                      uint64        `json:"conflict_rs,omitempty"`
+	ConflictOther                   uint64        `json:"conflict_other,omitempty"`
+	LexBytes                        uint64        `json:"lex_bytes,omitempty"`
+	LexTokens                       uint64        `json:"lex_tokens,omitempty"`
+	ReduceChainSteps                uint64        `json:"reduce_chain_steps,omitempty"`
+	ReduceChainMaxLen               uint64        `json:"reduce_chain_max_len,omitempty"`
+	ReduceChainClassHits            uint64        `json:"reduce_chain_class_hits,omitempty"`
+	ReduceChainStopNoAction         uint64        `json:"reduce_chain_stop_no_action,omitempty"`
+	ReduceChainStopMulti            uint64        `json:"reduce_chain_stop_multi,omitempty"`
+	ReduceChainStopShift            uint64        `json:"reduce_chain_stop_shift,omitempty"`
+	ReduceChainStopAccept           uint64        `json:"reduce_chain_stop_accept,omitempty"`
+	ReduceChainStopDead             uint64        `json:"reduce_chain_stop_dead,omitempty"`
+	ReduceChainStopCycle            uint64        `json:"reduce_chain_stop_cycle,omitempty"`
+	ReduceChainStopLimit            uint64        `json:"reduce_chain_stop_limit,omitempty"`
+	ReduceChainHintCandidates       uint64        `json:"reduce_chain_hint_candidates,omitempty"`
+	ReduceChainHintTaken            uint64        `json:"reduce_chain_hint_taken,omitempty"`
+	ReduceChainHintSteps            uint64        `json:"reduce_chain_hint_steps,omitempty"`
+	ReduceChainHintTerminalOK       uint64        `json:"reduce_chain_hint_terminal_ok,omitempty"`
+	ReduceChainHintTerminalMismatch uint64        `json:"reduce_chain_hint_terminal_mismatch,omitempty"`
+	ReduceChainHintLimit            uint64        `json:"reduce_chain_hint_limit,omitempty"`
+	ReduceChainHintDead             uint64        `json:"reduce_chain_hint_dead,omitempty"`
+	ReduceChainHintUnexpected       uint64        `json:"reduce_chain_hint_unexpected_action,omitempty"`
+	NoTreeReduceNodes               uint64        `json:"notree_reduce_nodes,omitempty"`
+	NoTreeLeafNodes                 uint64        `json:"notree_leaf_nodes,omitempty"`
+	HotAmbiguities                  []hotGLRState `json:"hot_ambiguities,omitempty"`
+	HotReduceChains                 []hotGLRState `json:"hot_reduce_chains,omitempty"`
+	HotReduceChainRuns              []hotGLRState `json:"hot_reduce_chain_runs,omitempty"`
+	HotMergeStates                  []hotGLRState `json:"hot_merge_states,omitempty"`
+	HotEquivStates                  []hotGLRState `json:"hot_equiv_states,omitempty"`
 }
 
 type hotGLRState struct {
@@ -419,6 +427,14 @@ func scoreRows(rows []reportRow) []langScore {
 			s.attrs["reduce_stop_dead_per_token"] = float64(r.ReduceChainStopDead) / tokens
 			s.attrs["reduce_stop_cycle_per_token"] = float64(r.ReduceChainStopCycle) / tokens
 			s.attrs["reduce_stop_limit_per_token"] = float64(r.ReduceChainStopLimit) / tokens
+			s.attrs["reduce_hint_candidates_per_token"] = float64(r.ReduceChainHintCandidates) / tokens
+			s.attrs["reduce_hint_taken_per_token"] = float64(r.ReduceChainHintTaken) / tokens
+			s.attrs["reduce_hint_steps_per_token"] = float64(r.ReduceChainHintSteps) / tokens
+			s.attrs["reduce_hint_terminal_ok_share"] = safeRatioUint(r.ReduceChainHintTerminalOK, r.ReduceChainHintTaken)
+			s.attrs["reduce_hint_terminal_mismatch_per_token"] = float64(r.ReduceChainHintTerminalMismatch) / tokens
+			s.attrs["reduce_hint_limit_per_token"] = float64(r.ReduceChainHintLimit) / tokens
+			s.attrs["reduce_hint_dead_per_token"] = float64(r.ReduceChainHintDead) / tokens
+			s.attrs["reduce_hint_unexpected_action_per_token"] = float64(r.ReduceChainHintUnexpected) / tokens
 			s.attrs["normalization_nodes_per_token"] = float64(r.NormalizationNodes) / tokens
 			s.attrs["normalization_rewrites_per_token"] = float64(r.NormalizationRewrites) / tokens
 			s.attrs["parser_loop_share"] = float64(r.ParserLoopNS) / wall
@@ -1187,6 +1203,14 @@ func (r *runtimeStats) add(o runtimeStats) {
 	r.ReduceChainStopDead += o.ReduceChainStopDead
 	r.ReduceChainStopCycle += o.ReduceChainStopCycle
 	r.ReduceChainStopLimit += o.ReduceChainStopLimit
+	r.ReduceChainHintCandidates += o.ReduceChainHintCandidates
+	r.ReduceChainHintTaken += o.ReduceChainHintTaken
+	r.ReduceChainHintSteps += o.ReduceChainHintSteps
+	r.ReduceChainHintTerminalOK += o.ReduceChainHintTerminalOK
+	r.ReduceChainHintTerminalMismatch += o.ReduceChainHintTerminalMismatch
+	r.ReduceChainHintLimit += o.ReduceChainHintLimit
+	r.ReduceChainHintDead += o.ReduceChainHintDead
+	r.ReduceChainHintUnexpected += o.ReduceChainHintUnexpected
 	if o.ReduceChainMaxLen > r.ReduceChainMaxLen {
 		r.ReduceChainMaxLen = o.ReduceChainMaxLen
 	}
