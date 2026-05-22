@@ -710,6 +710,16 @@ func stackNodeNeedsDeepEquivalent(n *Node) bool {
 
 func stackEntryNodesEquivalentForLanguageWithScratch(scratch *glrMergeScratch, lang *Language, a, b *Node) bool {
 	if languageNeedsExactStackNodeEquivalence(lang) {
+		if a == b {
+			return true
+		}
+		if a == nil || b == nil {
+			return false
+		}
+		if len(a.children) == 0 || len(b.children) == 0 ||
+			a.flags&nodeFlagHasError != 0 || b.flags&nodeFlagHasError != 0 {
+			return stackEntryNodesExactlyEquivalentTerminal(activeEquivAudit(scratch), a, b)
+		}
 		return stackEntryNodesExactlyEquivalentWithScratch(scratch, a, b, 0)
 	}
 	if lang != nil && lang.Name == "python" && scratch != nil && scratch.pythonShallow {
