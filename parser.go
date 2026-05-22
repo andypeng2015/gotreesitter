@@ -1633,6 +1633,7 @@ func recordParseRuntimeLoopStats(parseRuntime *ParseRuntime, scratch *parserScra
 	parseRuntime.EquivExactChildCompares = scratch.audit.equivExactChildCompares
 	parseRuntime.EquivFrontierChildScans = scratch.audit.equivFrontierChildScans
 	parseRuntime.EquivFrontierCandidateCompares = scratch.audit.equivFrontierCandidateCompares
+	parseRuntime.EquivStateStats = scratch.audit.equivStateStats()
 }
 
 func recordParseRuntimeMaterializationTiming(parseRuntime *ParseRuntime, timingRef *parseMaterializationTiming, timing parseMaterializationTiming) {

@@ -233,44 +233,60 @@ type runtimeStats struct {
 	HotAmbiguities                 []hotGLRState `json:"hot_ambiguities,omitempty"`
 	HotReduceChains                []hotGLRState `json:"hot_reduce_chains,omitempty"`
 	HotMergeStates                 []hotGLRState `json:"hot_merge_states,omitempty"`
+	HotEquivStates                 []hotGLRState `json:"hot_equiv_states,omitempty"`
 }
 
 type hotGLRState struct {
-	State             uint32         `json:"state"`
-	Lookahead         uint16         `json:"lookahead,omitempty"`
-	LookaheadName     string         `json:"lookahead_name,omitempty"`
-	ActionCount       uint8          `json:"action_count,omitempty"`
-	ShiftCount        uint8          `json:"shift_count,omitempty"`
-	ReduceCount       uint8          `json:"reduce_count,omitempty"`
-	ReduceSymbol      uint16         `json:"reduce_symbol,omitempty"`
-	ReduceSymbolName  string         `json:"reduce_symbol_name,omitempty"`
-	ChildCount        uint8          `json:"child_count,omitempty"`
-	ProductionID      uint16         `json:"production_id,omitempty"`
-	Hits              uint64         `json:"hits,omitempty"`
-	Forks             uint64         `json:"forks,omitempty"`
-	MultiStackHits    uint64         `json:"multi_stack_hits,omitempty"`
-	StackInTotal      uint64         `json:"stack_in_total,omitempty"`
-	StackInMax        int            `json:"stack_in_max,omitempty"`
-	ReduceChainHits   uint64         `json:"reduce_chain_hits,omitempty"`
-	ReduceChainSteps  uint64         `json:"reduce_chain_steps,omitempty"`
-	ReduceChainMaxLen int            `json:"reduce_chain_max_len,omitempty"`
-	ReduceChainNS     int64          `json:"reduce_chain_ns,omitempty"`
-	ActionNS          int64          `json:"action_ns,omitempty"`
-	ExtraShiftNS      int64          `json:"extra_shift_ns,omitempty"`
-	NoActionNS        int64          `json:"no_action_ns,omitempty"`
-	ConflictChoiceNS  int64          `json:"conflict_choice_ns,omitempty"`
-	ConflictForkNS    int64          `json:"conflict_fork_ns,omitempty"`
-	SingleShiftNS     int64          `json:"single_shift_ns,omitempty"`
-	SingleReduceNS    int64          `json:"single_reduce_ns,omitempty"`
-	SingleAcceptNS    int64          `json:"single_accept_ns,omitempty"`
-	SingleRecoverNS   int64          `json:"single_recover_ns,omitempty"`
-	SingleOtherNS     int64          `json:"single_other_ns,omitempty"`
-	MergeCalls        uint64         `json:"merge_calls,omitempty"`
-	MergeStacksIn     uint64         `json:"merge_stacks_in,omitempty"`
-	MergeStacksOut    uint64         `json:"merge_stacks_out,omitempty"`
-	MergeStacksInMax  int            `json:"merge_stacks_in_max,omitempty"`
-	MergeStacksOutMax int            `json:"merge_stacks_out_max,omitempty"`
-	Actions           []hotGLRAction `json:"actions,omitempty"`
+	State                          uint32         `json:"state"`
+	Lookahead                      uint16         `json:"lookahead,omitempty"`
+	LookaheadName                  string         `json:"lookahead_name,omitempty"`
+	ActionCount                    uint8          `json:"action_count,omitempty"`
+	ShiftCount                     uint8          `json:"shift_count,omitempty"`
+	ReduceCount                    uint8          `json:"reduce_count,omitempty"`
+	ReduceSymbol                   uint16         `json:"reduce_symbol,omitempty"`
+	ReduceSymbolName               string         `json:"reduce_symbol_name,omitempty"`
+	ChildCount                     uint8          `json:"child_count,omitempty"`
+	ProductionID                   uint16         `json:"production_id,omitempty"`
+	Hits                           uint64         `json:"hits,omitempty"`
+	Forks                          uint64         `json:"forks,omitempty"`
+	MultiStackHits                 uint64         `json:"multi_stack_hits,omitempty"`
+	StackInTotal                   uint64         `json:"stack_in_total,omitempty"`
+	StackInMax                     int            `json:"stack_in_max,omitempty"`
+	ReduceChainHits                uint64         `json:"reduce_chain_hits,omitempty"`
+	ReduceChainSteps               uint64         `json:"reduce_chain_steps,omitempty"`
+	ReduceChainMaxLen              int            `json:"reduce_chain_max_len,omitempty"`
+	ReduceChainNS                  int64          `json:"reduce_chain_ns,omitempty"`
+	ActionNS                       int64          `json:"action_ns,omitempty"`
+	ExtraShiftNS                   int64          `json:"extra_shift_ns,omitempty"`
+	NoActionNS                     int64          `json:"no_action_ns,omitempty"`
+	ConflictChoiceNS               int64          `json:"conflict_choice_ns,omitempty"`
+	ConflictForkNS                 int64          `json:"conflict_fork_ns,omitempty"`
+	SingleShiftNS                  int64          `json:"single_shift_ns,omitempty"`
+	SingleReduceNS                 int64          `json:"single_reduce_ns,omitempty"`
+	SingleAcceptNS                 int64          `json:"single_accept_ns,omitempty"`
+	SingleRecoverNS                int64          `json:"single_recover_ns,omitempty"`
+	SingleOtherNS                  int64          `json:"single_other_ns,omitempty"`
+	MergeCalls                     uint64         `json:"merge_calls,omitempty"`
+	MergeStacksIn                  uint64         `json:"merge_stacks_in,omitempty"`
+	MergeStacksOut                 uint64         `json:"merge_stacks_out,omitempty"`
+	MergeStacksInMax               int            `json:"merge_stacks_in_max,omitempty"`
+	MergeStacksOutMax              int            `json:"merge_stacks_out_max,omitempty"`
+	EquivCacheLookups              uint64         `json:"equiv_cache_lookups,omitempty"`
+	EquivCacheHits                 uint64         `json:"equiv_cache_hits,omitempty"`
+	EquivCacheStores               uint64         `json:"equiv_cache_stores,omitempty"`
+	EquivCacheMisses               uint64         `json:"equiv_cache_misses,omitempty"`
+	EquivCacheKeyMisses            uint64         `json:"equiv_cache_key_misses,omitempty"`
+	EquivCacheEpochMisses          uint64         `json:"equiv_cache_epoch_misses,omitempty"`
+	EquivCacheVersionMisses        uint64         `json:"equiv_cache_version_misses,omitempty"`
+	EquivSkipError                 uint64         `json:"equiv_skip_error,omitempty"`
+	EquivSkipLeaf                  uint64         `json:"equiv_skip_leaf,omitempty"`
+	EquivSkipFieldMismatch         uint64         `json:"equiv_skip_field_mismatch,omitempty"`
+	EquivExactCalls                uint64         `json:"equiv_exact_calls,omitempty"`
+	EquivFrontierCalls             uint64         `json:"equiv_frontier_calls,omitempty"`
+	EquivExactChildCompares        uint64         `json:"equiv_exact_child_compares,omitempty"`
+	EquivFrontierChildScans        uint64         `json:"equiv_frontier_child_scans,omitempty"`
+	EquivFrontierCandidateCompares uint64         `json:"equiv_frontier_candidate_compares,omitempty"`
+	Actions                        []hotGLRAction `json:"actions,omitempty"`
 }
 
 type hotGLRAction struct {
@@ -920,6 +936,9 @@ func statsFromGoTree(r *runner, tree *gotreesitter.Tree, queryCaptures, cursorNo
 		stats.HotReduceChains = hotGLRStatesFromProfile(r.goLang, r.profile.SnapshotTopReduceChains(r.hotShapeLimit))
 		stats.HotMergeStates = hotGLRStatesFromProfile(r.goLang, r.profile.SnapshotTopMergeStates(r.hotShapeLimit))
 	}
+	if r != nil && r.hotShapeLimit > 0 {
+		stats.HotEquivStates = hotEquivStatesFromRuntime(rt.EquivStateStats, r.hotShapeLimit)
+	}
 	return stats
 }
 
@@ -1013,6 +1032,45 @@ func parseActionTypeName(t gotreesitter.ParseActionType) string {
 	default:
 		return fmt.Sprintf("action_%d", t)
 	}
+}
+
+func hotEquivStatesFromRuntime(stats []gotreesitter.ParseEquivStateRuntime, limit int) []hotGLRState {
+	if len(stats) == 0 || limit == 0 {
+		return nil
+	}
+	sort.Slice(stats, func(i, j int) bool {
+		di := stats[i].EquivCacheLookups + stats[i].EquivExactCalls + stats[i].EquivFrontierCalls
+		dj := stats[j].EquivCacheLookups + stats[j].EquivExactCalls + stats[j].EquivFrontierCalls
+		if di == dj {
+			return stats[i].State < stats[j].State
+		}
+		return di > dj
+	})
+	if limit > 0 && len(stats) > limit {
+		stats = stats[:limit]
+	}
+	out := make([]hotGLRState, 0, len(stats))
+	for _, stat := range stats {
+		out = append(out, hotGLRState{
+			State:                          uint32(stat.State),
+			EquivCacheLookups:              stat.EquivCacheLookups,
+			EquivCacheHits:                 stat.EquivCacheHits,
+			EquivCacheStores:               stat.EquivCacheStores,
+			EquivCacheMisses:               stat.EquivCacheMisses,
+			EquivCacheEpochMisses:          stat.EquivCacheEpochMisses,
+			EquivCacheKeyMisses:            stat.EquivCacheKeyMisses,
+			EquivCacheVersionMisses:        stat.EquivCacheVersionMisses,
+			EquivSkipError:                 stat.EquivSkipError,
+			EquivSkipLeaf:                  stat.EquivSkipLeaf,
+			EquivSkipFieldMismatch:         stat.EquivSkipFieldMismatch,
+			EquivExactCalls:                stat.EquivExactCalls,
+			EquivFrontierCalls:             stat.EquivFrontierCalls,
+			EquivExactChildCompares:        stat.EquivExactChildCompares,
+			EquivFrontierChildScans:        stat.EquivFrontierChildScans,
+			EquivFrontierCandidateCompares: stat.EquivFrontierCandidateCompares,
+		})
+	}
+	return out
 }
 
 func subUint64(a, b uint64) uint64 {

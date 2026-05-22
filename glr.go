@@ -485,6 +485,15 @@ func activeEquivAudit(scratch *glrMergeScratch) *runtimeAudit {
 	return scratch.audit
 }
 
+func stackEquivalentForMergeState(scratch *glrMergeScratch, lang *Language, state StateID, a, b glrStack) bool {
+	audit := activeEquivAudit(scratch)
+	if audit != nil {
+		audit.setEquivState(state)
+		defer audit.clearEquivState()
+	}
+	return stackEquivalentForLanguageWithScratch(scratch, lang, a, b)
+}
+
 func nodeEquivCacheIndex(a, b *Node, depth int) int {
 	x := uint64(uintptr(unsafe.Pointer(a)))
 	y := uint64(uintptr(unsafe.Pointer(b)))
@@ -878,13 +887,76 @@ func stackEntryNodesExactlyEquivalentWithScratch(scratch *glrMergeScratch, a, b 
 		if audit != nil {
 			audit.recordEquivExactChildCompare()
 		}
-		if !stackEntryNodesExactlyEquivalentWithScratch(scratch, a.children[i], b.children[i], depth+1) {
+		ca := a.children[i]
+		cb := b.children[i]
+		if ca == cb {
+			continue
+		}
+		if ca == nil || cb == nil {
+			storeNodeEquivCache(scratch, a, b, depth, false)
+			return false
+		}
+		if len(ca.children) == 0 || len(cb.children) == 0 ||
+			ca.flags&nodeFlagHasError != 0 || cb.flags&nodeFlagHasError != 0 {
+			if !stackEntryNodesExactlyEquivalentTerminal(audit, ca, cb) {
+				storeNodeEquivCache(scratch, a, b, depth, false)
+				return false
+			}
+			continue
+		}
+		if !stackEntryNodesExactlyEquivalentWithScratch(scratch, ca, cb, depth+1) {
 			storeNodeEquivCache(scratch, a, b, depth, false)
 			return false
 		}
 	}
 	storeNodeEquivCache(scratch, a, b, depth, true)
 	return true
+}
+
+func stackEntryNodesExactlyEquivalentTerminal(audit *runtimeAudit, a, b *Node) bool {
+	if a == b {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	if a.symbol != b.symbol ||
+		a.startByte != b.startByte ||
+		a.endByte != b.endByte ||
+		len(a.children) != len(b.children) ||
+		((a.flags^b.flags)&nodeStackEquivFlagMask) != 0 ||
+		a.parseState != b.parseState ||
+		a.preGotoState != b.preGotoState ||
+		a.productionID != b.productionID {
+		return false
+	}
+	if len(a.fieldIDs) != len(b.fieldIDs) {
+		if audit != nil {
+			audit.recordEquivSkipFieldMismatch()
+		}
+		return false
+	}
+	for i := range a.fieldIDs {
+		if a.fieldIDs[i] != b.fieldIDs[i] {
+			if audit != nil {
+				audit.recordEquivSkipFieldMismatch()
+			}
+			return false
+		}
+	}
+	if a.flags&nodeFlagHasError != 0 {
+		if audit != nil {
+			audit.recordEquivSkipError()
+		}
+		return true
+	}
+	if len(a.children) == 0 {
+		if audit != nil {
+			audit.recordEquivSkipLeaf()
+		}
+		return true
+	}
+	return false
 }
 
 func stackEntryNodesEquivalentFrontierWithScratch(scratch *glrMergeScratch, a, b *Node, depth int) bool {
@@ -1225,7 +1297,7 @@ func mergeStacksSmallForLanguage(alive []glrStack, scratch *glrMergeScratch, lan
 					break
 				}
 			}
-			if stackEquivalentForLanguageWithScratch(scratch, lang, result[j], stack) {
+			if stackEquivalentForMergeState(scratch, lang, key.state, result[j], stack) {
 				duplicateIndex = j
 				break
 			}
@@ -1356,7 +1428,7 @@ func mergeStacksWithScratch(stacks []glrStack, scratch *glrMergeScratch) []glrSt
 				hashMatched = true
 				idx := slot.indices[j]
 				existing := &result[idx]
-				if stackEquivalentForLanguageWithScratch(scratch, scratch.language, *existing, stack) {
+				if stackEquivalentForMergeState(scratch, scratch.language, key.state, *existing, stack) {
 					duplicateIndex = idx
 					break
 				}
@@ -1475,7 +1547,7 @@ func mergeStacksWithScratchLargeCap(alive []glrStack, scratch *glrMergeScratch, 
 				hashMatched = true
 				idx := slot.indices[j]
 				existing := &result[idx]
-				if stackEquivalentForLanguageWithScratch(scratch, scratch.language, *existing, stack) {
+				if stackEquivalentForMergeState(scratch, scratch.language, key.state, *existing, stack) {
 					duplicateIndex = idx
 					break
 				}

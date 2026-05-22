@@ -113,43 +113,59 @@ type runtimeStats struct {
 	HotAmbiguities                 []hotGLRState `json:"hot_ambiguities,omitempty"`
 	HotReduceChains                []hotGLRState `json:"hot_reduce_chains,omitempty"`
 	HotMergeStates                 []hotGLRState `json:"hot_merge_states,omitempty"`
+	HotEquivStates                 []hotGLRState `json:"hot_equiv_states,omitempty"`
 }
 
 type hotGLRState struct {
-	State             uint32 `json:"state"`
-	Lookahead         uint16 `json:"lookahead,omitempty"`
-	LookaheadName     string `json:"lookahead_name,omitempty"`
-	ActionCount       uint8  `json:"action_count,omitempty"`
-	ShiftCount        uint8  `json:"shift_count,omitempty"`
-	ReduceCount       uint8  `json:"reduce_count,omitempty"`
-	ReduceSymbol      uint16 `json:"reduce_symbol,omitempty"`
-	ReduceSymbolName  string `json:"reduce_symbol_name,omitempty"`
-	ChildCount        uint8  `json:"child_count,omitempty"`
-	ProductionID      uint16 `json:"production_id,omitempty"`
-	Hits              uint64 `json:"hits,omitempty"`
-	Forks             uint64 `json:"forks,omitempty"`
-	MultiStackHits    uint64 `json:"multi_stack_hits,omitempty"`
-	StackInTotal      uint64 `json:"stack_in_total,omitempty"`
-	StackInMax        int    `json:"stack_in_max,omitempty"`
-	ReduceChainHits   uint64 `json:"reduce_chain_hits,omitempty"`
-	ReduceChainSteps  uint64 `json:"reduce_chain_steps,omitempty"`
-	ReduceChainMaxLen int    `json:"reduce_chain_max_len,omitempty"`
-	ReduceChainNS     int64  `json:"reduce_chain_ns,omitempty"`
-	ActionNS          int64  `json:"action_ns,omitempty"`
-	ExtraShiftNS      int64  `json:"extra_shift_ns,omitempty"`
-	NoActionNS        int64  `json:"no_action_ns,omitempty"`
-	ConflictChoiceNS  int64  `json:"conflict_choice_ns,omitempty"`
-	ConflictForkNS    int64  `json:"conflict_fork_ns,omitempty"`
-	SingleShiftNS     int64  `json:"single_shift_ns,omitempty"`
-	SingleReduceNS    int64  `json:"single_reduce_ns,omitempty"`
-	SingleAcceptNS    int64  `json:"single_accept_ns,omitempty"`
-	SingleRecoverNS   int64  `json:"single_recover_ns,omitempty"`
-	SingleOtherNS     int64  `json:"single_other_ns,omitempty"`
-	MergeCalls        uint64 `json:"merge_calls,omitempty"`
-	MergeStacksIn     uint64 `json:"merge_stacks_in,omitempty"`
-	MergeStacksOut    uint64 `json:"merge_stacks_out,omitempty"`
-	MergeStacksInMax  int    `json:"merge_stacks_in_max,omitempty"`
-	MergeStacksOutMax int    `json:"merge_stacks_out_max,omitempty"`
+	State                          uint32 `json:"state"`
+	Lookahead                      uint16 `json:"lookahead,omitempty"`
+	LookaheadName                  string `json:"lookahead_name,omitempty"`
+	ActionCount                    uint8  `json:"action_count,omitempty"`
+	ShiftCount                     uint8  `json:"shift_count,omitempty"`
+	ReduceCount                    uint8  `json:"reduce_count,omitempty"`
+	ReduceSymbol                   uint16 `json:"reduce_symbol,omitempty"`
+	ReduceSymbolName               string `json:"reduce_symbol_name,omitempty"`
+	ChildCount                     uint8  `json:"child_count,omitempty"`
+	ProductionID                   uint16 `json:"production_id,omitempty"`
+	Hits                           uint64 `json:"hits,omitempty"`
+	Forks                          uint64 `json:"forks,omitempty"`
+	MultiStackHits                 uint64 `json:"multi_stack_hits,omitempty"`
+	StackInTotal                   uint64 `json:"stack_in_total,omitempty"`
+	StackInMax                     int    `json:"stack_in_max,omitempty"`
+	ReduceChainHits                uint64 `json:"reduce_chain_hits,omitempty"`
+	ReduceChainSteps               uint64 `json:"reduce_chain_steps,omitempty"`
+	ReduceChainMaxLen              int    `json:"reduce_chain_max_len,omitempty"`
+	ReduceChainNS                  int64  `json:"reduce_chain_ns,omitempty"`
+	ActionNS                       int64  `json:"action_ns,omitempty"`
+	ExtraShiftNS                   int64  `json:"extra_shift_ns,omitempty"`
+	NoActionNS                     int64  `json:"no_action_ns,omitempty"`
+	ConflictChoiceNS               int64  `json:"conflict_choice_ns,omitempty"`
+	ConflictForkNS                 int64  `json:"conflict_fork_ns,omitempty"`
+	SingleShiftNS                  int64  `json:"single_shift_ns,omitempty"`
+	SingleReduceNS                 int64  `json:"single_reduce_ns,omitempty"`
+	SingleAcceptNS                 int64  `json:"single_accept_ns,omitempty"`
+	SingleRecoverNS                int64  `json:"single_recover_ns,omitempty"`
+	SingleOtherNS                  int64  `json:"single_other_ns,omitempty"`
+	MergeCalls                     uint64 `json:"merge_calls,omitempty"`
+	MergeStacksIn                  uint64 `json:"merge_stacks_in,omitempty"`
+	MergeStacksOut                 uint64 `json:"merge_stacks_out,omitempty"`
+	MergeStacksInMax               int    `json:"merge_stacks_in_max,omitempty"`
+	MergeStacksOutMax              int    `json:"merge_stacks_out_max,omitempty"`
+	EquivCacheLookups              uint64 `json:"equiv_cache_lookups,omitempty"`
+	EquivCacheHits                 uint64 `json:"equiv_cache_hits,omitempty"`
+	EquivCacheStores               uint64 `json:"equiv_cache_stores,omitempty"`
+	EquivCacheMisses               uint64 `json:"equiv_cache_misses,omitempty"`
+	EquivCacheEpochMisses          uint64 `json:"equiv_cache_epoch_misses,omitempty"`
+	EquivCacheKeyMisses            uint64 `json:"equiv_cache_key_misses,omitempty"`
+	EquivCacheVersionMisses        uint64 `json:"equiv_cache_version_misses,omitempty"`
+	EquivSkipError                 uint64 `json:"equiv_skip_error,omitempty"`
+	EquivSkipLeaf                  uint64 `json:"equiv_skip_leaf,omitempty"`
+	EquivSkipFieldMismatch         uint64 `json:"equiv_skip_field_mismatch,omitempty"`
+	EquivExactCalls                uint64 `json:"equiv_exact_calls,omitempty"`
+	EquivFrontierCalls             uint64 `json:"equiv_frontier_calls,omitempty"`
+	EquivExactChildCompares        uint64 `json:"equiv_exact_child_compares,omitempty"`
+	EquivFrontierChildScans        uint64 `json:"equiv_frontier_child_scans,omitempty"`
+	EquivFrontierCandidateCompares uint64 `json:"equiv_frontier_candidate_compares,omitempty"`
 }
 
 type modeAgg struct {
@@ -197,6 +213,7 @@ type langScore struct {
 	hotAmbiguities    []hotGLRState
 	hotReduceChains   []hotGLRState
 	hotMergeStates    []hotGLRState
+	hotEquivStates    []hotGLRState
 	bucket            string
 }
 
@@ -413,6 +430,9 @@ func scoreRows(rows []reportRow) []langScore {
 			s.hotMergeStates = topHotStates(r.HotMergeStates, func(h hotGLRState) uint64 {
 				return h.MergeStacksIn
 			}, 5)
+			s.hotEquivStates = topHotStates(r.HotEquivStates, func(h hotGLRState) uint64 {
+				return h.EquivCacheLookups + h.EquivExactCalls + h.EquivFrontierCalls
+			}, 5)
 		}
 		s.bucket = classify(s)
 		scores = append(scores, s)
@@ -552,13 +572,14 @@ func render(scores []langScore) {
 		fmt.Println("## Hot GLR Shapes")
 		fmt.Println()
 		for _, s := range scores {
-			if len(s.hotAmbiguities) == 0 && len(s.hotReduceChains) == 0 && len(s.hotMergeStates) == 0 {
+			if len(s.hotAmbiguities) == 0 && len(s.hotReduceChains) == 0 && len(s.hotMergeStates) == 0 && len(s.hotEquivStates) == 0 {
 				continue
 			}
 			fmt.Printf("### %s\n\n", s.lang)
 			printHotTable("fork/action buckets", s.hotAmbiguities, "action_ns")
 			printHotTable("reduce-chain buckets", s.hotReduceChains, "reduce_chain_ns")
 			printHotTable("merge-state buckets", s.hotMergeStates, "merge_in")
+			printHotEquivTable("equivalence-state buckets", s.hotEquivStates)
 		}
 	}
 
@@ -796,6 +817,21 @@ func aggregateHotStates(in []hotGLRState) []hotGLRState {
 		if h.MergeStacksOutMax > dst.MergeStacksOutMax {
 			dst.MergeStacksOutMax = h.MergeStacksOutMax
 		}
+		dst.EquivCacheLookups += h.EquivCacheLookups
+		dst.EquivCacheHits += h.EquivCacheHits
+		dst.EquivCacheStores += h.EquivCacheStores
+		dst.EquivCacheMisses += h.EquivCacheMisses
+		dst.EquivCacheEpochMisses += h.EquivCacheEpochMisses
+		dst.EquivCacheKeyMisses += h.EquivCacheKeyMisses
+		dst.EquivCacheVersionMisses += h.EquivCacheVersionMisses
+		dst.EquivSkipError += h.EquivSkipError
+		dst.EquivSkipLeaf += h.EquivSkipLeaf
+		dst.EquivSkipFieldMismatch += h.EquivSkipFieldMismatch
+		dst.EquivExactCalls += h.EquivExactCalls
+		dst.EquivFrontierCalls += h.EquivFrontierCalls
+		dst.EquivExactChildCompares += h.EquivExactChildCompares
+		dst.EquivFrontierChildScans += h.EquivFrontierChildScans
+		dst.EquivFrontierCandidateCompares += h.EquivFrontierCandidateCompares
 	}
 	out := make([]hotGLRState, 0, len(byKey))
 	for _, h := range byKey {
@@ -806,7 +842,7 @@ func aggregateHotStates(in []hotGLRState) []hotGLRState {
 
 func hasHotShapes(scores []langScore) bool {
 	for _, s := range scores {
-		if len(s.hotAmbiguities) > 0 || len(s.hotReduceChains) > 0 || len(s.hotMergeStates) > 0 {
+		if len(s.hotAmbiguities) > 0 || len(s.hotReduceChains) > 0 || len(s.hotMergeStates) > 0 || len(s.hotEquivStates) > 0 {
 			return true
 		}
 	}
@@ -866,6 +902,34 @@ func printHotTable(label string, rows []hotGLRState, metric string) {
 			h.MergeStacksIn,
 			h.MergeStacksOut,
 			scoreText,
+		)
+	}
+	fmt.Println()
+}
+
+func printHotEquivTable(label string, rows []hotGLRState) {
+	if len(rows) == 0 {
+		return
+	}
+	fmt.Printf("`%s`\n\n", label)
+	fmt.Println("| state | lookups | hit% | miss% | key_miss% | exact_calls | frontier_calls | exact_child | frontier_scans | frontier_candidates | skips | score |")
+	fmt.Println("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
+	for _, h := range rows {
+		skips := h.EquivSkipError + h.EquivSkipLeaf + h.EquivSkipFieldMismatch
+		score := h.EquivCacheLookups + h.EquivExactCalls + h.EquivFrontierCalls
+		fmt.Printf("| %d | %d | %.1f%% | %.1f%% | %.1f%% | %d | %d | %d | %d | %d | %d | %d |\n",
+			h.State,
+			h.EquivCacheLookups,
+			100*safeRatioUint(h.EquivCacheHits, h.EquivCacheLookups),
+			100*safeRatioUint(h.EquivCacheMisses, h.EquivCacheLookups),
+			100*safeRatioUint(h.EquivCacheKeyMisses, h.EquivCacheMisses),
+			h.EquivExactCalls,
+			h.EquivFrontierCalls,
+			h.EquivExactChildCompares,
+			h.EquivFrontierChildScans,
+			h.EquivFrontierCandidateCompares,
+			skips,
+			score,
 		)
 	}
 	fmt.Println()
@@ -1000,6 +1064,7 @@ func (r *runtimeStats) add(o runtimeStats) {
 	r.HotAmbiguities = append(r.HotAmbiguities, o.HotAmbiguities...)
 	r.HotReduceChains = append(r.HotReduceChains, o.HotReduceChains...)
 	r.HotMergeStates = append(r.HotMergeStates, o.HotMergeStates...)
+	r.HotEquivStates = append(r.HotEquivStates, o.HotEquivStates...)
 }
 
 func ratio(num, den int64) float64 {

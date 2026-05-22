@@ -572,6 +572,25 @@ type PendingParentFieldRejectPayloadStats struct {
 	HiddenWithFields     uint64
 }
 
+type ParseEquivStateRuntime struct {
+	State                          StateID
+	EquivCacheLookups              uint64
+	EquivCacheHits                 uint64
+	EquivCacheStores               uint64
+	EquivCacheMisses               uint64
+	EquivCacheEpochMisses          uint64
+	EquivCacheKeyMisses            uint64
+	EquivCacheVersionMisses        uint64
+	EquivSkipError                 uint64
+	EquivSkipLeaf                  uint64
+	EquivSkipFieldMismatch         uint64
+	EquivExactCalls                uint64
+	EquivFrontierCalls             uint64
+	EquivExactChildCompares        uint64
+	EquivFrontierChildScans        uint64
+	EquivFrontierCandidateCompares uint64
+}
+
 // ParseRuntime captures parser-loop diagnostics for a completed tree.
 type ParseRuntime struct {
 	StopReason                                   ParseStopReason
@@ -666,6 +685,7 @@ type ParseRuntime struct {
 	EquivExactChildCompares                      uint64
 	EquivFrontierChildScans                      uint64
 	EquivFrontierCandidateCompares               uint64
+	EquivStateStats                              []ParseEquivStateRuntime
 	ParseWallNanos                               int64
 	ParserLoopNanos                              int64
 	TokenNextNanos                               int64
