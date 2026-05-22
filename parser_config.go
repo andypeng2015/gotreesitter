@@ -25,6 +25,7 @@ var (
 	parseActionTimingOnce      sync.Once
 	parseActionTiming          bool
 	parseReduceChainHintsOnce  sync.Once
+	parseReduceChainHintsSet   bool
 	parseReduceChainHints      bool
 )
 
@@ -50,6 +51,7 @@ func ResetParseEnvConfigCacheForTests() {
 	parseActionTimingOnce = sync.Once{}
 	parseActionTiming = false
 	parseReduceChainHintsOnce = sync.Once{}
+	parseReduceChainHintsSet = false
 	parseReduceChainHints = false
 }
 
@@ -172,11 +174,22 @@ func parseActionTimingEnabled() bool {
 }
 
 func parseReduceChainHintsEnabled() bool {
+	_, enabled := parseReduceChainHintsEnv()
+	return enabled
+}
+
+func parseReduceChainHintsEnv() (configured bool, enabled bool) {
 	parseReduceChainHintsOnce.Do(func() {
 		raw := strings.TrimSpace(os.Getenv("GOT_GLR_REDUCE_CHAIN_HINTS"))
+		if raw == "" {
+			parseReduceChainHintsSet = false
+			parseReduceChainHints = false
+			return
+		}
+		parseReduceChainHintsSet = true
 		parseReduceChainHints = raw != "" && raw != "0" && !strings.EqualFold(raw, "false")
 	})
-	return parseReduceChainHints
+	return parseReduceChainHintsSet, parseReduceChainHints
 }
 
 func parseTransientReduceEnabled(envName string) bool {

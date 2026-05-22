@@ -476,6 +476,7 @@ func attachReduceChainHints(blobName string, lang *gotreesitter.Language) {
 			TerminalStates: []gotreesitter.StateID{gotreesitter.StateID(2336), gotreesitter.StateID(2361), gotreesitter.StateID(2098), gotreesitter.StateID(2460)},
 			TerminalAction: gotreesitter.ReduceChainTerminalSingleShift,
 			MaxSteps:       10,
+			DefaultEnabled: true,
 		}}
 	case "rust":
 		if !embeddedLanguageSymbolNameMatches(lang, gotreesitter.Symbol(5), ")") {

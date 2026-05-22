@@ -301,6 +301,17 @@ func parseShouldCompactNoTreeShiftLeaves(sourceLen int) bool {
 	return sourceLen >= 256*1024
 }
 
+func parseShouldUseDefaultReduceChainHints(p *Parser, source []byte, reuse *reuseCursor, oldTree *Tree, arenaClass arenaClass) bool {
+	return p != nil &&
+		p.language != nil &&
+		p.language.Name == "python" &&
+		!p.noTreeBenchmarkOnly &&
+		arenaClass == arenaClassFull &&
+		reuse == nil &&
+		oldTree == nil &&
+		len(source) >= 16*1024
+}
+
 func parseShouldUseCompactFullShiftLeaves(p *Parser, source []byte, reuse *reuseCursor, oldTree *Tree, arenaClass arenaClass) bool {
 	if p == nil {
 		return false

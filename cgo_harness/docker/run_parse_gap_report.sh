@@ -148,7 +148,7 @@ BUILD_ARG=()
 if [[ "$BUILD_IMAGE" == "0" ]]; then
   BUILD_ARG=(--no-build)
 fi
-REDUCE_CHAIN_HINTS="${GOT_GLR_REDUCE_CHAIN_HINTS:-0}"
+REDUCE_CHAIN_HINTS="${GOT_GLR_REDUCE_CHAIN_HINTS-}"
 
 {
   echo "commit=$(git -C "$REPO_ROOT" rev-parse HEAD)"

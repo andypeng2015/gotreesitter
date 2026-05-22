@@ -994,6 +994,32 @@ func TestParseShouldUsePendingFullParentsDefaultsForLargePythonNoCompat(t *testi
 	}
 }
 
+func TestParseShouldUseDefaultReduceChainHintsForLargePythonFullParse(t *testing.T) {
+	source := make([]byte, 16*1024)
+	parser := &Parser{
+		language: &Language{Name: "python"},
+	}
+
+	if !parseShouldUseDefaultReduceChainHints(parser, source, nil, nil, arenaClassFull) {
+		t.Fatal("parseShouldUseDefaultReduceChainHints = false, want true for large Python full parse")
+	}
+
+	parser.noTreeBenchmarkOnly = true
+	if parseShouldUseDefaultReduceChainHints(parser, source, nil, nil, arenaClassFull) {
+		t.Fatal("parseShouldUseDefaultReduceChainHints = true, want false for no-tree control")
+	}
+
+	parser.noTreeBenchmarkOnly = false
+	if parseShouldUseDefaultReduceChainHints(parser, source[:len(source)-1], nil, nil, arenaClassFull) {
+		t.Fatal("parseShouldUseDefaultReduceChainHints = true, want false below size gate")
+	}
+
+	parser.language = &Language{Name: "java"}
+	if parseShouldUseDefaultReduceChainHints(parser, source, nil, nil, arenaClassFull) {
+		t.Fatal("parseShouldUseDefaultReduceChainHints = true, want false for non-Python")
+	}
+}
+
 func TestParseShouldUsePendingFullParentsKeepsEnvOptInForOtherLargeSources(t *testing.T) {
 	source := make([]byte, 256*1024)
 	parser := &Parser{

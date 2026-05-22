@@ -37,6 +37,7 @@ type reduceChainHint struct {
 	terminalStates []StateID
 	terminalAction classifiedParseActionClass
 	maxSteps       uint16
+	defaultEnabled bool
 }
 
 func buildReduceChainHintIndex(hints []reduceChainHint) []int {
@@ -96,13 +97,37 @@ func classifyParseActionEntry(entry ParseActionEntry) classifiedParseAction {
 }
 
 func buildReduceChainHints(lang *Language) []reduceChainHint {
-	if lang == nil || !parseReduceChainHintsEnabled() {
+	if lang == nil {
 		return nil
 	}
-	if len(lang.ReduceChainHints) != 0 {
-		return buildReduceChainHintsFromMetadata(lang, lang.ReduceChainHints)
+	envConfigured, envEnabled := parseReduceChainHintsEnv()
+	if envConfigured && !envEnabled {
+		return nil
 	}
-	return buildReduceChainHintsFromMetadata(lang, defaultReduceChainHintMetadata(lang))
+
+	var hints []ReduceChainHint
+	if len(lang.ReduceChainHints) != 0 {
+		hints = lang.ReduceChainHints
+	} else {
+		hints = defaultReduceChainHintMetadata(lang)
+	}
+	if !envConfigured {
+		hints = defaultEnabledReduceChainHints(hints)
+	}
+	return buildReduceChainHintsFromMetadata(lang, hints)
+}
+
+func defaultEnabledReduceChainHints(hints []ReduceChainHint) []ReduceChainHint {
+	if len(hints) == 0 {
+		return nil
+	}
+	out := make([]ReduceChainHint, 0, len(hints))
+	for _, hint := range hints {
+		if hint.DefaultEnabled {
+			out = append(out, hint)
+		}
+	}
+	return out
 }
 
 func buildReduceChainHintsFromMetadata(lang *Language, hints []ReduceChainHint) []reduceChainHint {
@@ -119,6 +144,7 @@ func buildReduceChainHintsFromMetadata(lang *Language, hints []ReduceChainHint) 
 			terminalStates: append([]StateID(nil), hint.TerminalStates...),
 			terminalAction: terminalAction,
 			maxSteps:       hint.MaxSteps,
+			defaultEnabled: hint.DefaultEnabled,
 		})
 	}
 	return out
@@ -167,6 +193,7 @@ func defaultReduceChainHintMetadata(lang *Language) []ReduceChainHint {
 			TerminalStates: []StateID{StateID(2336), StateID(2361), StateID(2098), StateID(2460)},
 			TerminalAction: ReduceChainTerminalSingleShift,
 			MaxSteps:       10,
+			DefaultEnabled: true,
 		}}
 	case "rust":
 		if !languageSymbolNameMatches(lang, Symbol(5), ")") {
@@ -560,6 +587,9 @@ func (p *Parser) chainSingleReduceActions(s *glrStack, tok Token, anyReduced *bo
 func (p *Parser) chainSingleReduceActionsClassified(s *glrStack, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, deferParentLinks bool, trackChildErrors *bool) bool {
 	if len(p.reduceChainHints) != 0 {
 		if hint, ok := p.reduceChainHintFor(s.top().state, tok.Symbol); ok {
+			if hint.defaultEnabled && !p.reduceChainHintsExplicit && !p.reduceChainDefaultHintsActive {
+				return p.chainSingleReduceActionsClassifiedDefault(s, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
+			}
 			return p.chainSingleReduceActionsClassifiedHinted(s, tok, hint, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
 		}
 	}
@@ -605,24 +635,17 @@ func reduceChainHintTerminalStateAllowed(hint reduceChainHint, state StateID) bo
 	return false
 }
 
-func (p *Parser) lookupClassifiedAction(state StateID, lookahead Symbol) (classifiedParseAction, bool) {
-	actionIdx := p.lookupActionIndex(state, lookahead)
-	if actionIdx == 0 || int(actionIdx) >= len(p.classifiedActions) {
-		return classifiedParseAction{class: classifiedParseActionNoAction}, false
-	}
-	return p.classifiedActions[actionIdx], true
-}
-
 func (p *Parser) chainSingleReduceActionsClassifiedHinted(s *glrStack, tok Token, hint reduceChainHint, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, deferParentLinks bool, trackChildErrors *bool) bool {
 	if perfCountersEnabled {
 		perfRecordReduceChainHintCandidate()
 		perfRecordReduceChainHintTaken()
 	}
+	actions := p.classifiedActions
 	steps := 0
 	for steps < int(hint.maxSteps) {
 		currentState := s.top().state
-		classified, ok := p.lookupClassifiedAction(currentState, tok.Symbol)
-		if !ok {
+		actionIdx := p.lookupActionIndex(currentState, tok.Symbol)
+		if actionIdx == 0 || int(actionIdx) >= len(actions) {
 			if reduceChainHintTerminalMatches(hint, currentState, classifiedParseActionNoAction) {
 				if perfCountersEnabled {
 					perfRecordReduceChainHintTerminalOK()
@@ -634,6 +657,7 @@ func (p *Parser) chainSingleReduceActionsClassifiedHinted(s *glrStack, tok Token
 			}
 			return false
 		}
+		classified := &actions[actionIdx]
 		if classified.class != classifiedParseActionSingleReduce {
 			if reduceChainHintTerminalMatches(hint, currentState, classified.class) {
 				if perfCountersEnabled {
@@ -826,6 +850,9 @@ func (p *Parser) chainSingleReduceActionsProfiled(s *glrStack, tok Token, anyRed
 func (p *Parser) chainSingleReduceActionsClassifiedProfiled(s *glrStack, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, deferParentLinks bool, trackChildErrors *bool) bool {
 	if len(p.reduceChainHints) != 0 {
 		if hint, ok := p.reduceChainHintFor(s.top().state, tok.Symbol); ok {
+			if hint.defaultEnabled && !p.reduceChainHintsExplicit && !p.reduceChainDefaultHintsActive {
+				return p.chainSingleReduceActionsClassifiedProfiledDefault(s, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
+			}
 			return p.chainSingleReduceActionsClassifiedHintedProfiled(s, tok, hint, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
 		}
 	}
