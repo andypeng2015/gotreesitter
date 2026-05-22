@@ -857,6 +857,12 @@ func stackEntryNodesExactlyEquivalentWithScratch(scratch *glrMergeScratch, a, b 
 	if a == nil || b == nil {
 		return false
 	}
+	if hit, ok := lookupNodeEquivCache(scratch, a, b, depth); ok {
+		if hit && audit != nil {
+			audit.recordEquivExactTrue()
+		}
+		return hit
+	}
 	if a.symbol != b.symbol ||
 		a.startByte != b.startByte ||
 		a.endByte != b.endByte ||
@@ -894,12 +900,6 @@ func stackEntryNodesExactlyEquivalentWithScratch(scratch *glrMergeScratch, a, b 
 			audit.recordEquivExactTrue()
 		}
 		return true
-	}
-	if hit, ok := lookupNodeEquivCache(scratch, a, b, depth); ok {
-		if hit && audit != nil {
-			audit.recordEquivExactTrue()
-		}
-		return hit
 	}
 	for i := range a.children {
 		if audit != nil {
