@@ -34,7 +34,7 @@ type classifiedParseAction struct {
 type reduceChainHint struct {
 	startState     StateID
 	lookahead      Symbol
-	terminalState  StateID
+	terminalStates []StateID
 	terminalAction classifiedParseActionClass
 	maxSteps       uint16
 }
@@ -82,7 +82,7 @@ func buildReduceChainHints(lang *Language) []reduceChainHint {
 		return []reduceChainHint{{
 			startState:     StateID(1101),
 			lookahead:      Symbol(101),
-			terminalState:  StateID(2336),
+			terminalStates: []StateID{StateID(2336), StateID(2361), StateID(2098), StateID(2460)},
 			terminalAction: classifiedParseActionSingleShift,
 			maxSteps:       10,
 		}}
@@ -482,6 +482,22 @@ func (p *Parser) reduceChainHintFor(state StateID, lookahead Symbol) (reduceChai
 	return reduceChainHint{}, false
 }
 
+func reduceChainHintTerminalMatches(hint reduceChainHint, state StateID, class classifiedParseActionClass) bool {
+	if class != hint.terminalAction {
+		return false
+	}
+	return reduceChainHintTerminalStateAllowed(hint, state)
+}
+
+func reduceChainHintTerminalStateAllowed(hint reduceChainHint, state StateID) bool {
+	for _, terminalState := range hint.terminalStates {
+		if state == terminalState {
+			return true
+		}
+	}
+	return false
+}
+
 func (p *Parser) lookupClassifiedAction(state StateID, lookahead Symbol) (classifiedParseAction, bool) {
 	actionIdx := p.lookupActionIndex(state, lookahead)
 	if actionIdx == 0 || int(actionIdx) >= len(p.classifiedActions) {
@@ -500,7 +516,7 @@ func (p *Parser) chainSingleReduceActionsClassifiedHinted(s *glrStack, tok Token
 		currentState := s.top().state
 		classified, ok := p.lookupClassifiedAction(currentState, tok.Symbol)
 		if !ok {
-			if currentState == hint.terminalState && hint.terminalAction == classifiedParseActionNoAction {
+			if reduceChainHintTerminalMatches(hint, currentState, classifiedParseActionNoAction) {
 				if perfCountersEnabled {
 					perfRecordReduceChainHintTerminalOK()
 				}
@@ -512,16 +528,16 @@ func (p *Parser) chainSingleReduceActionsClassifiedHinted(s *glrStack, tok Token
 			return false
 		}
 		if classified.class != classifiedParseActionSingleReduce {
-			if currentState == hint.terminalState && classified.class == hint.terminalAction {
+			if reduceChainHintTerminalMatches(hint, currentState, classified.class) {
 				if perfCountersEnabled {
 					perfRecordReduceChainHintTerminalOK()
 				}
-			} else if currentState != hint.terminalState {
+			} else if reduceChainHintTerminalStateAllowed(hint, currentState) {
 				if perfCountersEnabled {
-					perfRecordReduceChainHintTerminalMismatch()
+					perfRecordReduceChainHintUnexpected()
 				}
 			} else if perfCountersEnabled {
-				perfRecordReduceChainHintUnexpected()
+				perfRecordReduceChainHintTerminalMismatch()
 			}
 			switch classified.class {
 			case classifiedParseActionSingleShift:
