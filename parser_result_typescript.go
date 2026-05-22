@@ -99,23 +99,7 @@ func normalizeTypeScriptCompatibility(root *Node, source []byte, lang *Language)
 		}
 		for i, child := range n.children {
 			for {
-				var rewritten *Node
-				switch {
-				case ctx.canRewriteGenericCalls:
-					rewritten = rewriteTypeScriptPredefinedGenericCall(child, &ctx)
-				}
-				if rewritten == nil && ctx.canRewriteInstantiatedCalls {
-					rewritten = rewriteTypeScriptInstantiatedCall(child, &ctx)
-				}
-				if rewritten == nil && ctx.canRewriteAsExpressions {
-					rewritten = rewriteTypeScriptAsExpressionCompatibility(child, &ctx)
-				}
-				if rewritten == nil && ctx.canRewriteGenericArrows {
-					rewritten = rewriteTypeScriptGenericArrowTypeAssertion(child, &ctx)
-				}
-				if rewritten == nil && ctx.canRewriteClassDeclarations {
-					rewritten = rewriteTypeScriptClassExpressionStatement(child, &ctx)
-				}
+				rewritten := rewriteTypeScriptCompatibilityChild(child, &ctx)
 				if rewritten == nil {
 					break
 				}
@@ -126,6 +110,40 @@ func normalizeTypeScriptCompatibility(root *Node, source []byte, lang *Language)
 			}
 		}
 	})
+}
+
+func rewriteTypeScriptCompatibilityChild(child *Node, ctx *typeScriptNormalizationContext) *Node {
+	if child == nil || ctx == nil {
+		return nil
+	}
+	switch child.symbol {
+	case ctx.binaryExpressionSym:
+		if ctx.canRewriteGenericCalls {
+			if rewritten := rewriteTypeScriptPredefinedGenericCall(child, ctx); rewritten != nil {
+				return rewritten
+			}
+		}
+		if ctx.canRewriteAsExpressions {
+			return rewriteTypeScriptAsTypeChain(child, ctx)
+		}
+	case ctx.callSym:
+		if ctx.canRewriteInstantiatedCalls {
+			return rewriteTypeScriptInstantiatedCall(child, ctx)
+		}
+	case ctx.asExpressionSym:
+		if ctx.canRewriteAsExpressions {
+			return rewriteTypeScriptAsAssignmentOrTernary(child, ctx)
+		}
+	case ctx.typeAssertionSym:
+		if ctx.canRewriteGenericArrows {
+			return rewriteTypeScriptGenericArrowTypeAssertion(child, ctx)
+		}
+	case ctx.expressionStatementSym:
+		if ctx.canRewriteClassDeclarations {
+			return rewriteTypeScriptClassExpressionStatement(child, ctx)
+		}
+	}
+	return nil
 }
 
 func normalizeTypeScriptIdentifierKeywordAliases(node *Node, ctx *typeScriptNormalizationContext) {
