@@ -148,6 +148,7 @@ BUILD_ARG=()
 if [[ "$BUILD_IMAGE" == "0" ]]; then
   BUILD_ARG=(--no-build)
 fi
+REDUCE_CHAIN_HINTS="${GOT_GLR_REDUCE_CHAIN_HINTS:-0}"
 
 {
   echo "commit=$(git -C "$REPO_ROOT" rev-parse HEAD)"
@@ -175,6 +176,7 @@ fi
   echo "equiv_counters=$EQUIV_COUNTERS"
   echo "reduce_timing=$REDUCE_TIMING"
   echo "action_timing=$ACTION_TIMING"
+  echo "got_glr_reduce_chain_hints=$REDUCE_CHAIN_HINTS"
 } >"$OUT_DIR/wrapper-metadata.txt"
 
 allow_arg_text=""
@@ -224,6 +226,7 @@ env \
   $phase_timing_env_text \
   $reduce_timing_env_text \
   $action_timing_env_text \
+  GOT_GLR_REDUCE_CHAIN_HINTS='$REDUCE_CHAIN_HINTS' \
   GTS_PARSE_GAP_DOCKER_IMAGE='$IMAGE_TAG' \
   GTS_PARSE_GAP_CPUS='$CPUS_LIMIT' \
   GTS_PARSE_GAP_MEMORY='$MEMORY_LIMIT' \
@@ -234,6 +237,7 @@ env \
   $phase_timing_env_text \
   $reduce_timing_env_text \
   $action_timing_env_text \
+  GOT_GLR_REDUCE_CHAIN_HINTS='$REDUCE_CHAIN_HINTS' \
   GTS_PARSE_GAP_DOCKER_IMAGE='$IMAGE_TAG' \
   GTS_PARSE_GAP_CPUS='$CPUS_LIMIT' \
   GTS_PARSE_GAP_MEMORY='$MEMORY_LIMIT' \
