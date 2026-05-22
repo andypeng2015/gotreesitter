@@ -1119,7 +1119,7 @@ func TestParserShouldDeferResultParentLinksForNoCompatBenchmark(t *testing.T) {
 
 func TestParseFullEntryScratchCapacityCapsLargePrealloc(t *testing.T) {
 	got := parseFullEntryScratchCapacity(2 * 1024 * 1024)
-	want := 128 * 1024
+	want := 64 * 1024
 	if got != want {
 		t.Fatalf("parseFullEntryScratchCapacity large source = %d, want %d", got, want)
 	}
