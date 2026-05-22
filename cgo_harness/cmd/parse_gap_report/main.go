@@ -233,6 +233,10 @@ type hotGLRState struct {
 	ActionCount       uint8          `json:"action_count,omitempty"`
 	ShiftCount        uint8          `json:"shift_count,omitempty"`
 	ReduceCount       uint8          `json:"reduce_count,omitempty"`
+	ReduceSymbol      uint16         `json:"reduce_symbol,omitempty"`
+	ReduceSymbolName  string         `json:"reduce_symbol_name,omitempty"`
+	ChildCount        uint8          `json:"child_count,omitempty"`
+	ProductionID      uint16         `json:"production_id,omitempty"`
 	Hits              uint64         `json:"hits,omitempty"`
 	Forks             uint64         `json:"forks,omitempty"`
 	MultiStackHits    uint64         `json:"multi_stack_hits,omitempty"`
@@ -241,6 +245,17 @@ type hotGLRState struct {
 	ReduceChainHits   uint64         `json:"reduce_chain_hits,omitempty"`
 	ReduceChainSteps  uint64         `json:"reduce_chain_steps,omitempty"`
 	ReduceChainMaxLen int            `json:"reduce_chain_max_len,omitempty"`
+	ReduceChainNS     int64          `json:"reduce_chain_ns,omitempty"`
+	ActionNS          int64          `json:"action_ns,omitempty"`
+	ExtraShiftNS      int64          `json:"extra_shift_ns,omitempty"`
+	NoActionNS        int64          `json:"no_action_ns,omitempty"`
+	ConflictChoiceNS  int64          `json:"conflict_choice_ns,omitempty"`
+	ConflictForkNS    int64          `json:"conflict_fork_ns,omitempty"`
+	SingleShiftNS     int64          `json:"single_shift_ns,omitempty"`
+	SingleReduceNS    int64          `json:"single_reduce_ns,omitempty"`
+	SingleAcceptNS    int64          `json:"single_accept_ns,omitempty"`
+	SingleRecoverNS   int64          `json:"single_recover_ns,omitempty"`
+	SingleOtherNS     int64          `json:"single_other_ns,omitempty"`
 	MergeCalls        uint64         `json:"merge_calls,omitempty"`
 	MergeStacksIn     uint64         `json:"merge_stacks_in,omitempty"`
 	MergeStacksOut    uint64         `json:"merge_stacks_out,omitempty"`
@@ -912,6 +927,9 @@ func hotGLRStatesFromProfile(lang *gotreesitter.Language, stats []gotreesitter.A
 			ActionCount:       stat.ActionCount,
 			ShiftCount:        stat.ShiftCount,
 			ReduceCount:       stat.ReduceCount,
+			ReduceSymbol:      uint16(stat.ReduceSymbol),
+			ChildCount:        stat.ChildCount,
+			ProductionID:      stat.ProductionID,
 			Hits:              stat.Hits,
 			Forks:             stat.Forks,
 			MultiStackHits:    stat.MultiStackHits,
@@ -920,11 +938,25 @@ func hotGLRStatesFromProfile(lang *gotreesitter.Language, stats []gotreesitter.A
 			ReduceChainHits:   stat.ReduceChainHits,
 			ReduceChainSteps:  stat.ReduceChainSteps,
 			ReduceChainMaxLen: stat.ReduceChainMaxLen,
+			ReduceChainNS:     stat.ReduceChainNanos,
+			ActionNS:          stat.ActionNanos,
+			ExtraShiftNS:      stat.ExtraShiftNanos,
+			NoActionNS:        stat.NoActionNanos,
+			ConflictChoiceNS:  stat.ConflictChoiceNanos,
+			ConflictForkNS:    stat.ConflictForkNanos,
+			SingleShiftNS:     stat.SingleShiftNanos,
+			SingleReduceNS:    stat.SingleReduceNanos,
+			SingleAcceptNS:    stat.SingleAcceptNanos,
+			SingleRecoverNS:   stat.SingleRecoverNanos,
+			SingleOtherNS:     stat.SingleOtherNanos,
 			MergeCalls:        stat.MergeCalls,
 			MergeStacksIn:     stat.MergeStacksIn,
 			MergeStacksOut:    stat.MergeStacksOut,
 			MergeStacksInMax:  stat.MergeStacksInMax,
 			MergeStacksOutMax: stat.MergeStacksOutMax,
+		}
+		if stat.ReduceSymbol != 0 || stat.ChildCount != 0 || stat.ProductionID != 0 {
+			row.ReduceSymbolName = symbolName(lang, stat.ReduceSymbol)
 		}
 		if len(stat.Actions) > 0 {
 			row.Actions = make([]hotGLRAction, 0, len(stat.Actions))

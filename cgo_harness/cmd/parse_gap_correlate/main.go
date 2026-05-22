@@ -113,6 +113,10 @@ type hotGLRState struct {
 	ActionCount       uint8  `json:"action_count,omitempty"`
 	ShiftCount        uint8  `json:"shift_count,omitempty"`
 	ReduceCount       uint8  `json:"reduce_count,omitempty"`
+	ReduceSymbol      uint16 `json:"reduce_symbol,omitempty"`
+	ReduceSymbolName  string `json:"reduce_symbol_name,omitempty"`
+	ChildCount        uint8  `json:"child_count,omitempty"`
+	ProductionID      uint16 `json:"production_id,omitempty"`
 	Hits              uint64 `json:"hits,omitempty"`
 	Forks             uint64 `json:"forks,omitempty"`
 	MultiStackHits    uint64 `json:"multi_stack_hits,omitempty"`
@@ -121,6 +125,17 @@ type hotGLRState struct {
 	ReduceChainHits   uint64 `json:"reduce_chain_hits,omitempty"`
 	ReduceChainSteps  uint64 `json:"reduce_chain_steps,omitempty"`
 	ReduceChainMaxLen int    `json:"reduce_chain_max_len,omitempty"`
+	ReduceChainNS     int64  `json:"reduce_chain_ns,omitempty"`
+	ActionNS          int64  `json:"action_ns,omitempty"`
+	ExtraShiftNS      int64  `json:"extra_shift_ns,omitempty"`
+	NoActionNS        int64  `json:"no_action_ns,omitempty"`
+	ConflictChoiceNS  int64  `json:"conflict_choice_ns,omitempty"`
+	ConflictForkNS    int64  `json:"conflict_fork_ns,omitempty"`
+	SingleShiftNS     int64  `json:"single_shift_ns,omitempty"`
+	SingleReduceNS    int64  `json:"single_reduce_ns,omitempty"`
+	SingleAcceptNS    int64  `json:"single_accept_ns,omitempty"`
+	SingleRecoverNS   int64  `json:"single_recover_ns,omitempty"`
+	SingleOtherNS     int64  `json:"single_other_ns,omitempty"`
 	MergeCalls        uint64 `json:"merge_calls,omitempty"`
 	MergeStacksIn     uint64 `json:"merge_stacks_in,omitempty"`
 	MergeStacksOut    uint64 `json:"merge_stacks_out,omitempty"`
@@ -355,12 +370,18 @@ func scoreRows(rows []reportRow) []langScore {
 			s.attrs["result_compat_share"] = float64(r.ResultCompatibilityNS) / wall
 			s.attrs["normalization_share"] = float64(r.NormalizationNS) / wall
 			s.hotAmbiguities = topHotStates(r.HotAmbiguities, func(h hotGLRState) uint64 {
+				if h.ActionNS > 0 {
+					return uint64(h.ActionNS)
+				}
 				if h.StackInTotal > 0 {
 					return h.StackInTotal
 				}
 				return h.Hits
 			}, 5)
 			s.hotReduceChains = topHotStates(r.HotReduceChains, func(h hotGLRState) uint64 {
+				if h.ReduceChainNS > 0 {
+					return uint64(h.ReduceChainNS)
+				}
 				return h.ReduceChainSteps
 			}, 5)
 			s.hotMergeStates = topHotStates(r.HotMergeStates, func(h hotGLRState) uint64 {
@@ -507,8 +528,8 @@ func render(scores []langScore) {
 				continue
 			}
 			fmt.Printf("### %s\n\n", s.lang)
-			printHotTable("fork/action buckets", s.hotAmbiguities, "stack_in")
-			printHotTable("reduce-chain buckets", s.hotReduceChains, "reduce_steps")
+			printHotTable("fork/action buckets", s.hotAmbiguities, "action_ns")
+			printHotTable("reduce-chain buckets", s.hotReduceChains, "reduce_chain_ns")
 			printHotTable("merge-state buckets", s.hotMergeStates, "merge_in")
 		}
 	}
@@ -625,15 +646,18 @@ func topHotStates(in []hotGLRState, score func(h hotGLRState) uint64, limit int)
 
 func aggregateHotStates(in []hotGLRState) []hotGLRState {
 	type key struct {
-		state       uint32
-		lookahead   uint16
-		actionCount uint8
-		shiftCount  uint8
-		reduceCount uint8
+		state        uint32
+		lookahead    uint16
+		actionCount  uint8
+		shiftCount   uint8
+		reduceCount  uint8
+		reduceSymbol uint16
+		childCount   uint8
+		productionID uint16
 	}
 	byKey := map[key]*hotGLRState{}
 	for _, h := range in {
-		k := key{h.State, h.Lookahead, h.ActionCount, h.ShiftCount, h.ReduceCount}
+		k := key{h.State, h.Lookahead, h.ActionCount, h.ShiftCount, h.ReduceCount, h.ReduceSymbol, h.ChildCount, h.ProductionID}
 		dst := byKey[k]
 		if dst == nil {
 			copied := h
@@ -649,6 +673,17 @@ func aggregateHotStates(in []hotGLRState) []hotGLRState {
 		}
 		dst.ReduceChainHits += h.ReduceChainHits
 		dst.ReduceChainSteps += h.ReduceChainSteps
+		dst.ReduceChainNS += h.ReduceChainNS
+		dst.ActionNS += h.ActionNS
+		dst.ExtraShiftNS += h.ExtraShiftNS
+		dst.NoActionNS += h.NoActionNS
+		dst.ConflictChoiceNS += h.ConflictChoiceNS
+		dst.ConflictForkNS += h.ConflictForkNS
+		dst.SingleShiftNS += h.SingleShiftNS
+		dst.SingleReduceNS += h.SingleReduceNS
+		dst.SingleAcceptNS += h.SingleAcceptNS
+		dst.SingleRecoverNS += h.SingleRecoverNS
+		dst.SingleOtherNS += h.SingleOtherNS
 		if h.ReduceChainMaxLen > dst.ReduceChainMaxLen {
 			dst.ReduceChainMaxLen = h.ReduceChainMaxLen
 		}
@@ -683,11 +718,23 @@ func printHotTable(label string, rows []hotGLRState, metric string) {
 		return
 	}
 	fmt.Printf("`%s`\n\n", label)
-	fmt.Println("| state | lookahead | lookahead_name | actions | shifts | reduces | forks | multi_stack | stack_in | reduce_steps | merge_in | merge_out | metric |")
-	fmt.Println("| ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
+	fmt.Println("| state | lookahead | lookahead_name | prod | reduce_symbol | actions | shifts | reduces | action_ns | single_reduce | conflict_fork | reduce_chain_ns | forks | multi_stack | stack_in | reduce_steps | merge_in | merge_out | metric |")
+	fmt.Println("| ---: | ---: | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
 	for _, h := range rows {
 		var score uint64
 		switch metric {
+		case "action_ns":
+			if h.ActionNS > 0 {
+				score = uint64(h.ActionNS)
+			} else {
+				score = h.StackInTotal
+			}
+		case "reduce_chain_ns":
+			if h.ReduceChainNS > 0 {
+				score = uint64(h.ReduceChainNS)
+			} else {
+				score = h.ReduceChainSteps
+			}
 		case "reduce_steps":
 			score = h.ReduceChainSteps
 		case "merge_in":
@@ -695,20 +742,30 @@ func printHotTable(label string, rows []hotGLRState, metric string) {
 		default:
 			score = h.StackInTotal
 		}
-		fmt.Printf("| %d | %d | `%s` | %d | %d | %d | %d | %d | %d | %d | %d | %d | %d |\n",
+		scoreText := fmt.Sprintf("%d", score)
+		if metric == "action_ns" || metric == "reduce_chain_ns" {
+			scoreText = nsText(int64(score))
+		}
+		fmt.Printf("| %d | %d | `%s` | %d | `%s` | %d | %d | %d | %s | %s | %s | %s | %d | %d | %d | %d | %d | %d | %s |\n",
 			h.State,
 			h.Lookahead,
 			escapePipes(h.LookaheadName),
+			h.ProductionID,
+			escapePipes(h.ReduceSymbolName),
 			h.ActionCount,
 			h.ShiftCount,
 			h.ReduceCount,
+			nsText(h.ActionNS),
+			nsText(h.SingleReduceNS),
+			nsText(h.ConflictForkNS),
+			nsText(h.ReduceChainNS),
 			h.Forks,
 			h.MultiStackHits,
 			h.StackInTotal,
 			h.ReduceChainSteps,
 			h.MergeStacksIn,
 			h.MergeStacksOut,
-			score,
+			scoreText,
 		)
 	}
 	fmt.Println()

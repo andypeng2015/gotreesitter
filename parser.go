@@ -1888,6 +1888,12 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	if materializationTimingRef != nil && parseActionTimingEnabled() {
 		actionTiming = materializationTimingRef
 	}
+	recordActionTiming := func(state StateID, lookahead Symbol, actions []ParseAction, kind ambiguityActionTimingKind, nanos int64) {
+		if nanos <= 0 || p == nil || p.ambiguityProfile == nil {
+			return
+		}
+		p.ambiguityProfile.recordActionTiming(state, lookahead, actions, kind, nanos)
+	}
 	var parserLoopNanos int64
 	var tokenNextNanos int64
 	var actionDispatchNanos int64
@@ -2239,7 +2245,9 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				nodeCount++
 				needToken = true
 				if actionTiming != nil {
-					actionTiming.actionExtraShiftNanos += time.Since(actionKindStart).Nanoseconds()
+					ns := time.Since(actionKindStart).Nanoseconds()
+					actionTiming.actionExtraShiftNanos += ns
+					recordActionTiming(currentState, tok.Symbol, actions, ambiguityActionExtraShift, ns)
 				}
 				continue
 			}
@@ -2248,6 +2256,15 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				if actionTiming != nil {
 					noActionStart = time.Now()
 				}
+				recordNoActionTiming := func() int64 {
+					if actionTiming == nil {
+						return 0
+					}
+					ns := time.Since(noActionStart).Nanoseconds()
+					actionTiming.actionNoActionNanos += ns
+					recordActionTiming(currentState, tok.Symbol, actions, ambiguityActionNoAction, ns)
+					return ns
+				}
 				sameState := parseStacksShareState(stacks, currentState)
 				if tok.Symbol == 0 {
 					if sameState {
@@ -2255,8 +2272,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 							tok = reTok
 							needToken = false
 							if actionTiming != nil {
-								ns := time.Since(noActionStart).Nanoseconds()
-								actionTiming.actionNoActionNanos += ns
+								ns := recordNoActionTiming()
 								actionTiming.actionNoActionRelexNanos += ns
 							}
 							goto retryAction
@@ -2265,14 +2281,14 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					if tok.StartByte != tok.EndByte {
 						needToken = true
 						if actionTiming != nil {
-							actionTiming.actionNoActionNanos += time.Since(noActionStart).Nanoseconds()
+							recordNoActionTiming()
 						}
 						continue
 					}
 					if len(stacks) == 1 {
 						if p.canFinalizeNoActionEOF(s) {
 							if actionTiming != nil {
-								actionTiming.actionNoActionNanos += time.Since(noActionStart).Nanoseconds()
+								recordNoActionTiming()
 							}
 							if phaseTiming {
 								actionDispatchNanos += time.Since(dispatchStart).Nanoseconds()
@@ -2281,7 +2297,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 						}
 						if tree, ok := tryFinalizeTrailingEOFSuffix(s, tok); ok {
 							if actionTiming != nil {
-								actionTiming.actionNoActionNanos += time.Since(noActionStart).Nanoseconds()
+								recordNoActionTiming()
 							}
 							if phaseTiming {
 								actionDispatchNanos += time.Since(dispatchStart).Nanoseconds()
@@ -2291,8 +2307,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					}
 					s.dead = true
 					if actionTiming != nil {
-						ns := time.Since(noActionStart).Nanoseconds()
-						actionTiming.actionNoActionNanos += ns
+						ns := recordNoActionTiming()
 						actionTiming.actionNoActionErrorNanos += ns
 					}
 					continue
@@ -2300,7 +2315,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				if tok.StartByte == tok.EndByte {
 					needToken = true
 					if actionTiming != nil {
-						actionTiming.actionNoActionNanos += time.Since(noActionStart).Nanoseconds()
+						recordNoActionTiming()
 					}
 					continue
 				}
@@ -2309,8 +2324,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 						tok = reTok
 						needToken = false
 						if actionTiming != nil {
-							ns := time.Since(noActionStart).Nanoseconds()
-							actionTiming.actionNoActionNanos += ns
+							ns := recordNoActionTiming()
 							actionTiming.actionNoActionRelexNanos += ns
 						}
 						goto retryAction
@@ -2319,8 +2333,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 						tok = reTok
 						needToken = false
 						if actionTiming != nil {
-							ns := time.Since(noActionStart).Nanoseconds()
-							actionTiming.actionNoActionNanos += ns
+							ns := recordNoActionTiming()
 							actionTiming.actionNoActionRelexNanos += ns
 						}
 						goto retryAction
@@ -2332,8 +2345,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					}
 					s.dead = true
 					if actionTiming != nil {
-						ns := time.Since(noActionStart).Nanoseconds()
-						actionTiming.actionNoActionNanos += ns
+						ns := recordNoActionTiming()
 						actionTiming.actionNoActionErrorNanos += ns
 					}
 					continue
@@ -2343,8 +2355,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					needToken = false
 					consecutiveReduces = 0
 					if actionTiming != nil {
-						ns := time.Since(noActionStart).Nanoseconds()
-						actionTiming.actionNoActionNanos += ns
+						ns := recordNoActionTiming()
 						actionTiming.actionNoActionMissingNanos += ns
 					}
 					continue
@@ -2353,8 +2364,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					if !s.truncate(depth + 1) {
 						s.dead = true
 						if actionTiming != nil {
-							ns := time.Since(noActionStart).Nanoseconds()
-							actionTiming.actionNoActionNanos += ns
+							ns := recordNoActionTiming()
 							actionTiming.actionNoActionErrorNanos += ns
 						}
 						continue
@@ -2362,16 +2372,14 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					p.applyAction(s, recoverAct, tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
 					needToken = true
 					if actionTiming != nil {
-						ns := time.Since(noActionStart).Nanoseconds()
-						actionTiming.actionNoActionNanos += ns
+						ns := recordNoActionTiming()
 						actionTiming.actionNoActionRecoverNanos += ns
 					}
 					continue
 				}
 				if s.depth() == 0 {
 					if actionTiming != nil {
-						ns := time.Since(noActionStart).Nanoseconds()
-						actionTiming.actionNoActionNanos += ns
+						ns := recordNoActionTiming()
 						actionTiming.actionNoActionErrorNanos += ns
 					}
 					if phaseTiming {
@@ -2382,8 +2390,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				p.pushOrExtendErrorNode(s, currentState, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors)
 				needToken = true
 				if actionTiming != nil {
-					ns := time.Since(noActionStart).Nanoseconds()
-					actionTiming.actionNoActionNanos += ns
+					ns := recordNoActionTiming()
 					actionTiming.actionNoActionErrorNanos += ns
 				}
 				continue
@@ -2431,7 +2438,9 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				if choice {
 					p.applyAction(s, chosen, tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
 					if actionTiming != nil {
-						actionTiming.actionConflictChoiceNanos += time.Since(conflictStart).Nanoseconds()
+						ns := time.Since(conflictStart).Nanoseconds()
+						actionTiming.actionConflictChoiceNanos += ns
+						recordActionTiming(currentState, tok.Symbol, actions, ambiguityActionConflictChoice, ns)
 					}
 					continue
 				}
@@ -2456,7 +2465,9 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				if s.depth() > maxForkCloneDepth {
 					p.applyAction(s, actions[0], tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
 					if actionTiming != nil {
-						actionTiming.actionConflictForkNanos += time.Since(conflictStart).Nanoseconds()
+						ns := time.Since(conflictStart).Nanoseconds()
+						actionTiming.actionConflictForkNanos += ns
+						recordActionTiming(currentState, tok.Symbol, actions, ambiguityActionConflictFork, ns)
 					}
 					continue
 				}
@@ -2482,7 +2493,9 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 						si, s.top().state, s.dead, s.shifted, s.depth(), s.byteOffset)
 				}
 				if actionTiming != nil {
-					actionTiming.actionConflictForkNanos += time.Since(conflictStart).Nanoseconds()
+					ns := time.Since(conflictStart).Nanoseconds()
+					actionTiming.actionConflictForkNanos += ns
+					recordActionTiming(currentState, tok.Symbol, actions, ambiguityActionConflictFork, ns)
 				}
 				continue
 			}
@@ -2497,29 +2510,39 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					forceAdvanceAfterReduce = true
 				}
 				if actionTiming != nil {
-					actionTiming.actionSingleReduceNanos += time.Since(actionKindStart).Nanoseconds()
+					ns := time.Since(actionKindStart).Nanoseconds()
+					actionTiming.actionSingleReduceNanos += ns
+					recordActionTiming(currentState, tok.Symbol, actions, ambiguityActionSingleReduce, ns)
 				}
 			} else {
 				switch act.Type {
 				case ParseActionShift:
 					p.applyShiftAction(s, act, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors)
 					if actionTiming != nil {
-						actionTiming.actionSingleShiftNanos += time.Since(actionKindStart).Nanoseconds()
+						ns := time.Since(actionKindStart).Nanoseconds()
+						actionTiming.actionSingleShiftNanos += ns
+						recordActionTiming(currentState, tok.Symbol, actions, ambiguityActionSingleShift, ns)
 					}
 				case ParseActionAccept:
 					p.applyAcceptAction(s)
 					if actionTiming != nil {
-						actionTiming.actionSingleAcceptNanos += time.Since(actionKindStart).Nanoseconds()
+						ns := time.Since(actionKindStart).Nanoseconds()
+						actionTiming.actionSingleAcceptNanos += ns
+						recordActionTiming(currentState, tok.Symbol, actions, ambiguityActionSingleAccept, ns)
 					}
 				case ParseActionRecover:
 					p.applyRecoverAction(s, act, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors)
 					if actionTiming != nil {
-						actionTiming.actionSingleRecoverNanos += time.Since(actionKindStart).Nanoseconds()
+						ns := time.Since(actionKindStart).Nanoseconds()
+						actionTiming.actionSingleRecoverNanos += ns
+						recordActionTiming(currentState, tok.Symbol, actions, ambiguityActionSingleRecover, ns)
 					}
 				default:
 					p.applyAction(s, act, tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
 					if actionTiming != nil {
-						actionTiming.actionSingleOtherNanos += time.Since(actionKindStart).Nanoseconds()
+						ns := time.Since(actionKindStart).Nanoseconds()
+						actionTiming.actionSingleOtherNanos += ns
+						recordActionTiming(currentState, tok.Symbol, actions, ambiguityActionSingleOther, ns)
 					}
 				}
 			}

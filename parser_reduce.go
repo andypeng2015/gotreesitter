@@ -343,10 +343,14 @@ func (p *Parser) chainSingleReduceActions(s *glrStack, tok Token, anyReduced *bo
 			if perfCountersEnabled {
 				perfRecordReduceChainStep(chainLen)
 			}
+			reduceStart := time.Time{}
 			if p.ambiguityProfile != nil {
-				p.ambiguityProfile.recordReduceChainStep(currentState, tok.Symbol, chainLen)
+				reduceStart = time.Now()
 			}
 			p.applyReduceActionDispatch(s, next, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
+			if p.ambiguityProfile != nil {
+				p.ambiguityProfile.recordReduceChainStep(currentState, tok.Symbol, next, chainLen, time.Since(reduceStart).Nanoseconds())
+			}
 			if s.dead || s.accepted || s.shifted {
 				return false
 			}

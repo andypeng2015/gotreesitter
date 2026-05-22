@@ -16,35 +16,66 @@ type AmbiguityProfile struct {
 
 // AmbiguityKey identifies one parse-table ambiguity bucket.
 type AmbiguityKey struct {
-	State       StateID
-	Lookahead   Symbol
-	ActionCount uint8
-	ShiftCount  uint8
-	ReduceCount uint8
+	State        StateID
+	Lookahead    Symbol
+	ActionCount  uint8
+	ShiftCount   uint8
+	ReduceCount  uint8
+	ReduceSymbol Symbol
+	ChildCount   uint8
+	ProductionID uint16
 }
 
 // AmbiguityStat is a snapshot row from AmbiguityProfile.
 type AmbiguityStat struct {
-	State             StateID
-	Lookahead         Symbol
-	ActionCount       uint8
-	ShiftCount        uint8
-	ReduceCount       uint8
-	Actions           []ParseAction
-	Hits              uint64
-	Forks             uint64
-	MultiStackHits    uint64
-	StackInTotal      uint64
-	StackInMax        int
-	ReduceChainHits   uint64
-	ReduceChainSteps  uint64
-	ReduceChainMaxLen int
-	MergeCalls        uint64
-	MergeStacksIn     uint64
-	MergeStacksOut    uint64
-	MergeStacksInMax  int
-	MergeStacksOutMax int
+	State               StateID
+	Lookahead           Symbol
+	ActionCount         uint8
+	ShiftCount          uint8
+	ReduceCount         uint8
+	ReduceSymbol        Symbol
+	ChildCount          uint8
+	ProductionID        uint16
+	Actions             []ParseAction
+	Hits                uint64
+	Forks               uint64
+	MultiStackHits      uint64
+	StackInTotal        uint64
+	StackInMax          int
+	ReduceChainHits     uint64
+	ReduceChainSteps    uint64
+	ReduceChainMaxLen   int
+	ReduceChainNanos    int64
+	ActionNanos         int64
+	ExtraShiftNanos     int64
+	NoActionNanos       int64
+	ConflictChoiceNanos int64
+	ConflictForkNanos   int64
+	SingleShiftNanos    int64
+	SingleReduceNanos   int64
+	SingleAcceptNanos   int64
+	SingleRecoverNanos  int64
+	SingleOtherNanos    int64
+	MergeCalls          uint64
+	MergeStacksIn       uint64
+	MergeStacksOut      uint64
+	MergeStacksInMax    int
+	MergeStacksOutMax   int
 }
+
+type ambiguityActionTimingKind uint8
+
+const (
+	ambiguityActionExtraShift ambiguityActionTimingKind = iota + 1
+	ambiguityActionNoAction
+	ambiguityActionConflictChoice
+	ambiguityActionConflictFork
+	ambiguityActionSingleShift
+	ambiguityActionSingleReduce
+	ambiguityActionSingleAccept
+	ambiguityActionSingleRecover
+	ambiguityActionSingleOther
+)
 
 // NewAmbiguityProfile creates an empty GLR ambiguity profile.
 func NewAmbiguityProfile() *AmbiguityProfile {
@@ -85,6 +116,9 @@ func (p *AmbiguityProfile) SnapshotTop(limit int) []AmbiguityStat {
 	p.mu.Unlock()
 
 	sort.Slice(out, func(i, j int) bool {
+		if out[i].ActionNanos != out[j].ActionNanos && (out[i].ActionNanos != 0 || out[j].ActionNanos != 0) {
+			return out[i].ActionNanos > out[j].ActionNanos
+		}
 		if out[i].StackInTotal != out[j].StackInTotal {
 			return out[i].StackInTotal > out[j].StackInTotal
 		}
@@ -119,6 +153,9 @@ func (p *AmbiguityProfile) SnapshotTopReduceChains(limit int) []AmbiguityStat {
 	p.mu.Unlock()
 
 	sort.Slice(out, func(i, j int) bool {
+		if out[i].ReduceChainNanos != out[j].ReduceChainNanos && (out[i].ReduceChainNanos != 0 || out[j].ReduceChainNanos != 0) {
+			return out[i].ReduceChainNanos > out[j].ReduceChainNanos
+		}
 		if out[i].ReduceChainSteps != out[j].ReduceChainSteps {
 			return out[i].ReduceChainSteps > out[j].ReduceChainSteps
 		}
@@ -224,11 +261,85 @@ func (p *AmbiguityProfile) record(state StateID, lookahead Symbol, actions []Par
 	}
 }
 
-func (p *AmbiguityProfile) recordReduceChainStep(state StateID, lookahead Symbol, chainLen int) {
+func (p *AmbiguityProfile) recordActionTiming(state StateID, lookahead Symbol, actions []ParseAction, kind ambiguityActionTimingKind, nanos int64) {
+	if p == nil || nanos <= 0 {
+		return
+	}
+	var shifts, reduces int
+	for _, action := range actions {
+		switch action.Type {
+		case ParseActionShift:
+			shifts++
+		case ParseActionReduce:
+			reduces++
+		}
+	}
+	key := AmbiguityKey{
+		State:       state,
+		Lookahead:   lookahead,
+		ActionCount: saturatingUint8(len(actions)),
+		ShiftCount:  saturatingUint8(shifts),
+		ReduceCount: saturatingUint8(reduces),
+	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.entries == nil {
+		p.entries = make(map[AmbiguityKey]*AmbiguityStat)
+	}
+	stat := p.entries[key]
+	if stat == nil {
+		stat = &AmbiguityStat{
+			State:       state,
+			Lookahead:   lookahead,
+			ActionCount: key.ActionCount,
+			ShiftCount:  key.ShiftCount,
+			ReduceCount: key.ReduceCount,
+			Actions:     append([]ParseAction(nil), actions...),
+		}
+		p.entries[key] = stat
+	}
+	if len(actions) == 1 && actions[0].Type == ParseActionReduce {
+		stat.ReduceSymbol = actions[0].Symbol
+		stat.ChildCount = actions[0].ChildCount
+		stat.ProductionID = actions[0].ProductionID
+	}
+	stat.ActionNanos += nanos
+	switch kind {
+	case ambiguityActionExtraShift:
+		stat.ExtraShiftNanos += nanos
+	case ambiguityActionNoAction:
+		stat.NoActionNanos += nanos
+	case ambiguityActionConflictChoice:
+		stat.ConflictChoiceNanos += nanos
+	case ambiguityActionConflictFork:
+		stat.ConflictForkNanos += nanos
+	case ambiguityActionSingleShift:
+		stat.SingleShiftNanos += nanos
+	case ambiguityActionSingleReduce:
+		stat.SingleReduceNanos += nanos
+	case ambiguityActionSingleAccept:
+		stat.SingleAcceptNanos += nanos
+	case ambiguityActionSingleRecover:
+		stat.SingleRecoverNanos += nanos
+	case ambiguityActionSingleOther:
+		stat.SingleOtherNanos += nanos
+	}
+}
+
+func (p *AmbiguityProfile) recordReduceChainStep(state StateID, lookahead Symbol, act ParseAction, chainLen int, nanos int64) {
 	if p == nil {
 		return
 	}
-	key := AmbiguityKey{State: state, Lookahead: lookahead}
+	key := AmbiguityKey{
+		State:        state,
+		Lookahead:    lookahead,
+		ActionCount:  1,
+		ReduceCount:  1,
+		ReduceSymbol: act.Symbol,
+		ChildCount:   act.ChildCount,
+		ProductionID: act.ProductionID,
+	}
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -237,11 +348,23 @@ func (p *AmbiguityProfile) recordReduceChainStep(state StateID, lookahead Symbol
 	}
 	stat := p.reduceEntries[key]
 	if stat == nil {
-		stat = &AmbiguityStat{State: state, Lookahead: lookahead}
+		stat = &AmbiguityStat{
+			State:        state,
+			Lookahead:    lookahead,
+			ActionCount:  key.ActionCount,
+			ReduceCount:  key.ReduceCount,
+			ReduceSymbol: act.Symbol,
+			ChildCount:   act.ChildCount,
+			ProductionID: act.ProductionID,
+			Actions:      []ParseAction{act},
+		}
 		p.reduceEntries[key] = stat
 	}
 	stat.ReduceChainHits++
 	stat.ReduceChainSteps++
+	if nanos > 0 {
+		stat.ReduceChainNanos += nanos
+	}
 	if chainLen > stat.ReduceChainMaxLen {
 		stat.ReduceChainMaxLen = chainLen
 	}
