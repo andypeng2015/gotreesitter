@@ -205,10 +205,6 @@ type ReduceChainHint struct {
 	TerminalStates []StateID
 	TerminalAction ReduceChainTerminalAction
 	MaxSteps       uint16
-	// DefaultEnabled allows vetted hints to run without the
-	// GOT_GLR_REDUCE_CHAIN_HINTS opt-in. Set GOT_GLR_REDUCE_CHAIN_HINTS=0 to
-	// force-disable all reduce-chain hints.
-	DefaultEnabled bool
 }
 
 // Language holds all data needed to parse a specific language.
@@ -245,8 +241,7 @@ type Language struct {
 	ParseActions       []ParseActionEntry
 
 	// ReduceChainHints are optional generated hot-path hints for deterministic
-	// reduce runs. Hints marked DefaultEnabled are consumed by default; other
-	// hints remain available behind GOT_GLR_REDUCE_CHAIN_HINTS=1.
+	// reduce runs. They are only consumed when reduce-chain hints are enabled.
 	ReduceChainHints []ReduceChainHint
 
 	// Lex tables

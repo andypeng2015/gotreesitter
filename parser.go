@@ -54,8 +54,6 @@ type Parser struct {
 	classifiedActions                   []classifiedParseAction
 	reduceChainHints                    []reduceChainHint
 	reduceChainHintByState              []int
-	reduceChainHintsExplicit            bool
-	reduceChainDefaultHintsActive       bool
 	reduceAliasSeq                      [][]Symbol
 	aliasTargetSymbol                   []bool
 	singleTokenWrapperSymbol            []bool
@@ -345,7 +343,6 @@ func NewParser(lang *Language) *Parser {
 			p.smallLookup = buildSmallLookup(lang, p.smallTokenLookup)
 		}
 		p.classifiedActions = buildClassifiedParseActions(lang)
-		p.reduceChainHintsExplicit, _ = parseReduceChainHintsEnv()
 		p.reduceChainHints = buildReduceChainHints(lang)
 		p.reduceChainHintByState = buildReduceChainHintIndex(p.reduceChainHints)
 		p.reduceAliasSeq = buildReduceAliasSequences(lang)
@@ -2656,7 +2653,6 @@ type parseModeFlags struct {
 	transientReduceChildren          bool
 	transientReduceScratchNoAlias    bool
 	transientChildren                *transientChildScratch
-	reduceChainDefaultHintsActive    bool
 }
 
 func (p *Parser) applyParseModeFlags(source []byte, reuse *reuseCursor, oldTree *Tree, arenaClass arenaClass) parseModeFlags {
@@ -2669,14 +2665,12 @@ func (p *Parser) applyParseModeFlags(source []byte, reuse *reuseCursor, oldTree 
 		transientReduceChildren:          p.transientReduceChildren,
 		transientReduceScratchNoAlias:    p.transientReduceScratchNoAlias,
 		transientChildren:                p.transientChildren,
-		reduceChainDefaultHintsActive:    p.reduceChainDefaultHintsActive,
 	}
 	p.compactNoTreeShiftLeaves = p.noTreeBenchmarkOnly && parseShouldCompactNoTreeShiftLeaves(len(source))
 	p.compactFullShiftLeaves = parseShouldUseCompactFullShiftLeaves(p, source, reuse, oldTree, arenaClass)
 	p.pendingFullParents = parseShouldUsePendingFullParents(p, source, reuse, oldTree, arenaClass)
 	p.finalChildRefs = parseShouldUseFinalChildRefs(p, source, reuse, oldTree, arenaClass)
 	p.skipInvisibleFullLeafCheckpoints = parseShouldSkipInvisibleFullLeafCheckpoints(p, source, reuse, oldTree, arenaClass)
-	p.reduceChainDefaultHintsActive = parseShouldUseDefaultReduceChainHints(p, source, reuse, oldTree, arenaClass)
 	return prev
 }
 
@@ -2689,7 +2683,6 @@ func (p *Parser) restoreParseModeFlags(prev parseModeFlags) {
 	p.transientReduceChildren = prev.transientReduceChildren
 	p.transientReduceScratchNoAlias = prev.transientReduceScratchNoAlias
 	p.transientChildren = prev.transientChildren
-	p.reduceChainDefaultHintsActive = prev.reduceChainDefaultHintsActive
 }
 
 func (p *Parser) configureParseScratch(scratch *parserScratch, source []byte, reuse *reuseCursor, oldTree *Tree, arenaClass arenaClass, deferParentLinks bool) bool {

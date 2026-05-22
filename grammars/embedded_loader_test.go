@@ -60,7 +60,6 @@ func TestEmbeddedReduceChainHints(t *testing.T) {
 		start     gotreesitter.StateID
 		lookahead gotreesitter.Symbol
 		maxSteps  uint16
-		defaultOn bool
 	}{
 		{
 			name:      "python",
@@ -68,7 +67,6 @@ func TestEmbeddedReduceChainHints(t *testing.T) {
 			start:     gotreesitter.StateID(1101),
 			lookahead: gotreesitter.Symbol(101),
 			maxSteps:  10,
-			defaultOn: true,
 		},
 		{
 			name:      "rust",
@@ -91,9 +89,6 @@ func TestEmbeddedReduceChainHints(t *testing.T) {
 			}
 			if hint.TerminalAction != gotreesitter.ReduceChainTerminalSingleShift {
 				t.Fatalf("terminal action = %d, want single shift", hint.TerminalAction)
-			}
-			if hint.DefaultEnabled != tc.defaultOn {
-				t.Fatalf("default enabled = %v, want %v", hint.DefaultEnabled, tc.defaultOn)
 			}
 			if len(hint.TerminalStates) == 0 {
 				t.Fatal("expected terminal states")

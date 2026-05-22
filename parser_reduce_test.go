@@ -44,69 +44,6 @@ func TestBuildReduceChainHintsUsesLanguageMetadata(t *testing.T) {
 	}
 }
 
-func TestBuildReduceChainHintsDefaultEnabledMetadata(t *testing.T) {
-	t.Setenv("GOT_GLR_REDUCE_CHAIN_HINTS", "")
-	ResetParseEnvConfigCacheForTests()
-	t.Cleanup(ResetParseEnvConfigCacheForTests)
-
-	lang := &Language{
-		Name:        "python",
-		StateCount:  20,
-		SymbolCount: 20,
-		SymbolNames: make([]string, 20),
-		ReduceChainHints: []ReduceChainHint{
-			{
-				StartState:     StateID(3),
-				Lookahead:      Symbol(2),
-				TerminalStates: []StateID{StateID(4)},
-				TerminalAction: ReduceChainTerminalSingleShift,
-				MaxSteps:       7,
-				DefaultEnabled: true,
-			},
-			{
-				StartState:     StateID(8),
-				Lookahead:      Symbol(5),
-				TerminalStates: []StateID{StateID(9)},
-				TerminalAction: ReduceChainTerminalSingleShift,
-				MaxSteps:       6,
-			},
-		},
-	}
-
-	got := buildReduceChainHints(lang)
-	if len(got) != 1 {
-		t.Fatalf("hint count = %d, want 1 default-enabled hint", len(got))
-	}
-	if got[0].startState != StateID(3) || got[0].lookahead != Symbol(2) {
-		t.Fatalf("hint = %+v, want state=3 lookahead=2", got[0])
-	}
-}
-
-func TestBuildReduceChainHintsEnvZeroDisablesDefaultMetadata(t *testing.T) {
-	t.Setenv("GOT_GLR_REDUCE_CHAIN_HINTS", "0")
-	ResetParseEnvConfigCacheForTests()
-	t.Cleanup(ResetParseEnvConfigCacheForTests)
-
-	lang := &Language{
-		Name:        "python",
-		StateCount:  10,
-		SymbolCount: 10,
-		SymbolNames: make([]string, 10),
-		ReduceChainHints: []ReduceChainHint{{
-			StartState:     StateID(3),
-			Lookahead:      Symbol(2),
-			TerminalStates: []StateID{StateID(4)},
-			TerminalAction: ReduceChainTerminalSingleShift,
-			MaxSteps:       7,
-			DefaultEnabled: true,
-		}},
-	}
-
-	if got := buildReduceChainHints(lang); len(got) != 0 {
-		t.Fatalf("hint count = %d, want 0 with env override", len(got))
-	}
-}
-
 func TestReduceChainHintForUsesStateIndex(t *testing.T) {
 	p := &Parser{
 		reduceChainHints: []reduceChainHint{
