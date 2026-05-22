@@ -86,6 +86,17 @@ func buildReduceChainHints(lang *Language) []reduceChainHint {
 			terminalAction: classifiedParseActionSingleShift,
 			maxSteps:       10,
 		}}
+	case "rust":
+		if !languageSymbolNameMatches(lang, Symbol(5), ")") {
+			return nil
+		}
+		return []reduceChainHint{{
+			startState:     StateID(205),
+			lookahead:      Symbol(5),
+			terminalStates: []StateID{StateID(98), StateID(132), StateID(133)},
+			terminalAction: classifiedParseActionSingleShift,
+			maxSteps:       32,
+		}}
 	default:
 		return nil
 	}
