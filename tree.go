@@ -744,6 +744,13 @@ type ParseRuntime struct {
 	ResultNormalizeRootStartNanos       int64
 	ResultCompatibilityNanos            int64
 	ResultParentLinkNanos               int64
+	ReduceRangeNanos                    int64
+	ReducePendingParentNanos            int64
+	ReduceChildBuildNanos               int64
+	ReduceParentBuildNanos              int64
+	ReduceSpanNanos                     int64
+	ReduceStackPushNanos                int64
+	ReduceNoTreeBuildNanos              int64
 	NormalizationPassesChecked          uint64
 	NormalizationPassesRun              uint64
 	NormalizationNodesVisited           uint64

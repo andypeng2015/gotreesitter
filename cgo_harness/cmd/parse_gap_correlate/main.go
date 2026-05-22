@@ -64,6 +64,13 @@ type runtimeStats struct {
 	ActionLookupNS          int64         `json:"action_lookup_ns,omitempty"`
 	GLRMergeNS              int64         `json:"glr_merge_ns,omitempty"`
 	GLRCullNS               int64         `json:"glr_cull_ns,omitempty"`
+	ReduceRangeNS           int64         `json:"reduce_range_ns,omitempty"`
+	ReducePendingParentNS   int64         `json:"reduce_pending_parent_ns,omitempty"`
+	ReduceChildBuildNS      int64         `json:"reduce_child_build_ns,omitempty"`
+	ReduceParentBuildNS     int64         `json:"reduce_parent_build_ns,omitempty"`
+	ReduceSpanNS            int64         `json:"reduce_span_ns,omitempty"`
+	ReduceStackPushNS       int64         `json:"reduce_stack_push_ns,omitempty"`
+	ReduceNoTreeBuildNS     int64         `json:"reduce_notree_build_ns,omitempty"`
 	MergeCalls              uint64        `json:"merge_calls,omitempty"`
 	EquivCacheLookups       uint64        `json:"equiv_cache_lookups,omitempty"`
 	EquivCacheHits          uint64        `json:"equiv_cache_hits,omitempty"`
@@ -311,6 +318,13 @@ func scoreRows(rows []reportRow) []langScore {
 			s.attrs["action_lookup_share"] = float64(r.ActionLookupNS) / wall
 			s.attrs["action_dispatch_share"] = float64(r.ActionDispatchNS) / wall
 			s.attrs["glr_merge_share"] = float64(r.GLRMergeNS) / wall
+			s.attrs["reduce_range_share"] = float64(r.ReduceRangeNS) / wall
+			s.attrs["reduce_pending_parent_share"] = float64(r.ReducePendingParentNS) / wall
+			s.attrs["reduce_child_build_share"] = float64(r.ReduceChildBuildNS) / wall
+			s.attrs["reduce_parent_build_share"] = float64(r.ReduceParentBuildNS) / wall
+			s.attrs["reduce_span_share"] = float64(r.ReduceSpanNS) / wall
+			s.attrs["reduce_stack_push_share"] = float64(r.ReduceStackPushNS) / wall
+			s.attrs["reduce_notree_build_share"] = float64(r.ReduceNoTreeBuildNS) / wall
 			s.attrs["result_build_share"] = float64(r.ResultBuildNS) / wall
 			s.attrs["result_compat_share"] = float64(r.ResultCompatibilityNS) / wall
 			s.attrs["normalization_share"] = float64(r.NormalizationNS) / wall
@@ -679,6 +693,13 @@ func (r *runtimeStats) add(o runtimeStats) {
 	r.ActionLookupNS += o.ActionLookupNS
 	r.GLRMergeNS += o.GLRMergeNS
 	r.GLRCullNS += o.GLRCullNS
+	r.ReduceRangeNS += o.ReduceRangeNS
+	r.ReducePendingParentNS += o.ReducePendingParentNS
+	r.ReduceChildBuildNS += o.ReduceChildBuildNS
+	r.ReduceParentBuildNS += o.ReduceParentBuildNS
+	r.ReduceSpanNS += o.ReduceSpanNS
+	r.ReduceStackPushNS += o.ReduceStackPushNS
+	r.ReduceNoTreeBuildNS += o.ReduceNoTreeBuildNS
 	r.MergeCalls += o.MergeCalls
 	r.EquivCacheLookups += o.EquivCacheLookups
 	r.EquivCacheHits += o.EquivCacheHits

@@ -1,6 +1,9 @@
 package gotreesitter
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
 type reduceChainSignature struct {
 	state        StateID
@@ -632,6 +635,11 @@ func (p *Parser) tryFastVisibleReduceActionFromGSS(s *glrStack, act ParseAction,
 		return false
 	}
 
+	timing := p.reduceTiming
+	childStart := time.Time{}
+	if timing != nil {
+		childStart = time.Now()
+	}
 	var childBuf [8]*Node
 	symbolMeta := p.language.SymbolMetadata
 	n := s.gss.head
@@ -668,16 +676,30 @@ func (p *Parser) tryFastVisibleReduceActionFromGSS(s *glrStack, act ParseAction,
 		perfRecordReduceChildrenFastGSS(childCount)
 	}
 	copy(children, childBuf[:childCount])
+	if timing != nil {
+		timing.reduceChildBuildNanos += time.Since(childStart).Nanoseconds()
+	}
 	named := p.isNamedSymbol(act.Symbol)
 	var parent *Node
+	parentStart := time.Time{}
+	if timing != nil {
+		parentStart = time.Now()
+	}
 	if deferParentLinks {
 		parent = newParentNodeInArenaNoLinksWithFieldSources(arena, act.Symbol, named, children, nil, nil, act.ProductionID, trackChildErrors)
 	} else {
 		parent = newParentNodeInArenaWithFieldSources(arena, act.Symbol, named, children, nil, nil, act.ProductionID)
 	}
 	p.recordReductionParentConstructed(arena, parent, act.Symbol, len(children), nil, nil, reduceChildPathFastGSS)
+	if timing != nil {
+		timing.reduceParentBuildNanos += time.Since(parentStart).Nanoseconds()
+	}
 	*nodeCount++
 
+	pushStart := time.Time{}
+	if timing != nil {
+		pushStart = time.Now()
+	}
 	gotoState := p.lookupGoto(topState, act.Symbol)
 	targetState := topState
 	if gotoState != 0 {
@@ -696,6 +718,9 @@ func (p *Parser) tryFastVisibleReduceActionFromGSS(s *glrStack, act ParseAction,
 		return true
 	}
 	p.pushStackNode(s, targetState, parent, entryScratch, gssScratch)
+	if timing != nil {
+		timing.reduceStackPushNanos += time.Since(pushStart).Nanoseconds()
+	}
 	s.score += int(act.DynamicPrecedence)
 	*anyReduced = true
 	if tmpEntries != nil {
@@ -705,19 +730,37 @@ func (p *Parser) tryFastVisibleReduceActionFromGSS(s *glrStack, act ParseAction,
 }
 
 func (p *Parser) applyNoTreeReduceActionFromGSS(s *glrStack, act ParseAction, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, tmp []stackEntry, trackChildErrors bool) {
+	timing := p.reduceTiming
+	rangeStart := time.Time{}
+	if timing != nil {
+		rangeStart = time.Now()
+	}
 	windowEntries, window, ok := reduceWindowRangeFromGSS(s, int(act.ChildCount), tmp)
+	if timing != nil {
+		timing.reduceRangeNanos += time.Since(rangeStart).Nanoseconds()
+	}
 	if !ok {
 		s.dead = true
 		releaseReduceWindowEntries(tmpEntries, windowEntries)
 		return
 	}
 
+	noTreeStart := time.Time{}
+	if timing != nil {
+		noTreeStart = time.Now()
+	}
 	targetDepth := s.depth() - window.actualEnd
 	if !truncateStackForReduce(s, targetDepth) {
+		if timing != nil {
+			timing.reduceNoTreeBuildNanos += time.Since(noTreeStart).Nanoseconds()
+		}
 		releaseReduceWindowEntries(tmpEntries, windowEntries)
 		return
 	}
 	p.pushNoTreeReduceNode(s, act, tok, arena, entryScratch, gssScratch, windowEntries, window.start, window.reducedEnd, window.reducedEnd, window.actualEnd, window.topState, nodeCount, trackChildErrors)
+	if timing != nil {
+		timing.reduceNoTreeBuildNanos += time.Since(noTreeStart).Nanoseconds()
+	}
 	markReduceApplied(s, act, anyReduced)
 	releaseReduceWindowEntries(tmpEntries, windowEntries)
 }
@@ -730,8 +773,16 @@ func (p *Parser) applyReduceActionFromGSS(s *glrStack, act ParseAction, tok Toke
 	if p.tryFastVisibleReduceActionFromGSS(s, act, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors) {
 		return
 	}
+	timing := p.reduceTiming
 	childCount := int(act.ChildCount)
+	rangeStart := time.Time{}
+	if timing != nil {
+		rangeStart = time.Now()
+	}
 	windowEntries, window, ok := reduceWindowRangeFromGSS(s, childCount, tmp)
+	if timing != nil {
+		timing.reduceRangeNanos += time.Since(rangeStart).Nanoseconds()
+	}
 	if !ok {
 		s.dead = true
 		releaseReduceWindowEntries(tmpEntries, windowEntries)
@@ -740,7 +791,14 @@ func (p *Parser) applyReduceActionFromGSS(s *glrStack, act ParseAction, tok Toke
 
 	targetDepth := s.depth() - window.actualEnd
 	if pendingFullParents := p.usePendingFullParents(); pendingFullParents {
+		pendingStart := time.Time{}
+		if timing != nil {
+			pendingStart = time.Now()
+		}
 		if child, ok := p.collapsibleRawUnarySelfReductionEntry(act, tok, arena, windowEntries, window.start, window.reducedEnd); ok {
+			if timing != nil {
+				timing.reducePendingParentNanos += time.Since(pendingStart).Nanoseconds()
+			}
 			if !truncateStackForReduce(s, targetDepth) {
 				releaseReduceWindowEntries(tmpEntries, windowEntries)
 				return
@@ -751,10 +809,16 @@ func (p *Parser) applyReduceActionFromGSS(s *glrStack, act ParseAction, tok Toke
 			return
 		}
 		if p.tryPushPendingNoFieldParent(s, act, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, windowEntries, window.start, window.reducedEnd, window.actualEnd, window.topState, targetDepth) {
+			if timing != nil {
+				timing.reducePendingParentNanos += time.Since(pendingStart).Nanoseconds()
+			}
 			releaseReduceWindowEntries(tmpEntries, windowEntries)
 			return
 		}
 		materializePendingPayloadEntries(p, windowEntries, window.start, window.actualEnd, arena)
+		if timing != nil {
+			timing.reducePendingParentNanos += time.Since(pendingStart).Nanoseconds()
+		}
 	}
 
 	if child := p.collapsibleRawUnarySelfReduction(act, tok, arena, windowEntries, window.start, window.reducedEnd); child != nil {
@@ -768,7 +832,14 @@ func (p *Parser) applyReduceActionFromGSS(s *glrStack, act ParseAction, tok Toke
 		return
 	}
 
+	childStart := time.Time{}
+	if timing != nil {
+		childStart = time.Now()
+	}
 	children, fieldIDs, fieldSources, childPath := p.buildReduceChildrenWithPath(windowEntries, window.start, window.reducedEnd, childCount, act.Symbol, act.ProductionID, arena)
+	if timing != nil {
+		timing.reduceChildBuildNanos += time.Since(childStart).Nanoseconds()
+	}
 
 	if !truncateStackForReduce(s, targetDepth) {
 		releaseReduceWindowEntries(tmpEntries, windowEntries)
@@ -784,12 +855,23 @@ func (p *Parser) applyReduceActionFromGSS(s *glrStack, act ParseAction, tok Toke
 
 	named := p.isNamedSymbol(act.Symbol)
 	var parent *Node
+	parentStart := time.Time{}
+	if timing != nil {
+		parentStart = time.Now()
+	}
 	if deferParentLinks {
 		parent = newParentNodeInArenaNoLinksWithFieldSources(arena, act.Symbol, named, children, fieldIDs, fieldSources, act.ProductionID, trackChildErrors)
 	} else {
 		parent = newParentNodeInArenaWithFieldSources(arena, act.Symbol, named, children, fieldIDs, fieldSources, act.ProductionID)
 	}
 	p.recordReductionParentConstructed(arena, parent, act.Symbol, len(children), fieldIDs, fieldSources, childPath)
+	if timing != nil {
+		timing.reduceParentBuildNanos += time.Since(parentStart).Nanoseconds()
+	}
+	spanStart := time.Time{}
+	if timing != nil {
+		spanStart = time.Now()
+	}
 	shouldUseRawSpan := shouldUseRawSpanForReduction(act.Symbol, children, p.language.SymbolMetadata, p.forceRawSpanAll, p.forceRawSpanTable)
 	if shouldUseRawSpan && window.reducedEnd > window.start {
 		span := computeReduceRawSpan(windowEntries, window.start, window.reducedEnd)
@@ -805,8 +887,15 @@ func (p *Parser) applyReduceActionFromGSS(s *glrStack, act ParseAction, tok Toke
 	if reduceChildPathMayDropSpan(childPath) {
 		extendParentSpanToWindow(parent, windowEntries, window.start, window.reducedEnd, p.language.SymbolMetadata, p.language.SymbolNames)
 	}
+	if timing != nil {
+		timing.reduceSpanNanos += time.Since(spanStart).Nanoseconds()
+	}
 	*nodeCount++
 
+	pushStart := time.Time{}
+	if timing != nil {
+		pushStart = time.Now()
+	}
 	gotoState := p.lookupGoto(window.topState, act.Symbol)
 	targetState := window.topState
 	if gotoState != 0 {
@@ -826,6 +915,9 @@ func (p *Parser) applyReduceActionFromGSS(s *glrStack, act ParseAction, tok Toke
 		extra.parseState = targetState
 		nodeBumpEquivVersion(extra)
 		p.pushStackNode(s, targetState, extra, entryScratch, gssScratch)
+	}
+	if timing != nil {
+		timing.reduceStackPushNanos += time.Since(pushStart).Nanoseconds()
 	}
 
 	markReduceApplied(s, act, anyReduced)
@@ -854,6 +946,11 @@ func (p *Parser) tryFastVisibleReduceActionFromGSSTransientParents(s *glrStack, 
 		return false
 	}
 
+	timing := p.reduceTiming
+	childStart := time.Time{}
+	if timing != nil {
+		childStart = time.Now()
+	}
 	var childBuf [8]*Node
 	symbolMeta := p.language.SymbolMetadata
 	n := s.gss.head
@@ -890,11 +987,25 @@ func (p *Parser) tryFastVisibleReduceActionFromGSSTransientParents(s *glrStack, 
 		perfRecordReduceChildrenFastGSS(childCount)
 	}
 	copy(children, childBuf[:childCount])
+	if timing != nil {
+		timing.reduceChildBuildNanos += time.Since(childStart).Nanoseconds()
+	}
 	named := p.isNamedSymbol(act.Symbol)
+	parentStart := time.Time{}
+	if timing != nil {
+		parentStart = time.Now()
+	}
 	parent := p.newReduceParentNode(arena, act.Symbol, named, children, nil, nil, act.ProductionID, deferParentLinks, trackChildErrors)
 	p.recordReductionParentConstructed(arena, parent, act.Symbol, len(children), nil, nil, reduceChildPathFastGSS)
+	if timing != nil {
+		timing.reduceParentBuildNanos += time.Since(parentStart).Nanoseconds()
+	}
 	*nodeCount++
 
+	pushStart := time.Time{}
+	if timing != nil {
+		pushStart = time.Now()
+	}
 	gotoState := p.lookupGoto(topState, act.Symbol)
 	targetState := topState
 	if gotoState != 0 {
@@ -913,6 +1024,9 @@ func (p *Parser) tryFastVisibleReduceActionFromGSSTransientParents(s *glrStack, 
 		return true
 	}
 	p.pushStackNode(s, targetState, parent, entryScratch, gssScratch)
+	if timing != nil {
+		timing.reduceStackPushNanos += time.Since(pushStart).Nanoseconds()
+	}
 	s.score += int(act.DynamicPrecedence)
 	*anyReduced = true
 	if tmpEntries != nil {
@@ -925,8 +1039,16 @@ func (p *Parser) applyReduceActionFromGSSTransientParents(s *glrStack, act Parse
 	if p.tryFastVisibleReduceActionFromGSSTransientParents(s, act, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors) {
 		return
 	}
+	timing := p.reduceTiming
 	childCount := int(act.ChildCount)
+	rangeStart := time.Time{}
+	if timing != nil {
+		rangeStart = time.Now()
+	}
 	windowEntries, topState, ok := reduceWindowFromGSS(s, childCount, tmp)
+	if timing != nil {
+		timing.reduceRangeNanos += time.Since(rangeStart).Nanoseconds()
+	}
 	if !ok {
 		s.dead = true
 		if tmpEntries != nil {
@@ -944,7 +1066,14 @@ func (p *Parser) applyReduceActionFromGSSTransientParents(s *glrStack, act Parse
 		reducedEnd--
 	}
 	if p.usePendingFullParents() {
+		pendingStart := time.Time{}
+		if timing != nil {
+			pendingStart = time.Now()
+		}
 		if child, ok := p.collapsibleRawUnarySelfReductionEntry(act, tok, arena, windowEntries, 0, reducedEnd); ok {
+			if timing != nil {
+				timing.reducePendingParentNanos += time.Since(pendingStart).Nanoseconds()
+			}
 			targetDepth := s.depth() - actualEnd
 			if targetDepth < 0 || !s.truncate(targetDepth) {
 				s.dead = true
@@ -963,13 +1092,23 @@ func (p *Parser) applyReduceActionFromGSSTransientParents(s *glrStack, act Parse
 		}
 	}
 	if p.usePendingFullParents() {
+		pendingStart := time.Time{}
+		if timing != nil {
+			pendingStart = time.Now()
+		}
 		if p.tryPushPendingNoFieldParent(s, act, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, windowEntries, 0, reducedEnd, actualEnd, topState, s.depth()-actualEnd) {
+			if timing != nil {
+				timing.reducePendingParentNanos += time.Since(pendingStart).Nanoseconds()
+			}
 			if tmpEntries != nil {
 				*tmpEntries = windowEntries[:0]
 			}
 			return
 		}
 		materializePendingPayloadEntries(p, windowEntries, 0, actualEnd, arena)
+		if timing != nil {
+			timing.reducePendingParentNanos += time.Since(pendingStart).Nanoseconds()
+		}
 	}
 
 	if child := p.collapsibleRawUnarySelfReduction(act, tok, arena, windowEntries, 0, reducedEnd); child != nil {
@@ -990,7 +1129,14 @@ func (p *Parser) applyReduceActionFromGSSTransientParents(s *glrStack, act Parse
 		return
 	}
 
+	childStart := time.Time{}
+	if timing != nil {
+		childStart = time.Now()
+	}
 	children, fieldIDs, fieldSources, childPath := p.buildReduceChildrenWithPath(windowEntries, 0, reducedEnd, childCount, act.Symbol, act.ProductionID, arena)
+	if timing != nil {
+		timing.reduceChildBuildNanos += time.Since(childStart).Nanoseconds()
+	}
 
 	targetDepth := s.depth() - actualEnd
 	if targetDepth < 0 || !s.truncate(targetDepth) {
@@ -1012,8 +1158,19 @@ func (p *Parser) applyReduceActionFromGSSTransientParents(s *glrStack, act Parse
 	}
 
 	named := p.isNamedSymbol(act.Symbol)
+	parentStart := time.Time{}
+	if timing != nil {
+		parentStart = time.Now()
+	}
 	parent := p.newReduceParentNode(arena, act.Symbol, named, children, fieldIDs, fieldSources, act.ProductionID, deferParentLinks, trackChildErrors)
 	p.recordReductionParentConstructed(arena, parent, act.Symbol, len(children), fieldIDs, fieldSources, childPath)
+	if timing != nil {
+		timing.reduceParentBuildNanos += time.Since(parentStart).Nanoseconds()
+	}
+	spanStart := time.Time{}
+	if timing != nil {
+		spanStart = time.Now()
+	}
 	shouldUseRawSpan := shouldUseRawSpanForReduction(act.Symbol, children, p.language.SymbolMetadata, p.forceRawSpanAll, p.forceRawSpanTable)
 	if shouldUseRawSpan && reducedEnd > 0 {
 		span := computeReduceRawSpan(windowEntries, 0, reducedEnd)
@@ -1028,8 +1185,15 @@ func (p *Parser) applyReduceActionFromGSSTransientParents(s *glrStack, act Parse
 	if reduceChildPathMayDropSpan(childPath) {
 		extendParentSpanToWindow(parent, windowEntries, 0, reducedEnd, p.language.SymbolMetadata, p.language.SymbolNames)
 	}
+	if timing != nil {
+		timing.reduceSpanNanos += time.Since(spanStart).Nanoseconds()
+	}
 	*nodeCount++
 
+	pushStart := time.Time{}
+	if timing != nil {
+		pushStart = time.Now()
+	}
 	gotoState := p.lookupGoto(topState, act.Symbol)
 	targetState := topState
 	if gotoState != 0 {
@@ -1049,6 +1213,9 @@ func (p *Parser) applyReduceActionFromGSSTransientParents(s *glrStack, act Parse
 		extra.parseState = targetState
 		nodeBumpEquivVersion(extra)
 		p.pushStackNode(s, targetState, extra, entryScratch, gssScratch)
+	}
+	if timing != nil {
+		timing.reduceStackPushNanos += time.Since(pushStart).Nanoseconds()
 	}
 
 	s.score += int(act.DynamicPrecedence)
@@ -3329,15 +3496,23 @@ func recordCollapseRule(arena *nodeArena, rule collapseUnaryRule) {
 }
 
 func (p *Parser) applyReduceAction(s *glrStack, act ParseAction, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, entries []stackEntry, deferParentLinks bool, trackChildErrors bool) {
+	timing := p.reduceTiming
 	childCount := int(act.ChildCount)
 	var (
 		window reduceRange
 		ok     bool
 	)
+	rangeStart := time.Time{}
+	if timing != nil {
+		rangeStart = time.Now()
+	}
 	if p != nil && p.noTreeBenchmarkOnly {
 		window, ok = computeReduceRangePayload(entries, childCount)
 	} else {
 		window, ok = computeReduceRangeForFullPayloads(entries, childCount, p.usePendingFullParents())
+	}
+	if timing != nil {
+		timing.reduceRangeNanos += time.Since(rangeStart).Nanoseconds()
 	}
 	if !ok {
 		// Not enough stack entries — kill this stack version.
@@ -3346,11 +3521,21 @@ func (p *Parser) applyReduceAction(s *glrStack, act ParseAction, tok Token, anyR
 	}
 
 	if p != nil && p.noTreeBenchmarkOnly {
+		noTreeStart := time.Time{}
+		if timing != nil {
+			noTreeStart = time.Now()
+		}
 		if !s.truncate(window.start) {
+			if timing != nil {
+				timing.reduceNoTreeBuildNanos += time.Since(noTreeStart).Nanoseconds()
+			}
 			s.dead = true
 			return
 		}
 		p.pushNoTreeReduceNode(s, act, tok, arena, entryScratch, gssScratch, entries, window.start, window.reducedEnd, window.reducedEnd, window.actualEnd, window.topState, nodeCount, trackChildErrors)
+		if timing != nil {
+			timing.reduceNoTreeBuildNanos += time.Since(noTreeStart).Nanoseconds()
+		}
 		s.score += int(act.DynamicPrecedence)
 		*anyReduced = true
 		return
@@ -3368,10 +3553,20 @@ func (p *Parser) applyReduceAction(s *glrStack, act ParseAction, tok Token, anyR
 		}
 	}
 	if p.usePendingFullParents() {
+		pendingStart := time.Time{}
+		if timing != nil {
+			pendingStart = time.Now()
+		}
 		if p.tryPushPendingNoFieldParent(s, act, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, entries, window.start, window.reducedEnd, window.actualEnd, window.topState, window.start) {
+			if timing != nil {
+				timing.reducePendingParentNanos += time.Since(pendingStart).Nanoseconds()
+			}
 			return
 		}
 		materializePendingPayloadEntries(p, entries, window.start, window.actualEnd, arena)
+		if timing != nil {
+			timing.reducePendingParentNanos += time.Since(pendingStart).Nanoseconds()
+		}
 	}
 
 	if child := p.collapsibleRawUnarySelfReduction(act, tok, arena, entries, window.start, window.reducedEnd); child != nil {
@@ -3385,7 +3580,14 @@ func (p *Parser) applyReduceAction(s *glrStack, act ParseAction, tok Token, anyR
 		return
 	}
 
+	childStart := time.Time{}
+	if timing != nil {
+		childStart = time.Now()
+	}
 	children, fieldIDs, fieldSources, childPath := p.buildReduceChildrenWithPath(entries, window.start, window.reducedEnd, childCount, act.Symbol, act.ProductionID, arena)
+	if timing != nil {
+		timing.reduceChildBuildNanos += time.Since(childStart).Nanoseconds()
+	}
 
 	trailingStart := window.reducedEnd
 	trailingEnd := window.actualEnd
@@ -3405,12 +3607,23 @@ func (p *Parser) applyReduceAction(s *glrStack, act ParseAction, tok Token, anyR
 
 	named := p.isNamedSymbol(act.Symbol)
 	var parent *Node
+	parentStart := time.Time{}
+	if timing != nil {
+		parentStart = time.Now()
+	}
 	if deferParentLinks {
 		parent = newParentNodeInArenaNoLinksWithFieldSources(arena, act.Symbol, named, children, fieldIDs, fieldSources, act.ProductionID, trackChildErrors)
 	} else {
 		parent = newParentNodeInArenaWithFieldSources(arena, act.Symbol, named, children, fieldIDs, fieldSources, act.ProductionID)
 	}
 	p.recordReductionParentConstructed(arena, parent, act.Symbol, len(children), fieldIDs, fieldSources, childPath)
+	if timing != nil {
+		timing.reduceParentBuildNanos += time.Since(parentStart).Nanoseconds()
+	}
+	spanStart := time.Time{}
+	if timing != nil {
+		spanStart = time.Now()
+	}
 	shouldUseRawSpan := shouldUseRawSpanForReduction(act.Symbol, children, p.language.SymbolMetadata, p.forceRawSpanAll, p.forceRawSpanTable)
 	if shouldUseRawSpan && window.reducedEnd > window.start {
 		span := computeReduceRawSpan(entries, window.start, window.reducedEnd)
@@ -3426,8 +3639,15 @@ func (p *Parser) applyReduceAction(s *glrStack, act ParseAction, tok Token, anyR
 	if reduceChildPathMayDropSpan(childPath) {
 		extendParentSpanToWindow(parent, entries, window.start, window.reducedEnd, p.language.SymbolMetadata, p.language.SymbolNames)
 	}
+	if timing != nil {
+		timing.reduceSpanNanos += time.Since(spanStart).Nanoseconds()
+	}
 	*nodeCount++
 
+	pushStart := time.Time{}
+	if timing != nil {
+		pushStart = time.Now()
+	}
 	gotoState := p.lookupGoto(window.topState, act.Symbol)
 	targetState := window.topState
 	if gotoState != 0 {
@@ -3448,21 +3668,32 @@ func (p *Parser) applyReduceAction(s *glrStack, act ParseAction, tok Token, anyR
 		nodeBumpEquivVersion(extra)
 		p.pushStackNode(s, targetState, extra, entryScratch, gssScratch)
 	}
+	if timing != nil {
+		timing.reduceStackPushNanos += time.Since(pushStart).Nanoseconds()
+	}
 
 	s.score += int(act.DynamicPrecedence)
 	*anyReduced = true
 }
 
 func (p *Parser) applyReduceActionTransientParents(s *glrStack, act ParseAction, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, entries []stackEntry, deferParentLinks bool, trackChildErrors bool) {
+	timing := p.reduceTiming
 	childCount := int(act.ChildCount)
 	var (
 		window reduceRange
 		ok     bool
 	)
+	rangeStart := time.Time{}
+	if timing != nil {
+		rangeStart = time.Now()
+	}
 	if p != nil && p.noTreeBenchmarkOnly {
 		window, ok = computeReduceRangePayload(entries, childCount)
 	} else {
 		window, ok = computeReduceRangeForFullPayloads(entries, childCount, p.usePendingFullParents())
+	}
+	if timing != nil {
+		timing.reduceRangeNanos += time.Since(rangeStart).Nanoseconds()
 	}
 	if !ok {
 		s.dead = true
@@ -3470,11 +3701,21 @@ func (p *Parser) applyReduceActionTransientParents(s *glrStack, act ParseAction,
 	}
 
 	if p != nil && p.noTreeBenchmarkOnly {
+		noTreeStart := time.Time{}
+		if timing != nil {
+			noTreeStart = time.Now()
+		}
 		if !s.truncate(window.start) {
+			if timing != nil {
+				timing.reduceNoTreeBuildNanos += time.Since(noTreeStart).Nanoseconds()
+			}
 			s.dead = true
 			return
 		}
 		p.pushNoTreeReduceNode(s, act, tok, arena, entryScratch, gssScratch, entries, window.start, window.reducedEnd, window.reducedEnd, window.actualEnd, window.topState, nodeCount, trackChildErrors)
+		if timing != nil {
+			timing.reduceNoTreeBuildNanos += time.Since(noTreeStart).Nanoseconds()
+		}
 		s.score += int(act.DynamicPrecedence)
 		*anyReduced = true
 		return
@@ -3492,10 +3733,20 @@ func (p *Parser) applyReduceActionTransientParents(s *glrStack, act ParseAction,
 		}
 	}
 	if p.usePendingFullParents() {
+		pendingStart := time.Time{}
+		if timing != nil {
+			pendingStart = time.Now()
+		}
 		if p.tryPushPendingNoFieldParent(s, act, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, entries, window.start, window.reducedEnd, window.actualEnd, window.topState, window.start) {
+			if timing != nil {
+				timing.reducePendingParentNanos += time.Since(pendingStart).Nanoseconds()
+			}
 			return
 		}
 		materializePendingPayloadEntries(p, entries, window.start, window.actualEnd, arena)
+		if timing != nil {
+			timing.reducePendingParentNanos += time.Since(pendingStart).Nanoseconds()
+		}
 	}
 
 	if child := p.collapsibleRawUnarySelfReduction(act, tok, arena, entries, window.start, window.reducedEnd); child != nil {
@@ -3509,7 +3760,14 @@ func (p *Parser) applyReduceActionTransientParents(s *glrStack, act ParseAction,
 		return
 	}
 
+	childStart := time.Time{}
+	if timing != nil {
+		childStart = time.Now()
+	}
 	children, fieldIDs, fieldSources, childPath := p.buildReduceChildrenWithPath(entries, window.start, window.reducedEnd, childCount, act.Symbol, act.ProductionID, arena)
+	if timing != nil {
+		timing.reduceChildBuildNanos += time.Since(childStart).Nanoseconds()
+	}
 
 	trailingStart := window.reducedEnd
 	trailingEnd := window.actualEnd
@@ -3527,8 +3785,19 @@ func (p *Parser) applyReduceActionTransientParents(s *glrStack, act ParseAction,
 	}
 
 	named := p.isNamedSymbol(act.Symbol)
+	parentStart := time.Time{}
+	if timing != nil {
+		parentStart = time.Now()
+	}
 	parent := p.newReduceParentNode(arena, act.Symbol, named, children, fieldIDs, fieldSources, act.ProductionID, deferParentLinks, trackChildErrors)
 	p.recordReductionParentConstructed(arena, parent, act.Symbol, len(children), fieldIDs, fieldSources, childPath)
+	if timing != nil {
+		timing.reduceParentBuildNanos += time.Since(parentStart).Nanoseconds()
+	}
+	spanStart := time.Time{}
+	if timing != nil {
+		spanStart = time.Now()
+	}
 	shouldUseRawSpan := shouldUseRawSpanForReduction(act.Symbol, children, p.language.SymbolMetadata, p.forceRawSpanAll, p.forceRawSpanTable)
 	if shouldUseRawSpan && window.reducedEnd > window.start {
 		span := computeReduceRawSpan(entries, window.start, window.reducedEnd)
@@ -3543,8 +3812,15 @@ func (p *Parser) applyReduceActionTransientParents(s *glrStack, act ParseAction,
 	if reduceChildPathMayDropSpan(childPath) {
 		extendParentSpanToWindow(parent, entries, window.start, window.reducedEnd, p.language.SymbolMetadata, p.language.SymbolNames)
 	}
+	if timing != nil {
+		timing.reduceSpanNanos += time.Since(spanStart).Nanoseconds()
+	}
 	*nodeCount++
 
+	pushStart := time.Time{}
+	if timing != nil {
+		pushStart = time.Now()
+	}
 	gotoState := p.lookupGoto(window.topState, act.Symbol)
 	targetState := window.topState
 	if gotoState != 0 {
@@ -3564,6 +3840,9 @@ func (p *Parser) applyReduceActionTransientParents(s *glrStack, act ParseAction,
 		extra.parseState = targetState
 		nodeBumpEquivVersion(extra)
 		p.pushStackNode(s, targetState, extra, entryScratch, gssScratch)
+	}
+	if timing != nil {
+		timing.reduceStackPushNanos += time.Since(pushStart).Nanoseconds()
 	}
 
 	s.score += int(act.DynamicPrecedence)

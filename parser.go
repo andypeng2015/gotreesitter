@@ -76,6 +76,7 @@ type Parser struct {
 	currentExternalTokenCheckpointValid bool
 	normalizationStats                  normalizationStats
 	materializationTiming               *parseMaterializationTiming
+	reduceTiming                        *parseMaterializationTiming
 }
 
 var snippetParserPools sync.Map
@@ -179,6 +180,13 @@ type IncrementalParseProfile struct {
 	ResultNormalizeRootStartNanos       int64
 	ResultCompatibilityNanos            int64
 	ResultParentLinkNanos               int64
+	ReduceRangeNanos                    int64
+	ReducePendingParentNanos            int64
+	ReduceChildBuildNanos               int64
+	ReduceParentBuildNanos              int64
+	ReduceSpanNanos                     int64
+	ReduceStackPushNanos                int64
+	ReduceNoTreeBuildNanos              int64
 	NormalizationNanos                  int64
 }
 
@@ -250,6 +258,13 @@ type incrementalParseTiming struct {
 	resultNormalizeRootStartNanos       int64
 	resultCompatibilityNanos            int64
 	resultParentLinkNanos               int64
+	reduceRangeNanos                    int64
+	reducePendingParentNanos            int64
+	reduceChildBuildNanos               int64
+	reduceParentBuildNanos              int64
+	reduceSpanNanos                     int64
+	reduceStackPushNanos                int64
+	reduceNoTreeBuildNanos              int64
 	normalizationNanos                  int64
 }
 
@@ -1600,6 +1615,13 @@ func recordParseRuntimeMaterializationTiming(parseRuntime *ParseRuntime, timingR
 	parseRuntime.ResultNormalizeRootStartNanos = timing.resultNormalizeRootStartNanos
 	parseRuntime.ResultCompatibilityNanos = timing.resultCompatibilityNanos
 	parseRuntime.ResultParentLinkNanos = timing.resultParentLinkNanos
+	parseRuntime.ReduceRangeNanos = timing.reduceRangeNanos
+	parseRuntime.ReducePendingParentNanos = timing.reducePendingParentNanos
+	parseRuntime.ReduceChildBuildNanos = timing.reduceChildBuildNanos
+	parseRuntime.ReduceParentBuildNanos = timing.reduceParentBuildNanos
+	parseRuntime.ReduceSpanNanos = timing.reduceSpanNanos
+	parseRuntime.ReduceStackPushNanos = timing.reduceStackPushNanos
+	parseRuntime.ReduceNoTreeBuildNanos = timing.reduceNoTreeBuildNanos
 }
 
 func recordParseRuntimePhaseTiming(parseRuntime *ParseRuntime, timingRef *parseMaterializationTiming, parseStart time.Time, parserLoopNanos, tokenNextNanos, actionDispatchNanos, actionLookupNanos, glrMergeNanos, glrCullNanos int64) {
@@ -1705,6 +1727,13 @@ func copyParseRuntimeToTiming(timing *incrementalParseTiming, parseRuntime Parse
 	timing.resultNormalizeRootStartNanos = parseRuntime.ResultNormalizeRootStartNanos
 	timing.resultCompatibilityNanos = parseRuntime.ResultCompatibilityNanos
 	timing.resultParentLinkNanos = parseRuntime.ResultParentLinkNanos
+	timing.reduceRangeNanos = parseRuntime.ReduceRangeNanos
+	timing.reducePendingParentNanos = parseRuntime.ReducePendingParentNanos
+	timing.reduceChildBuildNanos = parseRuntime.ReduceChildBuildNanos
+	timing.reduceParentBuildNanos = parseRuntime.ReduceParentBuildNanos
+	timing.reduceSpanNanos = parseRuntime.ReduceSpanNanos
+	timing.reduceStackPushNanos = parseRuntime.ReduceStackPushNanos
+	timing.reduceNoTreeBuildNanos = parseRuntime.ReduceNoTreeBuildNanos
 	timing.normalizationNanos = parseRuntime.NormalizationNanos
 }
 
@@ -1769,7 +1798,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	}
 	var materializationTiming parseMaterializationTiming
 	var materializationTimingRef *parseMaterializationTiming
-	if timing != nil || parseShouldCaptureMaterializationTiming(p, source, reuse, oldTree, arenaClass) {
+	if timing != nil || parseShouldCaptureMaterializationTiming(p, source, reuse, oldTree, arenaClass) || (p != nil && p.noTreeBenchmarkOnly && parseReduceTimingEnabled()) {
 		materializationTimingRef = &materializationTiming
 	}
 	phaseTiming := materializationTimingRef != nil
@@ -1780,9 +1809,16 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	var glrMergeNanos int64
 	var glrCullNanos int64
 	prevMaterializationTiming := p.materializationTiming
+	prevReduceTiming := p.reduceTiming
 	p.materializationTiming = materializationTimingRef
+	if materializationTimingRef != nil && parseReduceTimingEnabled() {
+		p.reduceTiming = materializationTimingRef
+	} else {
+		p.reduceTiming = nil
+	}
 	defer func() {
 		p.materializationTiming = prevMaterializationTiming
+		p.reduceTiming = prevReduceTiming
 	}()
 	defer p.recordParseArenaUsageOnReturn(arenaClass, arena, scratch)()
 	p.ensureParseInitialCapacity(source, arenaClass, arena, scratch)

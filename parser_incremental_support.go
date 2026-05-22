@@ -101,6 +101,13 @@ func (t *incrementalParseTiming) toProfile() IncrementalParseProfile {
 		ResultNormalizeRootStartNanos:       t.resultNormalizeRootStartNanos,
 		ResultCompatibilityNanos:            t.resultCompatibilityNanos,
 		ResultParentLinkNanos:               t.resultParentLinkNanos,
+		ReduceRangeNanos:                    t.reduceRangeNanos,
+		ReducePendingParentNanos:            t.reducePendingParentNanos,
+		ReduceChildBuildNanos:               t.reduceChildBuildNanos,
+		ReduceParentBuildNanos:              t.reduceParentBuildNanos,
+		ReduceSpanNanos:                     t.reduceSpanNanos,
+		ReduceStackPushNanos:                t.reduceStackPushNanos,
+		ReduceNoTreeBuildNanos:              t.reduceNoTreeBuildNanos,
 		NormalizationNanos:                  t.normalizationNanos,
 	}
 }
