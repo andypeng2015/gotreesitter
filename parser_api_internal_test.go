@@ -884,6 +884,15 @@ func TestParseFullArenaInitialNodeCapacityScalesForLargeSources(t *testing.T) {
 	}
 }
 
+func TestParseFullArenaInitialNodeCapacityPreallocatesMediumSources(t *testing.T) {
+	sourceLen := 192 * 1024
+	got := parseFullArenaInitialNodeCapacity(sourceLen)
+	want := sourceLen * 2 / 3
+	if got != want {
+		t.Fatalf("parseFullArenaInitialNodeCapacity(%d) = %d, want %d", sourceLen, got, want)
+	}
+}
+
 func TestParsePendingFullArenaInitialNodeCapacityUsesLowerLargeSourceFloor(t *testing.T) {
 	sourceLen := 2 * 1024 * 1024
 	got := parsePendingFullArenaInitialNodeCapacity(sourceLen)
@@ -1120,6 +1129,15 @@ func TestParseFullArenaHintHeadroomIsBoundedForLargeSources(t *testing.T) {
 	used := 1_500_000
 	got := parseFullArenaHintHeadroom(used)
 	want := 64 * 1024
+	if got != want {
+		t.Fatalf("parseFullArenaHintHeadroom(%d) = %d, want %d", used, got, want)
+	}
+}
+
+func TestParseFullArenaHintHeadroomIsTighterForMediumSources(t *testing.T) {
+	used := 128 * 1024
+	got := parseFullArenaHintHeadroom(used)
+	want := used / 16
 	if got != want {
 		t.Fatalf("parseFullArenaHintHeadroom(%d) = %d, want %d", used, got, want)
 	}
