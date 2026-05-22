@@ -131,8 +131,14 @@ func normalizeGoCompatibilitySubtree(n *Node, source []byte, syms goCompatibilit
 			normalizeGoAdjacentSiblingBoundaries(n, source, syms)
 		}
 	}
-	for i := 0; i < childCount; i++ {
-		normalizeGoCompatibilitySubtree(resultChildAt(n, i), source, syms, flags, incrementalRanges)
+	if n.ownerArena == nil || n.childIndex > finalChildSidecarIndexBase {
+		for _, child := range n.children {
+			normalizeGoCompatibilitySubtree(child, source, syms, flags, incrementalRanges)
+		}
+	} else {
+		for i := 0; i < childCount; i++ {
+			normalizeGoCompatibilitySubtree(resultChildAt(n, i), source, syms, flags, incrementalRanges)
+		}
 	}
 	if flags.trailingBoundary {
 		normalizeGoStatementListTrailingExtras(n, source, syms)
@@ -194,6 +200,14 @@ func goHasDroppableSemicolonFinalRef(view resultMutableChildView, source []byte,
 }
 
 func goHasDroppableSemicolonChild(n *Node, source []byte, semicolon Symbol) bool {
+	if n != nil && (n.ownerArena == nil || n.childIndex > finalChildSidecarIndexBase) {
+		for _, child := range n.children {
+			if goIsDroppableSemicolonNode(child, source, semicolon) {
+				return true
+			}
+		}
+		return false
+	}
 	for i := 0; i < resultChildCount(n); i++ {
 		if goIsDroppableSemicolonNode(resultChildAt(n, i), source, semicolon) {
 			return true
@@ -224,6 +238,18 @@ func goShouldDropSemicolonSpan(startByte, endByte uint32, source []byte) bool {
 }
 
 func normalizeGoAdjacentSiblingBoundaries(n *Node, source []byte, syms goCompatibilitySymbols) {
+	if n != nil && (n.ownerArena == nil || n.childIndex > finalChildSidecarIndexBase) {
+		for i := 0; i+1 < len(n.children); i++ {
+			curr := n.children[i]
+			next := n.children[i+1]
+			if curr == nil || next == nil {
+				continue
+			}
+			normalizeGoStatementListBoundary(curr, next, source, syms)
+			normalizeGoCaseSiblingBoundary(curr, next, source, syms)
+		}
+		return
+	}
 	childCount := resultChildCount(n)
 	for i := 0; i+1 < childCount; i++ {
 		curr := resultChildAt(n, i)
@@ -255,7 +281,12 @@ func normalizeGoStatementListTrailingExtras(n *Node, source []byte, syms goCompa
 	if !syms.isStatementList(n.symbol) || childCount == 0 || int(n.endByte) > len(source) {
 		return
 	}
-	last := resultChildAt(n, childCount-1)
+	var last *Node
+	if n.ownerArena == nil || n.childIndex > finalChildSidecarIndexBase {
+		last = n.children[childCount-1]
+	} else {
+		last = resultChildAt(n, childCount-1)
+	}
 	if last == nil || last.endByte >= n.endByte {
 		return
 	}
@@ -355,7 +386,12 @@ func goTrailingCaseStatementList(n *Node, syms goCompatibilitySymbols) *Node {
 	if n == nil || childCount == 0 {
 		return nil
 	}
-	last := resultChildAt(n, childCount-1)
+	var last *Node
+	if n.ownerArena == nil || n.childIndex > finalChildSidecarIndexBase {
+		last = n.children[childCount-1]
+	} else {
+		last = resultChildAt(n, childCount-1)
+	}
 	if last == nil || !syms.isStatementList(last.symbol) {
 		return nil
 	}
