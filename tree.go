@@ -664,6 +664,8 @@ type ParseRuntime struct {
 	ActionLookupNanos                            int64
 	GLRMergeNanos                                int64
 	GLRCullNanos                                 int64
+	ReduceTiming                                 *ParseReduceTiming
+	ActionTiming                                 *ParseActionTiming
 
 	ExternalScannerCheckpointRecords                 uint64
 	ExternalScannerCheckpointSlotsAllocated          uint64
@@ -744,18 +746,37 @@ type ParseRuntime struct {
 	ResultNormalizeRootStartNanos       int64
 	ResultCompatibilityNanos            int64
 	ResultParentLinkNanos               int64
-	ReduceRangeNanos                    int64
-	ReducePendingParentNanos            int64
-	ReduceChildBuildNanos               int64
-	ReduceParentBuildNanos              int64
-	ReduceSpanNanos                     int64
-	ReduceStackPushNanos                int64
-	ReduceNoTreeBuildNanos              int64
 	NormalizationPassesChecked          uint64
 	NormalizationPassesRun              uint64
 	NormalizationNodesVisited           uint64
 	NormalizationNodesRewritten         uint64
 	NormalizationNanos                  int64
+}
+
+type ParseReduceTiming struct {
+	RangeNanos         int64
+	PendingParentNanos int64
+	ChildBuildNanos    int64
+	ParentBuildNanos   int64
+	SpanNanos          int64
+	StackPushNanos     int64
+	NoTreeBuildNanos   int64
+}
+
+type ParseActionTiming struct {
+	ExtraShiftNanos      int64
+	NoActionNanos        int64
+	NoActionRelexNanos   int64
+	NoActionMissingNanos int64
+	NoActionRecoverNanos int64
+	NoActionErrorNanos   int64
+	ConflictChoiceNanos  int64
+	ConflictForkNanos    int64
+	SingleShiftNanos     int64
+	SingleReduceNanos    int64
+	SingleAcceptNanos    int64
+	SingleRecoverNanos   int64
+	SingleOtherNanos     int64
 }
 
 type ReduceChildPathRuntime struct {

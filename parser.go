@@ -187,6 +187,19 @@ type IncrementalParseProfile struct {
 	ReduceSpanNanos                     int64
 	ReduceStackPushNanos                int64
 	ReduceNoTreeBuildNanos              int64
+	ActionExtraShiftNanos               int64
+	ActionNoActionNanos                 int64
+	ActionNoActionRelexNanos            int64
+	ActionNoActionMissingNanos          int64
+	ActionNoActionRecoverNanos          int64
+	ActionNoActionErrorNanos            int64
+	ActionConflictChoiceNanos           int64
+	ActionConflictForkNanos             int64
+	ActionSingleShiftNanos              int64
+	ActionSingleReduceNanos             int64
+	ActionSingleAcceptNanos             int64
+	ActionSingleRecoverNanos            int64
+	ActionSingleOtherNanos              int64
 	NormalizationNanos                  int64
 }
 
@@ -265,6 +278,19 @@ type incrementalParseTiming struct {
 	reduceSpanNanos                     int64
 	reduceStackPushNanos                int64
 	reduceNoTreeBuildNanos              int64
+	actionExtraShiftNanos               int64
+	actionNoActionNanos                 int64
+	actionNoActionRelexNanos            int64
+	actionNoActionMissingNanos          int64
+	actionNoActionRecoverNanos          int64
+	actionNoActionErrorNanos            int64
+	actionConflictChoiceNanos           int64
+	actionConflictForkNanos             int64
+	actionSingleShiftNanos              int64
+	actionSingleReduceNanos             int64
+	actionSingleAcceptNanos             int64
+	actionSingleRecoverNanos            int64
+	actionSingleOtherNanos              int64
 	normalizationNanos                  int64
 }
 
@@ -1615,13 +1641,52 @@ func recordParseRuntimeMaterializationTiming(parseRuntime *ParseRuntime, timingR
 	parseRuntime.ResultNormalizeRootStartNanos = timing.resultNormalizeRootStartNanos
 	parseRuntime.ResultCompatibilityNanos = timing.resultCompatibilityNanos
 	parseRuntime.ResultParentLinkNanos = timing.resultParentLinkNanos
-	parseRuntime.ReduceRangeNanos = timing.reduceRangeNanos
-	parseRuntime.ReducePendingParentNanos = timing.reducePendingParentNanos
-	parseRuntime.ReduceChildBuildNanos = timing.reduceChildBuildNanos
-	parseRuntime.ReduceParentBuildNanos = timing.reduceParentBuildNanos
-	parseRuntime.ReduceSpanNanos = timing.reduceSpanNanos
-	parseRuntime.ReduceStackPushNanos = timing.reduceStackPushNanos
-	parseRuntime.ReduceNoTreeBuildNanos = timing.reduceNoTreeBuildNanos
+	if timing.reduceRangeNanos != 0 ||
+		timing.reducePendingParentNanos != 0 ||
+		timing.reduceChildBuildNanos != 0 ||
+		timing.reduceParentBuildNanos != 0 ||
+		timing.reduceSpanNanos != 0 ||
+		timing.reduceStackPushNanos != 0 ||
+		timing.reduceNoTreeBuildNanos != 0 {
+		parseRuntime.ReduceTiming = &ParseReduceTiming{
+			RangeNanos:         timing.reduceRangeNanos,
+			PendingParentNanos: timing.reducePendingParentNanos,
+			ChildBuildNanos:    timing.reduceChildBuildNanos,
+			ParentBuildNanos:   timing.reduceParentBuildNanos,
+			SpanNanos:          timing.reduceSpanNanos,
+			StackPushNanos:     timing.reduceStackPushNanos,
+			NoTreeBuildNanos:   timing.reduceNoTreeBuildNanos,
+		}
+	}
+	if timing.actionExtraShiftNanos != 0 ||
+		timing.actionNoActionNanos != 0 ||
+		timing.actionNoActionRelexNanos != 0 ||
+		timing.actionNoActionMissingNanos != 0 ||
+		timing.actionNoActionRecoverNanos != 0 ||
+		timing.actionNoActionErrorNanos != 0 ||
+		timing.actionConflictChoiceNanos != 0 ||
+		timing.actionConflictForkNanos != 0 ||
+		timing.actionSingleShiftNanos != 0 ||
+		timing.actionSingleReduceNanos != 0 ||
+		timing.actionSingleAcceptNanos != 0 ||
+		timing.actionSingleRecoverNanos != 0 ||
+		timing.actionSingleOtherNanos != 0 {
+		parseRuntime.ActionTiming = &ParseActionTiming{
+			ExtraShiftNanos:      timing.actionExtraShiftNanos,
+			NoActionNanos:        timing.actionNoActionNanos,
+			NoActionRelexNanos:   timing.actionNoActionRelexNanos,
+			NoActionMissingNanos: timing.actionNoActionMissingNanos,
+			NoActionRecoverNanos: timing.actionNoActionRecoverNanos,
+			NoActionErrorNanos:   timing.actionNoActionErrorNanos,
+			ConflictChoiceNanos:  timing.actionConflictChoiceNanos,
+			ConflictForkNanos:    timing.actionConflictForkNanos,
+			SingleShiftNanos:     timing.actionSingleShiftNanos,
+			SingleReduceNanos:    timing.actionSingleReduceNanos,
+			SingleAcceptNanos:    timing.actionSingleAcceptNanos,
+			SingleRecoverNanos:   timing.actionSingleRecoverNanos,
+			SingleOtherNanos:     timing.actionSingleOtherNanos,
+		}
+	}
 }
 
 func recordParseRuntimePhaseTiming(parseRuntime *ParseRuntime, timingRef *parseMaterializationTiming, parseStart time.Time, parserLoopNanos, tokenNextNanos, actionDispatchNanos, actionLookupNanos, glrMergeNanos, glrCullNanos int64) {
@@ -1727,13 +1792,30 @@ func copyParseRuntimeToTiming(timing *incrementalParseTiming, parseRuntime Parse
 	timing.resultNormalizeRootStartNanos = parseRuntime.ResultNormalizeRootStartNanos
 	timing.resultCompatibilityNanos = parseRuntime.ResultCompatibilityNanos
 	timing.resultParentLinkNanos = parseRuntime.ResultParentLinkNanos
-	timing.reduceRangeNanos = parseRuntime.ReduceRangeNanos
-	timing.reducePendingParentNanos = parseRuntime.ReducePendingParentNanos
-	timing.reduceChildBuildNanos = parseRuntime.ReduceChildBuildNanos
-	timing.reduceParentBuildNanos = parseRuntime.ReduceParentBuildNanos
-	timing.reduceSpanNanos = parseRuntime.ReduceSpanNanos
-	timing.reduceStackPushNanos = parseRuntime.ReduceStackPushNanos
-	timing.reduceNoTreeBuildNanos = parseRuntime.ReduceNoTreeBuildNanos
+	if reduceTiming := parseRuntime.ReduceTiming; reduceTiming != nil {
+		timing.reduceRangeNanos = reduceTiming.RangeNanos
+		timing.reducePendingParentNanos = reduceTiming.PendingParentNanos
+		timing.reduceChildBuildNanos = reduceTiming.ChildBuildNanos
+		timing.reduceParentBuildNanos = reduceTiming.ParentBuildNanos
+		timing.reduceSpanNanos = reduceTiming.SpanNanos
+		timing.reduceStackPushNanos = reduceTiming.StackPushNanos
+		timing.reduceNoTreeBuildNanos = reduceTiming.NoTreeBuildNanos
+	}
+	if actionTiming := parseRuntime.ActionTiming; actionTiming != nil {
+		timing.actionExtraShiftNanos = actionTiming.ExtraShiftNanos
+		timing.actionNoActionNanos = actionTiming.NoActionNanos
+		timing.actionNoActionRelexNanos = actionTiming.NoActionRelexNanos
+		timing.actionNoActionMissingNanos = actionTiming.NoActionMissingNanos
+		timing.actionNoActionRecoverNanos = actionTiming.NoActionRecoverNanos
+		timing.actionNoActionErrorNanos = actionTiming.NoActionErrorNanos
+		timing.actionConflictChoiceNanos = actionTiming.ConflictChoiceNanos
+		timing.actionConflictForkNanos = actionTiming.ConflictForkNanos
+		timing.actionSingleShiftNanos = actionTiming.SingleShiftNanos
+		timing.actionSingleReduceNanos = actionTiming.SingleReduceNanos
+		timing.actionSingleAcceptNanos = actionTiming.SingleAcceptNanos
+		timing.actionSingleRecoverNanos = actionTiming.SingleRecoverNanos
+		timing.actionSingleOtherNanos = actionTiming.SingleOtherNanos
+	}
 	timing.normalizationNanos = parseRuntime.NormalizationNanos
 }
 
@@ -1798,10 +1880,14 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	}
 	var materializationTiming parseMaterializationTiming
 	var materializationTimingRef *parseMaterializationTiming
-	if timing != nil || parseShouldCaptureMaterializationTiming(p, source, reuse, oldTree, arenaClass) || (p != nil && p.noTreeBenchmarkOnly && parseReduceTimingEnabled()) {
+	if timing != nil || parseShouldCaptureMaterializationTiming(p, source, reuse, oldTree, arenaClass) || (p != nil && p.noTreeBenchmarkOnly && (parseReduceTimingEnabled() || parseActionTimingEnabled())) {
 		materializationTimingRef = &materializationTiming
 	}
 	phaseTiming := materializationTimingRef != nil
+	var actionTiming *parseMaterializationTiming
+	if materializationTimingRef != nil && parseActionTimingEnabled() {
+		actionTiming = materializationTimingRef
+	}
 	var parserLoopNanos int64
 	var tokenNextNanos int64
 	var actionDispatchNanos int64
@@ -2145,33 +2231,58 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				p.ambiguityProfile.record(currentState, tok.Symbol, actions, numStacks)
 			}
 			if len(actions) > 0 && actions[0].Type == ParseActionShift && actions[0].Extra {
+				actionKindStart := time.Time{}
+				if actionTiming != nil {
+					actionKindStart = time.Now()
+				}
 				p.applyExtraShiftAction(s, currentState, actions[0], tok, arena, scratch)
 				nodeCount++
 				needToken = true
+				if actionTiming != nil {
+					actionTiming.actionExtraShiftNanos += time.Since(actionKindStart).Nanoseconds()
+				}
 				continue
 			}
 			if len(actions) == 0 {
+				noActionStart := time.Time{}
+				if actionTiming != nil {
+					noActionStart = time.Now()
+				}
 				sameState := parseStacksShareState(stacks, currentState)
 				if tok.Symbol == 0 {
 					if sameState {
 						if reTok, ok := p.tryRelexCurrentStateDFA(tok, currentState, ts); ok {
 							tok = reTok
 							needToken = false
+							if actionTiming != nil {
+								ns := time.Since(noActionStart).Nanoseconds()
+								actionTiming.actionNoActionNanos += ns
+								actionTiming.actionNoActionRelexNanos += ns
+							}
 							goto retryAction
 						}
 					}
 					if tok.StartByte != tok.EndByte {
 						needToken = true
+						if actionTiming != nil {
+							actionTiming.actionNoActionNanos += time.Since(noActionStart).Nanoseconds()
+						}
 						continue
 					}
 					if len(stacks) == 1 {
 						if p.canFinalizeNoActionEOF(s) {
+							if actionTiming != nil {
+								actionTiming.actionNoActionNanos += time.Since(noActionStart).Nanoseconds()
+							}
 							if phaseTiming {
 								actionDispatchNanos += time.Since(dispatchStart).Nanoseconds()
 							}
 							return finalize(stacks, ParseStopAccepted)
 						}
 						if tree, ok := tryFinalizeTrailingEOFSuffix(s, tok); ok {
+							if actionTiming != nil {
+								actionTiming.actionNoActionNanos += time.Since(noActionStart).Nanoseconds()
+							}
 							if phaseTiming {
 								actionDispatchNanos += time.Since(dispatchStart).Nanoseconds()
 							}
@@ -2179,21 +2290,39 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 						}
 					}
 					s.dead = true
+					if actionTiming != nil {
+						ns := time.Since(noActionStart).Nanoseconds()
+						actionTiming.actionNoActionNanos += ns
+						actionTiming.actionNoActionErrorNanos += ns
+					}
 					continue
 				}
 				if tok.StartByte == tok.EndByte {
 					needToken = true
+					if actionTiming != nil {
+						actionTiming.actionNoActionNanos += time.Since(noActionStart).Nanoseconds()
+					}
 					continue
 				}
 				if sameState {
 					if reTok, ok := p.tryRelexCurrentStateDFA(tok, currentState, ts); ok {
 						tok = reTok
 						needToken = false
+						if actionTiming != nil {
+							ns := time.Since(noActionStart).Nanoseconds()
+							actionTiming.actionNoActionNanos += ns
+							actionTiming.actionNoActionRelexNanos += ns
+						}
 						goto retryAction
 					}
 					if reTok, ok := p.tryRelexBroadDFA(tok, currentState, ts); ok {
 						tok = reTok
 						needToken = false
+						if actionTiming != nil {
+							ns := time.Since(noActionStart).Nanoseconds()
+							actionTiming.actionNoActionNanos += ns
+							actionTiming.actionNoActionRelexNanos += ns
+						}
 						goto retryAction
 					}
 				}
@@ -2202,24 +2331,49 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 						fmt.Printf("  stack[%d] KILLED: no action for sym=%d in state=%d (multiple stacks)\n", si, tok.Symbol, currentState)
 					}
 					s.dead = true
+					if actionTiming != nil {
+						ns := time.Since(noActionStart).Nanoseconds()
+						actionTiming.actionNoActionNanos += ns
+						actionTiming.actionNoActionErrorNanos += ns
+					}
 					continue
 				}
 				if tryMissingSingleShift(si, s, currentState) {
 					anyReduced = true
 					needToken = false
 					consecutiveReduces = 0
+					if actionTiming != nil {
+						ns := time.Since(noActionStart).Nanoseconds()
+						actionTiming.actionNoActionNanos += ns
+						actionTiming.actionNoActionMissingNanos += ns
+					}
 					continue
 				}
 				if depth, recoverAct, ok := p.findRecoverActionOnStack(s, tok.Symbol, timing); ok {
 					if !s.truncate(depth + 1) {
 						s.dead = true
+						if actionTiming != nil {
+							ns := time.Since(noActionStart).Nanoseconds()
+							actionTiming.actionNoActionNanos += ns
+							actionTiming.actionNoActionErrorNanos += ns
+						}
 						continue
 					}
 					p.applyAction(s, recoverAct, tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
 					needToken = true
+					if actionTiming != nil {
+						ns := time.Since(noActionStart).Nanoseconds()
+						actionTiming.actionNoActionNanos += ns
+						actionTiming.actionNoActionRecoverNanos += ns
+					}
 					continue
 				}
 				if s.depth() == 0 {
+					if actionTiming != nil {
+						ns := time.Since(noActionStart).Nanoseconds()
+						actionTiming.actionNoActionNanos += ns
+						actionTiming.actionNoActionErrorNanos += ns
+					}
 					if phaseTiming {
 						actionDispatchNanos += time.Since(dispatchStart).Nanoseconds()
 					}
@@ -2227,9 +2381,18 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				}
 				p.pushOrExtendErrorNode(s, currentState, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors)
 				needToken = true
+				if actionTiming != nil {
+					ns := time.Since(noActionStart).Nanoseconds()
+					actionTiming.actionNoActionNanos += ns
+					actionTiming.actionNoActionErrorNanos += ns
+				}
 				continue
 			}
 			if len(actions) > 1 {
+				conflictStart := time.Time{}
+				if actionTiming != nil {
+					conflictStart = time.Now()
+				}
 				var chosen ParseAction
 				choice := false
 				if reuse == nil && p.language != nil {
@@ -2267,6 +2430,9 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				}
 				if choice {
 					p.applyAction(s, chosen, tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
+					if actionTiming != nil {
+						actionTiming.actionConflictChoiceNanos += time.Since(conflictStart).Nanoseconds()
+					}
 					continue
 				}
 				if perfCountersEnabled {
@@ -2289,6 +2455,9 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				}
 				if s.depth() > maxForkCloneDepth {
 					p.applyAction(s, actions[0], tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
+					if actionTiming != nil {
+						actionTiming.actionConflictForkNanos += time.Since(conflictStart).Nanoseconds()
+					}
 					continue
 				}
 				base := *s
@@ -2312,24 +2481,46 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					fmt.Printf("[GLR] orig[%d] after action[0]: st=%d dead=%v shift=%v dep=%d byte=%d\n",
 						si, s.top().state, s.dead, s.shifted, s.depth(), s.byteOffset)
 				}
+				if actionTiming != nil {
+					actionTiming.actionConflictForkNanos += time.Since(conflictStart).Nanoseconds()
+				}
 				continue
 			}
 			act := actions[0]
+			actionKindStart := time.Time{}
+			if actionTiming != nil {
+				actionKindStart = time.Now()
+			}
 			disableBashReduceChain := p.language != nil && p.language.Name == "bash" && s.gss.head != nil
 			if act.Type == ParseActionReduce && !disableBashReduceChain {
 				if p.applyActionWithReduceChain(s, act, tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors) {
 					forceAdvanceAfterReduce = true
 				}
+				if actionTiming != nil {
+					actionTiming.actionSingleReduceNanos += time.Since(actionKindStart).Nanoseconds()
+				}
 			} else {
 				switch act.Type {
 				case ParseActionShift:
 					p.applyShiftAction(s, act, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors)
+					if actionTiming != nil {
+						actionTiming.actionSingleShiftNanos += time.Since(actionKindStart).Nanoseconds()
+					}
 				case ParseActionAccept:
 					p.applyAcceptAction(s)
+					if actionTiming != nil {
+						actionTiming.actionSingleAcceptNanos += time.Since(actionKindStart).Nanoseconds()
+					}
 				case ParseActionRecover:
 					p.applyRecoverAction(s, act, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors)
+					if actionTiming != nil {
+						actionTiming.actionSingleRecoverNanos += time.Since(actionKindStart).Nanoseconds()
+					}
 				default:
 					p.applyAction(s, act, tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
+					if actionTiming != nil {
+						actionTiming.actionSingleOtherNanos += time.Since(actionKindStart).Nanoseconds()
+					}
 				}
 			}
 		}

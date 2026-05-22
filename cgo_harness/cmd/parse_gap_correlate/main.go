@@ -71,6 +71,19 @@ type runtimeStats struct {
 	ReduceSpanNS            int64         `json:"reduce_span_ns,omitempty"`
 	ReduceStackPushNS       int64         `json:"reduce_stack_push_ns,omitempty"`
 	ReduceNoTreeBuildNS     int64         `json:"reduce_notree_build_ns,omitempty"`
+	ActionExtraShiftNS      int64         `json:"action_extra_shift_ns,omitempty"`
+	ActionNoActionNS        int64         `json:"action_no_action_ns,omitempty"`
+	ActionNoActionRelexNS   int64         `json:"action_no_action_relex_ns,omitempty"`
+	ActionNoActionMissingNS int64         `json:"action_no_action_missing_ns,omitempty"`
+	ActionNoActionRecoverNS int64         `json:"action_no_action_recover_ns,omitempty"`
+	ActionNoActionErrorNS   int64         `json:"action_no_action_error_ns,omitempty"`
+	ActionConflictChoiceNS  int64         `json:"action_conflict_choice_ns,omitempty"`
+	ActionConflictForkNS    int64         `json:"action_conflict_fork_ns,omitempty"`
+	ActionSingleShiftNS     int64         `json:"action_single_shift_ns,omitempty"`
+	ActionSingleReduceNS    int64         `json:"action_single_reduce_ns,omitempty"`
+	ActionSingleAcceptNS    int64         `json:"action_single_accept_ns,omitempty"`
+	ActionSingleRecoverNS   int64         `json:"action_single_recover_ns,omitempty"`
+	ActionSingleOtherNS     int64         `json:"action_single_other_ns,omitempty"`
 	MergeCalls              uint64        `json:"merge_calls,omitempty"`
 	EquivCacheLookups       uint64        `json:"equiv_cache_lookups,omitempty"`
 	EquivCacheHits          uint64        `json:"equiv_cache_hits,omitempty"`
@@ -325,6 +338,19 @@ func scoreRows(rows []reportRow) []langScore {
 			s.attrs["reduce_span_share"] = float64(r.ReduceSpanNS) / wall
 			s.attrs["reduce_stack_push_share"] = float64(r.ReduceStackPushNS) / wall
 			s.attrs["reduce_notree_build_share"] = float64(r.ReduceNoTreeBuildNS) / wall
+			s.attrs["action_extra_shift_share"] = float64(r.ActionExtraShiftNS) / wall
+			s.attrs["action_no_action_share"] = float64(r.ActionNoActionNS) / wall
+			s.attrs["action_no_action_relex_share"] = float64(r.ActionNoActionRelexNS) / wall
+			s.attrs["action_no_action_missing_share"] = float64(r.ActionNoActionMissingNS) / wall
+			s.attrs["action_no_action_recover_share"] = float64(r.ActionNoActionRecoverNS) / wall
+			s.attrs["action_no_action_error_share"] = float64(r.ActionNoActionErrorNS) / wall
+			s.attrs["action_conflict_choice_share"] = float64(r.ActionConflictChoiceNS) / wall
+			s.attrs["action_conflict_fork_share"] = float64(r.ActionConflictForkNS) / wall
+			s.attrs["action_single_shift_share"] = float64(r.ActionSingleShiftNS) / wall
+			s.attrs["action_single_reduce_share"] = float64(r.ActionSingleReduceNS) / wall
+			s.attrs["action_single_accept_share"] = float64(r.ActionSingleAcceptNS) / wall
+			s.attrs["action_single_recover_share"] = float64(r.ActionSingleRecoverNS) / wall
+			s.attrs["action_single_other_share"] = float64(r.ActionSingleOtherNS) / wall
 			s.attrs["result_build_share"] = float64(r.ResultBuildNS) / wall
 			s.attrs["result_compat_share"] = float64(r.ResultCompatibilityNS) / wall
 			s.attrs["normalization_share"] = float64(r.NormalizationNS) / wall
@@ -430,6 +456,8 @@ func render(scores []langScore) {
 			s.attrs["final_child_drains_per_token"],
 		)
 	}
+	printActionAttribution(scores)
+	printReduceAttribution(scores)
 
 	type corr struct {
 		name string
@@ -501,6 +529,77 @@ func render(scores []langScore) {
 		sort.Strings(buckets[key])
 		fmt.Printf("- `%s`: %s\n", key, strings.Join(buckets[key], ", "))
 	}
+}
+
+func printActionAttribution(scores []langScore) {
+	if !hasAnyAttr(scores,
+		"action_single_reduce_share",
+		"action_single_shift_share",
+		"action_conflict_fork_share",
+		"action_conflict_choice_share",
+		"action_no_action_share",
+		"action_extra_shift_share",
+	) {
+		return
+	}
+	fmt.Println()
+	fmt.Println("## Action Dispatch Attribution")
+	fmt.Println()
+	fmt.Println("| lang | dispatch | lookup | single_reduce | single_shift | conflict_fork | conflict_choice | no_action | extra_shift |")
+	fmt.Println("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
+	for _, s := range scores {
+		fmt.Printf("| %s | %s | %s | %s | %s | %s | %s | %s | %s |\n",
+			s.lang,
+			pctText(s.attrs["action_dispatch_share"]),
+			pctText(s.attrs["action_lookup_share"]),
+			pctText(s.attrs["action_single_reduce_share"]),
+			pctText(s.attrs["action_single_shift_share"]),
+			pctText(s.attrs["action_conflict_fork_share"]),
+			pctText(s.attrs["action_conflict_choice_share"]),
+			pctText(s.attrs["action_no_action_share"]),
+			pctText(s.attrs["action_extra_shift_share"]),
+		)
+	}
+}
+
+func printReduceAttribution(scores []langScore) {
+	if !hasAnyAttr(scores,
+		"reduce_range_share",
+		"reduce_child_build_share",
+		"reduce_parent_build_share",
+		"reduce_span_share",
+		"reduce_stack_push_share",
+		"reduce_notree_build_share",
+	) {
+		return
+	}
+	fmt.Println()
+	fmt.Println("## Reduce Subphase Attribution")
+	fmt.Println()
+	fmt.Println("| lang | range | child_build | parent_build | span | stack_push | notree_build |")
+	fmt.Println("| --- | ---: | ---: | ---: | ---: | ---: | ---: |")
+	for _, s := range scores {
+		fmt.Printf("| %s | %s | %s | %s | %s | %s | %s |\n",
+			s.lang,
+			pctText(s.attrs["reduce_range_share"]),
+			pctText(s.attrs["reduce_child_build_share"]),
+			pctText(s.attrs["reduce_parent_build_share"]),
+			pctText(s.attrs["reduce_span_share"]),
+			pctText(s.attrs["reduce_stack_push_share"]),
+			pctText(s.attrs["reduce_notree_build_share"]),
+		)
+	}
+}
+
+func hasAnyAttr(scores []langScore, names ...string) bool {
+	for _, s := range scores {
+		for _, name := range names {
+			if v, ok := s.attrs[name]; ok && v != 0 {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func topHotStates(in []hotGLRState, score func(h hotGLRState) uint64, limit int) []hotGLRState {
@@ -700,6 +799,19 @@ func (r *runtimeStats) add(o runtimeStats) {
 	r.ReduceSpanNS += o.ReduceSpanNS
 	r.ReduceStackPushNS += o.ReduceStackPushNS
 	r.ReduceNoTreeBuildNS += o.ReduceNoTreeBuildNS
+	r.ActionExtraShiftNS += o.ActionExtraShiftNS
+	r.ActionNoActionNS += o.ActionNoActionNS
+	r.ActionNoActionRelexNS += o.ActionNoActionRelexNS
+	r.ActionNoActionMissingNS += o.ActionNoActionMissingNS
+	r.ActionNoActionRecoverNS += o.ActionNoActionRecoverNS
+	r.ActionNoActionErrorNS += o.ActionNoActionErrorNS
+	r.ActionConflictChoiceNS += o.ActionConflictChoiceNS
+	r.ActionConflictForkNS += o.ActionConflictForkNS
+	r.ActionSingleShiftNS += o.ActionSingleShiftNS
+	r.ActionSingleReduceNS += o.ActionSingleReduceNS
+	r.ActionSingleAcceptNS += o.ActionSingleAcceptNS
+	r.ActionSingleRecoverNS += o.ActionSingleRecoverNS
+	r.ActionSingleOtherNS += o.ActionSingleOtherNS
 	r.MergeCalls += o.MergeCalls
 	r.EquivCacheLookups += o.EquivCacheLookups
 	r.EquivCacheHits += o.EquivCacheHits

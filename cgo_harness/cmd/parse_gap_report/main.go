@@ -178,6 +178,19 @@ type runtimeStats struct {
 	ReduceSpanNS            int64         `json:"reduce_span_ns,omitempty"`
 	ReduceStackPushNS       int64         `json:"reduce_stack_push_ns,omitempty"`
 	ReduceNoTreeBuildNS     int64         `json:"reduce_notree_build_ns,omitempty"`
+	ActionExtraShiftNS      int64         `json:"action_extra_shift_ns,omitempty"`
+	ActionNoActionNS        int64         `json:"action_no_action_ns,omitempty"`
+	ActionNoActionRelexNS   int64         `json:"action_no_action_relex_ns,omitempty"`
+	ActionNoActionMissingNS int64         `json:"action_no_action_missing_ns,omitempty"`
+	ActionNoActionRecoverNS int64         `json:"action_no_action_recover_ns,omitempty"`
+	ActionNoActionErrorNS   int64         `json:"action_no_action_error_ns,omitempty"`
+	ActionConflictChoiceNS  int64         `json:"action_conflict_choice_ns,omitempty"`
+	ActionConflictForkNS    int64         `json:"action_conflict_fork_ns,omitempty"`
+	ActionSingleShiftNS     int64         `json:"action_single_shift_ns,omitempty"`
+	ActionSingleReduceNS    int64         `json:"action_single_reduce_ns,omitempty"`
+	ActionSingleAcceptNS    int64         `json:"action_single_accept_ns,omitempty"`
+	ActionSingleRecoverNS   int64         `json:"action_single_recover_ns,omitempty"`
+	ActionSingleOtherNS     int64         `json:"action_single_other_ns,omitempty"`
 	QueryCaptures           uint64        `json:"query_captures,omitempty"`
 	CursorNodes             uint64        `json:"cursor_nodes,omitempty"`
 	MergeCalls              uint64        `json:"merge_calls,omitempty"`
@@ -288,6 +301,7 @@ type metadata struct {
 	HotShapeLimit      int               `json:"hot_shape_limit,omitempty"`
 	EquivCounters      bool              `json:"equiv_counters,omitempty"`
 	ReduceTiming       bool              `json:"reduce_timing,omitempty"`
+	ActionTiming       bool              `json:"action_timing,omitempty"`
 	CorpusManifest     string            `json:"corpus_manifest,omitempty"`
 	CorpusManifestSHA  string            `json:"corpus_manifest_sha256,omitempty"`
 	QueryManifest      string            `json:"query_manifest,omitempty"`
@@ -321,6 +335,7 @@ func main() {
 		hotShapeLimit   int
 		equivCounters   bool
 		reduceTiming    bool
+		actionTiming    bool
 	)
 	flag.StringVar(&langsFlag, "langs", "go,python,rust,java,c", "comma-separated languages to include")
 	flag.StringVar(&modesFlag, "modes", "cgo_full,go_full,go_no_tree", "comma-separated modes")
@@ -338,6 +353,7 @@ func main() {
 	flag.IntVar(&hotShapeLimit, "hot-shapes", 0, "include top-N GLR fork/reduce/merge hot-shape rows in runtime JSON")
 	flag.BoolVar(&equivCounters, "equiv-counters", false, "enable lightweight GLR equivalence attribution counters")
 	flag.BoolVar(&reduceTiming, "reduce-timing", false, "enable reduce subphase timing while measuring; implies --phase-timing")
+	flag.BoolVar(&actionTiming, "action-timing", false, "enable action-dispatch subphase timing while measuring; implies --phase-timing")
 	flag.Parse()
 
 	if countFlag <= 0 {
@@ -402,7 +418,7 @@ func main() {
 	defer gotreesitter.EnableArenaBreakdown(false)
 	gotreesitter.EnableGLREquivAudit(equivCounters)
 	defer gotreesitter.EnableGLREquivAudit(false)
-	if reduceTiming {
+	if reduceTiming || actionTiming {
 		phaseTiming = true
 	}
 	if phaseTiming {
@@ -412,6 +428,11 @@ func main() {
 		if reduceTiming {
 			if err := os.Setenv("GOT_PARSE_REDUCE_TIMING", "1"); err != nil {
 				fatalf("enable reduce timing: %v", err)
+			}
+		}
+		if actionTiming {
+			if err := os.Setenv("GOT_PARSE_ACTION_TIMING", "1"); err != nil {
+				fatalf("enable action timing: %v", err)
 			}
 		}
 		gotreesitter.ResetParseEnvConfigCacheForTests()
@@ -502,6 +523,7 @@ func main() {
 		HotShapeLimit:      hotShapeLimit,
 		EquivCounters:      equivCounters,
 		ReduceTiming:       reduceTiming,
+		ActionTiming:       actionTiming,
 		CorpusManifest:     relOrAbs(repoRoot, corpusPath),
 		CorpusManifestSHA:  sha256File(corpusPath),
 		QueryManifest:      relOrAbs(repoRoot, queryPath),
@@ -961,7 +983,7 @@ func subUint64(a, b uint64) uint64 {
 
 func statsFromRuntime(rt gotreesitter.ParseRuntime) runtimeStats {
 	publicMaterialized := rt.CompactFullLeafMaterialized + rt.PendingParentMaterialized + rt.FinalChildRefSingleChildMaterializedChildren
-	return runtimeStats{
+	stats := runtimeStats{
 		Tokens:                  rt.TokensConsumed,
 		Iterations:              rt.Iterations,
 		NodesAllocated:          rt.NodesAllocated,
@@ -1000,13 +1022,6 @@ func statsFromRuntime(rt gotreesitter.ParseRuntime) runtimeStats {
 		ActionLookupNS:          rt.ActionLookupNanos,
 		GLRMergeNS:              rt.GLRMergeNanos,
 		GLRCullNS:               rt.GLRCullNanos,
-		ReduceRangeNS:           rt.ReduceRangeNanos,
-		ReducePendingParentNS:   rt.ReducePendingParentNanos,
-		ReduceChildBuildNS:      rt.ReduceChildBuildNanos,
-		ReduceParentBuildNS:     rt.ReduceParentBuildNanos,
-		ReduceSpanNS:            rt.ReduceSpanNanos,
-		ReduceStackPushNS:       rt.ReduceStackPushNanos,
-		ReduceNoTreeBuildNS:     rt.ReduceNoTreeBuildNanos,
 		EquivCacheLookups:       rt.EquivCacheLookups,
 		EquivCacheHits:          rt.EquivCacheHits,
 		EquivCacheStores:        rt.EquivCacheStores,
@@ -1016,6 +1031,31 @@ func statsFromRuntime(rt gotreesitter.ParseRuntime) runtimeStats {
 		NoTreeReduceNodes:       rt.NoTreeReduceNodesConstructed,
 		NoTreeLeafNodes:         rt.NoTreeLeafNodesConstructed,
 	}
+	if reduceTiming := rt.ReduceTiming; reduceTiming != nil {
+		stats.ReduceRangeNS = reduceTiming.RangeNanos
+		stats.ReducePendingParentNS = reduceTiming.PendingParentNanos
+		stats.ReduceChildBuildNS = reduceTiming.ChildBuildNanos
+		stats.ReduceParentBuildNS = reduceTiming.ParentBuildNanos
+		stats.ReduceSpanNS = reduceTiming.SpanNanos
+		stats.ReduceStackPushNS = reduceTiming.StackPushNanos
+		stats.ReduceNoTreeBuildNS = reduceTiming.NoTreeBuildNanos
+	}
+	if actionTiming := rt.ActionTiming; actionTiming != nil {
+		stats.ActionExtraShiftNS = actionTiming.ExtraShiftNanos
+		stats.ActionNoActionNS = actionTiming.NoActionNanos
+		stats.ActionNoActionRelexNS = actionTiming.NoActionRelexNanos
+		stats.ActionNoActionMissingNS = actionTiming.NoActionMissingNanos
+		stats.ActionNoActionRecoverNS = actionTiming.NoActionRecoverNanos
+		stats.ActionNoActionErrorNS = actionTiming.NoActionErrorNanos
+		stats.ActionConflictChoiceNS = actionTiming.ConflictChoiceNanos
+		stats.ActionConflictForkNS = actionTiming.ConflictForkNanos
+		stats.ActionSingleShiftNS = actionTiming.SingleShiftNanos
+		stats.ActionSingleReduceNS = actionTiming.SingleReduceNanos
+		stats.ActionSingleAcceptNS = actionTiming.SingleAcceptNanos
+		stats.ActionSingleRecoverNS = actionTiming.SingleRecoverNanos
+		stats.ActionSingleOtherNS = actionTiming.SingleOtherNanos
+	}
+	return stats
 }
 
 func runGoEdit(r *runner, source []byte, noop bool) (runtimeStats, error) {
@@ -1054,6 +1094,19 @@ func runGoEdit(r *runner, source []byte, noop bool) (runtimeStats, error) {
 		stats.ReduceSpanNS = profile.ReduceSpanNanos
 		stats.ReduceStackPushNS = profile.ReduceStackPushNanos
 		stats.ReduceNoTreeBuildNS = profile.ReduceNoTreeBuildNanos
+		stats.ActionExtraShiftNS = profile.ActionExtraShiftNanos
+		stats.ActionNoActionNS = profile.ActionNoActionNanos
+		stats.ActionNoActionRelexNS = profile.ActionNoActionRelexNanos
+		stats.ActionNoActionMissingNS = profile.ActionNoActionMissingNanos
+		stats.ActionNoActionRecoverNS = profile.ActionNoActionRecoverNanos
+		stats.ActionNoActionErrorNS = profile.ActionNoActionErrorNanos
+		stats.ActionConflictChoiceNS = profile.ActionConflictChoiceNanos
+		stats.ActionConflictForkNS = profile.ActionConflictForkNanos
+		stats.ActionSingleShiftNS = profile.ActionSingleShiftNanos
+		stats.ActionSingleReduceNS = profile.ActionSingleReduceNanos
+		stats.ActionSingleAcceptNS = profile.ActionSingleAcceptNanos
+		stats.ActionSingleRecoverNS = profile.ActionSingleRecoverNanos
+		stats.ActionSingleOtherNS = profile.ActionSingleOtherNanos
 		stats.ResultBuildNS = profile.ResultTreeBuildNanos
 		stats.NormalizationNS = profile.NormalizationNanos
 		stats.NodesAllocated = int(profile.NewNodesAllocated)
