@@ -54,6 +54,7 @@ func normalizeTypeScriptTreeCompatibilityWithParser(root *Node, source []byte, p
 		haveSyntaxStats = true
 		parser.recordNormalizationMetric("ts_syntax_precedence_index", 1, syntaxStats.indexBuilds, syntaxStats.indexNodesVisited, 0)
 		parser.recordNormalizationMetric("ts_empty_statement_candidates", 1, 1, syntaxStats.emptyStatement.nodesVisited, syntaxStats.emptyStatement.nodesRewritten)
+		parser.recordNormalizationMetric("ts_existential_type_candidates", 1, 1, syntaxStats.existentialType.nodesVisited, syntaxStats.existentialType.nodesRewritten)
 		parser.recordNormalizationMetric("ts_statement_keyword_candidates", 1, 1, syntaxStats.statementKeyword.nodesVisited, syntaxStats.statementKeyword.nodesRewritten)
 		parser.recordNormalizationMetric("ts_call_precedence_candidates", 1, 1, syntaxStats.call.nodesVisited, syntaxStats.call.nodesRewritten)
 		parser.recordNormalizationMetric("ts_unary_precedence_candidates", 1, 1, syntaxStats.unary.nodesVisited, syntaxStats.unary.nodesRewritten)
@@ -959,6 +960,7 @@ type javaScriptTypeScriptPrecedenceStats struct {
 
 type javaScriptTypeScriptSyntaxNormalizationStats struct {
 	emptyStatement    normalizationPassCounters
+	existentialType   normalizationPassCounters
 	statementKeyword  normalizationPassCounters
 	call              normalizationPassCounters
 	unary             normalizationPassCounters
@@ -1002,6 +1004,8 @@ func normalizeJavaScriptTypeScriptStatementKeywordsAndPrecedenceWithDetailedStat
 	}
 	emptyStatementSym, hasEmptyStatement := symbolByName(lang, "empty_statement")
 	semicolonSym, semicolonNamed, hasSemicolon := symbolMeta(lang, ";")
+	existentialTypeSym, hasExistentialType := symbolByName(lang, "existential_type")
+	starSym, starNamed, hasStar := symbolMeta(lang, "*")
 	ifStmtSym, hasIfStmt := symbolByName(lang, "if_statement")
 	whileStmtSym, hasWhileStmt := symbolByName(lang, "while_statement")
 	ifSym, ifNamed, hasIf := symbolMeta(lang, "if")
@@ -1012,11 +1016,13 @@ func normalizeJavaScriptTypeScriptStatementKeywordsAndPrecedenceWithDetailedStat
 		root, source, lang,
 		callSym, unarySym, binarySym,
 		emptyStatementSym, hasEmptyStatement, semicolonSym, semicolonNamed, hasSemicolon,
+		existentialTypeSym, hasExistentialType, starSym, starNamed, hasStar,
 		ifStmtSym, hasIfStmt, ifSym, ifNamed, hasIf,
 		whileStmtSym, hasWhileStmt, whileSym, whileNamed, hasWhile,
 		closeBraceSym, hasCloseBrace,
 	)
 	stats.emptyStatement = index.emptyStatement
+	stats.existentialType = index.existentialType
 	stats.statementKeyword = index.statementKeyword
 	stats.call = index.call
 	stats.indexBuilds += index.builds
@@ -1091,6 +1097,11 @@ func rewriteJavaScriptTypeScriptStatementKeywordsCallPrecedenceAndBuildUnaryBina
 	semicolonSym Symbol,
 	semicolonNamed bool,
 	hasSemicolon bool,
+	existentialTypeSym Symbol,
+	hasExistentialType bool,
+	starSym Symbol,
+	starNamed bool,
+	hasStar bool,
 	ifStmtSym Symbol,
 	hasIfStmt bool,
 	ifSym Symbol,
@@ -1119,6 +1130,12 @@ func rewriteJavaScriptTypeScriptStatementKeywordsCallPrecedenceAndBuildUnaryBina
 			index.emptyStatement.nodesVisited++
 			if normalizeJavaScriptTypeScriptEmptyStatementLeafWithSymbolChanged(n, source, semicolonSym, semicolonNamed) {
 				index.emptyStatement.nodesRewritten++
+			}
+		}
+		if hasExistentialType && hasStar && n.symbol == existentialTypeSym {
+			index.existentialType.nodesVisited++
+			if normalizeJavaScriptTypeScriptCollapsedLeafWithSymbolChanged(n, starSym, starNamed) {
+				index.existentialType.nodesRewritten++
 			}
 		}
 		if hasIfStmt && hasIf && n.symbol == ifStmtSym {
@@ -1187,6 +1204,15 @@ func normalizeJavaScriptTypeScriptEmptyStatementLeafWithSymbolChanged(node *Node
 	}
 	leaf := newLeafNodeInArena(node.ownerArena, semicolonSym, semicolonNamed, node.startByte, node.endByte, node.startPoint, node.endPoint)
 	replaceNodeChildrenUnfielded(node, cloneNodeSliceInArena(node.ownerArena, []*Node{leaf}))
+	return true
+}
+
+func normalizeJavaScriptTypeScriptCollapsedLeafWithSymbolChanged(node *Node, childSym Symbol, childNamed bool) bool {
+	if node == nil || resultChildCount(node) != 0 {
+		return false
+	}
+	child := newLeafNodeInArena(node.ownerArena, childSym, childNamed, node.startByte, node.endByte, node.startPoint, node.endPoint)
+	replaceNodeChildrenUnfielded(node, cloneNodeSliceInArena(node.ownerArena, []*Node{child}))
 	return true
 }
 
@@ -1535,6 +1561,7 @@ func normalizeJavaScriptTypeScriptUnaryBinaryPrecedenceWithDetailedStats(root *N
 
 type javaScriptTypeScriptUnaryBinaryPrecedenceIndex struct {
 	emptyStatement   normalizationPassCounters
+	existentialType  normalizationPassCounters
 	statementKeyword normalizationPassCounters
 	call             normalizationPassCounters
 	unaryCandidates  []javaScriptTypeScriptPrecedenceCandidate

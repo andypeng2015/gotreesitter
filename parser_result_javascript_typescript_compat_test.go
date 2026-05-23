@@ -157,6 +157,39 @@ func TestNormalizeTypeScriptSyntaxPassRestoresEmptyStatementSemicolonChild(t *te
 	}
 }
 
+func TestNormalizeTypeScriptSyntaxPassRestoresExistentialTypeStarChild(t *testing.T) {
+	lang := &Language{
+		Name:        "typescript",
+		SymbolNames: []string{"EOF", "program", "existential_type", "*", "call_expression", "unary_expression", "binary_expression"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF", Visible: false, Named: false},
+			{Name: "program", Visible: true, Named: true},
+			{Name: "existential_type", Visible: true, Named: true},
+			{Name: "*", Visible: true, Named: false},
+			{Name: "call_expression", Visible: true, Named: true},
+			{Name: "unary_expression", Visible: true, Named: true},
+			{Name: "binary_expression", Visible: true, Named: true},
+		},
+	}
+
+	arena := newNodeArena(arenaClassFull)
+	existentialType := newLeafNodeInArena(arena, 2, true, 0, 1, Point{}, Point{Column: 1})
+	root := newParentNodeInArena(arena, 1, true, []*Node{existentialType}, nil, 0)
+
+	normalizeTypeScriptTreeCompatibility(root, []byte("*"), lang)
+
+	if got, want := resultChildCount(existentialType), 1; got != want {
+		t.Fatalf("existential_type child count = %d, want %d", got, want)
+	}
+	child := resultChildAt(existentialType, 0)
+	if child == nil {
+		t.Fatal("existential_type child is nil")
+	}
+	if got, want := child.Type(lang), "*"; got != want {
+		t.Fatalf("existential_type child type = %q, want %q", got, want)
+	}
+}
+
 func TestNormalizeJavaScriptStatementKeywordRestoresWhileLeaf(t *testing.T) {
 	lang := &Language{
 		Name:        "javascript",
