@@ -358,57 +358,60 @@ type queryMatch struct {
 }
 
 type metadata struct {
-	Schema             string            `json:"schema"`
-	Repo               string            `json:"repo,omitempty"`
-	Commit             string            `json:"commit,omitempty"`
-	Branch             string            `json:"branch,omitempty"`
-	Dirty              string            `json:"dirty,omitempty"`
-	GoVersion          string            `json:"go_version"`
-	DockerImage        string            `json:"docker_image,omitempty"`
-	CPULimit           string            `json:"cpu_limit,omitempty"`
-	MemoryLimit        string            `json:"memory_limit,omitempty"`
-	Modes              []string          `json:"modes"`
-	Languages          []string          `json:"languages"`
-	Count              int               `json:"count"`
-	GateOnly           bool              `json:"gate_only"`
-	HotShapeLimit      int               `json:"hot_shape_limit,omitempty"`
-	EquivCounters      bool              `json:"equiv_counters,omitempty"`
-	ReduceTiming       bool              `json:"reduce_timing,omitempty"`
-	ActionTiming       bool              `json:"action_timing,omitempty"`
-	CorpusManifest     string            `json:"corpus_manifest,omitempty"`
-	CorpusManifestSHA  string            `json:"corpus_manifest_sha256,omitempty"`
-	QueryManifest      string            `json:"query_manifest,omitempty"`
-	QueryManifestSHA   string            `json:"query_manifest_sha256,omitempty"`
-	EditManifest       string            `json:"edit_manifest,omitempty"`
-	EditManifestSHA    string            `json:"edit_manifest_sha256,omitempty"`
-	Environment        map[string]string `json:"environment,omitempty"`
-	GeneratedAtUTC     string            `json:"generated_at_utc"`
-	TotalSamples       int               `json:"total_samples"`
-	TotalRows          int               `json:"total_rows"`
-	ParityFailures     int               `json:"parity_failures"`
-	ModeFailures       int               `json:"mode_failures"`
-	UnsupportedSamples int               `json:"unsupported_samples"`
+	Schema              string            `json:"schema"`
+	Repo                string            `json:"repo,omitempty"`
+	Commit              string            `json:"commit,omitempty"`
+	Branch              string            `json:"branch,omitempty"`
+	Dirty               string            `json:"dirty,omitempty"`
+	GoVersion           string            `json:"go_version"`
+	DockerImage         string            `json:"docker_image,omitempty"`
+	CPULimit            string            `json:"cpu_limit,omitempty"`
+	MemoryLimit         string            `json:"memory_limit,omitempty"`
+	Modes               []string          `json:"modes"`
+	Languages           []string          `json:"languages"`
+	Count               int               `json:"count"`
+	GateOnly            bool              `json:"gate_only"`
+	HotShapeLimit       int               `json:"hot_shape_limit,omitempty"`
+	EquivCounters       bool              `json:"equiv_counters,omitempty"`
+	ReduceTiming        bool              `json:"reduce_timing,omitempty"`
+	ActionTiming        bool              `json:"action_timing,omitempty"`
+	CorpusManifest      string            `json:"corpus_manifest,omitempty"`
+	CorpusManifestSHA   string            `json:"corpus_manifest_sha256,omitempty"`
+	QueryManifest       string            `json:"query_manifest,omitempty"`
+	QueryManifestSHA    string            `json:"query_manifest_sha256,omitempty"`
+	EditManifest        string            `json:"edit_manifest,omitempty"`
+	EditManifestSHA     string            `json:"edit_manifest_sha256,omitempty"`
+	Environment         map[string]string `json:"environment,omitempty"`
+	GeneratedAtUTC      string            `json:"generated_at_utc"`
+	TotalSamples        int               `json:"total_samples"`
+	TotalRows           int               `json:"total_rows"`
+	ParityFailures      int               `json:"parity_failures"`
+	RequiredParityLangs []string          `json:"required_parity_languages,omitempty"`
+	RequiredParityFails int               `json:"required_parity_failures,omitempty"`
+	ModeFailures        int               `json:"mode_failures"`
+	UnsupportedSamples  int               `json:"unsupported_samples"`
 }
 
 func main() {
 	var (
-		langsFlag       string
-		modesFlag       string
-		corpusFlag      string
-		queryFlag       string
-		editFlag        string
-		outFlag         string
-		repoRootFlag    string
-		countFlag       int
-		allowParityFail bool
-		timeParityFails bool
-		gateOnly        bool
-		arenaBreakdown  bool
-		phaseTiming     bool
-		hotShapeLimit   int
-		equivCounters   bool
-		reduceTiming    bool
-		actionTiming    bool
+		langsFlag         string
+		modesFlag         string
+		corpusFlag        string
+		queryFlag         string
+		editFlag          string
+		outFlag           string
+		repoRootFlag      string
+		requireParityFlag string
+		countFlag         int
+		allowParityFail   bool
+		timeParityFails   bool
+		gateOnly          bool
+		arenaBreakdown    bool
+		phaseTiming       bool
+		hotShapeLimit     int
+		equivCounters     bool
+		reduceTiming      bool
+		actionTiming      bool
 	)
 	flag.StringVar(&langsFlag, "langs", "go,python,rust,java,c", "comma-separated languages to include")
 	flag.StringVar(&modesFlag, "modes", "cgo_full,go_full,go_no_tree", "comma-separated modes")
@@ -417,6 +420,7 @@ func main() {
 	flag.StringVar(&editFlag, "edits", "cgo_harness/edit_fixtures.json", "edit fixture manifest path")
 	flag.StringVar(&outFlag, "out", "harness_out/parse_gap/latest", "output directory")
 	flag.StringVar(&repoRootFlag, "repo-root", "", "repository root; autodetected when empty")
+	flag.StringVar(&requireParityFlag, "require-parity-langs", "", "comma-separated languages that must pass parse/highlight/query parity even when --allow-parity-fail is set")
 	flag.IntVar(&countFlag, "count", 10, "iterations per sample/mode")
 	flag.BoolVar(&allowParityFail, "allow-parity-fail", false, "write parity failures but exit zero")
 	flag.BoolVar(&timeParityFails, "time-parity-failures", false, "run timing modes even when correctness gates fail")
@@ -439,6 +443,11 @@ func main() {
 	langs := splitCSV(langsFlag)
 	if len(langs) == 0 {
 		fatalf("no languages selected")
+	}
+	requiredParityLangs := splitCSV(requireParityFlag)
+	requiredParity := make(map[string]struct{}, len(requiredParityLangs))
+	for _, lang := range requiredParityLangs {
+		requiredParity[lang] = struct{}{}
 	}
 	modes := splitCSV(modesFlag)
 	if len(modes) == 0 && !gateOnly {
@@ -524,6 +533,7 @@ func main() {
 
 	var rows []reportRow
 	parityFailures := 0
+	requiredParityFailures := 0
 	modeFailures := 0
 	unsupportedSamples := 0
 
@@ -540,6 +550,9 @@ func main() {
 		if gateOnly {
 			if parity.Error != "" {
 				parityFailures++
+				if _, ok := requiredParity[s.Language]; ok {
+					requiredParityFailures++
+				}
 			}
 			row := gateRow(common, s, countFlag, parity)
 			rows = append(rows, row)
@@ -550,6 +563,9 @@ func main() {
 		}
 		if parity.Error != "" {
 			parityFailures++
+			if _, ok := requiredParity[s.Language]; ok {
+				requiredParityFailures++
+			}
 			row := gateRow(common, s, countFlag, parity)
 			rows = append(rows, row)
 			if err := enc.Encode(row); err != nil {
@@ -580,36 +596,38 @@ func main() {
 	}
 
 	meta := metadata{
-		Schema:             "parse-gap-metadata-v1",
-		Repo:               common.Repo,
-		Commit:             common.Commit,
-		Branch:             common.Branch,
-		Dirty:              gitOutput(repoRoot, "status", "--short"),
-		GoVersion:          runtime.Version(),
-		DockerImage:        common.DockerImage,
-		CPULimit:           common.CPULimit,
-		MemoryLimit:        common.MemoryLimit,
-		Modes:              modes,
-		Languages:          langs,
-		Count:              countFlag,
-		GateOnly:           gateOnly,
-		HotShapeLimit:      hotShapeLimit,
-		EquivCounters:      equivCounters,
-		ReduceTiming:       reduceTiming,
-		ActionTiming:       actionTiming,
-		CorpusManifest:     relOrAbs(repoRoot, corpusPath),
-		CorpusManifestSHA:  sha256File(corpusPath),
-		QueryManifest:      relOrAbs(repoRoot, queryPath),
-		QueryManifestSHA:   sha256File(queryPath),
-		EditManifest:       relOrAbs(repoRoot, editPath),
-		EditManifestSHA:    sha256File(editPath),
-		Environment:        captureEnvironment(),
-		GeneratedAtUTC:     time.Now().UTC().Format(time.RFC3339),
-		TotalSamples:       len(samples),
-		TotalRows:          len(rows),
-		ParityFailures:     parityFailures,
-		ModeFailures:       modeFailures,
-		UnsupportedSamples: unsupportedSamples,
+		Schema:              "parse-gap-metadata-v1",
+		Repo:                common.Repo,
+		Commit:              common.Commit,
+		Branch:              common.Branch,
+		Dirty:               gitOutput(repoRoot, "status", "--short"),
+		GoVersion:           runtime.Version(),
+		DockerImage:         common.DockerImage,
+		CPULimit:            common.CPULimit,
+		MemoryLimit:         common.MemoryLimit,
+		Modes:               modes,
+		Languages:           langs,
+		Count:               countFlag,
+		GateOnly:            gateOnly,
+		HotShapeLimit:       hotShapeLimit,
+		EquivCounters:       equivCounters,
+		ReduceTiming:        reduceTiming,
+		ActionTiming:        actionTiming,
+		CorpusManifest:      relOrAbs(repoRoot, corpusPath),
+		CorpusManifestSHA:   sha256File(corpusPath),
+		QueryManifest:       relOrAbs(repoRoot, queryPath),
+		QueryManifestSHA:    sha256File(queryPath),
+		EditManifest:        relOrAbs(repoRoot, editPath),
+		EditManifestSHA:     sha256File(editPath),
+		Environment:         captureEnvironment(),
+		GeneratedAtUTC:      time.Now().UTC().Format(time.RFC3339),
+		TotalSamples:        len(samples),
+		TotalRows:           len(rows),
+		ParityFailures:      parityFailures,
+		RequiredParityLangs: requiredParityLangs,
+		RequiredParityFails: requiredParityFailures,
+		ModeFailures:        modeFailures,
+		UnsupportedSamples:  unsupportedSamples,
 	}
 	if err := writeJSON(filepath.Join(outDir, "metadata.json"), meta); err != nil {
 		fatalf("write metadata: %v", err)
@@ -621,6 +639,9 @@ func main() {
 	fmt.Print(summary)
 	fmt.Printf("\nresults: %s\n", resultsPath)
 
+	if requiredParityFailures > 0 {
+		fatalf("%d required parity failure(s) for language(s): %s", requiredParityFailures, strings.Join(requiredParityLangs, ","))
+	}
 	if parityFailures > 0 && !allowParityFail {
 		fatalf("%d parity failure(s); rerun with --allow-parity-fail to keep exit zero", parityFailures)
 	}

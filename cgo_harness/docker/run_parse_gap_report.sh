@@ -21,6 +21,7 @@ LABEL="parse-gap"
 OUT_ROOT="$REPO_ROOT/harness_out/parse_gap"
 ALLOW_PARITY_FAIL=0
 TIME_PARITY_FAILURES=0
+REQUIRE_PARITY_LANGS=""
 GATE_ONLY=0
 BUILD_IMAGE=1
 PHASE_TIMING=0
@@ -52,6 +53,8 @@ Options:
   --gomaxprocs <n>          GOMAXPROCS inside container (default: 1)
   --gomemlimit <value>      GOMEMLIMIT inside container (default: 3GiB)
   --allow-parity-fail       Write rows for parity-blocked samples and exit zero unless modes fail
+  --require-parity-langs <list>
+                            Comma-separated languages that must pass parity even with --allow-parity-fail
   --time-parity-failures    Also run timing modes for parity-blocked samples
   --gate-only               Run parse/highlight/query correctness gates only
   --phase-timing            Enable parser phase/subphase timing in report rows
@@ -87,6 +90,7 @@ while [[ $# -gt 0 ]]; do
     --gomaxprocs) GOMAXPROCS_VALUE="$2"; shift 2 ;;
     --gomemlimit) GOMEMLIMIT_VALUE="$2"; shift 2 ;;
     --allow-parity-fail) ALLOW_PARITY_FAIL=1; shift ;;
+    --require-parity-langs) REQUIRE_PARITY_LANGS="$2"; shift 2 ;;
     --time-parity-failures) TIME_PARITY_FAILURES=1; shift ;;
     --gate-only) GATE_ONLY=1; shift ;;
     --phase-timing) PHASE_TIMING=1; shift ;;
@@ -169,6 +173,7 @@ REDUCE_CHAIN_HINTS="${GOT_GLR_REDUCE_CHAIN_HINTS-}"
   echo "edits=$EDITS_PATH"
   echo "count=$COUNT"
   echo "allow_parity_fail=$ALLOW_PARITY_FAIL"
+  echo "require_parity_langs=$REQUIRE_PARITY_LANGS"
   echo "time_parity_failures=$TIME_PARITY_FAILURES"
   echo "gate_only=$GATE_ONLY"
   echo "phase_timing=$PHASE_TIMING"
@@ -186,6 +191,10 @@ fi
 time_parity_arg_text=""
 if [[ "$TIME_PARITY_FAILURES" == "1" ]]; then
   time_parity_arg_text="--time-parity-failures"
+fi
+require_parity_arg_text=""
+if [[ -n "$REQUIRE_PARITY_LANGS" ]]; then
+  require_parity_arg_text="--require-parity-langs '$REQUIRE_PARITY_LANGS'"
 fi
 gate_only_arg_text=""
 if [[ "$GATE_ONLY" == "1" ]]; then
@@ -251,6 +260,7 @@ env \
     --count '$COUNT' \
     --out '/workspace/$OUT_REL' \
     $allow_arg_text \
+    $require_parity_arg_text \
     $time_parity_arg_text \
     $gate_only_arg_text \
     $phase_timing_arg_text \
