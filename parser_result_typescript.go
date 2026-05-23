@@ -138,6 +138,161 @@ func normalizeTypeScriptCompatibility(root *Node, source []byte, lang *Language)
 	})
 }
 
+type typeScriptCompatibilityStats struct {
+	total                       normalizationPassCounters
+	identifierAliases           normalizationPassCounters
+	importKeywords              normalizationPassCounters
+	memberModifiers             normalizationPassCounters
+	enumBodies                  normalizationPassCounters
+	binaryChildren              normalizationPassCounters
+	callChildren                normalizationPassCounters
+	asChildren                  normalizationPassCounters
+	typeAssertionChildren       normalizationPassCounters
+	expressionStatementChildren normalizationPassCounters
+}
+
+func normalizeTypeScriptCompatibilityWithStats(root *Node, source []byte, lang *Language) typeScriptCompatibilityStats {
+	var stats typeScriptCompatibilityStats
+	ctx, ok := newTypeScriptNormalizationContext(source, lang)
+	if !ok || root == nil {
+		return stats
+	}
+
+	walkResultTreeDenseFirst(root, func(n *Node) {
+		stats.total.nodesVisited++
+		switch n.symbol {
+		case ctx.identifierSym:
+			stats.identifierAliases.nodesVisited++
+			before := len(n.children)
+			normalizeTypeScriptIdentifierKeywordAliases(n, &ctx)
+			if len(n.children) != before {
+				stats.identifierAliases.nodesRewritten++
+				stats.total.nodesRewritten++
+			}
+		case ctx.importSym:
+			if ctx.hasImportSym {
+				stats.importKeywords.nodesVisited++
+				before := n.isNamed()
+				normalizeTypeScriptImportKeywordNamedness(n, &ctx)
+				if n.isNamed() != before {
+					stats.importKeywords.nodesRewritten++
+					stats.total.nodesRewritten++
+				}
+			}
+		case ctx.methodDefinitionSym, ctx.methodSignatureSym, ctx.abstractMethodSignatureSym, ctx.propertySignatureSym, ctx.publicFieldDefinitionSym:
+			if ctx.accessibilityModSym != 0 {
+				stats.memberModifiers.nodesVisited++
+				beforeSymbol := n.symbol
+				beforeChildren := len(n.children)
+				normalizeTypeScriptRecoveredMemberModifiers(n, &ctx)
+				if n.symbol != beforeSymbol || len(n.children) != beforeChildren {
+					stats.memberModifiers.nodesRewritten++
+					stats.total.nodesRewritten++
+				}
+			}
+		case ctx.enumBodySym:
+			if ctx.canClearEnumBodyFields && len(n.fieldIDs) > 0 {
+				stats.enumBodies.nodesVisited++
+				beforeCleared := typeScriptEnumBodyClearedFieldCount(n, &ctx)
+				normalizeTypeScriptEnumBodyCompatibility(n, &ctx)
+				if typeScriptEnumBodyClearedFieldCount(n, &ctx) != beforeCleared {
+					stats.enumBodies.nodesRewritten++
+					stats.total.nodesRewritten++
+				}
+			}
+		}
+		for i, child := range n.children {
+			for {
+				bucket := typeScriptCompatibilityChildStatsBucket(child, &ctx, &stats)
+				if bucket == nil {
+					break
+				}
+				bucket.nodesVisited++
+				rewritten := rewriteTypeScriptCompatibilityChild(child, &ctx)
+				if rewritten == nil {
+					break
+				}
+				n.children[i] = rewritten
+				rewritten.parent = n
+				rewritten.childIndex = int32(i)
+				if bucket != nil {
+					bucket.nodesRewritten++
+				}
+				stats.total.nodesRewritten++
+				child = rewritten
+			}
+		}
+	})
+	return stats
+}
+
+func typeScriptCompatibilityChildStatsBucket(child *Node, ctx *typeScriptNormalizationContext, stats *typeScriptCompatibilityStats) *normalizationPassCounters {
+	if child == nil || ctx == nil || stats == nil {
+		return nil
+	}
+	switch child.symbol {
+	case ctx.binaryExpressionSym:
+		if ctx.canRewriteGenericCalls || ctx.canRewriteAsExpressions {
+			return &stats.binaryChildren
+		}
+	case ctx.callSym:
+		if ctx.canRewriteInstantiatedCalls {
+			return &stats.callChildren
+		}
+	case ctx.asExpressionSym:
+		if ctx.canRewriteAsExpressions {
+			return &stats.asChildren
+		}
+	case ctx.typeAssertionSym:
+		if ctx.canRewriteGenericArrows {
+			return &stats.typeAssertionChildren
+		}
+	case ctx.expressionStatementSym:
+		if ctx.canRewriteClassDeclarations {
+			return &stats.expressionStatementChildren
+		}
+	}
+	return nil
+}
+
+func normalizeTypeScriptEnumBodyCompatibility(n *Node, ctx *typeScriptNormalizationContext) {
+	if n == nil || ctx == nil || !ctx.canClearEnumBodyFields || n.symbol != ctx.enumBodySym || len(n.fieldIDs) == 0 {
+		return
+	}
+	limit := len(n.children)
+	if len(n.fieldIDs) < limit {
+		limit = len(n.fieldIDs)
+	}
+	for i := 0; i < limit; i++ {
+		child := n.children[i]
+		if child == nil || child.symbol != ctx.enumAssignmentSym {
+			continue
+		}
+		n.fieldIDs[i] = 0
+		if len(n.fieldSources) > i {
+			n.fieldSources[i] = fieldSourceNone
+		}
+	}
+}
+
+func typeScriptEnumBodyClearedFieldCount(n *Node, ctx *typeScriptNormalizationContext) int {
+	if n == nil || ctx == nil || len(n.fieldIDs) == 0 {
+		return 0
+	}
+	limit := len(n.children)
+	if len(n.fieldIDs) < limit {
+		limit = len(n.fieldIDs)
+	}
+	cleared := 0
+	for i := 0; i < limit; i++ {
+		child := n.children[i]
+		if child != nil && child.symbol == ctx.enumAssignmentSym && n.fieldIDs[i] == 0 {
+			cleared++
+		}
+	}
+	return cleared
+}
+
 func rewriteTypeScriptCompatibilityChild(child *Node, ctx *typeScriptNormalizationContext) *Node {
 	if child == nil || ctx == nil {
 		return nil

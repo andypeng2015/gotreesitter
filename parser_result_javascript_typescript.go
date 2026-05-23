@@ -93,8 +93,18 @@ func normalizeTypeScriptTreeCompatibilityWithParser(root *Node, source []byte, p
 	runVoid("ts_top_level_declaration_bounds", func() {
 		normalizeJavaScriptTopLevelDeclarationBounds(root, lang)
 	})
-	runVoid("ts_type_compatibility", func() {
-		normalizeTypeScriptCompatibility(root, source, lang)
+	run("ts_type_compatibility", func() normalizationPassCounters {
+		stats := normalizeTypeScriptCompatibilityWithStats(root, source, lang)
+		parser.recordNormalizationMetric("ts_type_identifier_alias_candidates", 1, 1, stats.identifierAliases.nodesVisited, stats.identifierAliases.nodesRewritten)
+		parser.recordNormalizationMetric("ts_type_import_keyword_candidates", 1, 1, stats.importKeywords.nodesVisited, stats.importKeywords.nodesRewritten)
+		parser.recordNormalizationMetric("ts_type_member_modifier_candidates", 1, 1, stats.memberModifiers.nodesVisited, stats.memberModifiers.nodesRewritten)
+		parser.recordNormalizationMetric("ts_type_enum_body_candidates", 1, 1, stats.enumBodies.nodesVisited, stats.enumBodies.nodesRewritten)
+		parser.recordNormalizationMetric("ts_type_binary_child_candidates", 1, 1, stats.binaryChildren.nodesVisited, stats.binaryChildren.nodesRewritten)
+		parser.recordNormalizationMetric("ts_type_call_child_candidates", 1, 1, stats.callChildren.nodesVisited, stats.callChildren.nodesRewritten)
+		parser.recordNormalizationMetric("ts_type_as_child_candidates", 1, 1, stats.asChildren.nodesVisited, stats.asChildren.nodesRewritten)
+		parser.recordNormalizationMetric("ts_type_assertion_child_candidates", 1, 1, stats.typeAssertionChildren.nodesVisited, stats.typeAssertionChildren.nodesRewritten)
+		parser.recordNormalizationMetric("ts_type_expression_statement_child_candidates", 1, 1, stats.expressionStatementChildren.nodesVisited, stats.expressionStatementChildren.nodesRewritten)
+		return stats.total
 	})
 	runVoid("ts_top_level_expression_bounds", func() {
 		normalizeJavaScriptTopLevelExpressionStatementBounds(root, lang)
