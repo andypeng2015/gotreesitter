@@ -105,6 +105,8 @@ func normalizeTypeScriptTreeCompatibilityWithParser(root *Node, source []byte, p
 		parser.recordNormalizationMetric("ts_type_binary_as_type_candidates", 1, 1, stats.binaryAsTypeChildren.nodesVisited, stats.binaryAsTypeChildren.nodesRewritten)
 		parser.recordNormalizationMetric("ts_type_binary_fast_skip", 1, 1, stats.binaryFastSkipped.nodesVisited, 0)
 		parser.recordNormalizationMetric("ts_type_call_child_candidates", 1, 1, stats.callChildren.nodesVisited, stats.callChildren.nodesRewritten)
+		parser.recordNormalizationMetric("ts_type_call_instantiated_candidates", 1, 1, stats.callInstantiatedChildren.nodesVisited, stats.callInstantiatedChildren.nodesRewritten)
+		parser.recordNormalizationMetric("ts_type_call_fast_skip", 1, 1, stats.callFastSkipped.nodesVisited, 0)
 		parser.recordNormalizationMetric("ts_type_as_child_candidates", 1, 1, stats.asChildren.nodesVisited, stats.asChildren.nodesRewritten)
 		parser.recordNormalizationMetric("ts_type_assertion_child_candidates", 1, 1, stats.typeAssertionChildren.nodesVisited, stats.typeAssertionChildren.nodesRewritten)
 		parser.recordNormalizationMetric("ts_type_expression_statement_child_candidates", 1, 1, stats.expressionStatementChildren.nodesVisited, stats.expressionStatementChildren.nodesRewritten)

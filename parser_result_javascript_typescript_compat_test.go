@@ -229,6 +229,27 @@ func TestTypeScriptBinaryOperatorCompatibilityGate(t *testing.T) {
 	}
 }
 
+func TestTypeScriptCallInstantiatedCompatibilityGate(t *testing.T) {
+	ctx := typeScriptNormalizationContext{
+		callSym:              1,
+		instantiationExprSym: 2,
+		argsSym:              3,
+	}
+	arena := newNodeArena(arenaClassFull)
+	callee := newLeafNodeInArena(arena, 4, true, 0, 1, Point{}, Point{Column: 1})
+	args := newLeafNodeInArena(arena, ctx.argsSym, true, 1, 3, Point{Column: 1}, Point{Column: 3})
+	call := newParentNodeInArena(arena, ctx.callSym, true, []*Node{callee, args}, nil, 0)
+
+	if typeScriptCallCouldBeInstantiated(call, &ctx) {
+		t.Fatal("plain callee should not be an instantiated-call candidate")
+	}
+
+	callee.symbol = ctx.instantiationExprSym
+	if !typeScriptCallCouldBeInstantiated(call, &ctx) {
+		t.Fatal("instantiation_expression callee should be an instantiated-call candidate")
+	}
+}
+
 func TestNormalizeJavaScriptStatementKeywordRestoresWhileLeaf(t *testing.T) {
 	lang := &Language{
 		Name:        "javascript",

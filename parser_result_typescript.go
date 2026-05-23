@@ -153,6 +153,8 @@ type typeScriptCompatibilityStats struct {
 	binaryAsTypeChildren        normalizationPassCounters
 	binaryFastSkipped           normalizationPassCounters
 	callChildren                normalizationPassCounters
+	callInstantiatedChildren    normalizationPassCounters
+	callFastSkipped             normalizationPassCounters
 	asChildren                  normalizationPassCounters
 	typeAssertionChildren       normalizationPassCounters
 	expressionStatementChildren normalizationPassCounters
@@ -229,6 +231,15 @@ func normalizeTypeScriptCompatibilityWithStats(root *Node, source []byte, lang *
 						stats.binaryFastSkipped.nodesVisited++
 					}
 				}
+				callInstantiatedCandidate := false
+				if child != nil && child.symbol == ctx.callSym && ctx.canRewriteInstantiatedCalls {
+					callInstantiatedCandidate = typeScriptCallCouldBeInstantiated(child, &ctx)
+					if callInstantiatedCandidate {
+						stats.callInstantiatedChildren.nodesVisited++
+					} else {
+						stats.callFastSkipped.nodesVisited++
+					}
+				}
 				bucket.nodesVisited++
 				rewritten := rewriteTypeScriptCompatibilityChild(child, &ctx)
 				if rewritten == nil {
@@ -244,6 +255,9 @@ func normalizeTypeScriptCompatibilityWithStats(root *Node, source []byte, lang *
 					stats.binaryGenericChildren.nodesRewritten++
 				} else if binaryAsTypeCandidate {
 					stats.binaryAsTypeChildren.nodesRewritten++
+				}
+				if callInstantiatedCandidate {
+					stats.callInstantiatedChildren.nodesRewritten++
 				}
 				stats.total.nodesRewritten++
 				child = rewritten
@@ -337,7 +351,7 @@ func rewriteTypeScriptCompatibilityChild(child *Node, ctx *typeScriptNormalizati
 			return rewriteTypeScriptAsTypeChain(child, ctx)
 		}
 	case ctx.callSym:
-		if ctx.canRewriteInstantiatedCalls {
+		if ctx.canRewriteInstantiatedCalls && typeScriptCallCouldBeInstantiated(child, ctx) {
 			return rewriteTypeScriptInstantiatedCall(child, ctx)
 		}
 	case ctx.asExpressionSym:
@@ -378,6 +392,18 @@ func typeScriptBinaryExpressionOperator(node *Node, ctx *typeScriptNormalization
 		return nil, false
 	}
 	return op, true
+}
+
+func typeScriptCallCouldBeInstantiated(node *Node, ctx *typeScriptNormalizationContext) bool {
+	if node == nil || ctx == nil || node.symbol != ctx.callSym || len(node.children) != 2 {
+		return false
+	}
+	function := node.children[0]
+	arguments := node.children[1]
+	return function != nil &&
+		arguments != nil &&
+		function.symbol == ctx.instantiationExprSym &&
+		arguments.symbol == ctx.argsSym
 }
 
 func normalizeTypeScriptIdentifierKeywordAliases(node *Node, ctx *typeScriptNormalizationContext) {
