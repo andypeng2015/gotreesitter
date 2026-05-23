@@ -202,6 +202,8 @@ type runtimeStats struct {
 	EquivCacheHits                  uint64        `json:"equiv_cache_hits,omitempty"`
 	EquivCacheStores                uint64        `json:"equiv_cache_stores,omitempty"`
 	EquivCacheMisses                uint64        `json:"equiv_cache_misses,omitempty"`
+	EquivCacheTrueHits              uint64        `json:"equiv_cache_true_hits,omitempty"`
+	EquivCacheFalseHits             uint64        `json:"equiv_cache_false_hits,omitempty"`
 	EquivCacheEpochMisses           uint64        `json:"equiv_cache_epoch_misses,omitempty"`
 	EquivCacheKeyMisses             uint64        `json:"equiv_cache_key_misses,omitempty"`
 	EquivCacheVersionMisses         uint64        `json:"equiv_cache_version_misses,omitempty"`
@@ -210,6 +212,13 @@ type runtimeStats struct {
 	EquivSkipFieldMismatch          uint64        `json:"equiv_skip_field_mismatch,omitempty"`
 	EquivExactCalls                 uint64        `json:"equiv_exact_calls,omitempty"`
 	EquivExactTrue                  uint64        `json:"equiv_exact_true,omitempty"`
+	EquivExactPointerTrue           uint64        `json:"equiv_exact_pointer_true,omitempty"`
+	EquivExactNilMismatch           uint64        `json:"equiv_exact_nil_mismatch,omitempty"`
+	EquivExactHeaderMismatch        uint64        `json:"equiv_exact_header_mismatch,omitempty"`
+	EquivExactChildMismatch         uint64        `json:"equiv_exact_child_mismatch,omitempty"`
+	EquivExactTerminalCalls         uint64        `json:"equiv_exact_terminal_calls,omitempty"`
+	EquivExactTerminalTrue          uint64        `json:"equiv_exact_terminal_true,omitempty"`
+	EquivExactTerminalFalse         uint64        `json:"equiv_exact_terminal_false,omitempty"`
 	EquivFrontierCalls              uint64        `json:"equiv_frontier_calls,omitempty"`
 	EquivFrontierTrue               uint64        `json:"equiv_frontier_true,omitempty"`
 	EquivExactChildCompares         uint64        `json:"equiv_exact_child_compares,omitempty"`
@@ -306,6 +315,8 @@ type hotGLRState struct {
 	EquivCacheHits                 uint64         `json:"equiv_cache_hits,omitempty"`
 	EquivCacheStores               uint64         `json:"equiv_cache_stores,omitempty"`
 	EquivCacheMisses               uint64         `json:"equiv_cache_misses,omitempty"`
+	EquivCacheTrueHits             uint64         `json:"equiv_cache_true_hits,omitempty"`
+	EquivCacheFalseHits            uint64         `json:"equiv_cache_false_hits,omitempty"`
 	EquivCacheKeyMisses            uint64         `json:"equiv_cache_key_misses,omitempty"`
 	EquivCacheEpochMisses          uint64         `json:"equiv_cache_epoch_misses,omitempty"`
 	EquivCacheVersionMisses        uint64         `json:"equiv_cache_version_misses,omitempty"`
@@ -314,6 +325,13 @@ type hotGLRState struct {
 	EquivSkipFieldMismatch         uint64         `json:"equiv_skip_field_mismatch,omitempty"`
 	EquivExactCalls                uint64         `json:"equiv_exact_calls,omitempty"`
 	EquivExactTrue                 uint64         `json:"equiv_exact_true,omitempty"`
+	EquivExactPointerTrue          uint64         `json:"equiv_exact_pointer_true,omitempty"`
+	EquivExactNilMismatch          uint64         `json:"equiv_exact_nil_mismatch,omitempty"`
+	EquivExactHeaderMismatch       uint64         `json:"equiv_exact_header_mismatch,omitempty"`
+	EquivExactChildMismatch        uint64         `json:"equiv_exact_child_mismatch,omitempty"`
+	EquivExactTerminalCalls        uint64         `json:"equiv_exact_terminal_calls,omitempty"`
+	EquivExactTerminalTrue         uint64         `json:"equiv_exact_terminal_true,omitempty"`
+	EquivExactTerminalFalse        uint64         `json:"equiv_exact_terminal_false,omitempty"`
 	EquivFrontierCalls             uint64         `json:"equiv_frontier_calls,omitempty"`
 	EquivFrontierTrue              uint64         `json:"equiv_frontier_true,omitempty"`
 	EquivExactChildCompares        uint64         `json:"equiv_exact_child_compares,omitempty"`
@@ -1160,6 +1178,8 @@ func hotEquivStatesFromRuntime(stats []gotreesitter.ParseEquivStateRuntime, limi
 			EquivCacheHits:                 stat.EquivCacheHits,
 			EquivCacheStores:               stat.EquivCacheStores,
 			EquivCacheMisses:               stat.EquivCacheMisses,
+			EquivCacheTrueHits:             stat.EquivCacheTrueHits,
+			EquivCacheFalseHits:            stat.EquivCacheFalseHits,
 			EquivCacheEpochMisses:          stat.EquivCacheEpochMisses,
 			EquivCacheKeyMisses:            stat.EquivCacheKeyMisses,
 			EquivCacheVersionMisses:        stat.EquivCacheVersionMisses,
@@ -1168,6 +1188,13 @@ func hotEquivStatesFromRuntime(stats []gotreesitter.ParseEquivStateRuntime, limi
 			EquivSkipFieldMismatch:         stat.EquivSkipFieldMismatch,
 			EquivExactCalls:                stat.EquivExactCalls,
 			EquivExactTrue:                 stat.EquivExactTrue,
+			EquivExactPointerTrue:          stat.EquivExactPointerTrue,
+			EquivExactNilMismatch:          stat.EquivExactNilMismatch,
+			EquivExactHeaderMismatch:       stat.EquivExactHeaderMismatch,
+			EquivExactChildMismatch:        stat.EquivExactChildMismatch,
+			EquivExactTerminalCalls:        stat.EquivExactTerminalCalls,
+			EquivExactTerminalTrue:         stat.EquivExactTerminalTrue,
+			EquivExactTerminalFalse:        stat.EquivExactTerminalFalse,
 			EquivFrontierCalls:             stat.EquivFrontierCalls,
 			EquivFrontierTrue:              stat.EquivFrontierTrue,
 			EquivExactChildCompares:        stat.EquivExactChildCompares,
@@ -1230,6 +1257,8 @@ func statsFromRuntime(rt gotreesitter.ParseRuntime) runtimeStats {
 		EquivCacheHits:                 rt.EquivCacheHits,
 		EquivCacheStores:               rt.EquivCacheStores,
 		EquivCacheMisses:               rt.EquivCacheMisses,
+		EquivCacheTrueHits:             rt.EquivCacheTrueHits,
+		EquivCacheFalseHits:            rt.EquivCacheFalseHits,
 		EquivCacheEpochMisses:          rt.EquivCacheEpochMisses,
 		EquivCacheKeyMisses:            rt.EquivCacheKeyMisses,
 		EquivCacheVersionMisses:        rt.EquivCacheVersionMisses,
@@ -1238,6 +1267,13 @@ func statsFromRuntime(rt gotreesitter.ParseRuntime) runtimeStats {
 		EquivSkipFieldMismatch:         rt.EquivSkipFieldMismatch,
 		EquivExactCalls:                rt.EquivExactCalls,
 		EquivExactTrue:                 rt.EquivExactTrue,
+		EquivExactPointerTrue:          rt.EquivExactPointerTrue,
+		EquivExactNilMismatch:          rt.EquivExactNilMismatch,
+		EquivExactHeaderMismatch:       rt.EquivExactHeaderMismatch,
+		EquivExactChildMismatch:        rt.EquivExactChildMismatch,
+		EquivExactTerminalCalls:        rt.EquivExactTerminalCalls,
+		EquivExactTerminalTrue:         rt.EquivExactTerminalTrue,
+		EquivExactTerminalFalse:        rt.EquivExactTerminalFalse,
 		EquivFrontierCalls:             rt.EquivFrontierCalls,
 		EquivFrontierTrue:              rt.EquivFrontierTrue,
 		EquivExactChildCompares:        rt.EquivExactChildCompares,

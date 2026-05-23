@@ -578,6 +578,8 @@ type ParseEquivStateRuntime struct {
 	EquivCacheHits                 uint64
 	EquivCacheStores               uint64
 	EquivCacheMisses               uint64
+	EquivCacheTrueHits             uint64
+	EquivCacheFalseHits            uint64
 	EquivCacheEpochMisses          uint64
 	EquivCacheKeyMisses            uint64
 	EquivCacheVersionMisses        uint64
@@ -586,6 +588,13 @@ type ParseEquivStateRuntime struct {
 	EquivSkipFieldMismatch         uint64
 	EquivExactCalls                uint64
 	EquivExactTrue                 uint64
+	EquivExactPointerTrue          uint64
+	EquivExactNilMismatch          uint64
+	EquivExactHeaderMismatch       uint64
+	EquivExactChildMismatch        uint64
+	EquivExactTerminalCalls        uint64
+	EquivExactTerminalTrue         uint64
+	EquivExactTerminalFalse        uint64
 	EquivFrontierCalls             uint64
 	EquivFrontierTrue              uint64
 	EquivExactChildCompares        uint64
@@ -676,6 +685,8 @@ type ParseRuntime struct {
 	EquivCacheHits                               uint64
 	EquivCacheStores                             uint64
 	EquivCacheMisses                             uint64
+	EquivCacheTrueHits                           uint64
+	EquivCacheFalseHits                          uint64
 	EquivCacheEpochMisses                        uint64
 	EquivCacheKeyMisses                          uint64
 	EquivCacheVersionMisses                      uint64
@@ -684,6 +695,13 @@ type ParseRuntime struct {
 	EquivSkipFieldMismatch                       uint64
 	EquivExactCalls                              uint64
 	EquivExactTrue                               uint64
+	EquivExactPointerTrue                        uint64
+	EquivExactNilMismatch                        uint64
+	EquivExactHeaderMismatch                     uint64
+	EquivExactChildMismatch                      uint64
+	EquivExactTerminalCalls                      uint64
+	EquivExactTerminalTrue                       uint64
+	EquivExactTerminalFalse                      uint64
 	EquivFrontierCalls                           uint64
 	EquivFrontierTrue                            uint64
 	EquivExactChildCompares                      uint64

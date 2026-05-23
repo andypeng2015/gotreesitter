@@ -20,6 +20,8 @@ type runtimeAuditEquivStateInfo struct {
 	equivCacheHits                 uint64
 	equivCacheStores               uint64
 	equivCacheMisses               uint64
+	equivCacheTrueHits             uint64
+	equivCacheFalseHits            uint64
 	equivCacheEpochMisses          uint64
 	equivCacheKeyMisses            uint64
 	equivCacheVersionMisses        uint64
@@ -28,6 +30,13 @@ type runtimeAuditEquivStateInfo struct {
 	equivSkipFieldMismatch         uint64
 	equivExactCalls                uint64
 	equivExactTrue                 uint64
+	equivExactPointerTrue          uint64
+	equivExactNilMismatch          uint64
+	equivExactHeaderMismatch       uint64
+	equivExactChildMismatch        uint64
+	equivExactTerminalCalls        uint64
+	equivExactTerminalTrue         uint64
+	equivExactTerminalFalse        uint64
 	equivFrontierCalls             uint64
 	equivFrontierTrue              uint64
 	equivExactChildCompares        uint64
@@ -96,6 +105,8 @@ type runtimeAudit struct {
 	equivCacheHits                 uint64
 	equivCacheStores               uint64
 	equivCacheMisses               uint64
+	equivCacheTrueHits             uint64
+	equivCacheFalseHits            uint64
 	equivCacheEpochMisses          uint64
 	equivCacheKeyMisses            uint64
 	equivCacheVersionMisses        uint64
@@ -104,6 +115,13 @@ type runtimeAudit struct {
 	equivSkipFieldMismatch         uint64
 	equivExactCalls                uint64
 	equivExactTrue                 uint64
+	equivExactPointerTrue          uint64
+	equivExactNilMismatch          uint64
+	equivExactHeaderMismatch       uint64
+	equivExactChildMismatch        uint64
+	equivExactTerminalCalls        uint64
+	equivExactTerminalTrue         uint64
+	equivExactTerminalFalse        uint64
 	equivFrontierCalls             uint64
 	equivFrontierTrue              uint64
 	equivExactChildCompares        uint64
@@ -183,6 +201,8 @@ func (a *runtimeAudit) beginParse() {
 	a.equivCacheHits = 0
 	a.equivCacheStores = 0
 	a.equivCacheMisses = 0
+	a.equivCacheTrueHits = 0
+	a.equivCacheFalseHits = 0
 	a.equivCacheEpochMisses = 0
 	a.equivCacheKeyMisses = 0
 	a.equivCacheVersionMisses = 0
@@ -191,6 +211,13 @@ func (a *runtimeAudit) beginParse() {
 	a.equivSkipFieldMismatch = 0
 	a.equivExactCalls = 0
 	a.equivExactTrue = 0
+	a.equivExactPointerTrue = 0
+	a.equivExactNilMismatch = 0
+	a.equivExactHeaderMismatch = 0
+	a.equivExactChildMismatch = 0
+	a.equivExactTerminalCalls = 0
+	a.equivExactTerminalTrue = 0
+	a.equivExactTerminalFalse = 0
 	a.equivFrontierCalls = 0
 	a.equivFrontierTrue = 0
 	a.equivExactChildCompares = 0
@@ -275,6 +302,8 @@ func (a *runtimeAudit) reset() {
 	a.equivCacheHits = 0
 	a.equivCacheStores = 0
 	a.equivCacheMisses = 0
+	a.equivCacheTrueHits = 0
+	a.equivCacheFalseHits = 0
 	a.equivCacheEpochMisses = 0
 	a.equivCacheKeyMisses = 0
 	a.equivCacheVersionMisses = 0
@@ -283,6 +312,13 @@ func (a *runtimeAudit) reset() {
 	a.equivSkipFieldMismatch = 0
 	a.equivExactCalls = 0
 	a.equivExactTrue = 0
+	a.equivExactPointerTrue = 0
+	a.equivExactNilMismatch = 0
+	a.equivExactHeaderMismatch = 0
+	a.equivExactChildMismatch = 0
+	a.equivExactTerminalCalls = 0
+	a.equivExactTerminalTrue = 0
+	a.equivExactTerminalFalse = 0
 	a.equivFrontierCalls = 0
 	a.equivFrontierTrue = 0
 	a.equivExactChildCompares = 0
@@ -462,6 +498,23 @@ func (a *runtimeAudit) recordEquivCacheHit() {
 	}
 }
 
+func (a *runtimeAudit) recordEquivCacheResultHit(result bool) {
+	if a == nil || !a.equivEnabled {
+		return
+	}
+	if result {
+		a.equivCacheTrueHits++
+		if state := a.currentEquivStateInfo(); state != nil {
+			state.equivCacheTrueHits++
+		}
+		return
+	}
+	a.equivCacheFalseHits++
+	if state := a.currentEquivStateInfo(); state != nil {
+		state.equivCacheFalseHits++
+	}
+}
+
 func (a *runtimeAudit) recordEquivCacheStore() {
 	if a == nil || !a.equivEnabled {
 		return
@@ -558,6 +611,76 @@ func (a *runtimeAudit) recordEquivExactTrue() {
 	}
 }
 
+func (a *runtimeAudit) recordEquivExactPointerTrue() {
+	if a == nil || !a.equivEnabled {
+		return
+	}
+	a.equivExactPointerTrue++
+	if state := a.currentEquivStateInfo(); state != nil {
+		state.equivExactPointerTrue++
+	}
+}
+
+func (a *runtimeAudit) recordEquivExactNilMismatch() {
+	if a == nil || !a.equivEnabled {
+		return
+	}
+	a.equivExactNilMismatch++
+	if state := a.currentEquivStateInfo(); state != nil {
+		state.equivExactNilMismatch++
+	}
+}
+
+func (a *runtimeAudit) recordEquivExactHeaderMismatch() {
+	if a == nil || !a.equivEnabled {
+		return
+	}
+	a.equivExactHeaderMismatch++
+	if state := a.currentEquivStateInfo(); state != nil {
+		state.equivExactHeaderMismatch++
+	}
+}
+
+func (a *runtimeAudit) recordEquivExactChildMismatch() {
+	if a == nil || !a.equivEnabled {
+		return
+	}
+	a.equivExactChildMismatch++
+	if state := a.currentEquivStateInfo(); state != nil {
+		state.equivExactChildMismatch++
+	}
+}
+
+func (a *runtimeAudit) recordEquivExactTerminalCall() {
+	if a == nil || !a.equivEnabled {
+		return
+	}
+	a.equivExactTerminalCalls++
+	if state := a.currentEquivStateInfo(); state != nil {
+		state.equivExactTerminalCalls++
+	}
+}
+
+func (a *runtimeAudit) recordEquivExactTerminalTrue() {
+	if a == nil || !a.equivEnabled {
+		return
+	}
+	a.equivExactTerminalTrue++
+	if state := a.currentEquivStateInfo(); state != nil {
+		state.equivExactTerminalTrue++
+	}
+}
+
+func (a *runtimeAudit) recordEquivExactTerminalFalse() {
+	if a == nil || !a.equivEnabled {
+		return
+	}
+	a.equivExactTerminalFalse++
+	if state := a.currentEquivStateInfo(); state != nil {
+		state.equivExactTerminalFalse++
+	}
+}
+
 func (a *runtimeAudit) recordEquivFrontierCall() {
 	if a == nil || !a.equivEnabled {
 		return
@@ -651,6 +774,8 @@ func (a *runtimeAudit) equivStateStats() []ParseEquivStateRuntime {
 			EquivCacheHits:                 info.equivCacheHits,
 			EquivCacheStores:               info.equivCacheStores,
 			EquivCacheMisses:               info.equivCacheMisses,
+			EquivCacheTrueHits:             info.equivCacheTrueHits,
+			EquivCacheFalseHits:            info.equivCacheFalseHits,
 			EquivCacheEpochMisses:          info.equivCacheEpochMisses,
 			EquivCacheKeyMisses:            info.equivCacheKeyMisses,
 			EquivCacheVersionMisses:        info.equivCacheVersionMisses,
@@ -659,6 +784,13 @@ func (a *runtimeAudit) equivStateStats() []ParseEquivStateRuntime {
 			EquivSkipFieldMismatch:         info.equivSkipFieldMismatch,
 			EquivExactCalls:                info.equivExactCalls,
 			EquivExactTrue:                 info.equivExactTrue,
+			EquivExactPointerTrue:          info.equivExactPointerTrue,
+			EquivExactNilMismatch:          info.equivExactNilMismatch,
+			EquivExactHeaderMismatch:       info.equivExactHeaderMismatch,
+			EquivExactChildMismatch:        info.equivExactChildMismatch,
+			EquivExactTerminalCalls:        info.equivExactTerminalCalls,
+			EquivExactTerminalTrue:         info.equivExactTerminalTrue,
+			EquivExactTerminalFalse:        info.equivExactTerminalFalse,
 			EquivFrontierCalls:             info.equivFrontierCalls,
 			EquivFrontierTrue:              info.equivFrontierTrue,
 			EquivExactChildCompares:        info.equivExactChildCompares,

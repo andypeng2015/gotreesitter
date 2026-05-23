@@ -443,6 +443,7 @@ func lookupNodeEquivCache(scratch *glrMergeScratch, a, b *Node, depth int) (bool
 	}
 	if audit != nil {
 		audit.recordEquivCacheHit()
+		audit.recordEquivCacheResultHit(entry.result)
 	}
 	return entry.result, true
 }
@@ -911,11 +912,15 @@ func stackEntryNodesExactlyEquivalentWithAudit(scratch *glrMergeScratch, audit *
 	}
 	if a == b {
 		if audit != nil {
+			audit.recordEquivExactPointerTrue()
 			audit.recordEquivExactTrue()
 		}
 		return true
 	}
 	if a == nil || b == nil {
+		if audit != nil {
+			audit.recordEquivExactNilMismatch()
+		}
 		return false
 	}
 	if hit, ok := lookupNodeEquivCache(scratch, a, b, depth); ok {
@@ -932,6 +937,9 @@ func stackEntryNodesExactlyEquivalentWithAudit(scratch *glrMergeScratch, audit *
 		a.parseState != b.parseState ||
 		a.preGotoState != b.preGotoState ||
 		a.productionID != b.productionID {
+		if audit != nil {
+			audit.recordEquivExactHeaderMismatch()
+		}
 		return false
 	}
 	if len(a.fieldIDs) != len(b.fieldIDs) {
@@ -972,18 +980,28 @@ func stackEntryNodesExactlyEquivalentWithAudit(scratch *glrMergeScratch, audit *
 			continue
 		}
 		if ca == nil || cb == nil {
+			if audit != nil {
+				audit.recordEquivExactNilMismatch()
+				audit.recordEquivExactChildMismatch()
+			}
 			storeNodeEquivCache(scratch, a, b, depth, false)
 			return false
 		}
 		if len(ca.children) == 0 || len(cb.children) == 0 ||
 			ca.flags&nodeFlagHasError != 0 || cb.flags&nodeFlagHasError != 0 {
 			if !stackEntryNodesExactlyEquivalentTerminal(audit, ca, cb) {
+				if audit != nil {
+					audit.recordEquivExactChildMismatch()
+				}
 				storeNodeEquivCache(scratch, a, b, depth, false)
 				return false
 			}
 			continue
 		}
 		if !stackEntryNodesExactlyEquivalentWithScratch(scratch, ca, cb, depth+1) {
+			if audit != nil {
+				audit.recordEquivExactChildMismatch()
+			}
 			storeNodeEquivCache(scratch, a, b, depth, false)
 			return false
 		}
@@ -1055,10 +1073,21 @@ func stackEntryNodesExactlyEquivalentNoAudit(scratch *glrMergeScratch, a, b *Nod
 }
 
 func stackEntryNodesExactlyEquivalentTerminal(audit *runtimeAudit, a, b *Node) bool {
+	if audit != nil {
+		audit.recordEquivExactTerminalCall()
+	}
 	if a == b {
+		if audit != nil {
+			audit.recordEquivExactPointerTrue()
+			audit.recordEquivExactTerminalTrue()
+		}
 		return true
 	}
 	if a == nil || b == nil {
+		if audit != nil {
+			audit.recordEquivExactNilMismatch()
+			audit.recordEquivExactTerminalFalse()
+		}
 		return false
 	}
 	if a.symbol != b.symbol ||
@@ -1069,11 +1098,16 @@ func stackEntryNodesExactlyEquivalentTerminal(audit *runtimeAudit, a, b *Node) b
 		a.parseState != b.parseState ||
 		a.preGotoState != b.preGotoState ||
 		a.productionID != b.productionID {
+		if audit != nil {
+			audit.recordEquivExactHeaderMismatch()
+			audit.recordEquivExactTerminalFalse()
+		}
 		return false
 	}
 	if len(a.fieldIDs) != len(b.fieldIDs) {
 		if audit != nil {
 			audit.recordEquivSkipFieldMismatch()
+			audit.recordEquivExactTerminalFalse()
 		}
 		return false
 	}
@@ -1081,6 +1115,7 @@ func stackEntryNodesExactlyEquivalentTerminal(audit *runtimeAudit, a, b *Node) b
 		if a.fieldIDs[i] != b.fieldIDs[i] {
 			if audit != nil {
 				audit.recordEquivSkipFieldMismatch()
+				audit.recordEquivExactTerminalFalse()
 			}
 			return false
 		}
@@ -1088,14 +1123,19 @@ func stackEntryNodesExactlyEquivalentTerminal(audit *runtimeAudit, a, b *Node) b
 	if a.flags&nodeFlagHasError != 0 {
 		if audit != nil {
 			audit.recordEquivSkipError()
+			audit.recordEquivExactTerminalTrue()
 		}
 		return true
 	}
 	if len(a.children) == 0 {
 		if audit != nil {
 			audit.recordEquivSkipLeaf()
+			audit.recordEquivExactTerminalTrue()
 		}
 		return true
+	}
+	if audit != nil {
+		audit.recordEquivExactTerminalFalse()
 	}
 	return false
 }

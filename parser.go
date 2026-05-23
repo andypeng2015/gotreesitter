@@ -1628,6 +1628,8 @@ func recordParseRuntimeLoopStats(parseRuntime *ParseRuntime, scratch *parserScra
 	parseRuntime.EquivCacheHits = scratch.audit.equivCacheHits
 	parseRuntime.EquivCacheStores = scratch.audit.equivCacheStores
 	parseRuntime.EquivCacheMisses = scratch.audit.equivCacheMisses
+	parseRuntime.EquivCacheTrueHits = scratch.audit.equivCacheTrueHits
+	parseRuntime.EquivCacheFalseHits = scratch.audit.equivCacheFalseHits
 	parseRuntime.EquivCacheEpochMisses = scratch.audit.equivCacheEpochMisses
 	parseRuntime.EquivCacheKeyMisses = scratch.audit.equivCacheKeyMisses
 	parseRuntime.EquivCacheVersionMisses = scratch.audit.equivCacheVersionMisses
@@ -1636,6 +1638,13 @@ func recordParseRuntimeLoopStats(parseRuntime *ParseRuntime, scratch *parserScra
 	parseRuntime.EquivSkipFieldMismatch = scratch.audit.equivSkipFieldMismatch
 	parseRuntime.EquivExactCalls = scratch.audit.equivExactCalls
 	parseRuntime.EquivExactTrue = scratch.audit.equivExactTrue
+	parseRuntime.EquivExactPointerTrue = scratch.audit.equivExactPointerTrue
+	parseRuntime.EquivExactNilMismatch = scratch.audit.equivExactNilMismatch
+	parseRuntime.EquivExactHeaderMismatch = scratch.audit.equivExactHeaderMismatch
+	parseRuntime.EquivExactChildMismatch = scratch.audit.equivExactChildMismatch
+	parseRuntime.EquivExactTerminalCalls = scratch.audit.equivExactTerminalCalls
+	parseRuntime.EquivExactTerminalTrue = scratch.audit.equivExactTerminalTrue
+	parseRuntime.EquivExactTerminalFalse = scratch.audit.equivExactTerminalFalse
 	parseRuntime.EquivFrontierCalls = scratch.audit.equivFrontierCalls
 	parseRuntime.EquivFrontierTrue = scratch.audit.equivFrontierTrue
 	parseRuntime.EquivExactChildCompares = scratch.audit.equivExactChildCompares
