@@ -18,16 +18,328 @@ func normalizeJavaScriptCompatibility(root *Node, source []byte, lang *Language)
 }
 
 func normalizeTypeScriptTreeCompatibility(root *Node, source []byte, lang *Language) {
-	normalizeCollapsedNamedLeafChildrenBySource(root, source, lang, "empty_statement", ";")
-	normalizeJavaScriptTypeScriptStatementKeywordLeaves(root, source, lang)
-	normalizeJavaScriptTypeScriptOptionalChainLeaves(root, source, lang)
-	normalizeJavaScriptTypeScriptCallPrecedence(root, lang)
-	normalizeJavaScriptTypeScriptUnaryPrecedence(root, lang)
-	normalizeJavaScriptTypeScriptBinaryPrecedence(root, lang)
-	normalizeTypeScriptRecoveredNamespaceRoot(root, source, lang)
-	normalizeJavaScriptTopLevelDeclarationBounds(root, lang)
-	normalizeTypeScriptCompatibility(root, source, lang)
-	normalizeJavaScriptTopLevelExpressionStatementBounds(root, lang)
+	normalizeTypeScriptTreeCompatibilityWithParser(root, source, nil, lang)
+}
+
+func normalizeTypeScriptTreeCompatibilityWithParser(root *Node, source []byte, parser *Parser, lang *Language) {
+	recordPasses := parser != nil && parser.currentMaterializationTiming() != nil
+	if !recordPasses {
+		normalizeCollapsedNamedLeafChildrenBySource(root, source, lang, "empty_statement", ";")
+		normalizeJavaScriptTypeScriptStatementKeywordLeaves(root, source, lang)
+		normalizeJavaScriptTypeScriptOptionalChainLeaves(root, source, lang)
+		normalizeJavaScriptTypeScriptCallPrecedence(root, lang)
+		normalizeJavaScriptTypeScriptUnaryPrecedence(root, lang)
+		normalizeJavaScriptTypeScriptBinaryPrecedence(root, lang)
+		normalizeTypeScriptRecoveredNamespaceRoot(root, source, lang)
+		normalizeJavaScriptTopLevelDeclarationBounds(root, lang)
+		normalizeTypeScriptCompatibility(root, source, lang)
+		normalizeJavaScriptTopLevelExpressionStatementBounds(root, lang)
+		return
+	}
+	run := func(name string, fn func() normalizationPassCounters) {
+		parser.runNamedNormalizationPass(name, func() bool { return true }, fn)
+	}
+	runVoid := func(name string, fn func()) {
+		run(name, func() normalizationPassCounters {
+			fn()
+			return normalizationPassCounters{}
+		})
+	}
+	recordTypeScriptCompatSourceFlagMetrics(parser, typeScriptCompatSourceFlagsFor(source))
+
+	run("ts_empty_statement", func() normalizationPassCounters {
+		return normalizeCollapsedNamedLeafChildrenBySourceWithStats(root, source, lang, "empty_statement", ";")
+	})
+	recordTypeScriptCompatCandidateMetrics(parser, root, lang)
+	run("ts_statement_keyword_leaves", func() normalizationPassCounters {
+		return normalizeJavaScriptTypeScriptStatementKeywordLeavesWithStats(root, source, lang)
+	})
+	runVoid("ts_optional_chain_leaves", func() {
+		normalizeJavaScriptTypeScriptOptionalChainLeaves(root, source, lang)
+	})
+	run("ts_call_precedence", func() normalizationPassCounters {
+		return normalizeJavaScriptTypeScriptCallPrecedenceWithStats(root, lang)
+	})
+	run("ts_unary_precedence", func() normalizationPassCounters {
+		return normalizeJavaScriptTypeScriptUnaryPrecedenceWithStats(root, lang)
+	})
+	run("ts_binary_precedence", func() normalizationPassCounters {
+		return normalizeJavaScriptTypeScriptBinaryPrecedenceWithStats(root, lang)
+	})
+	runVoid("ts_recovered_namespace_root", func() {
+		normalizeTypeScriptRecoveredNamespaceRoot(root, source, lang)
+	})
+	runVoid("ts_top_level_declaration_bounds", func() {
+		normalizeJavaScriptTopLevelDeclarationBounds(root, lang)
+	})
+	runVoid("ts_type_compatibility", func() {
+		normalizeTypeScriptCompatibility(root, source, lang)
+	})
+	runVoid("ts_top_level_expression_bounds", func() {
+		normalizeJavaScriptTopLevelExpressionStatementBounds(root, lang)
+	})
+}
+
+type typeScriptCompatSourceFlags struct {
+	hasSemicolon        bool
+	hasKeywordStatement bool
+	hasCallAngle        bool
+	hasUnaryCandidate   bool
+	hasBinaryCandidate  bool
+	hasTypeKeyword      bool
+	hasImportType       bool
+	hasMappedTypeSyntax bool
+	hasIndexTypeSyntax  bool
+	hasMemberModifier   bool
+	hasNamespaceModule  bool
+	hasOptionalChain    bool
+}
+
+func typeScriptCompatSourceFlagsFor(source []byte) typeScriptCompatSourceFlags {
+	var flags typeScriptCompatSourceFlags
+	for i := 0; i < len(source); {
+		switch source[i] {
+		case ';':
+			flags.hasSemicolon = true
+		case '?':
+			if i+1 < len(source) && source[i+1] == '.' {
+				flags.hasOptionalChain = true
+			}
+		case '<':
+			flags.hasCallAngle = true
+			flags.hasBinaryCandidate = true
+		case '>', '=', '*', '/', '%', '&', '|', '^':
+			flags.hasBinaryCandidate = true
+		case '+', '-':
+			flags.hasUnaryCandidate = true
+			flags.hasBinaryCandidate = true
+		case '!', '~':
+			flags.hasUnaryCandidate = true
+		case '[':
+			flags.hasIndexTypeSyntax = true
+			if typeScriptSourceRangeHasKeyword(source, i+1, typeScriptSourceBracketEnd(source, i+1), "in") {
+				flags.hasMappedTypeSyntax = true
+			}
+		}
+		if !isTypeScriptIdentifierStartByte(source[i]) {
+			i++
+			continue
+		}
+		start := i
+		i++
+		for i < len(source) && isTypeScriptIdentifierByte(source[i]) {
+			i++
+		}
+		switch string(source[start:i]) {
+		case "if", "while":
+			flags.hasKeywordStatement = true
+		case "type", "keyof", "as", "satisfies":
+			flags.hasTypeKeyword = true
+		case "import":
+			if typeScriptImportSourceLooksTypeLike(source, i) {
+				flags.hasImportType = true
+			}
+		case "public", "private", "protected", "readonly", "static", "abstract", "declare", "accessor", "override":
+			flags.hasMemberModifier = true
+		case "namespace", "module":
+			flags.hasNamespaceModule = true
+		case "delete", "typeof", "void", "await":
+			flags.hasUnaryCandidate = true
+		case "in", "instanceof":
+			flags.hasBinaryCandidate = true
+		}
+		continue
+	}
+	return flags
+}
+
+func isTypeScriptIdentifierByte(ch byte) bool {
+	return isTypeScriptIdentifierStartByte(ch) || (ch >= '0' && ch <= '9')
+}
+
+func typeScriptSourceBracketEnd(source []byte, pos int) int {
+	for pos < len(source) {
+		if source[pos] == ']' || source[pos] == '\n' || source[pos] == '\r' {
+			return pos
+		}
+		pos++
+	}
+	return len(source)
+}
+
+func typeScriptSourceRangeHasKeyword(source []byte, start, end int, keyword string) bool {
+	if start < 0 {
+		start = 0
+	}
+	if end > len(source) {
+		end = len(source)
+	}
+	for i := start; i+len(keyword) <= end; i++ {
+		if string(source[i:i+len(keyword)]) == keyword &&
+			(i == 0 || !isTypeScriptIdentifierByte(source[i-1])) &&
+			(i+len(keyword) >= len(source) || !isTypeScriptIdentifierByte(source[i+len(keyword)])) {
+			return true
+		}
+	}
+	return false
+}
+
+func typeScriptImportSourceLooksTypeLike(source []byte, pos int) bool {
+	for pos < len(source) && isASCIIWhitespace(source[pos]) {
+		pos++
+	}
+	if pos < len(source) && source[pos] == '(' {
+		return true
+	}
+	return typeScriptSourceRangeHasKeyword(source, pos, pos+4, "type")
+}
+
+func recordTypeScriptCompatSourceFlagMetrics(parser *Parser, flags typeScriptCompatSourceFlags) {
+	if parser == nil {
+		return
+	}
+	record := func(name string, enabled bool) {
+		parser.recordNormalizationMetric(name, 1, boolToUint64(enabled), 0, 0)
+	}
+	record("ts_source_has_semicolon", flags.hasSemicolon)
+	record("ts_source_has_keyword_statement", flags.hasKeywordStatement)
+	record("ts_source_has_call_angle", flags.hasCallAngle)
+	record("ts_source_has_unary_candidate", flags.hasUnaryCandidate)
+	record("ts_source_has_binary_candidate", flags.hasBinaryCandidate)
+	record("ts_source_has_type_keyword", flags.hasTypeKeyword)
+	record("ts_source_has_import_type", flags.hasImportType)
+	record("ts_source_has_mapped_type_syntax", flags.hasMappedTypeSyntax)
+	record("ts_source_has_index_type_syntax", flags.hasIndexTypeSyntax)
+	record("ts_source_has_member_modifier", flags.hasMemberModifier)
+	record("ts_source_has_namespace_module", flags.hasNamespaceModule)
+	record("ts_source_has_optional_chain", flags.hasOptionalChain)
+}
+
+func boolToUint64(v bool) uint64 {
+	if v {
+		return 1
+	}
+	return 0
+}
+
+type typeScriptCompatCandidateMetrics struct {
+	nodesVisited      uint64
+	callExpressions   uint64
+	unaryExpressions  uint64
+	binaryExpressions uint64
+	typeNodes         uint64
+	importNodes       uint64
+	memberNodes       uint64
+	namespaceNodes    uint64
+}
+
+func recordTypeScriptCompatCandidateMetrics(parser *Parser, root *Node, lang *Language) {
+	if parser == nil || root == nil || lang == nil {
+		return
+	}
+	metrics := typeScriptCompatCandidateMetricsFor(root, lang)
+	parser.recordNormalizationMetric("ts_candidates_index", 1, 1, metrics.nodesVisited, 0)
+	parser.recordNormalizationMetric("ts_candidates_call_expression", 1, 1, metrics.callExpressions, 0)
+	parser.recordNormalizationMetric("ts_candidates_unary_expression", 1, 1, metrics.unaryExpressions, 0)
+	parser.recordNormalizationMetric("ts_candidates_binary_expression", 1, 1, metrics.binaryExpressions, 0)
+	parser.recordNormalizationMetric("ts_candidates_type_nodes", 1, 1, metrics.typeNodes, 0)
+	parser.recordNormalizationMetric("ts_candidates_import_nodes", 1, 1, metrics.importNodes, 0)
+	parser.recordNormalizationMetric("ts_candidates_member_nodes", 1, 1, metrics.memberNodes, 0)
+	parser.recordNormalizationMetric("ts_candidates_namespace_nodes", 1, 1, metrics.namespaceNodes, 0)
+}
+
+func typeScriptCompatCandidateMetricsFor(root *Node, lang *Language) typeScriptCompatCandidateMetrics {
+	var metrics typeScriptCompatCandidateMetrics
+	syms := typeScriptCompatCandidateSymbolsFor(lang)
+	walkResultTreeDenseFirst(root, func(n *Node) {
+		metrics.nodesVisited++
+		switch {
+		case syms.hasCallExpression && n.symbol == syms.callExpression:
+			metrics.callExpressions++
+		case syms.hasUnaryExpression && n.symbol == syms.unaryExpression:
+			metrics.unaryExpressions++
+		case syms.hasBinaryExpression && n.symbol == syms.binaryExpression:
+			metrics.binaryExpressions++
+		case (syms.hasImportStatement && n.symbol == syms.importStatement) ||
+			(syms.hasImportType && n.symbol == syms.importType) ||
+			(syms.hasImportKeyword && n.symbol == syms.importKeyword):
+			metrics.importNodes++
+		case syms.hasInternalModule && n.symbol == syms.internalModule:
+			metrics.namespaceNodes++
+		case (syms.hasMethodDefinition && n.symbol == syms.methodDefinition) ||
+			(syms.hasMethodSignature && n.symbol == syms.methodSignature) ||
+			(syms.hasPropertySignature && n.symbol == syms.propertySignature) ||
+			(syms.hasPublicFieldDefinition && n.symbol == syms.publicFieldDefinition):
+			metrics.memberNodes++
+		case (syms.hasTypeAnnotation && n.symbol == syms.typeAnnotation) ||
+			(syms.hasTypeIdentifier && n.symbol == syms.typeIdentifier) ||
+			(syms.hasTypeQuery && n.symbol == syms.typeQuery) ||
+			(syms.hasMappedType && n.symbol == syms.mappedType) ||
+			(syms.hasIndexSignature && n.symbol == syms.indexSignature) ||
+			(syms.hasIndexedAccessType && n.symbol == syms.indexedAccessType):
+			metrics.typeNodes++
+		}
+	})
+	return metrics
+}
+
+type typeScriptCompatCandidateSymbols struct {
+	callExpression           Symbol
+	hasCallExpression        bool
+	unaryExpression          Symbol
+	hasUnaryExpression       bool
+	binaryExpression         Symbol
+	hasBinaryExpression      bool
+	importStatement          Symbol
+	hasImportStatement       bool
+	importType               Symbol
+	hasImportType            bool
+	importKeyword            Symbol
+	hasImportKeyword         bool
+	internalModule           Symbol
+	hasInternalModule        bool
+	methodDefinition         Symbol
+	hasMethodDefinition      bool
+	methodSignature          Symbol
+	hasMethodSignature       bool
+	propertySignature        Symbol
+	hasPropertySignature     bool
+	publicFieldDefinition    Symbol
+	hasPublicFieldDefinition bool
+	typeAnnotation           Symbol
+	hasTypeAnnotation        bool
+	typeIdentifier           Symbol
+	hasTypeIdentifier        bool
+	typeQuery                Symbol
+	hasTypeQuery             bool
+	mappedType               Symbol
+	hasMappedType            bool
+	indexSignature           Symbol
+	hasIndexSignature        bool
+	indexedAccessType        Symbol
+	hasIndexedAccessType     bool
+}
+
+func typeScriptCompatCandidateSymbolsFor(lang *Language) typeScriptCompatCandidateSymbols {
+	var syms typeScriptCompatCandidateSymbols
+	syms.callExpression, syms.hasCallExpression = symbolByName(lang, "call_expression")
+	syms.unaryExpression, syms.hasUnaryExpression = symbolByName(lang, "unary_expression")
+	syms.binaryExpression, syms.hasBinaryExpression = symbolByName(lang, "binary_expression")
+	syms.importStatement, syms.hasImportStatement = symbolByName(lang, "import_statement")
+	syms.importType, syms.hasImportType = symbolByName(lang, "import_type")
+	syms.importKeyword, syms.hasImportKeyword = symbolByName(lang, "import")
+	syms.internalModule, syms.hasInternalModule = symbolByName(lang, "internal_module")
+	syms.methodDefinition, syms.hasMethodDefinition = symbolByName(lang, "method_definition")
+	syms.methodSignature, syms.hasMethodSignature = symbolByName(lang, "method_signature")
+	syms.propertySignature, syms.hasPropertySignature = symbolByName(lang, "property_signature")
+	syms.publicFieldDefinition, syms.hasPublicFieldDefinition = symbolByName(lang, "public_field_definition")
+	syms.typeAnnotation, syms.hasTypeAnnotation = symbolByName(lang, "type_annotation")
+	syms.typeIdentifier, syms.hasTypeIdentifier = symbolByName(lang, "type_identifier")
+	syms.typeQuery, syms.hasTypeQuery = symbolByName(lang, "type_query")
+	syms.mappedType, syms.hasMappedType = symbolByName(lang, "mapped_type")
+	syms.indexSignature, syms.hasIndexSignature = symbolByName(lang, "index_signature")
+	syms.indexedAccessType, syms.hasIndexedAccessType = symbolByName(lang, "indexed_access_type")
+	return syms
 }
 
 func normalizeJavaScriptTypeScriptStatementKeywordLeaves(root *Node, source []byte, lang *Language) {
@@ -59,6 +371,42 @@ func normalizeJavaScriptTypeScriptStatementKeywordLeaves(root *Node, source []by
 	})
 }
 
+func normalizeJavaScriptTypeScriptStatementKeywordLeavesWithStats(root *Node, source []byte, lang *Language) normalizationPassCounters {
+	var counters normalizationPassCounters
+	if root == nil || lang == nil || len(source) == 0 {
+		return counters
+	}
+	switch lang.Name {
+	case "javascript", "typescript", "tsx":
+	default:
+		return counters
+	}
+	ifStmtSym, hasIfStmt := symbolByName(lang, "if_statement")
+	whileStmtSym, hasWhileStmt := symbolByName(lang, "while_statement")
+	ifSym, ifNamed, hasIf := symbolMeta(lang, "if")
+	whileSym, whileNamed, hasWhile := symbolMeta(lang, "while")
+	closeBraceSym, hasCloseBrace := symbolByName(lang, "}")
+	if (!hasIfStmt || !hasIf) && (!hasWhileStmt || !hasWhile) {
+		return counters
+	}
+
+	walkResultTreeDenseFirst(root, func(n *Node) {
+		counters.nodesVisited++
+		if hasIfStmt && hasIf && n.symbol == ifStmtSym {
+			if normalizeJavaScriptTypeScriptStatementKeywordLeafWithSymbolChanged(n, source, "if", ifSym, ifNamed, closeBraceSym, hasCloseBrace) {
+				counters.nodesRewritten++
+			}
+			return
+		}
+		if hasWhileStmt && hasWhile && n.symbol == whileStmtSym {
+			if normalizeJavaScriptTypeScriptStatementKeywordLeafWithSymbolChanged(n, source, "while", whileSym, whileNamed, closeBraceSym, hasCloseBrace) {
+				counters.nodesRewritten++
+			}
+		}
+	})
+	return counters
+}
+
 func normalizeJavaScriptTypeScriptStatementKeywordLeaf(n *Node, source []byte, lang *Language, keyword string) {
 	keywordSym, ok := symbolByName(lang, keyword)
 	if !ok {
@@ -68,19 +416,23 @@ func normalizeJavaScriptTypeScriptStatementKeywordLeaf(n *Node, source []byte, l
 }
 
 func normalizeJavaScriptTypeScriptStatementKeywordLeafWithSymbol(n *Node, source []byte, keyword string, keywordSym Symbol, keywordNamed bool, closeBraceSym Symbol, hasCloseBrace bool) {
+	_ = normalizeJavaScriptTypeScriptStatementKeywordLeafWithSymbolChanged(n, source, keyword, keywordSym, keywordNamed, closeBraceSym, hasCloseBrace)
+}
+
+func normalizeJavaScriptTypeScriptStatementKeywordLeafWithSymbolChanged(n *Node, source []byte, keyword string, keywordSym Symbol, keywordNamed bool, closeBraceSym Symbol, hasCloseBrace bool) bool {
 	end := n.startByte + uint32(len(keyword))
 	if int(end) > len(source) || !bytes.Equal(source[n.startByte:end], []byte(keyword)) {
-		return
+		return false
 	}
 	childCount := resultChildCount(n)
 	if childCount == 0 {
 		keywordNode := newLeafNodeInArena(n.ownerArena, keywordSym, keywordNamed, n.startByte, end, n.startPoint, advancePointByBytes(n.startPoint, source[n.startByte:end]))
 		replaceNodeChildrenUnfielded(n, cloneNodeSliceInArena(n.ownerArena, []*Node{keywordNode}))
-		return
+		return true
 	}
 	first := resultChildAt(n, 0)
 	if first != nil && first.symbol == keywordSym && first.startByte == n.startByte && first.endByte == end {
-		return
+		return false
 	}
 	keywordNode := newLeafNodeInArena(n.ownerArena, keywordSym, keywordNamed, n.startByte, end, n.startPoint, advancePointByBytes(n.startPoint, source[n.startByte:end]))
 
@@ -114,6 +466,7 @@ func normalizeJavaScriptTypeScriptStatementKeywordLeafWithSymbol(n *Node, source
 		n.ownerArena.clearFinalChildRefs(n)
 	}
 	populateParentNode(n, n.children)
+	return true
 }
 
 func prependFieldID(arena *nodeArena, fieldIDs []FieldID, oldLen int) []FieldID {
@@ -501,6 +854,35 @@ func normalizeJavaScriptTypeScriptCallPrecedence(root *Node, lang *Language) {
 	})
 }
 
+func normalizeJavaScriptTypeScriptCallPrecedenceWithStats(root *Node, lang *Language) normalizationPassCounters {
+	var counters normalizationPassCounters
+	if root == nil || lang == nil {
+		return counters
+	}
+	switch lang.Name {
+	case "javascript", "typescript", "tsx":
+	default:
+		return counters
+	}
+	callSym, ok := symbolByName(lang, "call_expression")
+	if !ok {
+		return counters
+	}
+
+	walkResultTreeDenseFirst(root, func(n *Node) {
+		counters.nodesVisited++
+		for i, child := range n.children {
+			if rewritten := rewriteJavaScriptTypeScriptCallPrecedenceWithSymbol(child, lang, callSym); rewritten != nil {
+				counters.nodesRewritten++
+				n.children[i] = rewritten
+				rewritten.parent = n
+				rewritten.childIndex = int32(i)
+			}
+		}
+	})
+	return counters
+}
+
 func rewriteJavaScriptTypeScriptCallPrecedence(node *Node, lang *Language) *Node {
 	callSym, ok := symbolByName(lang, "call_expression")
 	if !ok {
@@ -640,6 +1022,26 @@ func normalizeJavaScriptTypeScriptUnaryPrecedence(root *Node, lang *Language) {
 	})
 }
 
+func normalizeJavaScriptTypeScriptUnaryPrecedenceWithStats(root *Node, lang *Language) normalizationPassCounters {
+	var counters normalizationPassCounters
+	if root == nil || lang == nil {
+		return counters
+	}
+	switch lang.Name {
+	case "javascript", "typescript", "tsx":
+	default:
+		return counters
+	}
+	unarySym, ok := symbolByName(lang, "unary_expression")
+	if !ok {
+		return counters
+	}
+
+	return rewriteResultTreeChildrenPostorderWithStats(root, func(n *Node) *Node {
+		return rewriteJavaScriptTypeScriptUnaryPrecedenceWithSymbol(n, lang, unarySym)
+	})
+}
+
 func rewriteJavaScriptTypeScriptUnaryPrecedence(node *Node, lang *Language) *Node {
 	unarySym, ok := symbolByName(lang, "unary_expression")
 	if !ok {
@@ -690,6 +1092,26 @@ func normalizeJavaScriptTypeScriptBinaryPrecedence(root *Node, lang *Language) {
 	}
 
 	rewriteResultTreeChildrenPostorder(root, func(n *Node) *Node {
+		return rewriteJavaScriptTypeScriptBinaryPrecedenceWithSymbol(n, lang, binarySym)
+	})
+}
+
+func normalizeJavaScriptTypeScriptBinaryPrecedenceWithStats(root *Node, lang *Language) normalizationPassCounters {
+	var counters normalizationPassCounters
+	if root == nil || lang == nil {
+		return counters
+	}
+	switch lang.Name {
+	case "javascript", "typescript", "tsx":
+	default:
+		return counters
+	}
+	binarySym, ok := symbolByName(lang, "binary_expression")
+	if !ok {
+		return counters
+	}
+
+	return rewriteResultTreeChildrenPostorderWithStats(root, func(n *Node) *Node {
 		return rewriteJavaScriptTypeScriptBinaryPrecedenceWithSymbol(n, lang, binarySym)
 	})
 }

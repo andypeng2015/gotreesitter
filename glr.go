@@ -72,20 +72,21 @@ const (
 )
 
 type glrMergeScratch struct {
-	result          []glrStack
-	slots           []glrMergeSlot
-	largeSlots      []glrMergeLargeSlot
-	perKeyCap       int
-	language        *Language
-	audit           *runtimeAudit
-	equivEpoch      uint32
-	equivCache      []glrNodeEquivCacheEntry
-	pythonShallow   bool
-	budgetBytes     int64
-	resultBytes     int64
-	slotBytes       int64
-	largeSlotBytes  int64
-	equivCacheBytes int64
+	result           []glrStack
+	slots            []glrMergeSlot
+	largeSlots       []glrMergeLargeSlot
+	perKeyCap        int
+	language         *Language
+	deferExactDedupe bool
+	audit            *runtimeAudit
+	equivEpoch       uint32
+	equivCache       []glrNodeEquivCacheEntry
+	pythonShallow    bool
+	budgetBytes      int64
+	resultBytes      int64
+	slotBytes        int64
+	largeSlotBytes   int64
+	equivCacheBytes  int64
 }
 
 type glrMergeKey struct {
@@ -382,6 +383,10 @@ const (
 	// Depth is part of the cache key. Keep it bounded so large recursive
 	// comparisons cannot alias through a narrowing conversion.
 	glrNodeEquivCacheMaxDepth = 1<<16 - 1
+	// Exact TypeScript equivalence is independent of recursion depth. Use a
+	// reserved depth key so exact entries do not fragment across ancestors or
+	// collide with bounded frontier-equivalence entries.
+	glrNodeEquivCacheExactDepth = glrNodeEquivCacheMaxDepth
 )
 
 func (s *glrMergeScratch) beginEquivEpoch() {
@@ -530,6 +535,22 @@ func storeNodeEquivCacheNoAudit(scratch *glrMergeScratch, a, b *Node, depth int,
 	}
 }
 
+func lookupExactNodeEquivCache(scratch *glrMergeScratch, a, b *Node) (bool, bool) {
+	return lookupNodeEquivCache(scratch, a, b, glrNodeEquivCacheExactDepth)
+}
+
+func lookupExactNodeEquivCacheNoAudit(scratch *glrMergeScratch, a, b *Node) (bool, bool) {
+	return lookupNodeEquivCacheNoAudit(scratch, a, b, glrNodeEquivCacheExactDepth)
+}
+
+func storeExactNodeEquivCache(scratch *glrMergeScratch, a, b *Node, result bool) {
+	storeNodeEquivCache(scratch, a, b, glrNodeEquivCacheExactDepth, result)
+}
+
+func storeExactNodeEquivCacheNoAudit(scratch *glrMergeScratch, a, b *Node, result bool) {
+	storeNodeEquivCacheNoAudit(scratch, a, b, glrNodeEquivCacheExactDepth, result)
+}
+
 func activeEquivAudit(scratch *glrMergeScratch) *runtimeAudit {
 	if !runtimeEquivAuditEnabled || scratch == nil {
 		return nil
@@ -564,20 +585,26 @@ func stackEntriesEqualForLanguageWithScratch(scratch *glrMergeScratch, lang *Lan
 		return false
 	}
 	audit := activeEquivAudit(scratch)
-	for i := len(a) - 1; i >= 0; i-- {
-		if audit != nil {
-			audit.recordStackEquivEntryCompare()
-		}
-		if a[i].state != b[i].state {
-			if audit != nil {
-				audit.recordStackEquivStateMismatch()
+	if audit == nil {
+		for i := len(a) - 1; i >= 0; i-- {
+			if a[i].state != b[i].state {
+				return false
 			}
+			if !stackEntryPayloadsEquivalentForLanguageWithScratch(scratch, lang, a[i], b[i]) {
+				return false
+			}
+		}
+		return true
+	}
+	for i, depthFromTop := len(a)-1, 0; i >= 0; i, depthFromTop = i-1, depthFromTop+1 {
+		audit.recordStackEquivEntryCompare()
+		if a[i].state != b[i].state {
+			audit.recordStackEquivStateMismatchAt(depthFromTop)
 			return false
 		}
 		if !stackEntryPayloadsEquivalentForLanguageWithScratch(scratch, lang, a[i], b[i]) {
-			if audit != nil {
-				audit.recordStackEquivPayloadMismatch()
-			}
+			audit.recordStackEquivPayloadMismatchAt(depthFromTop)
+			audit.recordStackEquivPayloadMismatchSignatures(a[i], b[i])
 			return false
 		}
 	}
@@ -612,23 +639,32 @@ func gssStacksEqualForLanguageWithScratch(scratch *glrMergeScratch, lang *Langua
 		return false
 	}
 	audit := activeEquivAudit(scratch)
-	for an, bn := a.head, b.head; an != nil && bn != nil; an, bn = an.prev, bn.prev {
+	if audit == nil {
+		for an, bn := a.head, b.head; an != nil && bn != nil; an, bn = an.prev, bn.prev {
+			if an == bn {
+				return true
+			}
+			if an.entry.state != bn.entry.state {
+				return false
+			}
+			if !stackEntryPayloadsEquivalentForLanguageWithScratch(scratch, lang, an.entry, bn.entry) {
+				return false
+			}
+		}
+		return true
+	}
+	for an, bn, depthFromTop := a.head, b.head, 0; an != nil && bn != nil; an, bn, depthFromTop = an.prev, bn.prev, depthFromTop+1 {
 		if an == bn {
 			return true
 		}
-		if audit != nil {
-			audit.recordStackEquivEntryCompare()
-		}
+		audit.recordStackEquivEntryCompare()
 		if an.entry.state != bn.entry.state {
-			if audit != nil {
-				audit.recordStackEquivStateMismatch()
-			}
+			audit.recordStackEquivStateMismatchAt(depthFromTop)
 			return false
 		}
 		if !stackEntryPayloadsEquivalentForLanguageWithScratch(scratch, lang, an.entry, bn.entry) {
-			if audit != nil {
-				audit.recordStackEquivPayloadMismatch()
-			}
+			audit.recordStackEquivPayloadMismatchAt(depthFromTop)
+			audit.recordStackEquivPayloadMismatchSignatures(an.entry, bn.entry)
 			return false
 		}
 	}
@@ -648,53 +684,84 @@ func stackEquivalentForLanguageWithScratch(scratch *glrMergeScratch, lang *Langu
 		perfRecordStackEquivalentCall()
 	}
 	audit := activeEquivAudit(scratch)
+	var pairKey runtimeAuditStackEquivPairKey
+	var pairPrevious bool
+	var pairHit bool
+	pairKeyOK := false
 	if audit != nil {
 		audit.recordStackEquivCall()
+		if key, ok := stackEquivPairKeyForAudit(a, b); ok {
+			pairKey = key
+			pairKeyOK = true
+			pairPrevious, pairHit = audit.lookupStackEquivPair(key)
+		} else {
+			audit.recordStackEquivPairUnkeyed()
+		}
 	}
 	if a.depth() != b.depth() {
 		if audit != nil {
 			audit.recordStackEquivDepthMismatch()
+			finishStackEquivalentForAudit(audit, pairKey, pairKeyOK, pairPrevious, pairHit, false)
 		}
 		return false
 	}
 	if a.gss.head != nil && b.gss.head != nil {
 		eq := gssStacksEqualForLanguageWithScratch(scratch, lang, a.gss, b.gss)
-		if eq && perfCountersEnabled {
-			perfRecordStackEquivalentTrue()
-		}
-		if eq && audit != nil {
-			audit.recordStackEquivTrue()
-		}
-		return eq
+		return finishStackEquivalentResultForAudit(audit, pairKey, pairKeyOK, pairPrevious, pairHit, eq)
 	}
 	if a.gss.head != nil {
 		eq := gssStackEntriesEqualForLanguageWithScratch(scratch, lang, a.gss, b.entries)
-		if eq && perfCountersEnabled {
-			perfRecordStackEquivalentTrue()
-		}
-		if eq && audit != nil {
-			audit.recordStackEquivTrue()
-		}
-		return eq
+		return finishStackEquivalentResultForAudit(audit, pairKey, pairKeyOK, pairPrevious, pairHit, eq)
 	}
 	if b.gss.head != nil {
 		eq := gssStackEntriesEqualForLanguageWithScratch(scratch, lang, b.gss, a.entries)
-		if eq && perfCountersEnabled {
-			perfRecordStackEquivalentTrue()
-		}
-		if eq && audit != nil {
-			audit.recordStackEquivTrue()
-		}
-		return eq
+		return finishStackEquivalentResultForAudit(audit, pairKey, pairKeyOK, pairPrevious, pairHit, eq)
 	}
 	eq := stackEntriesEqualForLanguageWithScratch(scratch, lang, a.entries, b.entries)
-	if eq && perfCountersEnabled {
+	return finishStackEquivalentResultForAudit(audit, pairKey, pairKeyOK, pairPrevious, pairHit, eq)
+}
+
+func stackEquivPairKeyForAudit(a, b glrStack) (runtimeAuditStackEquivPairKey, bool) {
+	if a.gss.head == nil || b.gss.head == nil {
+		return runtimeAuditStackEquivPairKey{}, false
+	}
+	ap := uintptr(unsafe.Pointer(a.gss.head))
+	bp := uintptr(unsafe.Pointer(b.gss.head))
+	if ap == 0 || bp == 0 {
+		return runtimeAuditStackEquivPairKey{}, false
+	}
+	if ap > bp {
+		ap, bp = bp, ap
+	}
+	depth := a.gss.head.depth
+	if b.gss.head.depth > depth {
+		depth = b.gss.head.depth
+	}
+	return runtimeAuditStackEquivPairKey{
+		a:     ap,
+		b:     bp,
+		depth: uint32(depth),
+	}, true
+}
+
+func finishStackEquivalentResultForAudit(audit *runtimeAudit, pairKey runtimeAuditStackEquivPairKey, pairKeyOK bool, pairPrevious bool, pairHit bool, result bool) bool {
+	if result && perfCountersEnabled {
 		perfRecordStackEquivalentTrue()
 	}
-	if eq && audit != nil {
-		audit.recordStackEquivTrue()
+	if audit != nil {
+		if result {
+			audit.recordStackEquivTrue()
+		}
+		finishStackEquivalentForAudit(audit, pairKey, pairKeyOK, pairPrevious, pairHit, result)
 	}
-	return eq
+	return result
+}
+
+func finishStackEquivalentForAudit(audit *runtimeAudit, pairKey runtimeAuditStackEquivPairKey, pairKeyOK bool, pairPrevious bool, pairHit bool, result bool) {
+	if audit == nil || !pairKeyOK {
+		return
+	}
+	audit.storeStackEquivPair(pairKey, pairPrevious, pairHit, result)
 }
 
 func gssStackEntriesEqualForLanguageWithScratch(scratch *glrMergeScratch, lang *Language, gss gssStack, entries []stackEntry) bool {
@@ -709,24 +776,35 @@ func gssStackEntriesEqualForLanguageWithScratch(scratch *glrMergeScratch, lang *
 	}
 	audit := activeEquivAudit(scratch)
 	i := len(entries) - 1
-	for n := gss.head; n != nil; n = n.prev {
+	if audit == nil {
+		for n := gss.head; n != nil; n = n.prev {
+			if i < 0 {
+				return false
+			}
+			e := entries[i]
+			if n.entry.state != e.state {
+				return false
+			}
+			if !stackEntryPayloadsEquivalentForLanguageWithScratch(scratch, lang, n.entry, e) {
+				return false
+			}
+			i--
+		}
+		return i == -1
+	}
+	for n, depthFromTop := gss.head, 0; n != nil; n, depthFromTop = n.prev, depthFromTop+1 {
 		if i < 0 {
 			return false
 		}
 		e := entries[i]
-		if audit != nil {
-			audit.recordStackEquivEntryCompare()
-		}
+		audit.recordStackEquivEntryCompare()
 		if n.entry.state != e.state {
-			if audit != nil {
-				audit.recordStackEquivStateMismatch()
-			}
+			audit.recordStackEquivStateMismatchAt(depthFromTop)
 			return false
 		}
 		if !stackEntryPayloadsEquivalentForLanguageWithScratch(scratch, lang, n.entry, e) {
-			if audit != nil {
-				audit.recordStackEquivPayloadMismatch()
-			}
+			audit.recordStackEquivPayloadMismatchAt(depthFromTop)
+			audit.recordStackEquivPayloadMismatchSignatures(n.entry, e)
 			return false
 		}
 		i--
@@ -765,6 +843,81 @@ func stackEntryPayloadsEquivalentForLanguageWithScratch(scratch *glrMergeScratch
 		return false
 	}
 	return true
+}
+
+func stackEntryExactHeaderSignature(e stackEntry) uint64 {
+	h := gssHashSeed
+	h = mixStackEquivSignature(h, uint64(e.kind))
+	h = mixStackEquivSignature(h, uint64(e.state))
+	if !stackEntryHasNode(e) {
+		return mixStackEquivSignature(h, gssNilNodeSentinel)
+	}
+	h = mixStackEquivSignature(h, uint64(stackEntryNodeSymbol(e)))
+	h = mixStackEquivSignature(h, (uint64(stackEntryNodeStartByte(e))<<32)|uint64(stackEntryNodeEndByte(e)))
+	h = mixStackEquivSignature(h, uint64(stackEntryNodeChildCount(e)))
+	h = mixStackEquivSignature(h, uint64(stackEntryNodeFieldIDCount(e)))
+	h = mixStackEquivSignature(h, uint64(stackEntryNodeParseState(e)))
+	h = mixStackEquivSignature(h, uint64(stackEntryNodePreGotoState(e)))
+	h = mixStackEquivSignature(h, uint64(stackEntryNodeProductionID(e)))
+	h = mixStackEquivSignature(h, uint64(stackEntryNodeExactFlagBits(e)))
+	return h
+}
+
+func stackEntryExactShallowSignature(e stackEntry) uint64 {
+	h := stackEntryExactHeaderSignature(e)
+	n := stackEntryNode(e)
+	if n == nil {
+		return h
+	}
+	h = mixStackEquivSignature(h, uint64(len(n.fieldIDs)))
+	for i := range n.fieldIDs {
+		h = mixStackEquivSignature(h, uint64(n.fieldIDs[i]))
+	}
+	h = mixStackEquivSignature(h, uint64(len(n.children)))
+	for i := range n.children {
+		h = mixStackEquivSignature(h, uint64(i))
+		h = mixStackEquivSignature(h, stackNodeExactHeaderSignature(n.children[i]))
+	}
+	return h
+}
+
+func stackNodeExactHeaderSignature(n *Node) uint64 {
+	h := gssHashSeed
+	if n == nil {
+		return mixStackEquivSignature(h, gssNilNodeSentinel)
+	}
+	h = mixStackEquivSignature(h, uint64(n.symbol))
+	h = mixStackEquivSignature(h, (uint64(n.startByte)<<32)|uint64(n.endByte))
+	h = mixStackEquivSignature(h, uint64(len(n.children)))
+	h = mixStackEquivSignature(h, uint64(len(n.fieldIDs)))
+	h = mixStackEquivSignature(h, uint64(n.parseState))
+	h = mixStackEquivSignature(h, uint64(n.preGotoState))
+	h = mixStackEquivSignature(h, uint64(n.productionID))
+	h = mixStackEquivSignature(h, uint64(n.flags&nodeStackEquivFlagMask))
+	return h
+}
+
+func stackEntryNodeExactFlagBits(e stackEntry) nodeFlags {
+	var flags nodeFlags
+	if stackEntryNodeIsExtra(e) {
+		flags |= nodeFlagExtra
+	}
+	if stackEntryNodeIsNamed(e) {
+		flags |= nodeFlagNamed
+	}
+	if stackEntryNodeIsMissing(e) {
+		flags |= nodeFlagMissing
+	}
+	if stackEntryNodeHasError(e) {
+		flags |= nodeFlagHasError
+	}
+	return flags
+}
+
+func mixStackEquivSignature(h, v uint64) uint64 {
+	h ^= v + 0x9e3779b97f4a7c15 + (h << 6) + (h >> 2)
+	h *= gssHashPrime
+	return h
 }
 
 func stackEntryNodesEquivalent(a, b *Node) bool {
@@ -993,7 +1146,7 @@ func stackEntryNodesExactlyEquivalentWithAudit(scratch *glrMergeScratch, audit *
 		}
 		return false
 	}
-	if hit, ok := lookupNodeEquivCache(scratch, a, b, depth); ok {
+	if hit, ok := lookupExactNodeEquivCache(scratch, a, b); ok {
 		if hit && audit != nil {
 			audit.recordEquivExactTrue()
 		}
@@ -1054,7 +1207,7 @@ func stackEntryNodesExactlyEquivalentWithAudit(scratch *glrMergeScratch, audit *
 				audit.recordEquivExactNilMismatch()
 				audit.recordEquivExactChildMismatch()
 			}
-			storeNodeEquivCache(scratch, a, b, depth, false)
+			storeExactNodeEquivCache(scratch, a, b, false)
 			return false
 		}
 		if len(ca.children) == 0 || len(cb.children) == 0 ||
@@ -1063,7 +1216,7 @@ func stackEntryNodesExactlyEquivalentWithAudit(scratch *glrMergeScratch, audit *
 				if audit != nil {
 					audit.recordEquivExactChildMismatch()
 				}
-				storeNodeEquivCache(scratch, a, b, depth, false)
+				storeExactNodeEquivCache(scratch, a, b, false)
 				return false
 			}
 			continue
@@ -1072,11 +1225,11 @@ func stackEntryNodesExactlyEquivalentWithAudit(scratch *glrMergeScratch, audit *
 			if audit != nil {
 				audit.recordEquivExactChildMismatch()
 			}
-			storeNodeEquivCache(scratch, a, b, depth, false)
+			storeExactNodeEquivCache(scratch, a, b, false)
 			return false
 		}
 	}
-	storeNodeEquivCache(scratch, a, b, depth, true)
+	storeExactNodeEquivCache(scratch, a, b, true)
 	if audit != nil {
 		audit.recordEquivExactTrue()
 	}
@@ -1090,7 +1243,7 @@ func stackEntryNodesExactlyEquivalentNoAudit(scratch *glrMergeScratch, a, b *Nod
 	if a == nil || b == nil {
 		return false
 	}
-	if hit, ok := lookupNodeEquivCacheNoAudit(scratch, a, b, depth); ok {
+	if hit, ok := lookupExactNodeEquivCacheNoAudit(scratch, a, b); ok {
 		return hit
 	}
 	if a.symbol != b.symbol ||
@@ -1122,23 +1275,23 @@ func stackEntryNodesExactlyEquivalentNoAudit(scratch *glrMergeScratch, a, b *Nod
 			continue
 		}
 		if ca == nil || cb == nil {
-			storeNodeEquivCacheNoAudit(scratch, a, b, depth, false)
+			storeExactNodeEquivCacheNoAudit(scratch, a, b, false)
 			return false
 		}
 		if len(ca.children) == 0 || len(cb.children) == 0 ||
 			ca.flags&nodeFlagHasError != 0 || cb.flags&nodeFlagHasError != 0 {
 			if !stackEntryNodesExactlyEquivalentTerminalNoAudit(ca, cb) {
-				storeNodeEquivCacheNoAudit(scratch, a, b, depth, false)
+				storeExactNodeEquivCacheNoAudit(scratch, a, b, false)
 				return false
 			}
 			continue
 		}
 		if !stackEntryNodesExactlyEquivalentNoAudit(scratch, ca, cb, depth+1) {
-			storeNodeEquivCacheNoAudit(scratch, a, b, depth, false)
+			storeExactNodeEquivCacheNoAudit(scratch, a, b, false)
 			return false
 		}
 	}
-	storeNodeEquivCacheNoAudit(scratch, a, b, depth, true)
+	storeExactNodeEquivCacheNoAudit(scratch, a, b, true)
 	return true
 }
 
@@ -1571,6 +1724,9 @@ func mergeStacksSmallForLanguage(alive []glrStack, scratch *glrMergeScratch, lan
 	if len(alive) <= 1 {
 		return alive
 	}
+	if scratch != nil && scratch.deferExactDedupe {
+		return mergeStacksSmallDeferExact(alive, scratch, lang)
+	}
 	result := alive[:0]
 	for i := range alive {
 		stack := alive[i]
@@ -1591,6 +1747,53 @@ func mergeStacksSmallForLanguage(alive []glrStack, scratch *glrMergeScratch, lan
 					duplicateIndex = j
 					break
 				}
+			}
+			if stackEquivalentForMergeState(scratch, lang, key.state, result[j], stack) {
+				duplicateIndex = j
+				break
+			}
+		}
+		if duplicateIndex < 0 {
+			result = append(result, stack)
+			continue
+		}
+		if stackCompareMerge(&stack, &result[duplicateIndex]) >= 0 {
+			result[duplicateIndex] = stack
+		}
+	}
+	return result
+}
+
+func mergeStacksSmallDeferExact(alive []glrStack, scratch *glrMergeScratch, lang *Language) []glrStack {
+	perKeyCap := maxStacksPerMergeKey
+	if scratch != nil && scratch.perKeyCap > 0 {
+		perKeyCap = scratch.perKeyCap
+	}
+	result := alive[:0]
+	for i := range alive {
+		stack := alive[i]
+		key := mergeKeyForStack(stack)
+		duplicateIndex := -1
+		sameKeyCount := 0
+		for j := range result {
+			if mergeKeyForStack(result[j]) != key {
+				continue
+			}
+			sameKeyCount++
+			if scratch != nil && scratch.perKeyCap == 1 {
+				cmp := stackCompareMergeSmallCapOne(&stack, &result[j])
+				if cmp > 0 {
+					result[j] = stack
+					duplicateIndex = j
+					break
+				}
+				if cmp < 0 {
+					duplicateIndex = j
+					break
+				}
+			}
+			if sameKeyCount < perKeyCap {
+				continue
 			}
 			if stackEquivalentForMergeState(scratch, lang, key.state, result[j], stack) {
 				duplicateIndex = j
@@ -1665,6 +1868,9 @@ func mergeStacksWithScratch(stacks []glrStack, scratch *glrMergeScratch) []glrSt
 	}
 	if perKeyCap > maxStacksPerMergeKey {
 		return mergeStacksWithScratchLargeCap(alive, scratch, perKeyCap)
+	}
+	if scratch.deferExactDedupe {
+		return mergeStacksWithScratchDeferExact(alive, scratch, perKeyCap)
 	}
 
 	// Merge exact duplicates and keep a bounded number of distinct
@@ -1769,6 +1975,138 @@ func mergeStacksWithScratch(stacks []glrStack, scratch *glrMergeScratch) []glrSt
 
 		// Per-key alternative budget reached: replace the weakest
 		// retained candidate only if this stack is better.
+		if slot.worstIndex >= 0 {
+			replacedSlot := -1
+			for j := 0; j < slot.count; j++ {
+				if slot.indices[j] == slot.worstIndex {
+					replacedSlot = j
+					break
+				}
+			}
+			incumbentHash := uint64(0)
+			if replacedSlot >= 0 {
+				incumbentHash = slot.hashes[replacedSlot]
+			}
+			if !preferOverflowCandidate(&stack, &result[slot.worstIndex], hash, incumbentHash) {
+				continue
+			}
+			if perfCountersEnabled {
+				perfRecordMergeReplacement()
+			}
+			result[slot.worstIndex] = stack
+			if replacedSlot >= 0 {
+				slot.hashes[replacedSlot] = hash
+				slot.hashMask = recomputeMergeSlotHashMask(slot)
+			}
+			slot.worstIndex = recomputeMergeSlotWorst(slot, result)
+		}
+	}
+	if perfCountersEnabled {
+		perfRecordMergeOut(len(result))
+	}
+	if scratch.audit != nil {
+		scratch.audit.recordMerge(len(alive), len(result), slotCount)
+	}
+	scratch.result = result
+	scratch.slots = slots[:slotCount]
+	return result
+}
+
+func mergeStacksWithScratchDeferExact(alive []glrStack, scratch *glrMergeScratch, perKeyCap int) []glrStack {
+	result := ensureMergeResultCap(scratch, len(alive))
+	slots := ensureMergeSlotCap(scratch, len(alive))
+	slotCount := 0
+	for i := range alive {
+		stack := alive[i]
+		hash := stackHash(stack)
+		key := mergeKeyForStack(stack)
+
+		slotIndex := -1
+		for si := 0; si < slotCount; si++ {
+			if slots[si].key == key {
+				slotIndex = si
+				break
+			}
+		}
+		if slotIndex < 0 {
+			slotIndex = slotCount
+			slotCount++
+			slots[slotIndex].key = key
+			slots[slotIndex].count = 0
+			slots[slotIndex].worstIndex = -1
+			slots[slotIndex].hashMask = 0
+		}
+		slot := &slots[slotIndex]
+
+		if perKeyCap == 1 && slot.count == 1 {
+			idx := slot.indices[0]
+			cmp := stackCompareMerge(&stack, &result[idx])
+			if cmp > 0 {
+				result[idx] = stack
+				slot.hashes[0] = hash
+				slot.hashMask = mergeHashBit(hash)
+				slot.worstIndex = idx
+				if perfCountersEnabled {
+					perfRecordMergeReplacement()
+				}
+				continue
+			}
+			if cmp < 0 {
+				continue
+			}
+		}
+
+		duplicateIndex := -1
+		hashMatched := false
+		if slot.count >= perKeyCap && (slot.hashMask&mergeHashBit(hash)) != 0 {
+			for j := 0; j < slot.count; j++ {
+				if slot.hashes[j] != hash {
+					continue
+				}
+				hashMatched = true
+				idx := slot.indices[j]
+				existing := &result[idx]
+				if stackEquivalentForMergeState(scratch, scratch.language, key.state, *existing, stack) {
+					duplicateIndex = idx
+					break
+				}
+			}
+		}
+		if !hashMatched && slot.count >= perKeyCap && perfCountersEnabled {
+			perfRecordStackEquivalentHashMissSkip()
+		}
+		if duplicateIndex >= 0 {
+			if stackCompareMerge(&stack, &result[duplicateIndex]) >= 0 {
+				result[duplicateIndex] = stack
+				for j := 0; j < slot.count; j++ {
+					if slot.indices[j] == duplicateIndex {
+						slot.hashes[j] = hash
+						break
+					}
+				}
+				if slot.worstIndex == duplicateIndex {
+					slot.worstIndex = recomputeMergeSlotWorst(slot, result)
+				}
+			}
+			continue
+		}
+
+		if slot.count < perKeyCap {
+			idx := len(result)
+			result = append(result, stack)
+			slot.indices[slot.count] = idx
+			slot.hashes[slot.count] = hash
+			slot.hashMask |= mergeHashBit(hash)
+			slot.count++
+			if slot.worstIndex < 0 || stackCompareMerge(&result[idx], &result[slot.worstIndex]) < 0 {
+				slot.worstIndex = idx
+			}
+			continue
+		}
+		if perfCountersEnabled {
+			perfRecordMergePerKeyOverflow()
+		}
+
 		if slot.worstIndex >= 0 {
 			replacedSlot := -1
 			for j := 0; j < slot.count; j++ {

@@ -1631,6 +1631,23 @@ func recordParseRuntimeLoopStats(parseRuntime *ParseRuntime, scratch *parserScra
 	parseRuntime.StackEquivStateMismatch = scratch.audit.stackEquivStateMismatch
 	parseRuntime.StackEquivPayloadMismatch = scratch.audit.stackEquivPayloadMismatch
 	parseRuntime.StackEquivEntryCompares = scratch.audit.stackEquivEntryCompares
+	parseRuntime.StackEquivStateMismatchDepthSum = scratch.audit.stackEquivStateMismatchDepthSum
+	parseRuntime.StackEquivStateMismatchMaxDepth = scratch.audit.stackEquivStateMismatchMaxDepth
+	parseRuntime.StackEquivStateMismatchDepthBuckets = scratch.audit.stackEquivStateMismatchDepthBuckets
+	parseRuntime.StackEquivPayloadMismatchDepthSum = scratch.audit.stackEquivPayloadMismatchDepthSum
+	parseRuntime.StackEquivPayloadMismatchMaxDepth = scratch.audit.stackEquivPayloadMismatchMaxDepth
+	parseRuntime.StackEquivPayloadMismatchDepthBuckets = scratch.audit.stackEquivPayloadMismatchDepthBuckets
+	parseRuntime.StackEquivPayloadHeaderSigDiff = scratch.audit.stackEquivPayloadHeaderSigDiff
+	parseRuntime.StackEquivPayloadHeaderSigSame = scratch.audit.stackEquivPayloadHeaderSigSame
+	parseRuntime.StackEquivPayloadShallowSigDiff = scratch.audit.stackEquivPayloadShallowSigDiff
+	parseRuntime.StackEquivPayloadShallowSigSame = scratch.audit.stackEquivPayloadShallowSigSame
+	parseRuntime.StackEquivPairKeyed = scratch.audit.stackEquivPairKeyed
+	parseRuntime.StackEquivPairUnkeyed = scratch.audit.stackEquivPairUnkeyed
+	parseRuntime.StackEquivPairRepeats = scratch.audit.stackEquivPairRepeats
+	parseRuntime.StackEquivPairRepeatTrue = scratch.audit.stackEquivPairRepeatTrue
+	parseRuntime.StackEquivPairRepeatFalse = scratch.audit.stackEquivPairRepeatFalse
+	parseRuntime.StackEquivPairRepeatMismatch = scratch.audit.stackEquivPairRepeatMismatch
+	parseRuntime.StackEquivPairStores = scratch.audit.stackEquivPairStores
 	parseRuntime.EquivCacheLookups = scratch.audit.equivCacheLookups
 	parseRuntime.EquivCacheHits = scratch.audit.equivCacheHits
 	parseRuntime.EquivCacheStores = scratch.audit.equivCacheStores
@@ -2903,6 +2920,7 @@ func (p *Parser) prepareParseStacksForIteration(stacks []glrStack, scratch *pars
 		return result
 	}
 	scratch.merge.language = p.language
+	scratch.merge.deferExactDedupe = !p.noTreeBenchmarkOnly && p.language != nil && (p.language.Name == "typescript" || p.language.Name == "tsx")
 	if p.ambiguityProfile != nil {
 		p.ambiguityProfile.recordMergeBefore(stacks)
 	}

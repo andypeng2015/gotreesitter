@@ -111,7 +111,7 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) {
 	case "svelte":
 		normalizeSvelteTrailingExtraTrivia(ctx.root, ctx.source, ctx.lang)
 	case "tsx", "typescript":
-		normalizeTypeScriptTreeCompatibility(ctx.root, ctx.source, ctx.lang)
+		normalizeTypeScriptTreeCompatibilityWithParser(ctx.root, ctx.source, ctx.parser, ctx.lang)
 	case "yaml":
 		normalizeYAMLRecoveredRoot(ctx.root, ctx.source, ctx.lang)
 	case "zig":

@@ -573,40 +573,57 @@ type PendingParentFieldRejectPayloadStats struct {
 }
 
 type ParseEquivStateRuntime struct {
-	State                          StateID
-	StackEquivCalls                uint64
-	StackEquivTrue                 uint64
-	StackEquivDepthMismatch        uint64
-	StackEquivHashMismatch         uint64
-	StackEquivStateMismatch        uint64
-	StackEquivPayloadMismatch      uint64
-	StackEquivEntryCompares        uint64
-	EquivCacheLookups              uint64
-	EquivCacheHits                 uint64
-	EquivCacheStores               uint64
-	EquivCacheMisses               uint64
-	EquivCacheTrueHits             uint64
-	EquivCacheFalseHits            uint64
-	EquivCacheEpochMisses          uint64
-	EquivCacheKeyMisses            uint64
-	EquivCacheVersionMisses        uint64
-	EquivSkipError                 uint64
-	EquivSkipLeaf                  uint64
-	EquivSkipFieldMismatch         uint64
-	EquivExactCalls                uint64
-	EquivExactTrue                 uint64
-	EquivExactPointerTrue          uint64
-	EquivExactNilMismatch          uint64
-	EquivExactHeaderMismatch       uint64
-	EquivExactChildMismatch        uint64
-	EquivExactTerminalCalls        uint64
-	EquivExactTerminalTrue         uint64
-	EquivExactTerminalFalse        uint64
-	EquivFrontierCalls             uint64
-	EquivFrontierTrue              uint64
-	EquivExactChildCompares        uint64
-	EquivFrontierChildScans        uint64
-	EquivFrontierCandidateCompares uint64
+	State                                 StateID
+	StackEquivCalls                       uint64
+	StackEquivTrue                        uint64
+	StackEquivDepthMismatch               uint64
+	StackEquivHashMismatch                uint64
+	StackEquivStateMismatch               uint64
+	StackEquivPayloadMismatch             uint64
+	StackEquivEntryCompares               uint64
+	StackEquivStateMismatchDepthSum       uint64
+	StackEquivStateMismatchMaxDepth       uint32
+	StackEquivStateMismatchDepthBuckets   [stackEquivMismatchDepthBucketCount]uint64
+	StackEquivPayloadMismatchDepthSum     uint64
+	StackEquivPayloadMismatchMaxDepth     uint32
+	StackEquivPayloadMismatchDepthBuckets [stackEquivMismatchDepthBucketCount]uint64
+	StackEquivPayloadHeaderSigDiff        uint64
+	StackEquivPayloadHeaderSigSame        uint64
+	StackEquivPayloadShallowSigDiff       uint64
+	StackEquivPayloadShallowSigSame       uint64
+	StackEquivPairKeyed                   uint64
+	StackEquivPairUnkeyed                 uint64
+	StackEquivPairRepeats                 uint64
+	StackEquivPairRepeatTrue              uint64
+	StackEquivPairRepeatFalse             uint64
+	StackEquivPairRepeatMismatch          uint64
+	StackEquivPairStores                  uint64
+	EquivCacheLookups                     uint64
+	EquivCacheHits                        uint64
+	EquivCacheStores                      uint64
+	EquivCacheMisses                      uint64
+	EquivCacheTrueHits                    uint64
+	EquivCacheFalseHits                   uint64
+	EquivCacheEpochMisses                 uint64
+	EquivCacheKeyMisses                   uint64
+	EquivCacheVersionMisses               uint64
+	EquivSkipError                        uint64
+	EquivSkipLeaf                         uint64
+	EquivSkipFieldMismatch                uint64
+	EquivExactCalls                       uint64
+	EquivExactTrue                        uint64
+	EquivExactPointerTrue                 uint64
+	EquivExactNilMismatch                 uint64
+	EquivExactHeaderMismatch              uint64
+	EquivExactChildMismatch               uint64
+	EquivExactTerminalCalls               uint64
+	EquivExactTerminalTrue                uint64
+	EquivExactTerminalFalse               uint64
+	EquivFrontierCalls                    uint64
+	EquivFrontierTrue                     uint64
+	EquivExactChildCompares               uint64
+	EquivFrontierChildScans               uint64
+	EquivFrontierCandidateCompares        uint64
 }
 
 // ParseRuntime captures parser-loop diagnostics for a completed tree.
@@ -695,6 +712,23 @@ type ParseRuntime struct {
 	StackEquivStateMismatch                      uint64
 	StackEquivPayloadMismatch                    uint64
 	StackEquivEntryCompares                      uint64
+	StackEquivStateMismatchDepthSum              uint64
+	StackEquivStateMismatchMaxDepth              uint32
+	StackEquivStateMismatchDepthBuckets          [stackEquivMismatchDepthBucketCount]uint64
+	StackEquivPayloadMismatchDepthSum            uint64
+	StackEquivPayloadMismatchMaxDepth            uint32
+	StackEquivPayloadMismatchDepthBuckets        [stackEquivMismatchDepthBucketCount]uint64
+	StackEquivPayloadHeaderSigDiff               uint64
+	StackEquivPayloadHeaderSigSame               uint64
+	StackEquivPayloadShallowSigDiff              uint64
+	StackEquivPayloadShallowSigSame              uint64
+	StackEquivPairKeyed                          uint64
+	StackEquivPairUnkeyed                        uint64
+	StackEquivPairRepeats                        uint64
+	StackEquivPairRepeatTrue                     uint64
+	StackEquivPairRepeatFalse                    uint64
+	StackEquivPairRepeatMismatch                 uint64
+	StackEquivPairStores                         uint64
 	EquivCacheLookups                            uint64
 	EquivCacheHits                               uint64
 	EquivCacheStores                             uint64
@@ -816,6 +850,16 @@ type ParseRuntime struct {
 	NormalizationNodesVisited           uint64
 	NormalizationNodesRewritten         uint64
 	NormalizationNanos                  int64
+	NormalizationPasses                 *[]NormalizationPassRuntime
+}
+
+type NormalizationPassRuntime struct {
+	Name           string
+	Checked        uint64
+	Run            uint64
+	NodesVisited   uint64
+	NodesRewritten uint64
+	Nanos          int64
 }
 
 type ParseReduceTiming struct {
