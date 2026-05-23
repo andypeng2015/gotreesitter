@@ -153,6 +153,9 @@ if [[ "$BUILD_IMAGE" == "0" ]]; then
   BUILD_ARG=(--no-build)
 fi
 REDUCE_CHAIN_HINTS="${GOT_GLR_REDUCE_CHAIN_HINTS-}"
+GLR_MAX_STACKS="${GOT_GLR_MAX_STACKS-}"
+GLR_MAX_MERGE_PER_KEY="${GOT_GLR_MAX_MERGE_PER_KEY-}"
+PARSE_NODE_LIMIT_SCALE="${GOT_PARSE_NODE_LIMIT_SCALE-}"
 
 {
   echo "commit=$(git -C "$REPO_ROOT" rev-parse HEAD)"
@@ -182,6 +185,9 @@ REDUCE_CHAIN_HINTS="${GOT_GLR_REDUCE_CHAIN_HINTS-}"
   echo "reduce_timing=$REDUCE_TIMING"
   echo "action_timing=$ACTION_TIMING"
   echo "got_glr_reduce_chain_hints=$REDUCE_CHAIN_HINTS"
+  echo "got_glr_max_stacks=$GLR_MAX_STACKS"
+  echo "got_glr_max_merge_per_key=$GLR_MAX_MERGE_PER_KEY"
+  echo "got_parse_node_limit_scale=$PARSE_NODE_LIMIT_SCALE"
 } >"$OUT_DIR/wrapper-metadata.txt"
 
 allow_arg_text=""
@@ -236,6 +242,9 @@ env \
   $reduce_timing_env_text \
   $action_timing_env_text \
   GOT_GLR_REDUCE_CHAIN_HINTS='$REDUCE_CHAIN_HINTS' \
+  GOT_GLR_MAX_STACKS='$GLR_MAX_STACKS' \
+  GOT_GLR_MAX_MERGE_PER_KEY='$GLR_MAX_MERGE_PER_KEY' \
+  GOT_PARSE_NODE_LIMIT_SCALE='$PARSE_NODE_LIMIT_SCALE' \
   GTS_PARSE_GAP_DOCKER_IMAGE='$IMAGE_TAG' \
   GTS_PARSE_GAP_CPUS='$CPUS_LIMIT' \
   GTS_PARSE_GAP_MEMORY='$MEMORY_LIMIT' \
@@ -247,6 +256,9 @@ env \
   $reduce_timing_env_text \
   $action_timing_env_text \
   GOT_GLR_REDUCE_CHAIN_HINTS='$REDUCE_CHAIN_HINTS' \
+  GOT_GLR_MAX_STACKS='$GLR_MAX_STACKS' \
+  GOT_GLR_MAX_MERGE_PER_KEY='$GLR_MAX_MERGE_PER_KEY' \
+  GOT_PARSE_NODE_LIMIT_SCALE='$PARSE_NODE_LIMIT_SCALE' \
   GTS_PARSE_GAP_DOCKER_IMAGE='$IMAGE_TAG' \
   GTS_PARSE_GAP_CPUS='$CPUS_LIMIT' \
   GTS_PARSE_GAP_MEMORY='$MEMORY_LIMIT' \
