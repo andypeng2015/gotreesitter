@@ -9,6 +9,20 @@ for tags and release notes while still in `0.x`.
 
 - Nothing yet.
 
+## [0.19.1] - 2026-05-23
+
+Kotlin source-file query compatibility patch.
+
+### Fixed
+- Kotlin recovered parse roots that contain top-level package/import/class
+  nodes are now returned as `source_file` roots instead of `ERROR` roots, while
+  preserving child error state for diagnostics.
+- Fragmented top-level Kotlin `fun` declarations recovered under an error root
+  now expose enough `function_declaration` shape for existing
+  `source_file -> function_declaration -> simple_identifier` queries to keep
+  matching. This preserves downstream Aspect/Gazelle Orion queries without AXL
+  rewrites on files with recoverable syntax errors.
+
 ## [0.19.0] - 2026-05-23
 
 GLR materialization, query parity, and parser hot-path release.
@@ -730,7 +744,8 @@ Warm-reuse throughput ~10 % higher. 206-grammar parity green under `GTS_PARITY_M
 - Initial standalone pure-Go runtime module.
 - External scanner VM foundation and base parser/lexer/tree infrastructure.
 
-[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.19.0...HEAD
+[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.19.1...HEAD
+[0.19.1]: https://github.com/odvcencio/gotreesitter/compare/v0.19.0...v0.19.1
 [0.19.0]: https://github.com/odvcencio/gotreesitter/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/odvcencio/gotreesitter/compare/v0.17.4...v0.18.0
 [0.17.4]: https://github.com/odvcencio/gotreesitter/compare/v0.17.3...v0.17.4

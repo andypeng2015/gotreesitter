@@ -62,3 +62,81 @@ func TestKotlinNestedImportQueryMatchesRepeatedHeaders(t *testing.T) {
 		t.Fatal("expected wildcard_import capture")
 	}
 }
+
+func TestKotlinRecoveredRootPreservesSourceFileQueries(t *testing.T) {
+	src := []byte(`package com.example.deepimport
+
+import com.google.common.base.pretend.deep.Thing
+import com.google.common.base.pretend.deep.Things as ThingsHelper
+
+class DeepCompare() {}
+
+fun main(vararg args: string) {
+    var app = new DeepCompare();
+    System.out.println("Success: " + app.compare(Thing(1), Thing(2)));
+}
+`)
+	lang := grammars.KotlinLanguage()
+	parser := gotreesitter.NewParser(lang)
+	tree, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	defer tree.Release()
+
+	if got := tree.RootNode().Type(lang); got != "source_file" {
+		t.Fatalf("root type = %q, want source_file:\n%s", got, tree.RootNode().SExpr(lang))
+	}
+
+	q, err := gotreesitter.NewQuery(`
+		(source_file
+			(import_list
+				(import_header (identifier) @imp)
+			)
+		)
+
+		(source_file
+			(function_declaration
+				(simple_identifier) @fn
+				(#eq? @fn "main")
+			)
+		)
+	`, lang)
+	if err != nil {
+		t.Fatalf("NewQuery failed: %v", err)
+	}
+
+	cursor := q.Exec(tree.RootNode(), lang, src)
+	var imports []string
+	var hasMain bool
+	for {
+		match, ok := cursor.NextMatch()
+		if !ok {
+			break
+		}
+		for _, capture := range match.Captures {
+			switch capture.Name {
+			case "imp":
+				imports = append(imports, capture.Text(src))
+			case "fn":
+				hasMain = true
+			}
+		}
+	}
+
+	wantImports := []string{
+		"com.google.common.base.pretend.deep.Thing",
+		"com.google.common.base.pretend.deep.Things",
+	}
+	if len(imports) != len(wantImports) {
+		t.Fatalf("imports = %v, want %v", imports, wantImports)
+	}
+	for i := range wantImports {
+		if imports[i] != wantImports[i] {
+			t.Fatalf("imports = %v, want %v", imports, wantImports)
+		}
+	}
+	if !hasMain {
+		t.Fatal("expected recovered main function to match source_file-rooted query")
+	}
+}
