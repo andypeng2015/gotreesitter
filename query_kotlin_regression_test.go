@@ -97,6 +97,7 @@ fun main(vararg args: string) {
 
 		(source_file
 			(function_declaration
+				"fun" @fn_keyword
 				(simple_identifier) @fn
 				(#eq? @fn "main")
 			)
@@ -109,6 +110,7 @@ fun main(vararg args: string) {
 	cursor := q.Exec(tree.RootNode(), lang, src)
 	var imports []string
 	var hasMain bool
+	var hasFunKeyword bool
 	for {
 		match, ok := cursor.NextMatch()
 		if !ok {
@@ -120,6 +122,8 @@ fun main(vararg args: string) {
 				imports = append(imports, capture.Text(src))
 			case "fn":
 				hasMain = true
+			case "fn_keyword":
+				hasFunKeyword = capture.Text(src) == "fun"
 			}
 		}
 	}
@@ -138,5 +142,8 @@ fun main(vararg args: string) {
 	}
 	if !hasMain {
 		t.Fatal("expected recovered main function to match source_file-rooted query")
+	}
+	if !hasFunKeyword {
+		t.Fatal("expected recovered function declaration to expose fun keyword")
 	}
 }

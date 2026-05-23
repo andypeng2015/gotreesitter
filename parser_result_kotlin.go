@@ -52,6 +52,10 @@ func normalizeKotlinTopLevelFunctionFragments(root *Node, source []byte, lang *L
 	if !ok {
 		return
 	}
+	funSym, ok := symbolByName(lang, "fun")
+	if !ok {
+		return
+	}
 	children := resultChildSliceForMutation(root)
 	if len(children) < 3 {
 		return
@@ -59,7 +63,7 @@ func normalizeKotlinTopLevelFunctionFragments(root *Node, source []byte, lang *L
 	var rebuilt []*Node
 	changed := false
 	for i := 0; i < len(children); i++ {
-		if fn, ok := kotlinRecoveredTopLevelFunction(children, i, source, lang, fnSym); ok {
+		if fn, ok := kotlinRecoveredTopLevelFunction(children, i, source, lang, fnSym, funSym); ok {
 			rebuilt = append(rebuilt, fn)
 			i += 2
 			changed = true
@@ -73,7 +77,7 @@ func normalizeKotlinTopLevelFunctionFragments(root *Node, source []byte, lang *L
 	replaceNodeChildrenUnfielded(root, cloneNodeSliceInArena(root.ownerArena, rebuilt))
 }
 
-func kotlinRecoveredTopLevelFunction(children []*Node, idx int, source []byte, lang *Language, fnSym Symbol) (*Node, bool) {
+func kotlinRecoveredTopLevelFunction(children []*Node, idx int, source []byte, lang *Language, fnSym, funSym Symbol) (*Node, bool) {
 	if idx+2 >= len(children) {
 		return nil, false
 	}
@@ -89,10 +93,11 @@ func kotlinRecoveredTopLevelFunction(children []*Node, idx int, source []byte, l
 	if name.Type(lang) != "simple_identifier" || params.Type(lang) != "function_value_parameters" {
 		return nil, false
 	}
-	fnChildren := cloneNodeSliceInArena(funKeyword.ownerArena, []*Node{name, params})
+	retagResultRoot(funKeyword, funSym, symbolIsNamed(lang, funSym))
+	funKeyword.setHasError(false)
+	fnChildren := cloneNodeSliceInArena(funKeyword.ownerArena, []*Node{funKeyword, name, params})
 	fn := newParentNodeInArena(funKeyword.ownerArena, fnSym, symbolIsNamed(lang, fnSym), fnChildren, nil, 0)
-	fn.startByte = funKeyword.startByte
-	fn.startPoint = funKeyword.startPoint
+	fn.setHasError(true)
 	return fn, true
 }
 

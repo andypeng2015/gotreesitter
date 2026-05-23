@@ -18,10 +18,10 @@ Kotlin source-file query compatibility patch.
   nodes are now returned as `source_file` roots instead of `ERROR` roots, while
   preserving child error state for diagnostics.
 - Fragmented top-level Kotlin `fun` declarations recovered under an error root
-  now expose enough `function_declaration` shape for existing
-  `source_file -> function_declaration -> simple_identifier` queries to keep
-  matching. This preserves downstream Aspect/Gazelle Orion queries without AXL
-  rewrites on files with recoverable syntax errors.
+  now expose `function_declaration` shape with the `fun` keyword, name, and
+  parameter list, while retaining error state. This preserves downstream
+  Aspect/Gazelle Orion queries without AXL rewrites on files with recoverable
+  syntax errors.
 
 ## [0.19.0] - 2026-05-23
 
