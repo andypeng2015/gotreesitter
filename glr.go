@@ -320,6 +320,27 @@ func (s *glrStack) truncate(depth int) bool {
 	return true
 }
 
+func (s *glrStack) truncateBeforePush(depth int) bool {
+	if s.gss.head != nil {
+		if !s.gss.truncate(depth) {
+			return false
+		}
+		if s.entries != nil {
+			if depth <= len(s.entries) {
+				s.entries = s.entries[:depth]
+			} else {
+				s.entries = s.gss.materialize(s.entries[:0])
+			}
+		}
+		return true
+	}
+	if depth < 0 || depth > len(s.entries) {
+		return false
+	}
+	s.entries = s.entries[:depth]
+	return true
+}
+
 // mergeStacks removes dead stacks and collapses only truly duplicate
 // active stacks. Two stacks are considered merge-compatible only when
 // they share the same top parser state and byte position (matching the

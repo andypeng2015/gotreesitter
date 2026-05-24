@@ -1222,7 +1222,7 @@ func releaseReduceWindowEntries(tmpEntries *[]stackEntry, entries []stackEntry) 
 }
 
 func truncateStackForReduce(s *glrStack, targetDepth int) bool {
-	if targetDepth < 0 || !s.truncate(targetDepth) {
+	if targetDepth < 0 || !s.truncateBeforePush(targetDepth) {
 		s.dead = true
 		return false
 	}
@@ -1331,7 +1331,7 @@ func (p *Parser) tryFastVisibleReduceActionFromGSS(s *glrStack, act ParseAction,
 	}
 	parent.preGotoState = topState
 	parent.parseState = targetState
-	if !s.truncate(targetDepth) {
+	if !s.truncateBeforePush(targetDepth) {
 		s.dead = true
 		if tmpEntries != nil {
 			*tmpEntries = (*tmpEntries)[:0]
@@ -1637,7 +1637,7 @@ func (p *Parser) tryFastVisibleReduceActionFromGSSTransientParents(s *glrStack, 
 	}
 	parent.preGotoState = topState
 	parent.parseState = targetState
-	if !s.truncate(targetDepth) {
+	if !s.truncateBeforePush(targetDepth) {
 		s.dead = true
 		if tmpEntries != nil {
 			*tmpEntries = (*tmpEntries)[:0]
@@ -1696,7 +1696,7 @@ func (p *Parser) applyReduceActionFromGSSTransientParents(s *glrStack, act Parse
 				timing.reducePendingParentNanos += time.Since(pendingStart).Nanoseconds()
 			}
 			targetDepth := s.depth() - actualEnd
-			if targetDepth < 0 || !s.truncate(targetDepth) {
+			if targetDepth < 0 || !s.truncateBeforePush(targetDepth) {
 				s.dead = true
 				if tmpEntries != nil {
 					*tmpEntries = windowEntries[:0]
@@ -1734,7 +1734,7 @@ func (p *Parser) applyReduceActionFromGSSTransientParents(s *glrStack, act Parse
 
 	if child := p.collapsibleRawUnarySelfReduction(act, tok, arena, windowEntries, 0, reducedEnd); child != nil {
 		targetDepth := s.depth() - actualEnd
-		if targetDepth < 0 || !s.truncate(targetDepth) {
+		if targetDepth < 0 || !s.truncateBeforePush(targetDepth) {
 			s.dead = true
 			if tmpEntries != nil {
 				*tmpEntries = windowEntries[:0]
@@ -1760,7 +1760,7 @@ func (p *Parser) applyReduceActionFromGSSTransientParents(s *glrStack, act Parse
 	}
 
 	targetDepth := s.depth() - actualEnd
-	if targetDepth < 0 || !s.truncate(targetDepth) {
+	if targetDepth < 0 || !s.truncateBeforePush(targetDepth) {
 		s.dead = true
 		if tmpEntries != nil {
 			*tmpEntries = windowEntries[:0]
@@ -2169,7 +2169,7 @@ func (p *Parser) tryPushPendingNoFieldParent(s *glrStack, act ParseAction, tok T
 	}
 	parent.preGotoState = topState
 	parent.parseState = targetState
-	if !s.truncate(truncateDepth) {
+	if !s.truncateBeforePush(truncateDepth) {
 		s.dead = true
 		return true
 	}
@@ -2270,7 +2270,7 @@ func (p *Parser) tryPushPendingDirectFieldParent(s *glrStack, act ParseAction, t
 	}
 	parent.preGotoState = topState
 	parent.parseState = targetState
-	if !s.truncate(truncateDepth) {
+	if !s.truncateBeforePush(truncateDepth) {
 		s.dead = true
 		return true
 	}
@@ -4149,7 +4149,7 @@ func (p *Parser) applyReduceAction(s *glrStack, act ParseAction, tok Token, anyR
 		if timing != nil {
 			noTreeStart = time.Now()
 		}
-		if !s.truncate(window.start) {
+		if !s.truncateBeforePush(window.start) {
 			if timing != nil {
 				timing.reduceNoTreeBuildNanos += time.Since(noTreeStart).Nanoseconds()
 			}
@@ -4166,7 +4166,7 @@ func (p *Parser) applyReduceAction(s *glrStack, act ParseAction, tok Token, anyR
 	}
 	if p.usePendingFullParents() {
 		if child, ok := p.collapsibleRawUnarySelfReductionEntry(act, tok, arena, entries, window.start, window.reducedEnd); ok {
-			if !s.truncate(window.start) {
+			if !s.truncateBeforePush(window.start) {
 				s.dead = true
 				return
 			}
@@ -4194,7 +4194,7 @@ func (p *Parser) applyReduceAction(s *glrStack, act ParseAction, tok Token, anyR
 	}
 
 	if child := p.collapsibleRawUnarySelfReduction(act, tok, arena, entries, window.start, window.reducedEnd); child != nil {
-		if !s.truncate(window.start) {
+		if !s.truncateBeforePush(window.start) {
 			s.dead = true
 			return
 		}
@@ -4217,7 +4217,7 @@ func (p *Parser) applyReduceAction(s *glrStack, act ParseAction, tok Token, anyR
 	trailingEnd := window.actualEnd
 
 	// Pop all reduced entries in one step after collection.
-	if !s.truncate(window.start) {
+	if !s.truncateBeforePush(window.start) {
 		s.dead = true
 		return
 	}
@@ -4329,7 +4329,7 @@ func (p *Parser) applyReduceActionTransientParents(s *glrStack, act ParseAction,
 		if timing != nil {
 			noTreeStart = time.Now()
 		}
-		if !s.truncate(window.start) {
+		if !s.truncateBeforePush(window.start) {
 			if timing != nil {
 				timing.reduceNoTreeBuildNanos += time.Since(noTreeStart).Nanoseconds()
 			}
@@ -4346,7 +4346,7 @@ func (p *Parser) applyReduceActionTransientParents(s *glrStack, act ParseAction,
 	}
 	if p.usePendingFullParents() {
 		if child, ok := p.collapsibleRawUnarySelfReductionEntry(act, tok, arena, entries, window.start, window.reducedEnd); ok {
-			if !s.truncate(window.start) {
+			if !s.truncateBeforePush(window.start) {
 				s.dead = true
 				return
 			}
@@ -4374,7 +4374,7 @@ func (p *Parser) applyReduceActionTransientParents(s *glrStack, act ParseAction,
 	}
 
 	if child := p.collapsibleRawUnarySelfReduction(act, tok, arena, entries, window.start, window.reducedEnd); child != nil {
-		if !s.truncate(window.start) {
+		if !s.truncateBeforePush(window.start) {
 			s.dead = true
 			return
 		}
@@ -4396,7 +4396,7 @@ func (p *Parser) applyReduceActionTransientParents(s *glrStack, act ParseAction,
 	trailingStart := window.reducedEnd
 	trailingEnd := window.actualEnd
 
-	if !s.truncate(window.start) {
+	if !s.truncateBeforePush(window.start) {
 		s.dead = true
 		return
 	}
