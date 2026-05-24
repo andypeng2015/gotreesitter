@@ -108,27 +108,27 @@ func normalizeTypeScriptCompatibility(root *Node, source []byte, lang *Language)
 	}
 
 	walkResultTreeDenseFirst(root, func(n *Node) {
-		normalizeTypeScriptIdentifierKeywordAliases(n, &ctx)
-		normalizeTypeScriptImportKeywordNamedness(n, &ctx)
-		normalizeTypeScriptRecoveredMemberModifiers(n, &ctx)
-		if ctx.canClearEnumBodyFields && n.symbol == ctx.enumBodySym && len(n.fieldIDs) > 0 {
-			limit := len(n.children)
-			if len(n.fieldIDs) < limit {
-				limit = len(n.fieldIDs)
+		switch n.symbol {
+		case ctx.identifierSym:
+			normalizeTypeScriptIdentifierKeywordAliases(n, &ctx)
+		case ctx.importSym:
+			if ctx.hasImportSym {
+				normalizeTypeScriptImportKeywordNamedness(n, &ctx)
 			}
-			for i := 0; i < limit; i++ {
-				child := n.children[i]
-				if child == nil || child.symbol != ctx.enumAssignmentSym {
-					continue
-				}
-				n.fieldIDs[i] = 0
-				if len(n.fieldSources) > i {
-					n.fieldSources[i] = fieldSourceNone
-				}
+		case ctx.methodDefinitionSym, ctx.methodSignatureSym, ctx.abstractMethodSignatureSym, ctx.propertySignatureSym, ctx.publicFieldDefinitionSym:
+			if ctx.accessibilityModSym != 0 {
+				normalizeTypeScriptRecoveredMemberModifiers(n, &ctx)
+			}
+		case ctx.enumBodySym:
+			if ctx.canClearEnumBodyFields && len(n.fieldIDs) > 0 {
+				normalizeTypeScriptEnumBodyCompatibility(n, &ctx)
 			}
 		}
 		for i, child := range n.children {
 			for {
+				if !typeScriptCompatibilityChildCanRewrite(child, &ctx) {
+					break
+				}
 				rewritten := rewriteTypeScriptCompatibilityChild(child, &ctx)
 				if rewritten == nil {
 					break
@@ -265,6 +265,26 @@ func normalizeTypeScriptCompatibilityWithStats(root *Node, source []byte, lang *
 		}
 	})
 	return stats
+}
+
+func typeScriptCompatibilityChildCanRewrite(child *Node, ctx *typeScriptNormalizationContext) bool {
+	if child == nil || ctx == nil {
+		return false
+	}
+	switch child.symbol {
+	case ctx.binaryExpressionSym:
+		return ctx.canRewriteGenericCalls || ctx.canRewriteAsExpressions
+	case ctx.callSym:
+		return ctx.canRewriteInstantiatedCalls
+	case ctx.asExpressionSym:
+		return ctx.canRewriteAsExpressions
+	case ctx.typeAssertionSym:
+		return ctx.canRewriteGenericArrows
+	case ctx.expressionStatementSym:
+		return ctx.canRewriteClassDeclarations
+	default:
+		return false
+	}
 }
 
 func typeScriptCompatibilityChildStatsBucket(child *Node, ctx *typeScriptNormalizationContext, stats *typeScriptCompatibilityStats) *normalizationPassCounters {
