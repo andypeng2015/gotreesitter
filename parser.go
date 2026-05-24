@@ -1772,13 +1772,17 @@ func recordParseRuntimeRootStats(parseRuntime *ParseRuntime, tree *Tree, expecte
 	}
 	parseRuntime.RootEndByte = 0
 	parseRuntime.Truncated = false
-	if tree == nil || tree.RootNode() == nil {
+	root := rawRootOrNil(tree)
+	if root == nil {
 		return
 	}
-	root := tree.RootNode()
 	parseRuntime.RootEndByte = root.EndByte()
 	parseRuntime.Truncated = parseRuntime.RootEndByte < expectedEOFByte
 	if !collectFinalStats {
+		return
+	}
+	root = tree.RootNode()
+	if root == nil {
 		return
 	}
 	finalStats := collectFinalTreeMaterializationStats(root, lang)
