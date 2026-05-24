@@ -1155,10 +1155,40 @@ func rewriteJavaScriptTypeScriptStatementKeywordsCallPrecedenceAndBuildUnaryBina
 			}
 		}
 
-		children := n.children
-		if n.ownerArena != nil && n.childIndex <= finalChildSidecarIndexBase {
-			children = resultDenseChildrenFallbackForMutation(n)
+		if nodeHasFinalChildRefs(n) {
+			childCount := resultChildCount(n)
+			for i := 0; i < childCount; i++ {
+				child := resultChildAt(n, i)
+				if child == nil {
+					continue
+				}
+				if child.symbol == callSym {
+					index.call.nodesVisited++
+					if rewritten := rewriteJavaScriptTypeScriptCallPrecedenceWithSymbol(child, lang, callSym); rewritten != nil {
+						if replaceJavaScriptTypeScriptPrecedenceCandidate(javaScriptTypeScriptPrecedenceCandidate{parent: n, childIndex: i}, rewritten) {
+							child = rewritten
+							index.call.nodesRewritten++
+						}
+					}
+				}
+				walk(child)
+				switch child.symbol {
+				case unarySym:
+					index.unaryCandidates = append(index.unaryCandidates, javaScriptTypeScriptPrecedenceCandidate{
+						parent:     n,
+						childIndex: i,
+					})
+				case binarySym:
+					index.binaryCandidates = append(index.binaryCandidates, javaScriptTypeScriptPrecedenceCandidate{
+						parent:     n,
+						childIndex: i,
+					})
+				}
+			}
+			return
 		}
+
+		children := n.children
 		for i, child := range children {
 			if child == nil || child.symbol != callSym {
 				continue
@@ -1233,10 +1263,40 @@ func rewriteJavaScriptTypeScriptCallPrecedenceAndBuildUnaryBinaryIndex(root *Nod
 			return
 		}
 		index.nodesVisited++
-		children := n.children
-		if n.ownerArena != nil && n.childIndex <= finalChildSidecarIndexBase {
-			children = resultDenseChildrenFallbackForMutation(n)
+		if nodeHasFinalChildRefs(n) {
+			childCount := resultChildCount(n)
+			for i := 0; i < childCount; i++ {
+				child := resultChildAt(n, i)
+				if child == nil {
+					continue
+				}
+				if child.symbol == callSym {
+					index.call.nodesVisited++
+					if rewritten := rewriteJavaScriptTypeScriptCallPrecedenceWithSymbol(child, lang, callSym); rewritten != nil {
+						if replaceJavaScriptTypeScriptPrecedenceCandidate(javaScriptTypeScriptPrecedenceCandidate{parent: n, childIndex: i}, rewritten) {
+							child = rewritten
+							index.call.nodesRewritten++
+						}
+					}
+				}
+				walk(child)
+				switch child.symbol {
+				case unarySym:
+					index.unaryCandidates = append(index.unaryCandidates, javaScriptTypeScriptPrecedenceCandidate{
+						parent:     n,
+						childIndex: i,
+					})
+				case binarySym:
+					index.binaryCandidates = append(index.binaryCandidates, javaScriptTypeScriptPrecedenceCandidate{
+						parent:     n,
+						childIndex: i,
+					})
+				}
+			}
+			return
 		}
+
+		children := n.children
 		for i, child := range children {
 			if child == nil || child.symbol != callSym {
 				continue
