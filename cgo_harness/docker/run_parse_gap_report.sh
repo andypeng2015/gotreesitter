@@ -24,6 +24,7 @@ TIME_PARITY_FAILURES=0
 REQUIRE_PARITY_LANGS=""
 GATE_ONLY=0
 BUILD_IMAGE=1
+ARENA_BREAKDOWN=0
 PHASE_TIMING=0
 HOT_SHAPES=0
 EQUIV_COUNTERS=0
@@ -58,6 +59,7 @@ Options:
                             Comma-separated languages that must pass parity even with --allow-parity-fail
   --time-parity-failures    Also run timing modes for parity-blocked samples
   --gate-only               Run parse/highlight/query correctness gates only
+  --arena-breakdown         Enable detailed gotreesitter arena breakdown in report rows
   --phase-timing            Enable parser phase/subphase timing in report rows
   --hot-shapes <n>          Include top-N GLR fork/reduce/merge hot-shape rows in runtime JSON
   --equiv-counters          Enable lightweight GLR equivalence attribution counters
@@ -95,6 +97,7 @@ while [[ $# -gt 0 ]]; do
     --require-parity-langs) REQUIRE_PARITY_LANGS="$2"; shift 2 ;;
     --time-parity-failures) TIME_PARITY_FAILURES=1; shift ;;
     --gate-only) GATE_ONLY=1; shift ;;
+    --arena-breakdown) ARENA_BREAKDOWN=1; shift ;;
     --phase-timing) PHASE_TIMING=1; shift ;;
     --hot-shapes) HOT_SHAPES="$2"; shift 2 ;;
     --equiv-counters) EQUIV_COUNTERS=1; shift ;;
@@ -182,6 +185,7 @@ PARSE_NODE_LIMIT_SCALE="${GOT_PARSE_NODE_LIMIT_SCALE-}"
   echo "require_parity_langs=$REQUIRE_PARITY_LANGS"
   echo "time_parity_failures=$TIME_PARITY_FAILURES"
   echo "gate_only=$GATE_ONLY"
+  echo "arena_breakdown=$ARENA_BREAKDOWN"
   echo "phase_timing=$PHASE_TIMING"
   echo "hot_shapes=$HOT_SHAPES"
   echo "equiv_counters=$EQUIV_COUNTERS"
@@ -209,6 +213,10 @@ fi
 gate_only_arg_text=""
 if [[ "$GATE_ONLY" == "1" ]]; then
   gate_only_arg_text="--gate-only"
+fi
+arena_breakdown_arg_text=""
+if [[ "$ARENA_BREAKDOWN" == "1" ]]; then
+  arena_breakdown_arg_text="--arena-breakdown"
 fi
 phase_timing_arg_text=""
 phase_timing_env_text="GOT_PARSE_PHASE_TIMING='0'"
@@ -283,6 +291,7 @@ env \
     $require_parity_arg_text \
     $time_parity_arg_text \
     $gate_only_arg_text \
+    $arena_breakdown_arg_text \
     $phase_timing_arg_text \
     $hot_shapes_arg_text \
     $equiv_counters_arg_text \

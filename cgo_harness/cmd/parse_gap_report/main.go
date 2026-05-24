@@ -465,6 +465,7 @@ type metadata struct {
 	Languages           []string          `json:"languages"`
 	Count               int               `json:"count"`
 	GateOnly            bool              `json:"gate_only"`
+	ArenaBreakdown      bool              `json:"arena_breakdown,omitempty"`
 	HotShapeLimit       int               `json:"hot_shape_limit,omitempty"`
 	EquivCounters       bool              `json:"equiv_counters,omitempty"`
 	RuntimeAudit        bool              `json:"runtime_audit,omitempty"`
@@ -521,7 +522,7 @@ func main() {
 	flag.BoolVar(&allowParityFail, "allow-parity-fail", false, "write parity failures but exit zero")
 	flag.BoolVar(&timeParityFails, "time-parity-failures", false, "run timing modes even when correctness gates fail")
 	flag.BoolVar(&gateOnly, "gate-only", false, "run only parse/highlight/query correctness gates and skip timing modes")
-	flag.BoolVar(&arenaBreakdown, "arena-breakdown", true, "enable detailed gotreesitter arena breakdown while measuring")
+	flag.BoolVar(&arenaBreakdown, "arena-breakdown", false, "enable detailed gotreesitter arena breakdown while measuring")
 	flag.BoolVar(&phaseTiming, "phase-timing", false, "enable gotreesitter parser phase timing while measuring")
 	flag.IntVar(&hotShapeLimit, "hot-shapes", 0, "include top-N GLR fork/reduce/merge hot-shape rows in runtime JSON")
 	flag.BoolVar(&equivCounters, "equiv-counters", false, "enable lightweight GLR equivalence attribution counters")
@@ -708,6 +709,7 @@ func main() {
 		Languages:           langs,
 		Count:               countFlag,
 		GateOnly:            gateOnly,
+		ArenaBreakdown:      arenaBreakdown,
 		HotShapeLimit:       hotShapeLimit,
 		EquivCounters:       equivCounters,
 		RuntimeAudit:        runtimeAudit,
