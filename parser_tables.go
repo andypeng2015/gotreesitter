@@ -209,7 +209,14 @@ func (p *Parser) lookupAction(state StateID, sym Symbol) *ParseActionEntry {
 // Returns 0 (the error/no-action entry) if not found.
 func (p *Parser) lookupActionIndex(state StateID, sym Symbol) uint16 {
 	if int(state) < p.denseLimit {
-		return p.lookupActionIndexDense(state, sym)
+		if int(state) >= len(p.language.ParseTable) {
+			return 0
+		}
+		row := p.language.ParseTable[state]
+		if int(sym) >= len(row) {
+			return 0
+		}
+		return row[sym]
 	}
 	return p.lookupActionIndexSmall(state, sym)
 }
