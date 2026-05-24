@@ -193,6 +193,8 @@ type runtimeStats struct {
 	ActionSingleRecoverNS                 int64         `json:"action_single_recover_ns,omitempty"`
 	ActionSingleOtherNS                   int64         `json:"action_single_other_ns,omitempty"`
 	QueryCaptures                         uint64        `json:"query_captures,omitempty"`
+	QueryCompileNS                        int64         `json:"query_compile_ns,omitempty"`
+	QueryExecNS                           int64         `json:"query_exec_ns,omitempty"`
 	CursorNodes                           uint64        `json:"cursor_nodes,omitempty"`
 	MergeCalls                            uint64        `json:"merge_calls,omitempty"`
 	MergeDeadPruned                       uint64        `json:"merge_dead_pruned,omitempty"`
@@ -1002,8 +1004,8 @@ func runModeOnce(r *runner, mode string, source []byte, queries []querySpec, edi
 			releaseTree(tree, nil)
 			return runtimeStats{}, err
 		}
-		captures, qErr := runGoQuery(r, tree, source, queries[0].Query)
-		stats := statsFromGoTree(r, tree, captures, 0)
+		captures, qTiming, qErr := runGoQuery(r, tree, source, queries[0].Query)
+		stats := statsFromGoTree(r, tree, captures, 0, qTiming)
 		return stats, releaseTree(tree, qErr)
 	case "go_cursor_walk":
 		tree, err := parseGo(r, source)
@@ -1045,13 +1047,22 @@ func releaseTree(tree *gotreesitter.Tree, err error) error {
 	return err
 }
 
-func statsFromGoTree(r *runner, tree *gotreesitter.Tree, queryCaptures, cursorNodes uint64) runtimeStats {
+type queryTimingStats struct {
+	compileNS int64
+	execNS    int64
+}
+
+func statsFromGoTree(r *runner, tree *gotreesitter.Tree, queryCaptures, cursorNodes uint64, queryTiming ...queryTimingStats) runtimeStats {
 	if tree == nil {
 		return runtimeStats{}
 	}
 	rt := tree.ParseRuntime()
 	stats := statsFromRuntime(rt)
 	stats.QueryCaptures = queryCaptures
+	if len(queryTiming) > 0 {
+		stats.QueryCompileNS = queryTiming[0].compileNS
+		stats.QueryExecNS = queryTiming[0].execNS
+	}
 	stats.CursorNodes = cursorNodes
 	if breakdown, ok := tree.ArenaBreakdown(); ok {
 		stats.ArenaLiveB = breakdown.NodeStructBytesAllocated +
@@ -1634,10 +1645,23 @@ func pointAtByte(source []byte, offset int) gotreesitter.Point {
 	return gotreesitter.Point{Row: row, Column: col}
 }
 
-func runGoQuery(r *runner, tree *gotreesitter.Tree, source []byte, queryText string) (uint64, error) {
+func runGoQuery(r *runner, tree *gotreesitter.Tree, source []byte, queryText string) (uint64, queryTimingStats, error) {
+	timingEnabled := strings.TrimSpace(os.Getenv("GOT_PARSE_PHASE_TIMING")) != ""
+	timing := queryTimingStats{}
+	compileStart := time.Time{}
+	if timingEnabled {
+		compileStart = time.Now()
+	}
 	q, err := gotreesitter.NewQuery(queryText, r.goLang)
 	if err != nil {
-		return 0, err
+		return 0, timing, err
+	}
+	if timingEnabled {
+		timing.compileNS = time.Since(compileStart).Nanoseconds()
+	}
+	execStart := time.Time{}
+	if timingEnabled {
+		execStart = time.Now()
 	}
 	cursor := q.Exec(tree.RootNode(), r.goLang, source)
 	var captures uint64
@@ -1648,7 +1672,10 @@ func runGoQuery(r *runner, tree *gotreesitter.Tree, source []byte, queryText str
 		}
 		captures += uint64(len(match.Captures))
 	}
-	return captures, nil
+	if timingEnabled {
+		timing.execNS = time.Since(execStart).Nanoseconds()
+	}
+	return captures, timing, nil
 }
 
 func queryParity(r *runner, goTree *gotreesitter.Tree, cTree *sitter.Tree, source []byte, queryText string) (bool, error) {
