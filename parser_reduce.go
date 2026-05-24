@@ -2594,6 +2594,9 @@ func pendingNoFieldChildCount(entry stackEntry, arena *nodeArena, parentVisible 
 		return 1, hasPayload, hasError, true
 	}
 	if parentVisible {
+		if stackEntryTreeHasFieldIDs(entry, arena) {
+			return 0, false, false, false
+		}
 		if parent := stackEntryPendingParent(entry); parent != nil {
 			for i := 0; i < parent.childEntryCount(); i++ {
 				child := parent.childEntry(arena, i)
