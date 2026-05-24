@@ -32,16 +32,23 @@ func normalizeReturnedTree(root *Node, source []byte, lang *Language) {
 	if root == nil || lang == nil {
 		return
 	}
-	normalizeGoCompatibility(root, source, lang)
-	normalizeScalaTemplateBodyObjectFragments(root, source, lang)
-	normalizeScalaRecoveredObjectTemplateBodies(root, source, lang)
-	normalizeScalaDefinitionFields(root, source, lang)
-	normalizeScalaTemplateBodyFunctionAnnotations(root, source, lang)
-	normalizeScalaTemplateBodyFunctionEnds(root, source, lang)
-	normalizeScalaCaseClauseEnds(root, source, lang)
-	normalizeHTMLRecoveredNestedCustomTagRanges(root, source, lang)
-	normalizeRootEOFNewlineSpan(root, source, lang)
-	normalizeJavaScriptProgramEnd(root, source, lang)
+	switch lang.Name {
+	case "go":
+		normalizeGoCompatibility(root, source, lang)
+		normalizeRootEOFNewlineSpan(root, source, lang)
+	case "scala":
+		normalizeScalaTemplateBodyObjectFragments(root, source, lang)
+		normalizeScalaRecoveredObjectTemplateBodies(root, source, lang)
+		normalizeScalaDefinitionFields(root, source, lang)
+		normalizeScalaTemplateBodyFunctionAnnotations(root, source, lang)
+		normalizeScalaTemplateBodyFunctionEnds(root, source, lang)
+		normalizeScalaCaseClauseEnds(root, source, lang)
+		normalizeRootEOFNewlineSpan(root, source, lang)
+	case "html":
+		normalizeHTMLRecoveredNestedCustomTagRanges(root, source, lang)
+	case "javascript":
+		normalizeJavaScriptProgramEnd(root, source, lang)
+	}
 }
 
 func shouldNormalizeIncrementalReturnedTree(tree, oldTree *Tree) bool {
