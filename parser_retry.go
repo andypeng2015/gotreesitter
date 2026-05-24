@@ -1,6 +1,9 @@
 package gotreesitter
 
-import "time"
+import (
+	"bytes"
+	"time"
+)
 
 const (
 	// Retry no-stacks-alive full parses with a wider GLR cap. Large real-world
@@ -396,6 +399,54 @@ func effectiveParseMergePerKeyCap(lang *Language, mergePerKeyCap int, incrementa
 
 func typescriptFullParseCanUseTightMergeCap(sourceLen ...int) bool {
 	return len(sourceLen) == 0 || sourceLen[0] <= 64*1024
+}
+
+func tsxFullParseNeedsTypedArrowMergeWidth(lang *Language, source []byte, reuse *reuseCursor) bool {
+	return lang != nil &&
+		reuse == nil &&
+		!parseMaxMergePerKeyEnvConfigured() &&
+		lang.Name == "tsx" &&
+		typeScriptSourceHasTypedArrowParameters(source)
+}
+
+func typeScriptSourceHasTypedArrowParameters(source []byte) bool {
+	if len(source) == 0 || !bytes.Contains(source, []byte(":")) {
+		return false
+	}
+	offset := 0
+	for {
+		rel := bytes.Index(source[offset:], []byte("=>"))
+		if rel < 0 {
+			return false
+		}
+		arrow := offset + rel
+		i := arrow - 1
+		for i >= 0 {
+			switch source[i] {
+			case ' ', '\t', '\n', '\r':
+				i--
+				continue
+			}
+			break
+		}
+		if i < 0 || source[i] != ')' {
+			offset = arrow + len("=>")
+			continue
+		}
+		depth := 0
+		for j := i; j >= 0 && i-j <= 2048; j-- {
+			switch source[j] {
+			case ')':
+				depth++
+			case '(':
+				depth--
+				if depth == 0 {
+					return bytes.Contains(source[j:i], []byte(":"))
+				}
+			}
+		}
+		offset = arrow + len("=>")
+	}
 }
 
 func fullParseUsesDeterministicExternalConflicts(lang *Language) bool {

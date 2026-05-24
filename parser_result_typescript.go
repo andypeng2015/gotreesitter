@@ -35,6 +35,9 @@ type typeScriptNormalizationContext struct {
 	unionTypeNamed             bool
 	intersectionTypeSym        Symbol
 	intersectionTypeNamed      bool
+	literalTypeSym             Symbol
+	literalTypeNamed           bool
+	hasLiteralTypeSym          bool
 	objectTypeSym              Symbol
 	objectTypeNamed            bool
 	propertySignatureSym       Symbol
@@ -392,7 +395,13 @@ func rewriteTypeScriptCompatibilityChild(child *Node, ctx *typeScriptNormalizati
 
 func typeScriptBinaryOperatorCouldBeGenericCall(node *Node, ctx *typeScriptNormalizationContext) bool {
 	op, ok := typeScriptBinaryExpressionOperator(node, ctx)
-	return ok && op.symbol == ctx.greaterThanSym
+	if !ok {
+		return false
+	}
+	if op.symbol == ctx.greaterThanSym {
+		return true
+	}
+	return typeScriptBinaryExpressionHasGenericCallClose(node, ctx)
 }
 
 func typeScriptBinaryOperatorCouldBeAsTypeChain(node *Node, ctx *typeScriptNormalizationContext) bool {
@@ -754,6 +763,10 @@ func newTypeScriptNormalizationContext(source []byte, lang *Language) (typeScrip
 		ctx.unionTypeNamed = symbolIsNamed(lang, ctx.unionTypeSym)
 		ctx.intersectionTypeSym = syms[4]
 		ctx.intersectionTypeNamed = symbolIsNamed(lang, ctx.intersectionTypeSym)
+		ctx.literalTypeSym, ctx.hasLiteralTypeSym = lang.SymbolByName("literal_type")
+		if ctx.hasLiteralTypeSym {
+			ctx.literalTypeNamed = symbolIsNamed(lang, ctx.literalTypeSym)
+		}
 		ctx.pipeSym, ctx.hasPipeSym = lang.SymbolByName("|")
 		ctx.ampersandSym, ctx.hasAmpersandSym = lang.SymbolByName("&")
 		if syms, ok := languageSymbols(lang,
@@ -1485,19 +1498,12 @@ func rewriteTypeScriptPredefinedGenericCall(node *Node, ctx *typeScriptNormaliza
 	if node == nil || ctx == nil || ctx.lang == nil || node.symbol != ctx.binaryExpressionSym || len(node.children) != 3 {
 		return nil
 	}
-	left := node.children[0]
-	gt := node.children[1]
-	paren := node.children[2]
-	if left == nil || gt == nil || paren == nil || left.symbol != ctx.binaryExpressionSym || gt.symbol != ctx.greaterThanSym || paren.symbol != ctx.parenthesizedExprSym {
+	typeExpr, gt, paren, ok := splitTypeScriptGenericCallClose(node, ctx)
+	if !ok || typeExpr == nil || gt == nil || paren == nil || len(paren.children) != 3 {
 		return nil
 	}
-	if len(left.children) != 3 || len(paren.children) != 3 {
-		return nil
-	}
-	callee := left.children[0]
-	lt := left.children[1]
-	typeArg := left.children[2]
-	if callee == nil || lt == nil || typeArg == nil || lt.symbol != ctx.lessThanSym {
+	callee, lt, typeArgExpr, ok := splitTypeScriptGenericCallOpen(typeExpr, ctx)
+	if !ok || callee == nil || lt == nil || typeArgExpr == nil {
 		return nil
 	}
 	switch callee.Type(ctx.lang) {
@@ -1505,7 +1511,7 @@ func rewriteTypeScriptPredefinedGenericCall(node *Node, ctx *typeScriptNormaliza
 	default:
 		return nil
 	}
-	typeArg = normalizeTypeScriptGenericCallTypeArgument(typeArg, ctx)
+	typeArg := normalizeTypeScriptGenericCallTypeArgument(typeArgExpr, ctx)
 	if typeArg == nil {
 		return nil
 	}
@@ -1540,6 +1546,79 @@ func rewriteTypeScriptPredefinedGenericCall(node *Node, ctx *typeScriptNormaliza
 	call := newParentNodeInArena(arena, ctx.callSym, ctx.callNamed, callChildren, fieldIDs, node.productionID)
 	call.fieldSources = defaultFieldSourcesInArena(arena, fieldIDs)
 	return call
+}
+
+func splitTypeScriptGenericCallClose(node *Node, ctx *typeScriptNormalizationContext) (*Node, *Node, *Node, bool) {
+	if node == nil || ctx == nil || node.symbol != ctx.binaryExpressionSym || len(node.children) != 3 {
+		return nil, nil, nil, false
+	}
+	left := node.children[0]
+	op := node.children[1]
+	right := node.children[2]
+	if left == nil || op == nil || right == nil {
+		return nil, nil, nil, false
+	}
+	if op.symbol == ctx.greaterThanSym && right.symbol == ctx.parenthesizedExprSym {
+		return left, op, right, true
+	}
+	if !typeScriptBinaryOperatorIsTypeUnionOrIntersection(op, ctx) || right.symbol != ctx.binaryExpressionSym {
+		return nil, nil, nil, false
+	}
+	strippedRight, gt, paren, ok := splitTypeScriptGenericCallClose(right, ctx)
+	if !ok || strippedRight == nil {
+		return nil, nil, nil, false
+	}
+	rewritten := cloneNodeInArena(node.ownerArena, node)
+	children := cloneNodeSliceInArena(node.ownerArena, node.children)
+	children[2] = strippedRight
+	rewritten.children = children
+	populateParentNode(rewritten, rewritten.children)
+	return rewritten, gt, paren, true
+}
+
+func splitTypeScriptGenericCallOpen(node *Node, ctx *typeScriptNormalizationContext) (*Node, *Node, *Node, bool) {
+	if node == nil || ctx == nil || node.symbol != ctx.binaryExpressionSym || len(node.children) != 3 {
+		return nil, nil, nil, false
+	}
+	left := node.children[0]
+	op := node.children[1]
+	right := node.children[2]
+	if left == nil || op == nil || right == nil {
+		return nil, nil, nil, false
+	}
+	if op.symbol == ctx.lessThanSym {
+		return left, op, right, true
+	}
+	if !typeScriptBinaryOperatorIsTypeUnionOrIntersection(op, ctx) || left.symbol != ctx.binaryExpressionSym {
+		return nil, nil, nil, false
+	}
+	callee, lt, strippedLeft, ok := splitTypeScriptGenericCallOpen(left, ctx)
+	if !ok || strippedLeft == nil {
+		return nil, nil, nil, false
+	}
+	rewritten := cloneNodeInArena(node.ownerArena, node)
+	children := cloneNodeSliceInArena(node.ownerArena, node.children)
+	children[0] = strippedLeft
+	rewritten.children = children
+	populateParentNode(rewritten, rewritten.children)
+	return callee, lt, rewritten, true
+}
+
+func typeScriptBinaryExpressionHasGenericCallClose(node *Node, ctx *typeScriptNormalizationContext) bool {
+	typeExpr, _, _, ok := splitTypeScriptGenericCallClose(node, ctx)
+	if !ok || typeExpr == nil {
+		return false
+	}
+	_, _, _, ok = splitTypeScriptGenericCallOpen(typeExpr, ctx)
+	return ok
+}
+
+func typeScriptBinaryOperatorIsTypeUnionOrIntersection(op *Node, ctx *typeScriptNormalizationContext) bool {
+	if op == nil || ctx == nil {
+		return false
+	}
+	return (ctx.hasPipeSym && op.symbol == ctx.pipeSym) ||
+		(ctx.hasAmpersandSym && op.symbol == ctx.ampersandSym)
 }
 
 func rewriteTypeScriptInstantiatedCall(node *Node, ctx *typeScriptNormalizationContext) *Node {
@@ -1803,10 +1882,10 @@ func normalizeTypeScriptGenericCallTypeArgument(node *Node, ctx *typeScriptNorma
 		return nil
 	}
 	switch node.Type(ctx.lang) {
-	case "predefined_type":
+	case "predefined_type", "type_identifier", "union_type", "intersection_type", "object_type", "generic_type", "lookup_type", "template_literal_type", "conditional_type", "tuple_type", "array_type", "function_type", "constructor_type", "readonly_type", "type_query", "infer_type", "index_type_query", "nested_type_identifier":
 		return node
-	case "type_identifier":
-		if ctx.hasTypeIdentifierSym {
+	case "literal_type":
+		if ctx.hasLiteralTypeSym {
 			return node
 		}
 	case "identifier":
@@ -1819,8 +1898,49 @@ func normalizeTypeScriptGenericCallTypeArgument(node *Node, ctx *typeScriptNorma
 			typeIdentifierNamed := symbolIsNamed(ctx.lang, ctx.typeIdentifierSym)
 			return newLeafNodeInArena(node.ownerArena, ctx.typeIdentifierSym, typeIdentifierNamed, node.startByte, node.endByte, node.startPoint, node.endPoint)
 		}
+	case "null", "true", "false", "undefined", "number", "string":
+		return wrapTypeScriptGenericCallLiteralType(node, ctx)
+	case "binary_expression":
+		if len(node.children) != 3 || node.children[1] == nil {
+			return nil
+		}
+		var typeSym Symbol
+		var typeNamed bool
+		switch node.children[1].symbol {
+		case ctx.pipeSym:
+			if !ctx.hasPipeSym {
+				return nil
+			}
+			typeSym = ctx.unionTypeSym
+			typeNamed = ctx.unionTypeNamed
+		case ctx.ampersandSym:
+			if !ctx.hasAmpersandSym {
+				return nil
+			}
+			typeSym = ctx.intersectionTypeSym
+			typeNamed = ctx.intersectionTypeNamed
+		default:
+			return nil
+		}
+		leftType := normalizeTypeScriptGenericCallTypeArgument(node.children[0], ctx)
+		rightType := normalizeTypeScriptGenericCallTypeArgument(node.children[2], ctx)
+		if leftType == nil || rightType == nil {
+			return nil
+		}
+		children := cloneNodeSliceInArena(node.ownerArena, []*Node{leftType, node.children[1], rightType})
+		return newParentNodeInArena(node.ownerArena, typeSym, typeNamed, children, nil, node.productionID)
+	case "object":
+		return rewriteTypeScriptObjectExpressionAsType(node, ctx)
 	}
 	return nil
+}
+
+func wrapTypeScriptGenericCallLiteralType(node *Node, ctx *typeScriptNormalizationContext) *Node {
+	if node == nil || ctx == nil || !ctx.hasLiteralTypeSym {
+		return nil
+	}
+	children := cloneNodeSliceInArena(node.ownerArena, []*Node{node})
+	return newParentNodeInArena(node.ownerArena, ctx.literalTypeSym, ctx.literalTypeNamed, children, nil, node.productionID)
 }
 
 func typeScriptPredefinedTypeSymbol(lang *Language, text string) (Symbol, bool) {
