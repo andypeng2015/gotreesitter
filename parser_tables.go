@@ -209,6 +209,40 @@ func (p *Parser) lookupActionIndex(state StateID, sym Symbol) uint16 {
 	return p.lookupActionIndexSmall(state, sym)
 }
 
+func (p *Parser) buildExternalValidByState() [][]uint16 {
+	if p == nil || p.language == nil || len(p.language.ExternalSymbols) == 0 || len(p.language.ExternalLexStates) > 0 {
+		return nil
+	}
+	if len(p.language.ExternalSymbols) > int(^uint16(0)) {
+		return nil
+	}
+	stateCount := int(p.language.StateCount)
+	if stateCount == 0 {
+		stateCount = len(p.language.ParseTable)
+		if smallStates := p.smallBase + len(p.language.SmallParseTableMap); smallStates > stateCount {
+			stateCount = smallStates
+		}
+		if len(p.language.LexModes) > stateCount {
+			stateCount = len(p.language.LexModes)
+		}
+	}
+	if stateCount <= 0 {
+		return nil
+	}
+	rows := make([][]uint16, stateCount)
+	for state := 0; state < stateCount; state++ {
+		var row []uint16
+		for i, sym := range p.language.ExternalSymbols {
+			if p.lookupActionIndex(StateID(state), sym) == 0 {
+				continue
+			}
+			row = append(row, uint16(i))
+		}
+		rows[state] = row
+	}
+	return rows
+}
+
 func (p *Parser) forEachActionIndexInState(state StateID, visit func(sym Symbol, idx uint16) bool) {
 	if p == nil || p.language == nil || visit == nil {
 		return

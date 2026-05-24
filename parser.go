@@ -51,6 +51,7 @@ type Parser struct {
 	smallBase                           int
 	smallLookup                         [][]smallActionPair
 	smallTokenLookup                    [][]uint16
+	externalValidByState                [][]uint16
 	classifiedActions                   []classifiedParseAction
 	reduceChainHints                    []reduceChainHint
 	reduceChainHintByState              []int
@@ -342,6 +343,7 @@ func NewParser(lang *Language) *Parser {
 			p.smallTokenLookup = buildSmallTokenLookup(lang)
 			p.smallLookup = buildSmallLookup(lang, p.smallTokenLookup)
 		}
+		p.externalValidByState = p.buildExternalValidByState()
 		p.classifiedActions = buildClassifiedParseActions(lang)
 		p.reduceChainHints = buildReduceChainHints(lang)
 		p.reduceChainHintByState = buildReduceChainHintIndex(p.reduceChainHints)

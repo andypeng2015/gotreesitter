@@ -74,7 +74,7 @@ func (p *Parser) dfaReparseFactory() TokenSourceFactory {
 	}
 	return func(source []byte) (TokenSource, error) {
 		lexer := NewLexer(p.language.LexStates, source)
-		return newDFATokenSourceDirect(lexer, p.language, p.lookupActionIndex, p.hasKeywordState), nil
+		return newDFATokenSourceDirect(lexer, p.language, p.lookupActionIndex, p.hasKeywordState, p.externalValidByState), nil
 	}
 }
 
@@ -427,7 +427,7 @@ func (p *Parser) Parse(source []byte) (*Tree, error) {
 		p.reparseFactory = prevFactory
 	}()
 	lexer := NewLexer(p.language.LexStates, source)
-	ts := acquireDFATokenSource(lexer, p.language, p.lookupActionIndex, p.hasKeywordState)
+	ts := acquireDFATokenSource(lexer, p.language, p.lookupActionIndex, p.hasKeywordState, p.externalValidByState)
 	if p.noTreeBenchmarkOnly && !p.noTreeCheckpointBenchmarkOnly {
 		ts.usesExternalCheckpoints = false
 	}
@@ -581,7 +581,7 @@ func (p *Parser) ParseIncremental(source []byte, oldTree *Tree) (*Tree, error) {
 		p.reparseFactory = prevFactory
 	}()
 	lexer := NewLexer(p.language.LexStates, source)
-	ts := acquireDFATokenSource(lexer, p.language, p.lookupActionIndex, p.hasKeywordState)
+	ts := acquireDFATokenSource(lexer, p.language, p.lookupActionIndex, p.hasKeywordState, p.externalValidByState)
 	defer ts.Close()
 	tree := p.parseIncrementalInternal(source, oldTree, p.wrapIncludedRanges(ts), nil)
 	normalizeReturnedIncrementalTree(tree, oldTree, source, p.language)
@@ -679,7 +679,7 @@ func (p *Parser) ParseIncrementalProfiled(source []byte, oldTree *Tree) (*Tree, 
 		p.reparseFactory = prevFactory
 	}()
 	lexer := NewLexer(p.language.LexStates, source)
-	ts := acquireDFATokenSource(lexer, p.language, p.lookupActionIndex, p.hasKeywordState)
+	ts := acquireDFATokenSource(lexer, p.language, p.lookupActionIndex, p.hasKeywordState, p.externalValidByState)
 	defer ts.Close()
 	timing := &incrementalParseTiming{}
 	tree := p.parseIncrementalInternal(source, oldTree, p.wrapIncludedRanges(ts), timing)

@@ -18,6 +18,7 @@ type dfaTokenSource struct {
 	lookupActionIndex          func(state StateID, sym Symbol) uint16
 	lexModeStarts              []lexModeStart
 	hasKeywordState            []bool
+	externalValidByState       [][]uint16
 	externalPayload            any
 	externalValid              []bool
 	externalSnapshot           []byte
@@ -93,13 +94,14 @@ var dfaTokenSourcePool = sync.Pool{
 	},
 }
 
-func initDFATokenSource(ts *dfaTokenSource, lexer *Lexer, language *Language, lookupActionIndex func(state StateID, sym Symbol) uint16, hasKeywordState []bool) {
+func initDFATokenSource(ts *dfaTokenSource, lexer *Lexer, language *Language, lookupActionIndex func(state StateID, sym Symbol) uint16, hasKeywordState []bool, externalValidByState [][]uint16) {
 	ts.lexer = lexer
 	ts.language = language
 	ts.state = 0
 	ts.lookupActionIndex = lookupActionIndex
 	ts.lexModeStarts = nil
 	ts.hasKeywordState = hasKeywordState
+	ts.externalValidByState = externalValidByState
 	if lexer != nil && language != nil {
 		ts.lexer.states = language.LexStates
 		ts.lexer.immediateTokens = language.ImmediateTokens
@@ -123,10 +125,10 @@ func initDFATokenSource(ts *dfaTokenSource, lexer *Lexer, language *Language, lo
 	}
 }
 
-func acquireDFATokenSource(lexer *Lexer, language *Language, lookupActionIndex func(state StateID, sym Symbol) uint16, hasKeywordState []bool) *dfaTokenSource {
+func acquireDFATokenSource(lexer *Lexer, language *Language, lookupActionIndex func(state StateID, sym Symbol) uint16, hasKeywordState []bool, externalValidByState [][]uint16) *dfaTokenSource {
 	ts := dfaTokenSourcePool.Get().(*dfaTokenSource)
 	resetPooledDFATokenSource(ts)
-	initDFATokenSource(ts, lexer, language, lookupActionIndex, hasKeywordState)
+	initDFATokenSource(ts, lexer, language, lookupActionIndex, hasKeywordState, externalValidByState)
 	return ts
 }
 
@@ -159,14 +161,14 @@ func resetPooledDFATokenSource(ts *dfaTokenSource) {
 	ts.extZeroTried = savedExtZeroTried
 }
 
-func newDFATokenSourceDirect(lexer *Lexer, language *Language, lookupActionIndex func(state StateID, sym Symbol) uint16, hasKeywordState []bool) *dfaTokenSource {
+func newDFATokenSourceDirect(lexer *Lexer, language *Language, lookupActionIndex func(state StateID, sym Symbol) uint16, hasKeywordState []bool, externalValidByState [][]uint16) *dfaTokenSource {
 	ts := &dfaTokenSource{
 		extZeroPos:             -1,
 		zeroWidthPos:           -1,
 		bashArithmeticCachePos: -1,
 		noPool:                 true,
 	}
-	initDFATokenSource(ts, lexer, language, lookupActionIndex, hasKeywordState)
+	initDFATokenSource(ts, lexer, language, lookupActionIndex, hasKeywordState, externalValidByState)
 	return ts
 }
 
@@ -249,6 +251,7 @@ func (d *dfaTokenSource) Close() {
 	d.language = nil
 	d.lookupActionIndex = nil
 	d.hasKeywordState = nil
+	d.externalValidByState = nil
 	d.glrStates = nil
 	d.extZeroPos = -1
 	d.extZeroState = 0
@@ -1674,6 +1677,20 @@ func (d *dfaTokenSource) nextExternalToken() (Token, bool) {
 			row := d.language.ExternalLexStates[elsID]
 			for i := range valid {
 				if i < len(row) && row[i] && !valid[i] {
+					valid[i] = true
+					anyValid = true
+				}
+			}
+		}
+	} else if len(d.externalValidByState) > 0 {
+		for _, st := range states {
+			if int(st) >= len(d.externalValidByState) {
+				continue
+			}
+			row := d.externalValidByState[int(st)]
+			for _, extIdx := range row {
+				i := int(extIdx)
+				if i < len(valid) && !valid[i] {
 					valid[i] = true
 					anyValid = true
 				}
