@@ -861,6 +861,11 @@ func (c *QueryCursor) nextMatchRaw() (QueryMatch, bool) {
 				continue
 			}
 			pat := q.patterns[pi]
+			if !c.currentNodePost {
+				if match, ok := q.singleStepQueryMatch(&pat, pi, c.currentNode, c.lang); ok {
+					return match, true
+				}
+			}
 			var captureSets [][]QueryCapture
 			if c.currentNodePost {
 				if pat.steps[0].quantifier == queryQuantifierZeroOrMore || pat.steps[0].quantifier == queryQuantifierOneOrMore {
@@ -898,6 +903,30 @@ func (c *QueryCursor) nextMatchRaw() (QueryMatch, bool) {
 		c.currentCandidates = nil
 		c.candidateIdx = 0
 	}
+}
+
+func (q *Query) singleStepQueryMatch(pat *Pattern, patternIndex int, node *Node, lang *Language) (QueryMatch, bool) {
+	if q == nil || pat == nil || node == nil || len(pat.predicates) != 0 || len(pat.steps) != 1 {
+		return QueryMatch{}, false
+	}
+	step := &pat.steps[0]
+	if step.field != 0 ||
+		len(step.absentFields) != 0 ||
+		len(step.alternatives) != 0 ||
+		step.textMatch != "" ||
+		step.depth != 0 ||
+		step.quantifier != queryQuantifierOne ||
+		step.anchorBefore ||
+		step.anchorAfter ||
+		!q.nodeMatchesStep(step, node, lang) {
+		return QueryMatch{}, false
+	}
+	var captures []QueryCapture
+	q.appendCaptureIDs(step.captureIDs, node, &captures)
+	return QueryMatch{
+		PatternIndex: patternIndex,
+		Captures:     captures,
+	}, true
 }
 
 func (c *QueryCursor) pushCurrentNodeChildren() {
