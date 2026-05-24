@@ -51,14 +51,14 @@ func shouldNormalizeIncrementalReturnedTree(tree, oldTree *Tree) bool {
 	if oldTree == nil {
 		return true
 	}
-	return rootOrNil(tree) != rootOrNil(oldTree)
+	return rawRootOrNil(tree) != rawRootOrNil(oldTree)
 }
 
 func normalizeReturnedIncrementalTree(tree, oldTree *Tree, source []byte, lang *Language) {
 	if !shouldNormalizeIncrementalReturnedTree(tree, oldTree) {
 		return
 	}
-	normalizeReturnedTree(rootOrNil(tree), source, lang)
+	normalizeReturnedTree(rawRootOrNil(tree), source, lang)
 }
 
 func (p *Parser) normalizeReturnedTree(root *Node, source []byte) {
@@ -158,7 +158,7 @@ func (p *Parser) parseWithTokenSource(source []byte, ts TokenSource, reparseFact
 	if shouldRepeatExternalScannerFullParse(p.language, tree) {
 		tree = p.retryFullParseWithTokenSource(source, ts, initialMaxStacks, deterministicExternalConflicts, tree)
 	}
-	p.normalizeReturnedTree(rootOrNil(tree), source)
+	p.normalizeReturnedTree(rawRootOrNil(tree), source)
 	return tree, nil
 }
 
@@ -439,7 +439,7 @@ func (p *Parser) Parse(source []byte) (*Tree, error) {
 	if shouldRepeatExternalScannerFullParse(p.language, tree) {
 		tree = p.retryFullParseWithDFA(source, initialMaxStacks, deterministicExternalConflicts, tree)
 	}
-	p.normalizeReturnedTree(rootOrNil(tree), source)
+	p.normalizeReturnedTree(rawRootOrNil(tree), source)
 	return tree, nil
 }
 

@@ -101,6 +101,13 @@ func rootOrNil(tree *Tree) *Node {
 	return tree.RootNode()
 }
 
+func rawRootOrNil(tree *Tree) *Node {
+	if tree == nil {
+		return nil
+	}
+	return tree.root
+}
+
 func retryTreeEndByte(tree *Tree) uint32 {
 	if tree == nil {
 		return 0
