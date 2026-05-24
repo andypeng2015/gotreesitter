@@ -229,6 +229,41 @@ func TestTypeScriptBinaryOperatorCompatibilityGate(t *testing.T) {
 	}
 }
 
+func TestTypeScriptGenericCallCandidateCheckDoesNotRetargetParents(t *testing.T) {
+	ctx := typeScriptNormalizationContext{
+		binaryExpressionSym:  1,
+		greaterThanSym:       2,
+		pipeSym:              3,
+		lessThanSym:          4,
+		parenthesizedExprSym: 5,
+		hasPipeSym:           true,
+	}
+	arena := newNodeArena(arenaClassFull)
+	callee := newLeafNodeInArena(arena, 6, true, 0, 8, Point{}, Point{Column: 8})
+	lt := newLeafNodeInArena(arena, ctx.lessThanSym, false, 8, 9, Point{Column: 8}, Point{Column: 9})
+	stringType := newLeafNodeInArena(arena, 7, true, 9, 15, Point{Column: 9}, Point{Column: 15})
+	open := newParentNodeInArena(arena, ctx.binaryExpressionSym, true, []*Node{callee, lt, stringType}, nil, 0)
+	pipe := newLeafNodeInArena(arena, ctx.pipeSym, false, 16, 17, Point{Column: 16}, Point{Column: 17})
+	nullType := newLeafNodeInArena(arena, 8, true, 18, 22, Point{Column: 18}, Point{Column: 22})
+	union := newParentNodeInArena(arena, ctx.binaryExpressionSym, true, []*Node{open, pipe, nullType}, nil, 0)
+	gt := newLeafNodeInArena(arena, ctx.greaterThanSym, false, 22, 23, Point{Column: 22}, Point{Column: 23})
+	args := newParentNodeInArena(arena, ctx.parenthesizedExprSym, true, nil, nil, 0)
+	callShape := newParentNodeInArena(arena, ctx.binaryExpressionSym, true, []*Node{union, gt, args}, nil, 0)
+
+	if !typeScriptBinaryExpressionHasGenericCallClose(callShape, &ctx) {
+		t.Fatal("union generic call shape was not detected")
+	}
+	if nullType.parent != union {
+		t.Fatal("candidate check retargeted union child parent link")
+	}
+	if pipe.parent != union {
+		t.Fatal("candidate check retargeted union operator parent link")
+	}
+	if stringType.parent != open {
+		t.Fatal("candidate check retargeted open generic child parent link")
+	}
+}
+
 func TestTypeScriptCallInstantiatedCompatibilityGate(t *testing.T) {
 	ctx := typeScriptNormalizationContext{
 		callSym:              1,

@@ -1605,12 +1605,60 @@ func splitTypeScriptGenericCallOpen(node *Node, ctx *typeScriptNormalizationCont
 }
 
 func typeScriptBinaryExpressionHasGenericCallClose(node *Node, ctx *typeScriptNormalizationContext) bool {
-	typeExpr, _, _, ok := splitTypeScriptGenericCallClose(node, ctx)
+	typeExpr, ok := typeScriptGenericCallCloseTypeExpressionNoAlloc(node, ctx)
 	if !ok || typeExpr == nil {
 		return false
 	}
-	_, _, _, ok = splitTypeScriptGenericCallOpen(typeExpr, ctx)
-	return ok
+	return typeScriptGenericCallOpenNoAlloc(typeExpr, ctx)
+}
+
+func typeScriptGenericCallCloseTypeExpressionNoAlloc(node *Node, ctx *typeScriptNormalizationContext) (*Node, bool) {
+	root := node
+	for {
+		left, op, right, ok := typeScriptBinaryParts(node, ctx)
+		if !ok {
+			return nil, false
+		}
+		if op.symbol == ctx.greaterThanSym && right.symbol == ctx.parenthesizedExprSym {
+			if node == root {
+				return left, true
+			}
+			return root, true
+		}
+		if !typeScriptBinaryOperatorIsTypeUnionOrIntersection(op, ctx) || right.symbol != ctx.binaryExpressionSym {
+			return nil, false
+		}
+		node = right
+	}
+}
+
+func typeScriptGenericCallOpenNoAlloc(node *Node, ctx *typeScriptNormalizationContext) bool {
+	for {
+		left, op, _, ok := typeScriptBinaryParts(node, ctx)
+		if !ok {
+			return false
+		}
+		if op.symbol == ctx.lessThanSym {
+			return true
+		}
+		if !typeScriptBinaryOperatorIsTypeUnionOrIntersection(op, ctx) || left.symbol != ctx.binaryExpressionSym {
+			return false
+		}
+		node = left
+	}
+}
+
+func typeScriptBinaryParts(node *Node, ctx *typeScriptNormalizationContext) (*Node, *Node, *Node, bool) {
+	if node == nil || ctx == nil || node.symbol != ctx.binaryExpressionSym || len(node.children) != 3 {
+		return nil, nil, nil, false
+	}
+	left := node.children[0]
+	op := node.children[1]
+	right := node.children[2]
+	if left == nil || op == nil || right == nil {
+		return nil, nil, nil, false
+	}
+	return left, op, right, true
 }
 
 func typeScriptBinaryOperatorIsTypeUnionOrIntersection(op *Node, ctx *typeScriptNormalizationContext) bool {
