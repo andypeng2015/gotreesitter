@@ -2713,6 +2713,9 @@ func (d *dfaTokenSource) promoteKeyword(tok Token) Token {
 	if start < 0 || end < start || end > len(d.lexer.source) {
 		return tok
 	}
+	if !d.language.keywordLexCouldMatch(d.lexer.source, start, end) {
+		return tok
+	}
 
 	kw := Lexer{
 		states:     d.language.KeywordLexStates,
