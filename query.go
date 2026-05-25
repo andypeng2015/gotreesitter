@@ -835,7 +835,7 @@ func (c *QueryCursor) nextMatchRaw() (QueryMatch, bool) {
 			c.worklist = c.worklist[:len(c.worklist)-1]
 			n := item.node
 			depth := item.depth
-			if !c.nodeIntersectsRanges(n) {
+			if (c.hasByteRange || c.hasPointRange) && !c.nodeIntersectsRanges(n) {
 				continue
 			}
 			if item.post {
@@ -965,11 +965,12 @@ func (c *QueryCursor) pushCurrentNodeChildren() {
 		return
 	}
 	nextDepth := c.currentNodeDepth + 1
+	rangeLimited := c.hasByteRange || c.hasPointRange
 	// Push children in reverse order so leftmost is visited first.
 	for i := nodeChildCountNoMaterialize(n) - 1; i >= 0; i-- {
 		entry, ok := nodeChildEntryAtNoMaterialize(n, i)
 		if ok {
-			if !c.stackEntryIntersectsRanges(entry) {
+			if rangeLimited && !c.stackEntryIntersectsRanges(entry) {
 				continue
 			}
 			if c.query.canSkipQueryLeafEntry(entry, c.lang) {
@@ -977,7 +978,7 @@ func (c *QueryCursor) pushCurrentNodeChildren() {
 			}
 		}
 		child := nodeChildAtForReason(n, i, materializeForQuery)
-		if child != nil && c.nodeIntersectsRanges(child) {
+		if child != nil && (!rangeLimited || c.nodeIntersectsRanges(child)) {
 			c.worklist = append(c.worklist, queryCursorWorkItem{
 				node:  child,
 				depth: nextDepth,
