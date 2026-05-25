@@ -1842,10 +1842,26 @@ func (t *Tree) ensureResultCompatibility() {
 		return
 	}
 	t.resultCompatibilityOnce.Do(func() {
+		defer func() {
+			t.resultCompatibilityPending = false
+		}()
 		if t.root == nil || t.language == nil {
 			return
 		}
-		normalizeResultCompatibility(t.root, t.source, &Parser{language: t.language})
+		if !parsePhaseTimingEnabled() {
+			normalizeResultCompatibility(t.root, t.source, &Parser{language: t.language})
+			return
+		}
+		timing := &parseMaterializationTiming{}
+		parser := &Parser{
+			language:              t.language,
+			materializationTiming: timing,
+		}
+		start := materializationTimingStart(timing)
+		normalizeResultCompatibility(t.root, t.source, parser)
+		timing.addResultCompatibility(start)
+		t.parseRuntime.ResultCompatibilityNanos += timing.resultCompatibilityNanos
+		parser.copyNormalizationStats(&t.parseRuntime)
 	})
 }
 

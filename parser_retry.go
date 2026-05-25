@@ -58,7 +58,7 @@ func shouldRetryAcceptedErrorParse(tree *Tree, sourceLen int, initialMaxStacks i
 	if sourceLen <= 0 || sourceLen > fullParseRetryMaxSourceBytes {
 		return false
 	}
-	root := tree.RootNode()
+	root := rawRootOrNil(tree)
 	if root == nil || !root.HasError() {
 		return false
 	}
@@ -86,7 +86,7 @@ func treeParseClean(tree *Tree) bool {
 	if tree == nil {
 		return false
 	}
-	root := tree.RootNode()
+	root := rawRootOrNil(tree)
 	if root == nil || root.HasError() {
 		return false
 	}
@@ -112,7 +112,7 @@ func retryTreeEndByte(tree *Tree) uint32 {
 	if tree == nil {
 		return 0
 	}
-	if root := tree.RootNode(); root != nil {
+	if root := rawRootOrNil(tree); root != nil {
 		return root.EndByte()
 	}
 	return tree.ParseRuntime().RootEndByte
@@ -122,7 +122,7 @@ func retryTreeChildCount(tree *Tree) int {
 	if tree == nil {
 		return 0
 	}
-	if root := tree.RootNode(); root != nil {
+	if root := rawRootOrNil(tree); root != nil {
 		return root.ChildCount()
 	}
 	return 0
@@ -132,7 +132,7 @@ func retryTreeHasError(tree *Tree) bool {
 	if tree == nil {
 		return true
 	}
-	root := tree.RootNode()
+	root := rawRootOrNil(tree)
 	if root == nil {
 		return true
 	}
