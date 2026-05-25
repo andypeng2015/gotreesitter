@@ -2504,6 +2504,10 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 						if next, ok := tsxRepetitionReduceConflictChoice(p.language, tok, currentState, actions); ok {
 							chosen, choice = next, true
 						}
+					case "javascript":
+						if next, ok := javascriptRepetitionShiftConflictChoice(p.language, tok, currentState, actions); ok {
+							chosen, choice = next, true
+						}
 					}
 				}
 				if !choice && deterministicExternalConflicts && p.language != nil && p.language.Name == "yaml" && p.language.ExternalScanner != nil {
@@ -3485,6 +3489,36 @@ func typescriptRepetitionShiftConflictChoice(lang *Language, tok Token, state St
 		}
 	case 3817:
 		if !symbolHasName(lang, tok.Symbol, "case") {
+			return ParseAction{}, false
+		}
+	default:
+		return ParseAction{}, false
+	}
+	return repetitionShiftConflictChoice(actions)
+}
+
+// javascriptRepetitionShiftConflictChoice resolves the program-level
+// reduce/shift conflict at state 9 where the grammar accepts both
+// "reduce program_repeat1" and "shift the next statement-starter". The
+// repetition shift always continues the program list, matching how the
+// C runtime walks ambiguous tops without forking. Top-level
+// statement-starter tokens are listed explicitly to stay conservative.
+func javascriptRepetitionShiftConflictChoice(lang *Language, tok Token, state StateID, actions []ParseAction) (ParseAction, bool) {
+	if lang == nil {
+		return ParseAction{}, false
+	}
+	switch state {
+	case 9:
+		switch {
+		case symbolHasName(lang, tok.Symbol, "identifier"):
+		case symbolHasName(lang, tok.Symbol, "function"):
+		case symbolHasName(lang, tok.Symbol, "var"):
+		case symbolHasName(lang, tok.Symbol, "const"):
+		case symbolHasName(lang, tok.Symbol, "let"):
+		case symbolHasName(lang, tok.Symbol, "return"):
+		case symbolHasName(lang, tok.Symbol, "if"):
+		case symbolHasName(lang, tok.Symbol, "export"):
+		default:
 			return ParseAction{}, false
 		}
 	default:
