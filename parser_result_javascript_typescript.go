@@ -759,6 +759,12 @@ func normalizeJavaScriptTrailingContinueComments(root *Node, source []byte, lang
 	if root == nil || lang == nil || lang.Name != "javascript" || len(source) == 0 {
 		return
 	}
+	// Source-level gate: this pass only acts on continue_statement nodes
+	// with trailing comments. If source has neither "continue" nor "//",
+	// no candidate exists and the walk is wasted on large files like jquery.
+	if !bytes.Contains(source, []byte("continue")) || !bytes.Contains(source, []byte("//")) {
+		return
+	}
 	walkResultTreeDenseFirst(root, func(n *Node) {
 		normalizeJavaScriptTrailingContinueCommentSiblings(n, source, lang)
 	})
