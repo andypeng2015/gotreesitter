@@ -195,6 +195,8 @@ type runtimeStats struct {
 	QueryCaptures                         uint64        `json:"query_captures,omitempty"`
 	QueryCompileNS                        int64         `json:"query_compile_ns,omitempty"`
 	QueryExecNS                           int64         `json:"query_exec_ns,omitempty"`
+	QueryRootNS                           int64         `json:"query_root_ns,omitempty"`
+	QueryCursorNS                         int64         `json:"query_cursor_ns,omitempty"`
 	CursorNodes                           uint64        `json:"cursor_nodes,omitempty"`
 	MergeCalls                            uint64        `json:"merge_calls,omitempty"`
 	MergeDeadPruned                       uint64        `json:"merge_dead_pruned,omitempty"`
@@ -1050,6 +1052,8 @@ func releaseTree(tree *gotreesitter.Tree, err error) error {
 type queryTimingStats struct {
 	compileNS int64
 	execNS    int64
+	rootNS    int64
+	cursorNS  int64
 }
 
 func statsFromGoTree(r *runner, tree *gotreesitter.Tree, queryCaptures, cursorNodes uint64, queryTiming ...queryTimingStats) runtimeStats {
@@ -1062,6 +1066,8 @@ func statsFromGoTree(r *runner, tree *gotreesitter.Tree, queryCaptures, cursorNo
 	if len(queryTiming) > 0 {
 		stats.QueryCompileNS = queryTiming[0].compileNS
 		stats.QueryExecNS = queryTiming[0].execNS
+		stats.QueryRootNS = queryTiming[0].rootNS
+		stats.QueryCursorNS = queryTiming[0].cursorNS
 	}
 	stats.CursorNodes = cursorNodes
 	if breakdown, ok := tree.ArenaBreakdown(); ok {
@@ -1663,7 +1669,19 @@ func runGoQuery(r *runner, tree *gotreesitter.Tree, source []byte, queryText str
 	if timingEnabled {
 		execStart = time.Now()
 	}
-	cursor := q.Exec(tree.RootNode(), r.goLang, source)
+	rootStart := time.Time{}
+	if timingEnabled {
+		rootStart = time.Now()
+	}
+	root := tree.RootNode()
+	if timingEnabled {
+		timing.rootNS = time.Since(rootStart).Nanoseconds()
+	}
+	cursorStart := time.Time{}
+	if timingEnabled {
+		cursorStart = time.Now()
+	}
+	cursor := q.Exec(root, r.goLang, source)
 	var captures uint64
 	for {
 		match, ok := cursor.NextMatch()
@@ -1673,6 +1691,7 @@ func runGoQuery(r *runner, tree *gotreesitter.Tree, source []byte, queryText str
 		captures += uint64(len(match.Captures))
 	}
 	if timingEnabled {
+		timing.cursorNS = time.Since(cursorStart).Nanoseconds()
 		timing.execNS = time.Since(execStart).Nanoseconds()
 	}
 	return captures, timing, nil
