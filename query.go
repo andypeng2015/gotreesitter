@@ -22,6 +22,7 @@ type Query struct {
 	postFallbackCandidates     []int
 	rootZeroOrMorePatterns     []int
 	rootRepetitionPostPatterns []int
+	canSkipExactRootLeaves     bool
 
 	disabledPatternIdx  map[int]struct{}
 	disabledCaptureName map[string]struct{}
@@ -712,6 +713,10 @@ func (q *Query) buildRootPatternIndex() {
 	for sym, candidates := range q.postCandidatesBySymbol {
 		q.postCandidatesDense[sym] = candidates
 	}
+	q.canSkipExactRootLeaves = len(q.rootFallbackCandidates) == 0 &&
+		len(q.rootRepetitionPostPatterns) == 0 &&
+		len(q.postFallbackCandidates) == 0 &&
+		len(q.postCandidatesBySymbol) == 0
 }
 
 func addRootPatternCandidate(pi int, step QueryStep, bySymbolExact map[Symbol][]int, wildcard *[]int, complex *[]int) {
@@ -929,6 +934,18 @@ func (q *Query) singleStepQueryMatch(pat *Pattern, patternIndex int, node *Node,
 	}, true
 }
 
+func (q *Query) canSkipQueryLeafEntry(entry stackEntry, lang *Language) bool {
+	if q == nil || lang == nil || !q.canSkipExactRootLeaves {
+		return false
+	}
+	if stackEntryNodeChildCount(entry) != 0 {
+		return false
+	}
+	nodeNamed := stackEntryNodeIsNamed(entry)
+	sym := lang.PublicSymbolForNamedness(stackEntryNodeSymbol(entry), nodeNamed)
+	return len(q.rootPatternCandidates(sym)) == 0
+}
+
 func (c *QueryCursor) pushCurrentNodeChildren() {
 	n := c.currentNode
 	if n == nil {
@@ -950,9 +967,12 @@ func (c *QueryCursor) pushCurrentNodeChildren() {
 	nextDepth := c.currentNodeDepth + 1
 	// Push children in reverse order so leftmost is visited first.
 	for i := nodeChildCountNoMaterialize(n) - 1; i >= 0; i-- {
-		if c.hasByteRange || c.hasPointRange {
-			entry, ok := nodeChildEntryAtNoMaterialize(n, i)
-			if !ok || !c.stackEntryIntersectsRanges(entry) {
+		entry, ok := nodeChildEntryAtNoMaterialize(n, i)
+		if ok {
+			if !c.stackEntryIntersectsRanges(entry) {
+				continue
+			}
+			if c.query.canSkipQueryLeafEntry(entry, c.lang) {
 				continue
 			}
 		}
