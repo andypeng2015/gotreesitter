@@ -2083,22 +2083,64 @@ func extractTerminals(g *Grammar, st *symbolTable, stringLits []string, namedTok
 		})
 	}
 
-	// Named tokens: split into string-only and non-string groups for ordering,
-	// but both use the same prec-based priority scheme.
-	var stringNamedTokens, patternNamedTokens []string
+	// Named tokens: split into three groups for extraction ordering.
+	//
+	// stringNamedTokens: bare-STRING-bodied tokens (e.g. `null_lit = "null"`).
+	// stringChoiceNamedTokens: tokens whose expanded body is a CHOICE/SEQ of
+	//   pure STRINGs (e.g. HCL's `bool_lit = "true" | "false"`,
+	//   graphql's `operation_type = "query" | "mutation" | "subscription"`).
+	//   Extracted BEFORE patternNamedTokens so they get a lower tieOrder than
+	//   broad regex-based tokens like `identifier` — otherwise identifier
+	//   wins the DFA tie-break for inputs like "true" and the string-choice
+	//   token's accept is silently discarded from every state.
+	// patternNamedTokens: PATTERN- or TOKEN()-wrapped tokens including
+	//   regex bodies.
+	var stringNamedTokens, stringChoiceNamedTokens, patternNamedTokens []string
 	for _, name := range namedTokens {
 		rule := g.Rules[name]
 		if isStringOnlyToken(rule) {
 			stringNamedTokens = append(stringNamedTokens, name)
-		} else {
-			patternNamedTokens = append(patternNamedTokens, name)
+			continue
 		}
+		if expanded, _, _, err := expandTokenRule(rule); err == nil && isStringOnlyRule(expanded) {
+			stringChoiceNamedTokens = append(stringChoiceNamedTokens, name)
+			continue
+		}
+		patternNamedTokens = append(patternNamedTokens, name)
 	}
 
 	// String-only named tokens: prec-based priority, greedy decides ties.
 	for _, name := range stringNamedTokens {
 		id, ok := st.lookupNamedToken(name)
 		if !ok {
+			continue
+		}
+		rule := g.Rules[name]
+		expanded, imm, prec, err := expandTokenRule(rule)
+		if err != nil {
+			return nil, fmt.Errorf("expand token %q: %w", name, err)
+		}
+		adjustedPriority := -prec * 1000
+		if imm {
+			adjustedPriority -= 10000
+		}
+		patterns = append(patterns, TerminalPattern{
+			SymbolID:  id,
+			Rule:      expanded,
+			Priority:  adjustedPriority,
+			Immediate: imm,
+		})
+	}
+
+	// String-choice named tokens: same prec-based priority as patternNamedTokens
+	// but emitted FIRST so their lower tieOrder beats broader pattern tokens
+	// on equal-length DFA accept ties.
+	for _, name := range stringChoiceNamedTokens {
+		id, ok := st.lookupNamedToken(name)
+		if !ok {
+			continue
+		}
+		if keywordSet != nil && keywordSet[id] {
 			continue
 		}
 		rule := g.Rules[name]
