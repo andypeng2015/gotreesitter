@@ -3347,7 +3347,10 @@ func flattenHiddenChoiceAlts(g *Grammar, generatedHiddenRules map[string]bool) *
 		var pt, compound []*Rule
 		for _, alt := range alts {
 			if isSingleSymRef(alt) {
-				pt = append(pt, alt)
+				// PREC belongs to the hidden rule's own productions, not to
+				// consumer rules that inline its alternatives — leaking it
+				// breaks shift/reduce resolution at the call site.
+				pt = append(pt, stripTopPrec(alt))
 			} else {
 				compound = append(compound, alt)
 			}
@@ -3759,6 +3762,25 @@ func inlinePassthroughRefsCtxSeen(r *Rule, flattenMap map[string]*flattenInfo, i
 	out := *r
 	out.Children = newChildren
 	return &out
+}
+
+// stripTopPrec unwraps PREC/PREC_LEFT/PREC_RIGHT/PREC_DYNAMIC wrappers from
+// the top of a rule. ALIAS and FIELD wrappers are preserved.
+func stripTopPrec(r *Rule) *Rule {
+	if r == nil {
+		return nil
+	}
+	for {
+		switch r.Kind {
+		case RulePrec, RulePrecLeft, RulePrecRight, RulePrecDynamic:
+			if len(r.Children) == 0 {
+				return r
+			}
+			r = r.Children[0]
+		default:
+			return r
+		}
+	}
 }
 
 // stripTopAlias removes a top-level ALIAS wrapper, unwrapping through
