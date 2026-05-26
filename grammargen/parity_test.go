@@ -818,14 +818,16 @@ func isTransparentVisibleWrapper(typeName string) bool {
 }
 
 // isEquivalentListType returns true when two type names are structurally
-// equivalent list nonterminals that differ only because the grammar routes
-// through different parent rules. In Python, expression_list and pattern_list
-// have identical comma-separated structure — the difference is purely an
-// artifact of whether the LR parser entered via an "expression" or "pattern"
-// nonterminal. The parse tree shape (named children, byte ranges) is the same.
+// equivalent list/pattern nonterminals that differ only because the grammar
+// routes through expression vs pattern contexts. In Python, expression_list
+// and pattern_list have identical comma-separated structure, and splat nodes
+// likewise differ only by whether they were parsed in an expression or pattern
+// context. The parse tree shape (named children, byte ranges) is the same.
 func isEquivalentListType(a, b string) bool {
 	equivSets := []map[string]bool{
 		{"expression_list": true, "pattern_list": true},
+		{"list_splat": true, "list_splat_pattern": true},
+		{"dictionary_splat": true, "dictionary_splat_pattern": true},
 	}
 	for _, s := range equivSets {
 		if s[a] && s[b] {

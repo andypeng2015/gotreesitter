@@ -3,11 +3,27 @@ package grammargen
 import (
 	"context"
 	"fmt"
+	"os"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/odvcencio/gotreesitter"
 )
+
+const defaultBroadLexModeStateThreshold = 50000
+
+func broadLexModeStateThreshold() int {
+	raw := strings.TrimSpace(os.Getenv("GTS_GRAMMARGEN_BROAD_LEXMODE_STATE_THRESHOLD"))
+	if raw == "" {
+		return defaultBroadLexModeStateThreshold
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 0 {
+		return defaultBroadLexModeStateThreshold
+	}
+	return n
+}
 
 // buildFollowTokensFunc returns a function that, given a parser state,
 // returns the terminal symbols valid in states reachable after a reduce.
@@ -18,55 +34,63 @@ func buildFollowTokensFunc(tables *LRTables, tokenCount int) func(int) []int {
 	if tables == nil {
 		return nil
 	}
-	// Pre-build reverse GOTO index: lhsSym → list of GOTO target states.
-	// This avoids the O(stateCount) scan per reduce action that made
-	// computeLexModes unusable for large grammars (C# 121K states, TS 42K).
-	type gotoTarget struct{ targetState int }
-	gotoIndex := make(map[int][]gotoTarget) // lhsSym → targets
-	for state := 0; state < tables.StateCount; state++ {
-		acts, ok := tables.ActionTable[state]
-		if !ok {
-			continue
+	// Precompute the terminal symbols accepted by each state so reduce-follow
+	// expansion can reuse them without repeatedly scanning whole action rows.
+	stateTerminals := make(map[int][]int, len(tables.ActionTable))
+	for state, acts := range tables.ActionTable {
+		syms := make([]int, 0, len(acts))
+		for sym := range acts {
+			if sym > 0 && sym < tokenCount {
+				syms = append(syms, sym)
+			}
 		}
+		stateTerminals[state] = syms
+	}
+
+	// The current approximation is keyed only by the reduce production's LHS:
+	// for any state that can reduce A, collect terminals from every GOTO target
+	// reachable via A anywhere in the automaton. Precompute that once per LHS
+	// instead of rescanning all states for every parser state.
+	lhsFollow := make(map[int][]int)
+	lhsFollowSeen := make(map[int]map[int]bool)
+	for _, acts := range tables.ActionTable {
 		for sym, actions := range acts {
+			if sym <= 0 || sym < tokenCount {
+				continue
+			}
 			for _, act := range actions {
-				if act.kind == lrShift && sym >= tokenCount {
-					// This is a GOTO entry (nonterminal shift)
-					gotoIndex[sym] = append(gotoIndex[sym], gotoTarget{act.state})
+				if act.kind != lrShift {
+					continue
+				}
+				followSeen := lhsFollowSeen[sym]
+				if followSeen == nil {
+					followSeen = make(map[int]bool)
+					lhsFollowSeen[sym] = followSeen
+				}
+				for _, term := range stateTerminals[act.state] {
+					if !followSeen[term] {
+						followSeen[term] = true
+						lhsFollow[sym] = append(lhsFollow[sym], term)
+					}
 				}
 			}
 		}
 	}
 
-	// Pre-build terminal sets per state for fast lookup
-	stateTerminals := make(map[int][]int) // state → terminal syms
-	for state := 0; state < tables.StateCount; state++ {
-		acts, ok := tables.ActionTable[state]
-		if !ok {
-			continue
-		}
-		var terms []int
-		for sym := range acts {
-			if sym > 0 && sym < tokenCount {
-				terms = append(terms, sym)
-			}
-		}
-		if len(terms) > 0 {
-			stateTerminals[state] = terms
-		}
-	}
-
-	cache := make(map[int][]int)
+	// Cache per state to avoid recomputation.
+	cache := make(map[int][]int, len(tables.ActionTable))
 	return func(state int) []int {
 		if cached, ok := cache[state]; ok {
 			return cached
 		}
-		seen := make(map[int]bool)
 		acts, ok := tables.ActionTable[state]
 		if !ok {
 			cache[state] = nil
 			return nil
 		}
+		seen := make(map[int]bool)
+		// For each reduce action in this state, collect the precomputed
+		// terminal symbols reachable after reducing that production's LHS.
 		for _, actions := range acts {
 			for _, act := range actions {
 				if act.kind != lrReduce {
@@ -76,11 +100,8 @@ func buildFollowTokensFunc(tables *LRTables, tokenCount int) func(int) []int {
 				if lhsSym <= 0 {
 					continue
 				}
-				// Use pre-built GOTO index instead of scanning all states
-				for _, gt := range gotoIndex[lhsSym] {
-					for _, sym := range stateTerminals[gt.targetState] {
-						seen[sym] = true
-					}
+				for _, sym := range lhsFollow[lhsSym] {
+					seen[sym] = true
 				}
 			}
 		}
@@ -580,7 +601,7 @@ func generateWithReport(g *Grammar, opts reportBuildOptions) (*GenerateReport, e
 	var lexModes []lexModeSpec
 	var stateToMode []int
 	var afterWSModes []afterWSModeEntry
-	if tables.StateCount > 50000 {
+	if tables.StateCount > broadLexModeStateThreshold() {
 		// Large grammars (C# 121K states, TS 42K): use a single broad
 		// DFA with all tokens instead of per-state lex modes. Per-state
 		// mode computation is O(states × tokens) which is prohibitive
@@ -619,6 +640,7 @@ func generateWithReport(g *Grammar, opts reportBuildOptions) (*GenerateReport, e
 			termPatSyms,
 			buildFollowTokensFunc(tables, tokenCount),
 			patternImmediateTokenSet(ng),
+			followUnsafePatternTokenSet(ng),
 		)
 	}
 
@@ -803,7 +825,7 @@ func generateWithReportCtx(bgCtx context.Context, g *Grammar, opts reportBuildOp
 	var lexModes []lexModeSpec
 	var stateToMode []int
 	var afterWSModes []afterWSModeEntry
-	if tables.StateCount > 50000 {
+	if tables.StateCount > broadLexModeStateThreshold() {
 		// Large grammars (C# 121K states, TS 42K): use a single broad
 		// DFA with all tokens instead of per-state lex modes. Per-state
 		// mode computation is O(states × tokens) which is prohibitive
@@ -842,6 +864,7 @@ func generateWithReportCtx(bgCtx context.Context, g *Grammar, opts reportBuildOp
 			termPatSyms,
 			buildFollowTokensFunc(tables, tokenCount),
 			patternImmediateTokenSet(ng),
+			followUnsafePatternTokenSet(ng),
 		)
 	}
 

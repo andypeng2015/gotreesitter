@@ -2034,8 +2034,435 @@ func TestNormalizeCTranslationUnitRootRetagsRecoveredTopLevelChildren(t *testing
 	if got, want := root.Type(lang), "translation_unit"; got != want {
 		t.Fatalf("root.Type = %q, want %q", got, want)
 	}
-	if !root.HasError() {
-		t.Fatalf("root.HasError = false, want true")
+	if root.HasError() {
+		t.Fatalf("root.HasError = true, want false")
+	}
+}
+
+func TestNormalizeCTranslationUnitRootAcceptsStandaloneSemicolonsAndExpressionStatements(t *testing.T) {
+	lang := &Language{
+		Name:        "c",
+		SymbolNames: []string{"EOF", "ERROR", "translation_unit", "struct_specifier", ";", "expression_statement"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF", Visible: false, Named: false},
+			{Name: "ERROR", Visible: true, Named: true},
+			{Name: "translation_unit", Visible: true, Named: true},
+			{Name: "struct_specifier", Visible: true, Named: true},
+			{Name: ";", Visible: true, Named: false},
+			{Name: "expression_statement", Visible: true, Named: true},
+		},
+	}
+
+	arena := newNodeArena(arenaClassFull)
+	structNode := newLeafNodeInArena(arena, 3, true, 0, 6, Point{}, Point{Column: 6})
+	semi := newLeafNodeInArena(arena, 4, false, 6, 7, Point{Column: 6}, Point{Column: 7})
+	expr := newLeafNodeInArena(arena, 5, true, 8, 20, Point{Row: 1}, Point{Row: 1, Column: 12})
+	root := newParentNodeInArena(arena, 1, true, []*Node{structNode, semi, expr}, nil, 0)
+	root.hasError = true
+
+	normalizeCTranslationUnitRoot(root, lang)
+
+	if got, want := root.Type(lang), "translation_unit"; got != want {
+		t.Fatalf("root.Type = %q, want %q", got, want)
+	}
+	if root.HasError() {
+		t.Fatalf("root.HasError = true, want false")
+	}
+}
+
+func TestNormalizeCPreprocessorContinuationSpansExtendsMacroBody(t *testing.T) {
+	lang := &Language{
+		Name:        "c",
+		SymbolNames: []string{"EOF", "preproc_function_def", "identifier", "preproc_params", "preproc_arg"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF", Visible: false, Named: false},
+			{Name: "preproc_function_def", Visible: true, Named: true},
+			{Name: "identifier", Visible: true, Named: true},
+			{Name: "preproc_params", Visible: true, Named: true},
+			{Name: "preproc_arg", Visible: true, Named: true},
+		},
+	}
+
+	source := []byte("#define LOG(...) \\\n  if (x) \\\n  y\n")
+	arena := newNodeArena(arenaClassFull)
+	name := newLeafNodeInArena(arena, 2, true, 8, 11, Point{Column: 8}, Point{Column: 11})
+	params := newLeafNodeInArena(arena, 3, true, 11, 16, Point{Column: 11}, Point{Column: 16})
+	arg := newLeafNodeInArena(arena, 4, true, 17, 18, Point{Column: 17}, Point{Column: 18})
+	root := newParentNodeInArena(arena, 1, true, []*Node{name, params, arg}, nil, 0)
+	root.startByte = 0
+	root.startPoint = Point{}
+	root.endByte = 19
+	root.endPoint = Point{Row: 1}
+
+	normalizeCPreprocessorContinuationSpans(root, source, lang)
+
+	if got, want := root.endByte, uint32(len(source)-1); got != want {
+		t.Fatalf("root.endByte = %d, want %d", got, want)
+	}
+	if got, want := arg.startByte, uint32(21); got != want {
+		t.Fatalf("arg.startByte = %d, want %d", got, want)
+	}
+	if got, want := arg.endByte, uint32(len(source)-1); got != want {
+		t.Fatalf("arg.endByte = %d, want %d", got, want)
+	}
+}
+
+func TestNormalizeCNestedTopLevelPreprocFragmentsDropsContainedSiblings(t *testing.T) {
+	lang := &Language{
+		Name:        "c",
+		SymbolNames: []string{"EOF", "ERROR", "translation_unit", "preproc_function_def", "if_statement"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF", Visible: false, Named: false},
+			{Name: "ERROR", Visible: true, Named: true},
+			{Name: "translation_unit", Visible: true, Named: true},
+			{Name: "preproc_function_def", Visible: true, Named: true},
+			{Name: "if_statement", Visible: true, Named: true},
+		},
+	}
+
+	arena := newNodeArena(arenaClassFull)
+	preproc := newLeafNodeInArena(arena, 3, true, 0, 20, Point{}, Point{Row: 2})
+	leakedA := newLeafNodeInArena(arena, 4, true, 5, 10, Point{Column: 5}, Point{Column: 10})
+	leakedB := newLeafNodeInArena(arena, 4, true, 11, 19, Point{Row: 1}, Point{Row: 1, Column: 8})
+	root := newParentNodeInArena(arena, 1, true, []*Node{preproc, leakedA, leakedB}, nil, 0)
+	root.hasError = true
+
+	normalizeCNestedTopLevelPreprocFragments(root, lang)
+	normalizeCTranslationUnitRoot(root, lang)
+
+	if got, want := root.Type(lang), "translation_unit"; got != want {
+		t.Fatalf("root.Type = %q, want %q", got, want)
+	}
+	if got, want := root.ChildCount(), 1; got != want {
+		t.Fatalf("root.ChildCount = %d, want %d", got, want)
+	}
+	if got, want := root.Child(0).Type(lang), "preproc_function_def"; got != want {
+		t.Fatalf("root.Child(0).Type = %q, want %q", got, want)
+	}
+	if root.HasError() {
+		t.Fatal("root.HasError = true, want false")
+	}
+}
+
+func TestNormalizeCPointerAssignmentExpressionsReassociatesUnaryLHS(t *testing.T) {
+	lang := &Language{
+		Name:        "c",
+		SymbolNames: []string{"EOF", "translation_unit", "expression_statement", "pointer_expression", "assignment_expression", "identifier", "field_expression"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF", Visible: false, Named: false},
+			{Name: "translation_unit", Visible: true, Named: true},
+			{Name: "expression_statement", Visible: true, Named: true},
+			{Name: "pointer_expression", Visible: true, Named: true},
+			{Name: "assignment_expression", Visible: true, Named: true},
+			{Name: "identifier", Visible: true, Named: true},
+			{Name: "field_expression", Visible: true, Named: true},
+		},
+	}
+
+	arena := newNodeArena(arenaClassFull)
+	lhs := newLeafNodeInArena(arena, 5, true, 1, 10, Point{Column: 1}, Point{Column: 10})
+	rhs := newLeafNodeInArena(arena, 6, true, 13, 33, Point{Column: 13}, Point{Column: 33})
+	assign := newParentNodeInArena(arena, 4, true, []*Node{lhs, rhs}, nil, 0)
+	assign.startByte = 1
+	assign.startPoint = Point{Column: 1}
+	assign.endByte = 33
+	assign.endPoint = Point{Column: 33}
+	ptr := newParentNodeInArena(arena, 3, true, []*Node{assign}, nil, 0)
+	ptr.startByte = 0
+	ptr.startPoint = Point{}
+	ptr.endByte = 33
+	ptr.endPoint = Point{Column: 33}
+	stmt := newParentNodeInArena(arena, 2, true, []*Node{ptr}, nil, 0)
+	root := newParentNodeInArena(arena, 1, true, []*Node{stmt}, nil, 0)
+
+	normalizeCPointerAssignmentExpressions(root, lang)
+
+	expr := root.Child(0).Child(0)
+	if got, want := expr.Type(lang), "assignment_expression"; got != want {
+		t.Fatalf("expr.Type = %q, want %q", got, want)
+	}
+	if got, want := expr.Child(0).Type(lang), "pointer_expression"; got != want {
+		t.Fatalf("lhs.Type = %q, want %q", got, want)
+	}
+	if got, want := expr.Child(0).StartByte(), uint32(0); got != want {
+		t.Fatalf("pointer lhs start = %d, want %d", got, want)
+	}
+	if got, want := expr.Child(0).EndByte(), uint32(10); got != want {
+		t.Fatalf("pointer lhs end = %d, want %d", got, want)
+	}
+}
+
+func TestNormalizeCRecoveredTopLevelFunctionDefinitionsRewrapsSplitFunction(t *testing.T) {
+	lang := &Language{
+		Name:        "c",
+		SymbolNames: []string{"EOF", "ERROR", "translation_unit", "_declaration_specifiers", "primitive_type", "function_declarator", "{", "declaration", "}", "compound_statement", "function_definition"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF", Visible: false, Named: false},
+			{Name: "ERROR", Visible: true, Named: true},
+			{Name: "translation_unit", Visible: true, Named: true},
+			{Name: "_declaration_specifiers", Visible: false, Named: true},
+			{Name: "primitive_type", Visible: true, Named: true},
+			{Name: "function_declarator", Visible: true, Named: true},
+			{Name: "{", Visible: true, Named: false},
+			{Name: "declaration", Visible: true, Named: true},
+			{Name: "}", Visible: true, Named: false},
+			{Name: "compound_statement", Visible: true, Named: true},
+			{Name: "function_definition", Visible: true, Named: true},
+		},
+	}
+
+	arena := newNodeArena(arenaClassFull)
+	prim := newLeafNodeInArena(arena, 4, true, 0, 3, Point{}, Point{Column: 3})
+	specs := newParentNodeInArena(arena, 3, true, []*Node{prim}, nil, 0)
+	headErr := newParentNodeInArena(arena, 1, true, []*Node{specs}, nil, 0)
+	headErr.hasError = true
+	decl := newLeafNodeInArena(arena, 5, true, 4, 10, Point{Column: 4}, Point{Column: 10})
+	openBrace := newLeafNodeInArena(arena, 6, false, 11, 12, Point{Column: 11}, Point{Column: 12})
+	bodyDecl := newLeafNodeInArena(arena, 7, true, 13, 20, Point{Row: 1}, Point{Row: 1, Column: 7})
+	closeBrace := newLeafNodeInArena(arena, 8, false, 21, 22, Point{Row: 2}, Point{Row: 2, Column: 1})
+	root := newParentNodeInArena(arena, 1, true, []*Node{headErr, decl, openBrace, bodyDecl, closeBrace}, nil, 0)
+	root.hasError = true
+
+	normalizeCRecoveredTopLevelFunctionDefinitions(root, lang)
+	normalizeCTranslationUnitRoot(root, lang)
+
+	if got, want := root.Type(lang), "translation_unit"; got != want {
+		t.Fatalf("root.Type = %q, want %q", got, want)
+	}
+	if got, want := root.ChildCount(), 1; got != want {
+		t.Fatalf("root.ChildCount = %d, want %d", got, want)
+	}
+	fn := root.Child(0)
+	if got, want := fn.Type(lang), "function_definition"; got != want {
+		t.Fatalf("fn.Type = %q, want %q", got, want)
+	}
+	if got, want := fn.ChildCount(), 3; got != want {
+		t.Fatalf("fn.ChildCount = %d, want %d", got, want)
+	}
+	if got, want := fn.Child(0).Type(lang), "primitive_type"; got != want {
+		t.Fatalf("fn.Child(0).Type = %q, want %q", got, want)
+	}
+	if got, want := fn.Child(1).Type(lang), "function_declarator"; got != want {
+		t.Fatalf("fn.Child(1).Type = %q, want %q", got, want)
+	}
+	if got, want := fn.Child(2).Type(lang), "compound_statement"; got != want {
+		t.Fatalf("fn.Child(2).Type = %q, want %q", got, want)
+	}
+}
+
+func TestNormalizeCRecoveredTopLevelGNUAsmExpressionRewrapsRecoveredStatement(t *testing.T) {
+	lang := &Language{
+		Name:        "c",
+		SymbolNames: []string{"EOF", "ERROR", "translation_unit", "expression_statement", "gnu_asm_expression", "asm", "gnu_asm_qualifier", "volatile", "(", "string_literal", "concatenated_string", "gnu_asm_output_operand_list", "gnu_asm_input_operand_list", "gnu_asm_clobber_list", ")", ";"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF", Visible: false, Named: false},
+			{Name: "ERROR", Visible: true, Named: true},
+			{Name: "translation_unit", Visible: true, Named: true},
+			{Name: "expression_statement", Visible: true, Named: true},
+			{Name: "gnu_asm_expression", Visible: true, Named: true},
+			{Name: "asm", Visible: true, Named: false},
+			{Name: "gnu_asm_qualifier", Visible: true, Named: true},
+			{Name: "volatile", Visible: true, Named: false},
+			{Name: "(", Visible: true, Named: false},
+			{Name: "string_literal", Visible: true, Named: true},
+			{Name: "concatenated_string", Visible: true, Named: true},
+			{Name: "gnu_asm_output_operand_list", Visible: true, Named: true},
+			{Name: "gnu_asm_input_operand_list", Visible: true, Named: true},
+			{Name: "gnu_asm_clobber_list", Visible: true, Named: true},
+			{Name: ")", Visible: true, Named: false},
+			{Name: ";", Visible: true, Named: false},
+		},
+	}
+
+	source := []byte("asm volatile (\n    \"mov r0, %0\\n\"\n    \"mov r1, %[y]\\n\"\n    \"add r2, r0, r1\\n\"\n    \"mov %1, r2\\n\"\n    :     \"r\"  (z)\n    :     \"=r\" (x),\n      [y] \"=r\" ((uintptr_t) y)\n    : \"r2\");\n")
+	arena := newNodeArena(arenaClassFull)
+
+	asmLeaf := newLeafNodeInArena(arena, 5, false, 0, 3, Point{}, Point{Column: 3})
+	leadingErr := newParentNodeInArena(arena, errorSymbol, true, []*Node{asmLeaf}, nil, 0)
+	leadingErr.hasError = true
+
+	volatileLeaf := newLeafNodeInArena(arena, 7, false, 4, 12, Point{Column: 4}, Point{Column: 12})
+	qualifier := newParentNodeInArena(arena, 6, true, []*Node{volatileLeaf}, nil, 0)
+	openParen := newLeafNodeInArena(arena, 8, false, 13, 14, Point{Column: 13}, Point{Column: 14})
+	firstStr := newLeafNodeInArena(arena, 9, true, 19, 33, Point{Row: 1, Column: 4}, Point{Row: 1, Column: 18})
+	str2 := newLeafNodeInArena(arena, 9, true, 38, 54, Point{Row: 2, Column: 4}, Point{Row: 2, Column: 20})
+	str3 := newLeafNodeInArena(arena, 9, true, 59, 77, Point{Row: 3, Column: 4}, Point{Row: 3, Column: 22})
+	str4 := newLeafNodeInArena(arena, 9, true, 82, 96, Point{Row: 4, Column: 4}, Point{Row: 4, Column: 18})
+	newlineErr := newParentNodeInArena(arena, errorSymbol, true, nil, nil, 0)
+	newlineErr.startByte = 96
+	newlineErr.endByte = 97
+	newlineErr.startPoint = Point{Row: 4, Column: 18}
+	newlineErr.endPoint = Point{Row: 5}
+	newlineErr.hasError = true
+	concat := newParentNodeInArena(arena, 10, true, []*Node{str2, str3, str4, newlineErr}, nil, 0)
+	concat.hasError = true
+	output := newLeafNodeInArena(arena, 11, true, 101, 115, Point{Row: 5, Column: 4}, Point{Row: 5, Column: 18})
+	input := newLeafNodeInArena(arena, 12, true, 120, 166, Point{Row: 6, Column: 4}, Point{Row: 7, Column: 24})
+	clobber := newLeafNodeInArena(arena, 13, true, 171, 177, Point{Row: 8, Column: 4}, Point{Row: 8, Column: 10})
+	closeParen := newLeafNodeInArena(arena, 14, false, 177, 178, Point{Row: 8, Column: 10}, Point{Row: 8, Column: 11})
+	asmExpr := newParentNodeInArena(arena, 4, true, []*Node{qualifier, openParen, firstStr, concat, output, input, clobber, closeParen}, nil, 0)
+	asmExpr.startByte = 4
+	asmExpr.endByte = 178
+	asmExpr.startPoint = Point{Column: 4}
+	asmExpr.endPoint = Point{Row: 8, Column: 11}
+	asmExpr.hasError = true
+
+	semiLeaf := newLeafNodeInArena(arena, 15, false, 178, 179, Point{Row: 8, Column: 11}, Point{Row: 8, Column: 12})
+	trailingErr := newParentNodeInArena(arena, errorSymbol, true, []*Node{semiLeaf}, nil, 0)
+	trailingErr.hasError = true
+
+	root := newParentNodeInArena(arena, errorSymbol, true, []*Node{leadingErr, asmExpr, trailingErr}, nil, 0)
+	root.startByte = 0
+	root.endByte = uint32(len(source))
+	root.endPoint = Point{Row: 9}
+	root.hasError = true
+
+	normalizeCRecoveredTopLevelGNUAsmExpression(root, source, lang)
+	normalizeCTranslationUnitRoot(root, lang)
+
+	if got, want := root.Type(lang), "translation_unit"; got != want {
+		t.Fatalf("root.Type = %q, want %q", got, want)
+	}
+	if root.HasError() {
+		t.Fatal("root.HasError = true, want false")
+	}
+	if got, want := root.ChildCount(), 1; got != want {
+		t.Fatalf("root.ChildCount = %d, want %d", got, want)
+	}
+	stmt := root.Child(0)
+	if got, want := stmt.Type(lang), "expression_statement"; got != want {
+		t.Fatalf("stmt.Type = %q, want %q", got, want)
+	}
+	if got, want := stmt.StartByte(), uint32(0); got != want {
+		t.Fatalf("stmt.StartByte = %d, want %d", got, want)
+	}
+	if got, want := stmt.EndByte(), uint32(179); got != want {
+		t.Fatalf("stmt.EndByte = %d, want %d", got, want)
+	}
+	asm := stmt.Child(0)
+	if got, want := asm.Type(lang), "gnu_asm_expression"; got != want {
+		t.Fatalf("asm.Type = %q, want %q", got, want)
+	}
+	if asm.HasError() {
+		t.Fatal("asm.HasError = true, want false")
+	}
+	if got, want := asm.StartByte(), uint32(0); got != want {
+		t.Fatalf("asm.StartByte = %d, want %d", got, want)
+	}
+	if got, want := asm.EndByte(), uint32(178); got != want {
+		t.Fatalf("asm.EndByte = %d, want %d", got, want)
+	}
+	if got, want := asm.Child(0).Type(lang), "asm"; got != want {
+		t.Fatalf("asm.Child(0).Type = %q, want %q", got, want)
+	}
+	if got, want := asm.Child(3).Type(lang), "concatenated_string"; got != want {
+		t.Fatalf("asm.Child(3).Type = %q, want %q", got, want)
+	}
+	if got, want := asm.Child(3).ChildCount(), 4; got != want {
+		t.Fatalf("concatenated_string.ChildCount = %d, want %d", got, want)
+	}
+	if asm.Child(3).HasError() {
+		t.Fatal("concatenated_string.HasError = true, want false")
+	}
+	if got, want := asm.Child(3).StartByte(), uint32(19); got != want {
+		t.Fatalf("concatenated_string.StartByte = %d, want %d", got, want)
+	}
+	if got, want := asm.Child(3).EndByte(), uint32(96); got != want {
+		t.Fatalf("concatenated_string.EndByte = %d, want %d", got, want)
+	}
+}
+
+func TestNormalizeTypeScriptRecoveredNamespaceRootRewrapsNamespaceBody(t *testing.T) {
+	lang := &Language{
+		Name:        "typescript",
+		SymbolNames: []string{"EOF", "ERROR", "program", "comment", "namespace", "identifier", "{", "enum_declaration", "statement_block", "internal_module", "expression_statement"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF", Visible: false, Named: false},
+			{Name: "ERROR", Visible: true, Named: true},
+			{Name: "program", Visible: true, Named: true},
+			{Name: "comment", Visible: true, Named: true},
+			{Name: "namespace", Visible: true, Named: false},
+			{Name: "identifier", Visible: true, Named: true},
+			{Name: "{", Visible: true, Named: false},
+			{Name: "enum_declaration", Visible: true, Named: true},
+			{Name: "statement_block", Visible: true, Named: true},
+			{Name: "internal_module", Visible: true, Named: true},
+			{Name: "expression_statement", Visible: true, Named: true},
+		},
+	}
+
+	arena := newNodeArena(arenaClassFull)
+	source := []byte("// c\nnamespace ts {\n  enum X\n\n")
+	comment := newLeafNodeInArena(arena, 3, true, 0, 4, Point{}, Point{Column: 4})
+	namespaceTok := newLeafNodeInArena(arena, 4, false, 5, 14, Point{Row: 1}, Point{Row: 1, Column: 9})
+	name := newLeafNodeInArena(arena, 5, true, 15, 17, Point{Row: 1, Column: 10}, Point{Row: 1, Column: 12})
+	openBrace := newLeafNodeInArena(arena, 6, false, 18, 19, Point{Row: 1, Column: 13}, Point{Row: 1, Column: 14})
+	enumDecl := newLeafNodeInArena(arena, 7, true, 22, 28, Point{Row: 2, Column: 2}, Point{Row: 2, Column: 8})
+	wsErr := newLeafNodeInArena(arena, 1, true, 28, 30, Point{Row: 2, Column: 8}, Point{Row: 4})
+	wsErr.hasError = true
+	root := newParentNodeInArena(arena, 1, true, []*Node{comment, namespaceTok, name, openBrace, enumDecl, wsErr}, nil, 0)
+	root.hasError = true
+
+	normalizeTypeScriptRecoveredNamespaceRoot(root, source, lang)
+
+	if got, want := root.Type(lang), "program"; got != want {
+		t.Fatalf("root.Type = %q, want %q", got, want)
+	}
+	if got, want := root.ChildCount(), 2; got != want {
+		t.Fatalf("root.ChildCount = %d, want %d", got, want)
+	}
+	expr := root.Child(1)
+	if got, want := expr.Type(lang), "expression_statement"; got != want {
+		t.Fatalf("expr.Type = %q, want %q", got, want)
+	}
+	mod := expr.Child(0)
+	if got, want := mod.Type(lang), "internal_module"; got != want {
+		t.Fatalf("module.Type = %q, want %q", got, want)
+	}
+	block := mod.Child(1)
+	if got, want := block.Type(lang), "statement_block"; got != want {
+		t.Fatalf("block.Type = %q, want %q", got, want)
+	}
+	if got, want := block.ChildCount(), 1; got != want {
+		t.Fatalf("block.ChildCount = %d, want %d", got, want)
+	}
+	if got, want := block.Child(0).Type(lang), "enum_declaration"; got != want {
+		t.Fatalf("block.Child(0).Type = %q, want %q", got, want)
+	}
+	if root.HasError() {
+		t.Fatal("root.HasError = true, want false")
+	}
+}
+
+func TestNormalizeKnownSpanAttributionDispatchesUppercaseCobol(t *testing.T) {
+	lang := &Language{
+		Name:        "COBOL",
+		SymbolNames: []string{"EOF", "start", "program_definition", "identification_division"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF", Visible: false, Named: false},
+			{Name: "start", Visible: true, Named: true},
+			{Name: "program_definition", Visible: true, Named: true},
+			{Name: "identification_division", Visible: true, Named: true},
+		},
+	}
+
+	source := []byte("       identification division.\n")
+	arena := newNodeArena(arenaClassFull)
+	div := newLeafNodeInArena(arena, 3, true, 0, uint32(len(source)-1), Point{}, Point{Column: uint32(len(source) - 1)})
+	def := newParentNodeInArena(arena, 2, true, []*Node{div}, nil, 0)
+	def.startByte = 0
+	def.endByte = uint32(len(source) - 1)
+	root := newParentNodeInArena(arena, 1, true, []*Node{def}, nil, 0)
+	root.startByte = 0
+	root.endByte = uint32(len(source))
+
+	normalizeKnownSpanAttribution(root, source, &Parser{language: lang})
+
+	if got, want := root.StartByte(), uint32(7); got != want {
+		t.Fatalf("root.StartByte = %d, want %d", got, want)
+	}
+	if got, want := root.Child(0).StartByte(), uint32(7); got != want {
+		t.Fatalf("program_definition.StartByte = %d, want %d", got, want)
 	}
 }
 

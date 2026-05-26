@@ -84,7 +84,7 @@ func TestDiagScalaRootRuntime(t *testing.T) {
 		ng.WordSymbolID,
 		keywordSet,
 		terminalPatternSymSet(ng),
-		nil, nil,
+		nil, nil, nil,
 	)
 	var diagLexStates []gotreesitter.LexState
 	var diagLexModeOffsets []int

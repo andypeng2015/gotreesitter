@@ -215,6 +215,8 @@ func TestMultiGrammarImportRealCorpusParity(t *testing.T) {
 			switch g.name {
 			case "cobol":
 				gram.ChoiceLiftThreshold = 8
+			case "fortran":
+				gram.ChoiceLiftThreshold = 4
 			}
 			// Enable binary repeat mode for validated grammars that benefit
 			// from tree-sitter's upstream repeat lowering shape.

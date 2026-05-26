@@ -535,6 +535,43 @@ func TestHasErrorPropagation(t *testing.T) {
 	}
 }
 
+func TestPopulateParentNodeClearsStaleHasError(t *testing.T) {
+	left := NewLeafNode(Symbol(1), true, 0, 1, Point{}, Point{Column: 1})
+	mid := NewLeafNode(Symbol(2), true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	right := NewLeafNode(Symbol(1), true, 2, 3, Point{Column: 2}, Point{Column: 3})
+	parent := &Node{symbol: Symbol(3), isNamed: true, hasError: true}
+
+	populateParentNode(parent, []*Node{left, mid, right})
+
+	if parent.HasError() {
+		t.Fatal("populateParentNode kept stale hasError for clean children")
+	}
+}
+
+func TestPopulateParentNodeTreatsExplicitErrorChildAsError(t *testing.T) {
+	errChild := NewLeafNode(errorSymbol, false, 0, 1, Point{}, Point{Column: 1})
+	clean := NewLeafNode(Symbol(1), true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	parent := &Node{symbol: Symbol(3), isNamed: true}
+
+	populateParentNode(parent, []*Node{errChild, clean})
+
+	if !parent.HasError() {
+		t.Fatal("populateParentNode should propagate explicit error child")
+	}
+}
+
+func TestPopulateParentNodeNoLinksClearsStaleHasError(t *testing.T) {
+	left := NewLeafNode(Symbol(1), true, 0, 1, Point{}, Point{Column: 1})
+	right := NewLeafNode(Symbol(2), true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	parent := &Node{symbol: Symbol(3), isNamed: true, hasError: true}
+
+	populateParentNodeNoLinks(parent, []*Node{left, right}, true)
+
+	if parent.HasError() {
+		t.Fatal("populateParentNodeNoLinks kept stale hasError for clean children")
+	}
+}
+
 func TestOutOfRange(t *testing.T) {
 	child := NewLeafNode(Symbol(1), true, 0, 1, Point{}, Point{Row: 0, Column: 1})
 	parent := NewParentNode(Symbol(3), true, []*Node{child}, nil, 0)

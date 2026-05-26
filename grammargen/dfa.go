@@ -932,6 +932,21 @@ func patternImmediateTokenSet(ng *NormalizedGrammar) map[int]bool {
 	return m
 }
 
+// followUnsafePatternTokenSet returns symbol IDs of terminals whose token body
+// can start with a catch-all negated character class. These patterns are safe
+// when directly shiftable in the current parser state, but reduce-follow lex
+// mode expansion is too coarse for them: admitting them into unrelated states
+// lets merged DFAs greedily consume structurally significant input.
+func followUnsafePatternTokenSet(ng *NormalizedGrammar) map[int]bool {
+	m := make(map[int]bool)
+	for _, t := range ng.Terminals {
+		if ruleStartsWithCatchAllPattern(t.Rule) {
+			m[t.SymbolID] = true
+		}
+	}
+	return m
+}
+
 func ruleContainsPattern(r *Rule) bool {
 	if r == nil {
 		return false
@@ -966,6 +981,61 @@ func isStringOnlyRule(r *Rule) bool {
 	}
 }
 
+func ruleStartsWithCatchAllPattern(r *Rule) bool {
+	unsafe, _ := ruleStartsWithCatchAllPatternNullable(r)
+	return unsafe
+}
+
+func ruleStartsWithCatchAllPatternNullable(r *Rule) (unsafe bool, nullable bool) {
+	if r == nil {
+		return false, false
+	}
+	switch r.Kind {
+	case RuleBlank:
+		return false, true
+	case RuleString:
+		return false, r.Value == ""
+	case RulePattern:
+		return strings.HasPrefix(r.Value, "[^"), false
+	case RuleSeq:
+		allNullable := true
+		for _, c := range r.Children {
+			childUnsafe, childNullable := ruleStartsWithCatchAllPatternNullable(c)
+			if childUnsafe {
+				return true, false
+			}
+			if !childNullable {
+				return false, false
+			}
+		}
+		return false, allNullable
+	case RuleChoice:
+		nullable = false
+		for _, c := range r.Children {
+			childUnsafe, childNullable := ruleStartsWithCatchAllPatternNullable(c)
+			if childUnsafe {
+				return true, false
+			}
+			nullable = nullable || childNullable
+		}
+		return false, nullable
+	case RuleRepeat, RuleOptional:
+		childUnsafe, _ := ruleStartsWithCatchAllPatternNullable(firstChild(r))
+		return childUnsafe, true
+	case RuleRepeat1, RuleToken, RuleImmToken, RuleField, RulePrec, RulePrecLeft, RulePrecRight, RulePrecDynamic, RuleAlias:
+		return ruleStartsWithCatchAllPatternNullable(firstChild(r))
+	default:
+		return false, false
+	}
+}
+
+func firstChild(r *Rule) *Rule {
+	if r == nil || len(r.Children) == 0 {
+		return nil
+	}
+	return r.Children[0]
+}
+
 func terminalPatternSymSet(ng *NormalizedGrammar) map[int]bool {
 	m := make(map[int]bool, len(ng.Terminals))
 	for _, t := range ng.Terminals {
@@ -988,6 +1058,7 @@ func computeLexModes(
 	terminalPatternSyms map[int]bool, // symbols that have DFA terminal patterns
 	followTokens func(state int) []int, // additional tokens from reduce-follow expansion (may be nil)
 	patternImmediateTokens map[int]bool, // immediate tokens that are PATTERN-based (catch-all)
+	followUnsafePatternTokens map[int]bool, // broad PATTERN tokens unsafe for coarse reduce-follow expansion
 ) ([]lexModeSpec, []int, []afterWSModeEntry) {
 	extraSet := make(map[int]bool)
 	hasTerminalExtras := false
@@ -1039,7 +1110,20 @@ func computeLexModes(
 		}
 		if followTokens != nil {
 			for _, sym := range followTokens(state) {
-				if sym > 0 && sym < tokenCount && !extSet[sym] {
+				if sym > 0 && sym < tokenCount && !extSet[sym] && !immediateTokens[sym] && !followUnsafePatternTokens[sym] {
+					// Reduce-follow lex-mode expansion is intentionally coarse:
+					// it unions terminals reachable after reducing the current
+					// state's LHS anywhere in the automaton. That is helpful for
+					// regular keyword/string tokens, but it is too aggressive for
+					// token.immediate symbols and catch-all pattern tokens. Those are
+					// only valid in tightly constrained contexts, and admitting them
+					// through the coarse follow approximation can pollute unrelated
+					// lex modes. C's `_preproc_include_token1` (\r?\n, prio -500)
+					// leaked into GNU asm string-close states and stole the newline
+					// before the operand-list colon; Fortran's `operator_name`
+					// ([^()]+) leaked into `PROGRAM name` states and swallowed the
+					// rest of the file. Keep those tokens in the DFA only when they
+					// are directly shiftable in this state.
 					directValid[sym] = true
 				}
 			}

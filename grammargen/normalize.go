@@ -43,6 +43,9 @@ type Production struct {
 	LHS          int   // symbol index
 	RHS          []int // symbol indices
 	Prec         int
+	// HasExplicitPrec distinguishes an explicit compile-time precedence wrapper
+	// (including prec(0, ...)) from the default implicit zero precedence.
+	HasExplicitPrec bool
 	Assoc        Assoc
 	DynPrec      int
 	ProductionID int
@@ -106,13 +109,13 @@ type NormalizedGrammar struct {
 
 // symbolTable is used during normalization.
 type symbolTable struct {
-	byName             map[string]int // terminal name → symbol ID
-	nontermByName      map[string]int // nonterminal name → symbol ID
-	namedTokenByName   map[string]int // named token name → symbol ID (when distinct from anonymous)
-	symbols            []SymbolInfo
-	nextID             int
-	fieldMap           map[string]int
-	fields             []string
+	byName              map[string]int // terminal name → symbol ID
+	nontermByName       map[string]int // nonterminal name → symbol ID
+	namedTokenByName    map[string]int // named token name → symbol ID (when distinct from anonymous)
+	symbols             []SymbolInfo
+	nextID              int
+	fieldMap            map[string]int
+	fields              []string
 	binaryRepeatMode    bool // use tree-sitter binary repeat helper shape
 	choiceLiftThreshold int  // if >0, lift inline CHOICE nodes exceeding this width
 }
@@ -456,7 +459,7 @@ func Normalize(g *Grammar) (*NormalizedGrammar, error) {
 	}
 
 	// Phase 6: Extract terminal patterns for DFA generation.
-	terminals, err := extractTerminals(g, st, stringLiterals, namedTokens, inlinePatterns, inlineTokens, keywordSet)
+	terminals, err := extractTerminals(g, st, stringLiterals, namedTokens, inlinePatterns, aliasedPatterns, inlineTokens, keywordSet)
 	if err != nil {
 		return nil, fmt.Errorf("extract terminals: %w", err)
 	}
@@ -1740,7 +1743,7 @@ func resolveExtras(g *Grammar, st *symbolTable) []int {
 // extractTerminals builds TerminalPattern entries for DFA generation.
 // When keywordSet is non-nil, string terminals that are keywords are excluded
 // from the main DFA (they're handled by the keyword DFA instead).
-func extractTerminals(g *Grammar, st *symbolTable, stringLits []string, namedTokens []string, inlinePatterns []string, inlineTokens []inlineTokenEntry, keywordSet map[int]bool) ([]TerminalPattern, error) {
+func extractTerminals(g *Grammar, st *symbolTable, stringLits []string, namedTokens []string, inlinePatterns []string, aliasedPatterns map[string]aliasInfo, inlineTokens []inlineTokenEntry, keywordSet map[int]bool) ([]TerminalPattern, error) {
 	var patterns []TerminalPattern
 
 	// All non-immediate terminals use prec-based priority: -prec*1000.
@@ -1814,10 +1817,20 @@ func extractTerminals(g *Grammar, st *symbolTable, stringLits []string, namedTok
 		if err != nil {
 			return nil, fmt.Errorf("expand inline pattern %q: %w", pat, err)
 		}
+		priority := 0
+		if g.Word == "" {
+			if ai, ok := aliasedPatterns[pat]; ok && isInlineAliasedKeywordPattern(pat, ai) {
+				// Grammars like Fortran encode keywords as aliased inline regex
+				// patterns without declaring a word token. Give fixed keyword-like
+				// aliases a precedence boost so they beat the generic identifier
+				// regex when both match the same span.
+				priority = -1000
+			}
+		}
 		patterns = append(patterns, TerminalPattern{
 			SymbolID: id,
 			Rule:     expanded,
-			Priority: 0,
+			Priority: priority,
 		})
 	}
 
@@ -2185,6 +2198,36 @@ func isIdentifierLikeKeywordLiteral(s string) bool {
 	return hasLetter
 }
 
+func isInlineAliasedKeywordPattern(pattern string, ai aliasInfo) bool {
+	if ai.name == "" || !isIdentifierLikeKeywordLiteral(ai.name) {
+		return false
+	}
+	candDFA, err := buildPatternDFA(pattern)
+	if err != nil || len(candDFA) == 0 {
+		return false
+	}
+	kwDFA, err := buildPatternDFA(makeCaseInsensitivePattern(ai.name))
+	if err != nil || len(kwDFA) == 0 {
+		return false
+	}
+	return dfaAcceptsSubsetOf(candDFA, kwDFA)
+}
+
+func buildPatternDFA(pattern string) ([]dfaState, error) {
+	expanded, err := expandPatternRule(pattern)
+	if err != nil {
+		return nil, err
+	}
+	b := newNFABuilder()
+	frag, err := b.buildFromRule(expanded)
+	if err != nil {
+		return nil, err
+	}
+	b.states[frag.end].accept = 1
+	b.states[frag.end].priority = 0
+	return subsetConstruction(context.Background(), &nfa{states: b.states, start: frag.start})
+}
+
 // matchesDFA tests if a string is fully accepted by a DFA.
 func matchesDFA(dfa []dfaState, s string) bool {
 	state := 0
@@ -2345,29 +2388,58 @@ func flattenRule2(r *Rule, lhsID int, st *symbolTable, prodIDCounter *int) []Pro
 	}
 
 	// Unwrap precedence/assoc wrappers at the top level.
-	prec, assoc, dynPrec, inner := unwrapPrec(r)
+	prec, assoc, dynPrec, hasPrec, inner := unwrapPrec(r)
 
 	switch inner.Kind {
 	case RuleChoice:
 		var prods []Production
 		for _, alt := range inner.Children {
-			altPrec, altAssoc, altDyn, altInner := unwrapPrec(alt)
-			if altPrec == 0 {
+			altPrec, altAssoc, altDyn, altHasPrec, altInner := unwrapPrec(alt)
+			// Direct blank alternatives should not inherit an outer explicit
+			// zero-precedence wrapper here. Otherwise constructs like
+			// prec.right(0, choice(statement_block, blank)) manufacture an
+			// explicit epsilon reduce that can beat the concrete branch too
+			// early (e.g. TypeScript `namespace ts { ... }` reducing the body
+			// to blank before seeing `{`). Positive precedence is still copied
+			// to epsilon arms below via the sibling-propagation step.
+			inheritOuterToBlank := altInner.Kind != RuleBlank
+			if altPrec == 0 && inheritOuterToBlank {
 				altPrec = prec
 			}
-			if altAssoc == AssocNone {
+			if !altHasPrec && inheritOuterToBlank {
+				altHasPrec = hasPrec
+			}
+			if altAssoc == AssocNone && inheritOuterToBlank {
 				altAssoc = assoc
 			}
-			if altDyn == 0 {
+			if altDyn == 0 && inheritOuterToBlank {
 				altDyn = dynPrec
 			}
 			// Recursively flatten — alternatives may contain more choices.
 			altProds := flattenRule2(altInner, lhsID, st, prodIDCounter)
 			for i := range altProds {
+				suppressExplicitZeroWrapperAssoc := false
+				if altPrec == 0 && altHasPrec && altAssoc != AssocNone && altDyn == 0 &&
+					len(altProds[i].RHS) == 1 && len(altProds[i].Fields) == 0 && len(altProds[i].Aliases) == 0 {
+					rhsSym := altProds[i].RHS[0]
+					if rhsSym >= 0 && rhsSym < len(st.symbols) && st.symbols[rhsSym].Kind == SymbolNonterminal {
+						// A top-level prec.left/right(0, choice(...)) wrapper around a
+						// single nonterminal pass-through should not manufacture an
+						// explicit zero-precedence reduce on the wrapper production
+						// itself. That metadata belongs on real sequence productions;
+						// attaching it to wrapper reductions like `_string ->
+						// concatenated_string` can make C GNU asm prefer the wrapper
+						// reduce over shifting the following operand-list colon.
+						suppressExplicitZeroWrapperAssoc = true
+					}
+				}
 				if altProds[i].Prec == 0 {
 					altProds[i].Prec = altPrec
 				}
-				if altProds[i].Assoc == AssocNone {
+				if !suppressExplicitZeroWrapperAssoc && !altProds[i].HasExplicitPrec && altHasPrec {
+					altProds[i].HasExplicitPrec = true
+				}
+				if !suppressExplicitZeroWrapperAssoc && altProds[i].Assoc == AssocNone {
 					altProds[i].Assoc = altAssoc
 				}
 				if altProds[i].DynPrec == 0 {
@@ -2382,6 +2454,12 @@ func flattenRule2(r *Rule, lhsID int, st *symbolTable, prodIDCounter *int) []Pro
 		// the prec from their non-epsilon siblings. This matters for repeat
 		// helpers where the epsilon reduce must compete with shift actions
 		// from inner nonterminals (e.g., array's comma vs sequence_expression).
+		//
+		// Do not apply this to synthetic `_choice_lift*` helpers introduced by
+		// ChoiceLiftThreshold. Those helpers are implementation detail wrappers,
+		// and copying a sibling's explicit precedence onto the lifted epsilon arm
+		// can turn a valid shift/reduce fallback into an erroneous non-assoc
+		// no-action in the resolver (Fortran top-level `program` was one case).
 		var maxPrec int
 		var maxAssoc Assoc
 		for _, p := range prods {
@@ -2390,10 +2468,15 @@ func flattenRule2(r *Rule, lhsID int, st *symbolTable, prodIDCounter *int) []Pro
 				maxAssoc = p.Assoc
 			}
 		}
-		if maxPrec > 0 {
+		lhsName := ""
+		if lhsID >= 0 && lhsID < len(st.symbols) {
+			lhsName = st.symbols[lhsID].Name
+		}
+		if maxPrec > 0 && !strings.Contains(lhsName, "_choice_lift") {
 			for i := range prods {
 				if prods[i].Prec == 0 && len(prods[i].RHS) == 0 {
 					prods[i].Prec = maxPrec
+					prods[i].HasExplicitPrec = true
 					if prods[i].Assoc == AssocNone {
 						prods[i].Assoc = maxAssoc
 					}
@@ -2404,11 +2487,12 @@ func flattenRule2(r *Rule, lhsID int, st *symbolTable, prodIDCounter *int) []Pro
 
 	case RuleBlank:
 		prod := Production{
-			LHS:          lhsID,
-			Prec:         prec,
-			Assoc:        assoc,
-			DynPrec:      dynPrec,
-			ProductionID: *prodIDCounter,
+			LHS:             lhsID,
+			Prec:            prec,
+			HasExplicitPrec: hasPrec,
+			Assoc:           assoc,
+			DynPrec:         dynPrec,
+			ProductionID:    *prodIDCounter,
 		}
 		*prodIDCounter++
 		return []Production{prod}
@@ -2423,28 +2507,49 @@ func flattenRule2(r *Rule, lhsID int, st *symbolTable, prodIDCounter *int) []Pro
 			// (matching tree-sitter's behavior where the rightmost prec
 			// wrapper in a production wins). Fall back to the outer prec
 			// from unwrapPrec, then scanInnerPrec as last resort.
-			altPrec, altAssoc, altDyn := prec, assoc, dynPrec
+			altPrec, altAssoc, altDyn, altHasPrec := prec, assoc, dynPrec, hasPrec
+			altIncludesBlankChoice := false
+			altHasInnerPrec := false
 			for _, elem := range alt {
-				if elem.prec != 0 {
+				if elem.blank {
+					altIncludesBlankChoice = true
+					continue
+				}
+				if elem.hasPrec {
 					altPrec = elem.prec
+					altHasPrec = true
+					altHasInnerPrec = true
 				}
 				if elem.assoc != AssocNone {
 					altAssoc = elem.assoc
+					altHasInnerPrec = true
 				}
 				if elem.dynPrec != 0 {
 					altDyn = elem.dynPrec
+					altHasInnerPrec = true
 				}
 			}
-			if altPrec == 0 && altAssoc == AssocNone && altDyn == 0 {
-				altPrec, altAssoc, altDyn = scanInnerPrec(inner)
+			if altIncludesBlankChoice && !altHasInnerPrec && prec == 0 && dynPrec == 0 {
+				// Alternatives expanded from a blank choice arm should not inherit
+				// an outer explicit zero-precedence wrapper. Otherwise optional
+				// suffixes like seq(name, choice(statement_block, blank)) get a
+				// synthetic explicit epsilon-style reduce that can beat shifting
+				// the concrete branch too early (TypeScript internal_module).
+				altPrec = 0
+				altHasPrec = false
+				altAssoc = AssocNone
+			}
+			if !altHasPrec && altPrec == 0 && altAssoc == AssocNone && altDyn == 0 {
+				altPrec, altAssoc, altDyn, altHasPrec = scanInnerPrec(inner)
 			}
 
 			prod := Production{
-				LHS:          lhsID,
-				Prec:         altPrec,
-				Assoc:        altAssoc,
-				DynPrec:      altDyn,
-				ProductionID: *prodIDCounter,
+				LHS:             lhsID,
+				Prec:            altPrec,
+				HasExplicitPrec: altHasPrec,
+				Assoc:           altAssoc,
+				DynPrec:         altDyn,
+				ProductionID:    *prodIDCounter,
 			}
 			*prodIDCounter++
 
@@ -2464,10 +2569,12 @@ func flattenRule2(r *Rule, lhsID int, st *symbolTable, prodIDCounter *int) []Pro
 // rhsElement is a single element in a flattened RHS.
 type rhsElement struct {
 	rule       *Rule
+	blank      bool   // marker for an expanded blank choice arm; not emitted into RHS
 	fieldName  string // non-empty if wrapped in a Field
 	aliasName  string // non-empty if wrapped in an Alias
 	aliasNamed bool   // true if alias is a named symbol ($.name form)
 	prec       int    // precedence from enclosing prec wrapper (0 = none)
+	hasPrec    bool   // true if an explicit compile-time precedence wrapper was present
 	assoc      Assoc  // associativity from enclosing prec wrapper
 	dynPrec    int    // dynamic precedence from enclosing prec_dynamic wrapper
 }
@@ -2529,16 +2636,18 @@ func enumerateAlternatives(r *Rule) [][]*rhsElement {
 			return [][]*rhsElement{{}}
 		}
 		// Enumerate alternatives inside the alias, tagging each with the alias name.
+		// The outer alias must override any inner alias metadata; otherwise nested
+		// alias forms like alias(_jsx_identifier, "property_identifier") let the
+		// inner alias on _jsx_identifier shadow the outer one and lose the
+		// intended surface node type after default-alias cleanup.
 		innerAlts := enumerateAlternatives(r.Children[0])
 		var result [][]*rhsElement
 		for _, alt := range innerAlts {
 			tagged := make([]*rhsElement, len(alt))
 			for i, elem := range alt {
 				cp := *elem
-				if cp.aliasName == "" {
-					cp.aliasName = r.Value
-					cp.aliasNamed = r.Named
-				}
+				cp.aliasName = r.Value
+				cp.aliasNamed = r.Named
 				tagged[i] = &cp
 			}
 			result = append(result, tagged)
@@ -2554,14 +2663,18 @@ func enumerateAlternatives(r *Rule) [][]*rhsElement {
 					switch r.Kind {
 					case RulePrecLeft:
 						elem.prec = r.Prec
+						elem.hasPrec = true
 						elem.assoc = AssocLeft
 					case RulePrecRight:
 						elem.prec = r.Prec
+						elem.hasPrec = true
 						elem.assoc = AssocRight
 					case RulePrecDynamic:
 						elem.dynPrec = r.Prec
 					default: // RulePrec
 						elem.prec = r.Prec
+						elem.hasPrec = true
+						elem.assoc = AssocNone
 					}
 				}
 			}
@@ -2570,8 +2683,9 @@ func enumerateAlternatives(r *Rule) [][]*rhsElement {
 		return [][]*rhsElement{{}}
 
 	case RuleBlank:
-		// Epsilon — empty sequence.
-		return [][]*rhsElement{{}}
+		// Epsilon — carry a marker so expanded seq alternatives can detect that
+		// they came from a blank choice arm without emitting an RHS symbol.
+		return [][]*rhsElement{{&rhsElement{blank: true}}}
 
 	default:
 		// Leaf node (String, Symbol, etc.) — single element.
@@ -2582,6 +2696,9 @@ func enumerateAlternatives(r *Rule) [][]*rhsElement {
 // collectLinearRHS converts a flat list of rhsElements into symbol IDs, field assignments, and alias info.
 func collectLinearRHS(elems []*rhsElement, st *symbolTable, rhs *[]int, fields *[]FieldAssign, aliases *[]AliasInfo) {
 	for _, elem := range elems {
+		if elem.blank {
+			continue
+		}
 		childIdx := len(*rhs)
 		addRuleSymbol(elem.rule, st, rhs)
 		if elem.fieldName != "" && len(*rhs) > childIdx {
@@ -3348,28 +3465,31 @@ func applyHiddenRenames(r *Rule, renames map[string]string) *Rule {
 // scanInnerPrec walks a rule tree looking for prec wrappers inside seq elements.
 // In tree-sitter, prec.left(N, $.symbol) inside a seq propagates the precedence
 // to the containing production. Returns the last (rightmost) prec/assoc/dynPrec found.
-func scanInnerPrec(r *Rule) (prec int, assoc Assoc, dynPrec int) {
+func scanInnerPrec(r *Rule) (prec int, assoc Assoc, dynPrec int, hasPrec bool) {
 	if r == nil {
-		return 0, AssocNone, 0
+		return 0, AssocNone, 0, false
 	}
 	switch r.Kind {
 	case RulePrec:
 		prec = r.Prec
+		hasPrec = true
+		assoc = AssocNone
 	case RulePrecLeft:
 		prec = r.Prec
+		hasPrec = true
 		assoc = AssocLeft
 	case RulePrecRight:
 		prec = r.Prec
+		hasPrec = true
 		assoc = AssocRight
 	case RulePrecDynamic:
 		dynPrec = r.Prec
 	}
 	for _, child := range r.Children {
-		cp, ca, cd := scanInnerPrec(child)
-		if cp != 0 {
+		cp, ca, cd, childHasPrec := scanInnerPrec(child)
+		if childHasPrec {
 			prec = cp
-		}
-		if ca != AssocNone {
+			hasPrec = true
 			assoc = ca
 		}
 		if cd != 0 {
@@ -3380,17 +3500,20 @@ func scanInnerPrec(r *Rule) (prec int, assoc Assoc, dynPrec int) {
 }
 
 // unwrapPrec strips precedence/associativity wrappers from a rule.
-func unwrapPrec(r *Rule) (prec int, assoc Assoc, dynPrec int, inner *Rule) {
+func unwrapPrec(r *Rule) (prec int, assoc Assoc, dynPrec int, hasPrec bool, inner *Rule) {
 	for r != nil {
 		switch r.Kind {
 		case RulePrec:
 			prec = r.Prec
+			hasPrec = true
+			assoc = AssocNone
 			if len(r.Children) > 0 {
 				r = r.Children[0]
 				continue
 			}
 		case RulePrecLeft:
 			prec = r.Prec
+			hasPrec = true
 			assoc = AssocLeft
 			if len(r.Children) > 0 {
 				r = r.Children[0]
@@ -3398,6 +3521,7 @@ func unwrapPrec(r *Rule) (prec int, assoc Assoc, dynPrec int, inner *Rule) {
 			}
 		case RulePrecRight:
 			prec = r.Prec
+			hasPrec = true
 			assoc = AssocRight
 			if len(r.Children) > 0 {
 				r = r.Children[0]
@@ -3412,5 +3536,5 @@ func unwrapPrec(r *Rule) (prec int, assoc Assoc, dynPrec int, inner *Rule) {
 		}
 		break
 	}
-	return prec, assoc, dynPrec, r
+	return prec, assoc, dynPrec, hasPrec, r
 }

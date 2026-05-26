@@ -3,6 +3,7 @@ package gotreesitter
 import (
 	"bytes"
 	"fmt"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -425,7 +426,20 @@ func (p *Parser) tryRelexBroadDFA(tok Token, parserState StateID, ts TokenSource
 	dts.lexer.pos = int(tok.StartByte)
 	tok2 := dts.lexer.Next(broadLS)
 
-	if tok2.Symbol > 0 && tok2.Symbol != tok.Symbol {
+	// Only accept broad-DFA re-lex candidates that preserve the current token
+	// boundary or skip trivia only. A later-start token that jumps over real
+	// punctuation would skip meaningful input instead of correcting the token
+	// kind in-place.
+	sameBoundary := tok2.StartByte == tok.StartByte
+	triviaOnlyGap := false
+	if !sameBoundary && tok2.StartByte > tok.StartByte {
+		start := int(tok.StartByte)
+		end := int(tok2.StartByte)
+		if start >= 0 && end >= start && end <= len(dts.lexer.source) {
+			triviaOnlyGap = bytesAreTrivia(dts.lexer.source[start:end])
+		}
+	}
+	if tok2.Symbol > 0 && tok2.Symbol != tok.Symbol && (sameBoundary || triviaOnlyGap) {
 		// Check if the new token has actions in the current parser state
 		actionIdx := p.lookupActionIndex(parserState, tok2.Symbol)
 		if actionIdx != 0 && int(actionIdx) < len(p.language.ParseActions) &&
@@ -778,6 +792,7 @@ func (p *Parser) tryRecoverTrailingEOFSuffix(s *glrStack, tok Token, nodeCount *
 	if p == nil || s == nil || s.dead || tok.Symbol != 0 || tok.StartByte != tok.EndByte {
 		return nil, false
 	}
+	debugTrailingEOFRecovery := os.Getenv("GOT_DEBUG_TRAILING_EOF_RECOVERY") == "1"
 	entries := s.entries
 	borrowed := false
 	if entries == nil {
@@ -837,6 +852,13 @@ func (p *Parser) tryRecoverTrailingEOFSuffix(s *glrStack, tok Token, nodeCount *
 				prefixEOF.StartPoint = node.startPoint
 				prefixEOF.EndPoint = node.startPoint
 			}
+			// Trailing-EOF recovery is only meant to salvage a small leftover
+			// suffix after an otherwise complete parse. If we'd have to discard
+			// a large chunk of the file to make EOF advance, the recovered tree
+			// is almost always worse than letting the normal retry/error paths run.
+			if tok.StartByte > prefixEOF.StartByte && tok.StartByte-prefixEOF.StartByte > 4096 {
+				continue
+			}
 			insertedMissing := false
 			if !p.tryAdvanceEOFOnSingleStack(&prefix, prefixEOF, nodeCount, arena, entryScratch, gssScratch, tmpEntries) {
 				if !p.tryInsertMissingSingleShiftAtEOF(&prefix, prefixEOF, nodeCount, arena, entryScratch, gssScratch) {
@@ -881,6 +903,47 @@ func (p *Parser) tryRecoverTrailingEOFSuffix(s *glrStack, tok Token, nodeCount *
 				nodes = append(nodes, trailing)
 			}
 			if recovered || insertedMissing || cut > firstDrop {
+				if debugTrailingEOFRecovery {
+					origLastEnd := uint32(0)
+					origLastType := ""
+					for i := len(entries) - 1; i >= 0; i-- {
+						if entries[i].node == nil || entries[i].node.isExtra {
+							continue
+						}
+						origLastEnd = entries[i].node.endByte
+						if p.language != nil {
+							origLastType = entries[i].node.Type(p.language)
+						}
+						break
+					}
+					newLastEnd := uint32(0)
+					newLastType := ""
+					for i := len(nodes) - 1; i >= 0; i-- {
+						if nodes[i] == nil || nodes[i].isExtra {
+							continue
+						}
+						newLastEnd = nodes[i].endByte
+						if p.language != nil {
+							newLastType = nodes[i].Type(p.language)
+						}
+						break
+					}
+					fmt.Fprintf(
+						os.Stderr,
+						"[trail-eof] entries=%d firstDrop=%d cut=%d insertedMissing=%v recovered=%v origLast=%s@%d newLast=%s@%d topState=%d byte=%d\n",
+						len(entries),
+						firstDrop,
+						cut,
+						insertedMissing,
+						recovered,
+						origLastType,
+						origLastEnd,
+						newLastType,
+						newLastEnd,
+						s.top().state,
+						s.byteOffset,
+					)
+				}
 				return nodes, true
 			}
 		}

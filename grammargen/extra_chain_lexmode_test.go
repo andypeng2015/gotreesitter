@@ -69,6 +69,7 @@ func TestNonterminalExtraChainLexModesDoNotInheritTerminalExtras(t *testing.T) {
 		map[int]bool{},
 		terminalPatternSymSet(ng),
 		nil, nil,
+		nil,
 	)
 
 	initialMode := lexModes[stateToMode[0]]

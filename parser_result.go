@@ -1,6 +1,10 @@
 package gotreesitter
 
-import "bytes"
+import (
+	"bytes"
+	"fmt"
+	"os"
+)
 
 // buildResultFromGLR picks the best stack and constructs the final tree.
 // Prefers accepted stacks, then highest score, then most entries. When
@@ -11,11 +15,55 @@ func (p *Parser) buildResultFromGLR(stacks []glrStack, source []byte, arena *nod
 		arena.Release()
 		return parseErrorTree(source, p.language)
 	}
+	debugResultSelection := os.Getenv("GOT_DEBUG_RESULT_SELECTION") == "1"
+	if debugResultSelection {
+		for i := range stacks {
+			nodes := resultNodesFromStack(stacks[i])
+			lastEnd := uint32(0)
+			lastType := ""
+			if len(nodes) > 0 && nodes[len(nodes)-1] != nil {
+				last := nodes[len(nodes)-1]
+				lastEnd = last.endByte
+				if p != nil && p.language != nil {
+					lastType = last.Type(p.language)
+				}
+			}
+			topType := ""
+			topEnd := uint32(0)
+			if top := stacks[i].top(); top.node != nil {
+				topEnd = top.node.endByte
+				if p != nil && p.language != nil {
+					topType = top.node.Type(p.language)
+				}
+			}
+			fmt.Fprintf(
+				os.Stderr,
+				"[result] stack=%d dead=%v accepted=%v errRank=%d score=%d shifted=%v depth=%d byte=%d nodes=%d top=%s@%d last=%s@%d branch=%d\n",
+				i,
+				stacks[i].dead,
+				stacks[i].accepted,
+				stackErrorRank(&stacks[i]),
+				stacks[i].score,
+				stacks[i].shifted,
+				stacks[i].depth(),
+				stacks[i].byteOffset,
+				len(nodes),
+				topType,
+				topEnd,
+				lastType,
+				lastEnd,
+				stacks[i].branchOrder,
+			)
+		}
+	}
 	best := 0
 	for i := 1; i < len(stacks); i++ {
 		if stackCompareForResultSelection(p, &stacks[i], &stacks[best]) > 0 {
 			best = i
 		}
+	}
+	if debugResultSelection {
+		fmt.Fprintf(os.Stderr, "[result] selected=%d\n", best)
 	}
 
 	selected := stacks[best]
@@ -290,10 +338,11 @@ func (p *Parser) buildResultFromNodes(nodes []*Node, source []byte, arena *nodeA
 	if len(nodes) == 1 {
 		candidate := nodes[0]
 		candidate = repairPythonRootNode(candidate, arena, p.language)
-		extendNodeToTrailingWhitespace(candidate, source)
-		p.normalizeRootSourceStart(candidate, source)
-		normalizeKnownSpanAttribution(candidate, source, p)
 		if !hasExpectedRoot || candidate.symbol == expectedRootSymbol {
+			extendNodeToTrailingWhitespace(candidate, source)
+			p.normalizeRootSourceStart(candidate, source)
+			normalizeKnownSpanAttribution(candidate, source, p)
+			flattenInvisibleRootChildren(candidate, arena, p.language)
 			if shouldWireParentLinks {
 				wireParentLinksWithScratch(candidate, linkScratch)
 			}
@@ -313,6 +362,7 @@ func (p *Parser) buildResultFromNodes(nodes []*Node, source []byte, arena *nodeA
 		extendNodeToTrailingWhitespace(root, source)
 		p.normalizeRootSourceStart(root, source)
 		normalizeKnownSpanAttribution(root, source, p)
+		flattenInvisibleRootChildren(root, arena, p.language)
 		if shouldWireParentLinks {
 			wireParentLinksWithScratch(root, linkScratch)
 		}
@@ -426,6 +476,7 @@ func (p *Parser) buildResultFromNodes(nodes []*Node, source []byte, arena *nodeA
 		}
 		p.normalizeRootSourceStart(realRoot, source)
 		normalizeKnownSpanAttribution(realRoot, source, p)
+		flattenInvisibleRootChildren(realRoot, arena, p.language)
 		if returnRealRoot {
 			if shouldWireParentLinks {
 				wireParentLinksWithScratch(realRoot, linkScratch)
@@ -462,10 +513,54 @@ func (p *Parser) buildResultFromNodes(nodes []*Node, source []byte, arena *nodeA
 	extendNodeToTrailingWhitespace(root, source)
 	p.normalizeRootSourceStart(root, source)
 	normalizeKnownSpanAttribution(root, source, p)
+	flattenInvisibleRootChildren(root, arena, p.language)
 	if shouldWireParentLinks {
 		wireParentLinksWithScratch(root, linkScratch)
 	}
 	return newTreeWithArenas(root, source, p.language, arena, getBorrowed())
+}
+
+func flattenInvisibleRootChildren(root *Node, arena *nodeArena, lang *Language) {
+	if root == nil || lang == nil || len(root.children) == 0 {
+		return
+	}
+
+	var flatten func([]*Node, *Node) []*Node
+	flatten = func(out []*Node, node *Node) []*Node {
+		if node == nil {
+			return out
+		}
+		if int(node.symbol) < len(lang.SymbolMetadata) &&
+			!lang.SymbolMetadata[node.symbol].Visible &&
+			len(node.children) > 0 {
+			for _, child := range node.children {
+				out = flatten(out, child)
+			}
+			return out
+		}
+		return append(out, node)
+	}
+
+	out := make([]*Node, 0, len(root.children))
+	changed := false
+	for _, child := range root.children {
+		before := len(out)
+		out = flatten(out, child)
+		if len(out) != before+1 || (len(out) > before && out[before] != child) {
+			changed = true
+		}
+	}
+	if !changed {
+		return
+	}
+	if arena != nil {
+		buf := arena.allocNodeSlice(len(out))
+		copy(buf, out)
+		out = buf
+	}
+	root.children = out
+	root.fieldIDs = nil
+	root.fieldSources = nil
 }
 
 func (p *Parser) normalizeRootSourceStart(root *Node, source []byte) {
@@ -501,7 +596,12 @@ func normalizeKnownSpanAttribution(root *Node, source []byte, p *Parser) {
 	case "bash":
 		normalizeBashProgramVariableAssignments(root, lang)
 	case "c":
+		normalizeCPreprocessorContinuationSpans(root, source, lang)
+		normalizeCNestedTopLevelPreprocFragments(root, lang)
+		normalizeCRecoveredTopLevelFunctionDefinitions(root, lang)
+		normalizeCRecoveredTopLevelGNUAsmExpression(root, source, lang)
 		normalizeCTranslationUnitRoot(root, lang)
+		normalizeCPointerAssignmentExpressions(root, lang)
 		normalizeCSizeofUnknownTypeIdentifiers(root, source, lang)
 		normalizeCCastUnknownTypeIdentifiers(root, source, lang)
 	case "c_sharp":
@@ -509,7 +609,7 @@ func normalizeKnownSpanAttribution(root *Node, source []byte, p *Parser) {
 		normalizeCSharpSwitchTupleCasePatterns(root, lang)
 	case "caddy":
 		normalizeTopLevelTrailingLineBreakSpan(root, source, lang)
-	case "cobol":
+	case "cobol", "COBOL":
 		normalizeCobolLeadingAreaStart(root, source, lang)
 		normalizeCobolTopLevelDefinitionEnd(root, source, lang)
 	case "comment":
@@ -608,6 +708,7 @@ func normalizeKnownSpanAttribution(root *Node, source []byte, p *Parser) {
 	case "svelte":
 		normalizeSvelteTrailingExtraTrivia(root, source, lang)
 	case "tsx", "typescript":
+		normalizeTypeScriptRecoveredNamespaceRoot(root, source, lang)
 		normalizeTypeScriptCompatibility(root, source, lang)
 	case "zig":
 		normalizeZigEmptyInitListFields(root, lang)
@@ -1110,6 +1211,13 @@ func normalizeCTranslationUnitRoot(root *Node, lang *Language) {
 	}
 	root.symbol = sym
 	root.isNamed = int(sym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[sym].Named
+	root.hasError = false
+	for _, child := range root.children {
+		if child != nil && (child.IsError() || child.HasError()) {
+			root.hasError = true
+			break
+		}
+	}
 }
 
 func rootLooksLikeCTopLevel(root *Node, lang *Language) bool {
@@ -1129,6 +1237,7 @@ func rootLooksLikeCTopLevel(root *Node, lang *Language) bool {
 			"preproc_function_def",
 			"preproc_call",
 			"declaration",
+			"expression_statement",
 			"function_definition",
 			"linkage_specification",
 			"type_definition",
@@ -1138,13 +1247,405 @@ func rootLooksLikeCTopLevel(root *Node, lang *Language) bool {
 			"class_specifier",
 			"namespace_definition",
 			"template_declaration",
-			"comment":
+			"comment",
+			";":
 			sawTopLevel = true
 		default:
 			return false
 		}
 	}
 	return sawTopLevel
+}
+
+func normalizeCRecoveredTopLevelFunctionDefinitions(root *Node, lang *Language) {
+	if root == nil || lang == nil || len(root.children) < 4 {
+		return
+	}
+	if root.Type(lang) != "ERROR" {
+		return
+	}
+	if lang.Name != "c" && lang.Name != "cpp" {
+		return
+	}
+	functionDefSym, ok := symbolByName(lang, "function_definition")
+	if !ok {
+		return
+	}
+	compoundStmtSym, ok := symbolByName(lang, "compound_statement")
+	if !ok {
+		return
+	}
+	functionDefNamed := int(functionDefSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[functionDefSym].Named
+	compoundStmtNamed := int(compoundStmtSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[compoundStmtSym].Named
+
+	children := root.children
+	out := make([]*Node, 0, len(children))
+	changed := false
+	for i := 0; i < len(children); {
+		specChildren := make([]*Node, 0, 4)
+		j := i
+		for ; j < len(children); j++ {
+			extracted := cRecoveredFunctionHeadChildren(children[j], lang)
+			if len(extracted) == 0 {
+				break
+			}
+			specChildren = append(specChildren, extracted...)
+		}
+		if len(specChildren) == 0 || j+1 >= len(children) {
+			out = append(out, children[i])
+			i++
+			continue
+		}
+		declarator := children[j]
+		openBrace := children[j+1]
+		if declarator == nil || declarator.Type(lang) != "function_declarator" || openBrace == nil || openBrace.Type(lang) != "{" {
+			out = append(out, children[i])
+			i++
+			continue
+		}
+		closeIdx := cFindRecoveredTopLevelFunctionClose(children, j+1, lang)
+		if closeIdx < 0 {
+			out = append(out, children[i])
+			i++
+			continue
+		}
+		bodyChildren := make([]*Node, 0, closeIdx-(j+2))
+		for k := j + 2; k < closeIdx; k++ {
+			if children[k] != nil {
+				bodyChildren = append(bodyChildren, children[k])
+			}
+		}
+		if root.ownerArena != nil {
+			buf := root.ownerArena.allocNodeSlice(len(bodyChildren))
+			copy(buf, bodyChildren)
+			bodyChildren = buf
+		}
+		compound := newParentNodeInArena(root.ownerArena, compoundStmtSym, compoundStmtNamed, bodyChildren, nil, 0)
+		compound.startByte = openBrace.startByte
+		compound.startPoint = openBrace.startPoint
+		if closeBrace := children[closeIdx]; closeBrace != nil {
+			compound.endByte = closeBrace.endByte
+			compound.endPoint = closeBrace.endPoint
+		} else if len(bodyChildren) > 0 {
+			last := bodyChildren[len(bodyChildren)-1]
+			compound.endByte = last.endByte
+			compound.endPoint = last.endPoint
+		}
+
+		fnChildren := make([]*Node, 0, len(specChildren)+2)
+		fnChildren = append(fnChildren, specChildren...)
+		fnChildren = append(fnChildren, declarator, compound)
+		if root.ownerArena != nil {
+			buf := root.ownerArena.allocNodeSlice(len(fnChildren))
+			copy(buf, fnChildren)
+			fnChildren = buf
+		}
+		functionDef := newParentNodeInArena(root.ownerArena, functionDefSym, functionDefNamed, fnChildren, nil, 0)
+		functionDef.startByte = children[i].startByte
+		functionDef.startPoint = children[i].startPoint
+		functionDef.endByte = compound.endByte
+		functionDef.endPoint = compound.endPoint
+		out = append(out, functionDef)
+		i = closeIdx + 1
+		changed = true
+	}
+	if !changed {
+		return
+	}
+	if root.ownerArena != nil {
+		buf := root.ownerArena.allocNodeSlice(len(out))
+		copy(buf, out)
+		out = buf
+	}
+	root.children = out
+	root.fieldIDs = nil
+	root.fieldSources = nil
+	populateParentNode(root, root.children)
+}
+
+func normalizeCRecoveredTopLevelGNUAsmExpression(root *Node, source []byte, lang *Language) {
+	if root == nil || lang == nil || len(root.children) != 3 {
+		return
+	}
+	if root.Type(lang) != "ERROR" {
+		return
+	}
+	if lang.Name != "c" && lang.Name != "cpp" {
+		return
+	}
+	exprStmtSym, ok := symbolByName(lang, "expression_statement")
+	if !ok {
+		return
+	}
+	exprStmtNamed := int(exprStmtSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[exprStmtSym].Named
+
+	leadingErr := root.children[0]
+	asmExpr := root.children[1]
+	trailingErr := root.children[2]
+	if leadingErr == nil || asmExpr == nil || trailingErr == nil {
+		return
+	}
+	if asmExpr.Type(lang) != "gnu_asm_expression" {
+		return
+	}
+
+	asmLeaf := cRecoveredErrorLeaf(root.ownerArena, leadingErr, source, lang, "asm")
+	if asmLeaf == nil {
+		asmLeaf = cRecoveredErrorLeaf(root.ownerArena, leadingErr, source, lang, "__asm__")
+	}
+	semiLeaf := cRecoveredErrorLeaf(root.ownerArena, trailingErr, source, lang, ";")
+	if asmLeaf == nil || semiLeaf == nil {
+		return
+	}
+
+	repairedAsm := cBuildRecoveredGNUAsmExpression(root.ownerArena, asmExpr, asmLeaf, source, lang)
+	if repairedAsm == nil {
+		return
+	}
+
+	stmtChildren := []*Node{repairedAsm, semiLeaf}
+	if root.ownerArena != nil {
+		buf := root.ownerArena.allocNodeSlice(len(stmtChildren))
+		copy(buf, stmtChildren)
+		stmtChildren = buf
+	}
+	stmt := newParentNodeInArena(root.ownerArena, exprStmtSym, exprStmtNamed, stmtChildren, nil, 0)
+	stmt.startByte = asmLeaf.startByte
+	stmt.startPoint = asmLeaf.startPoint
+	stmt.endByte = semiLeaf.endByte
+	stmt.endPoint = semiLeaf.endPoint
+
+	rootChildren := []*Node{stmt}
+	if root.ownerArena != nil {
+		buf := root.ownerArena.allocNodeSlice(1)
+		buf[0] = stmt
+		rootChildren = buf
+	}
+	root.children = rootChildren
+	root.fieldIDs = nil
+	root.fieldSources = nil
+	populateParentNode(root, root.children)
+}
+
+func cSingleErrorLeafOfType(errNode *Node, lang *Language, want string) *Node {
+	if errNode == nil || lang == nil || len(errNode.children) != 1 {
+		return nil
+	}
+	if errNode.symbol != errorSymbol && errNode.Type(lang) != "ERROR" {
+		return nil
+	}
+	child := errNode.children[0]
+	if child == nil || child.Type(lang) != want {
+		return nil
+	}
+	return child
+}
+
+func cRecoveredErrorLeaf(arena *nodeArena, errNode *Node, source []byte, lang *Language, want string) *Node {
+	if leaf := cSingleErrorLeafOfType(errNode, lang, want); leaf != nil {
+		return leaf
+	}
+	if errNode == nil || lang == nil {
+		return nil
+	}
+	if errNode.symbol != errorSymbol && errNode.Type(lang) != "ERROR" {
+		return nil
+	}
+	if errNode.startByte > errNode.endByte || int(errNode.endByte) > len(source) {
+		return nil
+	}
+	if !bytes.Equal(bytes.TrimSpace(source[errNode.startByte:errNode.endByte]), []byte(want)) {
+		return nil
+	}
+	sym, ok := symbolByName(lang, want)
+	if !ok {
+		return nil
+	}
+	named := int(sym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[sym].Named
+	return newLeafNodeInArena(arena, sym, named, errNode.startByte, errNode.endByte, errNode.startPoint, errNode.endPoint)
+}
+
+func cBuildRecoveredGNUAsmExpression(arena *nodeArena, asmExpr *Node, asmLeaf *Node, source []byte, lang *Language) *Node {
+	if asmExpr == nil || asmLeaf == nil || lang == nil || asmExpr.Type(lang) != "gnu_asm_expression" {
+		return nil
+	}
+
+	var (
+		qualifier  *Node
+		openParen  *Node
+		firstStr   *Node
+		concat     *Node
+		outputList *Node
+		inputList  *Node
+		clobber    *Node
+		closeParen *Node
+	)
+	for _, child := range asmExpr.children {
+		if child == nil {
+			continue
+		}
+		switch child.Type(lang) {
+		case "gnu_asm_qualifier":
+			qualifier = child
+		case "(":
+			openParen = child
+		case "string_literal":
+			if firstStr == nil {
+				firstStr = child
+			}
+		case "concatenated_string":
+			concat = child
+		case "gnu_asm_output_operand_list":
+			outputList = child
+		case "gnu_asm_input_operand_list":
+			inputList = child
+		case "gnu_asm_clobber_list":
+			clobber = child
+		case ")":
+			closeParen = child
+		}
+	}
+	if openParen == nil || outputList == nil || inputList == nil || clobber == nil || closeParen == nil {
+		return nil
+	}
+	mergedStrings := cRecoverGNUAsmStringNode(arena, firstStr, concat, source, lang)
+	if mergedStrings == nil {
+		return nil
+	}
+
+	children := make([]*Node, 0, 8)
+	children = append(children, asmLeaf)
+	if qualifier != nil {
+		children = append(children, qualifier)
+	}
+	children = append(children, openParen, mergedStrings, outputList, inputList, clobber, closeParen)
+	if arena != nil {
+		buf := arena.allocNodeSlice(len(children))
+		copy(buf, children)
+		children = buf
+	}
+	repaired := newParentNodeInArena(arena, asmExpr.symbol, asmExpr.isNamed, children, nil, asmExpr.productionID)
+	repaired.startByte = asmLeaf.startByte
+	repaired.startPoint = asmLeaf.startPoint
+	repaired.endByte = closeParen.endByte
+	repaired.endPoint = closeParen.endPoint
+	return repaired
+}
+
+func cRecoverGNUAsmStringNode(arena *nodeArena, firstStr, concat *Node, source []byte, lang *Language) *Node {
+	if concat == nil {
+		return firstStr
+	}
+	if lang == nil || concat.Type(lang) != "concatenated_string" {
+		return nil
+	}
+	children := make([]*Node, 0, len(concat.children)+1)
+	lastEnd := uint32(0)
+	if firstStr != nil {
+		if firstStr.Type(lang) != "string_literal" {
+			return nil
+		}
+		if int(firstStr.endByte) > len(source) || int(concat.startByte) > len(source) || firstStr.endByte > concat.startByte {
+			return nil
+		}
+		if !bytesAreTrivia(source[firstStr.endByte:concat.startByte]) {
+			return nil
+		}
+		children = append(children, firstStr)
+		lastEnd = firstStr.endByte
+	}
+	for _, child := range concat.children {
+		if child == nil {
+			continue
+		}
+		switch child.Type(lang) {
+		case "string_literal":
+			children = append(children, child)
+			lastEnd = child.endByte
+		case "ERROR":
+			if child.symbol != errorSymbol || int(child.endByte) > len(source) || child.startByte > child.endByte {
+				return nil
+			}
+			if !bytesAreTrivia(source[child.startByte:child.endByte]) {
+				return nil
+			}
+		default:
+			return nil
+		}
+	}
+	if len(children) == 0 {
+		return nil
+	}
+	if arena != nil {
+		buf := arena.allocNodeSlice(len(children))
+		copy(buf, children)
+		children = buf
+	}
+	merged := newParentNodeInArena(arena, concat.symbol, concat.isNamed, children, nil, concat.productionID)
+	merged.startByte = children[0].startByte
+	merged.startPoint = children[0].startPoint
+	merged.endByte = lastEnd
+	merged.endPoint = children[len(children)-1].endPoint
+	return merged
+}
+
+func cRecoveredFunctionHeadChildren(node *Node, lang *Language) []*Node {
+	if node == nil || lang == nil {
+		return nil
+	}
+	if cIsRecoveredFunctionHeadSpecifier(node, lang) {
+		return []*Node{node}
+	}
+	var out []*Node
+	for _, child := range node.children {
+		if child == nil {
+			continue
+		}
+		if child.Type(lang) == "_declaration_specifiers" && len(child.children) > 0 {
+			for _, inner := range child.children {
+				if inner != nil {
+					out = append(out, inner)
+				}
+			}
+			continue
+		}
+		if cIsRecoveredFunctionHeadSpecifier(child, lang) {
+			out = append(out, child)
+		}
+	}
+	return out
+}
+
+func cIsRecoveredFunctionHeadSpecifier(node *Node, lang *Language) bool {
+	if node == nil || lang == nil {
+		return false
+	}
+	switch node.Type(lang) {
+	case "primitive_type", "storage_class_specifier", "type_qualifier", "sized_type_specifier", "type_identifier", "struct_specifier", "union_specifier", "enum_specifier", "attribute_specifier", "attribute_declaration", "ms_declspec_modifier":
+		return true
+	default:
+		return false
+	}
+}
+
+func cFindRecoveredTopLevelFunctionClose(children []*Node, openIdx int, lang *Language) int {
+	depth := 0
+	for i := openIdx; i < len(children); i++ {
+		child := children[i]
+		if child == nil {
+			continue
+		}
+		switch child.Type(lang) {
+		case "{":
+			depth++
+		case "}":
+			depth--
+			if depth == 0 {
+				return i
+			}
+		}
+	}
+	return -1
 }
 
 func normalizeCSizeofUnknownTypeIdentifiers(root *Node, source []byte, lang *Language) {
@@ -1207,6 +1708,230 @@ func normalizeCSizeofUnknownTypeIdentifiers(root *Node, source []byte, lang *Lan
 		}
 	}
 	rewrite(root)
+}
+
+func normalizeCPreprocessorContinuationSpans(root *Node, source []byte, lang *Language) {
+	if root == nil || lang == nil || len(source) == 0 {
+		return
+	}
+	if lang.Name != "c" && lang.Name != "cpp" {
+		return
+	}
+
+	var walk func(*Node)
+	walk = func(n *Node) {
+		if n == nil {
+			return
+		}
+		switch n.Type(lang) {
+		case "preproc_def", "preproc_function_def":
+			bodyStart, bodyEnd, ok := cPreprocContinuationBodyRange(n, source)
+			if ok && bodyEnd > n.endByte {
+				n.endByte = bodyEnd
+				n.endPoint = advancePointByBytes(Point{}, source[:bodyEnd])
+				for _, child := range n.children {
+					if child == nil || child.Type(lang) != "preproc_arg" {
+						continue
+					}
+					child.startByte = bodyStart
+					child.endByte = bodyEnd
+					child.startPoint = advancePointByBytes(Point{}, source[:bodyStart])
+					child.endPoint = n.endPoint
+					break
+				}
+			}
+		}
+		for _, child := range n.children {
+			walk(child)
+		}
+	}
+	walk(root)
+}
+
+func normalizeCNestedTopLevelPreprocFragments(root *Node, lang *Language) {
+	if root == nil || lang == nil || len(root.children) == 0 {
+		return
+	}
+	if lang.Name != "c" && lang.Name != "cpp" {
+		return
+	}
+
+	filtered := make([]*Node, 0, len(root.children))
+	var coverStart, coverEnd uint32
+	changed := false
+	for _, child := range root.children {
+		if child == nil {
+			continue
+		}
+		if coverEnd > 0 && child.startByte >= coverStart && child.endByte <= coverEnd {
+			changed = true
+			continue
+		}
+		filtered = append(filtered, child)
+		if isCTopLevelPreprocNode(child, lang) {
+			coverStart = child.startByte
+			coverEnd = child.endByte
+			continue
+		}
+		if child.startByte >= coverEnd {
+			coverStart, coverEnd = 0, 0
+		}
+	}
+	if !changed {
+		return
+	}
+	if root.ownerArena != nil {
+		buf := root.ownerArena.allocNodeSlice(len(filtered))
+		copy(buf, filtered)
+		filtered = buf
+	}
+	root.children = filtered
+	root.fieldIDs = nil
+	root.fieldSources = nil
+	root.hasError = false
+	populateParentNode(root, filtered)
+}
+
+func isCTopLevelPreprocNode(node *Node, lang *Language) bool {
+	if node == nil || lang == nil {
+		return false
+	}
+	switch node.Type(lang) {
+	case "preproc_def", "preproc_function_def", "preproc_if", "preproc_ifdef", "preproc_call":
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizeCPointerAssignmentExpressions(root *Node, lang *Language) {
+	if root == nil || lang == nil {
+		return
+	}
+	if lang.Name != "c" && lang.Name != "cpp" {
+		return
+	}
+	pointerSym, ok := lang.SymbolByName("pointer_expression")
+	if !ok {
+		return
+	}
+	assignSym, ok := lang.SymbolByName("assignment_expression")
+	if !ok {
+		return
+	}
+	pointerNamed := int(pointerSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[pointerSym].Named
+
+	var rewrite func(*Node) *Node
+	rewrite = func(n *Node) *Node {
+		if n == nil {
+			return nil
+		}
+		for i, child := range n.children {
+			rewritten := rewrite(child)
+			if rewritten != child {
+				n.children[i] = rewritten
+				rewritten.parent = n
+				rewritten.childIndex = i
+			}
+		}
+		if n.symbol != pointerSym || len(n.children) == 0 {
+			return n
+		}
+		assignIdx := -1
+		for i, child := range n.children {
+			if child != nil && child.symbol == assignSym {
+				assignIdx = i
+				break
+			}
+		}
+		if assignIdx < 0 {
+			return n
+		}
+		assign := n.children[assignIdx]
+		if len(assign.children) < 2 || assign.children[0] == nil {
+			return n
+		}
+		lhs := assign.children[0]
+		ptrChildren := make([]*Node, 0, 2)
+		for i := 0; i < assignIdx; i++ {
+			if n.children[i] != nil {
+				ptrChildren = append(ptrChildren, n.children[i])
+			}
+		}
+		ptrChildren = append(ptrChildren, lhs)
+		ptrLHS := newParentNodeInArena(n.ownerArena, pointerSym, pointerNamed, ptrChildren, nil, n.productionID)
+		ptrLHS.startByte = n.startByte
+		ptrLHS.startPoint = n.startPoint
+		ptrLHS.endByte = lhs.endByte
+		ptrLHS.endPoint = lhs.endPoint
+		ptrLHS.hasError = lhs.hasError
+		assign.children[0] = ptrLHS
+		populateParentNode(assign, assign.children)
+		return assign
+	}
+	for i, child := range root.children {
+		rewritten := rewrite(child)
+		if rewritten != child {
+			root.children[i] = rewritten
+			rewritten.parent = root
+			rewritten.childIndex = i
+		}
+	}
+}
+
+func cPreprocContinuationBodyRange(node *Node, source []byte) (uint32, uint32, bool) {
+	if node == nil || len(source) == 0 || int(node.endByte) <= 0 || int(node.endByte) > len(source) {
+		return 0, 0, false
+	}
+
+	// The recovered node usually ends at the newline terminating the first
+	// `#define ... \` line. Continue only when that logical line ends with a
+	// backslash after trimming spaces.
+	i := int(node.endByte) - 1
+	if source[i] == '\n' {
+		i--
+	}
+	if i >= 0 && source[i] == '\r' {
+		i--
+	}
+	for i >= 0 && (source[i] == ' ' || source[i] == '\t') {
+		i--
+	}
+	if i < 0 || source[i] != '\\' {
+		return 0, 0, false
+	}
+
+	cur := int(node.endByte)
+	if cur >= len(source) {
+		return 0, 0, false
+	}
+	bodyStart := cur
+	for bodyStart < len(source) && (source[bodyStart] == ' ' || source[bodyStart] == '\t') {
+		bodyStart++
+	}
+	bodyEnd := cur
+	for cur < len(source) {
+		lineEnd := cur
+		for lineEnd < len(source) && source[lineEnd] != '\n' {
+			lineEnd++
+		}
+		bodyEnd = lineEnd
+		j := lineEnd - 1
+		for j >= cur && (source[j] == ' ' || source[j] == '\t' || source[j] == '\r') {
+			j--
+		}
+		if j < cur || source[j] != '\\' {
+			break
+		}
+		if lineEnd >= len(source) {
+			break
+		}
+		cur = lineEnd + 1
+	}
+	if bodyEnd <= bodyStart {
+		return 0, 0, false
+	}
+	return uint32(bodyStart), uint32(bodyEnd), true
 }
 
 func normalizeCCastUnknownTypeIdentifiers(root *Node, source []byte, lang *Language) {
@@ -3788,7 +4513,7 @@ func firstNonWhitespaceByte(source []byte) uint32 {
 }
 
 func normalizeCobolLeadingAreaStart(root *Node, source []byte, lang *Language) {
-	if root == nil || lang == nil || lang.Name != "cobol" || len(source) == 0 {
+	if root == nil || lang == nil || (lang.Name != "cobol" && lang.Name != "COBOL") || len(source) == 0 {
 		return
 	}
 	start := firstNonWhitespaceByte(source)
@@ -3823,7 +4548,7 @@ func normalizeCobolLeadingAreaStart(root *Node, source []byte, lang *Language) {
 }
 
 func normalizeCobolTopLevelDefinitionEnd(root *Node, source []byte, lang *Language) {
-	if root == nil || lang == nil || lang.Name != "cobol" || root.Type(lang) != "start" || len(root.children) != 1 {
+	if root == nil || lang == nil || (lang.Name != "cobol" && lang.Name != "COBOL") || root.Type(lang) != "start" || len(root.children) != 1 {
 		return
 	}
 	def := root.children[0]
@@ -4691,6 +5416,143 @@ func normalizeTypeScriptCompatibility(root *Node, source []byte, lang *Language)
 		}
 	}
 	walk(root)
+}
+
+func normalizeTypeScriptRecoveredNamespaceRoot(root *Node, source []byte, lang *Language) {
+	if root == nil || lang == nil || len(root.children) < 4 {
+		return
+	}
+	if lang.Name != "tsx" && lang.Name != "typescript" {
+		return
+	}
+	rootType := root.Type(lang)
+	if rootType != "ERROR" && rootType != "program" {
+		return
+	}
+	stmtBlockSym, ok := lang.SymbolByName("statement_block")
+	if !ok {
+		return
+	}
+	internalModuleSym, ok := lang.SymbolByName("internal_module")
+	if !ok {
+		return
+	}
+	exprStmtSym, hasExprStmtSym := lang.SymbolByName("expression_statement")
+	programSym, hasProgramSym := lang.SymbolByName("program")
+
+	namespaceIdx := -1
+	for i, child := range root.children {
+		if child == nil || child.isExtra {
+			continue
+		}
+		if child.Type(lang) != "namespace" {
+			if child.Type(lang) != "comment" {
+				return
+			}
+			continue
+		}
+		namespaceIdx = i
+		break
+	}
+	if namespaceIdx < 0 || namespaceIdx+2 >= len(root.children) {
+		return
+	}
+	nameNode := root.children[namespaceIdx+1]
+	openBrace := root.children[namespaceIdx+2]
+	if nameNode == nil || openBrace == nil || nameNode.Type(lang) != "identifier" || openBrace.Type(lang) != "{" {
+		return
+	}
+
+	bodyChildren := make([]*Node, 0, len(root.children)-(namespaceIdx+3))
+	for i := namespaceIdx + 3; i < len(root.children); i++ {
+		child := root.children[i]
+		if child == nil {
+			continue
+		}
+		if typeScriptWhitespaceOnlyRecoverySubtree(child, source) {
+			continue
+		}
+		bodyChildren = append(bodyChildren, child)
+	}
+	if len(bodyChildren) == 0 {
+		return
+	}
+	if root.ownerArena != nil {
+		buf := root.ownerArena.allocNodeSlice(len(bodyChildren))
+		copy(buf, bodyChildren)
+		bodyChildren = buf
+	}
+
+	stmtBlockNamed := int(stmtBlockSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[stmtBlockSym].Named
+	internalModuleNamed := int(internalModuleSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[internalModuleSym].Named
+	block := newParentNodeInArena(root.ownerArena, stmtBlockSym, stmtBlockNamed, bodyChildren, nil, 0)
+	block.startByte = openBrace.startByte
+	block.startPoint = openBrace.startPoint
+	if len(bodyChildren) > 0 {
+		last := bodyChildren[len(bodyChildren)-1]
+		block.endByte = last.endByte
+		block.endPoint = last.endPoint
+	}
+
+	moduleChildren := []*Node{nameNode, block}
+	if root.ownerArena != nil {
+		buf := root.ownerArena.allocNodeSlice(len(moduleChildren))
+		copy(buf, moduleChildren)
+		moduleChildren = buf
+	}
+	internalModule := newParentNodeInArena(root.ownerArena, internalModuleSym, internalModuleNamed, moduleChildren, nil, 0)
+	internalModule.startByte = root.children[namespaceIdx].startByte
+	internalModule.startPoint = root.children[namespaceIdx].startPoint
+	internalModule.endByte = block.endByte
+	internalModule.endPoint = block.endPoint
+
+	wrapped := internalModule
+	if hasExprStmtSym {
+		exprStmtNamed := int(exprStmtSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[exprStmtSym].Named
+		exprChildren := []*Node{internalModule}
+		if root.ownerArena != nil {
+			buf := root.ownerArena.allocNodeSlice(1)
+			buf[0] = internalModule
+			exprChildren = buf
+		}
+		exprStmt := newParentNodeInArena(root.ownerArena, exprStmtSym, exprStmtNamed, exprChildren, nil, 0)
+		exprStmt.startByte = internalModule.startByte
+		exprStmt.startPoint = internalModule.startPoint
+		exprStmt.endByte = internalModule.endByte
+		exprStmt.endPoint = internalModule.endPoint
+		wrapped = exprStmt
+	}
+
+	newChildren := make([]*Node, 0, namespaceIdx+1)
+	for i := 0; i < namespaceIdx; i++ {
+		if root.children[i] != nil {
+			newChildren = append(newChildren, root.children[i])
+		}
+	}
+	newChildren = append(newChildren, wrapped)
+	if root.ownerArena != nil {
+		buf := root.ownerArena.allocNodeSlice(len(newChildren))
+		copy(buf, newChildren)
+		newChildren = buf
+	}
+	root.children = newChildren
+	root.fieldIDs = nil
+	root.fieldSources = nil
+	if hasProgramSym {
+		root.symbol = programSym
+		root.isNamed = int(programSym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[programSym].Named
+	}
+	populateParentNode(root, root.children)
+}
+
+func typeScriptWhitespaceOnlyRecoverySubtree(node *Node, source []byte) bool {
+	if node == nil || (!node.HasError() && node.symbol != errorSymbol) {
+		return false
+	}
+	if int(node.endByte) > len(source) || node.startByte > node.endByte {
+		return false
+	}
+	return bytesAreTrivia(source[node.startByte:node.endByte])
 }
 
 func newTypeScriptNormalizationContext(source []byte, lang *Language) (typeScriptNormalizationContext, bool) {

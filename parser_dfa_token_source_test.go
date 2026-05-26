@@ -205,3 +205,156 @@ func TestDFATokenSourceResetClearsScannerAndLexerState(t *testing.T) {
 		t.Fatalf("externalPayload state = %d, want %d", got, want)
 	}
 }
+
+func TestTryRelexBroadDFAAllowsSameBoundaryRetokenization(t *testing.T) {
+	lang := &Language{
+		SymbolNames:     []string{"EOF", "immediate", "word"},
+		ImmediateTokens: []bool{false, true, false},
+		TokenCount:      3,
+		StateCount:      2,
+		ParseTable: [][]uint16{
+			{0, 0, 0},
+			{0, 0, 1},
+		},
+		LexStates: []LexState{
+			{
+				Default: -1,
+				EOF:     -1,
+				Transitions: []LexTransition{
+					{Lo: 'x', Hi: 'x', NextState: 1},
+				},
+			},
+			{AcceptToken: 2, Default: -1, EOF: -1},
+		},
+		LexModes: []LexMode{
+			{LexState: 0},
+			{LexState: 0},
+		},
+		ParseActions: []ParseActionEntry{
+			{},
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 1}}},
+		},
+	}
+
+	parser := NewParser(lang)
+	ts := acquireDFATokenSource(NewLexer(lang.LexStates, []byte("x")), lang, parser.lookupActionIndex, parser.hasKeywordState)
+	defer ts.Close()
+
+	tok, ok := parser.tryRelexBroadDFA(Token{
+		Symbol:     1,
+		StartByte:  0,
+		EndByte:    1,
+		StartPoint: Point{},
+		EndPoint:   Point{Column: 1},
+	}, 1, ts)
+	if !ok {
+		t.Fatal("expected same-boundary broad relex to succeed")
+	}
+	if got, want := tok.Symbol, Symbol(2); got != want {
+		t.Fatalf("relex symbol = %d, want %d", got, want)
+	}
+	if got, want := tok.StartByte, uint32(0); got != want {
+		t.Fatalf("relex start byte = %d, want %d", got, want)
+	}
+}
+
+func TestTryRelexBroadDFARejectsLaterStartCandidate(t *testing.T) {
+	lang := &Language{
+		SymbolNames:     []string{"EOF", "immediate", "word"},
+		ImmediateTokens: []bool{false, true, false},
+		TokenCount:      3,
+		StateCount:      2,
+		ParseTable: [][]uint16{
+			{0, 0, 0},
+			{0, 0, 1},
+		},
+		LexStates: []LexState{
+			{
+				Default: -1,
+				EOF:     -1,
+				Transitions: []LexTransition{
+					{Lo: 'x', Hi: 'x', NextState: 1},
+				},
+			},
+			{AcceptToken: 2, Default: -1, EOF: -1},
+		},
+		LexModes: []LexMode{
+			{LexState: 0},
+			{LexState: 0},
+		},
+		ParseActions: []ParseActionEntry{
+			{},
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 1}}},
+		},
+	}
+
+	parser := NewParser(lang)
+	ts := acquireDFATokenSource(NewLexer(lang.LexStates, []byte(":x")), lang, parser.lookupActionIndex, parser.hasKeywordState)
+	defer ts.Close()
+
+	_, ok := parser.tryRelexBroadDFA(Token{
+		Symbol:     1,
+		StartByte:  0,
+		EndByte:    1,
+		StartPoint: Point{},
+		EndPoint:   Point{Column: 1},
+	}, 1, ts)
+	if ok {
+		t.Fatal("expected later-start broad relex candidate to be rejected")
+	}
+	if got, want := ts.lexer.pos, 0; got != want {
+		t.Fatalf("lexer.pos = %d, want %d after rejected relex", got, want)
+	}
+}
+
+func TestTryRelexBroadDFAAllowsTriviaGapCandidate(t *testing.T) {
+	lang := &Language{
+		SymbolNames:     []string{"EOF", "immediate", "word"},
+		ImmediateTokens: []bool{false, true, false},
+		TokenCount:      3,
+		StateCount:      2,
+		ParseTable: [][]uint16{
+			{0, 0, 0},
+			{0, 0, 1},
+		},
+		LexStates: []LexState{
+			{
+				Default: -1,
+				EOF:     -1,
+				Transitions: []LexTransition{
+					{Lo: 'x', Hi: 'x', NextState: 1},
+				},
+			},
+			{AcceptToken: 2, Default: -1, EOF: -1},
+		},
+		LexModes: []LexMode{
+			{LexState: 0},
+			{LexState: 0},
+		},
+		ParseActions: []ParseActionEntry{
+			{},
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 1}}},
+		},
+	}
+
+	parser := NewParser(lang)
+	ts := acquireDFATokenSource(NewLexer(lang.LexStates, []byte(" \n\tx")), lang, parser.lookupActionIndex, parser.hasKeywordState)
+	defer ts.Close()
+
+	tok, ok := parser.tryRelexBroadDFA(Token{
+		Symbol:     1,
+		StartByte:  0,
+		EndByte:    1,
+		StartPoint: Point{},
+		EndPoint:   Point{Column: 1},
+	}, 1, ts)
+	if !ok {
+		t.Fatal("expected trivia-gap broad relex to succeed")
+	}
+	if got, want := tok.Symbol, Symbol(2); got != want {
+		t.Fatalf("relex symbol = %d, want %d", got, want)
+	}
+	if got, want := tok.StartByte, uint32(3); got != want {
+		t.Fatalf("relex start byte = %d, want %d", got, want)
+	}
+}

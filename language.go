@@ -78,9 +78,9 @@ type LexTransition struct {
 
 // LexMode maps a parser state to its lexer configuration.
 type LexMode struct {
-	LexState              uint16
-	ExternalLexState      uint16
-	ReservedWordSetID     uint16
+	LexState                uint16
+	ExternalLexState        uint16
+	ReservedWordSetID       uint16
 	AfterWhitespaceLexState uint16 // DFA start state to use after whitespace (0 = same as LexState)
 }
 
@@ -122,10 +122,9 @@ type ExternalScanner interface {
 }
 
 // IncrementalReuseExternalScanner is implemented by external scanners that can
-// safely participate in DFA subtree reuse during incremental parses. Scanners
-// with serialized mutable state, such as Python's indentation stack, should
-// leave this unimplemented so edited incremental parses fall back to the
-// conservative full-reparse path.
+// safely participate in DFA subtree reuse during incremental parses. Stateful
+// scanners may still opt in when their serialized checkpoints are sufficient
+// to restore the scanner state at reused subtrees.
 type IncrementalReuseExternalScanner interface {
 	ExternalScanner
 	SupportsIncrementalReuse() bool

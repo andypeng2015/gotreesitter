@@ -28,11 +28,11 @@ LR_SPLIT=0
 
 # All grammars in the test set (alphabetical order matching importParityGrammars).
 ALL_GRAMMARS=(
-  bash c_lang comment cpon css csv diff dockerfile dot eds eex elixir forth
+  bash c_lang cobol comment cpon css csv diff dockerfile dot eds eex elixir forth
   git_config git_rebase gitattributes gitcommit go_lang gomod graphql haskell
   hcl html ini javascript jsdoc json json5 lua make nix ocaml pem php promql
   properties proto python regex requirements ron scala scheme sql ssh_config
-  swift todotxt toml yaml
+  swift todotxt toml yaml typescript tsx fortran
   # Large grammars (previously skipped):
   rust c_sharp java ruby cpp kotlin
   # TypeScript family:
@@ -43,10 +43,10 @@ ALL_GRAMMARS=(
 
 # Grammars with known parity gaps (from floor file v14).
 FAILING_GRAMMARS=(
-  bash c_lang comment cpon diff dockerfile dot eex elixir git_config
+  bash c_lang cobol comment cpon diff dockerfile dot eex elixir git_config
   gitattributes gitcommit go_lang gomod haskell hcl html ini javascript
   jsdoc lua make nix ocaml php promql python regex requirements scala
-  sql swift yaml
+  sql swift yaml typescript tsx fortran
   # Large grammars (no baseline yet):
   rust c_sharp java ruby cpp kotlin
 )
@@ -222,6 +222,7 @@ make_clone_block() {
   declare -A REPO_URLS=(
     [bash]="https://github.com/tree-sitter/tree-sitter-bash.git"
     [c_lang]="https://github.com/tree-sitter/tree-sitter-c.git"
+    [cobol]="https://github.com/yutaro-sakamoto/tree-sitter-cobol.git"
     [comment]="https://github.com/stsewd/tree-sitter-comment.git"
     [cpon]="https://github.com/psvz/tree-sitter-cpon.git"
     [css]="https://github.com/tree-sitter/tree-sitter-css.git"
@@ -233,6 +234,7 @@ make_clone_block() {
     [eex]="https://github.com/connorlay/tree-sitter-eex.git"
     [elixir]="https://github.com/elixir-lang/tree-sitter-elixir.git"
     [forth]="https://github.com/AlexanderBrevig/tree-sitter-forth.git"
+    [fortran]="https://github.com/stadelmanma/tree-sitter-fortran.git"
     [git_config]="https://github.com/the-mikedavis/tree-sitter-git-config.git"
     [git_rebase]="https://github.com/the-mikedavis/tree-sitter-git-rebase.git"
     [gitattributes]="https://github.com/tree-sitter-grammars/tree-sitter-gitattributes.git"
@@ -245,6 +247,8 @@ make_clone_block() {
     [html]="https://github.com/tree-sitter/tree-sitter-html.git"
     [ini]="https://github.com/justinmk/tree-sitter-ini.git"
     [javascript]="https://github.com/tree-sitter/tree-sitter-javascript.git"
+    [typescript]="https://github.com/tree-sitter/tree-sitter-typescript.git"
+    [tsx]="https://github.com/tree-sitter/tree-sitter-typescript.git"
     [jsdoc]="https://github.com/tree-sitter/tree-sitter-jsdoc.git"
     [json]="https://github.com/tree-sitter/tree-sitter-json.git"
     [json5]="https://github.com/Joakker/tree-sitter-json5.git"

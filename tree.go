@@ -497,6 +497,7 @@ func NewLeafNode(sym Symbol, named bool, startByte, endByte uint32, startPoint, 
 func populateParentNode(n *Node, children []*Node) {
 	switch len(children) {
 	case 0:
+		n.hasError = false
 		return
 	case 1:
 		c0 := children[0]
@@ -506,7 +507,7 @@ func populateParentNode(n *Node, children []*Node) {
 		n.endPoint = c0.endPoint
 		c0.parent = n
 		c0.childIndex = 0
-		n.hasError = c0.hasError
+		n.hasError = c0.IsError() || c0.hasError
 		return
 	case 2:
 		c0 := children[0]
@@ -519,7 +520,7 @@ func populateParentNode(n *Node, children []*Node) {
 		c0.childIndex = 0
 		c1.parent = n
 		c1.childIndex = 1
-		n.hasError = c0.hasError || c1.hasError
+		n.hasError = c0.IsError() || c0.hasError || c1.IsError() || c1.hasError
 		return
 	default:
 		first := children[0]
@@ -528,11 +529,12 @@ func populateParentNode(n *Node, children []*Node) {
 		n.endByte = last.endByte
 		n.startPoint = first.startPoint
 		n.endPoint = last.endPoint
+		n.hasError = false
 
 		for i, c := range children {
 			c.parent = n
 			c.childIndex = i
-			if c.hasError {
+			if c.IsError() || c.hasError {
 				n.hasError = true
 				break
 			}
@@ -545,6 +547,9 @@ func populateParentNode(n *Node, children []*Node) {
 func populateParentNodeNoLinks(n *Node, children []*Node, trackChildErrors bool) {
 	switch len(children) {
 	case 0:
+		if trackChildErrors {
+			n.hasError = false
+		}
 		return
 	case 1:
 		c0 := children[0]
@@ -553,7 +558,7 @@ func populateParentNodeNoLinks(n *Node, children []*Node, trackChildErrors bool)
 		n.startPoint = c0.startPoint
 		n.endPoint = c0.endPoint
 		if trackChildErrors {
-			n.hasError = c0.hasError
+			n.hasError = c0.IsError() || c0.hasError
 		}
 		return
 	case 2:
@@ -564,7 +569,7 @@ func populateParentNodeNoLinks(n *Node, children []*Node, trackChildErrors bool)
 		n.startPoint = c0.startPoint
 		n.endPoint = c1.endPoint
 		if trackChildErrors {
-			n.hasError = c0.hasError || c1.hasError
+			n.hasError = c0.IsError() || c0.hasError || c1.IsError() || c1.hasError
 		}
 		return
 	default:
@@ -575,8 +580,9 @@ func populateParentNodeNoLinks(n *Node, children []*Node, trackChildErrors bool)
 		n.startPoint = first.startPoint
 		n.endPoint = last.endPoint
 		if trackChildErrors {
+			n.hasError = false
 			for i := range children {
-				if children[i].hasError {
+				if children[i].IsError() || children[i].hasError {
 					n.hasError = true
 					break
 				}
