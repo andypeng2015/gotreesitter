@@ -616,7 +616,7 @@ func MarkdownGrammar() *Grammar {
 				Choice(
 					Sym("info_string"),
 					Blank()),
-				Sym("_newline"),
+				Sym("_fenced_code_block_newline"),
 				Choice(
 					Sym("code_fence_content"),
 					Blank()),
@@ -624,7 +624,7 @@ func MarkdownGrammar() *Grammar {
 					Seq(
 						Alias(Sym("_fenced_code_block_end_backtick"), "fenced_code_block_delimiter", true),
 						Sym("_close_block"),
-						Sym("_newline")),
+						Sym("_fenced_code_block_newline")),
 					Blank()),
 				Sym("_block_close")),
 			Seq(
@@ -635,7 +635,7 @@ func MarkdownGrammar() *Grammar {
 				Choice(
 					Sym("info_string"),
 					Blank()),
-				Sym("_newline"),
+				Sym("_fenced_code_block_newline"),
 				Choice(
 					Sym("code_fence_content"),
 					Blank()),
@@ -643,14 +643,14 @@ func MarkdownGrammar() *Grammar {
 					Seq(
 						Alias(Sym("_fenced_code_block_end_tilde"), "fenced_code_block_delimiter", true),
 						Sym("_close_block"),
-						Sym("_newline")),
+						Sym("_fenced_code_block_newline")),
 					Blank()),
 				Sym("_block_close")))))
 
 	// raw text content between fenced code block delimiters
 	g.Define("code_fence_content",
 		Repeat1(Choice(
-			Sym("_newline"),
+			Sym("_fenced_code_block_newline"),
 			Sym("_line"))))
 
 	// language/info tag on the opening fence line
@@ -1147,6 +1147,21 @@ func MarkdownGrammar() *Grammar {
 	// with block-dispatch states that have _html_block_*_start valid, which
 	// would otherwise leak those tokens into paragraph-continuation states.
 	g.Define("_html_block_newline",
+		Seq(
+			Sym("_line_ending"),
+			Choice(
+				Sym("block_continuation"),
+				Blank())))
+
+	// newline inside fenced_code_block content — distinct name prevents LALR
+	// merging with _newline contexts where _close_block IS a valid lookahead
+	// (e.g. _blank_line → _blank_line_start _newline followed by html_block 6/7
+	// → ... Seq(_html_block_newline, _blank_line) _close_block). Without this
+	// split, state-209-equivalent merges across contexts and the external
+	// scanner fires _close_block prematurely inside fenced code content. Body
+	// identical to _newline; only the name differs (same pattern as
+	// _indented_chunk_newline and _html_block_newline introduced by fbc52a58).
+	g.Define("_fenced_code_block_newline",
 		Seq(
 			Sym("_line_ending"),
 			Choice(
