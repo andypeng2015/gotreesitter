@@ -415,7 +415,7 @@ func MarkdownGrammar() *Grammar {
 			Sym("indented_code_block"),
 			Sym("_block_quote"),
 			Sym("thematic_break"),
-			Sym("list"),
+			Sym("_list"),
 			Sym("_fenced_code_block"),
 			Sym("_blank_line"),
 			Sym("html_block"),
@@ -946,10 +946,20 @@ func MarkdownGrammar() *Grammar {
 		Seq(
 			Alias(Repeat1(Choice(
 				Sym("_paragraph_line"),
-				Sym("_soft_line_break"))), "inline", true),
+				Sym("_paragraph_soft_line_break"))), "inline", true),
 			Choice(
 				Sym("_newline"),
 				Sym("_eof"))))
+
+	// soft line break used only inside paragraph; distinct name keeps paragraph
+	// LALR states isolated from other contexts that consume _soft_line_break
+	// (link_label, link_title, link_reference_definition).
+	g.Define("_paragraph_soft_line_break",
+		Seq(
+			Sym("_soft_line_ending"),
+			Choice(
+				Sym("block_continuation"),
+				Blank())))
 
 	// one or more blank lines (block separator)
 	g.Define("_blank_line",
@@ -974,7 +984,11 @@ func MarkdownGrammar() *Grammar {
 				Blank())))
 
 	// an ordered or unordered list
-	g.Define("list",
+	// Hidden by name — see _fenced_code_block comment. The bundled markdown.bin
+	// parser does not emit a `list` node at top level; list_items appear directly
+	// under section. Aliases on nested list items still produce visible `list`
+	// wrappers where the ref CST shows them.
+	g.Define("_list",
 		PrecRight(0, Choice(
 			Sym("_list_plus"),
 			Sym("_list_minus"),
