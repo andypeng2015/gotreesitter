@@ -99,6 +99,29 @@ func main() {
 	fmt.Printf("  Candidate recurse: %d  (%.2f per call avg)\n", candidate, ratio(candidate, frontier))
 	fmt.Printf("  Exact calls:    %d\n", exactCalls)
 
+	fmt.Printf("\n=== Header-only merge divergence (the C tree-sitter shape) ===\n")
+	hdrEq := rt.MergeHeaderEqTotal
+	deepTrue := rt.MergeDeepTrue
+	deepFalse := rt.MergeDeepFalse
+	divergent := rt.MergeHeaderDeepDivergent
+	totalCompared := deepTrue + deepFalse
+	fmt.Printf("  Total merge candidates compared:  %d\n", totalCompared)
+	fmt.Printf("  Deep equiv -> TRUE  (currently merged):  %d  (%.2f%%)\n", deepTrue, ratio100(deepTrue, totalCompared))
+	fmt.Printf("  Deep equiv -> FALSE (currently rejected): %d  (%.2f%%)\n", deepFalse, ratio100(deepFalse, totalCompared))
+	fmt.Printf("  Header-only would accept:        %d  (%.2f%%)\n", hdrEq, ratio100(hdrEq, totalCompared))
+	fmt.Printf("  Divergent (header=YES, deep=NO): %d  (%.4f%% of total)\n", divergent, ratio100(divergent, totalCompared))
+	if totalCompared > 0 {
+		rate := 100.0 * float64(divergent) / float64(totalCompared)
+		switch {
+		case rate < 0.01:
+			fmt.Printf("  → SAFE: divergence is <0.01%%. Header-only is the right lever.\n")
+		case rate < 0.1:
+			fmt.Printf("  → MARGINAL: divergence is %.4f%%. Worth investigating but needs guards.\n", rate)
+		default:
+			fmt.Printf("  → UNSAFE: divergence is %.4f%%. Deep equivalence is doing real filtering.\n", rate)
+		}
+	}
+
 	fmt.Printf("\n=== Stack-pair audit (outer, per-(stack-A-ptr, stack-B-ptr, depth)) ===\n")
 	keyed := rt.StackEquivPairKeyed
 	unkeyed := rt.StackEquivPairUnkeyed

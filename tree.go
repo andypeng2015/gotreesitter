@@ -729,6 +729,10 @@ type ParseRuntime struct {
 	StackEquivPairRepeatFalse                    uint64
 	StackEquivPairRepeatMismatch                 uint64
 	StackEquivPairStores                         uint64
+	MergeHeaderEqTotal                           uint64
+	MergeDeepTrue                                uint64
+	MergeDeepFalse                               uint64
+	MergeHeaderDeepDivergent                     uint64
 	EquivCacheLookups                            uint64
 	EquivCacheHits                               uint64
 	EquivCacheStores                             uint64

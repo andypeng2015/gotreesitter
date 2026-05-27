@@ -42,6 +42,10 @@ type runtimeAuditEquivStateInfo struct {
 	stackEquivPairRepeatFalse             uint64
 	stackEquivPairRepeatMismatch          uint64
 	stackEquivPairStores                  uint64
+	mergeHeaderEqTotal                    uint64
+	mergeDeepTrue                         uint64
+	mergeDeepFalse                        uint64
+	mergeHeaderDeepDivergent              uint64
 	equivCacheLookups                     uint64
 	equivCacheHits                        uint64
 	equivCacheStores                      uint64
@@ -158,6 +162,10 @@ type runtimeAudit struct {
 	stackEquivPairRepeatFalse             uint64
 	stackEquivPairRepeatMismatch          uint64
 	stackEquivPairStores                  uint64
+	mergeHeaderEqTotal                    uint64
+	mergeDeepTrue                         uint64
+	mergeDeepFalse                        uint64
+	mergeHeaderDeepDivergent              uint64
 	equivCacheLookups                     uint64
 	equivCacheHits                        uint64
 	equivCacheStores                      uint64
@@ -278,6 +286,10 @@ func (a *runtimeAudit) beginParse() {
 	a.stackEquivPairRepeatFalse = 0
 	a.stackEquivPairRepeatMismatch = 0
 	a.stackEquivPairStores = 0
+	a.mergeHeaderEqTotal = 0
+	a.mergeDeepTrue = 0
+	a.mergeDeepFalse = 0
+	a.mergeHeaderDeepDivergent = 0
 	a.equivCacheLookups = 0
 	a.equivCacheHits = 0
 	a.equivCacheStores = 0
@@ -412,6 +424,10 @@ func (a *runtimeAudit) reset() {
 	a.stackEquivPairRepeatFalse = 0
 	a.stackEquivPairRepeatMismatch = 0
 	a.stackEquivPairStores = 0
+	a.mergeHeaderEqTotal = 0
+	a.mergeDeepTrue = 0
+	a.mergeDeepFalse = 0
+	a.mergeHeaderDeepDivergent = 0
 	a.equivCacheLookups = 0
 	a.equivCacheHits = 0
 	a.equivCacheStores = 0

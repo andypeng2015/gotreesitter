@@ -1656,6 +1656,10 @@ func recordParseRuntimeLoopStats(parseRuntime *ParseRuntime, scratch *parserScra
 	parseRuntime.StackEquivPairRepeatFalse = scratch.audit.stackEquivPairRepeatFalse
 	parseRuntime.StackEquivPairRepeatMismatch = scratch.audit.stackEquivPairRepeatMismatch
 	parseRuntime.StackEquivPairStores = scratch.audit.stackEquivPairStores
+	parseRuntime.MergeHeaderEqTotal = scratch.audit.mergeHeaderEqTotal
+	parseRuntime.MergeDeepTrue = scratch.audit.mergeDeepTrue
+	parseRuntime.MergeDeepFalse = scratch.audit.mergeDeepFalse
+	parseRuntime.MergeHeaderDeepDivergent = scratch.audit.mergeHeaderDeepDivergent
 	parseRuntime.EquivCacheLookups = scratch.audit.equivCacheLookups
 	parseRuntime.EquivCacheHits = scratch.audit.equivCacheHits
 	parseRuntime.EquivCacheStores = scratch.audit.equivCacheStores

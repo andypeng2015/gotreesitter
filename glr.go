@@ -709,6 +709,7 @@ func stackEquivalentForLanguageWithScratch(scratch *glrMergeScratch, lang *Langu
 	var pairPrevious bool
 	var pairHit bool
 	pairKeyOK := false
+	headerEq := false
 	if audit != nil {
 		audit.recordStackEquivCall()
 		if key, ok := stackEquivPairKeyForAudit(a, b); ok {
@@ -718,28 +719,87 @@ func stackEquivalentForLanguageWithScratch(scratch *glrMergeScratch, lang *Langu
 		} else {
 			audit.recordStackEquivPairUnkeyed()
 		}
+		// Compute the header-only equivalence (C tree-sitter's
+		// ts_stack_can_merge shape: top state + byte offset). We track
+		// whether switching to header-only merge would over-merge — i.e.
+		// cases where header-only accepts but deep-frontier rejects.
+		headerEq = stacksHeaderEquivalent(a, b)
+		if headerEq {
+			audit.mergeHeaderEqTotal++
+		}
 	}
 	if a.depth() != b.depth() {
 		if audit != nil {
 			audit.recordStackEquivDepthMismatch()
 			finishStackEquivalentForAudit(audit, pairKey, pairKeyOK, pairPrevious, pairHit, false)
+			recordMergeHeaderDivergenceForAudit(audit, headerEq, false)
 		}
 		return false
 	}
 	if a.gss.head != nil && b.gss.head != nil {
 		eq := gssStacksEqualForLanguageWithScratch(scratch, lang, a.gss, b.gss)
+		if audit != nil {
+			recordMergeHeaderDivergenceForAudit(audit, headerEq, eq)
+		}
 		return finishStackEquivalentResultForAudit(audit, pairKey, pairKeyOK, pairPrevious, pairHit, eq)
 	}
 	if a.gss.head != nil {
 		eq := gssStackEntriesEqualForLanguageWithScratch(scratch, lang, a.gss, b.entries)
+		if audit != nil {
+			recordMergeHeaderDivergenceForAudit(audit, headerEq, eq)
+		}
 		return finishStackEquivalentResultForAudit(audit, pairKey, pairKeyOK, pairPrevious, pairHit, eq)
 	}
 	if b.gss.head != nil {
 		eq := gssStackEntriesEqualForLanguageWithScratch(scratch, lang, b.gss, a.entries)
+		if audit != nil {
+			recordMergeHeaderDivergenceForAudit(audit, headerEq, eq)
+		}
 		return finishStackEquivalentResultForAudit(audit, pairKey, pairKeyOK, pairPrevious, pairHit, eq)
 	}
 	eq := stackEntriesEqualForLanguageWithScratch(scratch, lang, a.entries, b.entries)
+	if audit != nil {
+		recordMergeHeaderDivergenceForAudit(audit, headerEq, eq)
+	}
 	return finishStackEquivalentResultForAudit(audit, pairKey, pairKeyOK, pairPrevious, pairHit, eq)
+}
+
+// stacksHeaderEquivalent returns true when two stacks would be considered
+// mergeable under C tree-sitter's ts_stack_can_merge semantics — i.e. when
+// their top parser state and byte offset agree. This is the cheap shallow
+// check we'd switch to if the divergence-from-deep-frontier rate is near
+// zero across the ring matrix.
+//
+// External scanner state is intentionally NOT included here because our
+// scanner is a parser-singleton (not per-stack), so the comparison would
+// be tautologically true. If we ever per-stack the external scanner, this
+// helper should grow that field too.
+func stacksHeaderEquivalent(a, b glrStack) bool {
+	aTop := a.top()
+	bTop := b.top()
+	if aTop.state != bTop.state {
+		return false
+	}
+	return a.byteOffset == b.byteOffset
+}
+
+// recordMergeHeaderDivergenceForAudit tallies the relationship between
+// header-only equivalence and deep equivalence for a single merge-candidate
+// pair. The interesting bucket is "header-only would accept, deep walk
+// rejects" (mergeHeaderDeepDivergent) — that's how many merges would change
+// behavior if we switched to header-only.
+func recordMergeHeaderDivergenceForAudit(audit *runtimeAudit, headerEq, deepEq bool) {
+	if audit == nil {
+		return
+	}
+	if deepEq {
+		audit.mergeDeepTrue++
+	} else {
+		audit.mergeDeepFalse++
+		if headerEq {
+			audit.mergeHeaderDeepDivergent++
+		}
+	}
 }
 
 func stackEquivPairKeyForAudit(a, b glrStack) (runtimeAuditStackEquivPairKey, bool) {
