@@ -948,7 +948,7 @@ func MarkdownGrammar() *Grammar {
 				Sym("_paragraph_line"),
 				Sym("_paragraph_soft_line_break"))), "inline", true),
 			Choice(
-				Sym("_newline"),
+				Sym("_paragraph_newline"),
 				Sym("_eof"))))
 
 	// soft line break used only inside paragraph; distinct name keeps paragraph
@@ -957,6 +957,17 @@ func MarkdownGrammar() *Grammar {
 	g.Define("_paragraph_soft_line_break",
 		Seq(
 			Sym("_soft_line_ending"),
+			Choice(
+				Sym("block_continuation"),
+				Blank())))
+
+	// newline terminating a paragraph; distinct name prevents the paragraph's
+	// trailing newline state from merging with block_quote-internal continuation
+	// states, which would otherwise cause block_quote to close prematurely after
+	// the first inner block instead of accepting further `> ...` lines.
+	g.Define("_paragraph_newline",
+		Seq(
+			Sym("_line_ending"),
 			Choice(
 				Sym("block_continuation"),
 				Blank())))
