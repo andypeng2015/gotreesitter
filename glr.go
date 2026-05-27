@@ -400,7 +400,15 @@ const (
 	// lookupNodeEquivCache the #1 CPU hotspot (~23% flat on BenchmarkSelfParseWarmReuse).
 	// 16K keeps the table cache-resident while reducing collision pressure on the
 	// Java/C/Rust/TypeScript real-corpus matrix relative to 8K; 4K loses too many hits.
-	glrNodeEquivCacheSize = 16384
+	//
+	// LAYOUT: 2-way set associative. The 16K entries are grouped into 8K sets of
+	// 2 slots each (primary + victim). Lookups check primary, then victim; on a
+	// victim hit, the entry is promoted to primary (swap). On store, the previous
+	// primary is evicted to the victim slot. This converts ~50% of direct-mapped
+	// collision misses into victim hits on profiles where the working set fits
+	// in ~2× the set count, which is the JS/Rust real-corpus shape.
+	glrNodeEquivCacheSize     = 16384
+	glrNodeEquivCacheSetCount = glrNodeEquivCacheSize / 2 // 8192 sets × 2 ways
 	// Depth is part of the cache key. Keep it bounded so large recursive
 	// comparisons cannot alias through a narrowing conversion.
 	glrNodeEquivCacheMaxDepth = 1<<16 - 1
@@ -439,39 +447,51 @@ func lookupNodeEquivCache(scratch *glrMergeScratch, a, b *Node, depth int) (bool
 		a, b = b, a
 		ap, bp = bp, ap
 	}
-	idx := nodeEquivCacheIndex(a, b, depth)
-	entry := &scratch.equivCache[idx]
+	primaryIdx := nodeEquivCacheIndex(a, b, depth)
+	primary := &scratch.equivCache[primaryIdx]
 	var audit *runtimeAudit
 	if runtimeEquivAuditEnabled {
 		if audit = scratch.audit; audit != nil {
 			audit.recordEquivCacheLookup()
 		}
 	}
-	// Epoch is the most selective — check it first and bail without touching the rest
-	// of the 32-byte slot.
-	if entry.epoch != scratch.equivEpoch {
+	// Try primary slot first.
+	if primary.epoch == scratch.equivEpoch &&
+		primary.a == ap && primary.b == bp && primary.depth == depthKey &&
+		primary.aVersion == a.equivVersion && primary.bVersion == b.equivVersion {
 		if audit != nil {
+			audit.recordEquivCacheHit()
+			audit.recordEquivCacheResultHit(primary.result)
+		}
+		return primary.result, true
+	}
+	// Primary missed — try victim slot (immediately following primary in the set).
+	victim := &scratch.equivCache[primaryIdx+1]
+	if victim.epoch == scratch.equivEpoch &&
+		victim.a == ap && victim.b == bp && victim.depth == depthKey &&
+		victim.aVersion == a.equivVersion && victim.bVersion == b.equivVersion {
+		// Promote victim to primary so the freshest hit is always in slot 0.
+		// The displaced primary moves to the victim slot to act as the next
+		// fallback. This is a 32-byte swap, cheaper than re-computing the deep
+		// equivalence walk on the alternative.
+		*primary, *victim = *victim, *primary
+		if audit != nil {
+			audit.recordEquivCacheHit()
+			audit.recordEquivCacheResultHit(primary.result)
+		}
+		return primary.result, true
+	}
+	// Real miss — record which kind for diagnostic attribution.
+	if audit != nil {
+		if primary.epoch != scratch.equivEpoch {
 			audit.recordEquivCacheEpochMiss()
-		}
-		return false, false
-	}
-	if entry.a != ap || entry.b != bp || entry.depth != depthKey {
-		if audit != nil {
+		} else if primary.a != ap || primary.b != bp || primary.depth != depthKey {
 			audit.recordEquivCacheKeyMiss()
-		}
-		return false, false
-	}
-	if entry.aVersion != a.equivVersion || entry.bVersion != b.equivVersion {
-		if audit != nil {
+		} else {
 			audit.recordEquivCacheVersionMiss()
 		}
-		return false, false
 	}
-	if audit != nil {
-		audit.recordEquivCacheHit()
-		audit.recordEquivCacheResultHit(entry.result)
-	}
-	return entry.result, true
+	return false, false
 }
 
 func lookupNodeEquivCacheNoAudit(scratch *glrMergeScratch, a, b *Node, depth int) (bool, bool) {
@@ -488,16 +508,21 @@ func lookupNodeEquivCacheNoAudit(scratch *glrMergeScratch, a, b *Node, depth int
 		a, b = b, a
 		ap, bp = bp, ap
 	}
-	entry := &scratch.equivCache[nodeEquivCacheIndex(a, b, depth)]
-	if entry.epoch != scratch.equivEpoch ||
-		entry.a != ap ||
-		entry.b != bp ||
-		entry.depth != depthKey ||
-		entry.aVersion != a.equivVersion ||
-		entry.bVersion != b.equivVersion {
-		return false, false
+	primaryIdx := nodeEquivCacheIndex(a, b, depth)
+	primary := &scratch.equivCache[primaryIdx]
+	if primary.epoch == scratch.equivEpoch &&
+		primary.a == ap && primary.b == bp && primary.depth == depthKey &&
+		primary.aVersion == a.equivVersion && primary.bVersion == b.equivVersion {
+		return primary.result, true
 	}
-	return entry.result, true
+	victim := &scratch.equivCache[primaryIdx+1]
+	if victim.epoch == scratch.equivEpoch &&
+		victim.a == ap && victim.b == bp && victim.depth == depthKey &&
+		victim.aVersion == a.equivVersion && victim.bVersion == b.equivVersion {
+		*primary, *victim = *victim, *primary
+		return primary.result, true
+	}
+	return false, false
 }
 
 func storeNodeEquivCache(scratch *glrMergeScratch, a, b *Node, depth int, result bool) {
@@ -519,8 +544,12 @@ func storeNodeEquivCache(scratch *glrMergeScratch, a, b *Node, depth int, result
 		a, b = b, a
 		ap, bp = bp, ap
 	}
-	idx := nodeEquivCacheIndex(a, b, depth)
-	scratch.equivCache[idx] = glrNodeEquivCacheEntry{
+	primaryIdx := nodeEquivCacheIndex(a, b, depth)
+	// 2-way set associative: evict the current primary to the victim slot,
+	// then write the new entry into primary. Stale entries in the victim
+	// (different epoch) are harmless — they fail epoch check on lookup.
+	scratch.equivCache[primaryIdx+1] = scratch.equivCache[primaryIdx]
+	scratch.equivCache[primaryIdx] = glrNodeEquivCacheEntry{
 		a:        ap,
 		b:        bp,
 		aVersion: a.equivVersion,
@@ -545,7 +574,9 @@ func storeNodeEquivCacheNoAudit(scratch *glrMergeScratch, a, b *Node, depth int,
 		a, b = b, a
 		ap, bp = bp, ap
 	}
-	scratch.equivCache[nodeEquivCacheIndex(a, b, depth)] = glrNodeEquivCacheEntry{
+	primaryIdx := nodeEquivCacheIndex(a, b, depth)
+	scratch.equivCache[primaryIdx+1] = scratch.equivCache[primaryIdx]
+	scratch.equivCache[primaryIdx] = glrNodeEquivCacheEntry{
 		a:        ap,
 		b:        bp,
 		aVersion: a.equivVersion,
@@ -588,6 +619,10 @@ func stackEquivalentForMergeState(scratch *glrMergeScratch, lang *Language, stat
 	return stackEquivalentForLanguageWithScratch(scratch, lang, a, b)
 }
 
+// nodeEquivCacheIndex returns the primary slot index for the 2-way set-
+// associative cache. The victim slot is at primary+1 (set base = primary &
+// ~1). Hash widens uses both pointers, both symbols, and depth to maximize
+// distribution across the 8K sets.
 func nodeEquivCacheIndex(a, b *Node, depth int) int {
 	x := uint64(uintptr(unsafe.Pointer(a)))
 	y := uint64(uintptr(unsafe.Pointer(b)))
@@ -595,7 +630,9 @@ func nodeEquivCacheIndex(a, b *Node, depth int) int {
 	// Mix in symbol to improve distribution for arena-sequential pointers.
 	h ^= (uint64(a.symbol) | uint64(b.symbol)<<16) * 0x85ebca6b
 	h ^= uint64(depth) * 0x517cc1b727220a95
-	return int(h & uint64(glrNodeEquivCacheSize-1))
+	// Map to a set index in [0, glrNodeEquivCacheSetCount), then multiply by
+	// 2 to land on the primary slot. The victim slot is at primary+1.
+	return int(h&uint64(glrNodeEquivCacheSetCount-1)) << 1
 }
 
 func stackEntriesEqualForLanguageWithScratch(scratch *glrMergeScratch, lang *Language, a, b []stackEntry) bool {
