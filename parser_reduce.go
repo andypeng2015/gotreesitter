@@ -1046,9 +1046,59 @@ func (p *Parser) applyShiftAction(s *glrStack, act ParseAction, tok Token, nodeC
 		leaf.parseState = targetState
 		p.pushStackCompactFullLeaf(s, targetState, leaf, entryScratch, gssScratch)
 	} else {
+		// Phase 3: pre-allocation interning. Compute the candidate key
+		// from primitives (token + act + state) so we can skip the arena
+		// allocation entirely on hit. The previous post-allocation
+		// variant paid hash+lookup overhead per shift without saving
+		// the allocation, which net-regressed wall time on JS.
+		isMissing := p.shiftTokenIsMissingError(tok)
+		var flags nodeFlags
+		if named {
+			flags |= nodeFlagNamed
+		}
+		if act.Extra {
+			flags |= nodeFlagExtra
+		}
+		if isMissing {
+			flags |= nodeFlagMissing | nodeFlagHasError
+		}
+		if internLeavesSubstituteEnabled {
+			key := internKey{
+				symbol:       uint32(tok.Symbol),
+				flags:        uint8(flags),
+				startByte:    tok.StartByte,
+				endByte:      tok.EndByte,
+				parseState:   targetState,
+				preGotoState: currentState,
+			}
+			if canonical := lookupCanonicalLeafKey(arena, key); canonical != nil {
+				if internLeavesObserveEnabled {
+					arena.internShiftLeafObserved++
+				}
+				if isMissing && trackChildErrors != nil {
+					*trackChildErrors = true
+				}
+				if act.Extra && perfCountersEnabled {
+					perfRecordExtraNode()
+				}
+				// External-scanner checkpoint: the canonical leaf was
+				// the first one to hit this exact (sym, span, state)
+				// tuple, so its checkpoint snapshot is by construction
+				// the right one to apply here too. Skip the re-record.
+				p.pushStackNode(s, targetState, canonical, entryScratch, gssScratch)
+				s.shifted = true
+				*nodeCount++
+				if p != nil && p.glrTrace {
+					fmt.Printf("      -> SHIFT[intern-hit] new_state=%d depth=%d\n", targetState, s.depth())
+				}
+				return
+			}
+			// Miss: fall through to the regular allocation path; store
+			// the resulting leaf below before pushing.
+		}
 		leaf := newLeafNodeInArena(arena, tok.Symbol, named,
 			tok.StartByte, tok.EndByte, tok.StartPoint, tok.EndPoint)
-		if p.shiftTokenIsMissingError(tok) {
+		if isMissing {
 			leaf.setMissing(true)
 			leaf.setHasError(true)
 			if trackChildErrors != nil {
@@ -1062,10 +1112,6 @@ func (p *Parser) applyShiftAction(s *glrStack, act ParseAction, tok Token, nodeC
 		leaf.preGotoState = currentState
 		leaf.parseState = targetState
 		p.recordCurrentExternalLeafCheckpoint(leaf, tok)
-		// Phase 3 measurement + substitution. Substitute mode subsumes
-		// the observe-only path (it stores into the same table on miss),
-		// so skip the standalone observation hook when both flags are
-		// set to avoid double-counting.
 		if internLeavesObserveEnabled {
 			arena.internShiftLeafObserved++
 			if !internLeavesSubstituteEnabled {
@@ -1073,7 +1119,7 @@ func (p *Parser) applyShiftAction(s *glrStack, act ParseAction, tok Token, nodeC
 			}
 		}
 		if internLeavesSubstituteEnabled {
-			leaf = substituteCanonicalLeaf(arena, leaf)
+			storeCanonicalLeaf(arena, leaf)
 		}
 		p.pushStackNode(s, targetState, leaf, entryScratch, gssScratch)
 	}

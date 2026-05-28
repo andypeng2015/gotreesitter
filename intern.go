@@ -320,6 +320,11 @@ func observeLeafInternFull(arena *nodeArena, n *Node) {
 // per-fork state (parseState, preGotoState, missing/error/extra flags,
 // checkpoint) has been set on the candidate leaf, so the canonical we
 // match against carries the same downstream-observable state.
+//
+// NOTE: this post-allocation variant is the legacy path. The shift
+// loop now uses lookupCanonicalLeafKey + storeCanonicalLeaf so it can
+// skip the arena allocation entirely on hit. Kept for tests/use cases
+// where the leaf is already in hand.
 func substituteCanonicalLeaf(arena *nodeArena, candidate *Node) *Node {
 	if arena.internLeavesFull == nil {
 		arena.internLeavesFull = newInternTable()
@@ -330,6 +335,42 @@ func substituteCanonicalLeaf(arena *nodeArena, candidate *Node) *Node {
 	}
 	arena.internLeavesFull.store(key, candidate)
 	return candidate
+}
+
+// lookupCanonicalLeafKey is the pre-allocation lookup used by the shift
+// loop. The caller has computed the full intern key from primitives
+// (token, act, state) without allocating a Node. On hit, the canonical
+// leaf is returned and the caller can skip newLeafNodeInArena entirely.
+// On miss, returns nil; the caller allocates and calls storeCanonicalLeaf
+// afterward.
+func lookupCanonicalLeafKey(arena *nodeArena, key internKey) *Node {
+	if arena.internLeavesFull == nil {
+		arena.internLeavesFull = newInternTable()
+		return nil
+	}
+	// Pre-allocation lookup has no children slice to dedup against; the
+	// table is leaves-only, so any hit at this key is a true match
+	// without further collision verification beyond the key equality
+	// the table already enforces.
+	if hit := arena.internLeavesFull.lookup(key, nil); hit != nil {
+		// Update hit/lookup counters in the lookup() call. arena.audit
+		// integration happens in Phase 4 if/when the runtime audit
+		// surface gets intern fields.
+		return hit
+	}
+	return nil
+}
+
+// storeCanonicalLeaf is the pre-allocation companion to
+// lookupCanonicalLeafKey. After the shift loop has allocated and fully
+// configured a leaf following a lookup miss, it stores the leaf as
+// the canonical entry for its key so subsequent shifts with the same
+// shape collapse to this pointer.
+func storeCanonicalLeaf(arena *nodeArena, leaf *Node) {
+	if arena.internLeavesFull == nil {
+		arena.internLeavesFull = newInternTable()
+	}
+	arena.internLeavesFull.store(buildKeyFromNode(leaf), leaf)
 }
 
 // lookup returns the canonical node for the given key, or nil if absent.
