@@ -312,31 +312,6 @@ func observeLeafInternFull(arena *nodeArena, n *Node) {
 	}
 }
 
-// substituteCanonicalLeaf looks up the just-prepared leaf node in the
-// parseState-aware intern table. On hit, returns the canonical leaf
-// (the newly-allocated node remains in the arena slab but is no longer
-// referenced from the parse tree). On miss, stores the leaf as the
-// canonical entry and returns it unchanged. Must be called AFTER all
-// per-fork state (parseState, preGotoState, missing/error/extra flags,
-// checkpoint) has been set on the candidate leaf, so the canonical we
-// match against carries the same downstream-observable state.
-//
-// NOTE: this post-allocation variant is the legacy path. The shift
-// loop now uses lookupCanonicalLeafKey + storeCanonicalLeaf so it can
-// skip the arena allocation entirely on hit. Kept for tests/use cases
-// where the leaf is already in hand.
-func substituteCanonicalLeaf(arena *nodeArena, candidate *Node) *Node {
-	if arena.internLeavesFull == nil {
-		arena.internLeavesFull = newInternTable()
-	}
-	key := buildKeyFromNode(candidate)
-	if hit := arena.internLeavesFull.lookup(key, candidate.children); hit != nil {
-		return hit
-	}
-	arena.internLeavesFull.store(key, candidate)
-	return candidate
-}
-
 // lookupCanonicalLeafKey is the pre-allocation lookup used by the shift
 // loop. The caller has computed the full intern key from primitives
 // (token, act, state) without allocating a Node. On hit, the canonical
