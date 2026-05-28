@@ -34,6 +34,7 @@ MAX_FILE_BYTES=""
 MIN_BYTES=""
 ORDER="path"
 BUILD_IMAGE=1
+EXTRA_ENV=()
 KEEP_GOING=1
 
 usage() {
@@ -66,6 +67,8 @@ Options:
   --order <mode>          path|largest|smallest (default: path)
   --stop-on-failure       Stop after the first language failure
   --no-build              Skip Docker image build in underlying runner
+  --extra-env <K=V>       Append KEY=VALUE to the env prefix passed to go test
+                          inside the container. May be supplied multiple times.
   -h, --help              Show this help
 
 The generated report is written to:
@@ -95,6 +98,7 @@ while [[ $# -gt 0 ]]; do
     --order) ORDER="$2"; shift 2 ;;
     --stop-on-failure) KEEP_GOING=0; shift ;;
     --no-build) BUILD_IMAGE=0; shift ;;
+    --extra-env) EXTRA_ENV+=("$2"); shift 2 ;;
     -h|--help)
       usage
       exit 0
@@ -150,6 +154,7 @@ bench_env_prefix() {
   if [[ -n "$MAX_BYTES" ]]; then envs+=("GTS_REAL_CORPUS_BENCH_MAX_BYTES=$MAX_BYTES"); fi
   if [[ -n "$MAX_FILE_BYTES" ]]; then envs+=("GTS_REAL_CORPUS_BENCH_MAX_FILE_BYTES=$MAX_FILE_BYTES"); fi
   if [[ -n "$MIN_BYTES" ]]; then envs+=("GTS_REAL_CORPUS_BENCH_MIN_BYTES=$MIN_BYTES"); fi
+  for kv in "${EXTRA_ENV[@]}"; do envs+=("$kv"); done
   printf 'env'
   for env_kv in "${envs[@]}"; do
     printf ' %q' "$env_kv"
