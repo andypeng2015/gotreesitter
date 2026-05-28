@@ -1,8 +1,57 @@
 package gotreesitter
 
 import (
+	"os"
 	"unsafe"
 )
+
+// internLeavesObserveEnabled gates the Phase 2 leaf-interning observation
+// path. Read once at package init from GOT_PARSE_INTERN_LEAVES_OBSERVE=1
+// so the per-leaf branch is free in the default case. When true,
+// newLeafNodeInArena populates an arena-local internTable for hit-rate
+// measurement BUT does not actually short-circuit allocation. This lets
+// us learn the potential hit rate before committing to the behavior
+// change in a future phase.
+var internLeavesObserveEnabled = os.Getenv("GOT_PARSE_INTERN_LEAVES_OBSERVE") == "1"
+
+// SetInternLeavesObserveEnabled toggles leaf-interning observation at
+// runtime. Tests and benches that want to A/B observation without
+// re-running the test binary set this directly. Not safe to flip while
+// a parse is in flight on another goroutine. Phase 2 scaffolding; the
+// API may change before becoming public.
+func SetInternLeavesObserveEnabled(on bool) {
+	internLeavesObserveEnabled = on
+}
+
+// InternStatsFor returns a snapshot of the leaf-interning observation
+// counters for the arena that owns the given root node. Returns the
+// zero value if observation is disabled or the root is not arena-backed.
+// Exposed so external benches can read hit rates without grepping
+// internal logs.
+func InternStatsFor(root *Node) InternObservationStats {
+	if root == nil || root.ownerArena == nil || root.ownerArena.internLeaves == nil {
+		return InternObservationStats{}
+	}
+	s := root.ownerArena.internLeaves.stats()
+	return InternObservationStats{
+		LeafLookups: s.Lookups,
+		LeafHits:    s.Hits,
+		LeafMisses:  s.Misses,
+		LeafStores:  s.Stores,
+		LeafGrowths: s.Growths,
+	}
+}
+
+// InternObservationStats is the externally-visible snapshot of
+// leaf-interning observation counters for a single parse. Returned
+// from InternStatsFor.
+type InternObservationStats struct {
+	LeafLookups uint64
+	LeafHits    uint64
+	LeafMisses  uint64
+	LeafStores  uint64
+	LeafGrowths uint64
+}
 
 // Phase 1 scaffolding for the GLR node interning initiative
 // (initiative.glr-node-interning in hyphae://m31labs/gotreesitter).

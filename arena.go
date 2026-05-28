@@ -76,6 +76,12 @@ type nodeArena struct {
 	// a parse did not borrow any external nodes (full parse without reuse).
 	skipChildClear bool
 	audit          *runtimeAudit
+	// internLeaves observes potential leaf-interning hit rates during the
+	// parse loop. Allocated lazily on first leaf creation when
+	// internLeavesObserveEnabled is true. Reset between parses in
+	// arena.reset(). Phase 2 of the GLR node interning initiative —
+	// observation only, no behavior change yet. See intern.go.
+	internLeaves *internTable
 
 	nodeSlabs                       []nodeSlab
 	nodeSlabCursor                  int
@@ -480,6 +486,9 @@ func (a *nodeArena) reset() {
 	a.trimPrimaryNodeCapacity()
 	a.ensureDefaultSliceSlabs()
 	a.clearBudget()
+	// Reset the intern observation table between parses. The table itself
+	// is allocated lazily on first leaf creation when observation is on.
+	a.internLeaves.reset()
 }
 
 func (a *nodeArena) resetPrimaryNodes() {

@@ -1923,7 +1923,25 @@ func newLeafNodeInArena(arena *nodeArena, sym Symbol, named bool, startByte, end
 	if arena.audit != nil {
 		arena.audit.recordNodeAlloc(n, runtimeAuditNodeKindLeaf)
 	}
+	if internLeavesObserveEnabled {
+		observeLeafIntern(arena, n)
+	}
 	return n
+}
+
+// observeLeafIntern records whether the just-allocated leaf node would
+// have hit an interning table. This is Phase 2 of the node-interning
+// initiative — measurement only, no behavior change. Called from the
+// hot path only when GOT_PARSE_INTERN_LEAVES_OBSERVE=1 is set, so the
+// default build pays nothing.
+func observeLeafIntern(arena *nodeArena, n *Node) {
+	if arena.internLeaves == nil {
+		arena.internLeaves = newInternTable()
+	}
+	key := buildKey(n.symbol, n.productionID, n.flags, n.startByte, n.endByte, nil)
+	if hit := arena.internLeaves.lookup(key, nil); hit == nil {
+		arena.internLeaves.store(key, n)
+	}
 }
 
 func newParentNodeInArena(arena *nodeArena, sym Symbol, named bool, children []*Node, fieldIDs []FieldID, productionID uint16) *Node {
