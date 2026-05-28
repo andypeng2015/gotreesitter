@@ -23,34 +23,75 @@ func SetInternLeavesObserveEnabled(on bool) {
 	internLeavesObserveEnabled = on
 }
 
+// internLeavesSubstituteEnabled is the Phase 3 behavior gate. When true,
+// the shift path looks up the new leaf in the per-arena intern table
+// after parseState is set; on hit, the canonical leaf is pushed onto
+// the stack instead of the newly-allocated one (the new one stays in
+// the arena slab but is unreferenced). Implies observation is on.
+var internLeavesSubstituteEnabled = os.Getenv("GOT_PARSE_INTERN_LEAVES_SUBSTITUTE") == "1"
+
+// SetInternLeavesSubstituteEnabled toggles canonical substitution at
+// runtime. See internLeavesSubstituteEnabled.
+func SetInternLeavesSubstituteEnabled(on bool) {
+	internLeavesSubstituteEnabled = on
+	if on {
+		internLeavesObserveEnabled = true
+	}
+}
+
 // InternStatsFor returns a snapshot of the leaf-interning observation
 // counters for the arena that owns the given root node. Returns the
 // zero value if observation is disabled or the root is not arena-backed.
 // Exposed so external benches can read hit rates without grepping
 // internal logs.
 func InternStatsFor(root *Node) InternObservationStats {
-	if root == nil || root.ownerArena == nil || root.ownerArena.internLeaves == nil {
+	if root == nil || root.ownerArena == nil {
 		return InternObservationStats{}
 	}
-	s := root.ownerArena.internLeaves.stats()
-	return InternObservationStats{
-		LeafLookups: s.Lookups,
-		LeafHits:    s.Hits,
-		LeafMisses:  s.Misses,
-		LeafStores:  s.Stores,
-		LeafGrowths: s.Growths,
+	arena := root.ownerArena
+	out := InternObservationStats{
+		ShiftLeafObserved: arena.internShiftLeafObserved,
 	}
+	if arena.internLeaves != nil {
+		s := arena.internLeaves.stats()
+		out.LeafLookups = s.Lookups
+		out.LeafHits = s.Hits
+		out.LeafMisses = s.Misses
+		out.LeafStores = s.Stores
+		out.LeafGrowths = s.Growths
+	}
+	if arena.internLeavesFull != nil {
+		s := arena.internLeavesFull.stats()
+		out.FullLookups = s.Lookups
+		out.FullHits = s.Hits
+		out.FullMisses = s.Misses
+	}
+	return out
 }
 
 // InternObservationStats is the externally-visible snapshot of
 // leaf-interning observation counters for a single parse. Returned
 // from InternStatsFor.
 type InternObservationStats struct {
+	// Phase 2 counters (parseState-blind observation across ALL leaves).
 	LeafLookups uint64
 	LeafHits    uint64
 	LeafMisses  uint64
 	LeafStores  uint64
 	LeafGrowths uint64
+	// Phase 3 attribution. Shift-path leaves get parseState set per-fork
+	// so they can't be canonically substituted via the parseState-blind
+	// measurement; non-shift leaves can. "Safe to substitute" via blind
+	// measurement = (LeafMisses+LeafHits) - ShiftLeafObserved.
+	ShiftLeafObserved uint64
+	// Phase 3 parseState-aware measurement. Same hook as LeafLookups
+	// but with parseState/preGotoState included in the key. A hit here
+	// means a truly dedup-safe duplicate; the difference between this
+	// and the blind hit rate quantifies how much of the blind
+	// observation was an artifact of ignoring state.
+	FullLookups uint64
+	FullHits    uint64
+	FullMisses  uint64
 }
 
 // Phase 1 scaffolding for the GLR node interning initiative
@@ -103,6 +144,14 @@ type internKey struct {
 	// startByte for position queries.
 	startByte uint32
 	endByte   uint32
+	// parseState and preGotoState capture the per-GLR-stack state the
+	// node was created in. Without these, two leaves from different
+	// forks would erroneously dedup even though consumers (e.g. the
+	// incremental-leaf fastpath) read these fields. Phase 3 promoted
+	// them from "tracked separately" to "part of the key" after Phase 2
+	// observation showed shift-path dominance.
+	parseState   StateID
+	preGotoState StateID
 	// childrenHash is a Bob Jenkins-style mix of the child pointer
 	// values. The pointers themselves live in the table's separate
 	// children-pointer arena; we compare them on hash collision.
@@ -185,6 +234,8 @@ func hashKey(k internKey) uint64 {
 	h *= prime2
 	h ^= uint64(k.startByte)<<32 | uint64(k.endByte)
 	h *= prime3
+	h ^= uint64(k.parseState)<<32 | uint64(k.preGotoState)
+	h *= prime1
 	h ^= k.childrenHash
 	// Final avalanche.
 	h ^= h >> 33
@@ -224,6 +275,61 @@ func buildKey(symbol Symbol, productionID uint16, flags nodeFlags, startByte, en
 		endByte:      endByte,
 		childrenHash: hashChildren(children),
 	}
+}
+
+// buildKeyFromNode extracts the full key from an in-place node, including
+// per-stack state. Used by the post-shift observation hook where the
+// caller has already set parseState/preGotoState; lookup against this
+// key tells us how many leaves are duplicates AT THE STATE LEVEL — the
+// signal that matters for canonical substitution.
+func buildKeyFromNode(n *Node) internKey {
+	return internKey{
+		symbol:       uint32(n.symbol),
+		productionID: n.productionID,
+		flags:        uint8(n.flags),
+		childCount:   uint8(len(n.children)),
+		startByte:    n.startByte,
+		endByte:      n.endByte,
+		parseState:   n.parseState,
+		preGotoState: n.preGotoState,
+		childrenHash: hashChildren(n.children),
+	}
+}
+
+// observeLeafInternFull is the post-state observation hook called by the
+// shift path AFTER parseState/preGotoState are set. Distinct from the
+// observeLeafIntern helper called by newLeafNodeInArena (which lacks
+// state info). The two co-exist so we can compare parseState-blind vs
+// parseState-aware hit rates and quantify how many "duplicates" are
+// only artifacts of the blind measurement.
+func observeLeafInternFull(arena *nodeArena, n *Node) {
+	if arena.internLeavesFull == nil {
+		arena.internLeavesFull = newInternTable()
+	}
+	key := buildKeyFromNode(n)
+	if hit := arena.internLeavesFull.lookup(key, n.children); hit == nil {
+		arena.internLeavesFull.store(key, n)
+	}
+}
+
+// substituteCanonicalLeaf looks up the just-prepared leaf node in the
+// parseState-aware intern table. On hit, returns the canonical leaf
+// (the newly-allocated node remains in the arena slab but is no longer
+// referenced from the parse tree). On miss, stores the leaf as the
+// canonical entry and returns it unchanged. Must be called AFTER all
+// per-fork state (parseState, preGotoState, missing/error/extra flags,
+// checkpoint) has been set on the candidate leaf, so the canonical we
+// match against carries the same downstream-observable state.
+func substituteCanonicalLeaf(arena *nodeArena, candidate *Node) *Node {
+	if arena.internLeavesFull == nil {
+		arena.internLeavesFull = newInternTable()
+	}
+	key := buildKeyFromNode(candidate)
+	if hit := arena.internLeavesFull.lookup(key, candidate.children); hit != nil {
+		return hit
+	}
+	arena.internLeavesFull.store(key, candidate)
+	return candidate
 }
 
 // lookup returns the canonical node for the given key, or nil if absent.

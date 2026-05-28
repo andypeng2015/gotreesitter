@@ -77,11 +77,19 @@ type nodeArena struct {
 	skipChildClear bool
 	audit          *runtimeAudit
 	// internLeaves observes potential leaf-interning hit rates during the
-	// parse loop. Allocated lazily on first leaf creation when
-	// internLeavesObserveEnabled is true. Reset between parses in
-	// arena.reset(). Phase 2 of the GLR node interning initiative —
-	// observation only, no behavior change yet. See intern.go.
+	// parse loop, parseState-BLIND (hooked from newLeafNodeInArena before
+	// per-fork state is set). Allocated lazily, reset between parses.
+	// Phase 2 measurement; Phase 3 added the state-aware counterpart.
 	internLeaves *internTable
+	// internLeavesFull is the parseState-AWARE measurement. Hooked at
+	// the shift call sites AFTER parseState/preGotoState are set, so the
+	// hit rate against this table represents truly dedup-safe duplicates.
+	internLeavesFull *internTable
+	// internShiftLeafObserved counts leaves allocated by the shift path.
+	// Those leaves get parseState set per-fork, so they can't be
+	// canonically substituted; the counter is needed to compute the
+	// "safe to dedup" leaf population (total leaves minus shift leaves).
+	internShiftLeafObserved uint64
 
 	nodeSlabs                       []nodeSlab
 	nodeSlabCursor                  int
@@ -486,9 +494,11 @@ func (a *nodeArena) reset() {
 	a.trimPrimaryNodeCapacity()
 	a.ensureDefaultSliceSlabs()
 	a.clearBudget()
-	// Reset the intern observation table between parses. The table itself
-	// is allocated lazily on first leaf creation when observation is on.
+	// Reset the intern observation tables between parses. Both are
+	// allocated lazily on first observation hit when observation is on.
 	a.internLeaves.reset()
+	a.internLeavesFull.reset()
+	a.internShiftLeafObserved = 0
 }
 
 func (a *nodeArena) resetPrimaryNodes() {

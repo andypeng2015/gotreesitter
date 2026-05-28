@@ -1062,6 +1062,19 @@ func (p *Parser) applyShiftAction(s *glrStack, act ParseAction, tok Token, nodeC
 		leaf.preGotoState = currentState
 		leaf.parseState = targetState
 		p.recordCurrentExternalLeafCheckpoint(leaf, tok)
+		// Phase 3 measurement + substitution. Substitute mode subsumes
+		// the observe-only path (it stores into the same table on miss),
+		// so skip the standalone observation hook when both flags are
+		// set to avoid double-counting.
+		if internLeavesObserveEnabled {
+			arena.internShiftLeafObserved++
+			if !internLeavesSubstituteEnabled {
+				observeLeafInternFull(arena, leaf)
+			}
+		}
+		if internLeavesSubstituteEnabled {
+			leaf = substituteCanonicalLeaf(arena, leaf)
+		}
 		p.pushStackNode(s, targetState, leaf, entryScratch, gssScratch)
 	}
 	s.shifted = true
