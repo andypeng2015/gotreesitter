@@ -3,9 +3,50 @@ package grammargen
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/odvcencio/gotreesitter"
 )
+
+// pipeReduceLHSIsRowBoundary reports whether the _pipe_table_line_ending reduce
+// action reduces to a pipe-table delimiter-row or body-data-row nonterminal — a
+// position where the body-loop separator (_pipe_table_newline →
+// _pipe_table_line_ending) can legitimately follow next, so the external token
+// must be kept rather than Case-2-suppressed.
+//
+// The match is by name prefix to stay robust against the auto-numbered
+// `_repeat<N>` suffix on generated repeat-aux nonterminals (the counter is
+// grammar-global and shifts when other rules are added):
+//
+//   - `pipe_table_delimiter_*` covers the delimiter row, its cells, and their
+//     repeat auxes; after the delimiter row the body loop begins.
+//   - `_pipe_table_data_row*` covers the body data row (a structural copy of
+//     `pipe_table_row`, see `_pipe_table` / `_pipe_table_data_row` in
+//     markdown_grammar.go) and its repeat aux; after a body row the loop may
+//     continue with another body row.
+//
+// The header row uses the bare `pipe_table_row` nonterminal (NOT
+// `_pipe_table_data_row`); it deliberately falls through here so Case-2 still
+// suppresses `_pipe_table_line_ending` after the header (where only the
+// `_pipe_table_header_block`'s trailing `_newline`/`_line_ending` is valid).
+// Cell-content nonterminals (`pipe_table_cell*`) also fall through and stay
+// suppressed.
+func pipeReduceLHSIsRowBoundary(ng *NormalizedGrammar, actionList []lrAction) bool {
+	for _, a := range actionList {
+		if a.kind != lrReduce {
+			continue
+		}
+		if a.lhsSym < 0 || a.lhsSym >= len(ng.Symbols) {
+			continue
+		}
+		name := ng.Symbols[a.lhsSym].Name
+		if strings.HasPrefix(name, "pipe_table_delimiter_") ||
+			strings.HasPrefix(name, "_pipe_table_data_row") {
+			return true
+		}
+	}
+	return false
+}
 
 // assemble populates a gotreesitter.Language from the normalized grammar,
 // LR parse tables, and lex DFA states.
@@ -885,8 +926,13 @@ func buildExternalLexStates(lang *gotreesitter.Language, tables *LRTables, ng *N
 						if !suppressed && lineEndingSymID >= 0 && actionsAreReduceOnly(actionList) {
 							// Case 2: Same reduce action as _line_ending — suppress the
 							// more specific token so the parser uses _line_ending instead.
+							// EXCEPTION: keep _pipe_table_line_ending when the reduce is a
+							// delimiter-row or body-data-row boundary, where the body-loop
+							// separator (_pipe_table_newline) can legitimately follow next.
+							// See pipeReduceLHSIsRowBoundary.
 							if leActs, ok := acts[lineEndingSymID]; ok && len(leActs) > 0 &&
-								actListsEqual(actionList, leActs) {
+								actListsEqual(actionList, leActs) &&
+								!pipeReduceLHSIsRowBoundary(ng, actionList) {
 								suppressed = true
 							}
 						}
