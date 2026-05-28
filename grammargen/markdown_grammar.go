@@ -906,7 +906,7 @@ func MarkdownGrammar() *Grammar {
 				Blank()),
 			Choice(
 				Sym("_link_reference_definition_newline"),
-				Sym("_soft_line_break"),
+				Sym("_link_reference_definition_soft_line_break"),
 				Sym("_eof")))))
 
 	// inline text characters that do not start a link
@@ -1298,6 +1298,29 @@ func MarkdownGrammar() *Grammar {
 	g.Define("_link_reference_definition_newline",
 		Seq(
 			Sym("_line_ending"),
+			Choice(
+				Sym("block_continuation"),
+				Blank())))
+
+	// soft line break terminating a link_reference_definition — structurally
+	// identical to _soft_line_break but with a distinct rule name so its LR
+	// items stay separate from paragraph's _paragraph_soft_line_break and the
+	// shared _soft_line_break (link_label/link_title) continuation states.
+	// Without this split, the def-terminator soft-break reduce merges with the
+	// paragraph soft-continuation state: the merged LR state offers BOTH
+	// _line_ending and _soft_line_ending after the def's trailing newline, the
+	// bundled scanner eagerly emits _soft_line_ending (a lazy paragraph
+	// continuation) for a non-blank next line, and the parser routes the def
+	// boundary into paragraph-continuation instead of closing the block —
+	// collapsing consecutive link_reference_definitions into one paragraph.
+	// The earlier _link_reference_definition_newline split isolated only the
+	// HARD-newline (_line_ending) terminator arm; this completes the symmetric
+	// split for the SOFT (_soft_line_ending) arm that separates two defs on
+	// consecutive lines (no blank line between). Same de-merge idiom as
+	// _paragraph_soft_line_break / _link_reference_definition_newline.
+	g.Define("_link_reference_definition_soft_line_break",
+		Seq(
+			Sym("_soft_line_ending"),
 			Choice(
 				Sym("block_continuation"),
 				Blank())))
