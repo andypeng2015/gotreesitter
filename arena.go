@@ -1304,7 +1304,11 @@ func (a *nodeArena) allocFieldIDSlice(n int) []FieldID {
 		start := slab.used
 		slab.used += n
 		a.fieldSlabCursor = i
-		out := slab.data[start:slab.used]
+		// Cap at len: callers (e.g. parser_result_scala_compilation.go) reslice
+		// then append on parent.fieldIDs. Without the 3-index expression the
+		// spare slab capacity would let those appends silently overwrite the
+		// next parent's fieldIDs. Same defect class as allocNodeSlice.
+		out := slab.data[start:slab.used:slab.used]
 		clear(out)
 		return out
 	}
@@ -1341,7 +1345,8 @@ func (a *nodeArena) allocFieldSourceSlice(n int) []uint8 {
 		start := slab.used
 		slab.used += n
 		a.fieldSourceSlabCursor = i
-		out := slab.data[start:slab.used]
+		// Cap at len for the same reason as allocFieldIDSlice — see comment above.
+		out := slab.data[start:slab.used:slab.used]
 		clear(out)
 		return out
 	}
