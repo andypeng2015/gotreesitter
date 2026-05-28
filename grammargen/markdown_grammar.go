@@ -414,7 +414,7 @@ func MarkdownGrammar() *Grammar {
 			Sym("indented_code_block"),
 			Sym("_block_quote"),
 			Sym("thematic_break"),
-			Sym("_list"),
+			Alias(Sym("_list"), "list", true),
 			Alias(Sym("_fenced_code_block"), "fenced_code_block", true),
 			Sym("_blank_line"),
 			Sym("html_block"),
@@ -1043,9 +1043,13 @@ func MarkdownGrammar() *Grammar {
 
 	// an ordered or unordered list
 	// Hidden by name — see _fenced_code_block comment. The bundled markdown.bin
-	// parser does not emit a `list` node at top level; list_items appear directly
-	// under section. Aliases on nested list items still produce visible `list`
-	// wrappers where the ref CST shows them.
+	// parser emits a visible `list` node wherever the list has a sibling block
+	// in its section/container; when a list is the sole block child of a section
+	// the single-iteration repeat-alias reduce collapses the lone wrapper into
+	// the parent. To reproduce that context-sensitive behavior, `_list` is
+	// re-aliased to the visible "list" at every use-site: the top-level
+	// _block_not_section alternation and both container alternations
+	// (_block_in_container, _block_in_list_item).
 	g.Define("_list",
 		PrecRight(0, Choice(
 			Sym("_list_plus"),
