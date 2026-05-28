@@ -1164,6 +1164,23 @@ func MarkdownGrammar() *Grammar {
 				Blank())))
 
 	// the block content of a single list item
+	//
+	// Uses `_block_in_list_item` instead of `_block_in_container` so the
+	// LALR state for a list item's block body is distinct from the one
+	// used inside `_block_quote`. Without this separation, multi-paragraph
+	// list items see their second-and-later paragraphs hoisted out of the
+	// outer `list_item` wrapper. Mirrors the `_paragraph_line` vs `_line`
+	// pattern used elsewhere in this grammar to prevent LALR merge
+	// artifacts (see audit Gap 3).
+	//
+	// NOTE: this partially fixes Gap 3 — multi-paragraph items now keep
+	// their outer wrapper. Single-item lists with non-trivial body (lazy
+	// continuation, nested list, nested container) still hoist the outer
+	// `list_item` wrapper. That residual problem is a grammargen-level
+	// single-iteration Repeat1 reduction artifact (the alias on
+	// `_list_item_minus` inside `Repeat1` inlines when there is exactly
+	// one iteration), not a markdown-grammar issue, and needs a fix in
+	// grammargen/normalize.go's auxiliary-rule lowering.
 	g.Define("_list_item_content",
 		Choice(
 			Prec(1, Seq(
@@ -1173,14 +1190,37 @@ func MarkdownGrammar() *Grammar {
 				Choice(
 					Sym("block_continuation"),
 					Blank()))),
-			Repeat1(Sym("_block_in_container")),
+			Repeat1(Sym("_block_in_list_item")),
 			Prec(1, Seq(
 				Choice(
 					Sym("task_list_marker_checked"),
 					Sym("task_list_marker_unchecked")),
 				Sym("_whitespace"),
 				Sym("paragraph"),
-				Repeat(Sym("_block_in_container"))))))
+				Repeat(Sym("_block_in_list_item"))))))
+
+	// Structurally-identical copy of `_block_in_container`, used inside
+	// `_list_item_content`. The separation gives the LALR generator a
+	// distinct state for list-item block bodies so it does not merge with
+	// the block_quote block-body state — merging causes the outer
+	// `list_item` alias to evaporate whenever the item body contains more
+	// than a single paragraph. See audit Gap 3 for inputs and analysis:
+	// inbox/agents/2026-05-28-grammargen-wrapper-gap-audit.md.
+	g.Define("_block_in_list_item",
+		Choice(
+			Alias(Sym("_setext_heading1"), "setext_heading", true),
+			Alias(Sym("_setext_heading2"), "setext_heading", true),
+			Sym("paragraph"),
+			Sym("indented_code_block"),
+			Alias(Sym("_block_quote"), "block_quote", true),
+			Sym("thematic_break"),
+			Alias(Sym("_list"), "list", true),
+			Alias(Sym("_fenced_code_block"), "fenced_code_block", true),
+			Sym("_blank_line"),
+			Sym("html_block"),
+			Sym("link_reference_definition"),
+			Sym("_pipe_table"),
+			Sym("section")))
 
 	// external newline (inline continuation context)
 	g.Define("_newline",
