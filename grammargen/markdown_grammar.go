@@ -985,13 +985,32 @@ func MarkdownGrammar() *Grammar {
 
 	// block-quote introduced by > marker
 	// Hidden by name — see _fenced_code_block comment.
+	//
+	// The Repeat over `_block_in_container` suffixes each child with an
+	// optional `block_continuation` slot so the blank-then-`>` line between
+	// sibling block children inside a quote has a parser-recognised place
+	// to emit a visible continuation marker. The bundled blob emits one
+	// `(block_continuation)` per inter-child boundary; this seq mirrors
+	// that shape. NOTE: the scanner still prefers `_block_quote_start` over
+	// `block_continuation` whenever both are in valid_symbols at the same
+	// position, so the symptom from audit Gap 4 (a spurious extra
+	// `block_quote_marker` between siblings) is not fully resolved by this
+	// grammar change alone — it requires scanner-state coordination in
+	// `grammars/markdown_scanner.go`. This change is forward-compatible:
+	// the slot exists, so once the scanner is updated to emit
+	// `block_continuation` here, the CST will start matching the bundled
+	// shape without further grammar changes.
 	g.Define("_block_quote",
 		Seq(
 			Alias(Sym("_block_quote_start"), "block_quote_marker", true),
 			Choice(
 				Sym("block_continuation"),
 				Blank()),
-			Repeat(Sym("_block_in_container")),
+			Repeat(Seq(
+				Sym("_block_in_container"),
+				Choice(
+					Sym("block_continuation"),
+					Blank()))),
 			Sym("_block_close"),
 			Choice(
 				Sym("block_continuation"),
