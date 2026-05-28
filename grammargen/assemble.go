@@ -760,6 +760,20 @@ func buildExternalLexStates(lang *gotreesitter.Language, tables *LRTables, ng *N
 	pipeTableLineEndingSymID := -1
 	lineEndingSymID := -1
 	pipeTableContentSymIDs := make([]int, 0, 4) // _word, _whitespace
+	// Markdown-specific: track `_close_block` and the fence end-delimiter
+	// externals. The markdown scanner emits `_close_block` eagerly whenever
+	// it is in valid_symbols (see markdown_scanner.go: `if
+	// isValid(mdTokCloseBlock) { lexer.SetResultSymbol(mdSymCloseBlock) }`
+	// near the top of `mdScan`). LALR merging puts `_close_block` in
+	// valid_symbols for states where the parser is still inside a fence
+	// body and a fence end delimiter could still come — when that happens
+	// the scanner's eager branch fires `_close_block`, completing the fence
+	// rule prematurely so the body becomes a `paragraph` and the closing
+	// ``` becomes a fresh fence wrapper. To suppress this, we treat
+	// `_close_block` as invalid in any state that also offers a fence end
+	// delimiter as a SHIFT action.
+	closeBlockSymID := -1
+	fencedCodeEndSymIDs := make([]int, 0, 2)
 	for sym := 0; sym < tokenCount; sym++ {
 		if _, isExt := extSymSet[sym]; isExt {
 			switch ng.Symbols[sym].Name {
@@ -767,12 +781,27 @@ func buildExternalLexStates(lang *gotreesitter.Language, tables *LRTables, ng *N
 				pipeTableLineEndingSymID = sym
 			case "_line_ending":
 				lineEndingSymID = sym
+			case "_close_block":
+				closeBlockSymID = sym
 			}
 			continue
 		}
 		switch ng.Symbols[sym].Name {
 		case "_word", "_whitespace":
 			pipeTableContentSymIDs = append(pipeTableContentSymIDs, sym)
+		}
+	}
+	// Fence end delimiters are aliased to `fenced_code_block_delimiter` at
+	// every use site, so their symbol names are canonicalized away during
+	// normalization. Look them up by their declared name (preserved on
+	// ng.OriginalExternalNames) via the external token index.
+	for i, name := range ng.OriginalExternalNames {
+		if i >= len(ng.ExternalSymbols) {
+			break
+		}
+		switch name {
+		case "_fenced_code_block_end_backtick", "_fenced_code_block_end_tilde":
+			fencedCodeEndSymIDs = append(fencedCodeEndSymIDs, ng.ExternalSymbols[i])
 		}
 	}
 
@@ -872,6 +901,30 @@ func buildExternalLexStates(lang *gotreesitter.Language, tables *LRTables, ng *N
 							if leActs, ok := acts[lineEndingSymID]; ok && len(leActs) > 0 &&
 								actListsEqual(actionList, leActs) {
 								suppressed = true
+							}
+						}
+					}
+					// Suppress `_close_block` when LALR has lifted it into
+					// the reduce-lookahead set of a `_newline` reduction.
+					// In those states the parser would reduce `_newline`
+					// (consumed by some surrounding context) on `_close_block`
+					// lookahead — but inside a fenced_code_block body, the
+					// scanner's eager `isValid(mdTokCloseBlock)` branch (see
+					// markdown_scanner.go near `mdScan`) fires `_close_block`
+					// the moment it appears in valid_symbols, short-circuiting
+					// the fence body parse so the closing ``` becomes a fresh
+					// fence wrapper and the body becomes a `paragraph`.
+					// Marking `_close_block` invalid in these reduce-only
+					// merged states forces the scanner to fall through to
+					// content parsing instead. This is a markdown-specific
+					// LALR merge artifact, analogous to the
+					// `_pipe_table_line_ending` suppression above.
+					if !suppressed && symID == closeBlockSymID && actionsAreReduceOnly(actionList) {
+						for _, a := range actionList {
+							lhs := a.lhsSym
+							if lhs >= 0 && lhs < len(ng.Symbols) && ng.Symbols[lhs].Name == "_newline" {
+								suppressed = true
+								break
 							}
 						}
 					}

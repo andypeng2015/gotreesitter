@@ -416,7 +416,7 @@ func MarkdownGrammar() *Grammar {
 			Sym("_block_quote"),
 			Sym("thematic_break"),
 			Sym("_list"),
-			Sym("_fenced_code_block"),
+			Alias(Sym("_fenced_code_block"), "fenced_code_block", true),
 			Sym("_blank_line"),
 			Sym("html_block"),
 			Sym("link_reference_definition"),
@@ -650,11 +650,18 @@ func MarkdownGrammar() *Grammar {
 					Blank()),
 				Sym("_block_close")))))
 
-	// raw text content between fenced code block delimiters
+	// raw text content between fenced code block delimiters.
+	// `_fenced_code_block_line` is a structurally-identical copy of `_line`
+	// used only here; the distinct rule name keeps `code_fence_content`'s
+	// content states from merging with paragraph `_line` states. Without the
+	// split, fences after non-paragraph blocks (heading, blank-line, etc.)
+	// would re-enter the merged content state where `_close_block` is in the
+	// reduce-lookahead set, and the scanner's eager `_close_block` branch
+	// (markdown_scanner.go line 344) fires before the body is parsed.
 	g.Define("code_fence_content",
 		Repeat1(Choice(
 			Sym("_fenced_code_block_newline"),
-			Sym("_line"))))
+			Sym("_fenced_code_block_line"))))
 
 	// language/info tag on the opening fence line
 	g.Define("info_string",
@@ -1276,6 +1283,58 @@ func MarkdownGrammar() *Grammar {
 
 	// a single line of text (paragraph continuation)
 	g.Define("_line",
+		PrecRight(0, Repeat1(Choice(
+			Sym("_word"),
+			Sym("_whitespace"),
+			Seq(
+				Choice(
+					Str("!"),
+					Str("\""),
+					Str("#"),
+					Str("$"),
+					Str("%"),
+					Str("&"),
+					Str("'"),
+					Str("("),
+					Str(")"),
+					Str("*"),
+					Str("+"),
+					Str(","),
+					Str("-"),
+					Str("."),
+					Str("/"),
+					Str(":"),
+					Str(";"),
+					Str("<"),
+					Str("="),
+					Str(">"),
+					Str("?"),
+					Str("@"),
+					Str("["),
+					Str("\\"),
+					Str("]"),
+					Str("^"),
+					Str("_"),
+					Str("`"),
+					Str("{"),
+					Str("|"),
+					Str("}"),
+					Str("~")),
+				Choice(
+					Sym("_last_token_punctuation"),
+					Blank()))))))
+
+	// A structurally-identical copy of _line for use inside code_fence_content.
+	// Using a distinct rule name keeps `code_fence_content`'s content states
+	// from merging with paragraph `_line` states. Without the split, fences
+	// after non-paragraph blocks (heading, blank line, etc.) re-enter a merged
+	// content state where `_close_block` is in the reduce-lookahead set, and
+	// the scanner's eager `_close_block` branch (markdown_scanner.go line 344)
+	// fires before the body is parsed — so the body gets reparsed as a
+	// `paragraph` and the closing ``` becomes a fresh fence wrapper. The body
+	// is identical to `_line`; only the name differs (same isolation pattern
+	// as `_paragraph_line` and `_fenced_code_block_newline`).
+	g.Define("_fenced_code_block_line",
 		PrecRight(0, Repeat1(Choice(
 			Sym("_word"),
 			Sym("_whitespace"),
