@@ -412,7 +412,7 @@ func MarkdownGrammar() *Grammar {
 			Alias(Sym("_setext_heading2"), "setext_heading", true),
 			Sym("paragraph"),
 			Sym("indented_code_block"),
-			Sym("_block_quote"),
+			Alias(Sym("_block_quote"), "block_quote", true),
 			Sym("thematic_break"),
 			Alias(Sym("_list"), "list", true),
 			Alias(Sym("_fenced_code_block"), "fenced_code_block", true),
