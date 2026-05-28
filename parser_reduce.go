@@ -5257,6 +5257,17 @@ func flattenedVisibleAliasTarget(n *Node, symbolMeta []SymbolMetadata) *Node {
 			visible = symbolMeta[n.symbol].Visible
 		}
 		if visible {
+			// Rename-through is only sound when the lone visible descendant is a
+			// LEAF (a token-shaped wrapper the alias relabels in place, e.g.
+			// alias($._hidden_token, $.name) -> (name)). When the descendant is an
+			// internal node with its own children (a real visible wrapper such as a
+			// single list_item produced by repeat1(alias($._x, $.y)) reduced once),
+			// upstream tree-sitter NESTS it under the new alias rather than
+			// collapsing the layer. Returning nil routes the caller to
+			// materializeHiddenNodeForAlias, which builds the proper wrapper.
+			if len(n.children) != 0 {
+				return nil
+			}
 			return n
 		}
 		var next *Node
