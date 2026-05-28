@@ -397,8 +397,7 @@ func MarkdownGrammar() *Grammar {
 
 	// prevents trailing punctuation in link destinations
 	g.Define("_last_token_punctuation",
-		Choice(
-			))
+		Choice())
 
 	// any block-level element (choice dispatch)
 	g.Define("_block",
@@ -420,7 +419,7 @@ func MarkdownGrammar() *Grammar {
 			Sym("_blank_line"),
 			Sym("html_block"),
 			Sym("link_reference_definition"),
-			Sym("_pipe_table")))
+			Alias(Sym("_pipe_table"), "pipe_table", true)))
 
 	// a document section introduced by an ATX heading
 	g.Define("section",
@@ -1039,7 +1038,7 @@ func MarkdownGrammar() *Grammar {
 			Sym("_blank_line"),
 			Sym("html_block"),
 			Sym("link_reference_definition"),
-			Sym("_pipe_table"),
+			Alias(Sym("_pipe_table"), "pipe_table", true),
 			Sym("section")))
 
 	// an ordered or unordered list
@@ -1226,7 +1225,7 @@ func MarkdownGrammar() *Grammar {
 			Sym("_blank_line"),
 			Sym("html_block"),
 			Sym("link_reference_definition"),
-			Sym("_pipe_table"),
+			Alias(Sym("_pipe_table"), "pipe_table", true),
 			Sym("section")))
 
 	// external newline (inline continuation context)
@@ -1487,7 +1486,27 @@ func MarkdownGrammar() *Grammar {
 			Alias(Sym("pipe_table_row"), "pipe_table_header", true),
 			Sym("_newline")))
 
-	// Hidden by name — see _fenced_code_block comment.
+	// Hidden by name — see _fenced_code_block comment. Use-sites wrap it in
+	// `Alias(Sym("_pipe_table"), "pipe_table", true)` (same idiom as `_list` /
+	// `_fenced_code_block`) so the visible `pipe_table` node materializes when the
+	// table is not the section's first/sole block — matching the bundled blob,
+	// which only emits the `pipe_table` wrapper after preceding content.
+	//
+	// The body loop uses `_pipe_table_data_row` (a structural copy of
+	// `pipe_table_row`, aliased back to `pipe_table_row`) rather than
+	// `pipe_table_row` directly. The header row and the body rows are otherwise
+	// the SAME `pipe_table_row` nonterminal, so grammargen's LALR merges the
+	// row-internal reduce states (e.g. the `pipe_table_row_repeat*` reduce that
+	// happens with the trailing newline in lookahead). In the header context that
+	// newline must be `_line_ending` (the `_pipe_table_header_block` requires
+	// `_newline`); in the body context it must be `_pipe_table_line_ending` (the
+	// body-loop separator `_pipe_table_newline`). A single merged LR state cannot
+	// offer the right external token for both, so the second body row gets dropped
+	// (the body-row-end state inherits the header's `_line_ending`-only lookahead
+	// after Case-2 suppression). The bundled blob (an LR(1)/GLR table) keeps these
+	// states distinct; the distinct `_pipe_table_data_row` nonterminal forces the
+	// same separation under LALR. Same de-merge idiom as `_paragraph_newline`,
+	// `_blank_line_newline`, `_link_reference_definition_newline`.
 	g.Define("_pipe_table",
 		PrecRight(0, Seq(
 			Sym("_pipe_table_header_block"),
@@ -1495,7 +1514,7 @@ func MarkdownGrammar() *Grammar {
 			Repeat(Seq(
 				Sym("_pipe_table_newline"),
 				Choice(
-					Sym("pipe_table_row"),
+					Alias(Sym("_pipe_table_data_row"), "pipe_table_row", true),
 					Blank()))),
 			Choice(
 				Sym("_newline"),
@@ -1552,6 +1571,58 @@ func MarkdownGrammar() *Grammar {
 
 	// a data row in a pipe table
 	g.Define("pipe_table_row",
+		Seq(
+			Choice(
+				Seq(
+					Choice(
+						Sym("_whitespace"),
+						Blank()),
+					Str("|")),
+				Blank()),
+			Choice(
+				Seq(
+					Repeat1(PrecRight(0, Seq(
+						Choice(
+							Seq(
+								Choice(
+									Sym("_whitespace"),
+									Blank()),
+								Sym("pipe_table_cell"),
+								Choice(
+									Sym("_whitespace"),
+									Blank())),
+							Alias(Sym("_whitespace"), "pipe_table_cell", true)),
+						Str("|")))),
+					Choice(
+						Sym("_whitespace"),
+						Blank()),
+					Choice(
+						Seq(
+							Sym("pipe_table_cell"),
+							Choice(
+								Sym("_whitespace"),
+								Blank())),
+						Blank())),
+				Seq(
+					Choice(
+						Sym("_whitespace"),
+						Blank()),
+					Sym("pipe_table_cell"),
+					Choice(
+						Sym("_whitespace"),
+						Blank())))))
+
+	// `_pipe_table_data_row` — structural copy of `pipe_table_row`, used only in
+	// the `_pipe_table` body loop and aliased back to `pipe_table_row`. It is
+	// byte-for-byte identical to `pipe_table_row` but a distinct nonterminal so
+	// grammargen's LALR keeps the body-row reduce states separate from the
+	// header-row states (which share `pipe_table_row`). Without this, the merged
+	// row-end state cannot offer `_pipe_table_line_ending` for body rows without
+	// also offering it after the header (which breaks the header→delimiter
+	// transition). See the `_pipe_table` comment. Cells still reference the shared
+	// `pipe_table_cell` — only the row wrapper is duplicated, so cell-content
+	// states stay shared (their Case-2 suppression remains correct).
+	g.Define("_pipe_table_data_row",
 		Seq(
 			Choice(
 				Seq(
@@ -1758,4 +1829,3 @@ func MarkdownGrammar() *Grammar {
 
 	return g
 }
-
