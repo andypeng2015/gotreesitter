@@ -5,10 +5,10 @@ import "bytes"
 func normalizeJavaScriptCompatibility(root *Node, source []byte, lang *Language) {
 	normalizeJavaScriptProgramStart(root, lang)
 	// Fused walk handles empty_statement, statement keywords (if/while),
-	// call_expression precedence, and builds unary/binary candidate indexes.
-	// Replaces 5 separate full-tree walks with 1 walk + indexed rewrites.
+	// optional-chain leaves, call_expression precedence, and builds unary/
+	// binary candidate indexes — six separate full-tree walks collapsed into
+	// one walk + indexed rewrites.
 	normalizeJavaScriptTypeScriptStatementKeywordsAndPrecedence(root, source, lang)
-	normalizeJavaScriptTypeScriptOptionalChainLeaves(root, source, lang)
 	normalizeJavaScriptTrailingContinueComments(root, source, lang)
 	normalizeJavaScriptTopLevelExpressionStatementBounds(root, lang)
 	normalizeJavaScriptTopLevelDeclarationBounds(root, lang)
@@ -23,7 +23,8 @@ func normalizeTypeScriptTreeCompatibility(root *Node, source []byte, lang *Langu
 func normalizeTypeScriptTreeCompatibilityWithParser(root *Node, source []byte, parser *Parser, lang *Language) {
 	recordPasses := parser != nil && parser.currentMaterializationTiming() != nil
 	if !recordPasses {
-		normalizeJavaScriptTypeScriptOptionalChainLeaves(root, source, lang)
+		// OptionalChainLeaves was fused into the statement-keyword walk; one less
+		// tree traversal per file containing "?." (most modern JS/TS).
 		normalizeJavaScriptTypeScriptStatementKeywordsAndPrecedence(root, source, lang)
 		normalizeTypeScriptRecoveredNamespaceRoot(root, source, lang)
 		normalizeJavaScriptTopLevelDeclarationBounds(root, lang)
@@ -43,9 +44,6 @@ func normalizeTypeScriptTreeCompatibilityWithParser(root *Node, source []byte, p
 	recordTypeScriptCompatSourceFlagMetrics(parser, typeScriptCompatSourceFlagsFor(source))
 
 	recordTypeScriptCompatCandidateMetrics(parser, root, lang)
-	runVoid("ts_optional_chain_leaves", func() {
-		normalizeJavaScriptTypeScriptOptionalChainLeaves(root, source, lang)
-	})
 	var syntaxStats javaScriptTypeScriptSyntaxNormalizationStats
 	var haveSyntaxStats bool
 	run("ts_statement_keyword_leaves", func() normalizationPassCounters {
@@ -1023,6 +1021,14 @@ func normalizeJavaScriptTypeScriptStatementKeywordsAndPrecedenceWithDetailedStat
 	whileSym, whileNamed, hasWhile := symbolMeta(lang, "while")
 	closeBraceSym, hasCloseBrace := symbolByName(lang, "}")
 
+	// Source-level gate: only enable the optional-chain leaf handler when "?."
+	// actually appears in the file, mirroring the standalone pass's gate so we
+	// don't slow down files that have no chance of matching.
+	optionalChainSym, hasOptionalChainSym := symbolByName(lang, "optional_chain")
+	optionalChainTokenSym, hasOptionalChainTokenSym := symbolByName(lang, "?.")
+	optionalChainTokenNamed := hasOptionalChainTokenSym && symbolIsNamed(lang, optionalChainTokenSym)
+	enableOptionalChain := hasOptionalChainSym && hasOptionalChainTokenSym && bytes.Contains(source, []byte("?."))
+
 	index := rewriteJavaScriptTypeScriptStatementKeywordsCallPrecedenceAndBuildUnaryBinaryIndex(
 		root, source, lang,
 		callSym, hasCallSym, unarySym, hasUnarySym, binarySym, hasBinarySym,
@@ -1031,6 +1037,7 @@ func normalizeJavaScriptTypeScriptStatementKeywordsAndPrecedenceWithDetailedStat
 		ifStmtSym, hasIfStmt, ifSym, ifNamed, hasIf,
 		whileStmtSym, hasWhileStmt, whileSym, whileNamed, hasWhile,
 		closeBraceSym, hasCloseBrace,
+		optionalChainSym, optionalChainTokenSym, optionalChainTokenNamed, enableOptionalChain,
 	)
 	stats.emptyStatement = index.emptyStatement
 	stats.existentialType = index.existentialType
@@ -1134,6 +1141,10 @@ func rewriteJavaScriptTypeScriptStatementKeywordsCallPrecedenceAndBuildUnaryBina
 	hasWhile bool,
 	closeBraceSym Symbol,
 	hasCloseBrace bool,
+	optionalChainSym Symbol,
+	optionalChainTokenSym Symbol,
+	optionalChainTokenNamed bool,
+	enableOptionalChain bool,
 ) javaScriptTypeScriptUnaryBinaryPrecedenceIndex {
 	var index javaScriptTypeScriptUnaryBinaryPrecedenceIndex
 	if root == nil {
@@ -1145,7 +1156,7 @@ func rewriteJavaScriptTypeScriptStatementKeywordsCallPrecedenceAndBuildUnaryBina
 	// other compat passes.
 	if !hasCallSym && !hasUnarySym && !hasBinarySym &&
 		!hasEmptyStatement && !hasExistentialType &&
-		!hasIfStmt && !hasWhileStmt {
+		!hasIfStmt && !hasWhileStmt && !enableOptionalChain {
 		return index
 	}
 	index.builds = 1
@@ -1176,6 +1187,19 @@ func rewriteJavaScriptTypeScriptStatementKeywordsCallPrecedenceAndBuildUnaryBina
 			index.statementKeyword.nodesVisited++
 			if normalizeJavaScriptTypeScriptStatementKeywordLeafWithSymbolChanged(n, source, "while", whileSym, whileNamed, closeBraceSym, hasCloseBrace) {
 				index.statementKeyword.nodesRewritten++
+			}
+		} else if enableOptionalChain && n.symbol == optionalChainSym && len(n.children) == 0 {
+			if n.endByte > n.startByte && int(n.endByte) <= len(source) && bytes.Equal(source[n.startByte:n.endByte], []byte("?.")) {
+				child := newLeafNodeInArena(n.ownerArena, optionalChainTokenSym, optionalChainTokenNamed, n.startByte, n.endByte, n.startPoint, n.endPoint)
+				children := phpAllocChildren(n.ownerArena, 1)
+				children[0] = child
+				n.children = children
+				n.fieldIDs = nil
+				n.fieldSources = nil
+				if n.ownerArena != nil {
+					n.ownerArena.clearFinalChildRefs(n)
+				}
+				populateParentNode(n, n.children)
 			}
 		}
 
