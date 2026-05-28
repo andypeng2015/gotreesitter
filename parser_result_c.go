@@ -24,10 +24,10 @@ func normalizeCCompatibilityWithParser(root *Node, source []byte, p *Parser, lan
 		run("c_preprocessor_directive_shapes", func() {
 			normalizeCPreprocessorDirectiveShapes(root, source, lang)
 		})
-		// Fused walk replaces three consecutive single-symbol preorder passes
-		// (declaration bounds + builtin primitive identifiers + variadic ellipsis).
-		// Saves two tree walks per C parse; emitted under the old metric names so
-		// scoreboards continue to compare cleanly.
+		// Fused walk replaces four preorder passes (declaration bounds + builtin
+		// primitive identifiers + variadic ellipsis + preproc newline spans).
+		// PreprocNewlineSpans only extends `\n` token endByte, which downstream
+		// passes don't read — safe to move earlier in the chain.
 		run("c_declaration_bounds", func() {
 			normalizeCFusedDeclVariadicWalk(root, source, lang)
 		})
@@ -39,9 +39,6 @@ func normalizeCCompatibilityWithParser(root *Node, source []byte, p *Parser, lan
 		})
 		run("c_bare_type_identifier_expression_statements", func() {
 			normalizeCBareTypeIdentifierExpressionStatements(root, source, lang)
-		})
-		run("c_preproc_newline_spans", func() {
-			normalizeCPreprocNewlineSpans(root, source, lang)
 		})
 		run("c_pointer_assignment_precedence", func() {
 			normalizeCPointerAssignmentPrecedence(root, lang)
@@ -58,16 +55,17 @@ func normalizeCCompatibilityWithParser(root *Node, source []byte, p *Parser, lan
 	normalizeCSizeofUnknownTypeIdentifiers(root, source, lang)
 	normalizeCCastUnknownTypeIdentifiers(root, source, lang)
 	normalizeCBareTypeIdentifierExpressionStatements(root, source, lang)
-	normalizeCPreprocNewlineSpans(root, source, lang)
 	normalizeCPointerAssignmentPrecedence(root, lang)
 	normalizeCCollapsedKeywordChildren(root, source, lang)
 }
 
-// normalizeCFusedDeclVariadicWalk performs the work of three previously
+// normalizeCFusedDeclVariadicWalk performs the work of four previously
 // separate preorder walks in a single pass: declaration-bounds extension,
-// builtin primitive type identifier promotion, and variadic-parameter
-// ellipsis materialization. The three handlers gate on disjoint node symbols
-// so the fusion is order-independent within a single visit.
+// builtin primitive type identifier promotion, variadic-parameter ellipsis
+// materialization, and preprocessor newline-span extension. The handlers
+// either gate on disjoint node symbols (decl/builtin/variadic) or operate on
+// the child layer (newline spans), so a single visit can apply all four
+// without ordering concerns.
 func normalizeCFusedDeclVariadicWalk(root *Node, source []byte, lang *Language) {
 	if root == nil || lang == nil {
 		return
@@ -77,6 +75,7 @@ func normalizeCFusedDeclVariadicWalk(root *Node, source []byte, lang *Language) 
 	if !isC && !isCpp {
 		return
 	}
+	srcLen := uint32(len(source))
 
 	// declaration bounds applies to c and cpp.
 	declarationSym, hasDecl := symbolByName(lang, "declaration")
@@ -117,11 +116,14 @@ func normalizeCFusedDeclVariadicWalk(root *Node, source []byte, lang *Language) 
 		}
 	}
 
-	if !hasDecl && !hasBuiltin && !hasVariadic {
+	// preproc newline spans applies to c and cpp.
+	nlSym, hasNl := symbolByName(lang, "\n")
+	hasNewlineSpan := hasNl && srcLen > 0
+
+	if !hasDecl && !hasBuiltin && !hasVariadic && !hasNewlineSpan {
 		return
 	}
 
-	srcLen := uint32(len(source))
 	walkResultTree(root, func(n *Node) {
 		if hasDecl && n.symbol == declarationSym {
 			first, last := firstAndLastNonNilChild(n.children)
@@ -147,6 +149,20 @@ func normalizeCFusedDeclVariadicWalk(root *Node, source []byte, lang *Language) 
 			child := newLeafNodeInArena(n.ownerArena, ellipsisSym, ellipsisNamed, n.startByte, n.endByte, n.startPoint, n.endPoint)
 			n.children = cloneNodeSliceInArena(n.ownerArena, []*Node{child})
 			populateParentNode(n, n.children)
+		}
+		if hasNewlineSpan {
+			for _, child := range n.children {
+				if child != nil && child.symbol == nlSym && child.endByte < srcLen {
+					end := child.endByte
+					for end < srcLen && (source[end] == '\n' || source[end] == '\r') {
+						end++
+					}
+					if end > child.endByte {
+						child.endByte = end
+						child.endPoint = advancePointByBytes(Point{}, source[:end])
+					}
+				}
+			}
 		}
 	})
 }
@@ -1105,31 +1121,6 @@ func normalizeCSizeofUnknownTypeIdentifiers(root *Node, source []byte, lang *Lan
 			}
 		}
 	}
-}
-
-func normalizeCPreprocNewlineSpans(root *Node, source []byte, lang *Language) {
-	if root == nil || lang == nil || (lang.Name != "c" && lang.Name != "cpp") || len(source) == 0 {
-		return
-	}
-	nlSym, ok := symbolByName(lang, "\n")
-	if !ok {
-		return
-	}
-	walkResultTree(root, func(n *Node) {
-		for _, child := range n.children {
-			if child != nil && child.symbol == nlSym && child.endByte < uint32(len(source)) {
-				// Extend newline tokens to include consecutive newlines/whitespace
-				end := child.endByte
-				for end < uint32(len(source)) && (source[end] == '\n' || source[end] == '\r') {
-					end++
-				}
-				if end > child.endByte {
-					child.endByte = end
-					child.endPoint = advancePointByBytes(Point{}, source[:end])
-				}
-			}
-		}
-	})
 }
 
 func normalizeCBareTypeIdentifierExpressionStatements(root *Node, source []byte, lang *Language) {
