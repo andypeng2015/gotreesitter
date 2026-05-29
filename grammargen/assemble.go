@@ -951,24 +951,35 @@ func buildExternalLexStates(lang *gotreesitter.Language, tables *LRTables, ng *N
 					// `block_continuation` instead and must keep `_close_block`.
 					if !suppressed && symID == closeBlockSymID &&
 						blockContinuationSymID >= 0 && actionsAreReduceOnly(actionList) {
-						// A reduce-only `_close_block` state that also offers a
-						// `block_continuation` SHIFT is a fenced_code_block /
-						// container body: the parser can consume a continuation
-						// marker to keep reading the body, and the bundled
-						// scanner's eager `_close_block` would otherwise truncate
-						// it. Genuine block boundaries (e.g. between consecutive
-						// link reference definitions, or a blank line closing a
-						// block) either SHIFT `_close_block` or have no
-						// `block_continuation` shift, so they keep it. After the
-						// `_link_reference_definition_newline` / `_blank_line_newline`
-						// grammar splits, the fence-body state is the ONLY
-						// reduce-only `_close_block` state with a
-						// `block_continuation` shift, so this is exact.
-						if bcActs, ok := acts[blockContinuationSymID]; ok {
-							for _, a := range bcActs {
-								if a.kind == lrShift {
-									suppressed = true
-									break
+						// A reduce-only `_close_block` state that reduces
+						// `_blank_line_newline` AND offers a `block_continuation`
+						// SHIFT is the fenced_code_block / container body: the
+						// parser can consume a continuation marker to keep reading
+						// the body, and the bundled scanner's eager `_close_block`
+						// would otherwise truncate it. Genuine block boundaries
+						// keep `_close_block`. The `_blank_line_newline` reduce is
+						// the load-bearing discriminator: the html_block type 6/7
+						// termination also reduces a blank line with a
+						// `block_continuation` shift, but via the de-merged
+						// `_html_block_blank_line_newline` (see markdown_grammar.go)
+						// — it MUST keep `_close_block` so the html block closes at
+						// its blank line, so we require the `_blank_line_newline`
+						// LHS specifically rather than any blank-line reduce.
+						reducesBlankLineNewline := false
+						for _, a := range actionList {
+							if a.lhsSym >= 0 && a.lhsSym < len(ng.Symbols) &&
+								ng.Symbols[a.lhsSym].Name == "_blank_line_newline" {
+								reducesBlankLineNewline = true
+								break
+							}
+						}
+						if reducesBlankLineNewline {
+							if bcActs, ok := acts[blockContinuationSymID]; ok {
+								for _, a := range bcActs {
+									if a.kind == lrShift {
+										suppressed = true
+										break
+									}
 								}
 							}
 						}

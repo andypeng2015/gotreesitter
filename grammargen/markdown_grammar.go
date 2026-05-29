@@ -836,7 +836,7 @@ func MarkdownGrammar() *Grammar {
 				Seq(
 					Seq(
 						Sym("_html_block_newline"),
-						Sym("_blank_line")),
+						Sym("_html_block_blank_line")),
 					Sym("_close_block")))),
 			Sym("_block_close"),
 			Choice(
@@ -853,7 +853,7 @@ func MarkdownGrammar() *Grammar {
 				Seq(
 					Seq(
 						Sym("_html_block_newline"),
-						Sym("_blank_line")),
+						Sym("_html_block_blank_line")),
 					Sym("_close_block")))),
 			Sym("_block_close"),
 			Choice(
@@ -1333,6 +1333,31 @@ func MarkdownGrammar() *Grammar {
 	// bundled scanner's eager _close_block can't be cleanly suppressed for one
 	// without breaking the other. Same de-merge pattern as _paragraph_newline.
 	g.Define("_blank_line_newline",
+		Seq(
+			Sym("_line_ending"),
+			Choice(
+				Sym("block_continuation"),
+				Blank())))
+
+	// Blank line that terminates an html_block (types 6 & 7) — a structural copy
+	// of _blank_line with its own newline rule. The shared _blank_line's
+	// blank-line reduce state (which reduces _blank_line_newline with a
+	// block_continuation shift) is the same LALR state the _close_block
+	// fence-body suppression targets in assemble.go. Reusing _blank_line here
+	// merged html-block termination into that state, so suppressing _close_block
+	// for fenced code bodies also stopped html blocks from closing at the blank
+	// line (the block over-consumed the blank and the following block was
+	// mis-dispatched). The distinct name de-merges the html-block termination
+	// into its own state, where _close_block stays valid. Same idiom as
+	// _paragraph_newline / _blank_line_newline / _fenced_code_block_newline.
+	g.Define("_html_block_blank_line",
+		Seq(
+			Sym("_blank_line_start"),
+			Choice(
+				Sym("_html_block_blank_line_newline"),
+				Sym("_eof"))))
+
+	g.Define("_html_block_blank_line_newline",
 		Seq(
 			Sym("_line_ending"),
 			Choice(
