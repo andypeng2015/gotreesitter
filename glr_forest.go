@@ -376,8 +376,22 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 						// them, mirroring reduceWindowFromGSS + the trailing re-push.
 						reducedEnd := reducedEndBeforeTrailingExtras(children)
 						kids := append([]stackEntry(nil), children[:reducedEnd]...)
-						childNodes, fieldIDs, fieldSources, _ := p.buildReduceChildrenWithPath(kids, 0, len(kids), cc, act.Symbol, act.ProductionID, arena)
+						childNodes, fieldIDs, fieldSources, childPath := p.buildReduceChildrenWithPath(kids, 0, len(kids), cc, act.Symbol, act.ProductionID, arena)
 						parent := newParentNodeInArenaWithFieldSources(arena, act.Symbol, named(act.Symbol), childNodes, fieldIDs, fieldSources, act.ProductionID)
+						// Recover the reduced node's byte span from the full window,
+						// mirroring the production reduce. newParentNode spans only the
+						// VISIBLE children, so anonymous/invisible tokens that
+						// buildReduceChildren drops (e.g. the digits of a css
+						// integer_value, or a node with zero visible children) would
+						// otherwise leave the span wrong or empty ([0:0]).
+						if shouldUseRawSpanForReduction(act.Symbol, childNodes, lang.SymbolMetadata, p.forceRawSpanAll, p.forceRawSpanTable) && len(kids) > 0 {
+							span := computeReduceRawSpan(kids, 0, len(kids))
+							parent.startByte, parent.endByte = span.startByte, span.endByte
+							parent.startPoint, parent.endPoint = span.startPoint, span.endPoint
+						}
+						if reduceChildPathMayDropSpan(childPath) {
+							extendParentSpanToWindow(parent, kids, 0, len(kids), lang.SymbolMetadata, lang.SymbolNames)
+						}
 						// Position the reduced node at the end of its last real
 						// child (before any trimmed trailing extras), falling back
 						// to the frontier position for empty productions.
@@ -433,6 +447,12 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 			// production result builder does, splitting by position.
 			if len(extras) > 0 {
 				foldResultRootExtras(root, extras, arena)
+			}
+			// The production root spans the whole input, including trailing
+			// trivia; the forest root stops at the last token. Extend to match
+			// when the remaining bytes are trivia (whitespace/comments only).
+			if int(root.endByte) < len(source) && bytesAreTrivia(source[root.endByte:]) {
+				extendNodeEndTo(root, uint32(len(source)), source)
 			}
 			return root, true
 		}
