@@ -67,10 +67,11 @@ func TestReduceOverForestForkedNode(t *testing.T) {
 // into one node with multiple links — the O(1), no-deep-compare mechanism.
 func TestCoalesceForestSharesNode(t *testing.T) {
 	idx := map[gssForestKey]*gssForestNode{}
+	slab := &gssForestNodeSlab{}
 	base := &gssForestNode{state: 0}
 	// Two distinct parses reach (state=5, byteOffset=42).
-	a := coalesceForest(idx, 5, 42, base, stackEntry{state: 100}, 3, 0)
-	b := coalesceForest(idx, 5, 42, base, stackEntry{state: 101}, 7, 0)
+	a := coalesceForest(idx, slab, 5, 42, base, stackEntry{state: 100}, 3, 0)
+	b := coalesceForest(idx, slab, 5, 42, base, stackEntry{state: 101}, 7, 0)
 	if a != b {
 		t.Fatal("coalesceForest created two nodes for the same (state,byteOffset)")
 	}
@@ -82,7 +83,7 @@ func TestCoalesceForestSharesNode(t *testing.T) {
 		t.Fatalf("want node score 7 (the better of 3/7), got %d", a.score)
 	}
 	// A different (state,byteOffset) is a separate node.
-	c := coalesceForest(idx, 6, 42, base, stackEntry{state: 102}, 1, 0)
+	c := coalesceForest(idx, slab, 6, 42, base, stackEntry{state: 102}, 1, 0)
 	if c == a {
 		t.Fatal("distinct (state,byteOffset) coalesced into the same node")
 	}

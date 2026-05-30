@@ -153,11 +153,11 @@ type gssForestNode struct {
 //
 // Stage 1 scaffold: builds the DAG. Correct trees require Stage 2 (reduce walks
 // every link); until then this is exercised only under the flag + parity gate.
-func coalesceForest(index map[gssForestKey]*gssForestNode, state StateID, byteOffset uint32, prev *gssForestNode, entry stackEntry, score, errorCost int) *gssForestNode {
+func coalesceForest(index map[gssForestKey]*gssForestNode, slab *gssForestNodeSlab, state StateID, byteOffset uint32, prev *gssForestNode, entry stackEntry, score, errorCost int) *gssForestNode {
 	key := gssForestKey{state: state, byteOffset: byteOffset}
 	node := index[key]
 	if node == nil {
-		node = &gssForestNode{state: state, byteOffset: byteOffset, score: score, errorCost: errorCost}
+		node = slab.alloc(state, byteOffset, score, errorCost)
 		index[key] = node
 	} else if errorCost < node.errorCost || (errorCost == node.errorCost && score > node.score) {
 		node.score, node.errorCost = score, errorCost
@@ -300,6 +300,51 @@ type gssForestKey struct {
 	byteOffset uint32
 }
 
+// gssForestNodeSlab batch-allocates gssForestNodes so the forest doesn't pay one heap
+// allocation per coalesced (state, byteOffset) node — the C GSS pools its stack
+// nodes the same way. Nodes must outlive the whole parse (the DAG references
+// them via links), so the slab only ever grows: when a batch fills, a new batch
+// is allocated and the old one stays alive through the pointers already handed
+// out. One slab per parseForest call.
+type gssForestNodeSlab struct {
+	buf     []gssForestNode
+	idx     int
+	linkBuf []gssLink
+	linkIdx int
+}
+
+func (s *gssForestNodeSlab) alloc(state StateID, byteOffset uint32, score, errorCost int) *gssForestNode {
+	if s.idx >= len(s.buf) {
+		s.buf = make([]gssForestNode, 4096)
+		s.idx = 0
+	}
+	n := &s.buf[s.idx]
+	s.idx++
+	n.state = state
+	n.byteOffset = byteOffset
+	n.score = score
+	n.errorCost = errorCost
+	n.links = s.linkSlice()
+	n.dirty = 0
+	return n
+}
+
+// linkSlice hands out a zero-length, cap-2 slice backed by the shared link
+// buffer. The overwhelming majority of nodes carry 1-2 links, which then append
+// in place with no per-node allocation; a node that exceeds 2 links (rare, the
+// fan-out is capped at forestMaxLinksPerNode) grows off-slab via the normal
+// append, which is harmless — the reserved 2 slots are just left unused.
+func (s *gssForestNodeSlab) linkSlice() []gssLink {
+	const initCap = 2
+	if s.linkIdx+initCap > len(s.linkBuf) {
+		s.linkBuf = make([]gssLink, 8192)
+		s.linkIdx = 0
+	}
+	sl := s.linkBuf[s.linkIdx : s.linkIdx : s.linkIdx+initCap]
+	s.linkIdx += initCap
+	return sl
+}
+
 // parseForest runs the GSS-forest GLR algorithm end to end: coalesce by
 // (state, byteOffset), reduce over the DAG via reduceOverForest, with NO deep
 // equivalence walk anywhere — the merge cost that was ~46% of fork-heavy parses
@@ -324,6 +369,7 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 	frontier := []*gssForestNode{start}
 	glrStates := make([]StateID, 0, 16)
 	reducer := &forestReducer{}
+	slab := &gssForestNodeSlab{}
 
 	// Per-step scratch reused across every token (cleared, not reallocated): the
 	// allocation/GC of fresh maps+slices each step dominated the profile.
@@ -382,9 +428,12 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 						// surrounding context. Trim them here and re-push them on
 						// top of the reduced node so the next (outer) reduce attaches
 						// them, mirroring reduceWindowFromGSS + the trailing re-push.
+						// `children` is the reducer's shared buffer, stable for the
+						// duration of this visit (no re-entry until we return), so the
+						// node-builder and span helpers read it in place — no per-reduce
+						// copy. window = children[0:reducedEnd] (trailing extras trimmed).
 						reducedEnd := reducedEndBeforeTrailingExtras(children)
-						kids := append([]stackEntry(nil), children[:reducedEnd]...)
-						childNodes, fieldIDs, fieldSources, childPath := p.buildReduceChildrenWithPath(kids, 0, len(kids), cc, act.Symbol, act.ProductionID, arena)
+						childNodes, fieldIDs, fieldSources, childPath := p.buildReduceChildrenWithPath(children, 0, reducedEnd, cc, act.Symbol, act.ProductionID, arena)
 						parent := newParentNodeInArenaWithFieldSources(arena, act.Symbol, named(act.Symbol), childNodes, fieldIDs, fieldSources, act.ProductionID)
 						// Recover the reduced node's byte span from the full window,
 						// mirroring the production reduce. newParentNode spans only the
@@ -392,29 +441,29 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 						// buildReduceChildren drops (e.g. the digits of a css
 						// integer_value, or a node with zero visible children) would
 						// otherwise leave the span wrong or empty ([0:0]).
-						if shouldUseRawSpanForReduction(act.Symbol, childNodes, lang.SymbolMetadata, p.forceRawSpanAll, p.forceRawSpanTable) && len(kids) > 0 {
-							span := computeReduceRawSpan(kids, 0, len(kids))
+						if shouldUseRawSpanForReduction(act.Symbol, childNodes, lang.SymbolMetadata, p.forceRawSpanAll, p.forceRawSpanTable) && reducedEnd > 0 {
+							span := computeReduceRawSpan(children, 0, reducedEnd)
 							parent.startByte, parent.endByte = span.startByte, span.endByte
 							parent.startPoint, parent.endPoint = span.startPoint, span.endPoint
 						}
 						if reduceChildPathMayDropSpan(childPath) {
-							extendParentSpanToWindow(parent, kids, 0, len(kids), lang.SymbolMetadata, lang.SymbolNames)
+							extendParentSpanToWindow(parent, children, 0, reducedEnd, lang.SymbolMetadata, lang.SymbolNames)
 						}
 						// Position the reduced node at the end of its last real
 						// child (before any trimmed trailing extras), falling back
 						// to the frontier position for empty productions.
 						parentEnd := node.byteOffset
 						if reducedEnd > 0 {
-							parentEnd = (*Node)(kids[reducedEnd-1].node).endByte
+							parentEnd = (*Node)(children[reducedEnd-1].node).endByte
 						}
 						// Subtree score = this production's dynamic precedence +
 						// the children's accumulated scores.
-						top := coalesceForest(curIndex, gotoState, parentEnd, popTo,
+						top := coalesceForest(curIndex, slab, gotoState, parentEnd, popTo,
 							stackEntry{node: unsafe.Pointer(parent), state: gotoState, kind: stackEntryKindNode},
 							int(act.DynamicPrecedence)+childScore, popTo.errorCost)
 						for _, ex := range children[reducedEnd:] {
 							exEnd := (*Node)(ex.node).endByte
-							top = coalesceForest(curIndex, gotoState, exEnd, top,
+							top = coalesceForest(curIndex, slab, gotoState, exEnd, top,
 								stackEntry{node: ex.node, state: gotoState, kind: stackEntryKindNode},
 								0, top.errorCost)
 						}
@@ -433,7 +482,7 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 						target = extraShiftTargetState(node.state, act)
 					}
 					before := len(nextIndex)
-					sh := coalesceForest(nextIndex, target, tok.EndByte, node,
+					sh := coalesceForest(nextIndex, slab, target, tok.EndByte, node,
 						stackEntry{node: unsafe.Pointer(leaf), state: target, kind: stackEntryKindNode},
 						0, node.errorCost) // a shifted leaf carries no dynamic precedence
 					if len(nextIndex) != before {
