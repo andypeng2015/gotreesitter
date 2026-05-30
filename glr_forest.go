@@ -39,6 +39,15 @@ var glrForestEnabled = os.Getenv("GOT_GLR_FOREST") == "1"
 // SetGLRForestEnabled toggles the GSS-forest path at runtime (tests/benchmarks).
 func SetGLRForestEnabled(on bool) { glrForestEnabled = on }
 
+// ParseForestExperimental parses source with the experimental GSS-forest GLR
+// path and returns the root node (or nil,false if the parse dies — the forest
+// path has no error recovery yet). Exported so out-of-tree benchmarks and
+// validation in packages that attach external scanners (e.g. grammars) can
+// drive it; not part of the stable API.
+func (p *Parser) ParseForestExperimental(source []byte) (*Node, bool) {
+	return p.parseForest(newNodeArena(arenaClassFull), source)
+}
+
 // gssLink is one alternative predecessor in the forest DAG: the subtree consumed
 // to reach this node, and the prior node it was consumed from. A coalesced node
 // (one per (state, position)) carries one link per surviving parse that reached
