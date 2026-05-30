@@ -48,6 +48,59 @@ func (p *Parser) ParseForestExperimental(source []byte) (*Node, bool) {
 	return p.parseForest(newNodeArena(arenaClassFull), source)
 }
 
+// languageWantsForest reports whether a language should use the GSS-forest GLR
+// fast path. Restricted to languages whose production GLR parse suffers the
+// super-linear deep-stack-equivalence blowup (hundreds of stacks that never
+// collapse) — the forest coalesces by (state, byteOffset) with no deep compare
+// and is dramatically faster there (measured: bash 44x, swift 6x, byte-parity).
+// The forest has no error recovery, so the caller falls back to the production
+// parser whenever it declines; this list should only grow once a language's
+// full corpus is verified forest==production.
+func languageWantsForest(name string) bool {
+	switch name {
+	case "bash":
+		return true
+	default:
+		return false
+	}
+}
+
+// tryForestFastPath attempts a full parse via the GSS-forest path and returns a
+// Tree on success, or nil to tell the caller to fall back to the production
+// parser. It declines (nil) whenever the forest cannot produce a clean,
+// complete tree — it has no error recovery, so any failure, error node, or
+// truncation routes to production. Gated by glrForestEnabled (GOT_GLR_FOREST);
+// off by default so the production path is unchanged until per-language corpus
+// parity is verified and the gate is lifted.
+func (p *Parser) tryForestFastPath(source []byte) *Tree {
+	if !glrForestEnabled || p == nil || p.language == nil || !languageWantsForest(p.language.Name) {
+		return nil
+	}
+	arena := newNodeArena(arenaClassFull)
+	root, ok := p.parseForest(arena, source)
+	if !ok || root == nil || root.HasError() {
+		return nil // production fallback handles failures and error recovery
+	}
+	// Guard against an early-EOF token source: the root must reach the last
+	// non-whitespace byte. Trailing whitespace/newlines are extras and may sit
+	// outside the root span, so they are excluded from the bound.
+	end := len(source)
+	for end > 0 {
+		switch source[end-1] {
+		case ' ', '\t', '\r', '\n':
+			end--
+			continue
+		}
+		break
+	}
+	if root.EndByte() < uint32(end) {
+		return nil // did not consume the whole input; let production recover it
+	}
+	tree := newTreeWithArenas(root, source, p.language, arena, nil)
+	p.normalizeReturnedTree(rawRootOrNil(tree), source)
+	return tree
+}
+
 // gssLink is one alternative predecessor in the forest DAG: the subtree consumed
 // to reach this node, and the prior node it was consumed from. A coalesced node
 // (one per (state, position)) carries one link per surviving parse that reached
