@@ -121,10 +121,31 @@ func coalesceForest(index map[gssForestKey]*gssForestNode, state StateID, byteOf
 			return node
 		}
 	}
+	// Bound the link fan-out per node (tree-sitter caps active versions). Without
+	// a cap, a repeated/ambiguous structure accumulates O(n) links on one node and
+	// reduceOverForest enumerates O(n^childCount) paths. Keep the best-score links;
+	// replace the weakest when full.
+	if len(node.links) >= forestMaxLinksPerNode {
+		worst := 0
+		for i := 1; i < len(node.links); i++ {
+			if node.links[i].score < node.links[worst].score {
+				worst = i
+			}
+		}
+		if score > node.links[worst].score {
+			node.links[worst] = gssLink{prev: prev, subtree: entry, score: score}
+			node.dirty++
+		}
+		return node
+	}
 	node.links = append(node.links, gssLink{prev: prev, subtree: entry, score: score})
 	node.dirty++
 	return node
 }
+
+// forestMaxLinksPerNode caps the alternative fan-out coalesced at one
+// (state, byteOffset) node, bounding reduceOverForest's path enumeration.
+const forestMaxLinksPerNode = 8
 
 // entrySymSpan returns a materialized node entry's symbol and byte span for cheap
 // alternative-deduplication (no deep structural comparison).
