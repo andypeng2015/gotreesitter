@@ -1,6 +1,9 @@
 package gotreesitter
 
-import "os"
+import (
+	"os"
+	"unsafe"
+)
 
 // GSS-FOREST REWRITE (perf/glr-gss-forest) — the only safe cut at the #1
 // machinery gap vs tree-sitter C: deep stack-merge node-equivalence is ~46% of
@@ -86,6 +89,95 @@ func coalesceForest(index map[gssForestKey]*gssForestNode, state StateID, byteOf
 type gssForestKey struct {
 	state      StateID
 	byteOffset uint32
+}
+
+// parseForest runs the GSS-forest GLR algorithm end to end: coalesce by
+// (state, byteOffset), reduce over the DAG via reduceOverForest, with NO deep
+// equivalence walk anywhere — the merge cost that was ~46% of fork-heavy parses
+// is structurally gone. Tokens are pulled via nextToken(leadState) (the lexer /
+// token-source wiring stays the caller's concern); the accepted root subtree is
+// returned, or (nil,false) if the parse dies. This is the forest path the
+// GOT_GLR_FOREST flag dispatches into; parity-iteration (extras, recovery,
+// external scanners, full GLR-lexing) is layered on this core.
+func (p *Parser) parseForest(arena *nodeArena, nextToken func(leadState StateID) Token) (*Node, bool) {
+	lang := p.language
+	meta := lang.SymbolMetadata
+	named := func(sym Symbol) bool { return int(sym) < len(meta) && meta[sym].Named }
+
+	// tree-sitter convention: state 0 is the error state, state 1 is the start.
+	start := &gssForestNode{state: 1, byteOffset: 0}
+	frontier := []*gssForestNode{start}
+
+	for {
+		leadState := frontier[len(frontier)-1].state
+		tok := nextToken(leadState)
+		eof := tok.Symbol == 0
+
+		// Reduces coalesce into curIndex (same position, seeded with the
+		// frontier so a reduced nonterminal can merge with an existing actor);
+		// shifts coalesce into nextIndex (next position).
+		curIndex := make(map[gssForestKey]*gssForestNode, len(frontier))
+		for _, n := range frontier {
+			curIndex[gssForestKey{n.state, n.byteOffset}] = n
+		}
+		nextIndex := map[gssForestKey]*gssForestNode{}
+		var nextFrontier []*gssForestNode
+		var accepted *gssForestNode
+
+		work := append([]*gssForestNode(nil), frontier...)
+		processed := map[*gssForestNode]int{}
+		for len(work) > 0 {
+			node := work[len(work)-1]
+			work = work[:len(work)-1]
+			// Re-process a node only when it gained links (new reduce paths).
+			if processed[node] == len(node.links) && processed[node] != 0 {
+				continue
+			}
+			processed[node] = len(node.links)
+
+			for _, act := range p.actionsForParseState(node.state, tok.Symbol, lang.ParseActions) {
+				switch act.Type {
+				case ParseActionReduce:
+					cc := int(act.ChildCount)
+					reduceOverForest(node, cc, func(children []stackEntry, popTo *gssForestNode) {
+						kids := append([]stackEntry(nil), children...) // buffer is shared
+						childNodes, fieldIDs, fieldSources, _ := p.buildReduceChildrenWithPath(kids, 0, len(kids), cc, act.Symbol, act.ProductionID, arena)
+						parent := newParentNodeInArenaWithFieldSources(arena, act.Symbol, named(act.Symbol), childNodes, fieldIDs, fieldSources, act.ProductionID)
+						gotoState := p.lookupGoto(popTo.state, act.Symbol)
+						if gotoState == 0 {
+							return
+						}
+						reduced := coalesceForest(curIndex, gotoState, node.byteOffset, popTo,
+							stackEntry{node: unsafe.Pointer(parent), state: gotoState, kind: stackEntryKindNode},
+							popTo.score+int(act.DynamicPrecedence), popTo.errorCost)
+						work = append(work, reduced)
+					})
+				case ParseActionShift:
+					leaf := newLeafNodeInArena(arena, tok.Symbol, named(tok.Symbol), tok.StartByte, tok.EndByte, tok.StartPoint, tok.EndPoint)
+					before := len(nextIndex)
+					sh := coalesceForest(nextIndex, act.State, tok.EndByte, node,
+						stackEntry{node: unsafe.Pointer(leaf), state: act.State, kind: stackEntryKindNode},
+						node.score, node.errorCost)
+					if len(nextIndex) != before {
+						nextFrontier = append(nextFrontier, sh)
+					}
+				case ParseActionAccept:
+					accepted = node
+				}
+			}
+		}
+
+		if eof {
+			if accepted != nil && len(accepted.links) > 0 {
+				return (*Node)(accepted.links[0].subtree.node), true
+			}
+			return nil, false
+		}
+		if len(nextFrontier) == 0 {
+			return nil, false
+		}
+		frontier = nextFrontier
+	}
 }
 
 // reduceOverForest enumerates every length-childCount path of subtrees ending at
