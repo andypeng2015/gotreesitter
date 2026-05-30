@@ -253,6 +253,14 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 	start := &gssForestNode{state: 1, byteOffset: 0}
 	frontier := []*gssForestNode{start}
 	glrStates := make([]StateID, 0, 16)
+	reducer := &forestReducer{}
+
+	// Per-step scratch reused across every token (cleared, not reallocated): the
+	// allocation/GC of fresh maps+slices each step dominated the profile.
+	curIndex := make(map[gssForestKey]*gssForestNode, 16)
+	nextIndex := make(map[gssForestKey]*gssForestNode, 16)
+	processed := make(map[*gssForestNode]int, 16)
+	var work, nextFrontier []*gssForestNode
 
 	for {
 		// GLR-lex over the union of frontier states; lead = the most-advanced.
@@ -268,16 +276,16 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 		// Reduces coalesce into curIndex (same position, seeded with the
 		// frontier so a reduced nonterminal can merge with an existing actor);
 		// shifts coalesce into nextIndex (next position).
-		curIndex := make(map[gssForestKey]*gssForestNode, len(frontier))
+		clear(curIndex)
 		for _, n := range frontier {
 			curIndex[gssForestKey{n.state, n.byteOffset}] = n
 		}
-		nextIndex := map[gssForestKey]*gssForestNode{}
-		var nextFrontier []*gssForestNode
+		clear(nextIndex)
+		clear(processed)
+		nextFrontier = nextFrontier[:0]
 		var accepted *gssForestNode
 
-		work := append([]*gssForestNode(nil), frontier...)
-		processed := map[*gssForestNode]int{}
+		work = append(work[:0], frontier...)
 		for len(work) > 0 {
 			node := work[len(work)-1]
 			work = work[:len(work)-1]
@@ -294,7 +302,7 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 				switch act.Type {
 				case ParseActionReduce:
 					cc := int(act.ChildCount)
-					reduceOverForest(node, cc, func(children []stackEntry, childScore int, popTo *gssForestNode) {
+					reducer.reduce(node, cc, func(children []stackEntry, childScore int, popTo *gssForestNode) {
 						gotoState := p.lookupGoto(popTo.state, act.Symbol)
 						if gotoState == 0 {
 							return
@@ -369,7 +377,9 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 		if len(nextFrontier) == 0 {
 			return nil, false
 		}
-		frontier = nextFrontier
+		// Copy (not alias) so the next step can reset nextFrontier in place;
+		// frontier is only read at the top of a step, before that reset.
+		frontier = append(frontier[:0], nextFrontier...)
 	}
 }
 
@@ -387,6 +397,24 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 // a bounded DFS (depth == childCount); ambiguous grammars are bounded upstream by
 // error_cost pruning + the per-(state,position) link cap, mirroring tree-sitter C.
 func reduceOverForest(node *gssForestNode, childCount int, visit func(children []stackEntry, childScore int, popTo *gssForestNode)) {
+	(&forestReducer{}).reduce(node, childCount, visit)
+}
+
+// forestReducer holds the two scratch slices the reduce DFS reuses across every
+// call within one parse, so the hot path allocates nothing: `path` collects the
+// current branch most-recent-first (append on descend, truncate on backtrack),
+// and `rev` is the left-to-right view handed to visit. The visitor must consume
+// children before returning (it copies), and must not re-enter reduce.
+type forestReducer struct {
+	path []stackEntry
+	rev  []stackEntry
+}
+
+// reduce walks back to childCount non-extra subtrees ending at node, including
+// any interior extras in the window (they do not count toward childCount —
+// mirroring reduceWindowFromGSS), and calls visit once per surviving path with
+// the children left-to-right and popTo = the predecessor the reduction pops to.
+func (fr *forestReducer) reduce(node *gssForestNode, childCount int, visit func(children []stackEntry, childScore int, popTo *gssForestNode)) {
 	if node == nil {
 		return
 	}
@@ -394,37 +422,31 @@ func reduceOverForest(node *gssForestNode, childCount int, visit func(children [
 		visit(nil, 0, node)
 		return
 	}
-	// Walk back to childCount *non-extra* subtrees. Extra leaves (comments,
-	// whitespace) encountered between them are included in the child window but
-	// do not count toward childCount — mirroring reduceWindowFromGSS so the
-	// reduced node carries its interior extras while the production's symbol
-	// count stays correct. The path is collected most-recent-first and reversed
-	// to left-to-right at emit. A per-branch copy keeps sibling links (the forks)
-	// from corrupting each other's window.
-	var dfs func(cur *gssForestNode, remaining, score int, path []stackEntry)
-	dfs = func(cur *gssForestNode, remaining, score int, path []stackEntry) {
-		if cur == nil {
-			return
-		}
-		for i := range cur.links {
-			link := cur.links[i]
-			next := make([]stackEntry, len(path)+1)
-			copy(next, path)
-			next[len(path)] = link.subtree
-			rem := remaining
-			if !stackEntryNodeIsExtra(link.subtree) {
-				rem--
-			}
-			if rem == 0 {
-				children := make([]stackEntry, len(next))
-				for j := range next {
-					children[j] = next[len(next)-1-j]
-				}
-				visit(children, score+link.score, link.prev)
-				continue
-			}
-			dfs(link.prev, rem, score+link.score, next)
-		}
+	fr.path = fr.path[:0]
+	fr.dfs(node, childCount, 0, visit)
+}
+
+func (fr *forestReducer) dfs(cur *gssForestNode, remaining, score int, visit func(children []stackEntry, childScore int, popTo *gssForestNode)) {
+	if cur == nil {
+		return
 	}
-	dfs(node, childCount, 0, nil)
+	mark := len(fr.path)
+	for i := range cur.links {
+		link := cur.links[i]
+		fr.path = append(fr.path[:mark], link.subtree)
+		rem := remaining
+		if !stackEntryNodeIsExtra(link.subtree) {
+			rem--
+		}
+		if rem == 0 {
+			fr.rev = fr.rev[:0]
+			for j := len(fr.path) - 1; j >= 0; j-- {
+				fr.rev = append(fr.rev, fr.path[j])
+			}
+			visit(fr.rev, score+link.score, link.prev)
+			continue
+		}
+		fr.dfs(link.prev, rem, score+link.score, visit)
+	}
+	fr.path = fr.path[:mark]
 }
