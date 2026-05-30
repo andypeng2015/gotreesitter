@@ -358,6 +358,16 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 	meta := lang.SymbolMetadata
 	named := func(sym Symbol) bool { return int(sym) < len(meta) && meta[sym].Named }
 
+	// Reuse ONE child-builder scratch for every reduce in this parse (like the
+	// production loop). buildReduceChildrenWithPath calls newReduceBuildScratch,
+	// which reuses p.reduceScratch when set, else allocates a fresh scratch +
+	// growing node slice PER REDUCE — the dominant forest allocation. One reused
+	// scratch turns that into a single up-front allocation.
+	prevReduceScratch := p.reduceScratch
+	var forestReduceScratch reduceBuildScratch
+	p.reduceScratch = &forestReduceScratch
+	defer func() { p.reduceScratch = prevReduceScratch }()
+
 	// Drive the production token source so keyword promotion, lex-mode
 	// selection, immediate tokens, external scanners and GLR-lexing all match
 	// the production parser. State is set per step from the frontier.
