@@ -89,20 +89,43 @@ type gssForestKey struct {
 }
 
 // reduceOverForest enumerates every length-childCount path of subtrees ending at
-// `node`, invoking visit with the collected children (most-recent-last) and the
-// predecessor node the reduction pops back to. This is Stage 2 — the crux that
-// replaces single-chain reduce with DAG traversal so a coalesced node's multiple
-// histories all reduce. NOT YET IMPLEMENTED: returns without visiting so the
-// flag path is inert until this lands. The walk is a bounded DFS over links
-// (depth == childCount); C bounds the analogous walk by error_cost + version cap
-// to keep ambiguous grammars from exploding.
+// `node` and invokes visit once per path with the children in left-to-right
+// order (children[0] = first/leftmost child) and `popTo` = the predecessor node
+// the reduction pops back to. This is Stage 2 — DAG traversal that replaces the
+// single-chain reduce so a coalesced node's multiple histories all reduce, with
+// no deep-equivalence walk anywhere (the 46% gone). A single-link chain yields
+// exactly one path, identical to today's reduce; coalesced nodes yield one path
+// per surviving alternative.
+//
+// `children` is a SHARED buffer reused across paths and across visit calls — the
+// visitor must consume or copy it before returning, never retain it. The walk is
+// a bounded DFS (depth == childCount); ambiguous grammars are bounded upstream by
+// error_cost pruning + the per-(state,position) link cap, mirroring tree-sitter C.
 func reduceOverForest(node *gssForestNode, childCount int, visit func(children []stackEntry, popTo *gssForestNode)) {
-	_ = node
-	_ = childCount
-	_ = visit
-	// TODO(Stage 2): DFS over node.links to depth childCount, accumulate the
-	// subtree on each link, and call visit at depth 0 with popTo = the link's
-	// prev at that depth. Dedup identical (popTo,children) results so the
-	// reduced node coalesces too. This is where the 46% deep-compare cost is
-	// eliminated — no equivalence walk, just link traversal + map coalescing.
+	if node == nil {
+		return
+	}
+	if childCount == 0 {
+		visit(nil, node)
+		return
+	}
+	buf := make([]stackEntry, childCount)
+	var dfs func(cur *gssForestNode, depth int)
+	dfs = func(cur *gssForestNode, depth int) {
+		if cur == nil {
+			return
+		}
+		for i := range cur.links {
+			link := cur.links[i]
+			// depth counts down childCount-1..0; buf[depth] is the child at that
+			// position, so buf ends up left-to-right (buf[0] = first child).
+			buf[depth] = link.subtree
+			if depth == 0 {
+				visit(buf, link.prev)
+			} else {
+				dfs(link.prev, depth-1)
+			}
+		}
+	}
+	dfs(node, childCount-1)
 }
