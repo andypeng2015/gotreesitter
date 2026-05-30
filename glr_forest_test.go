@@ -9,7 +9,7 @@ import (
 // "child-states|popToState" so order and fan-out are easy to assert.
 func pathsOf(node *gssForestNode, childCount int) []string {
 	var out []string
-	reduceOverForest(node, childCount, func(children []stackEntry, popTo *gssForestNode) {
+	reduceOverForest(node, childCount, func(children []stackEntry, _ int, popTo *gssForestNode) {
 		states := make([]uint32, len(children))
 		for i, c := range children {
 			states[i] = uint32(c.state)

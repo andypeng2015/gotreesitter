@@ -46,6 +46,12 @@ func SetGLRForestEnabled(on bool) { glrForestEnabled = on }
 type gssLink struct {
 	prev    *gssForestNode
 	subtree stackEntry
+	// score is the subtree's cumulative dynamic precedence (a reduce's
+	// DynamicPrecedence plus its children's scores; 0 for a shifted leaf). The
+	// forest defers ambiguity resolution to finalization: among alternatives at
+	// one (state, position), the highest-score subtree wins, matching
+	// tree-sitter's dynamic_precedence selection.
+	score int
 }
 
 // gssForestNode is a coalesced graph-structured-stack node: all parses that
@@ -59,6 +65,14 @@ type gssForestNode struct {
 	links      []gssLink
 	score      int
 	errorCost  int
+	// dirty advances whenever a link is appended OR a competing link is
+	// replaced by a higher-precedence alternative. Because Nodes are built
+	// eagerly at reduce time, a late replacement must re-trigger the reductions
+	// that consumed this node so parents rebuild from the winning subtree; the
+	// worklist reprocesses a node whenever its dirty count moved past what it
+	// last processed. Replacements only happen on a strictly higher score, so
+	// dirty advances finitely and the loop terminates.
+	dirty int
 }
 
 // coalesceForest merges a parse reaching (state, byteOffset) with subtree `entry`
@@ -75,15 +89,63 @@ func coalesceForest(index map[gssForestKey]*gssForestNode, state StateID, byteOf
 	if node == nil {
 		node = &gssForestNode{state: state, byteOffset: byteOffset, score: score, errorCost: errorCost}
 		index[key] = node
-	} else {
-		// Keep the better disambiguator at the coalesced node (mirrors how
-		// stackCompareMerge ranks; full per-link selection is Stage 3).
-		if errorCost < node.errorCost || (errorCost == node.errorCost && score > node.score) {
-			node.score, node.errorCost = score, errorCost
+	} else if errorCost < node.errorCost || (errorCost == node.errorCost && score > node.score) {
+		node.score, node.errorCost = score, errorCost
+	}
+	// Dedup competing alternatives: a link from the same predecessor whose
+	// subtree has the same symbol and span is the same reduction reached another
+	// way — keep the higher dynamic precedence (tree-sitter's resolution) instead
+	// of accumulating a duplicate. This bounds the forest (no exponential link
+	// blowup on ambiguous grammars) AND performs Stage-3 disambiguation, cheaply,
+	// with no deep-equivalence walk. Only materialized subtrees carry a comparable
+	// symbol+span, so the dedup applies to node entries only.
+	if entry.kind == stackEntryKindNode && entry.node != nil {
+		esym, estart, eend := entrySymSpan(entry)
+		for i := range node.links {
+			l := &node.links[i]
+			if l.prev != prev || l.subtree.kind != stackEntryKindNode {
+				continue
+			}
+			lsym, lstart, lend := entrySymSpan(l.subtree)
+			if lsym != esym || lstart != estart || lend != eend {
+				continue
+			}
+			// Competing reduction reaching the same (prev, symbol, span): keep the
+			// strictly higher dynamic precedence. A replacement marks the node
+			// dirty so the reductions that already consumed the losing subtree
+			// re-run and rebuild their parents from the winner.
+			if score > l.score {
+				l.subtree, l.score = entry, score
+				node.dirty++
+			}
+			return node
 		}
 	}
-	node.links = append(node.links, gssLink{prev: prev, subtree: entry})
+	node.links = append(node.links, gssLink{prev: prev, subtree: entry, score: score})
+	node.dirty++
 	return node
+}
+
+// entrySymSpan returns a materialized node entry's symbol and byte span for cheap
+// alternative-deduplication (no deep structural comparison).
+func entrySymSpan(e stackEntry) (Symbol, uint32, uint32) {
+	n := (*Node)(e.node)
+	return n.symbol, n.startByte, n.endByte
+}
+
+// bestLink returns the link whose subtree wins tree-sitter's selection:
+// highest score (dynamic precedence), then earliest (production order).
+func (n *gssForestNode) bestLink() *gssLink {
+	if n == nil || len(n.links) == 0 {
+		return nil
+	}
+	best := &n.links[0]
+	for i := 1; i < len(n.links); i++ {
+		if n.links[i].score > best.score {
+			best = &n.links[i]
+		}
+	}
+	return best
 }
 
 type gssForestKey struct {
@@ -142,17 +204,20 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 		for len(work) > 0 {
 			node := work[len(work)-1]
 			work = work[:len(work)-1]
-			// Re-process a node only when it gained links (new reduce paths).
-			if processed[node] == len(node.links) && processed[node] != 0 {
+			// Process a node the first time it is seen, and again whenever it has
+			// become dirty (a new link, or a link replaced by a higher-precedence
+			// alternative) since it was last processed. Re-running its reductions
+			// rebuilds any parents that consumed a now-superseded subtree.
+			if pv, seen := processed[node]; seen && pv == node.dirty {
 				continue
 			}
-			processed[node] = len(node.links)
+			processed[node] = node.dirty
 
 			for _, act := range p.actionsForParseState(node.state, tok.Symbol, lang.ParseActions) {
 				switch act.Type {
 				case ParseActionReduce:
 					cc := int(act.ChildCount)
-					reduceOverForest(node, cc, func(children []stackEntry, popTo *gssForestNode) {
+					reduceOverForest(node, cc, func(children []stackEntry, childScore int, popTo *gssForestNode) {
 						kids := append([]stackEntry(nil), children...) // buffer is shared
 						childNodes, fieldIDs, fieldSources, _ := p.buildReduceChildrenWithPath(kids, 0, len(kids), cc, act.Symbol, act.ProductionID, arena)
 						parent := newParentNodeInArenaWithFieldSources(arena, act.Symbol, named(act.Symbol), childNodes, fieldIDs, fieldSources, act.ProductionID)
@@ -160,9 +225,11 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 						if gotoState == 0 {
 							return
 						}
+						// Subtree score = this production's dynamic precedence +
+						// the children's accumulated scores.
 						reduced := coalesceForest(curIndex, gotoState, node.byteOffset, popTo,
 							stackEntry{node: unsafe.Pointer(parent), state: gotoState, kind: stackEntryKindNode},
-							popTo.score+int(act.DynamicPrecedence), popTo.errorCost)
+							int(act.DynamicPrecedence)+childScore, popTo.errorCost)
 						work = append(work, reduced)
 					})
 				case ParseActionShift:
@@ -170,7 +237,7 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 					before := len(nextIndex)
 					sh := coalesceForest(nextIndex, act.State, tok.EndByte, node,
 						stackEntry{node: unsafe.Pointer(leaf), state: act.State, kind: stackEntryKindNode},
-						node.score, node.errorCost)
+						0, node.errorCost) // a shifted leaf carries no dynamic precedence
 					if len(nextIndex) != before {
 						nextFrontier = append(nextFrontier, sh)
 					}
@@ -181,8 +248,8 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 		}
 
 		if eof {
-			if accepted != nil && len(accepted.links) > 0 {
-				return (*Node)(accepted.links[0].subtree.node), true
+			if best := accepted.bestLink(); best != nil {
+				return (*Node)(best.subtree.node), true
 			}
 			return nil, false
 		}
@@ -206,17 +273,17 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 // visitor must consume or copy it before returning, never retain it. The walk is
 // a bounded DFS (depth == childCount); ambiguous grammars are bounded upstream by
 // error_cost pruning + the per-(state,position) link cap, mirroring tree-sitter C.
-func reduceOverForest(node *gssForestNode, childCount int, visit func(children []stackEntry, popTo *gssForestNode)) {
+func reduceOverForest(node *gssForestNode, childCount int, visit func(children []stackEntry, childScore int, popTo *gssForestNode)) {
 	if node == nil {
 		return
 	}
 	if childCount == 0 {
-		visit(nil, node)
+		visit(nil, 0, node)
 		return
 	}
 	buf := make([]stackEntry, childCount)
-	var dfs func(cur *gssForestNode, depth int)
-	dfs = func(cur *gssForestNode, depth int) {
+	var dfs func(cur *gssForestNode, depth, score int)
+	dfs = func(cur *gssForestNode, depth, score int) {
 		if cur == nil {
 			return
 		}
@@ -226,11 +293,11 @@ func reduceOverForest(node *gssForestNode, childCount int, visit func(children [
 			// position, so buf ends up left-to-right (buf[0] = first child).
 			buf[depth] = link.subtree
 			if depth == 0 {
-				visit(buf, link.prev)
+				visit(buf, score+link.score, link.prev)
 			} else {
-				dfs(link.prev, depth-1)
+				dfs(link.prev, depth-1, score+link.score)
 			}
 		}
 	}
-	dfs(node, childCount-1)
+	dfs(node, childCount-1, 0)
 }
