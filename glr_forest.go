@@ -99,18 +99,31 @@ type gssForestKey struct {
 // returned, or (nil,false) if the parse dies. This is the forest path the
 // GOT_GLR_FOREST flag dispatches into; parity-iteration (extras, recovery,
 // external scanners, full GLR-lexing) is layered on this core.
-func (p *Parser) parseForest(arena *nodeArena, nextToken func(leadState StateID) Token) (*Node, bool) {
+func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 	lang := p.language
 	meta := lang.SymbolMetadata
 	named := func(sym Symbol) bool { return int(sym) < len(meta) && meta[sym].Named }
 
+	// Drive the production token source so keyword promotion, lex-mode
+	// selection, immediate tokens, external scanners and GLR-lexing all match
+	// the production parser. State is set per step from the frontier.
+	lexer := NewLexer(lang.LexStates, source)
+	ts := acquireDFATokenSource(lexer, lang, p.lookupActionIndex, p.hasKeywordState, p.externalValidByState)
+
 	// tree-sitter convention: state 0 is the error state, state 1 is the start.
 	start := &gssForestNode{state: 1, byteOffset: 0}
 	frontier := []*gssForestNode{start}
+	glrStates := make([]StateID, 0, 16)
 
 	for {
-		leadState := frontier[len(frontier)-1].state
-		tok := nextToken(leadState)
+		// GLR-lex over the union of frontier states; lead = the most-advanced.
+		glrStates = glrStates[:0]
+		for _, n := range frontier {
+			glrStates = append(glrStates, n.state)
+		}
+		ts.SetGLRStates(glrStates)
+		ts.SetParserState(frontier[len(frontier)-1].state)
+		tok := ts.Next()
 		eof := tok.Symbol == 0
 
 		// Reduces coalesce into curIndex (same position, seeded with the
