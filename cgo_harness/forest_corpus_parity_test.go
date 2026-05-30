@@ -99,7 +99,7 @@ func runForestLangParity(t *testing.T, name string, lang *gts.Language, files []
 			t.Errorf("%s: production produced no tree for %s", name, filepath.Base(f))
 			continue
 		}
-		want := prodTree.RootNode().SExpr(lang)
+		want := rangedRepr(prodTree.RootNode(), lang)
 
 		// Forest result + the dispatch acceptance criteria (mirrors
 		// tryForestFastPath: clean, no error node, reaches the last
@@ -112,7 +112,7 @@ func runForestLangParity(t *testing.T, name string, lang *gts.Language, files []
 			continue
 		}
 		dispatched++
-		if got := root.SExpr(lang); got != want {
+		if got := rangedRepr(root, lang); got != want {
 			diverged++
 			divergedFiles = append(divergedFiles, filepath.Base(f))
 		}
@@ -190,6 +190,24 @@ func forestCorpusFiles(t *testing.T, dir string) []string {
 	return files
 }
 
+// rangedRepr serializes the visible (named) tree WITH each node's byte span, so
+// the parity check catches byte-range divergences (e.g. the root not spanning
+// trailing whitespace) that a plain s-expression comparison misses.
+func rangedRepr(n *gts.Node, lang *gts.Language) string {
+	var sb strings.Builder
+	var walk func(*gts.Node)
+	walk = func(nd *gts.Node) {
+		fmt.Fprintf(&sb, "(%s[%d:%d]", nd.Type(lang), nd.StartByte(), nd.EndByte())
+		for i := 0; i < nd.NamedChildCount(); i++ {
+			sb.WriteByte(' ')
+			walk(nd.NamedChild(i))
+		}
+		sb.WriteByte(')')
+	}
+	walk(n)
+	return sb.String()
+}
+
 func lastNonWSByte(src []byte) uint32 {
 	end := len(src)
 	for end > 0 {
@@ -210,4 +228,3 @@ func envOr(key, def string) string {
 	return def
 }
 
-var _ = fmt.Sprintf
