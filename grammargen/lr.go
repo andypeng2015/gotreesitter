@@ -1133,6 +1133,24 @@ func (ctx *lrContext) transitionRow(state int) lrTransitionRow {
 
 func (ctx *lrContext) addTransition(state, sym, target int) {
 	ctx.ensureTransitionState(state)
+	// WIP (graphql LR investigation): de-duplicate (state, sym) transitions by
+	// last-wins replacement. The graphql grammar exposed a case where the LR
+	// construction emitted two transition rows for the same (state, sym), which
+	// the runtime then read as an ambiguous/garbage goto and the parse died
+	// (see zz_graphql_*_test.go diagnostics). Replacing in place keeps exactly
+	// one transition per (state, sym).
+	//
+	// OPEN QUESTION: is last-wins the correct resolution, or does the duplicate
+	// signal an upstream bug in item-set construction that should be fixed at
+	// the source? Needs verification against the full grammargen parity suite
+	// (not just graphql) before this can graduate from WIP to a real fix.
+	row := ctx.transitions[state]
+	for i := range row {
+		if row[i].sym == uint32(sym) {
+			row[i].target = uint32(target)
+			return
+		}
+	}
 	ctx.transitions[state] = append(ctx.transitions[state], lrTransition{
 		sym:    uint32(sym),
 		target: uint32(target),
