@@ -32,9 +32,12 @@ import (
 //	Stage 3  forest finalization: pick per node by score, matching tree-sitter's
 //	         dynamic_precedence-then-first-match selection for byte-identical out.
 
-// glrForestEnabled gates the experimental GSS-forest reduce path. Off by default
-// (read once from GOT_GLR_FOREST=1) so production keeps the proven dedup path.
-var glrForestEnabled = os.Getenv("GOT_GLR_FOREST") == "1"
+// glrForestEnabled is the master switch for the GSS-forest fast path. ON by
+// default: the byte-range-verified languages in languageWantsForest dispatch to
+// the forest automatically (with production fallback). Set GOT_GLR_FOREST=0 to
+// disable globally; tests/benchmarks toggle via SetGLRForestEnabled. Languages
+// NOT in the allowlist always use production regardless of this switch.
+var glrForestEnabled = os.Getenv("GOT_GLR_FOREST") != "0"
 
 // SetGLRForestEnabled toggles the GSS-forest path at runtime (tests/benchmarks).
 func SetGLRForestEnabled(on bool) { glrForestEnabled = on }
@@ -48,17 +51,22 @@ func (p *Parser) ParseForestExperimental(source []byte) (*Node, bool) {
 	return p.parseForest(newNodeArena(arenaClassFull), source)
 }
 
-// languageWantsForest reports whether a language should use the GSS-forest GLR
-// fast path. Restricted to languages whose production GLR parse suffers the
-// super-linear deep-stack-equivalence blowup (hundreds of stacks that never
-// collapse) — the forest coalesces by (state, byteOffset) with no deep compare
-// and is dramatically faster there (measured: bash 44x, swift 6x, byte-parity).
-// The forest has no error recovery, so the caller falls back to the production
-// parser whenever it declines; this list should only grow once a language's
-// full corpus is verified forest==production.
+// languageWantsForest reports whether a language dispatches to the GSS-forest
+// GLR fast path by default. Restricted to languages whose production GLR parse
+// suffers the super-linear deep-stack-equivalence blowup AND that are verified
+// byte-identical to production on their real corpus by TestForestCorpusParity
+// (which compares full node BYTE RANGES, not just s-expressions — an s-expr-only
+// gate hid systematic span bugs). Measured byte-range-clean speedups on the real
+// corpus: erlang 664x, cmake 166x, awk 202x, graphql 7x, css 5x, scss 3x. The
+// forest has no error recovery, so tryForestFastPath falls back to production on
+// any decline (failure / error / truncation); that fallback means a language can
+// never regress the cases it declines, but does NOT catch a clean-but-different
+// tree — so a language joins this list only once its byte-range gate is green.
+// EXCLUDED: bash (a single-token-GLR-lexing / stateful-scanner divergence),
+// python + ruby (still diverge — genuine structural bugs).
 func languageWantsForest(name string) bool {
 	switch name {
-	case "bash":
+	case "erlang", "cmake", "css", "scss", "awk":
 		return true
 	default:
 		return false
