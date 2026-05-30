@@ -1062,7 +1062,8 @@ func (p *Parser) applyShiftAction(s *glrStack, act ParseAction, tok Token, nodeC
 		if isMissing {
 			flags |= nodeFlagMissing | nodeFlagHasError
 		}
-		if internLeavesSubstituteEnabled {
+		substituteActive := internLeavesSubstituteEnabled || (p != nil && p.leafInternByLang)
+		if substituteActive {
 			key := internKey{
 				symbol:       uint32(tok.Symbol),
 				flags:        uint8(flags),
@@ -1118,7 +1119,7 @@ func (p *Parser) applyShiftAction(s *glrStack, act ParseAction, tok Token, nodeC
 				observeLeafInternFull(arena, leaf)
 			}
 		}
-		if internLeavesSubstituteEnabled {
+		if substituteActive {
 			storeCanonicalLeaf(arena, leaf)
 		}
 		p.pushStackNode(s, targetState, leaf, entryScratch, gssScratch)

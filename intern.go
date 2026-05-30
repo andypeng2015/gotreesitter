@@ -39,6 +39,22 @@ func SetInternLeavesSubstituteEnabled(on bool) {
 	}
 }
 
+// languageWantsLeafInterning reports whether a language should default to
+// canonical leaf interning regardless of the global flag. Restricted to the
+// GLR-heavy languages whose parses keep hundreds of stacks alive, where the
+// deep stack-equivalence merge dominates wall time and shared-leaf pointer
+// identity short-circuits it (measured speedups: swift 4.0x, bash 1.9x, both
+// byte-parity-preserving). Fast languages regress slightly (go +4.9%), so they
+// stay off.
+func languageWantsLeafInterning(name string) bool {
+	switch name {
+	case "bash", "swift":
+		return true
+	default:
+		return false
+	}
+}
+
 // InternStatsFor returns a snapshot of the leaf-interning observation
 // counters for the arena that owns the given root node. Returns the
 // zero value if observation is disabled or the root is not arena-backed.

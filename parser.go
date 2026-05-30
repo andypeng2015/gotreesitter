@@ -44,7 +44,14 @@ type Parser struct {
 	typeScriptHasIdentifier             bool
 	typeScriptContextualPropertyKeyword map[string]Symbol
 	forceRawSpanAll                     bool
-	forceRawSpanTable                   []bool
+	// leafInternByLang enables canonical leaf interning for this language even
+	// when the global GOT_PARSE_INTERN_LEAVES_SUBSTITUTE flag is off. Limited to
+	// languages whose GLR parses keep hundreds of stacks alive (bash, swift),
+	// where the deep stack-equivalence merge dominates and shared-leaf pointer
+	// identity short-circuits it (measured: swift 4.0x, bash 1.9x). Net-neutral
+	// or slightly negative on fast languages (go +4.9%), so it stays per-language.
+	leafInternByLang  bool
+	forceRawSpanTable []bool
 	included                            []Range
 	logger                              ParserLogger
 	glrTrace                            bool // verbose GLR stack tracing
@@ -313,6 +320,7 @@ func NewParser(lang *Language) *Parser {
 	p := &Parser{language: lang}
 	if lang != nil {
 		p.forceRawSpanAll = lang.Name == "yaml"
+		p.leafInternByLang = languageWantsLeafInterning(lang.Name)
 		for i, name := range lang.SymbolNames {
 			if name != "statement_list" {
 				continue
