@@ -706,7 +706,15 @@ func resolveReservedWordSets(sets []ReservedWordSet, st *symbolTable, terminals 
 		for _, rule := range set.Rules {
 			symID, ok := resolveReservedWordSymbol(rule, st, terminals)
 			if !ok {
-				return nil, fmt.Errorf("set %q: unsupported reserved rule %s", set.Name, describeRule(rule))
+				// Some grammars (e.g. php) declare reserved words as standalone
+				// case-insensitive keyword PATTERNs (flags="i") that are not used
+				// as tokens anywhere else in the grammar, so there is no terminal
+				// symbol to resolve them to. Rather than failing generation, skip
+				// the unresolvable entry — degrading that word to no per-state
+				// filtering. This mirrors the existing "drop reserved sets when
+				// not meaningful" behavior (see import_grammarjson.go) and keeps
+				// the grammar generating instead of erroring out.
+				continue
 			}
 			if !seen[symID] {
 				seen[symID] = true

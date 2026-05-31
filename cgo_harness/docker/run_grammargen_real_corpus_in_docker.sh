@@ -14,6 +14,10 @@ LABEL="grammargen-real-corpus"
 PROFILE="aggressive"
 MAX_CASES="25"
 MAX_GRAMMARS="0"
+# Per-grammar generation timeout. The default test cap is 30s, but the slowest
+# grammars legitimately take much longer to generate (nix ~138s, make ~54s,
+# d ~180s, objc ~126s). 300s covers them with margin under Docker contention.
+GENERATE_TIMEOUT="${GENERATE_TIMEOUT:-300s}"
 SEED_DIR=""
 CONTAINER_SEED_DIR=""
 OFFLINE=0
@@ -296,6 +300,7 @@ cd /workspace
   GTS_GRAMMARGEN_REAL_CORPUS_PROFILE=$PROFILE \
   GTS_GRAMMARGEN_REAL_CORPUS_MAX_CASES=$MAX_CASES \
   GTS_GRAMMARGEN_REAL_CORPUS_MAX_GRAMMARS=$MAX_GRAMMARS \
+  GTS_GRAMMARGEN_REAL_CORPUS_GENERATE_TIMEOUT=$GENERATE_TIMEOUT \
   GTS_GRAMMARGEN_REAL_CORPUS_ALLOW_PARTIAL=1 \
   GTS_GRAMMARGEN_REAL_CORPUS_FLOORS_PATH=/tmp/real_corpus_parity_floors.json \
   GTS_GRAMMARGEN_REAL_CORPUS_SKIP=rust,c_sharp,java,ruby,cpp,kotlin,css,scala,go_lang,c_lang,python,javascript,dockerfile,ocaml \
