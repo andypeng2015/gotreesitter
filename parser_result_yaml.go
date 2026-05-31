@@ -36,7 +36,6 @@ func normalizeYAMLRecoveredRoot(root *Node, source []byte, lang *Language) {
 	}
 	yamlNormalizeRecoveredSubtrees(root, source, lang)
 	yamlWrapDocumentBlockCollections(root, lang)
-	yamlExtendExplicitDocumentRangesToLeadingComments(root, lang)
 	yamlUnwrapCommentLedSequenceDocuments(root, lang)
 	root.startByte = 0
 	root.startPoint = Point{}
@@ -472,29 +471,6 @@ func yamlFlattenRecoverableNodes(children []*Node, lang *Language) []*Node {
 		appendNode(child)
 	}
 	return flat
-}
-
-func yamlExtendExplicitDocumentRangesToLeadingComments(root *Node, lang *Language) {
-	if root == nil || lang == nil || root.Type(lang) != "stream" {
-		return
-	}
-	var firstLeadingComment *Node
-	for _, child := range root.children {
-		if child == nil {
-			continue
-		}
-		if child.Type(lang) == "comment" {
-			if firstLeadingComment == nil {
-				firstLeadingComment = child
-			}
-			continue
-		}
-		if child.Type(lang) == "document" && firstLeadingComment != nil {
-			child.startByte = firstLeadingComment.startByte
-			child.startPoint = firstLeadingComment.startPoint
-		}
-		firstLeadingComment = nil
-	}
 }
 
 func yamlSliceContainsType(nodes []*Node, want string, lang *Language) bool {

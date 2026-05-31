@@ -22,6 +22,9 @@ func TestLeadingCommentSpanTightness(t *testing.T) {
 		{"java", "// c\n\nclass A {}\n"},
 		{"ruby", "# c\n\nx = 1\n"},
 		{"c", "// c\n\nint x;\n"},
+		// yaml's document node was over-extended over the leading comment by a
+		// per-language normalizer (now removed); the document must start after it.
+		{"yaml", "# c\n\nkey: value\n"},
 	}
 	for _, tc := range cases {
 		tc := tc
