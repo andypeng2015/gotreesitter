@@ -109,6 +109,34 @@ func TestForestDispatchReportsAcceptedRuntime(t *testing.T) {
 	}
 }
 
+func TestForestDispatchPromotesJavaScript(t *testing.T) {
+	gts.SetGLRForestEnabled(true)
+	defer gts.SetGLRForestEnabled(true)
+
+	src := []byte("function foo() {}\nfoo()\nlet plus1 = x => x + 1\nasync function* bar() { yield 1; }\n")
+	lang := grm.JavascriptLanguage()
+	gts.SetGLRForestEnabled(false)
+	prod, err := gts.NewParser(lang).Parse(src)
+	if err != nil {
+		t.Fatalf("production parse: %v", err)
+	}
+	defer prod.Release()
+
+	gts.SetGLRForestEnabled(true)
+	tree, err := gts.NewParser(lang).Parse(src)
+	if err != nil {
+		t.Fatalf("forest dispatch parse: %v", err)
+	}
+	defer tree.Release()
+	if got, want := tree.RootNode().SExpr(lang), prod.RootNode().SExpr(lang); got != want {
+		t.Fatalf("JavaScript forest dispatch diverged\n got: %s\nwant: %s", got, want)
+	}
+	rt := tree.ParseRuntime()
+	if rt.StopReason != gts.ParseStopAccepted || !rt.LastTokenWasEOF || rt.TokensConsumed != 0 {
+		t.Fatalf("JavaScript did not use forest accepted runtime: %s", rt.Summary())
+	}
+}
+
 func TestForestTreeIncrementalEditSupportsCSSReuse(t *testing.T) {
 	gts.SetGLRForestEnabled(true)
 	defer gts.SetGLRForestEnabled(true)

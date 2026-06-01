@@ -63,16 +63,17 @@ func (p *Parser) ParseForestExperimental(source []byte) (*Node, bool) {
 // (which compares full node BYTE RANGES, not just s-expressions — an s-expr-only
 // gate hid systematic span bugs). Measured byte-range-clean production-vs-forest
 // speedups on the real corpus: bash 803x, erlang 664x, cmake 166x, awk 202x,
-// css 5x, scss 3x. GraphQL is clean against production here too, but stays out
-// until the production tree is C-oracle-clean on the ring matrix. The forest has
-// no error recovery, so tryForestFastPath falls back to production on any
-// decline (failure / error / truncation); that fallback means a language can
-// never regress the cases it declines, but does NOT catch a clean-but-different
-// tree — so a language joins this list only once its byte-range gate is green.
+// javascript 36x, css 5x, scss 3x. GraphQL is clean against production here
+// too, but stays out until the production tree is C-oracle-clean on the ring
+// matrix. The forest has no error recovery, so tryForestFastPath falls back to
+// production on any decline (failure / error / truncation); that fallback means
+// a language can never regress the cases it declines, but does NOT catch a
+// clean-but-different tree — so a language joins this list only once its
+// byte-range gate is green.
 // EXCLUDED: python + ruby (still diverge — genuine structural bugs).
 func languageWantsForest(name string) bool {
 	switch name {
-	case "bash", "erlang", "cmake", "css", "scss", "awk":
+	case "bash", "erlang", "cmake", "css", "scss", "awk", "javascript":
 		return true
 	default:
 		return false
@@ -151,7 +152,7 @@ func forestAcceptedRuntime(root *Node, source []byte) ParseRuntime {
 // and faster than fresh-parse fallback.
 func languageAllowsForestIncrementalPath(name string) bool {
 	switch name {
-	case "erlang", "cmake", "css", "scss":
+	case "erlang", "cmake", "css", "scss", "javascript":
 		return true
 	default:
 		return false
