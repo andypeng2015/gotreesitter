@@ -38,11 +38,21 @@ func TestForestDispatchParity(t *testing.T) {
 
 	check := func(label string, lang *gts.Language, src string) {
 		gts.SetGLRForestEnabled(false)
-		prod, _ := gts.NewParser(lang).Parse([]byte(src))
+		prod, err := gts.NewParser(lang).Parse([]byte(src))
+		if err != nil {
+			t.Errorf("%s: prod parse failed: %v", label, err)
+			return
+		}
+		defer prod.Release()
 		want := prod.RootNode().SExpr(lang)
 		wantEnd := prod.RootNode().EndByte()
 		gts.SetGLRForestEnabled(true)
-		got, _ := gts.NewParser(lang).Parse([]byte(src))
+		got, err := gts.NewParser(lang).Parse([]byte(src))
+		if err != nil {
+			t.Errorf("%s: forest parse failed: %v", label, err)
+			return
+		}
+		defer got.Release()
 		if got.RootNode().SExpr(lang) != want {
 			t.Errorf("%s: forest dispatch s-expr diverged for %q", label, src)
 		}
@@ -78,10 +88,12 @@ func TestForestExperimentalAppliesBashCompatibility(t *testing.T) {
 	}
 	defer prod.Release()
 
-	root, ok := gts.NewParser(lang).ParseForestExperimental(src)
-	if !ok || root == nil {
-		t.Fatalf("forest experimental ok=%v root nil=%v", ok, root == nil)
+	forest, ok := gts.NewParser(lang).ParseForestExperimental(src)
+	if !ok || forest == nil || forest.RootNode() == nil {
+		t.Fatalf("forest experimental ok=%v tree nil=%v", ok, forest == nil)
 	}
+	defer forest.Release()
+	root := forest.RootNode()
 	if got, want := root.SExpr(lang), prod.RootNode().SExpr(lang); got != want {
 		t.Fatalf("forest experimental Bash compatibility mismatch\n got: %s\nwant: %s", got, want)
 	}

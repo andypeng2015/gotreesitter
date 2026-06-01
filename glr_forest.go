@@ -44,16 +44,19 @@ var glrForestEnabled = os.Getenv("GOT_GLR_FOREST") != "0"
 func SetGLRForestEnabled(on bool) { glrForestEnabled = on }
 
 // ParseForestExperimental parses source with the experimental GSS-forest GLR
-// path and returns the normalized root node (or nil,false if the parse dies —
-// the forest path has no error recovery yet). Exported so out-of-tree benchmarks
+// path and returns a releasable tree (or nil,false if the parse dies — the
+// forest path has no error recovery yet). Exported so out-of-tree benchmarks
 // and validation in packages that attach external scanners (e.g. grammars) can
 // drive it; not part of the stable API.
-func (p *Parser) ParseForestExperimental(source []byte) (*Node, bool) {
-	root, ok := p.parseForest(newNodeArena(arenaClassFull), source)
-	if ok && root != nil {
-		p.finalizeForestRoot(root, source)
+func (p *Parser) ParseForestExperimental(source []byte) (*Tree, bool) {
+	arena := acquireNodeArena(arenaClassFull)
+	root, ok := p.parseForest(arena, source)
+	if !ok || root == nil {
+		arena.Release()
+		return nil, false
 	}
-	return root, ok
+	p.finalizeForestRoot(root, source)
+	return newTreeWithArenas(root, source, p.language, arena, nil), true
 }
 
 // languageWantsForest reports whether a language dispatches to the GSS-forest

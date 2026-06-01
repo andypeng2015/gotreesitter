@@ -75,13 +75,13 @@ func TestParseForestEndToEnd(t *testing.T) {
 // the whole file.
 func TestParseForestExtras(t *testing.T) {
 	cases := []struct{ lang, src string }{
-		{"c", "int /* c */ x;\n"},                                  // interior to a declaration
-		{"c", "int x; // c\nint y;\n"},                             // between two declarations
-		{"c", "int x; /* a */ /* b */ int y;\n"},                   // two adjacent extras
-		{"c", "int f(void) { return 0; /* done */ }\n"},            // trailing a statement
-		{"c", "// leading\nint x;\n"},                              // leading the root
-		{"c", "int x;\n// trailing\n"},                             // trailing at EOF
-		{"c", "/* lead */ int x; // mid\nint y; /* tail */\n"},     // leading + interior + trailing
+		{"c", "int /* c */ x;\n"},                                   // interior to a declaration
+		{"c", "int x; // c\nint y;\n"},                              // between two declarations
+		{"c", "int x; /* a */ /* b */ int y;\n"},                    // two adjacent extras
+		{"c", "int f(void) { return 0; /* done */ }\n"},             // trailing a statement
+		{"c", "// leading\nint x;\n"},                               // leading the root
+		{"c", "int x;\n// trailing\n"},                              // trailing at EOF
+		{"c", "/* lead */ int x; // mid\nint y; /* tail */\n"},      // leading + interior + trailing
 		{"c", "int f(void) {\n  // body comment\n  return 0;\n}\n"}, // inside a block
 		{"go", "package p // pkg\nfunc f() {}\n"},
 		{"go", "// header\npackage p\nvar x = 1 // trailing\n"},
@@ -107,11 +107,14 @@ func mustParseSExpr(t *testing.T, lang *Language, src []byte) string {
 	if err != nil {
 		t.Fatalf("normal parse %q: %v", src, err)
 	}
+	defer tree.Release()
 	return tree.RootNode().SExpr(lang)
 }
 
 func forestParseSExpr(t *testing.T, lang *Language, src []byte) (string, bool) {
-	root, ok := NewParser(lang).parseForest(newNodeArena(arenaClassFull), src)
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+	root, ok := NewParser(lang).parseForest(arena, src)
 	if !ok || root == nil {
 		return "", false
 	}

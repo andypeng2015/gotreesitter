@@ -83,39 +83,56 @@ func runForestLangParity(t *testing.T, name string, lang *gts.Language, files []
 		divergedFiles                         []string
 	)
 	for _, f := range files {
-		src, err := os.ReadFile(f)
-		if err != nil {
-			t.Errorf("%s: read %s: %v", name, f, err)
-			continue
-		}
-		total++
+		func(f string) {
+			src, err := os.ReadFile(f)
+			if err != nil {
+				t.Errorf("%s: read %s: %v", name, f, err)
+				return
+			}
+			total++
 
-		// Production baseline (forest off).
-		gts.SetGLRForestEnabled(false)
-		st := time.Now()
-		prodTree, _ := gts.NewParser(lang).Parse(src)
-		prodNanos += time.Since(st).Nanoseconds()
-		if prodTree == nil || prodTree.RootNode() == nil {
-			t.Errorf("%s: production produced no tree for %s", name, filepath.Base(f))
-			continue
-		}
-		want := rangedRepr(prodTree.RootNode(), lang)
+			// Production baseline (forest off).
+			gts.SetGLRForestEnabled(false)
+			st := time.Now()
+			prodTree, _ := gts.NewParser(lang).Parse(src)
+			prodNanos += time.Since(st).Nanoseconds()
+			var prodRoot *gts.Node
+			if prodTree != nil {
+				prodRoot = prodTree.RootNode()
+			}
+			if prodRoot == nil {
+				if prodTree != nil {
+					prodTree.Release()
+				}
+				t.Errorf("%s: production produced no tree for %s", name, filepath.Base(f))
+				return
+			}
+			defer prodTree.Release()
+			want := rangedRepr(prodRoot, lang)
 
-		// Forest result + the dispatch acceptance criteria (mirrors
-		// tryForestFastPath: clean, no error node, reaches the last
-		// non-whitespace byte).
-		st = time.Now()
-		root, ok := gts.NewParser(lang).ParseForestExperimental(src)
-		forestNanos += time.Since(st).Nanoseconds()
-		if !ok || root == nil || root.HasError() || root.EndByte() < lastNonWSByte(src) {
-			fellBack++
-			continue
-		}
-		dispatched++
-		if got := rangedRepr(root, lang); got != want {
-			diverged++
-			divergedFiles = append(divergedFiles, filepath.Base(f))
-		}
+			// Forest result + the dispatch acceptance criteria (mirrors
+			// tryForestFastPath: clean, no error node, reaches the last
+			// non-whitespace byte).
+			st = time.Now()
+			forestTree, ok := gts.NewParser(lang).ParseForestExperimental(src)
+			forestNanos += time.Since(st).Nanoseconds()
+			if forestTree != nil {
+				defer forestTree.Release()
+			}
+			var root *gts.Node
+			if forestTree != nil {
+				root = forestTree.RootNode()
+			}
+			if !ok || root == nil || root.HasError() || root.EndByte() < lastNonWSByte(src) {
+				fellBack++
+				return
+			}
+			dispatched++
+			if got := rangedRepr(root, lang); got != want {
+				diverged++
+				divergedFiles = append(divergedFiles, filepath.Base(f))
+			}
+		}(f)
 	}
 
 	speedup := 0.0
@@ -227,4 +244,3 @@ func envOr(key, def string) string {
 	}
 	return def
 }
-

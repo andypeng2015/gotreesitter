@@ -38,6 +38,7 @@ func TestLeadingCommentSpanTightness(t *testing.T) {
 			if err != nil {
 				t.Fatalf("%s parse error: %v", tc.name, err)
 			}
+			defer tree.Release()
 			root := tree.RootNode()
 
 			var comment, firstReal *gotreesitter.Node
