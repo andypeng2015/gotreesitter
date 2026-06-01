@@ -3,6 +3,7 @@ package gotreesitter
 import (
 	"errors"
 	"fmt"
+	"time"
 	"unsafe"
 )
 
@@ -66,6 +67,30 @@ func normalizeReturnedIncrementalTree(tree, oldTree *Tree, source []byte, lang *
 		return
 	}
 	normalizeReturnedTree(rawRootOrNil(tree), source, lang)
+}
+
+const forestIncrementalReuseUnsupportedReason = "old tree was built by GSS forest fast path"
+
+func oldTreeDisablesIncrementalReuse(oldTree *Tree) bool {
+	return oldTree != nil && oldTree.incrementalReuseDisabled
+}
+
+func profileFreshParseFallback(start time.Time, tree *Tree, reason string) IncrementalParseProfile {
+	profile := IncrementalParseProfile{
+		ReparseNanos:           time.Since(start).Nanoseconds(),
+		ReuseUnsupported:       true,
+		ReuseUnsupportedReason: reason,
+	}
+	if tree == nil {
+		return profile
+	}
+	timing := &incrementalParseTiming{totalNanos: profile.ReparseNanos}
+	copyParseRuntimeToTiming(timing, tree.ParseRuntime())
+	profile = timing.toProfile()
+	profile.ReparseNanos = time.Since(start).Nanoseconds()
+	profile.ReuseUnsupported = true
+	profile.ReuseUnsupportedReason = reason
+	return profile
 }
 
 func (p *Parser) normalizeReturnedTree(root *Node, source []byte) {
@@ -586,6 +611,9 @@ func (p *Parser) ParseIncremental(source []byte, oldTree *Tree) (*Tree, error) {
 	if canReuseUnchangedTree(source, oldTree, p.language) {
 		return oldTree, nil
 	}
+	if oldTreeDisablesIncrementalReuse(oldTree) {
+		return p.Parse(source)
+	}
 	if err := p.checkDFALexer(); err != nil {
 		return nil, err
 	}
@@ -683,6 +711,11 @@ func (p *Parser) ParseIncrementalProfiled(source []byte, oldTree *Tree) (*Tree, 
 	}
 	if canReuseUnchangedTree(source, oldTree, p.language) {
 		return oldTree, IncrementalParseProfile{}, nil
+	}
+	if oldTreeDisablesIncrementalReuse(oldTree) {
+		start := time.Now()
+		tree, err := p.Parse(source)
+		return tree, profileFreshParseFallback(start, tree, forestIncrementalReuseUnsupportedReason), err
 	}
 	if err := p.checkDFALexer(); err != nil {
 		return nil, IncrementalParseProfile{}, err

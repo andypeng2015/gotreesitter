@@ -1,6 +1,7 @@
 package gotreesitter_test
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -64,6 +65,52 @@ func TestForestDispatchParity(t *testing.T) {
 	gts.SetGLRForestEnabled(true)
 }
 
+func TestForestTreeIncrementalEditFallsBackToFreshParse(t *testing.T) {
+	gts.SetGLRForestEnabled(true)
+	defer gts.SetGLRForestEnabled(true)
+
+	src, err := os.ReadFile("cgo_harness/corpus_real/css/small__test_css.css")
+	if err != nil {
+		t.Fatalf("read css corpus fixture: %v", err)
+	}
+	const offset = 68
+	if len(src) <= offset || src[offset] != '1' {
+		t.Fatalf("css fixture drifted: byte %d = %q, want '1'", offset, src[offset])
+	}
+
+	edited := append([]byte(nil), src...)
+	edited[offset] = '2'
+	edit := gts.InputEdit{
+		StartByte:   offset,
+		OldEndByte:  offset + 1,
+		NewEndByte:  offset + 1,
+		StartPoint:  pointForOffset(src, offset),
+		OldEndPoint: pointForOffset(src, offset+1),
+		NewEndPoint: pointForOffset(edited, offset+1),
+	}
+
+	parser := gts.NewParser(grm.CssLanguage())
+	oldTree, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("initial parse: %v", err)
+	}
+	defer oldTree.Release()
+	oldTree.Edit(edit)
+
+	newTree, profile, err := parser.ParseIncrementalProfiled(edited, oldTree)
+	if err != nil {
+		t.Fatalf("incremental parse: %v", err)
+	}
+	defer newTree.Release()
+	if got, want := newTree.RootNode().EndByte(), uint32(len(edited)); got != want {
+		t.Fatalf("incremental fallback root end = %d, want %d", got, want)
+	}
+	if !profile.ReuseUnsupported || profile.ReuseUnsupportedReason == "" {
+		t.Fatalf("profile reuse unsupported = %v reason %q, want forest fallback",
+			profile.ReuseUnsupported, profile.ReuseUnsupportedReason)
+	}
+}
+
 func cssN(n int) string {
 	if n == 0 {
 		return "0"
@@ -76,4 +123,17 @@ func cssN(n int) string {
 		n /= 10
 	}
 	return string(b[i:])
+}
+
+func pointForOffset(src []byte, offset int) gts.Point {
+	var pt gts.Point
+	for _, b := range src[:offset] {
+		if b == '\n' {
+			pt.Row++
+			pt.Column = 0
+		} else {
+			pt.Column++
+		}
+	}
+	return pt
 }

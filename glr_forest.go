@@ -56,8 +56,10 @@ func (p *Parser) ParseForestExperimental(source []byte) (*Node, bool) {
 // suffers the super-linear deep-stack-equivalence blowup AND that are verified
 // byte-identical to production on their real corpus by TestForestCorpusParity
 // (which compares full node BYTE RANGES, not just s-expressions — an s-expr-only
-// gate hid systematic span bugs). Measured byte-range-clean speedups on the real
-// corpus: erlang 664x, cmake 166x, awk 202x, graphql 7x, css 5x, scss 3x. The
+// gate hid systematic span bugs). Measured byte-range-clean production-vs-forest
+// speedups on the real corpus: erlang 664x, cmake 166x, awk 202x, css 5x, scss
+// 3x. GraphQL is clean against production here too, but stays out until the
+// production tree is C-oracle-clean on the ring matrix. The
 // forest has no error recovery, so tryForestFastPath falls back to production on
 // any decline (failure / error / truncation); that fallback means a language can
 // never regress the cases it declines, but does NOT catch a clean-but-different
@@ -105,6 +107,7 @@ func (p *Parser) tryForestFastPath(source []byte) *Tree {
 		return nil // did not consume the whole input; let production recover it
 	}
 	tree := newTreeWithArenas(root, source, p.language, arena, nil)
+	tree.incrementalReuseDisabled = true
 	p.normalizeReturnedTree(rawRootOrNil(tree), source)
 	return tree
 }

@@ -2203,6 +2203,7 @@ type Tree struct {
 	parseRuntime                       ParseRuntime
 	arenaBreakdown                     *ArenaBreakdown
 	externalScannerCheckpointsDeferred bool
+	incrementalReuseDisabled           bool
 	resultCompatibilityPending         bool
 	resultCompatibilityOnce            sync.Once
 	released                           bool
