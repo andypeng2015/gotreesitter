@@ -66,6 +66,9 @@ func shouldRetryAcceptedErrorParse(tree *Tree, sourceLen int, initialMaxStacks i
 	if rt.StopReason != ParseStopAccepted || rt.Truncated || rt.TokenSourceEOFEarly {
 		return false
 	}
+	if tree.language != nil && tree.language.Name == "cpp" {
+		return false
+	}
 	if initialMaxStacks <= 0 {
 		initialMaxStacks = maxGLRStacks
 	}
@@ -538,6 +541,11 @@ func fullParseRetryMergePerKeyOverride(tree *Tree, sourceLen int, initialMaxStac
 	}
 	if tree.language != nil && tree.language.Name == "java" && rt.StopReason == ParseStopAccepted && retryTreeHasError(tree) {
 		return javaFullParseRetryMaxMergePerKey
+	}
+	if tree.language != nil && tree.language.Name == "cpp" &&
+		rt.StopReason == ParseStopAccepted && retryTreeHasError(tree) &&
+		!rt.Truncated && !rt.TokenSourceEOFEarly {
+		return 0
 	}
 	if initialMaxStacks <= 0 {
 		initialMaxStacks = maxGLRStacks

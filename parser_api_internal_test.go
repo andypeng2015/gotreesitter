@@ -399,6 +399,50 @@ func TestShouldRunInitialFullParseMergeRetry(t *testing.T) {
 	}
 }
 
+func TestCppAcceptedErrorRetrySkipsCompleteTree(t *testing.T) {
+	tree := &Tree{
+		language: &Language{Name: "cpp"},
+		root: &Node{
+			endByte: 128,
+			flags:   nodeFlagHasError,
+		},
+		parseRuntime: ParseRuntime{
+			StopReason:      ParseStopAccepted,
+			ExpectedEOFByte: 128,
+			RootEndByte:     128,
+			MaxStacksSeen:   18,
+		},
+	}
+
+	if shouldRetryAcceptedErrorParse(tree, 128, 18) {
+		t.Fatal("shouldRetryAcceptedErrorParse(cpp complete accepted error) = true, want false")
+	}
+	if got := fullParseRetryMergePerKeyOverride(tree, 128, 18); got != 0 {
+		t.Fatalf("fullParseRetryMergePerKeyOverride(cpp complete accepted error) = %d, want 0", got)
+	}
+}
+
+func TestCppAcceptedErrorRetryPreservesTruncatedMergeRetry(t *testing.T) {
+	tree := &Tree{
+		language: &Language{Name: "cpp"},
+		root: &Node{
+			endByte: 96,
+			flags:   nodeFlagHasError,
+		},
+		parseRuntime: ParseRuntime{
+			StopReason:      ParseStopAccepted,
+			ExpectedEOFByte: 128,
+			RootEndByte:     96,
+			Truncated:       true,
+			MaxStacksSeen:   18,
+		},
+	}
+
+	if got := fullParseRetryMergePerKeyOverride(tree, 128, 18); got != fullParseRetryMaxMergePerKey {
+		t.Fatalf("fullParseRetryMergePerKeyOverride(cpp truncated accepted error) = %d, want %d", got, fullParseRetryMaxMergePerKey)
+	}
+}
+
 func TestRetryFullParseStopsSchedulingRetriesAfterTimeout(t *testing.T) {
 	parser := &Parser{timeoutMicros: 500}
 	source := []byte("1+")
