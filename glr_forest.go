@@ -171,7 +171,7 @@ type gssLink struct {
 	// prevDirty is the predecessor dirty version this link last observed. A
 	// link can be structurally identical while its predecessor gained a new
 	// alternative; downstream reductions must re-run in that case.
-	prevDirty int
+	prevDirty int32
 	subtree   stackEntry
 	// score is the subtree's cumulative dynamic precedence (a reduce's
 	// DynamicPrecedence plus its children's scores; 0 for a shifted leaf). The
@@ -181,7 +181,7 @@ type gssLink struct {
 	score int
 }
 
-func forestNodeDirty(node *gssForestNode) int {
+func forestNodeDirty(node *gssForestNode) int32 {
 	if node == nil {
 		return 0
 	}
@@ -206,7 +206,9 @@ type gssForestNode struct {
 	// worklist reprocesses a node whenever its dirty count moved past what it
 	// last processed. Replacements only happen on a strictly higher score, so
 	// dirty advances finitely and the loop terminates.
-	dirty int
+	dirty          int32
+	processedEpoch int32
+	processedDirty int32
 }
 
 // coalesceForest merges a parse reaching (state, byteOffset) with subtree `entry`
@@ -466,11 +468,9 @@ func (idx *gssForestIndex) lookup(key gssForestKey) *gssForestNode {
 		return idx.lastNode
 	}
 	node := idx.nodes[key]
-	if node != nil {
-		idx.lastKey = key
-		idx.lastNode = node
-		idx.lastValid = true
-	}
+	idx.lastKey = key
+	idx.lastNode = node
+	idx.lastValid = true
 	return node
 }
 
@@ -648,10 +648,11 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 	// allocation/GC of fresh maps+slices each step dominated the profile.
 	curIndex := newGSSForestIndex(16)
 	nextIndex := newGSSForestIndex(16)
-	processed := make(map[*gssForestNode]int, 16)
 	var work, nextFrontier []*gssForestNode
+	processEpoch := int32(0)
 
 	for {
+		processEpoch++
 		// GLR-lex over the union of frontier states; lead = the most-advanced.
 		glrStates = glrStates[:0]
 		for _, n := range frontier {
@@ -671,7 +672,6 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 			curIndex.set(gssForestKey{n.state, n.byteOffset}, n)
 		}
 		nextIndex.reset()
-		clear(processed)
 		nextFrontier = nextFrontier[:0]
 		var accepted *gssForestNode
 
@@ -683,10 +683,11 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 			// become dirty (a new link, or a link replaced by a higher-precedence
 			// alternative) since it was last processed. Re-running its reductions
 			// rebuilds any parents that consumed a now-superseded subtree.
-			if pv, seen := processed[node]; seen && pv == node.dirty {
+			if node.processedEpoch == processEpoch && node.processedDirty == node.dirty {
 				continue
 			}
-			processed[node] = node.dirty
+			node.processedEpoch = processEpoch
+			node.processedDirty = node.dirty
 
 			for _, act := range p.actionsForParseState(node.state, tok.Symbol, lang.ParseActions) {
 				switch act.Type {
