@@ -188,6 +188,28 @@ func forestNodeDirty(node *gssForestNode) int32 {
 	return node.dirty
 }
 
+func forestLinkNoExtraDepth(prev *gssForestNode, entry stackEntry) uint8 {
+	if forestStackEntryIsExtra(entry) {
+		return 0
+	}
+	if prev == nil {
+		return 1
+	}
+	if prev.noExtraDepth == ^uint8(0) {
+		return prev.noExtraDepth
+	}
+	return prev.noExtraDepth + 1
+}
+
+func forestRecordNoExtraDepth(node *gssForestNode, first bool, depth uint8) {
+	if node == nil {
+		return
+	}
+	if first || depth < node.noExtraDepth {
+		node.noExtraDepth = depth
+	}
+}
+
 // gssForestNode is a coalesced graph-structured-stack node: all parses that
 // reach (state, byteOffset) share this single node; their differing histories
 // are the links. This replaces the singly-linked gssNode{entry, prev} chain in
@@ -209,6 +231,7 @@ type gssForestNode struct {
 	dirty          int32
 	processedEpoch int32
 	processedDirty int32
+	noExtraDepth   uint8
 }
 
 // coalesceForest merges a parse reaching (state, byteOffset) with subtree `entry`
@@ -225,6 +248,7 @@ func coalesceForest(index *gssForestIndex, slab *gssForestNodeSlab, state StateI
 	}
 	key := gssForestKey{state: state, byteOffset: byteOffset}
 	node := index.lookup(key)
+	linkNoExtraDepth := forestLinkNoExtraDepth(prev, entry)
 	if node == nil {
 		node = slab.alloc(state, byteOffset, score, errorCost)
 		index.set(key, node)
@@ -285,6 +309,7 @@ func coalesceForest(index *gssForestIndex, slab *gssForestNodeSlab, state StateI
 		}
 		if score > node.links[worst].score {
 			node.links[worst] = gssLink{prev: prev, prevDirty: forestNodeDirty(prev), subtree: entry, score: score}
+			forestRecordNoExtraDepth(node, false, linkNoExtraDepth)
 			node.dirty++
 			if perfCountersEnabled {
 				perfRecordForestCoalesceCap(true)
@@ -294,7 +319,9 @@ func coalesceForest(index *gssForestIndex, slab *gssForestNodeSlab, state StateI
 		}
 		return node
 	}
+	firstLink := len(node.links) == 0
 	node.links = append(node.links, gssLink{prev: prev, prevDirty: forestNodeDirty(prev), subtree: entry, score: score})
+	forestRecordNoExtraDepth(node, firstLink, linkNoExtraDepth)
 	if perfCountersEnabled {
 		perfRecordForestCoalesceLinkAppend()
 	}
@@ -550,6 +577,9 @@ func (s *gssForestNodeSlab) alloc(state StateID, byteOffset uint32, score, error
 	n.errorCost = errorCost
 	n.links = s.linkSlice()
 	n.dirty = 0
+	n.processedEpoch = 0
+	n.processedDirty = 0
+	n.noExtraDepth = 0
 	return n
 }
 
@@ -1166,10 +1196,7 @@ func (fr *forestReducer) reduceLinearSinglePath(node *gssForestNode, childCount 
 }
 
 func (fr *forestReducer) reduceNoExtrasDFS(node *gssForestNode, childCount int, visit func(children []stackEntry, childScore int, popTo *gssForestNode)) bool {
-	if childCount <= 0 || node == nil {
-		return false
-	}
-	if !forestValidateNoExtrasDFS(node, childCount) {
+	if childCount <= 0 || node == nil || int(node.noExtraDepth) < childCount {
 		return false
 	}
 	if cap(fr.rev) < childCount {
@@ -1178,22 +1205,6 @@ func (fr *forestReducer) reduceNoExtrasDFS(node *gssForestNode, childCount int, 
 		fr.rev = fr.rev[:childCount]
 	}
 	fr.dfsNoExtras(node, childCount, 0, visit)
-	return true
-}
-
-func forestValidateNoExtrasDFS(cur *gssForestNode, remaining int) bool {
-	if cur == nil {
-		return false
-	}
-	for i := range cur.links {
-		link := cur.links[i]
-		if forestStackEntryIsExtra(link.subtree) {
-			return false
-		}
-		if remaining > 1 && !forestValidateNoExtrasDFS(link.prev, remaining-1) {
-			return false
-		}
-	}
 	return true
 }
 

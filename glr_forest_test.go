@@ -92,11 +92,11 @@ func TestReduceOverForestNestedForkNoExtras(t *testing.T) {
 	n1 := &gssForestNode{state: 1, links: []gssLink{
 		{prev: n0, subtree: stackEntry{state: 10}},
 		{prev: n0, subtree: stackEntry{state: 20}},
-	}}
+	}, noExtraDepth: 1}
 	n2 := &gssForestNode{state: 2, links: []gssLink{
 		{prev: n1, subtree: stackEntry{state: 11}},
 		{prev: n1, subtree: stackEntry{state: 21}},
-	}}
+	}, noExtraDepth: 2}
 
 	got := pathsOf(n2, 2)
 	want := []string{"[10 11]|0", "[20 11]|0", "[10 21]|0", "[20 21]|0"}
@@ -157,6 +157,9 @@ func TestCoalesceForestSharesNode(t *testing.T) {
 	}
 	if len(a.links) != 2 {
 		t.Fatalf("want 2 links on the coalesced node, got %d", len(a.links))
+	}
+	if a.noExtraDepth != 1 {
+		t.Fatalf("want no-extra depth 1, got %d", a.noExtraDepth)
 	}
 	// Higher score wins the node-level disambiguator (lower error cost first).
 	if a.score != 7 {
