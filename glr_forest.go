@@ -210,17 +210,39 @@ func forestRecordNoExtraDepth(node *gssForestNode, first bool, depth uint8) {
 	}
 }
 
+func forestRecordMinLinkScore(node *gssForestNode, first bool, score int) {
+	if node == nil {
+		return
+	}
+	if first || score < node.minLinkScore {
+		node.minLinkScore = score
+	}
+}
+
+func forestRefreshMinLinkScore(node *gssForestNode) {
+	if node == nil || len(node.links) == 0 {
+		return
+	}
+	minScore := node.links[0].score
+	for i := 1; i < len(node.links); i++ {
+		if node.links[i].score < minScore {
+			minScore = node.links[i].score
+		}
+	}
+	node.minLinkScore = minScore
+}
+
 // gssForestNode is a coalesced graph-structured-stack node: all parses that
 // reach (state, byteOffset) share this single node; their differing histories
 // are the links. This replaces the singly-linked gssNode{entry, prev} chain in
-// the forest path. score carries the best accumulated dynamic precedence among
-// the links for finalization tie-breaks.
+// the forest path. Link scores carry dynamic-precedence tie-breaks for final
+// selection; minLinkScore caches the weakest retained link for cap pruning.
 type gssForestNode struct {
-	state      StateID
-	byteOffset uint32
-	links      []gssLink
-	score      int
-	errorCost  int
+	state        StateID
+	byteOffset   uint32
+	links        []gssLink
+	errorCost    int
+	minLinkScore int
 	// dirty advances whenever a link is appended OR a competing link is
 	// replaced by a higher-precedence alternative. Because Nodes are built
 	// eagerly at reduce time, a late replacement must re-trigger the reductions
@@ -255,8 +277,8 @@ func coalesceForest(index *gssForestIndex, slab *gssForestNodeSlab, state StateI
 		if perfCountersEnabled {
 			perfRecordForestCoalesceNewNode()
 		}
-	} else if errorCost < node.errorCost || (errorCost == node.errorCost && score > node.score) {
-		node.score, node.errorCost = score, errorCost
+	} else if errorCost < node.errorCost {
+		node.errorCost = errorCost
 	}
 	// Dedup competing alternatives: a link from the same predecessor whose
 	// subtree has the same symbol and span is the same reduction reached another
@@ -282,7 +304,11 @@ func coalesceForest(index *gssForestIndex, slab *gssForestNodeSlab, state StateI
 			// re-run and rebuild their parents from the winner.
 			replaced := false
 			if score > l.score {
+				oldScore := l.score
 				l.subtree, l.score = entry, score
+				if oldScore == node.minLinkScore {
+					forestRefreshMinLinkScore(node)
+				}
 				node.dirty++
 				replaced = true
 			}
@@ -309,6 +335,7 @@ func coalesceForest(index *gssForestIndex, slab *gssForestNodeSlab, state StateI
 		}
 		if score > node.links[worst].score {
 			node.links[worst] = gssLink{prev: prev, prevDirty: forestNodeDirty(prev), subtree: entry, score: score}
+			forestRefreshMinLinkScore(node)
 			forestRecordNoExtraDepth(node, false, linkNoExtraDepth)
 			node.dirty++
 			if perfCountersEnabled {
@@ -321,6 +348,7 @@ func coalesceForest(index *gssForestIndex, slab *gssForestNodeSlab, state StateI
 	}
 	firstLink := len(node.links) == 0
 	node.links = append(node.links, gssLink{prev: prev, prevDirty: forestNodeDirty(prev), subtree: entry, score: score})
+	forestRecordMinLinkScore(node, firstLink, score)
 	forestRecordNoExtraDepth(node, firstLink, linkNoExtraDepth)
 	if perfCountersEnabled {
 		perfRecordForestCoalesceLinkAppend()
@@ -363,13 +391,7 @@ func forestCoalesceWouldDropForCap(index *gssForestIndex, state StateID, byteOff
 	if errorCost < node.errorCost {
 		return false
 	}
-	worstScore := node.links[0].score
-	for i := 1; i < len(node.links); i++ {
-		if node.links[i].score < worstScore {
-			worstScore = node.links[i].score
-		}
-	}
-	return score <= worstScore
+	return score <= node.minLinkScore
 }
 
 // forestMaxLinksPerNode caps the alternative fan-out coalesced at one
@@ -459,12 +481,21 @@ type gssForestKey struct {
 	byteOffset uint32
 }
 
+const gssForestLookupCacheSize = 16
+
+type gssForestLookupCacheEntry struct {
+	key   gssForestKey
+	node  *gssForestNode
+	valid bool
+}
+
 type gssForestIndex struct {
-	nodes     map[gssForestKey]*gssForestNode
-	keys      []gssForestKey
-	lastKey   gssForestKey
-	lastNode  *gssForestNode
-	lastValid bool
+	nodes       map[gssForestKey]*gssForestNode
+	keys        []gssForestKey
+	lookupCache [gssForestLookupCacheSize]gssForestLookupCacheEntry
+	lastKey     gssForestKey
+	lastNode    *gssForestNode
+	lastValid   bool
 }
 
 func newGSSForestIndex(capacity int) gssForestIndex {
@@ -481,6 +512,9 @@ func (idx *gssForestIndex) reset() {
 	idx.keys = idx.keys[:0]
 	idx.lastValid = false
 	idx.lastNode = nil
+	for i := range idx.lookupCache {
+		idx.lookupCache[i] = gssForestLookupCacheEntry{}
+	}
 }
 
 func (idx *gssForestIndex) len() int {
@@ -494,7 +528,16 @@ func (idx *gssForestIndex) lookup(key gssForestKey) *gssForestNode {
 	if idx.lastValid && idx.lastKey == key {
 		return idx.lastNode
 	}
+	slot := forestLookupCacheSlot(key)
+	cached := &idx.lookupCache[slot]
+	if cached.valid && cached.key == key {
+		idx.lastKey = key
+		idx.lastNode = cached.node
+		idx.lastValid = true
+		return cached.node
+	}
 	node := idx.nodes[key]
+	*cached = gssForestLookupCacheEntry{key: key, node: node, valid: true}
 	idx.lastKey = key
 	idx.lastNode = node
 	idx.lastValid = true
@@ -507,9 +550,14 @@ func (idx *gssForestIndex) set(key gssForestKey, node *gssForestNode) {
 	}
 	idx.nodes[key] = node
 	idx.keys = append(idx.keys, key)
+	idx.lookupCache[forestLookupCacheSlot(key)] = gssForestLookupCacheEntry{key: key, node: node, valid: true}
 	idx.lastKey = key
 	idx.lastNode = node
 	idx.lastValid = true
+}
+
+func forestLookupCacheSlot(key gssForestKey) uint32 {
+	return (uint32(key.state)*16777619 ^ key.byteOffset ^ (key.byteOffset >> 8)) & (gssForestLookupCacheSize - 1)
 }
 
 const (
@@ -559,7 +607,7 @@ func releaseGSSForestNodeSlab(s *gssForestNodeSlab) {
 	gssForestNodeSlabPool.Put(s)
 }
 
-func (s *gssForestNodeSlab) alloc(state StateID, byteOffset uint32, score, errorCost int) *gssForestNode {
+func (s *gssForestNodeSlab) alloc(state StateID, byteOffset uint32, _ int, errorCost int) *gssForestNode {
 	if len(s.nodeBatches) == 0 {
 		s.nodeBatches = append(s.nodeBatches, make([]gssForestNode, gssForestNodeBatchCap))
 	} else if s.nodeIdx >= len(s.nodeBatches[s.nodeBatch]) {
@@ -573,8 +621,8 @@ func (s *gssForestNodeSlab) alloc(state StateID, byteOffset uint32, score, error
 	s.nodeIdx++
 	n.state = state
 	n.byteOffset = byteOffset
-	n.score = score
 	n.errorCost = errorCost
+	n.minLinkScore = 0
 	n.links = s.linkSlice()
 	n.dirty = 0
 	n.processedEpoch = 0

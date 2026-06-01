@@ -196,14 +196,43 @@ func TestCoalesceForestSharesNode(t *testing.T) {
 	if a.noExtraDepth != 1 {
 		t.Fatalf("want no-extra depth 1, got %d", a.noExtraDepth)
 	}
-	// Higher score wins the node-level disambiguator (lower error cost first).
-	if a.score != 7 {
-		t.Fatalf("want node score 7 (the better of 3/7), got %d", a.score)
+	if a.minLinkScore != 3 {
+		t.Fatalf("want min link score 3, got %d", a.minLinkScore)
+	}
+	if best := a.bestLink(); best == nil || best.score != 7 {
+		t.Fatalf("want best link score 7, got %v", best)
 	}
 	// A different (state,byteOffset) is a separate node.
 	c := coalesceForest(&idx, slab, 6, 42, base, stackEntry{state: 102}, 1, 0)
 	if c == a {
 		t.Fatal("distinct (state,byteOffset) coalesced into the same node")
+	}
+}
+
+func TestCoalesceForestRefreshesMinLinkScoreOnReplacement(t *testing.T) {
+	idx := newGSSForestIndex(0)
+	slab := &gssForestNodeSlab{}
+	base := &gssForestNode{state: 0}
+	loser := newStackEntryNode(100, &Node{symbol: 100, startByte: 1, endByte: 4})
+	winner := newStackEntryNode(100, &Node{symbol: 100, startByte: 1, endByte: 4})
+
+	node := coalesceForest(&idx, slab, 5, 4, base, loser, 3, 0)
+	initialDirty := node.dirty
+	again := coalesceForest(&idx, slab, 5, 4, base, winner, 7, 0)
+	if again != node {
+		t.Fatal("replacement reached a different coalesced node")
+	}
+	if len(node.links) != 1 {
+		t.Fatalf("replacement appended duplicate link: got %d links, want 1", len(node.links))
+	}
+	if node.minLinkScore != 7 {
+		t.Fatalf("want refreshed min link score 7, got %d", node.minLinkScore)
+	}
+	if best := node.bestLink(); best == nil || best.score != 7 {
+		t.Fatalf("want best link score 7 after replacement, got %v", best)
+	}
+	if node.dirty <= initialDirty {
+		t.Fatalf("replacement dirty=%d, want > %d", node.dirty, initialDirty)
 	}
 }
 
@@ -227,6 +256,21 @@ func TestCoalesceForestMarksDirtyWhenPredecessorChanges(t *testing.T) {
 	}
 	if top.dirty <= initialDirty {
 		t.Fatalf("coalesced node dirty=%d, want > %d after predecessor changed", top.dirty, initialDirty)
+	}
+}
+
+func TestGSSForestIndexLookupCacheClearsOnReset(t *testing.T) {
+	idx := newGSSForestIndex(0)
+	key := gssForestKey{state: 7, byteOffset: 11}
+	node := &gssForestNode{state: 7, byteOffset: 11}
+
+	idx.set(key, node)
+	if got := idx.lookup(key); got != node {
+		t.Fatalf("cached lookup returned %p, want %p", got, node)
+	}
+	idx.reset()
+	if got := idx.lookup(key); got != nil {
+		t.Fatalf("lookup after reset returned stale node %p", got)
 	}
 }
 
