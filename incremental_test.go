@@ -524,6 +524,26 @@ func TestReuseTargetStateAmbiguousShiftMustMatchNodeState(t *testing.T) {
 	}
 }
 
+func TestForestLeafReuseRejectsMismatchedNodeState(t *testing.T) {
+	lang := buildArithmeticLanguage()
+	parser := NewParser(lang)
+	lookahead := Token{Symbol: 1}
+
+	leaf := &Node{symbol: 1, parseState: 4}
+	nextState, ok := parser.reuseTargetState(0, leaf, lookahead)
+	if !ok {
+		t.Fatal("expected generic unique-shift fallback to remain available")
+	}
+	if !rejectForestLeafStateMismatch(leaf, nextState) {
+		t.Fatal("expected forest leaf reuse to reject mismatched parseState")
+	}
+
+	leaf.parseState = nextState
+	if rejectForestLeafStateMismatch(leaf, nextState) {
+		t.Fatal("expected forest leaf reuse to accept matching parseState")
+	}
+}
+
 func TestReuseStackDepthForPreGoto(t *testing.T) {
 	entries := []stackEntry{
 		{state: 1},

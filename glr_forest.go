@@ -107,6 +107,7 @@ func (p *Parser) tryForestFastPath(source []byte) *Tree {
 		return nil // did not consume the whole input; let production recover it
 	}
 	tree := newTreeWithArenas(root, source, p.language, arena, nil)
+	tree.forestFastPath = true
 	if !languageAllowsForestIncrementalPath(p.language.Name) {
 		tree.incrementalReuseDisabled = true
 	}

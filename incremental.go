@@ -34,6 +34,7 @@ type reuseCursor struct {
 	rejectOutOfBounds             uint64
 	rejectRootNonLeafChanged      uint64
 	rejectLargeNonLeaf            uint64
+	forestFastPath                bool
 }
 
 // reuseScratch holds reusable buffers for incremental reuse traversal.
@@ -75,6 +76,7 @@ func (c *reuseCursor) reset(oldTree *Tree, source []byte, scratch *reuseScratch)
 	c.rejectOutOfBounds = 0
 	c.rejectRootNonLeafChanged = 0
 	c.rejectLargeNonLeaf = 0
+	c.forestFastPath = oldTree.forestFastPath
 
 	root := oldTree.RootNode()
 	c.stack = append(c.stack, reuseFrame{node: root})
@@ -120,6 +122,7 @@ func (c *reuseCursor) releaseNodeRefs() {
 	c.topLevelParent = nil
 	c.oldSource = nil
 	c.newSource = nil
+	c.forestFastPath = false
 	if cap(c.stack) > 0 {
 		clear(c.stack[:cap(c.stack)])
 		c.stack = c.stack[:0]
@@ -128,6 +131,13 @@ func (c *reuseCursor) releaseNodeRefs() {
 		clear(c.cached[:cap(c.cached)])
 		c.cached = c.cached[:0]
 	}
+}
+
+func rejectForestLeafStateMismatch(n *Node, nextState StateID) bool {
+	return n != nil &&
+		n.ChildCount() == 0 &&
+		n.parseState != 0 &&
+		n.parseState != nextState
 }
 
 // releaseNodeRefs nils *Node pointers in the scratch buffers.
@@ -383,6 +393,9 @@ func (p *Parser) tryReuseSubtree(s *glrStack, lookahead Token, ts TokenSource, i
 		}
 		nextState, ok := p.reuseTargetState(state, n, lookahead)
 		if !ok {
+			continue
+		}
+		if idx.forestFastPath && rejectForestLeafStateMismatch(n, nextState) {
 			continue
 		}
 		cp, ok := canReuseNodeWithExternalScannerCheckpoint(ts, state, n)
