@@ -1,7 +1,6 @@
 package gotreesitter_test
 
 import (
-	"os"
 	"strings"
 	"testing"
 
@@ -69,12 +68,10 @@ func TestForestTreeIncrementalEditSupportsCSSReuse(t *testing.T) {
 	gts.SetGLRForestEnabled(true)
 	defer gts.SetGLRForestEnabled(true)
 
-	src, err := os.ReadFile("cgo_harness/corpus_real/css/small__test_css.css")
-	if err != nil {
-		t.Fatalf("read css corpus fixture: %v", err)
-	}
-	const offset = 68
-	if len(src) <= offset || src[offset] != '1' {
+	src := []byte(".a { color: red; margin: 1px; padding: 4px; }\n.b { color: blue; transform: translateX(1px); }\n")
+	const oldNeedle = "margin: 1px"
+	offset := strings.Index(string(src), oldNeedle) + len("margin: ")
+	if offset < len("margin: ") || len(src) <= offset || src[offset] != '1' {
 		t.Fatalf("css fixture drifted: byte %d = %q, want '1'", offset, src[offset])
 	}
 
