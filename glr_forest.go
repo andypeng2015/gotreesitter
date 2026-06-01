@@ -1204,8 +1204,77 @@ func (fr *forestReducer) reduceNoExtrasDFS(node *gssForestNode, childCount int, 
 	} else {
 		fr.rev = fr.rev[:childCount]
 	}
-	fr.dfsNoExtras(node, childCount, 0, visit)
+	switch childCount {
+	case 2:
+		fr.dfsNoExtras2(node, 0, visit)
+	case 3:
+		fr.dfsNoExtras3(node, 0, visit)
+	case 4:
+		fr.dfsNoExtras4(node, 0, visit)
+	default:
+		fr.dfsNoExtras(node, childCount, 0, visit)
+	}
 	return true
+}
+
+func (fr *forestReducer) dfsNoExtras2(cur *gssForestNode, score int, visit func(children []stackEntry, childScore int, popTo *gssForestNode)) {
+	for i := range cur.links {
+		l0 := cur.links[i]
+		fr.rev[1] = l0.subtree
+		score0 := score + l0.score
+		n1 := l0.prev
+		for j := range n1.links {
+			l1 := n1.links[j]
+			fr.rev[0] = l1.subtree
+			visit(fr.rev, score0+l1.score, l1.prev)
+		}
+	}
+}
+
+func (fr *forestReducer) dfsNoExtras3(cur *gssForestNode, score int, visit func(children []stackEntry, childScore int, popTo *gssForestNode)) {
+	for i := range cur.links {
+		l0 := cur.links[i]
+		fr.rev[2] = l0.subtree
+		score0 := score + l0.score
+		n1 := l0.prev
+		for j := range n1.links {
+			l1 := n1.links[j]
+			fr.rev[1] = l1.subtree
+			score1 := score0 + l1.score
+			n2 := l1.prev
+			for k := range n2.links {
+				l2 := n2.links[k]
+				fr.rev[0] = l2.subtree
+				visit(fr.rev, score1+l2.score, l2.prev)
+			}
+		}
+	}
+}
+
+func (fr *forestReducer) dfsNoExtras4(cur *gssForestNode, score int, visit func(children []stackEntry, childScore int, popTo *gssForestNode)) {
+	for i := range cur.links {
+		l0 := cur.links[i]
+		fr.rev[3] = l0.subtree
+		score0 := score + l0.score
+		n1 := l0.prev
+		for j := range n1.links {
+			l1 := n1.links[j]
+			fr.rev[2] = l1.subtree
+			score1 := score0 + l1.score
+			n2 := l1.prev
+			for k := range n2.links {
+				l2 := n2.links[k]
+				fr.rev[1] = l2.subtree
+				score2 := score1 + l2.score
+				n3 := l2.prev
+				for m := range n3.links {
+					l3 := n3.links[m]
+					fr.rev[0] = l3.subtree
+					visit(fr.rev, score2+l3.score, l3.prev)
+				}
+			}
+		}
+	}
 }
 
 func (fr *forestReducer) dfsNoExtras(cur *gssForestNode, remaining, score int, visit func(children []stackEntry, childScore int, popTo *gssForestNode)) {

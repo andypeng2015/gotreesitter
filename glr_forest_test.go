@@ -105,6 +105,41 @@ func TestReduceOverForestNestedForkNoExtras(t *testing.T) {
 	}
 }
 
+func TestReduceOverForestNestedForkNoExtrasChildCount4(t *testing.T) {
+	n0 := &gssForestNode{state: 0}
+	n1 := &gssForestNode{state: 1, links: []gssLink{
+		{prev: n0, subtree: stackEntry{state: 10}},
+		{prev: n0, subtree: stackEntry{state: 20}},
+	}, noExtraDepth: 1}
+	n2 := &gssForestNode{state: 2, links: []gssLink{
+		{prev: n1, subtree: stackEntry{state: 11}},
+		{prev: n1, subtree: stackEntry{state: 21}},
+	}, noExtraDepth: 2}
+	n3 := &gssForestNode{state: 3, links: []gssLink{
+		{prev: n2, subtree: stackEntry{state: 12}},
+		{prev: n2, subtree: stackEntry{state: 22}},
+	}, noExtraDepth: 3}
+	n4 := &gssForestNode{state: 4, links: []gssLink{
+		{prev: n3, subtree: stackEntry{state: 13}},
+		{prev: n3, subtree: stackEntry{state: 23}},
+	}, noExtraDepth: 4}
+
+	got := pathsOf(n4, 4)
+	want := []string{
+		"[10 11 12 13]|0", "[20 11 12 13]|0",
+		"[10 21 12 13]|0", "[20 21 12 13]|0",
+		"[10 11 22 13]|0", "[20 11 22 13]|0",
+		"[10 21 22 13]|0", "[20 21 22 13]|0",
+		"[10 11 12 23]|0", "[20 11 12 23]|0",
+		"[10 21 12 23]|0", "[20 21 12 23]|0",
+		"[10 11 22 23]|0", "[20 11 22 23]|0",
+		"[10 21 22 23]|0", "[20 21 22 23]|0",
+	}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("nested fork no-extra childCount=4: got %v want %v", got, want)
+	}
+}
+
 func TestReduceOverForestForkedLinearWithExtra(t *testing.T) {
 	extra := &Node{}
 	extra.setExtra(true)
