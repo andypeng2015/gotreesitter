@@ -90,6 +90,25 @@ func TestForestExperimentalAppliesBashCompatibility(t *testing.T) {
 	}
 }
 
+func TestForestDispatchReportsAcceptedRuntime(t *testing.T) {
+	gts.SetGLRForestEnabled(true)
+	defer gts.SetGLRForestEnabled(true)
+
+	src := []byte("f() { echo a; }\n")
+	tree, err := gts.NewParser(grm.BashLanguage()).Parse(src)
+	if err != nil {
+		t.Fatalf("forest dispatch parse: %v", err)
+	}
+	defer tree.Release()
+	rt := tree.ParseRuntime()
+	if rt.StopReason != gts.ParseStopAccepted {
+		t.Fatalf("forest dispatch stop reason = %q, want %q (%s)", rt.StopReason, gts.ParseStopAccepted, rt.Summary())
+	}
+	if rt.SourceLen != uint32(len(src)) || rt.ExpectedEOFByte != uint32(len(src)) || rt.LastTokenEndByte != uint32(len(src)) || !rt.LastTokenWasEOF {
+		t.Fatalf("forest dispatch runtime mismatch: %s", rt.Summary())
+	}
+}
+
 func TestForestTreeIncrementalEditSupportsCSSReuse(t *testing.T) {
 	gts.SetGLRForestEnabled(true)
 	defer gts.SetGLRForestEnabled(true)

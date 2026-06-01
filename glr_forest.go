@@ -114,6 +114,7 @@ func (p *Parser) tryForestFastPath(source []byte) *Tree {
 	}
 	p.finalizeForestRoot(root, source)
 	tree := newTreeWithArenas(root, source, p.language, arena, nil)
+	tree.setParseRuntime(forestAcceptedRuntime(root, source))
 	tree.forestFastPath = true
 	if !languageAllowsForestIncrementalPath(p.language.Name) {
 		tree.incrementalReuseDisabled = true
@@ -124,6 +125,22 @@ func (p *Parser) tryForestFastPath(source []byte) *Tree {
 
 func (p *Parser) finalizeForestRoot(root *Node, source []byte) {
 	p.finalizeResultRoot(root, source, nil, false, false)
+}
+
+func forestAcceptedRuntime(root *Node, source []byte) ParseRuntime {
+	if root == nil {
+		return ParseRuntime{StopReason: ParseStopNone}
+	}
+	sourceLen := uint32(len(source))
+	return ParseRuntime{
+		StopReason:       ParseStopAccepted,
+		SourceLen:        sourceLen,
+		ExpectedEOFByte:  sourceLen,
+		RootEndByte:      root.EndByte(),
+		LastTokenEndByte: sourceLen,
+		LastTokenSymbol:  0,
+		LastTokenWasEOF:  true,
+	}
 }
 
 // languageAllowsForestIncrementalPath reports forest-default languages whose
