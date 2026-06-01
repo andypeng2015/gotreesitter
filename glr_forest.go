@@ -2,6 +2,7 @@ package gotreesitter
 
 import (
 	"os"
+	"sync"
 	"unsafe"
 )
 
@@ -86,9 +87,10 @@ func (p *Parser) tryForestFastPath(source []byte) *Tree {
 	if !glrForestEnabled || p == nil || p.language == nil || !languageWantsForest(p.language.Name) {
 		return nil
 	}
-	arena := newNodeArena(arenaClassFull)
+	arena := acquireNodeArena(arenaClassFull)
 	root, ok := p.parseForest(arena, source)
 	if !ok || root == nil || root.HasError() {
+		arena.Release()
 		return nil // production fallback handles failures and error recovery
 	}
 	// Guard against an early-EOF token source: the root must reach the last
@@ -104,6 +106,7 @@ func (p *Parser) tryForestFastPath(source []byte) *Tree {
 		break
 	}
 	if root.EndByte() < uint32(end) {
+		arena.Release()
 		return nil // did not consume the whole input; let production recover it
 	}
 	tree := newTreeWithArenas(root, source, p.language, arena, nil)
@@ -321,26 +324,65 @@ type gssForestKey struct {
 	byteOffset uint32
 }
 
-// gssForestNodeSlab batch-allocates gssForestNodes so the forest doesn't pay one heap
-// allocation per coalesced (state, byteOffset) node — the C GSS pools its stack
-// nodes the same way. Nodes must outlive the whole parse (the DAG references
-// them via links), so the slab only ever grows: when a batch fills, a new batch
-// is allocated and the old one stays alive through the pointers already handed
-// out. One slab per parseForest call.
+const (
+	gssForestNodeBatchCap            = 4096
+	gssForestLinkBatchCap            = 8192
+	maxRetainedGSSForestScratchBytes = 32 * 1024 * 1024
+)
+
+var gssForestNodeSlabPool = sync.Pool{
+	New: func() any {
+		return &gssForestNodeSlab{}
+	},
+}
+
+// gssForestNodeSlab batch-allocates gssForestNodes so the forest doesn't pay one
+// heap allocation per coalesced (state, byteOffset) node — the C GSS pools its
+// stack nodes the same way. Nodes must outlive the whole parse (the DAG
+// references them via links), so batches stay live until parseForest returns,
+// then the scratch is cleared and pooled.
 type gssForestNodeSlab struct {
-	buf     []gssForestNode
-	idx     int
-	linkBuf []gssLink
-	linkIdx int
+	nodeBatches [][]gssForestNode
+	nodeBatch   int
+	nodeIdx     int
+	linkBatches [][]gssLink
+	linkBatch   int
+	linkIdx     int
+}
+
+func acquireGSSForestNodeSlab() *gssForestNodeSlab {
+	s := gssForestNodeSlabPool.Get().(*gssForestNodeSlab)
+	s.nodeBatch = 0
+	s.nodeIdx = 0
+	s.linkBatch = 0
+	s.linkIdx = 0
+	return s
+}
+
+func releaseGSSForestNodeSlab(s *gssForestNodeSlab) {
+	if s == nil {
+		return
+	}
+	s.resetForRelease()
+	if s.retainedBytes() > maxRetainedGSSForestScratchBytes {
+		s.nodeBatches = nil
+		s.linkBatches = nil
+	}
+	gssForestNodeSlabPool.Put(s)
 }
 
 func (s *gssForestNodeSlab) alloc(state StateID, byteOffset uint32, score, errorCost int) *gssForestNode {
-	if s.idx >= len(s.buf) {
-		s.buf = make([]gssForestNode, 4096)
-		s.idx = 0
+	if len(s.nodeBatches) == 0 {
+		s.nodeBatches = append(s.nodeBatches, make([]gssForestNode, gssForestNodeBatchCap))
+	} else if s.nodeIdx >= len(s.nodeBatches[s.nodeBatch]) {
+		s.nodeBatch++
+		s.nodeIdx = 0
+		if s.nodeBatch >= len(s.nodeBatches) {
+			s.nodeBatches = append(s.nodeBatches, make([]gssForestNode, gssForestNodeBatchCap))
+		}
 	}
-	n := &s.buf[s.idx]
-	s.idx++
+	n := &s.nodeBatches[s.nodeBatch][s.nodeIdx]
+	s.nodeIdx++
 	n.state = state
 	n.byteOffset = byteOffset
 	n.score = score
@@ -350,20 +392,58 @@ func (s *gssForestNodeSlab) alloc(state StateID, byteOffset uint32, score, error
 	return n
 }
 
-// linkSlice hands out a zero-length, cap-2 slice backed by the shared link
-// buffer. The overwhelming majority of nodes carry 1-2 links, which then append
-// in place with no per-node allocation; a node that exceeds 2 links (rare, the
-// fan-out is capped at forestMaxLinksPerNode) grows off-slab via the normal
-// append, which is harmless — the reserved 2 slots are just left unused.
+// linkSlice hands out a zero-length slice backed by the shared link buffer with
+// enough capacity for the capped forest fan-out. The pooled slab makes this a
+// retained scratch cost and avoids per-node append growth on ambiguous states.
 func (s *gssForestNodeSlab) linkSlice() []gssLink {
-	const initCap = 2
-	if s.linkIdx+initCap > len(s.linkBuf) {
-		s.linkBuf = make([]gssLink, 8192)
+	const initCap = forestMaxLinksPerNode
+	if len(s.linkBatches) == 0 {
+		s.linkBatches = append(s.linkBatches, make([]gssLink, gssForestLinkBatchCap))
+	} else if s.linkIdx+initCap > len(s.linkBatches[s.linkBatch]) {
+		s.linkBatch++
 		s.linkIdx = 0
+		if s.linkBatch >= len(s.linkBatches) {
+			s.linkBatches = append(s.linkBatches, make([]gssLink, gssForestLinkBatchCap))
+		}
 	}
-	sl := s.linkBuf[s.linkIdx : s.linkIdx : s.linkIdx+initCap]
+	buf := s.linkBatches[s.linkBatch]
+	sl := buf[s.linkIdx : s.linkIdx : s.linkIdx+initCap]
 	s.linkIdx += initCap
 	return sl
+}
+
+func (s *gssForestNodeSlab) resetForRelease() {
+	for i := 0; i <= s.nodeBatch && i < len(s.nodeBatches); i++ {
+		used := len(s.nodeBatches[i])
+		if i == s.nodeBatch {
+			used = s.nodeIdx
+		}
+		clear(s.nodeBatches[i][:used])
+	}
+	for i := 0; i <= s.linkBatch && i < len(s.linkBatches); i++ {
+		used := len(s.linkBatches[i])
+		if i == s.linkBatch {
+			used = s.linkIdx
+		}
+		clear(s.linkBatches[i][:used])
+	}
+	s.nodeBatch = 0
+	s.nodeIdx = 0
+	s.linkBatch = 0
+	s.linkIdx = 0
+}
+
+func (s *gssForestNodeSlab) retainedBytes() int {
+	total := 0
+	nodeSize := int(unsafe.Sizeof(gssForestNode{}))
+	linkSize := int(unsafe.Sizeof(gssLink{}))
+	for _, batch := range s.nodeBatches {
+		total += cap(batch) * nodeSize
+	}
+	for _, batch := range s.linkBatches {
+		total += cap(batch) * linkSize
+	}
+	return total
 }
 
 // parseForest runs the GSS-forest GLR algorithm end to end: coalesce by
@@ -400,7 +480,8 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 	frontier := []*gssForestNode{start}
 	glrStates := make([]StateID, 0, 16)
 	reducer := &forestReducer{}
-	slab := &gssForestNodeSlab{}
+	slab := acquireGSSForestNodeSlab()
+	defer releaseGSSForestNodeSlab(slab)
 
 	// Per-step scratch reused across every token (cleared, not reallocated): the
 	// allocation/GC of fresh maps+slices each step dominated the profile.

@@ -88,3 +88,28 @@ func TestCoalesceForestSharesNode(t *testing.T) {
 		t.Fatal("distinct (state,byteOffset) coalesced into the same node")
 	}
 }
+
+func TestGSSForestNodeSlabReleaseClearsPointers(t *testing.T) {
+	slab := &gssForestNodeSlab{}
+	base := slab.alloc(1, 0, 0, 0)
+	node := slab.alloc(2, 1, 0, 0)
+	nodeLinkStart := slab.linkIdx - forestMaxLinksPerNode
+	node.links = append(node.links, gssLink{
+		prev:    base,
+		subtree: stackEntry{state: 3},
+	})
+
+	if len(slab.nodeBatches) == 0 || len(slab.linkBatches) == 0 {
+		t.Fatal("expected slab batches to be allocated")
+	}
+	if got := slab.linkBatches[0][nodeLinkStart].prev; got != base {
+		t.Fatalf("test setup failed: link batch prev = %p, want %p", got, base)
+	}
+	slab.resetForRelease()
+	if got := slab.nodeBatches[0][0].links; got != nil {
+		t.Fatalf("node batch retained stale links slice: %v", got)
+	}
+	if got := slab.linkBatches[0][nodeLinkStart].prev; got != nil {
+		t.Fatalf("link batch retained stale prev pointer: %p", got)
+	}
+}
