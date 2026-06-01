@@ -3832,6 +3832,16 @@ func rustRepetitionShiftConflictChoice(lang *Language, tok Token, state StateID,
 		default:
 			return ParseAction{}, false
 		}
+	case 12:
+		switch {
+		case symbolHasName(lang, tok.Symbol, ";"):
+		default:
+			return ParseAction{}, false
+		}
+	case 193:
+		if !symbolHasName(lang, tok.Symbol, "..") || !rustAllReducesHaveSymbol(lang, actions, "_non_special_token_repeat1") {
+			return ParseAction{}, false
+		}
 	case 83:
 		// delim_token_tree_repeat1 — macro token-tree contents (`foo!( … )`).
 		// Every continuation token continues the tree (repetition shift); the
@@ -3856,12 +3866,16 @@ func rustRepetitionShiftConflictChoice(lang *Language, tok Token, state StateID,
 // conflict reduces delim_token_tree_repeat1 (and at least one reduce exists).
 // It scopes the state-83 fork collapse to the macro token-tree repetition.
 func rustAllReducesAreDelimTokenTree(lang *Language, actions []ParseAction) bool {
+	return rustAllReducesHaveSymbol(lang, actions, "delim_token_tree_repeat1")
+}
+
+func rustAllReducesHaveSymbol(lang *Language, actions []ParseAction, name string) bool {
 	found := false
 	for _, act := range actions {
 		if act.Type != ParseActionReduce {
 			continue
 		}
-		if !symbolHasName(lang, act.Symbol, "delim_token_tree_repeat1") {
+		if !symbolHasName(lang, act.Symbol, name) {
 			return false
 		}
 		found = true

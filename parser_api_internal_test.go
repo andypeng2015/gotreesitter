@@ -160,6 +160,40 @@ func TestPythonRepetitionShiftConflictChoiceRejectsOtherState(t *testing.T) {
 	}
 }
 
+func TestRustRepetitionShiftConflictChoiceAllowsSourceFileRepeat(t *testing.T) {
+	lang := &Language{SymbolNames: []string{"end", "identifier", ";", "..", "source_file_repeat1", "_non_special_token_repeat1"}}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 4, ChildCount: 2},
+		{Type: ParseActionShift, State: 535, Repetition: true},
+	}
+
+	for _, sym := range []Symbol{2} {
+		chosen, ok := rustRepetitionShiftConflictChoice(lang, Token{Symbol: sym}, 12, actions)
+		if !ok {
+			t.Fatalf("rustRepetitionShiftConflictChoice(%q) = false, want true", lang.SymbolNames[sym])
+		}
+		if chosen.Type != ParseActionShift || chosen.State != 535 || !chosen.Repetition {
+			t.Fatalf("rustRepetitionShiftConflictChoice(%q) picked %+v, want repetition shift", lang.SymbolNames[sym], chosen)
+		}
+	}
+}
+
+func TestRustRepetitionShiftConflictChoiceAllowsNonSpecialTokenRepeat(t *testing.T) {
+	lang := &Language{SymbolNames: []string{"end", "..", "_non_special_token_repeat1"}}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 2, ChildCount: 2},
+		{Type: ParseActionShift, State: 232, Repetition: true},
+	}
+
+	chosen, ok := rustRepetitionShiftConflictChoice(lang, Token{Symbol: 1}, 193, actions)
+	if !ok {
+		t.Fatal("rustRepetitionShiftConflictChoice = false, want true")
+	}
+	if chosen.Type != ParseActionShift || chosen.State != 232 || !chosen.Repetition {
+		t.Fatalf("rustRepetitionShiftConflictChoice picked %+v, want repetition shift", chosen)
+	}
+}
+
 func TestTSXRepetitionReduceConflictChoiceAllowsHotRepeats(t *testing.T) {
 	lang := &Language{SymbolNames: []string{"end", "identifier", ";", "_jsx_start_opening_element_repeat1", "object_type_repeat1", "const", "let", "program_repeat1"}}
 	for _, tc := range []struct {
