@@ -107,9 +107,26 @@ func (p *Parser) tryForestFastPath(source []byte) *Tree {
 		return nil // did not consume the whole input; let production recover it
 	}
 	tree := newTreeWithArenas(root, source, p.language, arena, nil)
-	tree.incrementalReuseDisabled = true
+	if !languageAllowsForestIncrementalPath(p.language.Name) {
+		tree.incrementalReuseDisabled = true
+	}
 	p.normalizeReturnedTree(rawRootOrNil(tree), source)
 	return tree
+}
+
+// languageAllowsForestIncrementalPath reports forest-default languages whose
+// forest-built trees are safe to feed into the normal incremental parser path.
+// Some languages still report subtree reuse as unsupported there, but entering
+// that path can be much faster than forcing a fresh forest full parse. Languages
+// stay disabled until the edited real-corpus matrix proves the path is correct
+// and faster than fresh-parse fallback.
+func languageAllowsForestIncrementalPath(name string) bool {
+	switch name {
+	case "erlang":
+		return true
+	default:
+		return false
+	}
 }
 
 // gssLink is one alternative predecessor in the forest DAG: the subtree consumed
@@ -469,13 +486,18 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 						if reducedEnd > 0 {
 							parentEnd = (*Node)(children[reducedEnd-1].node).endByte
 						}
+						parent.preGotoState = popTo.state
+						parent.parseState = gotoState
 						// Subtree score = this production's dynamic precedence +
 						// the children's accumulated scores.
 						top := coalesceForest(curIndex, slab, gotoState, parentEnd, popTo,
 							stackEntry{node: unsafe.Pointer(parent), state: gotoState, kind: stackEntryKindNode},
 							int(act.DynamicPrecedence)+childScore, popTo.errorCost)
 						for _, ex := range children[reducedEnd:] {
-							exEnd := (*Node)(ex.node).endByte
+							extra := (*Node)(ex.node)
+							extra.parseState = gotoState
+							nodeBumpEquivVersion(extra)
+							exEnd := extra.endByte
 							top = coalesceForest(curIndex, slab, gotoState, exEnd, top,
 								stackEntry{node: ex.node, state: gotoState, kind: stackEntryKindNode},
 								0, top.errorCost)
@@ -494,6 +516,8 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 						leaf.setExtra(true)
 						target = extraShiftTargetState(node.state, act)
 					}
+					leaf.preGotoState = node.state
+					leaf.parseState = target
 					before := len(nextIndex)
 					sh := coalesceForest(nextIndex, slab, target, tok.EndByte, node,
 						stackEntry{node: unsafe.Pointer(leaf), state: target, kind: stackEntryKindNode},

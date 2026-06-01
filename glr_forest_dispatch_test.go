@@ -65,7 +65,7 @@ func TestForestDispatchParity(t *testing.T) {
 	gts.SetGLRForestEnabled(true)
 }
 
-func TestForestTreeIncrementalEditFallsBackToFreshParse(t *testing.T) {
+func TestForestTreeIncrementalEditFallsBackWhenReuseDisabled(t *testing.T) {
 	gts.SetGLRForestEnabled(true)
 	defer gts.SetGLRForestEnabled(true)
 
@@ -103,7 +103,7 @@ func TestForestTreeIncrementalEditFallsBackToFreshParse(t *testing.T) {
 	}
 	defer newTree.Release()
 	if got, want := newTree.RootNode().EndByte(), uint32(len(edited)); got != want {
-		t.Fatalf("incremental fallback root end = %d, want %d", got, want)
+		t.Fatalf("incremental root end = %d, want %d", got, want)
 	}
 	if !profile.ReuseUnsupported || profile.ReuseUnsupportedReason == "" {
 		t.Fatalf("profile reuse unsupported = %v reason %q, want forest fallback",
