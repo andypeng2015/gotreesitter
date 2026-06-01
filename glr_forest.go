@@ -300,6 +300,29 @@ func coalesceForest(index *gssForestIndex, slab *gssForestNodeSlab, state StateI
 	return node
 }
 
+const forestGotoCacheSize = 8
+
+type forestGotoCache struct {
+	states  [forestGotoCacheSize]StateID
+	targets [forestGotoCacheSize]StateID
+	used    uint8
+}
+
+func (c *forestGotoCache) lookup(p *Parser, state StateID, sym Symbol) StateID {
+	for i := 0; i < int(c.used); i++ {
+		if c.states[i] == state {
+			return c.targets[i]
+		}
+	}
+	target := p.lookupGoto(state, sym)
+	if c.used < forestGotoCacheSize {
+		c.states[c.used] = state
+		c.targets[c.used] = target
+		c.used++
+	}
+	return target
+}
+
 func forestCoalesceWouldDropForCap(index *gssForestIndex, state StateID, byteOffset uint32, score, errorCost int) bool {
 	if index == nil {
 		return false
@@ -669,8 +692,9 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 				switch act.Type {
 				case ParseActionReduce:
 					cc := int(act.ChildCount)
+					var gotoCache forestGotoCache
 					reducer.reduce(node, cc, func(children []stackEntry, childScore int, popTo *gssForestNode) {
-						gotoState := p.lookupGoto(popTo.state, act.Symbol)
+						gotoState := gotoCache.lookup(p, popTo.state, act.Symbol)
 						if gotoState == 0 {
 							if perfCountersEnabled {
 								perfRecordForestReduceGotoMiss()
@@ -860,6 +884,9 @@ func (fr *forestReducer) reduce(node *gssForestNode, childCount int, visit func(
 		}
 		return
 	}
+	if fr.reduceForkedLinearSinglePath(node, childCount, visit) {
+		return
+	}
 	if fr.reduceLinearSinglePath(node, childCount, visit) {
 		return
 	}
@@ -959,6 +986,73 @@ func (fr *forestReducer) reduceForkedLinearNoExtras(node *gssForestNode, childCo
 		visit(fr.rev, score, cur)
 	}
 	return true
+}
+
+func (fr *forestReducer) reduceForkedLinearSinglePath(node *gssForestNode, childCount int, visit func(children []stackEntry, childScore int, popTo *gssForestNode)) bool {
+	if childCount <= 0 || node == nil || len(node.links) <= 1 {
+		return false
+	}
+	maxPathLen := 0
+	for i := range node.links {
+		pathLen, ok := validateLinearReducePathFromLink(node.links[i], childCount)
+		if !ok {
+			return false
+		}
+		if pathLen > maxPathLen {
+			maxPathLen = pathLen
+		}
+	}
+	if cap(fr.path) < maxPathLen {
+		fr.path = make([]stackEntry, 0, maxPathLen)
+	}
+	if cap(fr.rev) < maxPathLen {
+		fr.rev = make([]stackEntry, maxPathLen)
+	}
+	for i := range node.links {
+		fr.emitLinearReducePathFromLink(node.links[i], childCount, visit)
+	}
+	return true
+}
+
+func validateLinearReducePathFromLink(link gssLink, childCount int) (int, bool) {
+	remaining := childCount
+	pathLen := 0
+	for {
+		pathLen++
+		if !stackEntryNodeIsExtra(link.subtree) {
+			remaining--
+			if remaining == 0 {
+				return pathLen, true
+			}
+		}
+		cur := link.prev
+		if cur == nil || len(cur.links) != 1 {
+			return 0, false
+		}
+		link = cur.links[0]
+	}
+}
+
+func (fr *forestReducer) emitLinearReducePathFromLink(link gssLink, childCount int, visit func(children []stackEntry, childScore int, popTo *gssForestNode)) {
+	fr.path = fr.path[:0]
+	remaining := childCount
+	score := 0
+	for {
+		fr.path = append(fr.path, link.subtree)
+		score += link.score
+		if !stackEntryNodeIsExtra(link.subtree) {
+			remaining--
+			if remaining == 0 {
+				fr.rev = fr.rev[:len(fr.path)]
+				for i := range fr.path {
+					fr.rev[len(fr.path)-1-i] = fr.path[i]
+				}
+				visit(fr.rev, score, link.prev)
+				return
+			}
+		}
+		link = link.prev.links[0]
+	}
 }
 
 func (fr *forestReducer) reduceLinearSinglePath(node *gssForestNode, childCount int, visit func(children []stackEntry, childScore int, popTo *gssForestNode)) bool {

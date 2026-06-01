@@ -84,6 +84,26 @@ func TestReduceOverForestForkedNode(t *testing.T) {
 	}
 }
 
+func TestReduceOverForestForkedLinearWithExtra(t *testing.T) {
+	extra := &Node{}
+	extra.setExtra(true)
+	n0 := &gssForestNode{state: 0}
+	n1 := &gssForestNode{state: 1, links: []gssLink{{prev: n0, subtree: stackEntry{state: 10}}}}
+	n2 := &gssForestNode{state: 2, links: []gssLink{{prev: n1, subtree: stackEntry{state: 11}}}}
+	n3 := &gssForestNode{state: 3, links: []gssLink{{prev: n2, subtree: newStackEntryNode(90, extra)}}}
+	n2a := &gssForestNode{state: 20, links: []gssLink{{prev: n1, subtree: stackEntry{state: 21}}}}
+	n4 := &gssForestNode{state: 4, links: []gssLink{
+		{prev: n3, subtree: stackEntry{state: 12}},
+		{prev: n2a, subtree: stackEntry{state: 22}},
+	}}
+
+	got := pathsOf(n4, 2)
+	want := []string{"[11 90 12]|1", "[21 22]|1"}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("forked linear with extra: got %v want %v", got, want)
+	}
+}
+
 // TestCoalesceForestSharesNode proves coalesceForest dedups by (state,byteOffset)
 // into one node with multiple links — the O(1), no-deep-compare mechanism.
 func TestCoalesceForestSharesNode(t *testing.T) {
