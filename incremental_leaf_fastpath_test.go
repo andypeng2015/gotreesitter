@@ -315,7 +315,7 @@ func TestReuseTreeWithNewSourceKeepsPrimaryArena(t *testing.T) {
 
 	arena := tree.arena
 	refsBefore := arena.refs.Load()
-	reused := reuseTreeWithNewSource(tree, newSource, tree.lastEditedLeaf)
+	reused := reuseTreeWithNewSource(tree, newSource, tree.lastEditedLeaf, false)
 	if reused == nil {
 		t.Fatal("reuseTreeWithNewSource returned nil")
 	}

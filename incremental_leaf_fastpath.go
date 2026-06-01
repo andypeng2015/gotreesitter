@@ -29,7 +29,7 @@ func (p *Parser) tryTokenInvariantLeafEdit(source []byte, oldTree *Tree, ts Toke
 		start = time.Now()
 	}
 	if p.canReuseLanguageTextInvariantNode(source, oldTree, node, edit) {
-		tree := reuseTreeWithNewSource(oldTree, source, node)
+		tree := reuseTreeWithNewSource(oldTree, source, node, true)
 		if tree == nil || tree.root == nil {
 			return nil, false
 		}
@@ -65,7 +65,7 @@ func (p *Parser) tryTokenInvariantLeafEdit(source []byte, oldTree *Tree, ts Toke
 	if !ok || tok.Symbol != leaf.symbol || tok.StartByte != leaf.startByte || tok.EndByte != leaf.endByte {
 		return nil, false
 	}
-	tree := reuseTreeWithNewSource(oldTree, source, leaf)
+	tree := reuseTreeWithNewSource(oldTree, source, leaf, false)
 	if tree == nil || tree.root == nil {
 		return nil, false
 	}
@@ -534,7 +534,7 @@ func restoreDFATokenSourceState(dts *dfaTokenSource, state dfaTokenSourceStateSn
 	}
 }
 
-func reuseTreeWithNewSource(oldTree *Tree, source []byte, dirtyLeaf *Node) *Tree {
+func reuseTreeWithNewSource(oldTree *Tree, source []byte, dirtyNode *Node, clearSubtree bool) *Tree {
 	if oldTree == nil || oldTree.root == nil {
 		return nil
 	}
@@ -543,7 +543,11 @@ func reuseTreeWithNewSource(oldTree *Tree, source []byte, dirtyLeaf *Node) *Tree
 		arena.Retain()
 	}
 	borrowed := retainBorrowedArenasForReusedTree(oldTree, arena)
-	clearDirtySubtreeAndPath(dirtyLeaf)
+	if clearSubtree {
+		clearDirtySubtreeAndPath(dirtyNode)
+	} else {
+		clearDirtyPathToRoot(dirtyNode)
+	}
 	return newTreeWithUniqueArenas(oldTree.root, source, oldTree.language, arena, borrowed)
 }
 
