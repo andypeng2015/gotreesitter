@@ -772,7 +772,7 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 				case ParseActionReduce:
 					cc := int(act.ChildCount)
 					var gotoCache forestGotoCache
-					reducer.reduce(node, cc, func(children []stackEntry, childScore int, popTo *gssForestNode) {
+					reducer.reduce(node, cc, func(children []stackEntry, childScore int, popTo *gssForestNode, noExtras bool) {
 						gotoState := gotoCache.lookup(p, popTo.state, act.Symbol)
 						if gotoState == 0 {
 							if perfCountersEnabled {
@@ -792,7 +792,10 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 						// duration of this visit (no re-entry until we return), so the
 						// node-builder and span helpers read it in place — no per-reduce
 						// copy. window = children[0:reducedEnd] (trailing extras trimmed).
-						reducedEnd := reducedEndBeforeTrailingExtras(children)
+						reducedEnd := len(children)
+						if !noExtras {
+							reducedEnd = reducedEndBeforeTrailingExtras(children)
+						}
 						score := int(act.DynamicPrecedence) + childScore
 						// If the target forest node is already at its fan-out cap and
 						// this reduction cannot displace an existing alternative, avoid
@@ -917,8 +920,12 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 // a bounded DFS (depth == childCount); ambiguous grammars are bounded upstream by
 // error_cost pruning + the per-(state,position) link cap, mirroring tree-sitter C.
 func reduceOverForest(node *gssForestNode, childCount int, visit func(children []stackEntry, childScore int, popTo *gssForestNode)) {
-	(&forestReducer{}).reduce(node, childCount, visit)
+	(&forestReducer{}).reduce(node, childCount, func(children []stackEntry, childScore int, popTo *gssForestNode, _ bool) {
+		visit(children, childScore, popTo)
+	})
 }
+
+type forestReduceVisitor func(children []stackEntry, childScore int, popTo *gssForestNode, noExtras bool)
 
 // forestReducer holds the two scratch slices the reduce DFS reuses across every
 // call within one parse, so the hot path allocates nothing: `path` collects the
@@ -934,7 +941,7 @@ type forestReducer struct {
 // any interior extras in the window (they do not count toward childCount —
 // mirroring reduceWindowFromGSS), and calls visit once per surviving path with
 // the children left-to-right and popTo = the predecessor the reduction pops to.
-func (fr *forestReducer) reduce(node *gssForestNode, childCount int, visit func(children []stackEntry, childScore int, popTo *gssForestNode)) {
+func (fr *forestReducer) reduce(node *gssForestNode, childCount int, visit forestReduceVisitor) {
 	if node == nil {
 		return
 	}
@@ -945,7 +952,7 @@ func (fr *forestReducer) reduce(node *gssForestNode, childCount int, visit func(
 		if perfCountersEnabled {
 			perfRecordForestReduceZero()
 		}
-		visit(nil, 0, node)
+		visit(nil, 0, node, true)
 		return
 	}
 	if childCount == 1 && fr.reduceOneNoExtras(node, visit) {
@@ -982,7 +989,7 @@ func (fr *forestReducer) reduce(node *gssForestNode, childCount int, visit func(
 	fr.dfs(node, childCount, 0, visit)
 }
 
-func (fr *forestReducer) reduceOneNoExtras(node *gssForestNode, visit func(children []stackEntry, childScore int, popTo *gssForestNode)) bool {
+func (fr *forestReducer) reduceOneNoExtras(node *gssForestNode, visit forestReduceVisitor) bool {
 	if node == nil {
 		return true
 	}
@@ -999,12 +1006,12 @@ func (fr *forestReducer) reduceOneNoExtras(node *gssForestNode, visit func(child
 	for i := range node.links {
 		link := node.links[i]
 		fr.rev[0] = link.subtree
-		visit(fr.rev, link.score, link.prev)
+		visit(fr.rev, link.score, link.prev, true)
 	}
 	return true
 }
 
-func (fr *forestReducer) reduceLinearNoExtras(node *gssForestNode, childCount int, visit func(children []stackEntry, childScore int, popTo *gssForestNode)) bool {
+func (fr *forestReducer) reduceLinearNoExtras(node *gssForestNode, childCount int, visit forestReduceVisitor) bool {
 	if childCount <= 0 {
 		return false
 	}
@@ -1027,11 +1034,11 @@ func (fr *forestReducer) reduceLinearNoExtras(node *gssForestNode, childCount in
 		score += link.score
 		cur = link.prev
 	}
-	visit(fr.rev, score, cur)
+	visit(fr.rev, score, cur, true)
 	return true
 }
 
-func (fr *forestReducer) reduceForkedLinearNoExtras(node *gssForestNode, childCount int, visit func(children []stackEntry, childScore int, popTo *gssForestNode)) bool {
+func (fr *forestReducer) reduceForkedLinearNoExtras(node *gssForestNode, childCount int, visit forestReduceVisitor) bool {
 	if childCount <= 1 || node == nil || len(node.links) <= 1 {
 		return false
 	}
@@ -1068,12 +1075,12 @@ func (fr *forestReducer) reduceForkedLinearNoExtras(node *gssForestNode, childCo
 			score += next.score
 			cur = next.prev
 		}
-		visit(fr.rev, score, cur)
+		visit(fr.rev, score, cur, true)
 	}
 	return true
 }
 
-func (fr *forestReducer) reduceForkedLinearSinglePath(node *gssForestNode, childCount int, visit func(children []stackEntry, childScore int, popTo *gssForestNode)) bool {
+func (fr *forestReducer) reduceForkedLinearSinglePath(node *gssForestNode, childCount int, visit forestReduceVisitor) bool {
 	if childCount <= 0 || node == nil || len(node.links) <= 1 {
 		return false
 	}
@@ -1118,7 +1125,7 @@ func validateLinearReducePathFromLink(link gssLink, childCount int) (int, bool) 
 	}
 }
 
-func (fr *forestReducer) emitLinearReducePathFromLink(link gssLink, childCount int, visit func(children []stackEntry, childScore int, popTo *gssForestNode)) {
+func (fr *forestReducer) emitLinearReducePathFromLink(link gssLink, childCount int, visit forestReduceVisitor) {
 	fr.path = fr.path[:0]
 	remaining := childCount
 	score := 0
@@ -1132,7 +1139,7 @@ func (fr *forestReducer) emitLinearReducePathFromLink(link gssLink, childCount i
 				for i := range fr.path {
 					fr.rev[len(fr.path)-1-i] = fr.path[i]
 				}
-				visit(fr.rev, score, link.prev)
+				visit(fr.rev, score, link.prev, false)
 				return
 			}
 		}
@@ -1140,7 +1147,7 @@ func (fr *forestReducer) emitLinearReducePathFromLink(link gssLink, childCount i
 	}
 }
 
-func (fr *forestReducer) reduceLinearForkedSinglePath(node *gssForestNode, childCount int, visit func(children []stackEntry, childScore int, popTo *gssForestNode)) bool {
+func (fr *forestReducer) reduceLinearForkedSinglePath(node *gssForestNode, childCount int, visit forestReduceVisitor) bool {
 	if childCount <= 0 || node == nil || len(node.links) != 1 {
 		return false
 	}
@@ -1185,7 +1192,7 @@ func (fr *forestReducer) reduceLinearForkedSinglePath(node *gssForestNode, child
 	return true
 }
 
-func (fr *forestReducer) emitLinearReducePathFromLinkWithPrefix(link gssLink, childCount int, branchPathLen, prefixLen int, score int, visit func(children []stackEntry, childScore int, popTo *gssForestNode)) {
+func (fr *forestReducer) emitLinearReducePathFromLinkWithPrefix(link gssLink, childCount int, branchPathLen, prefixLen int, score int, visit forestReduceVisitor) {
 	totalLen := prefixLen + branchPathLen
 	fr.rev = fr.rev[:totalLen]
 	for i := 0; i < prefixLen; i++ {
@@ -1200,7 +1207,7 @@ func (fr *forestReducer) emitLinearReducePathFromLinkWithPrefix(link gssLink, ch
 		if !forestStackEntryIsExtra(link.subtree) {
 			remaining--
 			if remaining == 0 {
-				visit(fr.rev, score, link.prev)
+				visit(fr.rev, score, link.prev, false)
 				return
 			}
 		}
@@ -1208,7 +1215,7 @@ func (fr *forestReducer) emitLinearReducePathFromLinkWithPrefix(link gssLink, ch
 	}
 }
 
-func (fr *forestReducer) reduceLinearSinglePath(node *gssForestNode, childCount int, visit func(children []stackEntry, childScore int, popTo *gssForestNode)) bool {
+func (fr *forestReducer) reduceLinearSinglePath(node *gssForestNode, childCount int, visit forestReduceVisitor) bool {
 	if childCount <= 0 {
 		return false
 	}
@@ -1234,7 +1241,7 @@ func (fr *forestReducer) reduceLinearSinglePath(node *gssForestNode, childCount 
 				for i := range fr.path {
 					fr.rev[len(fr.path)-1-i] = fr.path[i]
 				}
-				visit(fr.rev, score, link.prev)
+				visit(fr.rev, score, link.prev, false)
 				return true
 			}
 		}
@@ -1243,7 +1250,7 @@ func (fr *forestReducer) reduceLinearSinglePath(node *gssForestNode, childCount 
 	return false
 }
 
-func (fr *forestReducer) reduceNoExtrasDFS(node *gssForestNode, childCount int, visit func(children []stackEntry, childScore int, popTo *gssForestNode)) bool {
+func (fr *forestReducer) reduceNoExtrasDFS(node *gssForestNode, childCount int, visit forestReduceVisitor) bool {
 	if childCount <= 0 || node == nil || int(node.noExtraDepth) < childCount {
 		return false
 	}
@@ -1265,7 +1272,7 @@ func (fr *forestReducer) reduceNoExtrasDFS(node *gssForestNode, childCount int, 
 	return true
 }
 
-func (fr *forestReducer) dfsNoExtras2(cur *gssForestNode, score int, visit func(children []stackEntry, childScore int, popTo *gssForestNode)) {
+func (fr *forestReducer) dfsNoExtras2(cur *gssForestNode, score int, visit forestReduceVisitor) {
 	for i := range cur.links {
 		l0 := cur.links[i]
 		fr.rev[1] = l0.subtree
@@ -1274,12 +1281,12 @@ func (fr *forestReducer) dfsNoExtras2(cur *gssForestNode, score int, visit func(
 		for j := range n1.links {
 			l1 := n1.links[j]
 			fr.rev[0] = l1.subtree
-			visit(fr.rev, score0+l1.score, l1.prev)
+			visit(fr.rev, score0+l1.score, l1.prev, true)
 		}
 	}
 }
 
-func (fr *forestReducer) dfsNoExtras3(cur *gssForestNode, score int, visit func(children []stackEntry, childScore int, popTo *gssForestNode)) {
+func (fr *forestReducer) dfsNoExtras3(cur *gssForestNode, score int, visit forestReduceVisitor) {
 	for i := range cur.links {
 		l0 := cur.links[i]
 		fr.rev[2] = l0.subtree
@@ -1293,13 +1300,13 @@ func (fr *forestReducer) dfsNoExtras3(cur *gssForestNode, score int, visit func(
 			for k := range n2.links {
 				l2 := n2.links[k]
 				fr.rev[0] = l2.subtree
-				visit(fr.rev, score1+l2.score, l2.prev)
+				visit(fr.rev, score1+l2.score, l2.prev, true)
 			}
 		}
 	}
 }
 
-func (fr *forestReducer) dfsNoExtras4(cur *gssForestNode, score int, visit func(children []stackEntry, childScore int, popTo *gssForestNode)) {
+func (fr *forestReducer) dfsNoExtras4(cur *gssForestNode, score int, visit forestReduceVisitor) {
 	for i := range cur.links {
 		l0 := cur.links[i]
 		fr.rev[3] = l0.subtree
@@ -1318,28 +1325,28 @@ func (fr *forestReducer) dfsNoExtras4(cur *gssForestNode, score int, visit func(
 				for m := range n3.links {
 					l3 := n3.links[m]
 					fr.rev[0] = l3.subtree
-					visit(fr.rev, score2+l3.score, l3.prev)
+					visit(fr.rev, score2+l3.score, l3.prev, true)
 				}
 			}
 		}
 	}
 }
 
-func (fr *forestReducer) dfsNoExtras(cur *gssForestNode, remaining, score int, visit func(children []stackEntry, childScore int, popTo *gssForestNode)) {
+func (fr *forestReducer) dfsNoExtras(cur *gssForestNode, remaining, score int, visit forestReduceVisitor) {
 	out := remaining - 1
 	for i := range cur.links {
 		link := cur.links[i]
 		fr.rev[out] = link.subtree
 		nextScore := score + link.score
 		if remaining == 1 {
-			visit(fr.rev, nextScore, link.prev)
+			visit(fr.rev, nextScore, link.prev, true)
 			continue
 		}
 		fr.dfsNoExtras(link.prev, remaining-1, nextScore, visit)
 	}
 }
 
-func (fr *forestReducer) dfs(cur *gssForestNode, remaining, score int, visit func(children []stackEntry, childScore int, popTo *gssForestNode)) {
+func (fr *forestReducer) dfs(cur *gssForestNode, remaining, score int, visit forestReduceVisitor) {
 	if cur == nil {
 		return
 	}
@@ -1367,7 +1374,7 @@ func (fr *forestReducer) dfs(cur *gssForestNode, remaining, score int, visit fun
 			for j := range fr.path {
 				fr.rev[len(fr.path)-1-j] = fr.path[j]
 			}
-			visit(fr.rev, score+link.score, link.prev)
+			visit(fr.rev, score+link.score, link.prev, false)
 			continue
 		}
 		fr.dfs(link.prev, rem, score+link.score, visit)
