@@ -477,7 +477,7 @@ func shouldRepeatExternalScannerFullParse(lang *Language, tree *Tree) bool {
 	if lang == nil || lang.ExternalScanner == nil || tree == nil {
 		return false
 	}
-	if lang.Name == "python" {
+	if lang.Name == "python" || lang.Name == "dart" {
 		return false
 	}
 	// Skip the redundant re-parse when the first attempt already produced a

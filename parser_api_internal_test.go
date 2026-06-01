@@ -645,6 +645,28 @@ func TestCppAcceptedErrorRetryPreservesTruncatedMergeRetry(t *testing.T) {
 	}
 }
 
+func TestShouldRepeatExternalScannerFullParseSkipsDart(t *testing.T) {
+	tree := &Tree{
+		root: &Node{
+			flags: nodeFlagHasError,
+		},
+		parseRuntime: ParseRuntime{
+			StopReason: ParseStopAccepted,
+		},
+	}
+	scanner := parserTestUnsafeExternalScanner{}
+
+	if shouldRepeatExternalScannerFullParse(&Language{Name: "dart", ExternalScanner: scanner}, tree) {
+		t.Fatal("shouldRepeatExternalScannerFullParse(dart accepted error) = true, want false")
+	}
+	if shouldRepeatExternalScannerFullParse(&Language{Name: "python", ExternalScanner: scanner}, tree) {
+		t.Fatal("shouldRepeatExternalScannerFullParse(python accepted error) = true, want false")
+	}
+	if !shouldRepeatExternalScannerFullParse(&Language{Name: "ruby", ExternalScanner: scanner}, tree) {
+		t.Fatal("shouldRepeatExternalScannerFullParse(ruby accepted error) = false, want true")
+	}
+}
+
 func TestRetryFullParseStopsSchedulingRetriesAfterTimeout(t *testing.T) {
 	parser := &Parser{timeoutMicros: 500}
 	source := []byte("1+")
