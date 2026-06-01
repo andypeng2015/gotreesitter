@@ -22,6 +22,10 @@ type reuseCursor struct {
 	topLevelParent *Node
 	topLevelIndex  int
 	topLevelEnd    int
+	// End byte of the first edited top-level child. CSS reparses this prefix
+	// before considering sibling reuse because selector/declaration scanner
+	// context is too sensitive for leaf reuse inside the edited rule.
+	topLevelResumeByte uint32
 
 	cachedStart      uint32
 	cachedStartValid bool
@@ -35,6 +39,7 @@ type reuseCursor struct {
 	rejectRootNonLeafChanged      uint64
 	rejectLargeNonLeaf            uint64
 	forestFastPath                bool
+	languageName                  string // cached for language-specific reuse safety policies
 }
 
 // reuseScratch holds reusable buffers for incremental reuse traversal.
@@ -77,12 +82,17 @@ func (c *reuseCursor) reset(oldTree *Tree, source []byte, scratch *reuseScratch)
 	c.rejectRootNonLeafChanged = 0
 	c.rejectLargeNonLeaf = 0
 	c.forestFastPath = oldTree.forestFastPath
+	c.languageName = ""
+	if oldTree.language != nil {
+		c.languageName = oldTree.language.Name
+	}
 
 	root := oldTree.RootNode()
 	c.stack = append(c.stack, reuseFrame{node: root})
 	c.topLevelParent = nil
 	c.topLevelIndex = 0
 	c.topLevelEnd = 0
+	c.topLevelResumeByte = 0
 	childCount := nodeChildCountNoMaterialize(root)
 	if c.hasEdits && root != nil && childCount > 0 {
 		firstAffected := -1
@@ -100,6 +110,9 @@ func (c *reuseCursor) reset(oldTree *Tree, source []byte, scratch *reuseScratch)
 			c.topLevelParent = root
 			c.topLevelIndex = firstAffected + 1
 			c.topLevelEnd = childCount
+			if entry, ok := nodeChildEntryAtNoMaterialize(root, firstAffected); ok {
+				c.topLevelResumeByte = stackEntryNodeEndByte(entry)
+			}
 		}
 	}
 	return c
@@ -123,6 +136,7 @@ func (c *reuseCursor) releaseNodeRefs() {
 	c.oldSource = nil
 	c.newSource = nil
 	c.forestFastPath = false
+	c.languageName = ""
 	if cap(c.stack) > 0 {
 		clear(c.stack[:cap(c.stack)])
 		c.stack = c.stack[:0]
@@ -243,6 +257,10 @@ func (c *reuseCursor) reusableIndexedEntry(entry stackEntry) bool {
 	}
 	start := stackEntryNodeStartByte(entry)
 	end := stackEntryNodeEndByte(entry)
+	if c.rejectCSSDirtyTopLevelPrefix(start) {
+		c.rejectDirty++
+		return false
+	}
 	if c.hasEdits && !nodeBytesEqual(start, end, c.oldSource, c.newSource) {
 		c.rejectDirty++
 		return false
@@ -349,6 +367,10 @@ func (c *reuseCursor) advance() *Node {
 			c.rejectOutOfBounds++
 			continue
 		}
+		if c.rejectCSSDirtyTopLevelPrefix(cur.startByte) {
+			c.rejectDirty++
+			continue
+		}
 		if dirtyHere {
 			c.rejectDirty++
 			continue
@@ -386,7 +408,8 @@ func (p *Parser) tryReuseSubtree(s *glrStack, lookahead Token, ts TokenSource, i
 			// Preserve full-root reuse on undo when bytes are identical.
 			if !(n.startByte == 0 &&
 				n.endByte == idx.sourceLen &&
-				nodeBytesEqual(n.startByte, n.endByte, idx.oldSource, idx.newSource)) {
+				nodeBytesEqual(n.startByte, n.endByte, idx.oldSource, idx.newSource)) &&
+				!idx.directForestTopLevelNonLeafReuse(n) {
 				idx.rejectRootNonLeafChanged++
 				continue
 			}
@@ -440,6 +463,28 @@ func (p *Parser) tryReuseSubtree(s *glrStack, lookahead Token, ts TokenSource, i
 	return lookahead, 0, false
 }
 
+func (c *reuseCursor) directForestTopLevelNonLeafReuse(n *Node) bool {
+	return c != nil &&
+		c.forestFastPath &&
+		c.languageName == "css" &&
+		c.topLevelParent != nil &&
+		n != nil &&
+		n.parent == c.topLevelParent &&
+		n.startByte >= c.topLevelResumeByte
+}
+
+// rejectCSSDirtyTopLevelPrefix forces CSS to reparse the first edited rule.
+// Reusing equal leaves inside that dirty top-level rule can feed the external
+// scanner stale selector/declaration context and produce a fresh-tree mismatch.
+func (c *reuseCursor) rejectCSSDirtyTopLevelPrefix(start uint32) bool {
+	return c != nil &&
+		c.forestFastPath &&
+		c.languageName == "css" &&
+		c.topLevelParent != nil &&
+		c.topLevelResumeByte > 0 &&
+		start < c.topLevelResumeByte
+}
+
 func reuseNode(p *Parser, s *glrStack, n *Node, nextState StateID, startState StateID, lookahead Token, ts TokenSource, idx *reuseCursor, entryScratch *glrEntryScratch, gssScratch *gssScratch, checkpoint externalScannerCheckpointRef) (Token, uint32, bool) {
 	if perfCountersEnabled {
 		perfRecordReuseSuccess()
@@ -481,6 +526,10 @@ func reuseNode(p *Parser, s *glrStack, n *Node, nextState StateID, startState St
 			if tok, ok := fastForwardWithExternalScannerCheckpoint(ts, n, checkpoint); ok {
 				return tok, reusedBytes, true
 			}
+		}
+		if stateful, ok := ts.(parserStateTokenSource); ok {
+			stateful.SetParserState(nextState)
+			stateful.SetGLRStates(nil)
 		}
 		return advanceTokenSourceTo(ts, lookahead, n.EndByte()), reusedBytes, true
 	}

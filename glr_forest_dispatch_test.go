@@ -65,7 +65,7 @@ func TestForestDispatchParity(t *testing.T) {
 	gts.SetGLRForestEnabled(true)
 }
 
-func TestForestTreeIncrementalEditFallsBackWhenReuseDisabled(t *testing.T) {
+func TestForestTreeIncrementalEditSupportsCSSReuse(t *testing.T) {
 	gts.SetGLRForestEnabled(true)
 	defer gts.SetGLRForestEnabled(true)
 
@@ -105,9 +105,17 @@ func TestForestTreeIncrementalEditFallsBackWhenReuseDisabled(t *testing.T) {
 	if got, want := newTree.RootNode().EndByte(), uint32(len(edited)); got != want {
 		t.Fatalf("incremental root end = %d, want %d", got, want)
 	}
-	if !profile.ReuseUnsupported || profile.ReuseUnsupportedReason == "" {
-		t.Fatalf("profile reuse unsupported = %v reason %q, want forest fallback",
+	if profile.ReuseUnsupported || profile.ReuseUnsupportedReason != "" {
+		t.Fatalf("profile reuse unsupported = %v reason %q, want CSS reuse path",
 			profile.ReuseUnsupported, profile.ReuseUnsupportedReason)
+	}
+	freshTree, err := parser.Parse(edited)
+	if err != nil {
+		t.Fatalf("fresh parse: %v", err)
+	}
+	defer freshTree.Release()
+	if got, want := newTree.RootNode().SExpr(grm.CssLanguage()), freshTree.RootNode().SExpr(grm.CssLanguage()); got != want {
+		t.Fatalf("incremental CSS tree diverged from fresh parse\n got: %s\nwant: %s", got, want)
 	}
 }
 
