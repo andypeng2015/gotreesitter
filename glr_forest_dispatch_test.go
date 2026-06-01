@@ -58,10 +58,36 @@ func TestForestDispatchParity(t *testing.T) {
 	for _, s := range malformed {
 		check("css-malformed-fallback", css, s)
 	}
+	// Bash is dispatched only after root compatibility normalization.
+	check("bash-dispatched", grm.BashLanguage(), "f() { echo a; }\n")
 	// Non-dispatched languages must be untouched even with the switch on.
 	check("go-untouched", grm.GoLanguage(), "package p\nfunc f() { return }\n")
-	check("bash-untouched", grm.BashLanguage(), "f() { echo a; }\n")
+	check("rust-untouched", grm.RustLanguage(), "fn main() {}\n")
 	gts.SetGLRForestEnabled(true)
+}
+
+func TestForestExperimentalAppliesBashCompatibility(t *testing.T) {
+	gts.SetGLRForestEnabled(false)
+	defer gts.SetGLRForestEnabled(true)
+
+	src := []byte("url=`(curl -SsL https://registry.npmjs.org/npm/$t; echo \"\") \\\n     | sed -e 's/^.*tarball\":\"//' \\\n     | sed -e 's/\".*$//'`\n\nret=$?\n")
+	lang := grm.BashLanguage()
+	prod, err := gts.NewParser(lang).Parse(src)
+	if err != nil {
+		t.Fatalf("production parse: %v", err)
+	}
+	defer prod.Release()
+
+	root, ok := gts.NewParser(lang).ParseForestExperimental(src)
+	if !ok || root == nil {
+		t.Fatalf("forest experimental ok=%v root nil=%v", ok, root == nil)
+	}
+	if got, want := root.SExpr(lang), prod.RootNode().SExpr(lang); got != want {
+		t.Fatalf("forest experimental Bash compatibility mismatch\n got: %s\nwant: %s", got, want)
+	}
+	if got, want := root.NamedChildCount(), 2; got != want {
+		t.Fatalf("forest Bash root named child count = %d, want %d; root=%s", got, want, root.SExpr(lang))
+	}
 }
 
 func TestForestTreeIncrementalEditSupportsCSSReuse(t *testing.T) {

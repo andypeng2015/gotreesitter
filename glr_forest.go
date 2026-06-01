@@ -44,12 +44,16 @@ var glrForestEnabled = os.Getenv("GOT_GLR_FOREST") != "0"
 func SetGLRForestEnabled(on bool) { glrForestEnabled = on }
 
 // ParseForestExperimental parses source with the experimental GSS-forest GLR
-// path and returns the root node (or nil,false if the parse dies — the forest
-// path has no error recovery yet). Exported so out-of-tree benchmarks and
-// validation in packages that attach external scanners (e.g. grammars) can
+// path and returns the normalized root node (or nil,false if the parse dies —
+// the forest path has no error recovery yet). Exported so out-of-tree benchmarks
+// and validation in packages that attach external scanners (e.g. grammars) can
 // drive it; not part of the stable API.
 func (p *Parser) ParseForestExperimental(source []byte) (*Node, bool) {
-	return p.parseForest(newNodeArena(arenaClassFull), source)
+	root, ok := p.parseForest(newNodeArena(arenaClassFull), source)
+	if ok && root != nil {
+		p.finalizeForestRoot(root, source)
+	}
+	return root, ok
 }
 
 // languageWantsForest reports whether a language dispatches to the GSS-forest
@@ -58,18 +62,17 @@ func (p *Parser) ParseForestExperimental(source []byte) (*Node, bool) {
 // byte-identical to production on their real corpus by TestForestCorpusParity
 // (which compares full node BYTE RANGES, not just s-expressions — an s-expr-only
 // gate hid systematic span bugs). Measured byte-range-clean production-vs-forest
-// speedups on the real corpus: erlang 664x, cmake 166x, awk 202x, css 5x, scss
-// 3x. GraphQL is clean against production here too, but stays out until the
-// production tree is C-oracle-clean on the ring matrix. The
-// forest has no error recovery, so tryForestFastPath falls back to production on
-// any decline (failure / error / truncation); that fallback means a language can
+// speedups on the real corpus: bash 803x, erlang 664x, cmake 166x, awk 202x,
+// css 5x, scss 3x. GraphQL is clean against production here too, but stays out
+// until the production tree is C-oracle-clean on the ring matrix. The forest has
+// no error recovery, so tryForestFastPath falls back to production on any
+// decline (failure / error / truncation); that fallback means a language can
 // never regress the cases it declines, but does NOT catch a clean-but-different
 // tree — so a language joins this list only once its byte-range gate is green.
-// EXCLUDED: bash (a single-token-GLR-lexing / stateful-scanner divergence),
-// python + ruby (still diverge — genuine structural bugs).
+// EXCLUDED: python + ruby (still diverge — genuine structural bugs).
 func languageWantsForest(name string) bool {
 	switch name {
-	case "erlang", "cmake", "css", "scss", "awk":
+	case "bash", "erlang", "cmake", "css", "scss", "awk":
 		return true
 	default:
 		return false
@@ -109,6 +112,7 @@ func (p *Parser) tryForestFastPath(source []byte) *Tree {
 		arena.Release()
 		return nil // did not consume the whole input; let production recover it
 	}
+	p.finalizeForestRoot(root, source)
 	tree := newTreeWithArenas(root, source, p.language, arena, nil)
 	tree.forestFastPath = true
 	if !languageAllowsForestIncrementalPath(p.language.Name) {
@@ -116,6 +120,10 @@ func (p *Parser) tryForestFastPath(source []byte) *Tree {
 	}
 	p.normalizeReturnedTree(rawRootOrNil(tree), source)
 	return tree
+}
+
+func (p *Parser) finalizeForestRoot(root *Node, source []byte) {
+	p.finalizeResultRoot(root, source, nil, false, false)
 }
 
 // languageAllowsForestIncrementalPath reports forest-default languages whose
