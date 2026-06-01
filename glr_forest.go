@@ -177,12 +177,12 @@ type gssForestNode struct {
 //
 // Stage 1 scaffold: builds the DAG. Correct trees require Stage 2 (reduce walks
 // every link); until then this is exercised only under the flag + parity gate.
-func coalesceForest(index map[gssForestKey]*gssForestNode, slab *gssForestNodeSlab, state StateID, byteOffset uint32, prev *gssForestNode, entry stackEntry, score, errorCost int) *gssForestNode {
+func coalesceForest(index *gssForestIndex, slab *gssForestNodeSlab, state StateID, byteOffset uint32, prev *gssForestNode, entry stackEntry, score, errorCost int) *gssForestNode {
 	key := gssForestKey{state: state, byteOffset: byteOffset}
-	node := index[key]
+	node := index.lookup(key)
 	if node == nil {
 		node = slab.alloc(state, byteOffset, score, errorCost)
-		index[key] = node
+		index.set(key, node)
 	} else if errorCost < node.errorCost || (errorCost == node.errorCost && score > node.score) {
 		node.score, node.errorCost = score, errorCost
 	}
@@ -322,6 +322,61 @@ func (n *gssForestNode) bestLink() *gssLink {
 type gssForestKey struct {
 	state      StateID
 	byteOffset uint32
+}
+
+type gssForestIndex struct {
+	nodes     map[gssForestKey]*gssForestNode
+	keys      []gssForestKey
+	lastKey   gssForestKey
+	lastNode  *gssForestNode
+	lastValid bool
+}
+
+func newGSSForestIndex(capacity int) gssForestIndex {
+	return gssForestIndex{
+		nodes: make(map[gssForestKey]*gssForestNode, capacity),
+		keys:  make([]gssForestKey, 0, capacity),
+	}
+}
+
+func (idx *gssForestIndex) reset() {
+	for _, key := range idx.keys {
+		delete(idx.nodes, key)
+	}
+	idx.keys = idx.keys[:0]
+	idx.lastValid = false
+	idx.lastNode = nil
+}
+
+func (idx *gssForestIndex) len() int {
+	if idx == nil {
+		return 0
+	}
+	return len(idx.nodes)
+}
+
+func (idx *gssForestIndex) lookup(key gssForestKey) *gssForestNode {
+	if idx.lastValid && idx.lastKey == key {
+		return idx.lastNode
+	}
+	node := idx.nodes[key]
+	if node != nil {
+		idx.lastKey = key
+		idx.lastNode = node
+		idx.lastValid = true
+	}
+	return node
+}
+
+func (idx *gssForestIndex) set(key gssForestKey, node *gssForestNode) {
+	if idx.nodes == nil {
+		idx.nodes = make(map[gssForestKey]*gssForestNode, 16)
+	}
+	idx.nodes[key] = node
+	idx.keys = append(idx.keys, key)
+	idx.lastKey = key
+	idx.lastNode = node
+	idx.lastValid = true
 }
 
 const (
@@ -485,8 +540,8 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 
 	// Per-step scratch reused across every token (cleared, not reallocated): the
 	// allocation/GC of fresh maps+slices each step dominated the profile.
-	curIndex := make(map[gssForestKey]*gssForestNode, 16)
-	nextIndex := make(map[gssForestKey]*gssForestNode, 16)
+	curIndex := newGSSForestIndex(16)
+	nextIndex := newGSSForestIndex(16)
 	processed := make(map[*gssForestNode]int, 16)
 	var work, nextFrontier []*gssForestNode
 
@@ -504,11 +559,11 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 		// Reduces coalesce into curIndex (same position, seeded with the
 		// frontier so a reduced nonterminal can merge with an existing actor);
 		// shifts coalesce into nextIndex (next position).
-		clear(curIndex)
+		curIndex.reset()
 		for _, n := range frontier {
-			curIndex[gssForestKey{n.state, n.byteOffset}] = n
+			curIndex.set(gssForestKey{n.state, n.byteOffset}, n)
 		}
-		clear(nextIndex)
+		nextIndex.reset()
 		clear(processed)
 		nextFrontier = nextFrontier[:0]
 		var accepted *gssForestNode
@@ -572,7 +627,7 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 						parent.parseState = gotoState
 						// Subtree score = this production's dynamic precedence +
 						// the children's accumulated scores.
-						top := coalesceForest(curIndex, slab, gotoState, parentEnd, popTo,
+						top := coalesceForest(&curIndex, slab, gotoState, parentEnd, popTo,
 							stackEntry{node: unsafe.Pointer(parent), state: gotoState, kind: stackEntryKindNode},
 							int(act.DynamicPrecedence)+childScore, popTo.errorCost)
 						for _, ex := range children[reducedEnd:] {
@@ -580,7 +635,7 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 							extra.parseState = gotoState
 							nodeBumpEquivVersion(extra)
 							exEnd := extra.endByte
-							top = coalesceForest(curIndex, slab, gotoState, exEnd, top,
+							top = coalesceForest(&curIndex, slab, gotoState, exEnd, top,
 								stackEntry{node: ex.node, state: gotoState, kind: stackEntryKindNode},
 								0, top.errorCost)
 						}
@@ -600,11 +655,11 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 					}
 					leaf.preGotoState = node.state
 					leaf.parseState = target
-					before := len(nextIndex)
-					sh := coalesceForest(nextIndex, slab, target, tok.EndByte, node,
+					before := nextIndex.len()
+					sh := coalesceForest(&nextIndex, slab, target, tok.EndByte, node,
 						stackEntry{node: unsafe.Pointer(leaf), state: target, kind: stackEntryKindNode},
 						0, node.errorCost) // a shifted leaf carries no dynamic precedence
-					if len(nextIndex) != before {
+					if nextIndex.len() != before {
 						nextFrontier = append(nextFrontier, sh)
 					}
 				case ParseActionAccept:
@@ -680,8 +735,38 @@ func (fr *forestReducer) reduce(node *gssForestNode, childCount int, visit func(
 		visit(nil, 0, node)
 		return
 	}
+	if fr.reduceLinearNoExtras(node, childCount, visit) {
+		return
+	}
 	fr.path = fr.path[:0]
 	fr.dfs(node, childCount, 0, visit)
+}
+
+func (fr *forestReducer) reduceLinearNoExtras(node *gssForestNode, childCount int, visit func(children []stackEntry, childScore int, popTo *gssForestNode)) bool {
+	if childCount <= 0 {
+		return false
+	}
+	if cap(fr.rev) < childCount {
+		fr.rev = make([]stackEntry, childCount)
+	} else {
+		fr.rev = fr.rev[:childCount]
+	}
+	cur := node
+	score := 0
+	for i := childCount - 1; i >= 0; i-- {
+		if cur == nil || len(cur.links) != 1 {
+			return false
+		}
+		link := cur.links[0]
+		if stackEntryNodeIsExtra(link.subtree) {
+			return false
+		}
+		fr.rev[i] = link.subtree
+		score += link.score
+		cur = link.prev
+	}
+	visit(fr.rev, score, cur)
+	return true
 }
 
 func (fr *forestReducer) dfs(cur *gssForestNode, remaining, score int, visit func(children []stackEntry, childScore int, popTo *gssForestNode)) {
