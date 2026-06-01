@@ -2943,6 +2943,18 @@ func languageName(lang *Language) string {
 	return lang.Name
 }
 
+func languageDefersExactDedupe(lang *Language, noTreeBenchmarkOnly bool) bool {
+	if noTreeBenchmarkOnly || lang == nil {
+		return false
+	}
+	switch lang.Name {
+	case "typescript", "tsx", "rust":
+		return true
+	default:
+		return false
+	}
+}
+
 type parseStackPrepResult struct {
 	stacks     []glrStack
 	stopReason ParseStopReason
@@ -2970,7 +2982,7 @@ func (p *Parser) prepareParseStacksForIteration(stacks []glrStack, scratch *pars
 		return result
 	}
 	scratch.merge.language = p.language
-	scratch.merge.deferExactDedupe = !p.noTreeBenchmarkOnly && p.language != nil && (p.language.Name == "typescript" || p.language.Name == "tsx")
+	scratch.merge.deferExactDedupe = languageDefersExactDedupe(p.language, p.noTreeBenchmarkOnly)
 	if p.ambiguityProfile != nil {
 		p.ambiguityProfile.recordMergeBefore(stacks)
 	}

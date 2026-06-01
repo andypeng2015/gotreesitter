@@ -782,6 +782,25 @@ func TestParseMaxMergePerKeyValue(t *testing.T) {
 	}
 }
 
+func TestLanguageDefersExactDedupe(t *testing.T) {
+	for _, name := range []string{"typescript", "tsx", "rust"} {
+		if !languageDefersExactDedupe(&Language{Name: name}, false) {
+			t.Fatalf("languageDefersExactDedupe(%s, full tree) = false, want true", name)
+		}
+		if languageDefersExactDedupe(&Language{Name: name}, true) {
+			t.Fatalf("languageDefersExactDedupe(%s, no-tree) = true, want false", name)
+		}
+	}
+	for _, name := range []string{"go", "python", "javascript"} {
+		if languageDefersExactDedupe(&Language{Name: name}, false) {
+			t.Fatalf("languageDefersExactDedupe(%s, full tree) = true, want false", name)
+		}
+	}
+	if languageDefersExactDedupe(nil, false) {
+		t.Fatal("languageDefersExactDedupe(nil, full tree) = true, want false")
+	}
+}
+
 func TestParsePreMaterializationDiagEnabled(t *testing.T) {
 	t.Setenv("GOT_GLR_V2_PRE_MATERIALIZATION_DIAG", "1")
 	ResetParseEnvConfigCacheForTests()
