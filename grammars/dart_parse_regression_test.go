@@ -198,6 +198,168 @@ func TestDartSingleTypeArgumentFreeCallRemainsRelationalExpression(t *testing.T)
 	}
 }
 
+func TestDartComplexVoidFunctionTypeArgumentFreeCallRemainsRelationalExpression(t *testing.T) {
+	src := []byte("base class Parser implements Finalizable {\n  late final p = _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<TSParser>, TSLogger)>>('ts_parser_set_logger');\n}\n")
+	parser := ts.NewParser(DartLanguage())
+	tree, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	root := tree.RootNode()
+	if root == nil {
+		t.Fatal("missing root node")
+	}
+	if tree.ParseStopReason() != ts.ParseStopAccepted {
+		t.Fatalf("stop=%s runtime=%s", tree.ParseStopReason(), tree.ParseRuntime().Summary())
+	}
+	if root.HasError() {
+		t.Fatalf("expected complex void function-type call to parse cleanly, got %s", root.SExpr(DartLanguage()))
+	}
+	classDef := root.NamedChild(0)
+	if classDef == nil || classDef.Type(DartLanguage()) != "class_definition" {
+		t.Fatalf("first named child = %v, want class_definition; tree=%s", classDef, root.SExpr(DartLanguage()))
+	}
+	body := classDef.ChildByFieldName("body", DartLanguage())
+	if body == nil || body.NamedChildCount() == 0 {
+		t.Fatalf("class body missing; tree=%s", root.SExpr(DartLanguage()))
+	}
+	decl := body.NamedChild(0)
+	if decl == nil {
+		t.Fatalf("class declaration missing; tree=%s", root.SExpr(DartLanguage()))
+	}
+	initList := decl.NamedChild(1)
+	if initList == nil || initList.Type(DartLanguage()) != "initialized_identifier_list" {
+		t.Fatalf("initialized list = %v; tree=%s", initList, root.SExpr(DartLanguage()))
+	}
+	init := initList.NamedChild(0)
+	if init == nil || init.Type(DartLanguage()) != "initialized_identifier" {
+		t.Fatalf("initialized identifier = %v; tree=%s", init, root.SExpr(DartLanguage()))
+	}
+	if got, want := init.NamedChildCount(), 2; got != want {
+		t.Fatalf("initialized identifier named child count = %d, want %d; tree=%s", got, want, root.SExpr(DartLanguage()))
+	}
+	value := init.NamedChild(1)
+	if value == nil || value.Type(DartLanguage()) != "relational_expression" {
+		t.Fatalf("value = %v, want relational_expression; tree=%s", value, root.SExpr(DartLanguage()))
+	}
+	if got, want := value.NamedChildCount(), 3; got != want {
+		t.Fatalf("value named child count = %d, want %d; tree=%s", got, want, root.SExpr(DartLanguage()))
+	}
+	left := value.NamedChild(0)
+	if left == nil || left.Type(DartLanguage()) != "relational_expression" {
+		t.Fatalf("left child = %v, want relational_expression; tree=%s", left, root.SExpr(DartLanguage()))
+	}
+	if got, want := left.NamedChildCount(), 5; got != want {
+		t.Fatalf("left named child count = %d, want %d; tree=%s", got, want, root.SExpr(DartLanguage()))
+	}
+}
+
+func TestDartNestedFunctionTypeArgumentFreeCallAssociatesOuterRelationalExpression(t *testing.T) {
+	src := []byte("base class Parser implements Finalizable {\n  late final p = _lookup<ffi.NativeFunction<TSSymbol Function(ffi.Pointer<TSLanguage>, ffi.Pointer<ffi.Char>, ffi.Uint32, ffi.Bool)>>('ts_language_symbol_for_name');\n}\n")
+	parser := ts.NewParser(DartLanguage())
+	tree, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	root := tree.RootNode()
+	if root == nil {
+		t.Fatal("missing root node")
+	}
+	if tree.ParseStopReason() != ts.ParseStopAccepted {
+		t.Fatalf("stop=%s runtime=%s", tree.ParseStopReason(), tree.ParseRuntime().Summary())
+	}
+	if root.HasError() {
+		t.Fatalf("expected nested function-type call to parse cleanly, got %s", root.SExpr(DartLanguage()))
+	}
+	classDef := root.NamedChild(0)
+	if classDef == nil || classDef.Type(DartLanguage()) != "class_definition" {
+		t.Fatalf("first named child = %v, want class_definition; tree=%s", classDef, root.SExpr(DartLanguage()))
+	}
+	body := classDef.ChildByFieldName("body", DartLanguage())
+	if body == nil || body.NamedChildCount() == 0 {
+		t.Fatalf("class body missing; tree=%s", root.SExpr(DartLanguage()))
+	}
+	decl := body.NamedChild(0)
+	if decl == nil {
+		t.Fatalf("class declaration missing; tree=%s", root.SExpr(DartLanguage()))
+	}
+	initList := decl.NamedChild(1)
+	if initList == nil || initList.Type(DartLanguage()) != "initialized_identifier_list" {
+		t.Fatalf("initialized list = %v; tree=%s", initList, root.SExpr(DartLanguage()))
+	}
+	init := initList.NamedChild(0)
+	if init == nil || init.Type(DartLanguage()) != "initialized_identifier" {
+		t.Fatalf("initialized identifier = %v; tree=%s", init, root.SExpr(DartLanguage()))
+	}
+	if got, want := init.NamedChildCount(), 2; got != want {
+		t.Fatalf("initialized identifier named child count = %d, want %d; tree=%s", got, want, root.SExpr(DartLanguage()))
+	}
+	value := init.NamedChild(1)
+	if value == nil || value.Type(DartLanguage()) != "relational_expression" {
+		t.Fatalf("value = %v, want relational_expression; tree=%s", value, root.SExpr(DartLanguage()))
+	}
+	left := value.NamedChild(0)
+	if left == nil || left.Type(DartLanguage()) != "relational_expression" {
+		t.Fatalf("left child = %v, want relational_expression; tree=%s", left, root.SExpr(DartLanguage()))
+	}
+	if got, want := left.NamedChildCount(), 5; got != want {
+		t.Fatalf("left named child count = %d, want %d; tree=%s", got, want, root.SExpr(DartLanguage()))
+	}
+}
+
+func TestDartComplexGenericReturnTypeArgumentFreeCallParsesAsSelectorCall(t *testing.T) {
+	src := []byte("base class Parser implements Finalizable {\n  late final p = _lookup<ffi.NativeFunction<ffi.Pointer<TSLanguage> Function(ffi.Pointer<TSParser>)>>('ts_parser_language');\n}\n")
+	parser := ts.NewParser(DartLanguage())
+	tree, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	root := tree.RootNode()
+	if root == nil {
+		t.Fatal("missing root node")
+	}
+	if tree.ParseStopReason() != ts.ParseStopAccepted {
+		t.Fatalf("stop=%s runtime=%s", tree.ParseStopReason(), tree.ParseRuntime().Summary())
+	}
+	if root.HasError() {
+		t.Fatalf("expected complex generic-return call to parse cleanly, got %s", root.SExpr(DartLanguage()))
+	}
+	classDef := root.NamedChild(0)
+	if classDef == nil || classDef.Type(DartLanguage()) != "class_definition" {
+		t.Fatalf("first named child = %v, want class_definition; tree=%s", classDef, root.SExpr(DartLanguage()))
+	}
+	body := classDef.ChildByFieldName("body", DartLanguage())
+	if body == nil || body.NamedChildCount() == 0 {
+		t.Fatalf("class body missing; tree=%s", root.SExpr(DartLanguage()))
+	}
+	decl := body.NamedChild(0)
+	if decl == nil {
+		t.Fatalf("class declaration missing; tree=%s", root.SExpr(DartLanguage()))
+	}
+	initList := decl.NamedChild(1)
+	if initList == nil || initList.Type(DartLanguage()) != "initialized_identifier_list" {
+		t.Fatalf("initialized list = %v; tree=%s", initList, root.SExpr(DartLanguage()))
+	}
+	init := initList.NamedChild(0)
+	if init == nil || init.Type(DartLanguage()) != "initialized_identifier" {
+		t.Fatalf("initialized identifier = %v; tree=%s", init, root.SExpr(DartLanguage()))
+	}
+	if got, want := init.NamedChildCount(), 3; got != want {
+		t.Fatalf("initialized identifier named child count = %d, want %d; tree=%s", got, want, root.SExpr(DartLanguage()))
+	}
+	callee := init.NamedChild(1)
+	if callee == nil || callee.Type(DartLanguage()) != "identifier" {
+		t.Fatalf("callee = %v, want identifier; tree=%s", callee, root.SExpr(DartLanguage()))
+	}
+	selector := init.NamedChild(2)
+	if selector == nil || selector.Type(DartLanguage()) != "selector" {
+		t.Fatalf("call selector = %v, want selector; tree=%s", selector, root.SExpr(DartLanguage()))
+	}
+	if got, want := selector.NamedChildCount(), 1; got != want {
+		t.Fatalf("selector named child count = %d, want %d; tree=%s", got, want, root.SExpr(DartLanguage()))
+	}
+}
+
 func TestDartConstructorNamedLikeClassBuildsConstructorSignature(t *testing.T) {
 	src := []byte("base class QueryCursor {\n  QueryCursor() {}\n}\n")
 	parser := ts.NewParser(DartLanguage())
@@ -228,6 +390,41 @@ func TestDartConstructorNamedLikeClassBuildsConstructorSignature(t *testing.T) {
 		t.Fatalf("method signature = %v; tree=%s", methodSig, root.SExpr(DartLanguage()))
 	}
 	sig := methodSig.NamedChild(0)
+	if sig == nil || sig.Type(DartLanguage()) != "constructor_signature" {
+		t.Fatalf("signature = %v, want constructor_signature; tree=%s", sig, root.SExpr(DartLanguage()))
+	}
+}
+
+func TestDartPrivateConstructorDeclarationBuildsConstructorSignature(t *testing.T) {
+	src := []byte("class _SymbolAddresses {\n  final TreeSitter _library;\n  _SymbolAddresses(this._library);\n}\n")
+	parser := ts.NewParser(DartLanguage())
+	tree, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	root := tree.RootNode()
+	if root == nil {
+		t.Fatal("missing root node")
+	}
+	if tree.ParseStopReason() != ts.ParseStopAccepted {
+		t.Fatalf("stop=%s runtime=%s", tree.ParseStopReason(), tree.ParseRuntime().Summary())
+	}
+	if root.HasError() {
+		t.Fatalf("expected private constructor to parse cleanly, got %s", root.SExpr(DartLanguage()))
+	}
+	classDef := root.NamedChild(0)
+	if classDef == nil || classDef.Type(DartLanguage()) != "class_definition" {
+		t.Fatalf("first named child = %v, want class_definition; tree=%s", classDef, root.SExpr(DartLanguage()))
+	}
+	body := classDef.ChildByFieldName("body", DartLanguage())
+	if body == nil || body.NamedChildCount() < 2 {
+		t.Fatalf("class body missing constructor declaration; tree=%s", root.SExpr(DartLanguage()))
+	}
+	decl := body.NamedChild(1)
+	if decl == nil || decl.Type(DartLanguage()) != "declaration" {
+		t.Fatalf("constructor declaration = %v, want declaration; tree=%s", decl, root.SExpr(DartLanguage()))
+	}
+	sig := decl.NamedChild(0)
 	if sig == nil || sig.Type(DartLanguage()) != "constructor_signature" {
 		t.Fatalf("signature = %v, want constructor_signature; tree=%s", sig, root.SExpr(DartLanguage()))
 	}

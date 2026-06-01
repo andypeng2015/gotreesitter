@@ -268,6 +268,46 @@ func replaceChildRangeWithSingleNode(parent *Node, start, end int, replacement *
 	}
 }
 
+func replaceChildRangeWithNodes(parent *Node, start, end int, replacements []*Node) {
+	if parent == nil || len(replacements) == 0 {
+		return
+	}
+	childCount := resultChildCount(parent)
+	if start < 0 || start >= end || end > childCount {
+		return
+	}
+	children := resultDenseChildrenFallbackForMutation(parent)
+	oldLen := len(children)
+	newChildren := make([]*Node, 0, oldLen-(end-start)+len(replacements))
+	newChildren = append(newChildren, children[:start]...)
+	newChildren = append(newChildren, replacements...)
+	newChildren = append(newChildren, children[end:]...)
+	parent.children = newChildren
+	if parent.ownerArena != nil {
+		parent.ownerArena.clearFinalChildRefs(parent)
+	}
+
+	if len(parent.fieldIDs) == oldLen {
+		newFieldIDs := make([]FieldID, 0, len(newChildren))
+		newFieldIDs = append(newFieldIDs, parent.fieldIDs[:start]...)
+		for range replacements {
+			newFieldIDs = append(newFieldIDs, 0)
+		}
+		newFieldIDs = append(newFieldIDs, parent.fieldIDs[end:]...)
+		parent.fieldIDs = newFieldIDs
+	}
+	if len(parent.fieldSources) == oldLen {
+		newFieldSources := make([]uint8, 0, len(newChildren))
+		newFieldSources = append(newFieldSources, parent.fieldSources[:start]...)
+		for range replacements {
+			newFieldSources = append(newFieldSources, fieldSourceNone)
+		}
+		newFieldSources = append(newFieldSources, parent.fieldSources[end:]...)
+		parent.fieldSources = newFieldSources
+	}
+	populateParentNode(parent, parent.children)
+}
+
 func firstAndLastNonNilChild(children []*Node) (*Node, *Node) {
 	var first *Node
 	for _, child := range children {
