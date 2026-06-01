@@ -130,6 +130,36 @@ func TestTypeScriptRepetitionShiftConflictChoiceRejectsOtherState(t *testing.T) 
 	}
 }
 
+func TestPythonRepetitionShiftConflictChoiceAllowsHotModuleRepeat(t *testing.T) {
+	lang := &Language{SymbolNames: []string{"end", "identifier", "def", "module_repeat1"}}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 3, ChildCount: 2},
+		{Type: ParseActionShift, State: 616, Repetition: true},
+	}
+
+	for _, sym := range []Symbol{1, 2} {
+		chosen, ok := pythonRepetitionShiftConflictChoice(lang, Token{Symbol: sym}, 72, actions)
+		if !ok {
+			t.Fatalf("pythonRepetitionShiftConflictChoice(%q) = false, want true", lang.SymbolNames[sym])
+		}
+		if chosen.Type != ParseActionShift || chosen.State != 616 || !chosen.Repetition {
+			t.Fatalf("pythonRepetitionShiftConflictChoice(%q) picked %+v, want repetition shift", lang.SymbolNames[sym], chosen)
+		}
+	}
+}
+
+func TestPythonRepetitionShiftConflictChoiceRejectsOtherState(t *testing.T) {
+	lang := &Language{SymbolNames: []string{"end", "identifier", "module_repeat1"}}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 2, ChildCount: 2},
+		{Type: ParseActionShift, State: 616, Repetition: true},
+	}
+
+	if _, ok := pythonRepetitionShiftConflictChoice(lang, Token{Symbol: 1}, 73, actions); ok {
+		t.Fatal("pythonRepetitionShiftConflictChoice = true, want false")
+	}
+}
+
 func TestTSXRepetitionReduceConflictChoiceAllowsHotRepeats(t *testing.T) {
 	lang := &Language{SymbolNames: []string{"end", "identifier", ";", "_jsx_start_opening_element_repeat1", "object_type_repeat1", "const", "let", "program_repeat1"}}
 	for _, tc := range []struct {

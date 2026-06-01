@@ -2527,6 +2527,10 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 						if next, ok := javascriptRepetitionShiftConflictChoice(p.language, tok, currentState, actions); ok {
 							chosen, choice = next, true
 						}
+					case "python":
+						if next, ok := pythonRepetitionShiftConflictChoice(p.language, tok, currentState, actions); ok {
+							chosen, choice = next, true
+						}
 					case "kotlin":
 						if next, ok := kotlinObjectLiteralConflictChoice(p.language, actions); ok {
 							chosen, choice = next, true
@@ -3622,6 +3626,25 @@ func javascriptRepetitionShiftConflictChoice(lang *Language, tok Token, state St
 		// object_repeat1 boundary: `{a, b, c}` — the `,` separator
 		// continues the object-member list (repetition shift).
 		if !symbolHasName(lang, tok.Symbol, ",") {
+			return ParseAction{}, false
+		}
+	default:
+		return ParseAction{}, false
+	}
+	return repetitionShiftConflictChoice(actions)
+}
+
+// pythonRepetitionShiftConflictChoice resolves the module_repeat1 boundary
+// where statement-start identifiers and definitions can either reduce the
+// existing module list or shift as the next top-level statement. The shift
+// continues the list while preserving current Python parity gates.
+func pythonRepetitionShiftConflictChoice(lang *Language, tok Token, state StateID, actions []ParseAction) (ParseAction, bool) {
+	if lang == nil {
+		return ParseAction{}, false
+	}
+	switch state {
+	case 71, 72:
+		if !symbolHasName(lang, tok.Symbol, "identifier") && !symbolHasName(lang, tok.Symbol, "def") {
 			return ParseAction{}, false
 		}
 	default:
