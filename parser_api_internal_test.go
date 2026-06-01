@@ -160,6 +160,43 @@ func TestPythonRepetitionShiftConflictChoiceRejectsOtherState(t *testing.T) {
 	}
 }
 
+func TestDartRepetitionShiftConflictChoiceAllowsHotRepeats(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		state        StateID
+		reduceSymbol Symbol
+	}{
+		{name: "enum_body_repeat2", state: 596, reduceSymbol: 1},
+		{name: "extension_body_repeat1", state: 602, reduceSymbol: 2},
+		{name: "program_repeat4", state: 479, reduceSymbol: 3},
+	} {
+		lang := &Language{SymbolNames: []string{"end", "enum_body_repeat2", "extension_body_repeat1", "program_repeat4"}}
+		actions := []ParseAction{
+			{Type: ParseActionReduce, Symbol: tc.reduceSymbol, ChildCount: 2},
+			{Type: ParseActionShift, State: 9, Repetition: true},
+		}
+
+		chosen, ok := dartRepetitionShiftConflictChoice(lang, tc.state, actions)
+		if !ok {
+			t.Fatalf("dartRepetitionShiftConflictChoice(%s) = false, want true", tc.name)
+		}
+		if chosen.Type != ParseActionShift || chosen.State != 9 || !chosen.Repetition {
+			t.Fatalf("dartRepetitionShiftConflictChoice(%s) picked %+v, want repetition shift", tc.name, chosen)
+		}
+	}
+}
+
+func TestDartRepetitionShiftConflictChoiceRejectsOtherRepeat(t *testing.T) {
+	lang := &Language{SymbolNames: []string{"end", "enum_body_repeat2", "other_repeat1"}}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 2, ChildCount: 2},
+		{Type: ParseActionShift, State: 9, Repetition: true},
+	}
+	if _, ok := dartRepetitionShiftConflictChoice(lang, 596, actions); ok {
+		t.Fatal("dartRepetitionShiftConflictChoice = true, want false")
+	}
+}
+
 func TestDRepetitionShiftConflictChoiceAllowsDeclarationsAndStatements(t *testing.T) {
 	lang := &Language{SymbolNames: []string{"end", "_declarations_and_statements"}}
 	actions := []ParseAction{

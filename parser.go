@@ -2531,6 +2531,10 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 						if next, ok := pythonRepetitionShiftConflictChoice(p.language, tok, currentState, actions); ok {
 							chosen, choice = next, true
 						}
+					case "dart":
+						if next, ok := dartRepetitionShiftConflictChoice(p.language, currentState, actions); ok {
+							chosen, choice = next, true
+						}
 					case "d":
 						if next, ok := dRepetitionShiftConflictChoice(p.language, currentState, actions); ok {
 							chosen, choice = next, true
@@ -3671,6 +3675,33 @@ func pythonRepetitionShiftConflictChoice(lang *Language, tok Token, state StateI
 	switch state {
 	case 71, 72:
 		if !symbolHasName(lang, tok.Symbol, "identifier") && !symbolHasName(lang, tok.Symbol, "def") {
+			return ParseAction{}, false
+		}
+	default:
+		return ParseAction{}, false
+	}
+	return repetitionShiftConflictChoice(actions)
+}
+
+// dartRepetitionShiftConflictChoice collapses Dart list-boundary forks where a
+// repeat reduce competes with shifting the next element. These states dominate
+// the current Dart real-corpus shard: enum bodies, extension bodies, and
+// top-level program declarations.
+func dartRepetitionShiftConflictChoice(lang *Language, state StateID, actions []ParseAction) (ParseAction, bool) {
+	if lang == nil {
+		return ParseAction{}, false
+	}
+	switch state {
+	case 596:
+		if !allReducesHaveSymbol(lang, actions, "enum_body_repeat2") {
+			return ParseAction{}, false
+		}
+	case 602:
+		if !allReducesHaveSymbol(lang, actions, "extension_body_repeat1") {
+			return ParseAction{}, false
+		}
+	case 479:
+		if !allReducesHaveSymbol(lang, actions, "program_repeat4") {
 			return ParseAction{}, false
 		}
 	default:
