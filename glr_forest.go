@@ -167,14 +167,25 @@ func languageAllowsForestIncrementalPath(name string) bool {
 // (one per (state, position)) carries one link per surviving parse that reached
 // it — exactly tree-sitter C's StackNode.links[].
 type gssLink struct {
-	prev    *gssForestNode
-	subtree stackEntry
+	prev *gssForestNode
+	// prevDirty is the predecessor dirty version this link last observed. A
+	// link can be structurally identical while its predecessor gained a new
+	// alternative; downstream reductions must re-run in that case.
+	prevDirty int
+	subtree   stackEntry
 	// score is the subtree's cumulative dynamic precedence (a reduce's
 	// DynamicPrecedence plus its children's scores; 0 for a shifted leaf). The
 	// forest defers ambiguity resolution to finalization: among alternatives at
 	// one (state, position), the highest-score subtree wins, matching
 	// tree-sitter's dynamic_precedence selection.
 	score int
+}
+
+func forestNodeDirty(node *gssForestNode) int {
+	if node == nil {
+		return 0
+	}
+	return node.dirty
 }
 
 // gssForestNode is a coalesced graph-structured-stack node: all parses that
@@ -249,6 +260,10 @@ func coalesceForest(index *gssForestIndex, slab *gssForestNodeSlab, state StateI
 				node.dirty++
 				replaced = true
 			}
+			if l.prevDirty != forestNodeDirty(prev) {
+				l.prevDirty = forestNodeDirty(prev)
+				node.dirty++
+			}
 			if perfCountersEnabled {
 				perfRecordForestCoalesceDedupHit(replaced)
 			}
@@ -267,7 +282,7 @@ func coalesceForest(index *gssForestIndex, slab *gssForestNodeSlab, state StateI
 			}
 		}
 		if score > node.links[worst].score {
-			node.links[worst] = gssLink{prev: prev, subtree: entry, score: score}
+			node.links[worst] = gssLink{prev: prev, prevDirty: forestNodeDirty(prev), subtree: entry, score: score}
 			node.dirty++
 			if perfCountersEnabled {
 				perfRecordForestCoalesceCap(true)
@@ -277,7 +292,7 @@ func coalesceForest(index *gssForestIndex, slab *gssForestNodeSlab, state StateI
 		}
 		return node
 	}
-	node.links = append(node.links, gssLink{prev: prev, subtree: entry, score: score})
+	node.links = append(node.links, gssLink{prev: prev, prevDirty: forestNodeDirty(prev), subtree: entry, score: score})
 	if perfCountersEnabled {
 		perfRecordForestCoalesceLinkAppend()
 	}
@@ -675,17 +690,7 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 						// node-builder and span helpers read it in place — no per-reduce
 						// copy. window = children[0:reducedEnd] (trailing extras trimmed).
 						reducedEnd := reducedEndBeforeTrailingExtras(children)
-						parentEnd := node.byteOffset
-						if reducedEnd > 0 {
-							parentEnd = (*Node)(children[reducedEnd-1].node).endByte
-						}
 						score := int(act.DynamicPrecedence) + childScore
-						if forestCoalesceWouldDropForCap(&curIndex, gotoState, parentEnd, score, popTo.errorCost) {
-							if perfCountersEnabled {
-								perfRecordForestCoalescePreCapDrop()
-							}
-							return
-						}
 						childNodes, fieldIDs, fieldSources, childPath := p.buildReduceChildrenWithPath(children, 0, reducedEnd, cc, act.Symbol, act.ProductionID, arena)
 						parent := newParentNodeInArenaWithFieldSources(arena, act.Symbol, named(act.Symbol), childNodes, fieldIDs, fieldSources, act.ProductionID)
 						// Recover the reduced node's byte span from the full window,
@@ -702,9 +707,22 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 						if reduceChildPathMayDropSpan(childPath) {
 							extendParentSpanToWindow(parent, children, 0, reducedEnd, lang.SymbolMetadata, p.spanExtendingInvisibleSymbols, p.nonSpanExtendingInvisibleSymbols)
 						}
-						// Position the reduced node at the end of its last real
-						// child (before any trimmed trailing extras), falling back
-						// to the frontier position for empty productions.
+						// Coalescing tracks parser input position, not necessarily the
+						// visible node span. JavaScript blocks can end before dropped
+						// anonymous delimiters in the tree, but the stack has still
+						// consumed through node.byteOffset. If trailing extras were
+						// trimmed, key the parent before those extras so they can be
+						// re-pushed on top.
+						parentEnd := node.byteOffset
+						if reducedEnd < len(children) && reducedEnd > 0 {
+							parentEnd = stackEntryNodeEndByte(children[reducedEnd-1])
+						}
+						if forestCoalesceWouldDropForCap(&curIndex, gotoState, parentEnd, score, popTo.errorCost) {
+							if perfCountersEnabled {
+								perfRecordForestCoalescePreCapDrop()
+							}
+							return
+						}
 						parent.preGotoState = popTo.state
 						parent.parseState = gotoState
 						// Subtree score = this production's dynamic precedence +

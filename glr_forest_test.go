@@ -89,6 +89,29 @@ func TestCoalesceForestSharesNode(t *testing.T) {
 	}
 }
 
+func TestCoalesceForestMarksDirtyWhenPredecessorChanges(t *testing.T) {
+	idx := newGSSForestIndex(0)
+	slab := &gssForestNodeSlab{}
+	prev := &gssForestNode{state: 1, dirty: 1}
+	entry := newStackEntryNode(2, &Node{symbol: 7, startByte: 10, endByte: 20})
+
+	top := coalesceForest(&idx, slab, 5, 20, prev, entry, 0, 0)
+	initialDirty := top.dirty
+	initialLinks := len(top.links)
+
+	prev.dirty++
+	again := coalesceForest(&idx, slab, 5, 20, prev, entry, 0, 0)
+	if again != top {
+		t.Fatal("same link reached a different coalesced node")
+	}
+	if len(top.links) != initialLinks {
+		t.Fatalf("duplicate link appended: got %d links, want %d", len(top.links), initialLinks)
+	}
+	if top.dirty <= initialDirty {
+		t.Fatalf("coalesced node dirty=%d, want > %d after predecessor changed", top.dirty, initialDirty)
+	}
+}
+
 func TestGSSForestNodeSlabReleaseClearsPointers(t *testing.T) {
 	slab := &gssForestNodeSlab{}
 	base := slab.alloc(1, 0, 0, 0)

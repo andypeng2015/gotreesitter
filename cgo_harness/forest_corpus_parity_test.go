@@ -81,6 +81,8 @@ func runForestLangParity(t *testing.T, name string, lang *gts.Language, files []
 		total, dispatched, fellBack, diverged int
 		prodNanos, forestNanos                int64
 		divergedFiles                         []string
+		fallbackReasons                       = map[string]int{}
+		verboseFallbacks                      = strings.TrimSpace(os.Getenv("GTS_FOREST_CORPUS_VERBOSE")) != ""
 	)
 	for _, f := range files {
 		func(f string) {
@@ -125,6 +127,20 @@ func runForestLangParity(t *testing.T, name string, lang *gts.Language, files []
 			}
 			if !ok || root == nil || root.HasError() || root.EndByte() < lastNonWSByte(src) {
 				fellBack++
+				reason := forestFallbackReason(ok, root, src)
+				fallbackReasons[reason]++
+				if verboseFallbacks {
+					endByte := uint32(0)
+					hasError := false
+					if root != nil {
+						endByte = root.EndByte()
+						hasError = root.HasError()
+					}
+					t.Logf("%s: forest fallback %s reason=%s ok=%v root=%v hasError=%v end=%d lastNonWS=%d size=%d",
+						name, filepath.Base(f), reason, ok, root != nil, hasError, endByte, lastNonWSByte(src), len(src))
+					t.Logf("%s: production fallback peer %s hasError=%v end=%d",
+						name, filepath.Base(f), prodRoot.HasError(), prodRoot.EndByte())
+				}
 				return
 			}
 			dispatched++
@@ -142,11 +158,45 @@ func runForestLangParity(t *testing.T, name string, lang *gts.Language, files []
 	t.Logf("%-8s files=%d dispatched=%d fellback=%d diverged=%d | prod=%.1fms forest=%.1fms speedup=%.1fx",
 		name, total, dispatched, fellBack, diverged,
 		float64(prodNanos)/1e6, float64(forestNanos)/1e6, speedup)
+	if fellBack > 0 {
+		t.Logf("%-8s fallback reasons: %s", name, formatFallbackReasons(fallbackReasons))
+	}
 	if diverged > 0 {
 		sort.Strings(divergedFiles)
 		t.Errorf("%s: %d/%d dispatched files DIVERGED from production (blocks forest default-on): %s",
 			name, diverged, dispatched, strings.Join(divergedFiles, ", "))
 	}
+}
+
+func forestFallbackReason(ok bool, root *gts.Node, src []byte) string {
+	switch {
+	case !ok:
+		return "parse_failed"
+	case root == nil:
+		return "nil_root"
+	case root.HasError():
+		return "has_error"
+	case root.EndByte() < lastNonWSByte(src):
+		return "truncated"
+	default:
+		return "unknown"
+	}
+}
+
+func formatFallbackReasons(reasons map[string]int) string {
+	if len(reasons) == 0 {
+		return "none"
+	}
+	keys := make([]string, 0, len(reasons))
+	for k := range reasons {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		parts = append(parts, fmt.Sprintf("%s=%d", k, reasons[k]))
+	}
+	return strings.Join(parts, ",")
 }
 
 func forestLanguageLoaders() map[string]func() *gts.Language {
