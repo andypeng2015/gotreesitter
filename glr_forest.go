@@ -691,6 +691,19 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 						// copy. window = children[0:reducedEnd] (trailing extras trimmed).
 						reducedEnd := reducedEndBeforeTrailingExtras(children)
 						score := int(act.DynamicPrecedence) + childScore
+						// If the target forest node is already at its fan-out cap and
+						// this reduction cannot displace an existing alternative, avoid
+						// building the reduced children and parent node just to drop it.
+						parentEnd := node.byteOffset
+						if reducedEnd < len(children) && reducedEnd > 0 {
+							parentEnd = stackEntryNodeEndByte(children[reducedEnd-1])
+						}
+						if forestCoalesceWouldDropForCap(&curIndex, gotoState, parentEnd, score, popTo.errorCost) {
+							if perfCountersEnabled {
+								perfRecordForestCoalescePreCapDrop()
+							}
+							return
+						}
 						childNodes, fieldIDs, fieldSources, childPath := p.buildReduceChildrenWithPath(children, 0, reducedEnd, cc, act.Symbol, act.ProductionID, arena)
 						parent := newParentNodeInArenaWithFieldSources(arena, act.Symbol, named(act.Symbol), childNodes, fieldIDs, fieldSources, act.ProductionID)
 						// Recover the reduced node's byte span from the full window,
@@ -713,16 +726,6 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 						// consumed through node.byteOffset. If trailing extras were
 						// trimmed, key the parent before those extras so they can be
 						// re-pushed on top.
-						parentEnd := node.byteOffset
-						if reducedEnd < len(children) && reducedEnd > 0 {
-							parentEnd = stackEntryNodeEndByte(children[reducedEnd-1])
-						}
-						if forestCoalesceWouldDropForCap(&curIndex, gotoState, parentEnd, score, popTo.errorCost) {
-							if perfCountersEnabled {
-								perfRecordForestCoalescePreCapDrop()
-							}
-							return
-						}
 						parent.preGotoState = popTo.state
 						parent.parseState = gotoState
 						// Subtree score = this production's dynamic precedence +
@@ -851,6 +854,12 @@ func (fr *forestReducer) reduce(node *gssForestNode, childCount int, visit func(
 		}
 		return
 	}
+	if fr.reduceForkedLinearNoExtras(node, childCount, visit) {
+		if perfCountersEnabled {
+			perfRecordForestReduceLinearNoExtras(childCount)
+		}
+		return
+	}
 	if fr.reduceLinearSinglePath(node, childCount, visit) {
 		return
 	}
@@ -910,6 +919,48 @@ func (fr *forestReducer) reduceLinearNoExtras(node *gssForestNode, childCount in
 	return true
 }
 
+func (fr *forestReducer) reduceForkedLinearNoExtras(node *gssForestNode, childCount int, visit func(children []stackEntry, childScore int, popTo *gssForestNode)) bool {
+	if childCount <= 1 || node == nil || len(node.links) <= 1 {
+		return false
+	}
+	for i := range node.links {
+		link := node.links[i]
+		if stackEntryNodeIsExtra(link.subtree) {
+			return false
+		}
+		cur := link.prev
+		for child := childCount - 2; child >= 0; child-- {
+			if cur == nil || len(cur.links) != 1 {
+				return false
+			}
+			next := cur.links[0]
+			if stackEntryNodeIsExtra(next.subtree) {
+				return false
+			}
+			cur = next.prev
+		}
+	}
+	if cap(fr.rev) < childCount {
+		fr.rev = make([]stackEntry, childCount)
+	} else {
+		fr.rev = fr.rev[:childCount]
+	}
+	for i := range node.links {
+		link := node.links[i]
+		score := link.score
+		fr.rev[childCount-1] = link.subtree
+		cur := link.prev
+		for child := childCount - 2; child >= 0; child-- {
+			next := cur.links[0]
+			fr.rev[child] = next.subtree
+			score += next.score
+			cur = next.prev
+		}
+		visit(fr.rev, score, cur)
+	}
+	return true
+}
+
 func (fr *forestReducer) reduceLinearSinglePath(node *gssForestNode, childCount int, visit func(children []stackEntry, childScore int, popTo *gssForestNode)) bool {
 	if childCount <= 0 {
 		return false
@@ -965,9 +1016,13 @@ func (fr *forestReducer) dfs(cur *gssForestNode, remaining, score int, visit fun
 			if perfCountersEnabled {
 				perfRecordForestReduceDFSVisit(len(fr.path))
 			}
-			fr.rev = fr.rev[:0]
-			for j := len(fr.path) - 1; j >= 0; j-- {
-				fr.rev = append(fr.rev, fr.path[j])
+			if cap(fr.rev) < len(fr.path) {
+				fr.rev = make([]stackEntry, len(fr.path))
+			} else {
+				fr.rev = fr.rev[:len(fr.path)]
+			}
+			for j := range fr.path {
+				fr.rev[len(fr.path)-1-j] = fr.path[j]
 			}
 			visit(fr.rev, score+link.score, link.prev)
 			continue
