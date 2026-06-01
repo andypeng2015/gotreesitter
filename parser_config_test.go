@@ -15,6 +15,44 @@ func TestTransientReduceLanguageDefaultsToDisabled(t *testing.T) {
 	if parseTransientReduceChildrenLanguageEnabled(&Language{Name: "java"}) {
 		t.Fatal("java transient reduce children enabled by default")
 	}
+	if parseTransientReduceChildrenLanguageEnabled(&Language{Name: "go"}) {
+		t.Fatal("go transient reduce children enabled without source-gated default")
+	}
+	if parseTransientReduceParentsLanguageEnabled(&Language{Name: "go"}) {
+		t.Fatal("go transient reduce parents enabled without source-gated default")
+	}
+}
+
+func TestTransientReduceGoDefaultLargeSourceOnly(t *testing.T) {
+	t.Setenv("GOT_TRANSIENT_REDUCE_CHILDREN", "")
+	t.Setenv("GOT_TRANSIENT_REDUCE_PARENTS", "")
+	t.Setenv("GOT_TRANSIENT_REDUCE_LANGS", "")
+	t.Setenv("GOT_TRANSIENT_REDUCE_CHILDREN_LANGS", "")
+	t.Setenv("GOT_TRANSIENT_REDUCE_PARENTS_LANGS", "")
+
+	p := &Parser{language: &Language{Name: "go"}}
+	small := make([]byte, defaultTransientReduceGoMinSourceLen-1)
+	large := make([]byte, defaultTransientReduceGoMinSourceLen)
+	if p.shouldUseTransientReduceChildren(small, nil, nil, arenaClassFull) {
+		t.Fatal("go transient reduce children enabled below large-source threshold")
+	}
+	if p.shouldUseTransientReduceParents(small, nil, nil, arenaClassFull) {
+		t.Fatal("go transient reduce parents enabled below large-source threshold")
+	}
+	if !p.shouldUseTransientReduceChildren(large, nil, nil, arenaClassFull) {
+		t.Fatal("go transient reduce children disabled at large-source threshold")
+	}
+	if !p.shouldUseTransientReduceParents(large, nil, nil, arenaClassFull) {
+		t.Fatal("go transient reduce parents disabled at large-source threshold")
+	}
+
+	p.noResultCompatibilityBenchmarkOnly = true
+	if p.shouldUseTransientReduceChildren(large, nil, nil, arenaClassFull) {
+		t.Fatal("go transient reduce children enabled in no-result-compat benchmark mode")
+	}
+	if p.shouldUseTransientReduceParents(large, nil, nil, arenaClassFull) {
+		t.Fatal("go transient reduce parents enabled in no-result-compat benchmark mode")
+	}
 }
 
 func TestTransientReduceLanguageAllowlist(t *testing.T) {
@@ -32,6 +70,23 @@ func TestTransientReduceLanguageAllowlist(t *testing.T) {
 	}
 	if parseTransientReduceChildrenLanguageEnabled(&Language{Name: "python"}) {
 		t.Fatal("python transient reduce children enabled outside allowlist")
+	}
+}
+
+func TestTransientReduceGoAllowlistBypassesLargeSourceDefault(t *testing.T) {
+	t.Setenv("GOT_TRANSIENT_REDUCE_CHILDREN", "")
+	t.Setenv("GOT_TRANSIENT_REDUCE_PARENTS", "")
+	t.Setenv("GOT_TRANSIENT_REDUCE_LANGS", "go")
+	t.Setenv("GOT_TRANSIENT_REDUCE_CHILDREN_LANGS", "")
+	t.Setenv("GOT_TRANSIENT_REDUCE_PARENTS_LANGS", "")
+
+	p := &Parser{language: &Language{Name: "go"}}
+	src := []byte("package p\n")
+	if !p.shouldUseTransientReduceChildren(src, nil, nil, arenaClassFull) {
+		t.Fatal("go transient reduce children explicit allowlist ignored below threshold")
+	}
+	if !p.shouldUseTransientReduceParents(src, nil, nil, arenaClassFull) {
+		t.Fatal("go transient reduce parents explicit allowlist ignored below threshold")
 	}
 }
 

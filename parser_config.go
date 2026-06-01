@@ -206,11 +206,23 @@ func parseTransientReduceChildrenLanguageEnabled(lang *Language) bool {
 	return parseTransientReduceLanguageEnabled(lang, "GOT_TRANSIENT_REDUCE_CHILDREN_LANGS")
 }
 
+func parseTransientReduceChildrenLanguageEnabledForSource(lang *Language, sourceLen int) bool {
+	return parseTransientReduceLanguageEnabledForSource(lang, sourceLen, "GOT_TRANSIENT_REDUCE_CHILDREN_LANGS")
+}
+
 func parseTransientReduceParentsLanguageEnabled(lang *Language) bool {
 	return parseTransientReduceLanguageEnabled(lang, "GOT_TRANSIENT_REDUCE_PARENTS_LANGS")
 }
 
+func parseTransientReduceParentsLanguageEnabledForSource(lang *Language, sourceLen int) bool {
+	return parseTransientReduceLanguageEnabledForSource(lang, sourceLen, "GOT_TRANSIENT_REDUCE_PARENTS_LANGS")
+}
+
 func parseTransientReduceLanguageEnabled(lang *Language, envName string) bool {
+	return parseTransientReduceLanguageEnabledForSource(lang, 0, envName)
+}
+
+func parseTransientReduceLanguageEnabledForSource(lang *Language, sourceLen int, envName string) bool {
 	if lang == nil {
 		return false
 	}
@@ -219,9 +231,20 @@ func parseTransientReduceLanguageEnabled(lang *Language, envName string) bool {
 		raw = strings.TrimSpace(os.Getenv("GOT_TRANSIENT_REDUCE_LANGS"))
 	}
 	if raw == "" {
-		return false
+		return defaultTransientReduceLanguageEnabledForSource(lang.Name, sourceLen)
 	}
 	return transientReduceLanguageListMatches(raw, lang.Name)
+}
+
+const defaultTransientReduceGoMinSourceLen = 64 * 1024
+
+func defaultTransientReduceLanguageEnabledForSource(name string, sourceLen int) bool {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "go":
+		return sourceLen >= defaultTransientReduceGoMinSourceLen
+	default:
+		return false
+	}
 }
 
 func transientReduceLanguageListMatches(raw, name string) bool {

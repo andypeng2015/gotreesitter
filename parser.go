@@ -3302,12 +3302,13 @@ func (p *Parser) shouldUseTransientReduceChildren(source []byte, reuse *reuseCur
 	return parseTransientReduceChildrenEnabled() &&
 		p != nil &&
 		p.language != nil &&
-		parseTransientReduceChildrenLanguageEnabled(p.language) &&
+		parseTransientReduceChildrenLanguageEnabledForSource(p.language, len(source)) &&
 		arenaClass == arenaClassFull &&
 		reuse == nil &&
 		oldTree == nil &&
 		!p.noTreeBenchmarkOnly &&
 		!p.noTreeCheckpointBenchmarkOnly &&
+		!p.noResultCompatibilityBenchmarkOnly &&
 		len(source) > 0
 }
 
@@ -3315,12 +3316,13 @@ func (p *Parser) shouldUseTransientReduceParents(source []byte, reuse *reuseCurs
 	return parseTransientReduceParentsEnabled() &&
 		p != nil &&
 		p.language != nil &&
-		parseTransientReduceParentsLanguageEnabled(p.language) &&
+		parseTransientReduceParentsLanguageEnabledForSource(p.language, len(source)) &&
 		arenaClass == arenaClassFull &&
 		reuse == nil &&
 		oldTree == nil &&
 		!p.noTreeBenchmarkOnly &&
 		!p.noTreeCheckpointBenchmarkOnly &&
+		!p.noResultCompatibilityBenchmarkOnly &&
 		len(source) > 0
 }
 
