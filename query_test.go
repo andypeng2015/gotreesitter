@@ -2189,6 +2189,46 @@ func TestMatchRootQuantifierGroupsAdjacentSiblings(t *testing.T) {
 	assertRootQuantifierGroups(t, q.executeNodeIntoBuffer(tree.RootNode(), lang, source, &queryExecBuffer{}))
 }
 
+func TestQueryCursorRootQuantifierGroupsWithoutParentLinks(t *testing.T) {
+	lang := queryTestLanguage()
+	source := []byte("a b 1 c")
+	id0 := leaf(Symbol(1), true, 0, 1)
+	id1 := leaf(Symbol(1), true, 2, 3)
+	num := leaf(Symbol(2), true, 4, 5)
+	id2 := leaf(Symbol(1), true, 6, 7)
+	program := parent(Symbol(7), true, []*Node{id0, id1, num, id2}, []FieldID{0, 0, 0, 0})
+	for _, child := range []*Node{id0, id1, num, id2} {
+		child.parent = nil
+		child.childIndex = -1
+	}
+	tree := NewTree(program, source, lang)
+
+	q, err := NewQuery(`(identifier)+ @id`, lang)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	cursor := q.Exec(tree.RootNode(), tree.Language(), tree.Source())
+
+	var got [][]string
+	for {
+		match, ok := cursor.NextMatch()
+		if !ok {
+			break
+		}
+		var captures []string
+		for _, capture := range match.Captures {
+			captures = append(captures, capture.Node.Text(source))
+		}
+		got = append(got, captures)
+	}
+	want := [][]string{{"a", "b"}, {"c"}}
+	if !slices.EqualFunc(got, want, func(a, b []string) bool {
+		return slices.Equal(a, b)
+	}) {
+		t.Fatalf("matches: got %v, want %v", got, want)
+	}
+}
+
 func TestMatchRootStarEmitsEmptyMatchesBeforeRunEnd(t *testing.T) {
 	lang := queryTestLanguage()
 	source := []byte("a b 1 c")

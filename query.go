@@ -215,6 +215,8 @@ type QueryCursor struct {
 	endPoint      Point
 
 	currentNode       *Node
+	currentParent     *Node
+	currentChildIdx   int
 	currentNodeDepth  uint32
 	currentNodePost   bool
 	currentCandidates []int
@@ -239,9 +241,11 @@ type QueryCursor struct {
 }
 
 type queryCursorWorkItem struct {
-	node  *Node
-	depth uint32
-	post  bool
+	node     *Node
+	parent   *Node
+	childIdx int
+	depth    uint32
+	post     bool
 }
 
 type queryExecBuffer struct {
@@ -312,7 +316,7 @@ func (q *Query) Exec(node *Node, lang *Language, source []byte) *QueryCursor {
 	if node != nil {
 		// Pre-size the worklist for typical tree depth (avoids early growths).
 		c.worklist = make([]queryCursorWorkItem, 1, 32)
-		c.worklist[0] = queryCursorWorkItem{node: node, depth: 0}
+		c.worklist[0] = queryCursorWorkItem{node: node, childIdx: -1, depth: 0}
 	}
 	return c
 }
@@ -495,7 +499,7 @@ func (q *Query) executeNodeIntoBuffer(root *Node, lang *Language, source []byte,
 	}
 
 	buf.matches = buf.matches[:0]
-	buf.worklist = append(buf.worklist[:0], queryCursorWorkItem{node: root, depth: 0})
+	buf.worklist = append(buf.worklist[:0], queryCursorWorkItem{node: root, childIdx: -1, depth: 0})
 
 	for len(buf.worklist) > 0 {
 		last := len(buf.worklist) - 1
@@ -516,7 +520,7 @@ func (q *Query) executeNodeIntoBuffer(root *Node, lang *Language, source []byte,
 				pat := q.patterns[pi]
 				var captureSets [][]QueryCapture
 				if pat.steps[0].quantifier == queryQuantifierZeroOrMore || pat.steps[0].quantifier == queryQuantifierOneOrMore {
-					captureSets = q.matchPatternPostorderAll(&pat, n, lang, source)
+					captureSets = q.matchPatternPostorderAll(&pat, n, item.parent, item.childIdx, lang, source)
 				} else {
 					captureSets = q.matchPatternAll(&pat, n, lang, source)
 				}
@@ -532,9 +536,11 @@ func (q *Query) executeNodeIntoBuffer(root *Node, lang *Language, source []byte,
 
 		if q.hasPostorderPatterns() {
 			buf.worklist = append(buf.worklist, queryCursorWorkItem{
-				node:  n,
-				depth: item.depth,
-				post:  true,
+				node:     n,
+				parent:   item.parent,
+				childIdx: item.childIdx,
+				depth:    item.depth,
+				post:     true,
 			})
 		}
 
@@ -544,8 +550,10 @@ func (q *Query) executeNodeIntoBuffer(root *Node, lang *Language, source []byte,
 				continue
 			}
 			buf.worklist = append(buf.worklist, queryCursorWorkItem{
-				node:  child,
-				depth: item.depth + 1,
+				node:     child,
+				parent:   n,
+				childIdx: i,
+				depth:    item.depth + 1,
 			})
 		}
 
@@ -841,6 +849,8 @@ func (c *QueryCursor) nextMatchRaw() (QueryMatch, bool) {
 			}
 			if item.post {
 				c.currentNode = n
+				c.currentParent = item.parent
+				c.currentChildIdx = item.childIdx
 				c.currentNodeDepth = depth
 				c.currentNodePost = true
 				postCandidates := q.postorderPatternCandidates(c.lang.PublicSymbolForNamedness(n.Symbol(), n.IsNamed()))
@@ -854,6 +864,8 @@ func (c *QueryCursor) nextMatchRaw() (QueryMatch, bool) {
 			}
 
 			c.currentNode = n
+			c.currentParent = item.parent
+			c.currentChildIdx = item.childIdx
 			c.currentNodeDepth = depth
 			c.currentNodePost = false
 			c.currentCandidates = q.rootPatternCandidates(c.lang.PublicSymbolForNamedness(n.Symbol(), n.IsNamed()))
@@ -875,7 +887,7 @@ func (c *QueryCursor) nextMatchRaw() (QueryMatch, bool) {
 			var captureSets [][]QueryCapture
 			if c.currentNodePost {
 				if pat.steps[0].quantifier == queryQuantifierZeroOrMore || pat.steps[0].quantifier == queryQuantifierOneOrMore {
-					captureSets = q.matchPatternPostorderAll(&pat, c.currentNode, c.lang, c.source)
+					captureSets = q.matchPatternPostorderAll(&pat, c.currentNode, c.currentParent, c.currentChildIdx, c.lang, c.source)
 				} else {
 					captureSets = q.matchPatternAll(&pat, c.currentNode, c.lang, c.source)
 				}
@@ -904,6 +916,8 @@ func (c *QueryCursor) nextMatchRaw() (QueryMatch, bool) {
 		// Exhausted candidates for this node; advance to the next node.
 		c.pushCurrentNodeChildren()
 		c.currentNode = nil
+		c.currentParent = nil
+		c.currentChildIdx = -1
 		c.currentNodeDepth = 0
 		c.currentNodePost = false
 		c.currentCandidates = nil
@@ -957,9 +971,11 @@ func (c *QueryCursor) pushCurrentNodeChildren() {
 	}
 	if c.query != nil && c.query.hasPostorderPatterns() {
 		c.worklist = append(c.worklist, queryCursorWorkItem{
-			node:  n,
-			depth: c.currentNodeDepth,
-			post:  true,
+			node:     n,
+			parent:   c.currentParent,
+			childIdx: c.currentChildIdx,
+			depth:    c.currentNodeDepth,
+			post:     true,
 		})
 	}
 	if c.hasMaxStartDepth && c.currentNodeDepth >= c.maxStartDepth {
@@ -981,8 +997,10 @@ func (c *QueryCursor) pushCurrentNodeChildren() {
 		child := nodeChildAtForReason(n, i, materializeForQuery)
 		if child != nil && (!rangeLimited || c.nodeIntersectsRanges(child)) {
 			c.worklist = append(c.worklist, queryCursorWorkItem{
-				node:  child,
-				depth: nextDepth,
+				node:     child,
+				parent:   n,
+				childIdx: i,
+				depth:    nextDepth,
 			})
 		}
 	}

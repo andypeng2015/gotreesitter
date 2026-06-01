@@ -137,7 +137,7 @@ func (q *Query) matchRootZeroOrMorePatternAll(pat *Pattern, node *Node, lang *La
 	return nil
 }
 
-func (q *Query) matchPatternPostorderAll(pat *Pattern, node *Node, lang *Language, source []byte) [][]QueryCapture {
+func (q *Query) matchPatternPostorderAll(pat *Pattern, node *Node, parent *Node, childIdx int, lang *Language, source []byte) [][]QueryCapture {
 	if len(pat.steps) == 0 {
 		return nil
 	}
@@ -146,34 +146,34 @@ func (q *Query) matchPatternPostorderAll(pat *Pattern, node *Node, lang *Languag
 	default:
 		return nil
 	}
-	parent := node.Parent()
-	childIdx := nodeChildIndexInParent(node, parent)
+	parent, childIdx = queryPatternSiblingContext(node, parent, childIdx)
 	if len(q.matchPatternOnceAll(pat, node, parent, childIdx, lang, source, nil)) == 0 {
 		return nil
 	}
-	if next := node.NextSibling(); next != nil {
-		nextParent := next.Parent()
-		nextChildIdx := nodeChildIndexInParent(next, nextParent)
+	if next, nextParent, nextChildIdx := queryAdjacentSibling(node, parent, childIdx, 1); next != nil {
 		if len(q.matchPatternOnceAll(pat, next, nextParent, nextChildIdx, lang, source, nil)) > 0 {
 			return nil
 		}
 	}
 
 	runStart := node
-	for prev := node.PrevSibling(); prev != nil; prev = prev.PrevSibling() {
-		prevParent := prev.Parent()
-		prevChildIdx := nodeChildIndexInParent(prev, prevParent)
+	runStartParent := parent
+	runStartChildIdx := childIdx
+	for {
+		prev, prevParent, prevChildIdx := queryAdjacentSibling(runStart, runStartParent, runStartChildIdx, -1)
+		if prev == nil {
+			break
+		}
 		if len(q.matchPatternOnceAll(pat, prev, prevParent, prevChildIdx, lang, source, nil)) == 0 {
 			break
 		}
 		runStart = prev
+		runStartParent = prevParent
+		runStartChildIdx = prevChildIdx
 	}
 
 	partials := [][]QueryCapture{nil}
-	for current := runStart; current != nil; current = current.NextSibling() {
-		currentParent := current.Parent()
-		currentChildIdx := nodeChildIndexInParent(current, currentParent)
-
+	for current, currentParent, currentChildIdx := runStart, runStartParent, runStartChildIdx; current != nil; {
 		var nextPartials [][]QueryCapture
 		for _, captures := range partials {
 			nextPartials = append(nextPartials, q.matchPatternOnceAll(pat, current, currentParent, currentChildIdx, lang, source, captures)...)
@@ -185,6 +185,7 @@ func (q *Query) matchPatternPostorderAll(pat *Pattern, node *Node, lang *Languag
 		if current == node {
 			break
 		}
+		current, currentParent, currentChildIdx = queryAdjacentSibling(current, currentParent, currentChildIdx, 1)
 	}
 
 	var matches [][]QueryCapture
@@ -196,6 +197,41 @@ func (q *Query) matchPatternPostorderAll(pat *Pattern, node *Node, lang *Languag
 		matches = append(matches, cloneQueryCaptures(captures))
 	}
 	return matches
+}
+
+func queryPatternSiblingContext(node *Node, parent *Node, childIdx int) (*Node, int) {
+	if node == nil {
+		return nil, -1
+	}
+	if parent != nil && childIdx >= 0 {
+		return parent, childIdx
+	}
+	if linkedParent, linkedIdx, ok := nodeParentLink(node); linkedParent != nil && ok && linkedIdx >= 0 {
+		return linkedParent, linkedIdx
+	}
+	parent = node.Parent()
+	return parent, nodeChildIndexInParent(node, parent)
+}
+
+func queryAdjacentSibling(node *Node, parent *Node, childIdx int, delta int) (*Node, *Node, int) {
+	if node == nil {
+		return nil, nil, -1
+	}
+	if parent != nil && childIdx >= 0 {
+		nextIdx := childIdx + delta
+		if nextIdx >= 0 && nextIdx < nodeChildCountNoMaterialize(parent) {
+			return nodeChildAtForReason(parent, nextIdx, materializeForQuery), parent, nextIdx
+		}
+		return nil, parent, -1
+	}
+	var sibling *Node
+	if delta > 0 {
+		sibling = node.NextSibling()
+	} else {
+		sibling = node.PrevSibling()
+	}
+	siblingParent, siblingIdx := queryPatternSiblingContext(sibling, nil, -1)
+	return sibling, siblingParent, siblingIdx
 }
 
 func (q *Query) matchPatternOnceAll(
