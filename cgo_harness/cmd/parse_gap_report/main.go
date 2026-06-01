@@ -130,6 +130,19 @@ type paritySummary struct {
 }
 
 type runtimeStats struct {
+	StopReason                            string        `json:"stop_reason,omitempty"`
+	SourceLen                             uint32        `json:"source_len,omitempty"`
+	ExpectedEOFByte                       uint32        `json:"expected_eof_byte,omitempty"`
+	RootEndByte                           uint32        `json:"root_end_byte,omitempty"`
+	Truncated                             bool          `json:"truncated,omitempty"`
+	TokenSourceEOFEarly                   bool          `json:"token_source_eof_early,omitempty"`
+	LastTokenEndByte                      uint32        `json:"last_token_end_byte,omitempty"`
+	LastTokenSymbol                       uint16        `json:"last_token_symbol,omitempty"`
+	LastTokenWasEOF                       bool          `json:"last_token_was_eof,omitempty"`
+	IterationLimit                        int           `json:"iteration_limit,omitempty"`
+	StackDepthLimit                       int           `json:"stack_depth_limit,omitempty"`
+	NodeLimit                             int           `json:"node_limit,omitempty"`
+	MemoryBudgetBytes                     int64         `json:"memory_budget_bytes,omitempty"`
 	Tokens                                uint64        `json:"tokens,omitempty"`
 	Iterations                            int           `json:"iterations,omitempty"`
 	NodesAllocated                        int           `json:"nodes_allocated,omitempty"`
@@ -1403,6 +1416,19 @@ func nonzeroBuckets(buckets [8]uint64) []uint64 {
 func statsFromRuntime(rt gotreesitter.ParseRuntime) runtimeStats {
 	publicMaterialized := rt.CompactFullLeafMaterialized + rt.PendingParentMaterialized + rt.FinalChildRefSingleChildMaterializedChildren
 	stats := runtimeStats{
+		StopReason:                            string(rt.StopReason),
+		SourceLen:                             rt.SourceLen,
+		ExpectedEOFByte:                       rt.ExpectedEOFByte,
+		RootEndByte:                           rt.RootEndByte,
+		Truncated:                             rt.Truncated,
+		TokenSourceEOFEarly:                   rt.TokenSourceEOFEarly,
+		LastTokenEndByte:                      rt.LastTokenEndByte,
+		LastTokenSymbol:                       uint16(rt.LastTokenSymbol),
+		LastTokenWasEOF:                       rt.LastTokenWasEOF,
+		IterationLimit:                        rt.IterationLimit,
+		StackDepthLimit:                       rt.StackDepthLimit,
+		NodeLimit:                             rt.NodeLimit,
+		MemoryBudgetBytes:                     rt.MemoryBudgetBytes,
 		Tokens:                                rt.TokensConsumed,
 		Iterations:                            rt.Iterations,
 		NodesAllocated:                        rt.NodesAllocated,

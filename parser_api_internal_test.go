@@ -160,6 +160,80 @@ func TestPythonRepetitionShiftConflictChoiceRejectsOtherState(t *testing.T) {
 	}
 }
 
+func TestClojureRepetitionShiftConflictChoiceAllowsHotRepeats(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		state        StateID
+		reduceSymbol Symbol
+	}{
+		{name: "source_repeat1", state: 20, reduceSymbol: 1},
+		{name: "_bare_list_lit_repeat1", state: 2, reduceSymbol: 2},
+	} {
+		lang := &Language{SymbolNames: []string{"end", "source_repeat1", "_bare_list_lit_repeat1"}}
+		actions := []ParseAction{
+			{Type: ParseActionReduce, Symbol: tc.reduceSymbol, ChildCount: 2},
+			{Type: ParseActionShift, State: 9, Repetition: true},
+		}
+
+		chosen, ok := clojureRepetitionShiftConflictChoice(lang, tc.state, actions)
+		if !ok {
+			t.Fatalf("clojureRepetitionShiftConflictChoice(%s) = false, want true", tc.name)
+		}
+		if chosen.Type != ParseActionShift || chosen.State != 9 || !chosen.Repetition {
+			t.Fatalf("clojureRepetitionShiftConflictChoice(%s) picked %+v, want repetition shift", tc.name, chosen)
+		}
+	}
+}
+
+func TestClojureRepetitionShiftConflictChoiceRejectsOtherRepeat(t *testing.T) {
+	lang := &Language{SymbolNames: []string{"end", "source_repeat1", "other_repeat1"}}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 2, ChildCount: 2},
+		{Type: ParseActionShift, State: 9, Repetition: true},
+	}
+	if _, ok := clojureRepetitionShiftConflictChoice(lang, 20, actions); ok {
+		t.Fatal("clojureRepetitionShiftConflictChoice = true, want false")
+	}
+}
+
+func TestAwkRepetitionShiftConflictChoiceAllowsHotRepeats(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		state        StateID
+		reduceSymbol Symbol
+	}{
+		{name: "block_repeat1", state: 8, reduceSymbol: 1},
+		{name: "program_repeat1", state: 303, reduceSymbol: 2},
+		{name: "_regex_bracket_exp_repeat1", state: 2107, reduceSymbol: 3},
+		{name: "regex_pattern_repeat1", state: 2120, reduceSymbol: 4},
+	} {
+		lang := &Language{SymbolNames: []string{"end", "block_repeat1", "program_repeat1", "_regex_bracket_exp_repeat1", "regex_pattern_repeat1"}}
+		actions := []ParseAction{
+			{Type: ParseActionReduce, Symbol: tc.reduceSymbol, ChildCount: 2},
+			{Type: ParseActionShift, State: 9, Repetition: true},
+		}
+
+		chosen, ok := awkRepetitionShiftConflictChoice(lang, tc.state, actions)
+		if !ok {
+			t.Fatalf("awkRepetitionShiftConflictChoice(%s) = false, want true", tc.name)
+		}
+		if chosen.Type != ParseActionShift || chosen.State != 9 || !chosen.Repetition {
+			t.Fatalf("awkRepetitionShiftConflictChoice(%s) picked %+v, want repetition shift", tc.name, chosen)
+		}
+	}
+}
+
+func TestAwkRepetitionShiftConflictChoiceRejectsOtherRepeat(t *testing.T) {
+	lang := &Language{SymbolNames: []string{"end", "program_repeat1", "other_repeat1"}}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 2, ChildCount: 2},
+		{Type: ParseActionShift, State: 9, Repetition: true},
+	}
+	if _, ok := awkRepetitionShiftConflictChoice(lang, 303, actions); ok {
+		t.Fatal("awkRepetitionShiftConflictChoice = true, want false")
+	}
+}
+
 func TestRustRepetitionShiftConflictChoiceAllowsSourceFileRepeat(t *testing.T) {
 	lang := &Language{SymbolNames: []string{"end", "identifier", ";", "..", "source_file_repeat1", "_non_special_token_repeat1"}}
 	actions := []ParseAction{

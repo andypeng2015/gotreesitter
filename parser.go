@@ -2531,6 +2531,14 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 						if next, ok := pythonRepetitionShiftConflictChoice(p.language, tok, currentState, actions); ok {
 							chosen, choice = next, true
 						}
+					case "clojure":
+						if next, ok := clojureRepetitionShiftConflictChoice(p.language, currentState, actions); ok {
+							chosen, choice = next, true
+						}
+					case "awk":
+						if next, ok := awkRepetitionShiftConflictChoice(p.language, currentState, actions); ok {
+							chosen, choice = next, true
+						}
 					case "kotlin":
 						if next, ok := kotlinObjectLiteralConflictChoice(p.language, actions); ok {
 							chosen, choice = next, true
@@ -3667,6 +3675,62 @@ func pythonRepetitionShiftConflictChoice(lang *Language, tok Token, state StateI
 	return repetitionShiftConflictChoice(actions)
 }
 
+// clojureRepetitionShiftConflictChoice resolves the two dominant Clojure
+// list-boundary forks where the table offers both "reduce the current repeat"
+// and "shift the next repeat element". Close delimiters/EOF do not have the
+// repetition shift, so repetitionShiftConflictChoice excludes them; on tokens
+// with the continuation shift, continuing the repeat matches the C runtime and
+// avoids a combinatorial source/list fork storm.
+func clojureRepetitionShiftConflictChoice(lang *Language, state StateID, actions []ParseAction) (ParseAction, bool) {
+	if lang == nil {
+		return ParseAction{}, false
+	}
+	switch state {
+	case 20:
+		if !allReducesHaveSymbol(lang, actions, "source_repeat1") {
+			return ParseAction{}, false
+		}
+	case 2:
+		if !allReducesHaveSymbol(lang, actions, "_bare_list_lit_repeat1") {
+			return ParseAction{}, false
+		}
+	default:
+		return ParseAction{}, false
+	}
+	return repetitionShiftConflictChoice(actions)
+}
+
+// awkRepetitionShiftConflictChoice collapses AWK repeat continuation forks that
+// dominate large real-corpus parses. The real-corpus oracle still reports
+// recoverable ERROR subtrees for some AWK files, so this is scoped to guarded
+// repeat-vs-shift pruning rather than broader AWK recovery normalization.
+func awkRepetitionShiftConflictChoice(lang *Language, state StateID, actions []ParseAction) (ParseAction, bool) {
+	if lang == nil {
+		return ParseAction{}, false
+	}
+	switch state {
+	case 8:
+		if !allReducesHaveSymbol(lang, actions, "block_repeat1") {
+			return ParseAction{}, false
+		}
+	case 303:
+		if !allReducesHaveSymbol(lang, actions, "program_repeat1") {
+			return ParseAction{}, false
+		}
+	case 2107:
+		if !allReducesHaveSymbol(lang, actions, "_regex_bracket_exp_repeat1") {
+			return ParseAction{}, false
+		}
+	case 2120:
+		if !allReducesHaveSymbol(lang, actions, "regex_pattern_repeat1") {
+			return ParseAction{}, false
+		}
+	default:
+		return ParseAction{}, false
+	}
+	return repetitionShiftConflictChoice(actions)
+}
+
 func singleReduceAgainstRepetitionShiftConflictChoice(actions []ParseAction) (ParseAction, bool) {
 	if len(actions) < 2 {
 		return ParseAction{}, false
@@ -3839,7 +3903,7 @@ func rustRepetitionShiftConflictChoice(lang *Language, tok Token, state StateID,
 			return ParseAction{}, false
 		}
 	case 193:
-		if !symbolHasName(lang, tok.Symbol, "..") || !rustAllReducesHaveSymbol(lang, actions, "_non_special_token_repeat1") {
+		if !symbolHasName(lang, tok.Symbol, "..") || !allReducesHaveSymbol(lang, actions, "_non_special_token_repeat1") {
 			return ParseAction{}, false
 		}
 	case 83:
@@ -3866,10 +3930,10 @@ func rustRepetitionShiftConflictChoice(lang *Language, tok Token, state StateID,
 // conflict reduces delim_token_tree_repeat1 (and at least one reduce exists).
 // It scopes the state-83 fork collapse to the macro token-tree repetition.
 func rustAllReducesAreDelimTokenTree(lang *Language, actions []ParseAction) bool {
-	return rustAllReducesHaveSymbol(lang, actions, "delim_token_tree_repeat1")
+	return allReducesHaveSymbol(lang, actions, "delim_token_tree_repeat1")
 }
 
-func rustAllReducesHaveSymbol(lang *Language, actions []ParseAction, name string) bool {
+func allReducesHaveSymbol(lang *Language, actions []ParseAction, name string) bool {
 	found := false
 	for _, act := range actions {
 		if act.Type != ParseActionReduce {
