@@ -894,6 +894,9 @@ func (fr *forestReducer) reduce(node *gssForestNode, childCount int, visit func(
 	if fr.reduceLinearSinglePath(node, childCount, visit) {
 		return
 	}
+	if fr.reduceNoExtrasDFS(node, childCount, visit) {
+		return
+	}
 	if perfCountersEnabled {
 		perfRecordForestReduceDFS()
 	}
@@ -1160,6 +1163,52 @@ func (fr *forestReducer) reduceLinearSinglePath(node *gssForestNode, childCount 
 		cur = link.prev
 	}
 	return false
+}
+
+func (fr *forestReducer) reduceNoExtrasDFS(node *gssForestNode, childCount int, visit func(children []stackEntry, childScore int, popTo *gssForestNode)) bool {
+	if childCount <= 0 || node == nil {
+		return false
+	}
+	if !forestValidateNoExtrasDFS(node, childCount) {
+		return false
+	}
+	if cap(fr.rev) < childCount {
+		fr.rev = make([]stackEntry, childCount)
+	} else {
+		fr.rev = fr.rev[:childCount]
+	}
+	fr.dfsNoExtras(node, childCount, 0, visit)
+	return true
+}
+
+func forestValidateNoExtrasDFS(cur *gssForestNode, remaining int) bool {
+	if cur == nil {
+		return false
+	}
+	for i := range cur.links {
+		link := cur.links[i]
+		if forestStackEntryIsExtra(link.subtree) {
+			return false
+		}
+		if remaining > 1 && !forestValidateNoExtrasDFS(link.prev, remaining-1) {
+			return false
+		}
+	}
+	return true
+}
+
+func (fr *forestReducer) dfsNoExtras(cur *gssForestNode, remaining, score int, visit func(children []stackEntry, childScore int, popTo *gssForestNode)) {
+	out := remaining - 1
+	for i := range cur.links {
+		link := cur.links[i]
+		fr.rev[out] = link.subtree
+		nextScore := score + link.score
+		if remaining == 1 {
+			visit(fr.rev, nextScore, link.prev)
+			continue
+		}
+		fr.dfsNoExtras(link.prev, remaining-1, nextScore, visit)
+	}
 }
 
 func (fr *forestReducer) dfs(cur *gssForestNode, remaining, score int, visit func(children []stackEntry, childScore int, popTo *gssForestNode)) {

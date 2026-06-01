@@ -84,6 +84,27 @@ func TestReduceOverForestForkedNode(t *testing.T) {
 	}
 }
 
+func TestReduceOverForestNestedForkNoExtras(t *testing.T) {
+	// Two no-extra fork levels:
+	//   n0 <-(a:10 or b:20)- n1 <-(c:11 or d:21)- n2
+	// The reducer should enumerate the cartesian product in left-to-right order.
+	n0 := &gssForestNode{state: 0}
+	n1 := &gssForestNode{state: 1, links: []gssLink{
+		{prev: n0, subtree: stackEntry{state: 10}},
+		{prev: n0, subtree: stackEntry{state: 20}},
+	}}
+	n2 := &gssForestNode{state: 2, links: []gssLink{
+		{prev: n1, subtree: stackEntry{state: 11}},
+		{prev: n1, subtree: stackEntry{state: 21}},
+	}}
+
+	got := pathsOf(n2, 2)
+	want := []string{"[10 11]|0", "[20 11]|0", "[10 21]|0", "[20 21]|0"}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("nested fork no-extra childCount=2: got %v want %v", got, want)
+	}
+}
+
 func TestReduceOverForestForkedLinearWithExtra(t *testing.T) {
 	extra := &Node{}
 	extra.setExtra(true)

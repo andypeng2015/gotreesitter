@@ -77,6 +77,7 @@ func TestForestCorpusParity(t *testing.T) {
 
 func runForestLangParity(t *testing.T, name string, lang *gts.Language, files []string) {
 	t.Helper()
+	gts.ResetPerfCounters()
 	var (
 		total, dispatched, fellBack, diverged int
 		prodNanos, forestNanos                int64
@@ -160,6 +161,30 @@ func runForestLangParity(t *testing.T, name string, lang *gts.Language, files []
 		float64(prodNanos)/1e6, float64(forestNanos)/1e6, speedup)
 	if fellBack > 0 {
 		t.Logf("%-8s fallback reasons: %s", name, formatFallbackReasons(fallbackReasons))
+	}
+	if perf := gts.PerfCountersSnapshot(); perf.ForestReduceCalls > 0 || perf.ForestCoalesceCalls > 0 {
+		t.Logf("%-8s forest perf: reduce calls=%d zero=%d linear=%d dfs=%d dfs_links=%d dfs_multilink=%d dfs_extra=%d dfs_visits=%d dfs_path_entries=%d max_path=%d max_child=%d goto_hit=%d goto_miss=%d coalesce calls=%d new=%d append=%d dedup=%d cap_drop=%d cap_replace=%d precap_drop=%d",
+			name,
+			perf.ForestReduceCalls,
+			perf.ForestReduceZero,
+			perf.ForestReduceLinearNoExtras,
+			perf.ForestReduceDFS,
+			perf.ForestReduceDFSLinks,
+			perf.ForestReduceDFSMultiLinkSteps,
+			perf.ForestReduceDFSExtraLinks,
+			perf.ForestReduceDFSVisits,
+			perf.ForestReduceDFSPathEntries,
+			perf.ForestReduceMaxPathLen,
+			perf.ForestReduceMaxChildCount,
+			perf.ForestReduceGotoHits,
+			perf.ForestReduceGotoMisses,
+			perf.ForestCoalesceCalls,
+			perf.ForestCoalesceNewNodes,
+			perf.ForestCoalesceLinkAppends,
+			perf.ForestCoalesceDedupHits,
+			perf.ForestCoalesceCapDrops,
+			perf.ForestCoalesceCapReplacements,
+			perf.ForestCoalescePreCapDrops)
 	}
 	if diverged > 0 {
 		sort.Strings(divergedFiles)

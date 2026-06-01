@@ -283,6 +283,27 @@ type runtimeStats struct {
 	ReduceChildrenScratch                 uint64        `json:"reduce_children_scratch,omitempty"`
 	ReduceScratchNoAlias                  uint64        `json:"reduce_scratch_no_alias,omitempty"`
 	ReduceScratchGeneral                  uint64        `json:"reduce_scratch_general,omitempty"`
+	ForestReduceCalls                     uint64        `json:"forest_reduce_calls,omitempty"`
+	ForestReduceZero                      uint64        `json:"forest_reduce_zero,omitempty"`
+	ForestReduceLinearNoExtras            uint64        `json:"forest_reduce_linear_no_extras,omitempty"`
+	ForestReduceDFS                       uint64        `json:"forest_reduce_dfs,omitempty"`
+	ForestReduceDFSLinks                  uint64        `json:"forest_reduce_dfs_links,omitempty"`
+	ForestReduceDFSMultiLinkSteps         uint64        `json:"forest_reduce_dfs_multilink_steps,omitempty"`
+	ForestReduceDFSExtraLinks             uint64        `json:"forest_reduce_dfs_extra_links,omitempty"`
+	ForestReduceDFSVisits                 uint64        `json:"forest_reduce_dfs_visits,omitempty"`
+	ForestReduceDFSPathEntries            uint64        `json:"forest_reduce_dfs_path_entries,omitempty"`
+	ForestReduceGotoHits                  uint64        `json:"forest_reduce_goto_hits,omitempty"`
+	ForestReduceGotoMisses                uint64        `json:"forest_reduce_goto_misses,omitempty"`
+	ForestReduceMaxPathLen                uint64        `json:"forest_reduce_max_path_len,omitempty"`
+	ForestReduceMaxChildCount             uint64        `json:"forest_reduce_max_child_count,omitempty"`
+	ForestCoalesceCalls                   uint64        `json:"forest_coalesce_calls,omitempty"`
+	ForestCoalesceNewNodes                uint64        `json:"forest_coalesce_new_nodes,omitempty"`
+	ForestCoalesceLinkAppends             uint64        `json:"forest_coalesce_link_appends,omitempty"`
+	ForestCoalesceDedupHits               uint64        `json:"forest_coalesce_dedup_hits,omitempty"`
+	ForestCoalesceDedupReplacements       uint64        `json:"forest_coalesce_dedup_replacements,omitempty"`
+	ForestCoalescePreCapDrops             uint64        `json:"forest_coalesce_precap_drops,omitempty"`
+	ForestCoalesceCapDrops                uint64        `json:"forest_coalesce_cap_drops,omitempty"`
+	ForestCoalesceCapReplacements         uint64        `json:"forest_coalesce_cap_replacements,omitempty"`
 	ReduceChildFastGSS                    *pathStats    `json:"reduce_child_fast_gss,omitempty"`
 	ReduceChildAllVisible                 *pathStats    `json:"reduce_child_all_visible,omitempty"`
 	ReduceChildNoAlias                    *pathStats    `json:"reduce_child_no_alias,omitempty"`
@@ -1118,6 +1139,27 @@ func statsFromGoTree(r *runner, tree *gotreesitter.Tree, queryCaptures, cursorNo
 	stats.ReduceChildrenScratch = perf.ReduceChildrenScratch
 	stats.ReduceScratchNoAlias = perf.ReduceScratchNoAlias
 	stats.ReduceScratchGeneral = perf.ReduceScratchGeneral
+	stats.ForestReduceCalls = perf.ForestReduceCalls
+	stats.ForestReduceZero = perf.ForestReduceZero
+	stats.ForestReduceLinearNoExtras = perf.ForestReduceLinearNoExtras
+	stats.ForestReduceDFS = perf.ForestReduceDFS
+	stats.ForestReduceDFSLinks = perf.ForestReduceDFSLinks
+	stats.ForestReduceDFSMultiLinkSteps = perf.ForestReduceDFSMultiLinkSteps
+	stats.ForestReduceDFSExtraLinks = perf.ForestReduceDFSExtraLinks
+	stats.ForestReduceDFSVisits = perf.ForestReduceDFSVisits
+	stats.ForestReduceDFSPathEntries = perf.ForestReduceDFSPathEntries
+	stats.ForestReduceGotoHits = perf.ForestReduceGotoHits
+	stats.ForestReduceGotoMisses = perf.ForestReduceGotoMisses
+	stats.ForestReduceMaxPathLen = perf.ForestReduceMaxPathLen
+	stats.ForestReduceMaxChildCount = perf.ForestReduceMaxChildCount
+	stats.ForestCoalesceCalls = perf.ForestCoalesceCalls
+	stats.ForestCoalesceNewNodes = perf.ForestCoalesceNewNodes
+	stats.ForestCoalesceLinkAppends = perf.ForestCoalesceLinkAppends
+	stats.ForestCoalesceDedupHits = perf.ForestCoalesceDedupHits
+	stats.ForestCoalesceDedupReplacements = perf.ForestCoalesceDedupReplacements
+	stats.ForestCoalescePreCapDrops = perf.ForestCoalescePreCapDrops
+	stats.ForestCoalesceCapDrops = perf.ForestCoalesceCapDrops
+	stats.ForestCoalesceCapReplacements = perf.ForestCoalesceCapReplacements
 	if r != nil && r.profile != nil && r.hotShapeLimit > 0 {
 		chainTotals := r.profile.SnapshotReduceChainTotals()
 		stats.ReduceChainClassHits = chainTotals.ReduceChainClassHits
