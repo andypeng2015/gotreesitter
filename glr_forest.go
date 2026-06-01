@@ -887,6 +887,9 @@ func (fr *forestReducer) reduce(node *gssForestNode, childCount int, visit func(
 	if fr.reduceForkedLinearSinglePath(node, childCount, visit) {
 		return
 	}
+	if fr.reduceLinearForkedSinglePath(node, childCount, visit) {
+		return
+	}
 	if fr.reduceLinearSinglePath(node, childCount, visit) {
 		return
 	}
@@ -907,7 +910,7 @@ func (fr *forestReducer) reduceOneNoExtras(node *gssForestNode, visit func(child
 		fr.rev = fr.rev[:1]
 	}
 	for i := range node.links {
-		if stackEntryNodeIsExtra(node.links[i].subtree) {
+		if forestStackEntryIsExtra(node.links[i].subtree) {
 			return false
 		}
 	}
@@ -935,7 +938,7 @@ func (fr *forestReducer) reduceLinearNoExtras(node *gssForestNode, childCount in
 			return false
 		}
 		link := cur.links[0]
-		if stackEntryNodeIsExtra(link.subtree) {
+		if forestStackEntryIsExtra(link.subtree) {
 			return false
 		}
 		fr.rev[i] = link.subtree
@@ -952,7 +955,7 @@ func (fr *forestReducer) reduceForkedLinearNoExtras(node *gssForestNode, childCo
 	}
 	for i := range node.links {
 		link := node.links[i]
-		if stackEntryNodeIsExtra(link.subtree) {
+		if forestStackEntryIsExtra(link.subtree) {
 			return false
 		}
 		cur := link.prev
@@ -961,7 +964,7 @@ func (fr *forestReducer) reduceForkedLinearNoExtras(node *gssForestNode, childCo
 				return false
 			}
 			next := cur.links[0]
-			if stackEntryNodeIsExtra(next.subtree) {
+			if forestStackEntryIsExtra(next.subtree) {
 				return false
 			}
 			cur = next.prev
@@ -1019,7 +1022,7 @@ func validateLinearReducePathFromLink(link gssLink, childCount int) (int, bool) 
 	pathLen := 0
 	for {
 		pathLen++
-		if !stackEntryNodeIsExtra(link.subtree) {
+		if !forestStackEntryIsExtra(link.subtree) {
 			remaining--
 			if remaining == 0 {
 				return pathLen, true
@@ -1040,13 +1043,81 @@ func (fr *forestReducer) emitLinearReducePathFromLink(link gssLink, childCount i
 	for {
 		fr.path = append(fr.path, link.subtree)
 		score += link.score
-		if !stackEntryNodeIsExtra(link.subtree) {
+		if !forestStackEntryIsExtra(link.subtree) {
 			remaining--
 			if remaining == 0 {
 				fr.rev = fr.rev[:len(fr.path)]
 				for i := range fr.path {
 					fr.rev[len(fr.path)-1-i] = fr.path[i]
 				}
+				visit(fr.rev, score, link.prev)
+				return
+			}
+		}
+		link = link.prev.links[0]
+	}
+}
+
+func (fr *forestReducer) reduceLinearForkedSinglePath(node *gssForestNode, childCount int, visit func(children []stackEntry, childScore int, popTo *gssForestNode)) bool {
+	if childCount <= 0 || node == nil || len(node.links) != 1 {
+		return false
+	}
+	fr.path = fr.path[:0]
+	cur := node
+	remaining := childCount
+	prefixScore := 0
+	for cur != nil && len(cur.links) == 1 {
+		link := cur.links[0]
+		fr.path = append(fr.path, link.subtree)
+		prefixScore += link.score
+		if !forestStackEntryIsExtra(link.subtree) {
+			remaining--
+			if remaining == 0 {
+				return false
+			}
+		}
+		cur = link.prev
+	}
+	if cur == nil || len(cur.links) <= 1 {
+		return false
+	}
+	prefixLen := len(fr.path)
+	maxPathLen := prefixLen
+	var branchLens [forestMaxLinksPerNode]int
+	for i := range cur.links {
+		pathLen, ok := validateLinearReducePathFromLink(cur.links[i], remaining)
+		if !ok {
+			return false
+		}
+		branchLens[i] = pathLen
+		if prefixLen+pathLen > maxPathLen {
+			maxPathLen = prefixLen + pathLen
+		}
+	}
+	if cap(fr.rev) < maxPathLen {
+		fr.rev = make([]stackEntry, maxPathLen)
+	}
+	for i := range cur.links {
+		fr.emitLinearReducePathFromLinkWithPrefix(cur.links[i], remaining, branchLens[i], prefixLen, prefixScore, visit)
+	}
+	return true
+}
+
+func (fr *forestReducer) emitLinearReducePathFromLinkWithPrefix(link gssLink, childCount int, branchPathLen, prefixLen int, score int, visit func(children []stackEntry, childScore int, popTo *gssForestNode)) {
+	totalLen := prefixLen + branchPathLen
+	fr.rev = fr.rev[:totalLen]
+	for i := 0; i < prefixLen; i++ {
+		fr.rev[totalLen-1-i] = fr.path[i]
+	}
+	remaining := childCount
+	branchOut := branchPathLen - 1
+	for {
+		fr.rev[branchOut] = link.subtree
+		branchOut--
+		score += link.score
+		if !forestStackEntryIsExtra(link.subtree) {
+			remaining--
+			if remaining == 0 {
 				visit(fr.rev, score, link.prev)
 				return
 			}
@@ -1070,7 +1141,7 @@ func (fr *forestReducer) reduceLinearSinglePath(node *gssForestNode, childCount 
 		link := cur.links[0]
 		fr.path = append(fr.path, link.subtree)
 		score += link.score
-		if !stackEntryNodeIsExtra(link.subtree) {
+		if !forestStackEntryIsExtra(link.subtree) {
 			remaining--
 			if remaining == 0 {
 				if cap(fr.rev) < len(fr.path) {
@@ -1097,7 +1168,7 @@ func (fr *forestReducer) dfs(cur *gssForestNode, remaining, score int, visit fun
 	mark := len(fr.path)
 	for i := range cur.links {
 		link := cur.links[i]
-		extra := stackEntryNodeIsExtra(link.subtree)
+		extra := forestStackEntryIsExtra(link.subtree)
 		if perfCountersEnabled {
 			perfRecordForestReduceDFSStep(len(cur.links), extra)
 		}
@@ -1124,4 +1195,8 @@ func (fr *forestReducer) dfs(cur *gssForestNode, remaining, score int, visit fun
 		fr.dfs(link.prev, rem, score+link.score, visit)
 	}
 	fr.path = fr.path[:mark]
+}
+
+func forestStackEntryIsExtra(e stackEntry) bool {
+	return e.kind == stackEntryKindNode && e.node != nil && (*Node)(e.node).isExtra()
 }
