@@ -28,3 +28,44 @@ void f() {
 	tc := parityCase{name: "cpp", source: string(src)}
 	runParityCase(t, tc, "collapsed-keyword-compatibility", src)
 }
+
+func TestCppMalformedClassFunctionDefinitionRecoveryParity(t *testing.T) {
+	src := []byte(`int main() {
+  a<T>();
+  // <- function
+
+  a::b();
+  // ^ function
+
+  a::b<C, D>();
+  // ^ function
+
+  this->b<C, D>();
+  //    ^ function
+
+  auto x = y;
+  // <- type
+
+  vector<T> a;
+  // <- type
+
+  std::vector<T> a;
+  //   ^ type
+}
+
+class C : D{
+  A();
+  // <- function
+
+  void efg() {
+    // ^ function
+  }
+}
+
+void A::b() {
+  //    ^ function
+}
+`)
+	tc := parityCase{name: "cpp", source: string(src)}
+	runParityCase(t, tc, "malformed-class-function-definition-recovery", src)
+}
