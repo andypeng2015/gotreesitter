@@ -749,6 +749,11 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 
 	for {
 		processEpoch++
+		if reducer.capped {
+			// A forest reduce exceeded forestReduceStepCap (high-ambiguity
+			// blowup); decline so the caller falls back to the production parser.
+			return nil, false
+		}
 		// GLR-lex over the union of frontier states; lead = the most-advanced.
 		glrStates = glrStates[:0]
 		for _, n := range frontier {
@@ -952,9 +957,24 @@ type forestReduceVisitor func(children []stackEntry, childScore int, popTo *gssF
 // current branch most-recent-first (append on descend, truncate on backtrack),
 // and `rev` is the left-to-right view handed to visit. The visitor must consume
 // children before returning (it copies), and must not re-enter reduce.
+// forestReduceStepCap bounds a SINGLE forest reduce's path enumeration. The
+// reduce DFS (forestReducer.dfs / .dfsNoExtras) walks every reduce path through
+// the GSS forest; on a high-ambiguity grammar (haskell) the path count is
+// exponential and the DFS runs effectively unbounded — it times out the
+// forest-vs-C oracle gate (TestForestVsCOracleParity). The counter resets per
+// reduce() call and counts link iterations (each is a recursion step or a
+// coalescing visit, where the real cost lives); when it crosses this cap the
+// reducer sets `capped` (sticky for the rest of the parse) and parseForest
+// declines, so a pathological input falls back to the production parser instead
+// of hanging. A normal reduce enumerates a handful of paths, orders of magnitude
+// under this cap, so it never fires for the allowlisted forest languages.
+var forestReduceStepCap = 1 << 16
+
 type forestReducer struct {
-	path []stackEntry
-	rev  []stackEntry
+	path   []stackEntry
+	rev    []stackEntry
+	steps  int
+	capped bool
 }
 
 // reduce walks back to childCount non-extra subtrees ending at node, including
@@ -965,6 +985,7 @@ func (fr *forestReducer) reduce(node *gssForestNode, childCount int, visit fores
 	if node == nil {
 		return
 	}
+	fr.steps = 0 // per-reduce budget; fr.capped stays sticky for the whole parse
 	if perfCountersEnabled {
 		perfRecordForestReduceCall(childCount)
 	}
@@ -1369,6 +1390,13 @@ func (fr *forestReducer) dfsNoExtras(cur *gssForestNode, remaining, score int, v
 	out := remaining - 1
 	links := cur.links
 	for i := range links {
+		if fr.capped {
+			break
+		}
+		if fr.steps++; fr.steps > forestReduceStepCap {
+			fr.capped = true
+			break
+		}
 		link := &links[i]
 		fr.rev[out] = link.subtree
 		nextScore := score + link.score
@@ -1387,6 +1415,13 @@ func (fr *forestReducer) dfs(cur *gssForestNode, remaining, score int, visit for
 	mark := len(fr.path)
 	links := cur.links
 	for i := range links {
+		if fr.capped {
+			break
+		}
+		if fr.steps++; fr.steps > forestReduceStepCap {
+			fr.capped = true
+			break
+		}
 		link := &links[i]
 		extra := forestStackEntryIsExtra(link.subtree)
 		if perfCountersEnabled {
