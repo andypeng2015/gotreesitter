@@ -369,9 +369,17 @@ func (d *dfaTokenSource) Next() Token {
 
 		// Some grammars can emit zero-width non-EOF tokens that have no parse
 		// action in any live GLR state. If returned as-is, parser recovery can
-		// loop forever at the same byte. Skip one rune (or coerce EOF at end)
-		// so the token source itself always guarantees forward progress.
+		// loop forever at the same byte. External scanners already have a
+		// same-position tried-symbol mask; prefer masking and retrying before
+		// falling back to byte skipping so ordinary DFA extras at the same byte
+		// are not damaged.
 		if tok.Symbol != 0 && tok.EndByte <= tok.StartByte && !d.hasAnyActionForSymbol(tok.Symbol) {
+			if tokenFromExternal && d.canRetryAfterUnusableZeroWidthExternal(tok) {
+				if DebugDFA.Load() {
+					fmt.Printf("  ZERO-WIDTH external retry sym=%d at pos=%d state=%d\n", tok.Symbol, d.lexer.pos, d.state)
+				}
+				continue
+			}
 			if d.lexer.pos < len(d.lexer.source) {
 				if DebugDFA.Load() {
 					fmt.Printf("  ZERO-WIDTH skip sym=%d at pos=%d state=%d\n", tok.Symbol, d.lexer.pos, d.state)
@@ -1966,6 +1974,27 @@ func isExplicitLineBreakSymbolName(name string) bool {
 	default:
 		return false
 	}
+}
+
+func (d *dfaTokenSource) canRetryAfterUnusableZeroWidthExternal(tok Token) bool {
+	if d == nil || d.language == nil || d.lexer == nil || tok.EndByte > tok.StartByte {
+		return false
+	}
+	if d.allowRepeatedZeroWidthExternalSymbol(tok.Symbol) {
+		return false
+	}
+	idx := d.externalSymbolIndex(tok.Symbol)
+	if idx < 0 {
+		return false
+	}
+	if d.lexer.pos != int(tok.EndByte) {
+		return false
+	}
+	if d.extZeroPos != d.lexer.pos || d.extZeroState != d.state ||
+		idx >= len(d.extZeroTried) || !d.extZeroTried[idx] {
+		d.trackZeroWidthExternalToken(tok)
+	}
+	return true
 }
 
 func (d *dfaTokenSource) currentLineStartsWithHashDirective() bool {
