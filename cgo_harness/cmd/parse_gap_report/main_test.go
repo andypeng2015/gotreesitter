@@ -3,6 +3,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -42,6 +44,57 @@ func TestDiffHighlightCaptures(t *testing.T) {
 	}
 	if len(onlyC) != 1 || onlyC[0] != cCaps[1] {
 		t.Fatalf("onlyC = %#v, want %#v", onlyC, []highlightCapture{cCaps[1]})
+	}
+}
+
+func TestCollectSamplesUsesRequestedLanguageOrder(t *testing.T) {
+	root := t.TempDir()
+	rubyPath := filepath.Join(root, "a.rb")
+	tsPath := filepath.Join(root, "a.ts")
+	if err := os.WriteFile(rubyPath, []byte("puts 'x'\n"), 0o644); err != nil {
+		t.Fatalf("write ruby sample: %v", err)
+	}
+	if err := os.WriteFile(tsPath, []byte("const x = 1;\n"), 0o644); err != nil {
+		t.Fatalf("write typescript sample: %v", err)
+	}
+
+	manifest := corpusManifest{Sets: []corpusSetSpec{
+		{Name: "ruby", Language: "ruby", Files: []string{rubyPath}},
+		{Name: "typescript", Language: "typescript", Files: []string{tsPath}},
+	}}
+	selected := map[string]struct{}{"ruby": {}, "typescript": {}}
+
+	samples, err := collectSamples(root, manifest, selected, []string{"typescript", "ruby"})
+	if err != nil {
+		t.Fatalf("collectSamples: %v", err)
+	}
+	if len(samples) != 2 {
+		t.Fatalf("samples length = %d, want 2", len(samples))
+	}
+	if got, want := samples[0].Language, "typescript"; got != want {
+		t.Fatalf("first language = %q, want %q", got, want)
+	}
+}
+
+func TestRenderSummaryUsesRequestedLanguageOrder(t *testing.T) {
+	rows := []reportRow{
+		{Language: "ruby", Sample: "ruby.rb", Mode: "cgo_full", MedianNS: 10},
+		{Language: "ruby", Sample: "ruby.rb", Mode: "go_full", MedianNS: 10},
+		{Language: "typescript", Sample: "a.ts", Mode: "cgo_full", MedianNS: 10},
+		{Language: "typescript", Sample: "a.ts", Mode: "go_full", MedianNS: 10},
+		{Language: "php", Sample: "a.php", Mode: "cgo_full", MedianNS: 10},
+		{Language: "php", Sample: "a.php", Mode: "go_full", MedianNS: 10},
+	}
+
+	summary := renderSummary(rows, []string{"typescript", "php", "ruby"})
+	ts := strings.Index(summary, "| typescript |")
+	php := strings.Index(summary, "| php |")
+	ruby := strings.Index(summary, "| ruby |")
+	if ts < 0 || php < 0 || ruby < 0 {
+		t.Fatalf("summary missing rows:\n%s", summary)
+	}
+	if !(ts < php && php < ruby) {
+		t.Fatalf("summary order mismatch:\n%s", summary)
 	}
 }
 

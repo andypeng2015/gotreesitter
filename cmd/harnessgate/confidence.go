@@ -314,11 +314,11 @@ func runConfidenceStep(name string, manifest confidenceManifest, resultsPath str
 }
 
 var top50ConfidenceLanguages = []string{
-	"bash", "c", "cpp", "c_sharp", "cmake", "css", "dart", "elixir", "elm", "erlang",
-	"go", "gomod", "graphql", "haskell", "hcl", "html", "ini", "java", "javascript", "json",
-	"json5", "julia", "kotlin", "lua", "make", "markdown", "nix", "objc", "ocaml", "perl",
-	"php", "powershell", "python", "r", "ruby", "rust", "scala", "scss", "sql", "svelte",
-	"swift", "toml", "tsx", "typescript", "xml", "yaml", "zig", "awk", "clojure", "d",
+	"typescript", "tsx", "javascript", "python", "java", "c_sharp", "php", "bash", "cpp", "go",
+	"html", "css", "sql", "c", "rust", "json", "ruby", "swift", "kotlin", "dart",
+	"lua", "yaml", "xml", "toml", "markdown", "svelte", "scss", "powershell", "r", "scala",
+	"hcl", "graphql", "perl", "elixir", "haskell", "julia", "clojure", "erlang", "ocaml", "nix",
+	"objc", "gomod", "json5", "ini", "zig", "make", "cmake", "d", "awk", "elm",
 }
 
 // core90ExtraConfidenceLanguages extends top50 with conflict-heavy and scanner-

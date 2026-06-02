@@ -618,7 +618,7 @@ func main() {
 	for _, lang := range langs {
 		selected[lang] = struct{}{}
 	}
-	samples, err := collectSamples(repoRoot, corpus, selected)
+	samples, err := collectSamples(repoRoot, corpus, selected, langs)
 	if err != nil {
 		fatalf("collect corpus: %v", err)
 	}
@@ -776,7 +776,7 @@ func main() {
 	if err := writeJSON(filepath.Join(outDir, "metadata.json"), meta); err != nil {
 		fatalf("write metadata: %v", err)
 	}
-	summary := renderSummary(rows)
+	summary := renderSummary(rows, langs)
 	if err := os.WriteFile(filepath.Join(outDir, "summary.md"), []byte(summary), 0o644); err != nil {
 		fatalf("write summary: %v", err)
 	}
@@ -2319,7 +2319,7 @@ func classify(row reportRow) string {
 	return "unclassified"
 }
 
-func renderSummary(rows []reportRow) string {
+func renderSummary(rows []reportRow, languageOrder []string) string {
 	type key struct {
 		lang string
 		mode string
@@ -2337,7 +2337,10 @@ func renderSummary(rows []reportRow) string {
 		seenLang[row.Language] = struct{}{}
 		langs = append(langs, row.Language)
 	}
-	sort.Strings(langs)
+	order := languageOrderIndex(languageOrder)
+	sort.Slice(langs, func(i, j int) bool {
+		return languageLess(langs[i], langs[j], order)
+	})
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Parse Gap Report\n\n")
@@ -2476,7 +2479,7 @@ func joinSet(set map[string]struct{}) string {
 	return strings.Join(values, ",")
 }
 
-func collectSamples(repoRoot string, manifest corpusManifest, selected map[string]struct{}) ([]sample, error) {
+func collectSamples(repoRoot string, manifest corpusManifest, selected map[string]struct{}, languageOrder []string) ([]sample, error) {
 	var out []sample
 	for _, set := range manifest.Sets {
 		if _, ok := selected[set.Language]; !ok {
@@ -2504,9 +2507,10 @@ func collectSamples(repoRoot string, manifest corpusManifest, selected map[strin
 			})
 		}
 	}
+	order := languageOrderIndex(languageOrder)
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Language != out[j].Language {
-			return out[i].Language < out[j].Language
+			return languageLess(out[i].Language, out[j].Language, order)
 		}
 		if out[i].Set != out[j].Set {
 			return out[i].Set < out[j].Set
@@ -2514,6 +2518,31 @@ func collectSamples(repoRoot string, manifest corpusManifest, selected map[strin
 		return out[i].RelPath < out[j].RelPath
 	})
 	return out, nil
+}
+
+func languageOrderIndex(languages []string) map[string]int {
+	out := make(map[string]int, len(languages))
+	for i, lang := range languages {
+		if _, ok := out[lang]; !ok {
+			out[lang] = i
+		}
+	}
+	return out
+}
+
+func languageLess(a, b string, order map[string]int) bool {
+	ai, aok := order[a]
+	bi, bok := order[b]
+	switch {
+	case aok && bok && ai != bi:
+		return ai < bi
+	case aok && !bok:
+		return true
+	case !aok && bok:
+		return false
+	default:
+		return a < b
+	}
 }
 
 func filesForSet(repoRoot string, set corpusSetSpec) ([]string, error) {
