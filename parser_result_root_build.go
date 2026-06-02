@@ -125,6 +125,9 @@ func (b *resultRootBuild) syntheticRootSymbol(originalNodes, rootChildren []*Nod
 	if b.isLanguage("sql") {
 		return b.expectedRootSymbol
 	}
+	if b.isLanguage("swift") {
+		return b.expectedRootSymbol
+	}
 	return errorSymbol
 }
 
