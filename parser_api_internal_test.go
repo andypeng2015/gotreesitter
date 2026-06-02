@@ -1072,7 +1072,7 @@ func TestParseMaxMergePerKeyValue(t *testing.T) {
 }
 
 func TestLanguageDefersExactDedupe(t *testing.T) {
-	for _, name := range []string{"typescript", "tsx", "rust"} {
+	for _, name := range []string{"dart", "typescript", "tsx", "rust"} {
 		if !languageDefersExactDedupe(&Language{Name: name}, false) {
 			t.Fatalf("languageDefersExactDedupe(%s, full tree) = false, want true", name)
 		}

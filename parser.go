@@ -2974,7 +2974,7 @@ func languageDefersExactDedupe(lang *Language, noTreeBenchmarkOnly bool) bool {
 		return false
 	}
 	switch lang.Name {
-	case "typescript", "tsx", "rust":
+	case "dart", "typescript", "tsx", "rust":
 		return true
 	default:
 		return false
