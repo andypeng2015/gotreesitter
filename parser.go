@@ -3823,11 +3823,17 @@ func tsxRepetitionReduceConflictChoice(lang *Language, tok Token, state StateID,
 		case symbolHasName(lang, tok.Symbol, "return"):
 		case symbolHasName(lang, tok.Symbol, "if"):
 		case symbolHasName(lang, tok.Symbol, "export"):
+		case symbolHasName(lang, tok.Symbol, "import"):
 		case symbolHasName(lang, tok.Symbol, "let"):
 		default:
 			return ParseAction{}, false
 		}
 		reduceSymbol = "program_repeat1"
+	case 4615:
+		if !symbolHasName(lang, tok.Symbol, ",") {
+			return ParseAction{}, false
+		}
+		return repetitionShiftConflictChoice(actions)
 	case 3468:
 		if !symbolHasName(lang, tok.Symbol, "identifier") {
 			return ParseAction{}, false

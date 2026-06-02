@@ -333,17 +333,20 @@ func TestRustRepetitionShiftConflictChoiceAllowsNonSpecialTokenRepeat(t *testing
 }
 
 func TestTSXRepetitionReduceConflictChoiceAllowsHotRepeats(t *testing.T) {
-	lang := &Language{SymbolNames: []string{"end", "identifier", ";", "_jsx_start_opening_element_repeat1", "object_type_repeat1", "const", "let", "program_repeat1"}}
+	lang := &Language{SymbolNames: []string{"end", "identifier", ";", "_jsx_start_opening_element_repeat1", "object_type_repeat1", "const", "let", "program_repeat1", "import", ",", "object_pattern_repeat1"}}
 	for _, tc := range []struct {
 		name      string
 		state     StateID
 		lookahead Symbol
 		reduceSym Symbol
+		wantType  ParseActionType
 	}{
-		{name: "jsx opening element", state: 3468, lookahead: 1, reduceSym: 3},
-		{name: "object type semicolon", state: 3885, lookahead: 2, reduceSym: 4},
-		{name: "program const", state: 9, lookahead: 5, reduceSym: 7},
-		{name: "program let", state: 9, lookahead: 6, reduceSym: 7},
+		{name: "jsx opening element", state: 3468, lookahead: 1, reduceSym: 3, wantType: ParseActionReduce},
+		{name: "object type semicolon", state: 3885, lookahead: 2, reduceSym: 4, wantType: ParseActionReduce},
+		{name: "program const", state: 9, lookahead: 5, reduceSym: 7, wantType: ParseActionReduce},
+		{name: "program let", state: 9, lookahead: 6, reduceSym: 7, wantType: ParseActionReduce},
+		{name: "program import", state: 9, lookahead: 8, reduceSym: 7, wantType: ParseActionReduce},
+		{name: "object pattern comma", state: 4615, lookahead: 9, reduceSym: 10, wantType: ParseActionShift},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			actions := []ParseAction{
@@ -354,8 +357,14 @@ func TestTSXRepetitionReduceConflictChoiceAllowsHotRepeats(t *testing.T) {
 			if !ok {
 				t.Fatal("tsxRepetitionReduceConflictChoice = false, want true")
 			}
-			if chosen.Type != ParseActionReduce || chosen.Symbol != tc.reduceSym {
-				t.Fatalf("tsxRepetitionReduceConflictChoice picked %+v, want reduce", chosen)
+			if chosen.Type != tc.wantType {
+				t.Fatalf("tsxRepetitionReduceConflictChoice picked %+v, want type %v", chosen, tc.wantType)
+			}
+			if tc.wantType == ParseActionReduce && chosen.Symbol != tc.reduceSym {
+				t.Fatalf("tsxRepetitionReduceConflictChoice picked %+v, want reduce symbol %d", chosen, tc.reduceSym)
+			}
+			if tc.wantType == ParseActionShift && !chosen.Repetition {
+				t.Fatalf("tsxRepetitionReduceConflictChoice picked %+v, want repetition shift", chosen)
 			}
 		})
 	}
