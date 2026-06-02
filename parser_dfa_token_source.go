@@ -1991,10 +1991,16 @@ func (d *dfaTokenSource) canRetryAfterUnusableZeroWidthExternal(tok Token) bool 
 	if d.lexer.pos != int(tok.EndByte) {
 		return false
 	}
-	if d.extZeroPos != d.lexer.pos || d.extZeroState != d.state ||
-		idx >= len(d.extZeroTried) || !d.extZeroTried[idx] {
-		d.trackZeroWidthExternalToken(tok)
+	// Retry a zero-width external symbol at most once per (position, state).
+	// If we've already tried this symbol here, retrying again loops forever
+	// when the external scanner keeps re-emitting it (observed with
+	// markdown_inline). Return false so Next falls through to the byte-skip
+	// path, which guarantees forward progress instead of spinning.
+	if d.extZeroPos == d.lexer.pos && d.extZeroState == d.state &&
+		idx < len(d.extZeroTried) && d.extZeroTried[idx] {
+		return false
 	}
+	d.trackZeroWidthExternalToken(tok)
 	return true
 }
 
