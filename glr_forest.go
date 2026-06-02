@@ -78,15 +78,20 @@ func (p *Parser) ParseForestExperimental(source []byte) (*Tree, bool) {
 // the older note was stale): python is forest byte-CLEAN (diverged=0) but ~0.8x
 // because it has no merge blowup for the forest to amortize the GSS overhead
 // against; rust forest TRUNCATES (incomplete) and fails safe to production; dart
-// declines every file. php is forest-clean vs PRODUCTION (diverged=0, ~1/3
-// dispatch @ 2.8x) but stays OUT for a different reason — like graphql, php
-// production itself is not yet C-oracle-clean: the real-corpus C-parity precheck
-// fails on corpus_real/php/medium__keywords.php with the forest OFF too
-// (production != C, "first=(none)"), so php can't be gated until that production
-// divergence is fixed. ruby/haskell are unverified — haskell's production parse
-// is so pathologically slow (the O(n^2) deep-merge blowup) that the
-// forest-vs-production parity gate itself times out; vetting it needs a
-// forest-vs-C oracle gate that skips the slow production leg.
+// declines every file. ruby is unverified. haskell is NOT forest-amenable: its
+// production parse is so pathologically slow (the O(n^2) deep-merge blowup) that
+// the forest-vs-production gate times out, and the forest-vs-C oracle gate
+// (TestForestVsCOracleParity) shows the forest RELOCATES the blowup — its reduce
+// DFS times out on every haskell corpus file.
+//
+// php is now forest byte-clean vs C — the zero-width recovery ";" missing-flag
+// fix (commit e5cf641a) made its production tree C-oracle-clean and the forest
+// matches it, so correctness no longer blocks it — but it stays OUT on PERF
+// grounds: only ~1/3 of its real corpus dispatches, and the GOT_GLR_FOREST
+// on/off A/B is a net-wall LOSS (forest ~1.40ms vs production ~1.21ms over the
+// corpus) because the failed forest attempts on the ~2/3 fallback files cost
+// more than the dispatched third saves. Re-promote only if the dispatch rate
+// rises (e.g. the forest learns the constructs it currently parse_fails on).
 func languageWantsForest(name string) bool {
 	switch name {
 	case "bash", "erlang", "cmake", "css", "scss", "awk", "javascript", "c_sharp":
