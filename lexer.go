@@ -32,6 +32,10 @@ func bytesToStringNoCopy(b []byte) string {
 	return unsafe.String(unsafe.SliceData(b), len(b))
 }
 
+// lexerScanFn is the signature of Lexer.scan, so a generated switch-DFA lexer
+// (cmd/lexgen) can be plugged in place of the table interpreter.
+type lexerScanFn func(l *Lexer, startState uint32, startPos int, startRow, startCol uint32) (Token, bool)
+
 // Lexer tokenizes source text using a table-driven DFA.
 type Lexer struct {
 	states          []LexState
@@ -42,6 +46,10 @@ type Lexer struct {
 	col             uint32
 	immediateTokens []bool // symbol IDs that are token.immediate(); rejected after whitespace skip
 	zeroWidthTokens []bool // symbol IDs whose terminal pattern can intentionally match empty input
+	// genScan, when non-nil, replaces the table scan() with a generated
+	// switch-DFA lexer for this language (set only under -tags lexgen via
+	// lookupGenScan; verified bit-for-bit by the differential tests).
+	genScan lexerScanFn
 }
 
 // NewLexer creates a new Lexer that will tokenize source using the given
@@ -72,7 +80,13 @@ func (l *Lexer) Next(startState uint32) Token {
 		tokenStartRow := l.row
 		tokenStartCol := l.col
 
-		tok, ok := l.scan(startState, tokenStartPos, tokenStartRow, tokenStartCol)
+		var tok Token
+		var ok bool
+		if l.genScan != nil {
+			tok, ok = l.genScan(l, startState, tokenStartPos, tokenStartRow, tokenStartCol)
+		} else {
+			tok, ok = l.scan(startState, tokenStartPos, tokenStartRow, tokenStartCol)
+		}
 		if ok {
 			if tok.Symbol == 0 {
 				// Skip token (whitespace). Verify the lexer actually

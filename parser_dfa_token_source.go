@@ -112,6 +112,7 @@ func initDFATokenSource(ts *dfaTokenSource, lexer *Lexer, language *Language, lo
 		ts.lexer.immediateTokens = language.ImmediateTokens
 		ts.lexer.zeroWidthTokens = language.ZeroWidthTokens
 		ts.lexer.asciiTable = language.LexAsciiTable()
+		ts.lexer.genScan = lookupGenScan(language.Name)
 		ts.lexModeStarts = language.LexModeStarts()
 	}
 	if language != nil {
@@ -220,6 +221,7 @@ func (d *dfaTokenSource) Reset(source []byte) {
 		d.lexer.immediateTokens = d.language.ImmediateTokens
 		d.lexer.zeroWidthTokens = d.language.ZeroWidthTokens
 		d.lexer.asciiTable = d.language.LexAsciiTable()
+		d.lexer.genScan = lookupGenScan(d.language.Name)
 	}
 	d.state = 0
 	d.glrStates = nil

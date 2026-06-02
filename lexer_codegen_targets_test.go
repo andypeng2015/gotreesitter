@@ -1,3 +1,5 @@
+//go:build lexgen
+
 package gotreesitter
 
 import "testing"
