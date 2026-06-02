@@ -13,7 +13,10 @@ type reduceChainSignature struct {
 	productionID uint16
 }
 
-const maxRepeatedReduceChainSignature = 32
+// A repeated signature has the same state, stack depth, reduced symbol, child
+// count, and production ID. Applying it again cannot advance parser state; it
+// only builds another wrapper around the same top-level shape.
+const maxRepeatedReduceChainSignature = 1
 
 type classifiedParseActionClass uint8
 

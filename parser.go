@@ -2537,6 +2537,10 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 						if next, ok := phpRepetitionShiftConflictChoice(p.language, tok, currentState, actions); ok {
 							chosen, choice = next, true
 						}
+					case "sql":
+						if next, ok := sqlRepetitionShiftConflictChoice(p.language, tok, currentState, actions); ok {
+							chosen, choice = next, true
+						}
 					case "dart":
 						if next, ok := dartRepetitionShiftConflictChoice(p.language, currentState, actions); ok {
 							chosen, choice = next, true
@@ -3707,6 +3711,21 @@ func phpRepetitionShiftConflictChoice(lang *Language, tok Token, state StateID, 
 	case symbolHasName(lang, tok.Symbol, "class"):
 	case symbolHasName(lang, tok.Symbol, "while"):
 	case symbolHasName(lang, tok.Symbol, "echo"):
+	default:
+		return ParseAction{}, false
+	}
+	return repetitionShiftConflictChoice(actions)
+}
+
+func sqlRepetitionShiftConflictChoice(lang *Language, tok Token, state StateID, actions []ParseAction) (ParseAction, bool) {
+	if lang == nil {
+		return ParseAction{}, false
+	}
+	switch state {
+	case 10852:
+		if !symbolHasName(lang, tok.Symbol, ",") || !allReducesHaveSymbol(lang, actions, "select_clause_body_repeat1") {
+			return ParseAction{}, false
+		}
 	default:
 		return ParseAction{}, false
 	}

@@ -200,6 +200,46 @@ func TestPHPRepetitionShiftConflictChoiceRejectsOtherState(t *testing.T) {
 	}
 }
 
+func TestSQLRepetitionShiftConflictChoiceAllowsSelectClauseComma(t *testing.T) {
+	lang := &Language{SymbolNames: []string{"end", ",", "select_clause_body_repeat1"}}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 2, ChildCount: 2},
+		{Type: ParseActionShift, State: 7016, Repetition: true},
+	}
+
+	chosen, ok := sqlRepetitionShiftConflictChoice(lang, Token{Symbol: 1}, 10852, actions)
+	if !ok {
+		t.Fatal("sqlRepetitionShiftConflictChoice = false, want true")
+	}
+	if chosen.Type != ParseActionShift || chosen.State != 7016 || !chosen.Repetition {
+		t.Fatalf("sqlRepetitionShiftConflictChoice picked %+v, want repetition shift", chosen)
+	}
+}
+
+func TestSQLRepetitionShiftConflictChoiceRejectsOtherRepeat(t *testing.T) {
+	lang := &Language{SymbolNames: []string{"end", ",", "select_clause_body_repeat1", "source_file_repeat1"}}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 3, ChildCount: 2},
+		{Type: ParseActionShift, State: 7016, Repetition: true},
+	}
+
+	if _, ok := sqlRepetitionShiftConflictChoice(lang, Token{Symbol: 1}, 10852, actions); ok {
+		t.Fatal("sqlRepetitionShiftConflictChoice = true, want false")
+	}
+}
+
+func TestSQLRepetitionShiftConflictChoiceRejectsOtherState(t *testing.T) {
+	lang := &Language{SymbolNames: []string{"end", ",", "select_clause_body_repeat1"}}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 2, ChildCount: 2},
+		{Type: ParseActionShift, State: 7016, Repetition: true},
+	}
+
+	if _, ok := sqlRepetitionShiftConflictChoice(lang, Token{Symbol: 1}, 10853, actions); ok {
+		t.Fatal("sqlRepetitionShiftConflictChoice = true, want false")
+	}
+}
+
 func TestDartRepetitionShiftConflictChoiceAllowsHotRepeats(t *testing.T) {
 	for _, tc := range []struct {
 		name         string
