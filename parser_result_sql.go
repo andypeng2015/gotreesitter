@@ -403,18 +403,22 @@ func sqlRecoverDirectSelectStatementFromRange(source []byte, start, end uint32, 
 		}
 		return nil, false
 	}
-	startPoint := advancePointByBytes(Point{}, source[:start])
-	offsetRoot := tree.RootNodeWithOffset(start, startPoint)
-	if offsetRoot == nil || offsetRoot.HasError() {
+	parsedRoot := tree.RootNode()
+	if parsedRoot == nil || parsedRoot.HasError() {
 		tree.Release()
 		return nil, false
 	}
-	stmt := sqlFirstChildOfType(offsetRoot, lang, "select_statement")
-	if stmt == nil || stmt.startByte != start || stmt.endByte != end {
+	stmt := sqlFirstChildOfType(parsedRoot, lang, "select_statement")
+	if stmt == nil || stmt.startByte != 0 || stmt.endByte != end-start {
 		tree.Release()
 		return nil, false
 	}
-	clone := cloneTreeNodesIntoArena(stmt, arena)
+	offset := &cloneOffset{
+		byteDelta: start,
+		point:     advancePointByBytes(Point{}, source[:start]),
+		baseRow:   parsedRoot.startPoint.Row,
+	}
+	clone := cloneTreeNodesIntoArenaWithOffset(stmt, arena, offset)
 	tree.Release()
 	return clone, clone != nil
 }
@@ -474,18 +478,18 @@ func sqlRecoverSelectContinuationFromRange(source []byte, statementStart, tailSt
 		}
 		return nil, false
 	}
+	parsedRoot := tree.RootNode()
 	startPoint := advancePointByBytes(Point{}, source[:tailStart])
 	prefixPoint := advancePointByBytes(Point{}, []byte(prefix))
 	if startPoint.Row < prefixPoint.Row {
 		tree.Release()
 		return nil, false
 	}
-	offsetRoot := tree.RootNodeWithOffset(tailStart-uint32(len(prefix)), Point{Row: startPoint.Row - prefixPoint.Row, Column: startPoint.Column})
-	if offsetRoot == nil || offsetRoot.HasError() {
+	if parsedRoot == nil || parsedRoot.HasError() {
 		tree.Release()
 		return nil, false
 	}
-	wrappedStmt := sqlFirstChildOfType(offsetRoot, lang, "select_statement")
+	wrappedStmt := sqlFirstChildOfType(parsedRoot, lang, "select_statement")
 	if wrappedStmt == nil || resultChildCount(wrappedStmt) < 2 {
 		tree.Release()
 		return nil, false
@@ -503,12 +507,17 @@ func sqlRecoverSelectContinuationFromRange(source []byte, statementStart, tailSt
 	}
 	stmtChildren := make([]*Node, 0, resultChildCount(wrappedStmt))
 	stmtChildren = append(stmtChildren, missingSelect)
+	offset := &cloneOffset{
+		byteDelta: tailStart - uint32(len(prefix)),
+		point:     Point{Row: startPoint.Row - prefixPoint.Row, Column: startPoint.Column},
+		baseRow:   parsedRoot.startPoint.Row,
+	}
 	for i := 1; i < resultChildCount(wrappedStmt); i++ {
 		child := resultChildAt(wrappedStmt, i)
 		if child == nil {
 			continue
 		}
-		stmtChildren = append(stmtChildren, cloneTreeNodesIntoArena(child, arena))
+		stmtChildren = append(stmtChildren, cloneTreeNodesIntoArenaWithOffset(child, arena, offset))
 	}
 	tree.Release()
 	if len(stmtChildren) == 1 {
