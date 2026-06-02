@@ -115,6 +115,17 @@ func TestPHPTopLevelStaticNamedFunctionRecovery(t *testing.T) {
 	}
 	if errNode := root.Child(1); errNode == nil || errNode.Type(PhpLanguage()) != "ERROR" {
 		t.Fatalf("second child = %v, want ERROR; tree=%s", errNode, root.SExpr(PhpLanguage()))
+	} else {
+		staticModifier := findFirstPHPNodeOfType(errNode, PhpLanguage(), "static_modifier")
+		if staticModifier == nil {
+			t.Fatalf("missing static_modifier under ERROR; tree=%s", root.SExpr(PhpLanguage()))
+		}
+		if got := staticModifier.ChildCount(); got != 1 {
+			t.Fatalf("static_modifier child count = %d, want 1; tree=%s", got, root.SExpr(PhpLanguage()))
+		}
+		if child := staticModifier.Child(0); child == nil || child.Type(PhpLanguage()) != "static" {
+			t.Fatalf("static_modifier child = %v, want static; tree=%s", child, root.SExpr(PhpLanguage()))
+		}
 	}
 	if body := root.Child(2); body == nil || body.Type(PhpLanguage()) != "compound_statement" {
 		t.Fatalf("third child = %v, want compound_statement; tree=%s", body, root.SExpr(PhpLanguage()))
@@ -183,5 +194,56 @@ func TestPHPTopLevelStaticNamedFunctionFollowedByArrowAndClassRecovery(t *testin
 	}
 	if decl := root.Child(4); decl == nil || decl.Type(PhpLanguage()) != "class_declaration" {
 		t.Fatalf("child[4] = %v, want class_declaration; tree=%s", decl, root.SExpr(PhpLanguage()))
+	}
+}
+
+func TestPHPModifierWrappersRestoreAnonymousChildren(t *testing.T) {
+	src := []byte("<?php\nabstract class A {\n  private const BAR = 1;\n  protected readonly static $a;\n  final public $b;\n  public static function foo(): static {}\n}\n")
+	parser := ts.NewParser(PhpLanguage())
+	tree, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	root := tree.RootNode()
+	if root == nil {
+		t.Fatal("missing root node")
+	}
+	for parent, child := range map[string]string{
+		"abstract_modifier":   "abstract",
+		"final_modifier":      "final",
+		"readonly_modifier":   "readonly",
+		"static_modifier":     "static",
+		"visibility_modifier": "private",
+	} {
+		assertFirstPHPWrapperChild(t, root, PhpLanguage(), parent, child)
+	}
+}
+
+func findFirstPHPNodeOfType(node *ts.Node, lang *ts.Language, typ string) *ts.Node {
+	if node == nil {
+		return nil
+	}
+	if node.Type(lang) == typ {
+		return node
+	}
+	for i := 0; i < node.ChildCount(); i++ {
+		if found := findFirstPHPNodeOfType(node.Child(i), lang, typ); found != nil {
+			return found
+		}
+	}
+	return nil
+}
+
+func assertFirstPHPWrapperChild(t *testing.T, root *ts.Node, lang *ts.Language, parentType, childType string) {
+	t.Helper()
+	parent := findFirstPHPNodeOfType(root, lang, parentType)
+	if parent == nil {
+		t.Fatalf("missing %s; tree=%s", parentType, root.SExpr(lang))
+	}
+	if got := parent.ChildCount(); got != 1 {
+		t.Fatalf("%s child count = %d, want 1; tree=%s", parentType, got, root.SExpr(lang))
+	}
+	if child := parent.Child(0); child == nil || child.Type(lang) != childType {
+		t.Fatalf("%s child = %v, want %s; tree=%s", parentType, child, childType, root.SExpr(lang))
 	}
 }

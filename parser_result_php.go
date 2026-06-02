@@ -1,6 +1,11 @@
 package gotreesitter
 
 func normalizePHPCompatibility(root *Node, source []byte, lang *Language) {
+	normalizeCollapsedNamedLeafChildrenBySource(root, source, lang, "static_modifier", "static")
+	normalizeCollapsedNamedLeafChildrenBySource(root, source, lang, "abstract_modifier", "abstract")
+	normalizeCollapsedNamedLeafChildrenBySource(root, source, lang, "final_modifier", "final")
+	normalizeCollapsedNamedLeafChildrenBySource(root, source, lang, "readonly_modifier", "readonly")
+	normalizeCollapsedNamedLeafChildrenBySource(root, source, lang, "visibility_modifier", "public", "protected", "private")
 	normalizePHPSingletonTypeWrappers(root, lang)
 	normalizePHPStaticFunctionFragments(root, source, lang)
 }
