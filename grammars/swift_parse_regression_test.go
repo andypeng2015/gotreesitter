@@ -1,6 +1,7 @@
 package grammars
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/odvcencio/gotreesitter"
@@ -42,5 +43,25 @@ func TestSwiftLineCommentsStayExtraComments(t *testing.T) {
 		if got, want := child.EndByte(), span[1]; got != want {
 			t.Fatalf("comment %d end = %d, want %d; tree: %s", i, got, want, root.SExpr(lang))
 		}
+	}
+}
+
+func TestSwiftMemberKeywordSelfAfterDotStaysNavigable(t *testing.T) {
+	lang := SwiftLanguage()
+	src := []byte("let element = Element.self\nlet storage = _HashNode.Storage.self\n")
+	parser := gotreesitter.NewParser(lang)
+	tree, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse swift member self: %v", err)
+	}
+	defer tree.Release()
+
+	root := tree.RootNode()
+	if root.HasError() {
+		t.Fatalf("swift member self fixture has parse errors: %s", root.SExpr(lang))
+	}
+	sexpr := root.SExpr(lang)
+	if got, want := strings.Count(sexpr, "(navigation_suffix (simple_identifier))"), 3; got != want {
+		t.Fatalf("navigation suffix count = %d, want %d; tree: %s", got, want, sexpr)
 	}
 }

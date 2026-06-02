@@ -705,6 +705,7 @@ func (d *dfaTokenSource) scanDFATokenForState(state StateID, lexState uint32) (T
 		}
 	}
 	tok = d.promoteKeyword(tok)
+	tok = d.demoteSwiftMemberKeyword(tok)
 	tok, endPos, endRow, endCol := d.normalizeDFAToken(tok, d.lexer.pos, d.lexer.row, d.lexer.col)
 
 	d.lexer.pos = savedPos
@@ -2869,10 +2870,93 @@ func (d *dfaTokenSource) promoteKeyword(tok Token) Token {
 		if d.shouldPreferJavaScriptTypeScriptContextualIdentifier(tok, kwTok, kwHasAction, idHasAction) {
 			return tok
 		}
+		if d.shouldPreferSwiftMemberIdentifier(tok, kwTok) {
+			return tok
+		}
 	}
 
 	tok.Symbol = kwTok.Symbol
 	return tok
+}
+
+func (d *dfaTokenSource) shouldPreferSwiftMemberIdentifier(tok, kwTok Token) bool {
+	if d == nil || d.language == nil || d.language.Name != "swift" {
+		return false
+	}
+	if tok.Symbol == kwTok.Symbol {
+		return false
+	}
+	return d.isAfterSwiftMemberDot(int(tok.StartByte))
+}
+
+func (d *dfaTokenSource) demoteSwiftMemberKeyword(tok Token) Token {
+	if !d.shouldDemoteSwiftMemberKeyword(tok) {
+		return tok
+	}
+	if sym, ok := d.swiftSimpleIdentifierSymbol(); ok {
+		tok.Symbol = sym
+	}
+	return tok
+}
+
+func (d *dfaTokenSource) shouldDemoteSwiftMemberKeyword(tok Token) bool {
+	if d == nil || d.language == nil || d.language.Name != "swift" || tok.Symbol == 0 {
+		return false
+	}
+	if !d.isAfterSwiftMemberDot(int(tok.StartByte)) {
+		return false
+	}
+	start := int(tok.StartByte)
+	end := int(tok.EndByte)
+	if start < 0 || end <= start || end > len(d.lexer.source) {
+		return false
+	}
+	text := tok.Text
+	if text == "" {
+		text = bytesToStringNoCopy(d.lexer.source[start:end])
+	}
+	return d.symbolName(tok.Symbol) == text
+}
+
+func (d *dfaTokenSource) swiftSimpleIdentifierSymbol() (Symbol, bool) {
+	if d == nil || d.language == nil {
+		return 0, false
+	}
+	if d.language.KeywordCaptureToken != 0 {
+		return d.language.KeywordCaptureToken, true
+	}
+	for i, name := range d.language.SymbolNames {
+		if strings.Contains(name, "XID_Start") && strings.Contains(name, "XID_Continue") {
+			return Symbol(i), true
+		}
+	}
+	for i := range d.language.SymbolNames {
+		sym := Symbol(i)
+		meta, ok := d.symbolMetadata(sym)
+		if ok && meta.Named && d.symbolName(sym) == "simple_identifier" {
+			return sym, true
+		}
+	}
+	return 0, false
+}
+
+func (d *dfaTokenSource) isAfterSwiftMemberDot(start int) bool {
+	if d == nil || d.lexer == nil {
+		return false
+	}
+	if start <= 0 || start > len(d.lexer.source) {
+		return false
+	}
+	i := start - 1
+	for i >= 0 {
+		switch d.lexer.source[i] {
+		case ' ', '\t', '\r':
+			i--
+			continue
+		}
+		return d.lexer.source[i] == '.'
+	}
+	return false
 }
 
 func (d *dfaTokenSource) lexKeywordSource(source []byte) (Token, bool) {
