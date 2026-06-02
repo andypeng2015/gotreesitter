@@ -67,6 +67,73 @@ func buildReservedWordLanguage() *Language {
 	}
 }
 
+func buildCaseKeywordLanguage(name string) *Language {
+	return &Language{
+		Name:                name,
+		SymbolCount:         4,
+		TokenCount:          3,
+		StateCount:          1,
+		LargeStateCount:     1,
+		KeywordCaptureToken: 1, // IDENT
+		SymbolNames: []string{
+			"end",
+			"identifier",
+			"FROM",
+			"stmt",
+		},
+		KeywordLexStates: []LexState{
+			{AcceptToken: 0, Default: -1, EOF: -1, Transitions: []LexTransition{
+				{Lo: 'F', Hi: 'F', NextState: 1},
+			}},
+			{AcceptToken: 0, Default: -1, EOF: -1, Transitions: []LexTransition{
+				{Lo: 'R', Hi: 'R', NextState: 2},
+			}},
+			{AcceptToken: 0, Default: -1, EOF: -1, Transitions: []LexTransition{
+				{Lo: 'O', Hi: 'O', NextState: 3},
+			}},
+			{AcceptToken: 0, Default: -1, EOF: -1, Transitions: []LexTransition{
+				{Lo: 'M', Hi: 'M', NextState: 4},
+			}},
+			{AcceptToken: 2, Default: -1, EOF: -1},
+		},
+	}
+}
+
+func promoteCaseKeyword(lang *Language, source []byte) Token {
+	d := &dfaTokenSource{
+		lexer:    &Lexer{source: source},
+		language: lang,
+	}
+	return d.promoteKeyword(Token{
+		Symbol:    lang.KeywordCaptureToken,
+		StartByte: 0,
+		EndByte:   uint32(len(source)),
+	})
+}
+
+func TestSQLKeywordPromotionRetriesUppercase(t *testing.T) {
+	lang := buildCaseKeywordLanguage("sql")
+
+	got := promoteCaseKeyword(lang, []byte("from"))
+	if got.Symbol != 2 {
+		t.Fatalf("lowercase SQL keyword: got symbol %d, want 2 (FROM)", got.Symbol)
+	}
+}
+
+func TestNonSQLKeywordPromotionRemainsCaseSensitive(t *testing.T) {
+	lang := buildCaseKeywordLanguage("case_keyword_test")
+
+	got := promoteCaseKeyword(lang, []byte("from"))
+	if got.Symbol != 1 {
+		t.Fatalf("lowercase non-SQL keyword: got symbol %d, want 1 (identifier)", got.Symbol)
+	}
+
+	got = promoteCaseKeyword(lang, []byte("FROM"))
+	if got.Symbol != 2 {
+		t.Fatalf("uppercase non-SQL keyword: got symbol %d, want 2 (FROM)", got.Symbol)
+	}
+}
+
 func TestReservedWordBlocksPromotion(t *testing.T) {
 	lang := buildReservedWordLanguage()
 	source := []byte("if")

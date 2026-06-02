@@ -108,6 +108,11 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) {
 		normalizeScalaCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "sql":
 		normalizeSQLRecoveredSelectRoot(ctx.root, ctx.lang)
+		normalizeSQLTrailingSelectListError(ctx.root, ctx.lang)
+		if ctx.parser != nil && !ctx.parser.skipRecoveryReparse {
+			normalizeSQLRecoveredTopLevelSelectStatements(ctx.root, ctx.source, ctx.parser, ctx.lang)
+		}
+		normalizeSQLSelectClauseBodyIntoFields(ctx.root, ctx.lang)
 	case "svelte":
 		normalizeSvelteTrailingExtraTrivia(ctx.root, ctx.source, ctx.lang)
 	case "swift":

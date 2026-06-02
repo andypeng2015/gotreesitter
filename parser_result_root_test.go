@@ -117,3 +117,47 @@ func TestBuildResultFromNodesKeepsWrappedSingleChildSpan(t *testing.T) {
 		t.Fatalf("wrapped child text = %q, want %q", got, want)
 	}
 }
+
+func TestBuildResultFromNodesKeepsSQLSourceFileRootWhenChildrenHaveErrors(t *testing.T) {
+	lang := &Language{
+		Name: "sql",
+		SymbolNames: []string{
+			"EOF",
+			"source_file",
+			"select_statement",
+			"ERROR",
+		},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF", Visible: false, Named: false},
+			{Name: "source_file", Visible: true, Named: true},
+			{Name: "select_statement", Visible: true, Named: true},
+			{Name: "ERROR", Visible: true, Named: true},
+		},
+	}
+	parser := &Parser{
+		language:      lang,
+		rootSymbol:    1,
+		hasRootSymbol: true,
+	}
+	arena := acquireNodeArena(arenaClassFull)
+	source := []byte("SELECT a,\n")
+
+	stmt := newLeafNodeInArena(arena, 2, true, 0, 8, Point{}, Point{Column: 8})
+	errNode := newLeafNodeInArena(arena, errorSymbol, true, 8, 9, Point{Column: 8}, Point{Column: 9})
+	errNode.setHasError(true)
+	errNode.setExtra(true)
+
+	tree := parser.buildResultFromNodes([]*Node{stmt, errNode}, source, arena, nil, nil, nil)
+	t.Cleanup(tree.Release)
+
+	root := tree.RootNode()
+	if root == nil {
+		t.Fatal("buildResultFromNodes returned nil root")
+	}
+	if got, want := root.Type(lang), "source_file"; got != want {
+		t.Fatalf("root type = %q, want %q", got, want)
+	}
+	if !root.HasError() {
+		t.Fatal("expected source_file root to retain HasError=true")
+	}
+}

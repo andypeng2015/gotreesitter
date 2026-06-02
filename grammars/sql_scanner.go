@@ -11,13 +11,6 @@ const (
 	sqlTokDollarTagEnd   = 2 // "_dollar_quoted_string_end_tag" — closing $tag$
 )
 
-// Concrete symbol IDs from the generated SQL grammar ExternalSymbols.
-const (
-	sqlSymDollarTagStart gotreesitter.Symbol = 285
-	sqlSymContent        gotreesitter.Symbol = 286
-	sqlSymDollarTagEnd   gotreesitter.Symbol = 287
-)
-
 // sqlScannerState stores the dollar-quote tag for matching the closing delimiter.
 type sqlScannerState struct {
 	tag string // empty when not inside a dollar-quoted string
@@ -69,35 +62,39 @@ func (SqlExternalScanner) Deserialize(payload any, buf []byte) {
 
 func (SqlExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
 	s := payload.(*sqlScannerState)
+	lang := SqlLanguage()
+	tagStartSym := lang.ExternalSymbols[sqlTokDollarTagStart]
+	contentSym := lang.ExternalSymbols[sqlTokContent]
+	tagEndSym := lang.ExternalSymbols[sqlTokDollarTagEnd]
 
 	// Start tag: scan a $..$ tag and store it.
 	if sqlValid(validSymbols, sqlTokDollarTagStart) && s.tag == "" {
-		tag, ok := scanSqlDollarTag(lexer)
+		tag, ok := scanSqlDollarTag(lexer, true)
 		if !ok {
 			return false
 		}
 		s.tag = tag
 		lexer.MarkEnd()
-		lexer.SetResultSymbol(sqlSymDollarTagStart)
+		lexer.SetResultSymbol(tagStartSym)
 		return true
+	}
+
+	// Content: scan the body between dollar-quote tags, stopping immediately
+	// before the matching closing tag. Non-matching '$' sequences are content.
+	if sqlValid(validSymbols, sqlTokContent) && s.tag != "" {
+		return scanSqlDollarContent(lexer, s.tag, contentSym)
 	}
 
 	// End tag: scan for a matching $..$ tag.
 	if sqlValid(validSymbols, sqlTokDollarTagEnd) && s.tag != "" {
-		tag, ok := scanSqlDollarTag(lexer)
+		tag, ok := scanSqlDollarTag(lexer, false)
 		if !ok || tag != s.tag {
 			return false
 		}
 		s.tag = ""
 		lexer.MarkEnd()
-		lexer.SetResultSymbol(sqlSymDollarTagEnd)
+		lexer.SetResultSymbol(tagEndSym)
 		return true
-	}
-
-	// Content: scan the body between dollar-quote tags, stopping when we
-	// see a potential closing tag (a '$' character).
-	if sqlValid(validSymbols, sqlTokContent) && s.tag != "" {
-		return scanSqlDollarContent(lexer)
 	}
 
 	return false
@@ -106,7 +103,12 @@ func (SqlExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, v
 // scanSqlDollarTag scans a $identifier$ or $$ tag and returns the full tag
 // string (including the $ delimiters). Returns ("", false) if the current
 // position doesn't start a valid dollar tag.
-func scanSqlDollarTag(lexer *gotreesitter.ExternalLexer) (string, bool) {
+func scanSqlDollarTag(lexer *gotreesitter.ExternalLexer, skipWhitespace bool) (string, bool) {
+	if skipWhitespace {
+		for sqlIsScannerWhitespace(lexer.Lookahead()) {
+			lexer.Advance(true)
+		}
+	}
 	if lexer.Lookahead() != '$' {
 		return "", false
 	}
@@ -142,25 +144,38 @@ func scanSqlDollarTag(lexer *gotreesitter.ExternalLexer) (string, bool) {
 	return string(tag), true
 }
 
-// scanSqlDollarContent scans the body of a dollar-quoted string, consuming
-// everything until a '$' is encountered (which might be the start of the
-// closing tag).
-func scanSqlDollarContent(lexer *gotreesitter.ExternalLexer) bool {
-	hasContent := false
-	for {
-		ch := lexer.Lookahead()
-		if ch == '$' || ch == 0 {
-			break
-		}
-		hasContent = true
-		lexer.Advance(false)
-	}
-	if !hasContent {
+// scanSqlDollarContent scans the body of a dollar-quoted string. It mirrors
+// upstream tree-sitter-sql: content ends only before the full matching tag.
+func scanSqlDollarContent(lexer *gotreesitter.ExternalLexer, tag string, contentSym gotreesitter.Symbol) bool {
+	if tag == "" {
 		return false
 	}
+	pos := 0
+	lexer.SetResultSymbol(contentSym)
 	lexer.MarkEnd()
-	lexer.SetResultSymbol(sqlSymContent)
-	return true
+	for {
+		ch := lexer.Lookahead()
+		if ch == 0 {
+			return false
+		}
+		if pos < len(tag) && ch == rune(tag[pos]) {
+			if pos == len(tag)-1 {
+				return true
+			}
+			if pos == 0 {
+				lexer.SetResultSymbol(contentSym)
+				lexer.MarkEnd()
+			}
+			pos++
+			lexer.Advance(false)
+			continue
+		}
+		if pos != 0 {
+			pos = 0
+			continue
+		}
+		lexer.Advance(false)
+	}
 }
 
 func isSqlTagStart(ch rune) bool {
@@ -169,6 +184,10 @@ func isSqlTagStart(ch rune) bool {
 
 func isSqlTagChar(ch rune) bool {
 	return isSqlTagStart(ch) || (ch >= '0' && ch <= '9')
+}
+
+func sqlIsScannerWhitespace(ch rune) bool {
+	return ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' || ch == '\f'
 }
 
 func sqlValid(validSymbols []bool, idx int) bool {

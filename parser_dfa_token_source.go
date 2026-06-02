@@ -47,6 +47,11 @@ type dfaTokenSource struct {
 	// avoiding a per-call heap allocation when masking already-tried symbols.
 	maskedScratch []bool
 
+	// sqlKeywordScratch is a reusable upper-case copy buffer for SQL keyword
+	// promotion. tree-sitter-sql keywords are case-insensitive, while the
+	// generated keyword DFA stores upper-case literals.
+	sqlKeywordScratch []byte
+
 	// Zero-width external token loop prevention.
 	// Tracks which external token indices have been produced as zero-width
 	// tokens at the current (position, state) pair, so they can be excluded
@@ -145,6 +150,7 @@ func resetPooledDFATokenSource(ts *dfaTokenSource) {
 	savedExternalRetrySnap := ts.externalRetrySnap[:0]
 	savedExternalCompare := ts.externalCompare[:0]
 	savedMasked := ts.maskedScratch[:0]
+	savedSQLKeywordScratch := ts.sqlKeywordScratch[:0]
 	savedExtZeroTried := ts.extZeroTried[:0]
 	*ts = dfaTokenSource{
 		extZeroPos:             -1,
@@ -158,6 +164,7 @@ func resetPooledDFATokenSource(ts *dfaTokenSource) {
 	ts.externalRetrySnap = savedExternalRetrySnap
 	ts.externalCompare = savedExternalCompare
 	ts.maskedScratch = savedMasked
+	ts.sqlKeywordScratch = savedSQLKeywordScratch
 	ts.extZeroTried = savedExtZeroTried
 }
 
@@ -2748,23 +2755,22 @@ func (d *dfaTokenSource) promoteKeyword(tok Token) Token {
 	if start < 0 || end < start || end > len(d.lexer.source) {
 		return tok
 	}
+	keywordSource := d.lexer.source[start:end]
 	if !d.language.keywordLexCouldMatch(d.lexer.source, start, end) {
-		return tok
+		upper, ok := d.sqlUppercaseKeywordSource(keywordSource)
+		if !ok || !d.language.keywordLexCouldMatch(upper, 0, len(upper)) {
+			return tok
+		}
+		keywordSource = upper
 	}
 
-	kw := Lexer{
-		states:     d.language.KeywordLexStates,
-		asciiTable: d.language.KeywordLexAsciiTable(),
-		source:     d.lexer.source[start:end],
+	kwTok, ok := d.lexKeywordSource(keywordSource)
+	if !ok && d.language.Name == "sql" {
+		if upper, upperOK := d.sqlUppercaseKeywordSource(d.lexer.source[start:end]); upperOK && d.language.keywordLexCouldMatch(upper, 0, len(upper)) {
+			kwTok, ok = d.lexKeywordSource(upper)
+		}
 	}
-	kwTok := kw.Next(0)
-	if kwTok.Symbol == 0 {
-		return tok
-	}
-	if kwTok.StartByte != 0 {
-		return tok
-	}
-	if kwTok.EndByte != uint32(end-start) {
+	if !ok {
 		return tok
 	}
 	if d.language.Name == "rust" && int(kwTok.Symbol) < len(d.language.SymbolNames) && d.language.SymbolNames[kwTok.Symbol] == "default" {
@@ -2838,6 +2844,56 @@ func (d *dfaTokenSource) promoteKeyword(tok Token) Token {
 
 	tok.Symbol = kwTok.Symbol
 	return tok
+}
+
+func (d *dfaTokenSource) lexKeywordSource(source []byte) (Token, bool) {
+	if d == nil || d.language == nil {
+		return Token{}, false
+	}
+	kw := Lexer{
+		states:     d.language.KeywordLexStates,
+		asciiTable: d.language.KeywordLexAsciiTable(),
+		source:     source,
+	}
+	kwTok := kw.Next(0)
+	if kwTok.Symbol == 0 {
+		return Token{}, false
+	}
+	if kwTok.StartByte != 0 {
+		return Token{}, false
+	}
+	if kwTok.EndByte != uint32(len(source)) {
+		return Token{}, false
+	}
+	return kwTok, true
+}
+
+func (d *dfaTokenSource) sqlUppercaseKeywordSource(source []byte) ([]byte, bool) {
+	if d == nil || d.language == nil || d.language.Name != "sql" || len(source) == 0 {
+		return nil, false
+	}
+	if cap(d.sqlKeywordScratch) < len(source) {
+		d.sqlKeywordScratch = make([]byte, len(source))
+	} else {
+		d.sqlKeywordScratch = d.sqlKeywordScratch[:len(source)]
+	}
+	changed := false
+	for i, b := range source {
+		switch {
+		case b >= 'a' && b <= 'z':
+			d.sqlKeywordScratch[i] = b - ('a' - 'A')
+			changed = true
+		case (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b == '_':
+			d.sqlKeywordScratch[i] = b
+		default:
+			d.sqlKeywordScratch = d.sqlKeywordScratch[:0]
+			return nil, false
+		}
+	}
+	if !changed {
+		return nil, false
+	}
+	return d.sqlKeywordScratch, true
 }
 
 func (d *dfaTokenSource) activeLiteralKeywordSymbol(tok Token) (Symbol, bool) {

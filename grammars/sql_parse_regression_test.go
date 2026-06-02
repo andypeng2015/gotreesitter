@@ -23,20 +23,107 @@ func TestSQLTrailingCommaAtEOFRecoversStatementPrefix(t *testing.T) {
 	if !root.HasError() {
 		t.Fatalf("expected recovered SQL tree to retain error flag, got %s", root.SExpr(SqlLanguage()))
 	}
-	if got := root.ChildCount(); got != 3 {
-		t.Fatalf("root child count = %d, want 3; tree=%s", got, root.SExpr(SqlLanguage()))
+	if got := root.ChildCount(); got != 1 {
+		t.Fatalf("root child count = %d, want 1; tree=%s", got, root.SExpr(SqlLanguage()))
 	}
 	if first := root.Child(0); first == nil || first.Type(SqlLanguage()) != "select_statement" {
 		t.Fatalf("first child = %v, want select_statement; tree=%s", first, root.SExpr(SqlLanguage()))
+	} else if !first.HasError() {
+		t.Fatalf("recovered select_statement should retain error flag; tree=%s", root.SExpr(SqlLanguage()))
 	}
-	if second := root.Child(1); second == nil || !second.IsError() {
-		t.Fatalf("second child = %v, want ERROR; tree=%s", second, root.SExpr(SqlLanguage()))
-	} else if got := second.Type(SqlLanguage()); got != "ERROR" {
-		t.Fatalf("second child type = %q, want ERROR", got)
-	} else if got := second.ChildCount(); got != 1 {
-		t.Fatalf("ERROR child count = %d, want 1", got)
+}
+
+func TestSQLDollarQuotedStringsAllowDollarContent(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		src  string
+	}{
+		{name: "empty_tag", src: "SELECT $$a$$;\n"},
+		{name: "named_tag", src: "SELECT $a$baz$a$;\n"},
+		{name: "embedded_empty_tag_text", src: "SELECT $a$$$$a$;\n"},
+		{name: "embedded_dollars", src: "SELECT $a$b$$a$;\n"},
+		{name: "list", src: "SELECT $$a$$, $a$baz$a$, $a$$$$a$, $a$b$$a$;\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			src := []byte(tc.src)
+			parser := ts.NewParser(SqlLanguage())
+			tree, err := parser.Parse(src)
+			if err != nil {
+				t.Fatalf("parse failed: %v", err)
+			}
+			root := tree.RootNode()
+			if root == nil {
+				t.Fatal("missing root node")
+			}
+			if root.HasError() {
+				t.Fatalf("unexpected SQL dollar string parse error: %s", root.SExpr(SqlLanguage()))
+			}
+			if got := root.ChildCount(); got != 2 {
+				t.Fatalf("root child count = %d, want 2; tree=%s", got, root.SExpr(SqlLanguage()))
+			}
+			if first := root.Child(0); first == nil || first.Type(SqlLanguage()) != "select_statement" {
+				t.Fatalf("first child = %v, want select_statement; tree=%s", first, root.SExpr(SqlLanguage()))
+			}
+			if second := root.Child(1); second == nil || second.Type(SqlLanguage()) != ";" {
+				t.Fatalf("second child = %v, want semicolon; tree=%s", second, root.SExpr(SqlLanguage()))
+			}
+		})
 	}
-	if third := root.Child(2); third == nil || third.Type(SqlLanguage()) != "comment" {
-		t.Fatalf("third child = %v, want comment; tree=%s", third, root.SExpr(SqlLanguage()))
+}
+
+func TestSQLSelectClauseBodyIntoFieldRequiresIntoKeyword(t *testing.T) {
+	lang := SqlLanguage()
+
+	tree, err := ts.NewParser(lang).Parse([]byte("SELECT (SELECT 1), a\nFROM (SELECT a FROM table) AS b;\n"))
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
 	}
+	body := sqlFirstSelectClauseBody(t, tree, lang)
+	if got := body.ChildCount(); got < 3 {
+		t.Fatalf("select_clause_body child count = %d, want at least 3; tree=%s", got, tree.RootNode().SExpr(lang))
+	}
+	if child := body.Child(2); child == nil || child.Type(lang) != "identifier" {
+		t.Fatalf("body child 2 = %v, want identifier; tree=%s", child, tree.RootNode().SExpr(lang))
+	}
+	if got := body.FieldNameForChild(2, lang); got != "" {
+		t.Fatalf("body child 2 field = %q, want empty; tree=%s", got, tree.RootNode().SExpr(lang))
+	}
+
+	tree, err = ts.NewParser(lang).Parse([]byte("SELECT a INTO b;\n"))
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	body = sqlFirstSelectClauseBody(t, tree, lang)
+	foundInto := false
+	for i := 0; i < body.ChildCount(); i++ {
+		child := body.Child(i)
+		if child != nil && child.Type(lang) == "identifier" && body.FieldNameForChild(i, lang) == "into" {
+			foundInto = true
+			break
+		}
+	}
+	if !foundInto {
+		t.Fatalf("explicit SELECT INTO target did not keep into field; tree=%s", tree.RootNode().SExpr(lang))
+	}
+}
+
+func sqlFirstSelectClauseBody(t *testing.T, tree *ts.Tree, lang *ts.Language) *ts.Node {
+	t.Helper()
+	root := tree.RootNode()
+	if root == nil || root.ChildCount() == 0 {
+		t.Fatalf("missing SQL root child; tree=%v", root)
+	}
+	stmt := root.Child(0)
+	if stmt == nil || stmt.Type(lang) != "select_statement" || stmt.ChildCount() == 0 {
+		t.Fatalf("root child 0 = %v, want select_statement; tree=%s", stmt, root.SExpr(lang))
+	}
+	clause := stmt.Child(0)
+	if clause == nil || clause.Type(lang) != "select_clause" || clause.ChildCount() < 2 {
+		t.Fatalf("statement child 0 = %v, want select_clause with body; tree=%s", clause, root.SExpr(lang))
+	}
+	body := clause.Child(1)
+	if body == nil || body.Type(lang) != "select_clause_body" {
+		t.Fatalf("select clause child 1 = %v, want select_clause_body; tree=%s", body, root.SExpr(lang))
+	}
+	return body
 }
