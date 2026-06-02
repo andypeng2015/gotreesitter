@@ -5,12 +5,6 @@ import (
 	"testing"
 )
 
-// scanFunc abstracts the table scan() (a method) and scanJsonGen (a func) so the
-// same tokenize loop drives both under identical work.
-type scanFunc func(l *Lexer, startState uint32, startPos int, startRow, startCol uint32) (Token, bool)
-
-func tableScanFunc(l *Lexer, s uint32, p int, r, c uint32) (Token, bool) { return l.scan(s, p, r, c) }
-
 // jsonAscii is the real runtime ASCII fast-path table, built once. The table
 // baseline MUST use it (the runtime does, via Language.LexAsciiTable) or the
 // comparison unfairly pits scanJsonGen against the slow linear-scan fallback.

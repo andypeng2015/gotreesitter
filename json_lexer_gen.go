@@ -19,6 +19,8 @@ func scanJsonGen(l *Lexer, startState uint32, startPos int, startRow, startCol u
 	acceptStartRow := startRow
 	acceptStartCol := startCol
 	var acceptSymbol Symbol
+	acceptSkip := false
+	acceptPriorityBest := int16(32767)
 	eofHops := 0
 	for {
 		if state < 0 || state >= 44 {
@@ -26,7 +28,7 @@ func scanJsonGen(l *Lexer, startState uint32, startPos int, startRow, startCol u
 		}
 		switch state {
 		case 22:
-			if acceptPos < 0 || scanPos > acceptPos {
+			if acceptPos < 0 || 0 < acceptPriorityBest || (0 == acceptPriorityBest && scanPos > acceptPos) {
 				acceptPos = scanPos
 				acceptRow = scanRow
 				acceptCol = scanCol
@@ -34,9 +36,11 @@ func scanJsonGen(l *Lexer, startState uint32, startPos int, startRow, startCol u
 				acceptStartRow = tokenStartRow
 				acceptStartCol = tokenStartCol
 				acceptSymbol = 1
+				acceptSkip = false
+				acceptPriorityBest = 0
 			}
 		case 23:
-			if acceptPos < 0 || scanPos > acceptPos {
+			if acceptPos < 0 || 0 < acceptPriorityBest || (0 == acceptPriorityBest && scanPos > acceptPos) {
 				acceptPos = scanPos
 				acceptRow = scanRow
 				acceptCol = scanCol
@@ -44,9 +48,11 @@ func scanJsonGen(l *Lexer, startState uint32, startPos int, startRow, startCol u
 				acceptStartRow = tokenStartRow
 				acceptStartCol = tokenStartCol
 				acceptSymbol = 2
+				acceptSkip = false
+				acceptPriorityBest = 0
 			}
 		case 24:
-			if acceptPos < 0 || scanPos > acceptPos {
+			if acceptPos < 0 || 0 < acceptPriorityBest || (0 == acceptPriorityBest && scanPos > acceptPos) {
 				acceptPos = scanPos
 				acceptRow = scanRow
 				acceptCol = scanCol
@@ -54,9 +60,11 @@ func scanJsonGen(l *Lexer, startState uint32, startPos int, startRow, startCol u
 				acceptStartRow = tokenStartRow
 				acceptStartCol = tokenStartCol
 				acceptSymbol = 3
+				acceptSkip = false
+				acceptPriorityBest = 0
 			}
 		case 25:
-			if acceptPos < 0 || scanPos > acceptPos {
+			if acceptPos < 0 || 0 < acceptPriorityBest || (0 == acceptPriorityBest && scanPos > acceptPos) {
 				acceptPos = scanPos
 				acceptRow = scanRow
 				acceptCol = scanCol
@@ -64,9 +72,11 @@ func scanJsonGen(l *Lexer, startState uint32, startPos int, startRow, startCol u
 				acceptStartRow = tokenStartRow
 				acceptStartCol = tokenStartCol
 				acceptSymbol = 4
+				acceptSkip = false
+				acceptPriorityBest = 0
 			}
 		case 26:
-			if acceptPos < 0 || scanPos > acceptPos {
+			if acceptPos < 0 || 0 < acceptPriorityBest || (0 == acceptPriorityBest && scanPos > acceptPos) {
 				acceptPos = scanPos
 				acceptRow = scanRow
 				acceptCol = scanCol
@@ -74,9 +84,11 @@ func scanJsonGen(l *Lexer, startState uint32, startPos int, startRow, startCol u
 				acceptStartRow = tokenStartRow
 				acceptStartCol = tokenStartCol
 				acceptSymbol = 5
+				acceptSkip = false
+				acceptPriorityBest = 0
 			}
 		case 27:
-			if acceptPos < 0 || scanPos > acceptPos {
+			if acceptPos < 0 || 0 < acceptPriorityBest || (0 == acceptPriorityBest && scanPos > acceptPos) {
 				acceptPos = scanPos
 				acceptRow = scanRow
 				acceptCol = scanCol
@@ -84,9 +96,11 @@ func scanJsonGen(l *Lexer, startState uint32, startPos int, startRow, startCol u
 				acceptStartRow = tokenStartRow
 				acceptStartCol = tokenStartCol
 				acceptSymbol = 6
+				acceptSkip = false
+				acceptPriorityBest = 0
 			}
 		case 28:
-			if acceptPos < 0 || scanPos > acceptPos {
+			if acceptPos < 0 || 0 < acceptPriorityBest || (0 == acceptPriorityBest && scanPos > acceptPos) {
 				acceptPos = scanPos
 				acceptRow = scanRow
 				acceptCol = scanCol
@@ -94,9 +108,11 @@ func scanJsonGen(l *Lexer, startState uint32, startPos int, startRow, startCol u
 				acceptStartRow = tokenStartRow
 				acceptStartCol = tokenStartCol
 				acceptSymbol = 7
+				acceptSkip = false
+				acceptPriorityBest = 0
 			}
 		case 29:
-			if acceptPos < 0 || scanPos > acceptPos {
+			if acceptPos < 0 || 0 < acceptPriorityBest || (0 == acceptPriorityBest && scanPos > acceptPos) {
 				acceptPos = scanPos
 				acceptRow = scanRow
 				acceptCol = scanCol
@@ -104,9 +120,11 @@ func scanJsonGen(l *Lexer, startState uint32, startPos int, startRow, startCol u
 				acceptStartRow = tokenStartRow
 				acceptStartCol = tokenStartCol
 				acceptSymbol = 8
+				acceptSkip = false
+				acceptPriorityBest = 0
 			}
 		case 30:
-			if acceptPos < 0 || scanPos > acceptPos {
+			if acceptPos < 0 || 0 < acceptPriorityBest || (0 == acceptPriorityBest && scanPos > acceptPos) {
 				acceptPos = scanPos
 				acceptRow = scanRow
 				acceptCol = scanCol
@@ -114,9 +132,11 @@ func scanJsonGen(l *Lexer, startState uint32, startPos int, startRow, startCol u
 				acceptStartRow = tokenStartRow
 				acceptStartCol = tokenStartCol
 				acceptSymbol = 8
+				acceptSkip = false
+				acceptPriorityBest = 0
 			}
 		case 31:
-			if acceptPos < 0 || scanPos > acceptPos {
+			if acceptPos < 0 || 0 < acceptPriorityBest || (0 == acceptPriorityBest && scanPos > acceptPos) {
 				acceptPos = scanPos
 				acceptRow = scanRow
 				acceptCol = scanCol
@@ -124,9 +144,11 @@ func scanJsonGen(l *Lexer, startState uint32, startPos int, startRow, startCol u
 				acceptStartRow = tokenStartRow
 				acceptStartCol = tokenStartCol
 				acceptSymbol = 8
+				acceptSkip = false
+				acceptPriorityBest = 0
 			}
 		case 32:
-			if acceptPos < 0 || scanPos > acceptPos {
+			if acceptPos < 0 || 0 < acceptPriorityBest || (0 == acceptPriorityBest && scanPos > acceptPos) {
 				acceptPos = scanPos
 				acceptRow = scanRow
 				acceptCol = scanCol
@@ -134,9 +156,11 @@ func scanJsonGen(l *Lexer, startState uint32, startPos int, startRow, startCol u
 				acceptStartRow = tokenStartRow
 				acceptStartCol = tokenStartCol
 				acceptSymbol = 8
+				acceptSkip = false
+				acceptPriorityBest = 0
 			}
 		case 33:
-			if acceptPos < 0 || scanPos > acceptPos {
+			if acceptPos < 0 || 0 < acceptPriorityBest || (0 == acceptPriorityBest && scanPos > acceptPos) {
 				acceptPos = scanPos
 				acceptRow = scanRow
 				acceptCol = scanCol
@@ -144,9 +168,11 @@ func scanJsonGen(l *Lexer, startState uint32, startPos int, startRow, startCol u
 				acceptStartRow = tokenStartRow
 				acceptStartCol = tokenStartCol
 				acceptSymbol = 8
+				acceptSkip = false
+				acceptPriorityBest = 0
 			}
 		case 34:
-			if acceptPos < 0 || scanPos > acceptPos {
+			if acceptPos < 0 || 0 < acceptPriorityBest || (0 == acceptPriorityBest && scanPos > acceptPos) {
 				acceptPos = scanPos
 				acceptRow = scanRow
 				acceptCol = scanCol
@@ -154,9 +180,11 @@ func scanJsonGen(l *Lexer, startState uint32, startPos int, startRow, startCol u
 				acceptStartRow = tokenStartRow
 				acceptStartCol = tokenStartCol
 				acceptSymbol = 9
+				acceptSkip = false
+				acceptPriorityBest = 0
 			}
 		case 35:
-			if acceptPos < 0 || scanPos > acceptPos {
+			if acceptPos < 0 || 0 < acceptPriorityBest || (0 == acceptPriorityBest && scanPos > acceptPos) {
 				acceptPos = scanPos
 				acceptRow = scanRow
 				acceptCol = scanCol
@@ -164,9 +192,11 @@ func scanJsonGen(l *Lexer, startState uint32, startPos int, startRow, startCol u
 				acceptStartRow = tokenStartRow
 				acceptStartCol = tokenStartCol
 				acceptSymbol = 10
+				acceptSkip = false
+				acceptPriorityBest = 0
 			}
 		case 36:
-			if acceptPos < 0 || scanPos > acceptPos {
+			if acceptPos < 0 || 0 < acceptPriorityBest || (0 == acceptPriorityBest && scanPos > acceptPos) {
 				acceptPos = scanPos
 				acceptRow = scanRow
 				acceptCol = scanCol
@@ -174,9 +204,11 @@ func scanJsonGen(l *Lexer, startState uint32, startPos int, startRow, startCol u
 				acceptStartRow = tokenStartRow
 				acceptStartCol = tokenStartCol
 				acceptSymbol = 10
+				acceptSkip = false
+				acceptPriorityBest = 0
 			}
 		case 37:
-			if acceptPos < 0 || scanPos > acceptPos {
+			if acceptPos < 0 || 0 < acceptPriorityBest || (0 == acceptPriorityBest && scanPos > acceptPos) {
 				acceptPos = scanPos
 				acceptRow = scanRow
 				acceptCol = scanCol
@@ -184,9 +216,11 @@ func scanJsonGen(l *Lexer, startState uint32, startPos int, startRow, startCol u
 				acceptStartRow = tokenStartRow
 				acceptStartCol = tokenStartCol
 				acceptSymbol = 10
+				acceptSkip = false
+				acceptPriorityBest = 0
 			}
 		case 38:
-			if acceptPos < 0 || scanPos > acceptPos {
+			if acceptPos < 0 || 0 < acceptPriorityBest || (0 == acceptPriorityBest && scanPos > acceptPos) {
 				acceptPos = scanPos
 				acceptRow = scanRow
 				acceptCol = scanCol
@@ -194,9 +228,11 @@ func scanJsonGen(l *Lexer, startState uint32, startPos int, startRow, startCol u
 				acceptStartRow = tokenStartRow
 				acceptStartCol = tokenStartCol
 				acceptSymbol = 10
+				acceptSkip = false
+				acceptPriorityBest = 0
 			}
 		case 39:
-			if acceptPos < 0 || scanPos > acceptPos {
+			if acceptPos < 0 || 0 < acceptPriorityBest || (0 == acceptPriorityBest && scanPos > acceptPos) {
 				acceptPos = scanPos
 				acceptRow = scanRow
 				acceptCol = scanCol
@@ -204,9 +240,11 @@ func scanJsonGen(l *Lexer, startState uint32, startPos int, startRow, startCol u
 				acceptStartRow = tokenStartRow
 				acceptStartCol = tokenStartCol
 				acceptSymbol = 11
+				acceptSkip = false
+				acceptPriorityBest = 0
 			}
 		case 40:
-			if acceptPos < 0 || scanPos > acceptPos {
+			if acceptPos < 0 || 0 < acceptPriorityBest || (0 == acceptPriorityBest && scanPos > acceptPos) {
 				acceptPos = scanPos
 				acceptRow = scanRow
 				acceptCol = scanCol
@@ -214,9 +252,11 @@ func scanJsonGen(l *Lexer, startState uint32, startPos int, startRow, startCol u
 				acceptStartRow = tokenStartRow
 				acceptStartCol = tokenStartCol
 				acceptSymbol = 12
+				acceptSkip = false
+				acceptPriorityBest = 0
 			}
 		case 41:
-			if acceptPos < 0 || scanPos > acceptPos {
+			if acceptPos < 0 || 0 < acceptPriorityBest || (0 == acceptPriorityBest && scanPos > acceptPos) {
 				acceptPos = scanPos
 				acceptRow = scanRow
 				acceptCol = scanCol
@@ -224,9 +264,11 @@ func scanJsonGen(l *Lexer, startState uint32, startPos int, startRow, startCol u
 				acceptStartRow = tokenStartRow
 				acceptStartCol = tokenStartCol
 				acceptSymbol = 13
+				acceptSkip = false
+				acceptPriorityBest = 0
 			}
 		case 42:
-			if acceptPos < 0 || scanPos > acceptPos {
+			if acceptPos < 0 || 0 < acceptPriorityBest || (0 == acceptPriorityBest && scanPos > acceptPos) {
 				acceptPos = scanPos
 				acceptRow = scanRow
 				acceptCol = scanCol
@@ -234,9 +276,11 @@ func scanJsonGen(l *Lexer, startState uint32, startPos int, startRow, startCol u
 				acceptStartRow = tokenStartRow
 				acceptStartCol = tokenStartCol
 				acceptSymbol = 14
+				acceptSkip = false
+				acceptPriorityBest = 0
 			}
 		case 43:
-			if acceptPos < 0 || scanPos > acceptPos {
+			if acceptPos < 0 || 0 < acceptPriorityBest || (0 == acceptPriorityBest && scanPos > acceptPos) {
 				acceptPos = scanPos
 				acceptRow = scanRow
 				acceptCol = scanCol
@@ -244,6 +288,8 @@ func scanJsonGen(l *Lexer, startState uint32, startPos int, startRow, startCol u
 				acceptStartRow = tokenStartRow
 				acceptStartCol = tokenStartCol
 				acceptSymbol = 14
+				acceptSkip = false
+				acceptPriorityBest = 0
 			}
 		}
 		if scanPos >= len(src) {
@@ -625,6 +671,7 @@ func scanJsonGen(l *Lexer, startState uint32, startPos int, startRow, startCol u
 			tokenStartCol = scanCol
 			acceptPos = -1
 			acceptSymbol = 0
+			acceptSkip = false
 		}
 		state = next
 	}
@@ -634,6 +681,14 @@ func scanJsonGen(l *Lexer, startState uint32, startPos int, startRow, startCol u
 	l.pos = acceptPos
 	l.row = acceptRow
 	l.col = acceptCol
+	if acceptSkip {
+		return Token{
+			StartByte:  uint32(acceptStartPos),
+			EndByte:    uint32(acceptPos),
+			StartPoint: Point{Row: acceptStartRow, Column: acceptStartCol},
+			EndPoint:   Point{Row: acceptRow, Column: acceptCol},
+		}, true
+	}
 	return Token{
 		Symbol:     acceptSymbol,
 		Text:       bytesToStringNoCopy(src[acceptStartPos:acceptPos]),

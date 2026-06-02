@@ -48,3 +48,7 @@ var jsonLexStatesForDiff = []LexState{
 	{AcceptToken: 14, AcceptPriority: 0, Skip: false, Default: -1, EOF: -1, Transitions: []LexTransition{}},
 	{AcceptToken: 14, AcceptPriority: 0, Skip: false, Default: -1, EOF: -1, Transitions: []LexTransition{{Lo: 1, Hi: 9, NextState: 43, Skip: false}, {Lo: 11, Hi: 1114111, NextState: 43, Skip: false}}},
 }
+
+var jsonImmediateForDiff = []bool(nil)
+
+var jsonZeroWidthForDiff = []bool(nil)
