@@ -89,7 +89,7 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) {
 	case "perl":
 		normalizePerlCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "php":
-		normalizePHPCompatibility(ctx.root, ctx.source, ctx.lang)
+		normalizePHPCompatibility(ctx.root, ctx.source, ctx.parser, ctx.lang)
 	case "powershell":
 		normalizePowerShellProgramShape(ctx.root, ctx.source, ctx.lang)
 		normalizePowerShellAssignmentOperatorTokens(ctx.root, ctx.source, ctx.lang)

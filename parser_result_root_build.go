@@ -167,7 +167,11 @@ func (b *resultRootBuild) singleChildSlice(child *Node) []*Node {
 
 func (b *resultRootBuild) finishTree(root *Node, wireParentLinks, extendTrailing bool) *Tree {
 	b.finalizeRoot(root, wireParentLinks, extendTrailing)
-	tree := newTreeWithArenas(root, b.source, b.lang, b.arena, b.borrowedArenas())
+	borrowed := b.borrowedArenas()
+	if b.parser != nil {
+		borrowed = append(borrowed, b.parser.takeCompatibilityBorrowedArenas()...)
+	}
+	tree := newTreeWithArenas(root, b.source, b.lang, b.arena, borrowed)
 	if b.parser.shouldDeferResultCompatibility(root) {
 		tree.deferResultCompatibility()
 	}

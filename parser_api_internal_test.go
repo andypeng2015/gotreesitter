@@ -160,6 +160,46 @@ func TestPythonRepetitionShiftConflictChoiceRejectsOtherState(t *testing.T) {
 	}
 }
 
+func TestPHPRepetitionShiftConflictChoiceAllowsProgramRepeat(t *testing.T) {
+	lang := &Language{SymbolNames: []string{"end", "namespace", "\\", "name", "use", "new", "program_repeat1"}}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 6, ChildCount: 2},
+		{Type: ParseActionShift, State: 1846, Repetition: true},
+	}
+
+	for _, sym := range []Symbol{1, 2, 3, 4, 5} {
+		chosen, ok := phpRepetitionShiftConflictChoice(lang, Token{Symbol: sym}, 2, actions)
+		if !ok {
+			t.Fatalf("phpRepetitionShiftConflictChoice(%q) = false, want true", lang.SymbolNames[sym])
+		}
+		if chosen.Type != ParseActionShift || chosen.State != 1846 || !chosen.Repetition {
+			t.Fatalf("phpRepetitionShiftConflictChoice(%q) picked %+v, want repetition shift", lang.SymbolNames[sym], chosen)
+		}
+	}
+}
+
+func TestPHPRepetitionShiftConflictChoiceRejectsOtherRepeat(t *testing.T) {
+	lang := &Language{SymbolNames: []string{"end", "namespace", "program_repeat1", "arguments_repeat1"}}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 3, ChildCount: 2},
+		{Type: ParseActionShift, State: 1846, Repetition: true},
+	}
+	if _, ok := phpRepetitionShiftConflictChoice(lang, Token{Symbol: 1}, 2, actions); ok {
+		t.Fatal("phpRepetitionShiftConflictChoice = true, want false")
+	}
+}
+
+func TestPHPRepetitionShiftConflictChoiceRejectsOtherState(t *testing.T) {
+	lang := &Language{SymbolNames: []string{"end", "namespace", "program_repeat1"}}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 2, ChildCount: 2},
+		{Type: ParseActionShift, State: 1846, Repetition: true},
+	}
+	if _, ok := phpRepetitionShiftConflictChoice(lang, Token{Symbol: 1}, 3, actions); ok {
+		t.Fatal("phpRepetitionShiftConflictChoice = true, want false")
+	}
+}
+
 func TestDartRepetitionShiftConflictChoiceAllowsHotRepeats(t *testing.T) {
 	for _, tc := range []struct {
 		name         string

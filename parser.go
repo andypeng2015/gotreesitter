@@ -25,6 +25,7 @@ type Parser struct {
 	reparseFactory                      TokenSourceFactory
 	recoveryParser                      *Parser
 	skipRecoveryReparse                 bool
+	compatibilityBorrowedArenas         []*nodeArena
 	fullArenaHint                       uint32
 	pendingFullArenaHint                uint32
 	compactFullArenaHint                uint32
@@ -422,6 +423,7 @@ func resetSnippetParser(parser *Parser) {
 	parser.reparseFactory = nil
 	parser.recoveryParser = nil
 	parser.skipRecoveryReparse = false
+	parser.releaseCompatibilityBorrowedArenas()
 	parser.fullArenaHint = 0
 	parser.pendingFullArenaHint = 0
 	parser.compactFullArenaHint = 0
@@ -2531,6 +2533,10 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 						if next, ok := pythonRepetitionShiftConflictChoice(p.language, tok, currentState, actions); ok {
 							chosen, choice = next, true
 						}
+					case "php":
+						if next, ok := phpRepetitionShiftConflictChoice(p.language, tok, currentState, actions); ok {
+							chosen, choice = next, true
+						}
 					case "dart":
 						if next, ok := dartRepetitionShiftConflictChoice(p.language, currentState, actions); ok {
 							chosen, choice = next, true
@@ -3677,6 +3683,30 @@ func pythonRepetitionShiftConflictChoice(lang *Language, tok Token, state StateI
 		if !symbolHasName(lang, tok.Symbol, "identifier") && !symbolHasName(lang, tok.Symbol, "def") {
 			return ParseAction{}, false
 		}
+	default:
+		return ParseAction{}, false
+	}
+	return repetitionShiftConflictChoice(actions)
+}
+
+func phpRepetitionShiftConflictChoice(lang *Language, tok Token, state StateID, actions []ParseAction) (ParseAction, bool) {
+	if lang == nil || state != 2 {
+		return ParseAction{}, false
+	}
+	if !allReducesHaveSymbol(lang, actions, "program_repeat1") {
+		return ParseAction{}, false
+	}
+	switch {
+	case symbolHasName(lang, tok.Symbol, "namespace"):
+	case symbolHasName(lang, tok.Symbol, "\\"):
+	case symbolHasName(lang, tok.Symbol, "name"):
+	case symbolHasName(lang, tok.Symbol, "use"):
+	case symbolHasName(lang, tok.Symbol, "new"):
+	case symbolHasName(lang, tok.Symbol, "function"):
+	case symbolHasName(lang, tok.Symbol, "static"):
+	case symbolHasName(lang, tok.Symbol, "class"):
+	case symbolHasName(lang, tok.Symbol, "while"):
+	case symbolHasName(lang, tok.Symbol, "echo"):
 	default:
 		return ParseAction{}, false
 	}

@@ -145,6 +145,7 @@ func (pp *ParserPool) release(p *Parser) {
 	// Return the recovery sub-parser so its reuseCursor *Node refs (and the
 	// arena they pin) are released while preserving its language-level caches.
 	p.clearRecoveryParser()
+	p.releaseCompatibilityBorrowedArenas()
 	pp.pool.Put(p)
 }
 

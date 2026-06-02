@@ -153,6 +153,51 @@ func (p *Parser) clearRecoveryParser() {
 	p.recoveryParser = nil
 }
 
+func (p *Parser) borrowCompatibilityArena(arena *nodeArena) {
+	if p == nil || arena == nil {
+		return
+	}
+	for _, existing := range p.compatibilityBorrowedArenas {
+		if existing == arena {
+			return
+		}
+	}
+	arena.Retain()
+	p.compatibilityBorrowedArenas = append(p.compatibilityBorrowedArenas, arena)
+}
+
+func (p *Parser) borrowCompatibilityTreeArenas(tree *Tree) {
+	if p == nil || tree == nil {
+		return
+	}
+	p.borrowCompatibilityArena(tree.arena)
+	for _, arena := range tree.borrowedArena {
+		p.borrowCompatibilityArena(arena)
+	}
+}
+
+func (p *Parser) takeCompatibilityBorrowedArenas() []*nodeArena {
+	if p == nil || len(p.compatibilityBorrowedArenas) == 0 {
+		return nil
+	}
+	out := p.compatibilityBorrowedArenas
+	p.compatibilityBorrowedArenas = nil
+	return out
+}
+
+func (p *Parser) releaseCompatibilityBorrowedArenas() {
+	if p == nil || len(p.compatibilityBorrowedArenas) == 0 {
+		return
+	}
+	for _, arena := range p.compatibilityBorrowedArenas {
+		if arena != nil {
+			arena.Release()
+		}
+	}
+	clear(p.compatibilityBorrowedArenas)
+	p.compatibilityBorrowedArenas = nil
+}
+
 // parseWithSnippetParser runs a recovery snippet parse. timeoutMicros is
 // optional so callers can inherit a parent parser timeout when needed.
 func parseWithSnippetParser(lang *Language, source []byte, timeoutMicros ...uint64) (*Tree, error) {
@@ -186,6 +231,7 @@ func (p *Parser) parseWithTokenSource(source []byte, ts TokenSource, reparseFact
 	if ts == nil {
 		return nil, ErrNoTokenSource
 	}
+	p.releaseCompatibilityBorrowedArenas()
 	p.clearRecoveryParser()
 	defer p.clearRecoveryParser()
 	releaseTS := manageTokenSourceLifetime(ts)
@@ -468,6 +514,7 @@ func (p *Parser) Parse(source []byte) (*Tree, error) {
 	if tree := p.tryForestFastPath(source); tree != nil {
 		return tree, nil
 	}
+	p.releaseCompatibilityBorrowedArenas()
 	p.clearRecoveryParser()
 	defer p.clearRecoveryParser()
 	prevFactory := p.reparseFactory
