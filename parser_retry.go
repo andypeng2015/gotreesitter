@@ -383,6 +383,14 @@ func effectiveParseMergePerKeyCap(lang *Language, mergePerKeyCap int, incrementa
 		if !parseMaxMergePerKeyEnvConfigured() && mergePerKeyCap > 1 {
 			return 1
 		}
+	case "sql":
+		// SQL recovery can retain thousands of same-key statement-expression
+		// alternatives on SELECT-heavy inputs. One full-parse survivor preserves
+		// the focused parse/highlight parity gate while removing the redundant
+		// GLR churn; explicit env overrides and incremental reparses stay wide.
+		if !parseMaxMergePerKeyEnvConfigured() && mergePerKeyCap > 1 {
+			return 1
+		}
 	case "javascript":
 		// Plain JS can develop many near-equivalent GLR survivors on large
 		// runtime bundles. Keeping more than four alternatives per merge key
