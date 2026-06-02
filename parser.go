@@ -2545,6 +2545,10 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 						if next, ok := dartRepetitionShiftConflictChoice(p.language, currentState, actions); ok {
 							chosen, choice = next, true
 						}
+					case "swift":
+						if next, ok := swiftBraceTypeExpressionConflictChoice(p.language, tok, currentState, actions); ok {
+							chosen, choice = next, true
+						}
 					case "d":
 						if next, ok := dRepetitionShiftConflictChoice(p.language, currentState, actions); ok {
 							chosen, choice = next, true
@@ -3757,6 +3761,75 @@ func dartRepetitionShiftConflictChoice(lang *Language, state StateID, actions []
 		return ParseAction{}, false
 	}
 	return repetitionShiftConflictChoice(actions)
+}
+
+func swiftBraceTypeExpressionConflictChoice(lang *Language, tok Token, state StateID, actions []ParseAction) (ParseAction, bool) {
+	if lang == nil {
+		return ParseAction{}, false
+	}
+	if state == 72 && symbolHasName(lang, tok.Symbol, ".") {
+		return singleReduceAgainstShiftConflictChoice(lang, actions, "_navigable_type_expression")
+	}
+	if state != 2815 || !symbolHasName(lang, tok.Symbol, "{") {
+		return ParseAction{}, false
+	}
+	var simpleType ParseAction
+	haveSimpleType := false
+	haveExpression := false
+	for _, act := range actions {
+		if act.Type != ParseActionReduce || act.ChildCount != 1 {
+			return ParseAction{}, false
+		}
+		switch {
+		case symbolHasName(lang, act.Symbol, "_simple_user_type"):
+			if haveSimpleType {
+				return ParseAction{}, false
+			}
+			simpleType = act
+			haveSimpleType = true
+		case symbolHasName(lang, act.Symbol, "_expression"):
+			if haveExpression {
+				return ParseAction{}, false
+			}
+			haveExpression = true
+		default:
+			return ParseAction{}, false
+		}
+	}
+	if !haveSimpleType || !haveExpression {
+		return ParseAction{}, false
+	}
+	return simpleType, true
+}
+
+func singleReduceAgainstShiftConflictChoice(lang *Language, actions []ParseAction, reduceSymbol string) (ParseAction, bool) {
+	if len(actions) < 2 {
+		return ParseAction{}, false
+	}
+	var reduce ParseAction
+	haveReduce := false
+	haveShift := false
+	for _, act := range actions {
+		switch act.Type {
+		case ParseActionReduce:
+			if haveReduce || !symbolHasName(lang, act.Symbol, reduceSymbol) {
+				return ParseAction{}, false
+			}
+			reduce = act
+			haveReduce = true
+		case ParseActionShift:
+			if haveShift {
+				return ParseAction{}, false
+			}
+			haveShift = true
+		default:
+			return ParseAction{}, false
+		}
+	}
+	if !haveReduce || !haveShift {
+		return ParseAction{}, false
+	}
+	return reduce, true
 }
 
 // dRepetitionShiftConflictChoice keeps D declaration/statement lists on the

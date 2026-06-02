@@ -277,6 +277,74 @@ func TestDartRepetitionShiftConflictChoiceRejectsOtherRepeat(t *testing.T) {
 	}
 }
 
+func TestSwiftBraceTypeExpressionConflictChoiceAllowsHotRR(t *testing.T) {
+	lang := &Language{SymbolNames: []string{"end", "{", "_simple_user_type", "_expression"}}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 2, ChildCount: 1},
+		{Type: ParseActionReduce, Symbol: 3, ChildCount: 1},
+	}
+
+	chosen, ok := swiftBraceTypeExpressionConflictChoice(lang, Token{Symbol: 1}, 2815, actions)
+	if !ok {
+		t.Fatal("swiftBraceTypeExpressionConflictChoice = false, want true")
+	}
+	if chosen.Type != ParseActionReduce || chosen.Symbol != 2 {
+		t.Fatalf("swiftBraceTypeExpressionConflictChoice picked %+v, want _simple_user_type reduce", chosen)
+	}
+}
+
+func TestSwiftBraceTypeExpressionConflictChoiceRejectsOtherState(t *testing.T) {
+	lang := &Language{SymbolNames: []string{"end", "{", "_simple_user_type", "_expression"}}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 2, ChildCount: 1},
+		{Type: ParseActionReduce, Symbol: 3, ChildCount: 1},
+	}
+
+	if _, ok := swiftBraceTypeExpressionConflictChoice(lang, Token{Symbol: 1}, 2816, actions); ok {
+		t.Fatal("swiftBraceTypeExpressionConflictChoice = true, want false")
+	}
+}
+
+func TestSwiftBraceTypeExpressionConflictChoiceRejectsOtherReduce(t *testing.T) {
+	lang := &Language{SymbolNames: []string{"end", "{", "_simple_user_type", "other"}}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 2, ChildCount: 1},
+		{Type: ParseActionReduce, Symbol: 3, ChildCount: 1},
+	}
+
+	if _, ok := swiftBraceTypeExpressionConflictChoice(lang, Token{Symbol: 1}, 2815, actions); ok {
+		t.Fatal("swiftBraceTypeExpressionConflictChoice = true, want false")
+	}
+}
+
+func TestSwiftBraceTypeExpressionConflictChoiceAllowsNavigableDotReduce(t *testing.T) {
+	lang := &Language{SymbolNames: []string{"end", ".", "_navigable_type_expression"}}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 2, ChildCount: 1},
+		{Type: ParseActionShift, State: 201},
+	}
+
+	chosen, ok := swiftBraceTypeExpressionConflictChoice(lang, Token{Symbol: 1}, 72, actions)
+	if !ok {
+		t.Fatal("swiftBraceTypeExpressionConflictChoice(dot) = false, want true")
+	}
+	if chosen.Type != ParseActionReduce || chosen.Symbol != 2 {
+		t.Fatalf("swiftBraceTypeExpressionConflictChoice(dot) picked %+v, want _navigable_type_expression reduce", chosen)
+	}
+}
+
+func TestSwiftBraceTypeExpressionConflictChoiceRejectsOtherDotReduce(t *testing.T) {
+	lang := &Language{SymbolNames: []string{"end", ".", "_navigable_type_expression", "other"}}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 3, ChildCount: 1},
+		{Type: ParseActionShift, State: 201},
+	}
+
+	if _, ok := swiftBraceTypeExpressionConflictChoice(lang, Token{Symbol: 1}, 72, actions); ok {
+		t.Fatal("swiftBraceTypeExpressionConflictChoice(dot) = true, want false")
+	}
+}
+
 func TestDRepetitionShiftConflictChoiceAllowsDeclarationsAndStatements(t *testing.T) {
 	lang := &Language{SymbolNames: []string{"end", "_declarations_and_statements"}}
 	actions := []ParseAction{
