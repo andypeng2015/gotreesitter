@@ -391,6 +391,22 @@ func effectiveParseMergePerKeyCap(lang *Language, mergePerKeyCap int, incrementa
 		if !parseMaxMergePerKeyEnvConfigured() && mergePerKeyCap > 1 {
 			return 1
 		}
+	case "r":
+		// R's call/argument grammar can keep many same-key alternatives alive
+		// even on tiny call-heavy inputs. One full-parse survivor preserves the
+		// current parse/highlight parity surface while preventing no-tree GLR
+		// churn from growing into multi-GB RSS.
+		if !parseMaxMergePerKeyEnvConfigured() && mergePerKeyCap > 1 {
+			return 1
+		}
+	case "scala":
+		// Scala's expression/template grammar can retain huge same-key survivor
+		// sets before result selection on real-world files. Keep one full-parse
+		// survivor by default so the language remains bounded and measurable;
+		// explicit env overrides stay available for deeper parity diagnosis.
+		if !parseMaxMergePerKeyEnvConfigured() && mergePerKeyCap > 1 {
+			return 1
+		}
 	case "javascript":
 		// Plain JS can develop many near-equivalent GLR survivors on large
 		// runtime bundles. Keeping more than four alternatives per merge key
