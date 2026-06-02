@@ -537,6 +537,32 @@ func TestParsePredicateUnknownCapture(t *testing.T) {
 	}
 }
 
+func TestQuantifiedChildPredicateAllowsMissingCaptureWhenSkipped(t *testing.T) {
+	lang := queryTestLanguage()
+	q, err := NewQuery(`(function_declaration
+  (parameter_list
+    (identifier) @constant
+    (#any-of? @constant "X"))*
+  (block) @body)`, lang)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+
+	tree := buildSimpleTree(lang)
+	matches := q.Execute(tree)
+	if len(matches) != 1 {
+		t.Fatalf("matches: got %d, want 1", len(matches))
+	}
+	got := make([]string, 0, len(matches[0].Captures))
+	for _, capture := range matches[0].Captures {
+		got = append(got, capture.Name+":"+capture.Node.Text(tree.Source()))
+	}
+	want := []string{"body:42"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("captures: got %v, want %v", got, want)
+	}
+}
+
 func TestParsePredicateInvalidRegex(t *testing.T) {
 	lang := queryTestLanguage()
 	_, err := NewQuery(`(identifier) @name (#match? @name "[")`, lang)
@@ -3848,6 +3874,42 @@ func TestGroupingMultiSiblingOuterCaptureDoesNotEmitSyntheticRoot(t *testing.T) 
 		got = append(got, capture.Name+":"+capture.Node.Text(tree.Source()))
 	}
 	want := []string{"id:main"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("captures: got %v, want %v", got, want)
+	}
+}
+
+func TestGroupingMultiSiblingNestedUnderParentMatchesSiblings(t *testing.T) {
+	lang := queryTestLanguage()
+	tree := buildSimpleTree(lang)
+	q, err := NewQuery(`(function_declaration (identifier) ((parameter_list) @params . (block) @body))`, lang)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+
+	steps := q.patterns[0].steps
+	if len(steps) != 4 {
+		t.Fatalf("steps: got %d, want 4", len(steps))
+	}
+	if steps[2].synthetic {
+		t.Fatal("nested grouped siblings should be inlined under their parent")
+	}
+	if steps[2].depth != 1 || steps[3].depth != 1 {
+		t.Fatalf("grouped sibling depths: got %d/%d, want 1/1", steps[2].depth, steps[3].depth)
+	}
+	if !steps[3].anchorBefore {
+		t.Fatal("expected internal group anchor before second sibling")
+	}
+
+	matches := q.Execute(tree)
+	if len(matches) != 1 {
+		t.Fatalf("matches: got %d, want 1", len(matches))
+	}
+	got := make([]string, 0, len(matches[0].Captures))
+	for _, capture := range matches[0].Captures {
+		got = append(got, capture.Name+":"+capture.Node.Text(tree.Source()))
+	}
+	want := []string{"params:()", "body:42"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("captures: got %v, want %v", got, want)
 	}

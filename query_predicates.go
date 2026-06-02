@@ -40,10 +40,10 @@ func (q *Query) matchesPredicate(pred QueryPredicate, captures []QueryCapture, l
 		return anyCaptureRegexMatches(pred, captures, source, true)
 	case predicateAnyOf:
 		left, ok := captureText(pred.leftCapture, captures, source)
-		return ok && stringInList(left, pred.values)
+		return (ok && stringInList(left, pred.values)) || (!ok && pred.allowMissing)
 	case predicateNotAnyOf:
 		left, ok := captureText(pred.leftCapture, captures, source)
-		return ok && !stringInList(left, pred.values)
+		return (ok && !stringInList(left, pred.values)) || (!ok && pred.allowMissing)
 	case predicateHasAncestor:
 		return ancestorPredicateMatches(pred, captures, lang, false)
 	case predicateNotHasAncestor:
@@ -269,7 +269,7 @@ func predicateRightText(pred QueryPredicate, captures []QueryCapture, source []b
 func textEqualityPredicateMatches(pred QueryPredicate, captures []QueryCapture, source []byte, wantEqual bool) bool {
 	left, ok := captureText(pred.leftCapture, captures, source)
 	if !ok {
-		return false
+		return pred.allowMissing
 	}
 	right, ok := predicateRightText(pred, captures, source)
 	if !ok {
@@ -281,7 +281,7 @@ func textEqualityPredicateMatches(pred QueryPredicate, captures []QueryCapture, 
 func regexPredicateMatches(pred QueryPredicate, captures []QueryCapture, source []byte, negated bool) bool {
 	left, ok := captureText(pred.leftCapture, captures, source)
 	if !ok {
-		return false
+		return pred.allowMissing
 	}
 	if pred.regex == nil {
 		return negated
@@ -296,7 +296,7 @@ func regexPredicateMatches(pred QueryPredicate, captures []QueryCapture, source 
 func anyCaptureTextEquals(pred QueryPredicate, captures []QueryCapture, source []byte, wantEqual bool) bool {
 	nodes := captureNodes(pred.leftCapture, captures)
 	if len(nodes) == 0 {
-		return false
+		return pred.allowMissing
 	}
 	right, ok := predicateRightText(pred, captures, source)
 	if !ok {
@@ -313,7 +313,7 @@ func anyCaptureTextEquals(pred QueryPredicate, captures []QueryCapture, source [
 func anyCaptureRegexMatches(pred QueryPredicate, captures []QueryCapture, source []byte, negated bool) bool {
 	nodes := captureNodes(pred.leftCapture, captures)
 	if len(nodes) == 0 || pred.regex == nil {
-		return false
+		return len(nodes) == 0 && pred.allowMissing
 	}
 	for _, n := range nodes {
 		matched := pred.regex.MatchString(n.Text(source))

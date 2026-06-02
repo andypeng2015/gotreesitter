@@ -132,6 +132,8 @@ type QueryPredicate struct {
 	offset     [4]int // #offset! start_row start_col end_row end_col
 	countOp    string // for #count?: ">", "<", ">=", "<=", "==", "!="
 	countValue int    // for #count?
+
+	allowMissing bool // true when scoped under a child pattern that may match zero times
 }
 
 // alternativeSymbol is one branch of an alternation like [(true) (false)].

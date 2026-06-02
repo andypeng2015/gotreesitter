@@ -179,6 +179,10 @@ type runtimeStats struct {
 	NormalizationRewrites                 uint64        `json:"normalization_nodes_rewritten,omitempty"`
 	NormalizationPasses                   *[]passStats  `json:"normalization_passes,omitempty"`
 	ParseWallNS                           int64         `json:"parse_wall_ns,omitempty"`
+	SetupParseNS                          int64         `json:"setup_parse_ns,omitempty"`
+	TreeEditNS                            int64         `json:"tree_edit_ns,omitempty"`
+	IncrementalReuseNS                    int64         `json:"incremental_reuse_ns,omitempty"`
+	IncrementalReparseNS                  int64         `json:"incremental_reparse_ns,omitempty"`
 	ParserLoopNS                          int64         `json:"parser_loop_ns,omitempty"`
 	TokenNextNS                           int64         `json:"token_next_ns,omitempty"`
 	ActionDispatchNS                      int64         `json:"action_dispatch_ns,omitempty"`
@@ -1584,19 +1588,24 @@ func pathStatsFromRuntime(rt gotreesitter.ReduceChildPathRuntime) *pathStats {
 }
 
 func runGoEdit(r *runner, source []byte, noop bool) (runtimeStats, error) {
+	setupStart := time.Now()
 	oldTree, err := parseGo(r, source)
+	setupNS := time.Since(setupStart).Nanoseconds()
 	if err != nil {
 		return runtimeStats{}, err
 	}
 	defer oldTree.Release()
 	edited := source
+	var editNS int64
 	if !noop {
 		candidate, ok := chooseEdit(source)
 		if !ok {
 			return runtimeStats{}, fmt.Errorf("no safe edit candidate")
 		}
 		edited = applyEdit(source, candidate)
+		editStart := time.Now()
 		oldTree.Edit(candidate.inputEdit(source, edited))
+		editNS = time.Since(editStart).Nanoseconds()
 	}
 	tree, profile, ok, err := parseGoIncremental(r, edited, oldTree)
 	if err != nil {
@@ -1606,6 +1615,10 @@ func runGoEdit(r *runner, source []byte, noop bool) (runtimeStats, error) {
 	stats := statsFromGoTree(r, tree, 0, 0)
 	if ok {
 		stats.ParseWallNS = profile.ReparseNanos + profile.ReuseCursorNanos
+		stats.SetupParseNS = setupNS
+		stats.TreeEditNS = editNS
+		stats.IncrementalReuseNS = profile.ReuseCursorNanos
+		stats.IncrementalReparseNS = profile.ReparseNanos
 		stats.ParserLoopNS = profile.ParserLoopNanos
 		stats.TokenNextNS = profile.TokenNextNanos
 		stats.ActionDispatchNS = profile.ActionDispatchNanos

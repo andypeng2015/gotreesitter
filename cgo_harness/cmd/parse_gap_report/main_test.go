@@ -2,7 +2,13 @@
 
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	gotreesitter "github.com/odvcencio/gotreesitter"
+	"github.com/odvcencio/gotreesitter/grammars"
+)
 
 func TestFormatHighlightCaptureMismatchIncludesCountsAndFirstCaptures(t *testing.T) {
 	onlyGo := []highlightCapture{
@@ -36,5 +42,33 @@ func TestDiffHighlightCaptures(t *testing.T) {
 	}
 	if len(onlyC) != 1 || onlyC[0] != cCaps[1] {
 		t.Fatalf("onlyC = %#v, want %#v", onlyC, []highlightCapture{cCaps[1]})
+	}
+}
+
+func TestRunGoEditReportsIncrementalAttribution(t *testing.T) {
+	lang := grammars.RustLanguage()
+	r := &runner{
+		name:     "rust",
+		goLang:   lang,
+		goParser: gotreesitter.NewParser(lang),
+		support: grammars.ParseSupport{
+			Name:    "rust",
+			Backend: grammars.ParseBackendDFA,
+		},
+	}
+
+	source := []byte(strings.Repeat("// comment abc\nfn main() {}\n", 32))
+	stats, err := runGoEdit(r, source, false)
+	if err != nil {
+		t.Fatalf("runGoEdit: %v", err)
+	}
+	if stats.SetupParseNS <= 0 {
+		t.Fatalf("SetupParseNS = %d, want > 0", stats.SetupParseNS)
+	}
+	if stats.TreeEditNS <= 0 {
+		t.Fatalf("TreeEditNS = %d, want > 0", stats.TreeEditNS)
+	}
+	if stats.ParseWallNS != stats.IncrementalReuseNS+stats.IncrementalReparseNS {
+		t.Fatalf("ParseWallNS = %d, want reuse + reparse = %d", stats.ParseWallNS, stats.IncrementalReuseNS+stats.IncrementalReparseNS)
 	}
 }

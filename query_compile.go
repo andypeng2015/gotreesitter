@@ -266,14 +266,130 @@ func (b *patternBodyParser) appendChildPattern(childPat *Pattern) {
 	if childPat == nil || len(childPat.steps) == 0 {
 		return
 	}
+	if b.appendSyntheticGroupedChildPattern(childPat) {
+		return
+	}
 	if b.pendingAnchor {
 		childPat.steps[0].anchorBefore = true
 		b.pendingAnchor = false
 	}
 	childRootIdx := len(b.pat.steps)
-	b.pat.predicates = append(b.pat.predicates, childPat.predicates...)
+	b.appendChildPredicates(childPat)
 	b.pat.steps = append(b.pat.steps, childPat.steps...)
 	b.lastChildRootIdx = childRootIdx
+}
+
+func (b *patternBodyParser) appendSyntheticGroupedChildPattern(childPat *Pattern) bool {
+	root := &childPat.steps[0]
+	if !canInlineSyntheticGroupedChildRoot(root) || len(childPat.steps) <= 1 {
+		return false
+	}
+
+	rootDepth := root.depth
+	firstAppendedIdx := len(b.pat.steps)
+	lastRootIdx := -1
+	b.appendChildPredicates(childPat)
+	for i := 1; i < len(childPat.steps); i++ {
+		step := childPat.steps[i]
+		step.depth--
+		if i == 1 && (b.pendingAnchor || root.anchorBefore) {
+			step.anchorBefore = true
+			b.pendingAnchor = false
+		}
+		b.pat.steps = append(b.pat.steps, step)
+		if step.depth == rootDepth {
+			lastRootIdx = firstAppendedIdx + i - 1
+		}
+	}
+	if root.anchorAfter && lastRootIdx >= 0 {
+		b.pat.steps[lastRootIdx].anchorAfter = true
+	}
+	b.lastChildRootIdx = lastRootIdx
+	return true
+}
+
+func (b *patternBodyParser) appendChildPredicates(childPat *Pattern) {
+	if childPat == nil || len(childPat.predicates) == 0 {
+		return
+	}
+	b.pat.predicates = append(b.pat.predicates, b.predicatesForChildPattern(childPat)...)
+}
+
+func (b *patternBodyParser) predicatesForChildPattern(childPat *Pattern) []QueryPredicate {
+	if childPat == nil || len(childPat.steps) == 0 || !stepCanMatchZero(&childPat.steps[0]) {
+		if childPat == nil {
+			return nil
+		}
+		return childPat.predicates
+	}
+	predicates := childPat.predicates
+	if len(predicates) == 0 {
+		return predicates
+	}
+	captureNames := b.captureNamesForPattern(childPat)
+	if len(captureNames) == 0 {
+		return predicates
+	}
+
+	out := make([]QueryPredicate, len(predicates))
+	copy(out, predicates)
+	for i := range out {
+		if predicateReferencesAnyCapture(out[i], captureNames) {
+			out[i].allowMissing = true
+		}
+	}
+	return out
+}
+
+func (b *patternBodyParser) captureNamesForPattern(pat *Pattern) map[string]struct{} {
+	names := make(map[string]struct{})
+	for i := range pat.steps {
+		b.addCaptureNames(names, pat.steps[i].captureIDs)
+		for j := range pat.steps[i].alternatives {
+			b.addCaptureNames(names, pat.steps[i].alternatives[j].captureIDs)
+			for k := range pat.steps[i].alternatives[j].steps {
+				b.addCaptureNames(names, pat.steps[i].alternatives[j].steps[k].captureIDs)
+			}
+		}
+	}
+	return names
+}
+
+func (b *patternBodyParser) addCaptureNames(names map[string]struct{}, ids []int) {
+	for _, id := range ids {
+		if id >= 0 && id < len(b.p.q.captures) {
+			names[b.p.q.captures[id]] = struct{}{}
+		}
+	}
+}
+
+func stepCanMatchZero(step *QueryStep) bool {
+	return step.quantifier == queryQuantifierZeroOrOne || step.quantifier == queryQuantifierZeroOrMore
+}
+
+func predicateReferencesAnyCapture(pred QueryPredicate, names map[string]struct{}) bool {
+	if pred.leftCapture != "" {
+		if _, ok := names[pred.leftCapture]; ok {
+			return true
+		}
+	}
+	if pred.rightCapture != "" {
+		if _, ok := names[pred.rightCapture]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func canInlineSyntheticGroupedChildRoot(step *QueryStep) bool {
+	return step.synthetic &&
+		step.quantifier == queryQuantifierOne &&
+		step.field == 0 &&
+		len(step.absentFields) == 0 &&
+		len(step.captureIDs) == 0 &&
+		len(step.alternatives) == 0 &&
+		step.altIndex == nil &&
+		step.textMatch == ""
 }
 
 func (b *patternBodyParser) rootStep() *QueryStep {
