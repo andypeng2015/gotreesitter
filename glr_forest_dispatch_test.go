@@ -186,7 +186,13 @@ class C {
 	}
 }
 
-func TestForestTreeIncrementalEditSupportsCSSReuse(t *testing.T) {
+// TestForestTreeIncrementalEditCSSFreshFallbackIsCorrect: css was demoted from
+// languageAllowsForestIncrementalPath (TestForestIncrementalCorrectness found its
+// forest-incremental reuse produces wrong trees on some valid edits). A css
+// forest old tree now routes edits to a fresh parse; this verifies that fallback
+// is signalled and the resulting tree is byte-identical to a standalone fresh
+// parse. Restore the real-reuse assertions here once the reuse bug is fixed.
+func TestForestTreeIncrementalEditCSSFreshFallbackIsCorrect(t *testing.T) {
 	gts.SetGLRForestEnabled(true)
 	defer gts.SetGLRForestEnabled(true)
 
@@ -224,9 +230,8 @@ func TestForestTreeIncrementalEditSupportsCSSReuse(t *testing.T) {
 	if got, want := newTree.RootNode().EndByte(), uint32(len(edited)); got != want {
 		t.Fatalf("incremental root end = %d, want %d", got, want)
 	}
-	if profile.ReuseUnsupported || profile.ReuseUnsupportedReason != "" {
-		t.Fatalf("profile reuse unsupported = %v reason %q, want CSS reuse path",
-			profile.ReuseUnsupported, profile.ReuseUnsupportedReason)
+	if !profile.ReuseUnsupported {
+		t.Fatalf("css forest tree edit should fall back to fresh parse (reuse demoted), got ReuseUnsupported=false")
 	}
 	freshTree, err := parser.Parse(edited)
 	if err != nil {
@@ -238,7 +243,12 @@ func TestForestTreeIncrementalEditSupportsCSSReuse(t *testing.T) {
 	}
 }
 
-func TestForestTreeIncrementalEditSupportsCMakeReuse(t *testing.T) {
+// TestForestTreeIncrementalEditCMakeFreshFallbackIsCorrect: cmake was demoted
+// from languageAllowsForestIncrementalPath (TestForestIncrementalCorrectness
+// found its forest-incremental reuse produces wrong trees on some valid edits).
+// Edits on a cmake forest old tree now route to a fresh parse; verify the
+// fallback is signalled and the tree stays byte-identical to a fresh parse.
+func TestForestTreeIncrementalEditCMakeFreshFallbackIsCorrect(t *testing.T) {
 	gts.SetGLRForestEnabled(true)
 	defer gts.SetGLRForestEnabled(true)
 
@@ -276,15 +286,8 @@ func TestForestTreeIncrementalEditSupportsCMakeReuse(t *testing.T) {
 	if got, want := newTree.RootNode().EndByte(), uint32(len(edited)); got != want {
 		t.Fatalf("incremental root end = %d, want %d", got, want)
 	}
-	if profile.ReuseUnsupported || profile.ReuseUnsupportedReason != "" {
-		t.Fatalf("profile reuse unsupported = %v reason %q, want CMake reuse path",
-			profile.ReuseUnsupported, profile.ReuseUnsupportedReason)
-	}
-	if profile.ReparseNanos != 0 {
-		t.Fatalf("profile reparse nanos = %d, want 0 for CMake text-invariant leaf reuse", profile.ReparseNanos)
-	}
-	if profile.ReusedSubtrees == 0 {
-		t.Fatalf("profile reused subtrees = 0, want CMake sibling reuse")
+	if !profile.ReuseUnsupported {
+		t.Fatalf("cmake forest tree edit should fall back to fresh parse (reuse demoted), got ReuseUnsupported=false")
 	}
 	freshTree, err := parser.Parse(edited)
 	if err != nil {

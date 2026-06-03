@@ -226,9 +226,19 @@ func forestAcceptedRuntime(root *Node, source []byte) ParseRuntime {
 // that path can be much faster than forcing a fresh forest full parse. Languages
 // stay disabled until the edited real-corpus matrix proves the path is correct
 // and faster than fresh-parse fallback.
+//
+// 2026-06-03: restricted to {erlang, javascript}. The edited-corpus matrix gate
+// the comment above always required was finally written
+// (TestForestIncrementalCorrectness) and it found that cmake, css and scss had
+// been added here WITHOUT it — their forest-incremental reuse produces
+// structurally-wrong, often truncated trees on valid edits (e.g. one scss edit
+// yields a 413-byte s-expr vs the correct 377KB). erlang (49/66 valid edits) and
+// javascript (13/66) are byte-for-byte incremental==fresh; the rest are demoted
+// to fresh-forest-parse fallback on edits (correct) until the reuse bug is fixed.
+// Do NOT re-add a language here without it passing TestForestIncrementalCorrectness.
 func languageAllowsForestIncrementalPath(name string) bool {
 	switch name {
-	case "erlang", "cmake", "css", "scss", "javascript":
+	case "erlang", "javascript":
 		return true
 	default:
 		return false
