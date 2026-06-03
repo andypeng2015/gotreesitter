@@ -548,6 +548,38 @@ func collectForestRootAndExtras(accepted *gssForestNode) (*Node, []*Node) {
 	return root, extras
 }
 
+// forestRootChildrenCoverNonTrivia reports whether the root's direct children
+// cover every NON-TRIVIA byte of the root span — i.e. no top-level item was
+// dropped or mis-attached into a hole in the middle of the child list. It reads
+// the no-materialize child view (stack entries) so the check never forces lazy
+// subtrees into existence. bytesAreTrivia is whitespace-only, matching the
+// end-coverage check at the accept site: comments are folded in as real
+// children, so a correct tree's inter-child gaps are whitespace only. A
+// non-trivia gap means the forest took a wrong GLR path at scale and must
+// decline rather than dispatch a structurally-incomplete tree.
+func forestRootChildrenCoverNonTrivia(root *Node, source []byte) bool {
+	if root == nil {
+		return true
+	}
+	prev := root.startByte
+	n := nodeChildCountNoMaterialize(root)
+	for i := 0; i < n; i++ {
+		entry, ok := nodeChildEntryAtNoMaterialize(root, i)
+		if !ok {
+			continue
+		}
+		start := stackEntryNodeStartByte(entry)
+		end := stackEntryNodeEndByte(entry)
+		if start > prev && int(start) <= len(source) && !bytesAreTrivia(source[prev:start]) {
+			return false
+		}
+		if end > prev {
+			prev = end
+		}
+	}
+	return true
+}
+
 // bestLink returns the link whose subtree wins tree-sitter's selection:
 // highest score (dynamic precedence), then earliest (production order).
 // forestCollapsibleNamedKeywordLeaf returns the collapsed LEAF for a unary reduce
@@ -1111,6 +1143,15 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 			// when the remaining bytes are trivia (whitespace/comments only).
 			if int(root.endByte) < len(source) && bytesAreTrivia(source[root.endByte:]) {
 				extendNodeEndTo(root, uint32(len(source)), source)
+			}
+			// Coverage safety: the checks above only validate the END byte. A
+			// large-input GLR parse can still take a wrong path that drops or
+			// mis-attaches a RUN of top-level items, leaving a non-trivia hole
+			// in the MIDDLE of the root's child list (dart's large bindings drop
+			// a ~7KB run of typedefs). Dispatching that hands the caller a
+			// structurally-incomplete tree. Decline so production re-runs.
+			if !forestRootChildrenCoverNonTrivia(root, source) {
+				return nil, false
 			}
 			return root, true
 		}
