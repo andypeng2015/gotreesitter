@@ -756,11 +756,32 @@ func releaseGSSForestNodeSlab(s *gssForestNodeSlab) {
 		return
 	}
 	s.resetForRelease()
-	if s.retainedBytes() > maxRetainedGSSForestScratchBytes {
-		s.nodeBatches = nil
-		s.linkBatches = nil
-	}
+	s.trimToRetentionCap()
 	gssForestNodeSlabPool.Put(s)
+}
+
+// trimToRetentionCap drops batches from the tail until the slab is under the
+// retention cap, instead of the old all-or-nothing (dropping the ENTIRE slab when
+// over cap forced a large parse to re-allocate and re-zero its whole link slab
+// every parse — linkSlice was 76% of forest allocations). Keeping a cap's worth
+// of batches lets them be reused (acquire resets linkBatch/nodeBatch to 0), so a
+// large parse re-allocates only the overflow, at the SAME 32 MiB memory bound.
+func (s *gssForestNodeSlab) trimToRetentionCap() {
+	nodeSize := int(unsafe.Sizeof(gssForestNode{}))
+	linkSize := int(unsafe.Sizeof(gssLink{}))
+	total := s.retainedBytes()
+	// Link batches dominate; trim them first, then node batches. Always keep at
+	// least one batch of each so the slab stays warm.
+	for total > maxRetainedGSSForestScratchBytes && len(s.linkBatches) > 1 {
+		last := len(s.linkBatches) - 1
+		total -= cap(s.linkBatches[last]) * linkSize
+		s.linkBatches = s.linkBatches[:last]
+	}
+	for total > maxRetainedGSSForestScratchBytes && len(s.nodeBatches) > 1 {
+		last := len(s.nodeBatches) - 1
+		total -= cap(s.nodeBatches[last]) * nodeSize
+		s.nodeBatches = s.nodeBatches[:last]
+	}
 }
 
 func (s *gssForestNodeSlab) alloc(state StateID, byteOffset uint32, _ int, errorCost int) *gssForestNode {
