@@ -637,83 +637,65 @@ type gssForestKey struct {
 	byteOffset uint32
 }
 
-const gssForestLookupCacheSize = 16
-
-type gssForestLookupCacheEntry struct {
-	key   gssForestKey
-	node  *gssForestNode
-	valid bool
+// gssForestIndex maps (state, byteOffset) -> coalesced node for one parse step.
+// Profiling showed it holds very few entries per step (p50=1, p90=5, p99=10
+// across scss/js/go; rare max ~63), so a Go map was pure overhead: its hashing,
+// per-insert mapassign, and per-key delete-on-reset dominated ~15-20% of a
+// fork-heavy (scss) forest parse. A linear-scan slice wins at these sizes — no
+// hashing, no allocation, O(1) truncate reset. Keys are unique by construction
+// (coalesceForest only set()s after a lookup() miss; the per-step seed inserts
+// the frontier, which carries unique (state,byteOffset) because the prior step's
+// shift-coalesce deduplicated it), so set() appends blindly. lastKey caches the
+// hottest repeated lookup (consecutive coalesces of the same actor).
+type gssForestEntry struct {
+	key  gssForestKey
+	node *gssForestNode
 }
 
 type gssForestIndex struct {
-	nodes       map[gssForestKey]*gssForestNode
-	keys        []gssForestKey
-	lookupCache [gssForestLookupCacheSize]gssForestLookupCacheEntry
-	lastKey     gssForestKey
-	lastNode    *gssForestNode
-	lastValid   bool
+	entries   []gssForestEntry
+	lastKey   gssForestKey
+	lastNode  *gssForestNode
+	lastValid bool
 }
 
 func newGSSForestIndex(capacity int) gssForestIndex {
-	return gssForestIndex{
-		nodes: make(map[gssForestKey]*gssForestNode, capacity),
-		keys:  make([]gssForestKey, 0, capacity),
-	}
+	return gssForestIndex{entries: make([]gssForestEntry, 0, capacity)}
 }
 
 func (idx *gssForestIndex) reset() {
-	for _, key := range idx.keys {
-		delete(idx.nodes, key)
-	}
-	idx.keys = idx.keys[:0]
+	idx.entries = idx.entries[:0]
 	idx.lastValid = false
 	idx.lastNode = nil
-	for i := range idx.lookupCache {
-		idx.lookupCache[i] = gssForestLookupCacheEntry{}
-	}
 }
 
 func (idx *gssForestIndex) len() int {
 	if idx == nil {
 		return 0
 	}
-	return len(idx.nodes)
+	return len(idx.entries)
 }
 
 func (idx *gssForestIndex) lookup(key gssForestKey) *gssForestNode {
 	if idx.lastValid && idx.lastKey == key {
 		return idx.lastNode
 	}
-	slot := forestLookupCacheSlot(key)
-	cached := &idx.lookupCache[slot]
-	if cached.valid && cached.key == key {
-		idx.lastKey = key
-		idx.lastNode = cached.node
-		idx.lastValid = true
-		return cached.node
+	for i := range idx.entries {
+		if idx.entries[i].key == key {
+			idx.lastKey = key
+			idx.lastNode = idx.entries[i].node
+			idx.lastValid = true
+			return idx.entries[i].node
+		}
 	}
-	node := idx.nodes[key]
-	*cached = gssForestLookupCacheEntry{key: key, node: node, valid: true}
-	idx.lastKey = key
-	idx.lastNode = node
-	idx.lastValid = true
-	return node
+	return nil
 }
 
 func (idx *gssForestIndex) set(key gssForestKey, node *gssForestNode) {
-	if idx.nodes == nil {
-		idx.nodes = make(map[gssForestKey]*gssForestNode, 16)
-	}
-	idx.nodes[key] = node
-	idx.keys = append(idx.keys, key)
-	idx.lookupCache[forestLookupCacheSlot(key)] = gssForestLookupCacheEntry{key: key, node: node, valid: true}
+	idx.entries = append(idx.entries, gssForestEntry{key: key, node: node})
 	idx.lastKey = key
 	idx.lastNode = node
 	idx.lastValid = true
-}
-
-func forestLookupCacheSlot(key gssForestKey) uint32 {
-	return (uint32(key.state)*16777619 ^ key.byteOffset ^ (key.byteOffset >> 8)) & (gssForestLookupCacheSize - 1)
 }
 
 const (
