@@ -1039,6 +1039,18 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 						// re-pushed on top.
 						parent.preGotoState = popTo.state
 						parent.parseState = gotoState
+						// Mark a reduced EXTRA node (e.g. a multi-token comment like rust's
+						// doc_comment, which is parsed as `//`+content then reduced) as
+						// extra, mirroring the production reduce (parser_reduce.go:
+						// `if tok.NoLookahead && targetState == topState { parent.setExtra }`).
+						// A no-lookahead reduce whose goto is transparent (returns to the
+						// state it popped to) is an extra completing in place. Without this
+						// the comment node sits UNMARKED in the GSS chain, so the next
+						// reduce pops it as a real child (wrong popTo, goto=0, dead-end) —
+						// the between-item-comment bug for rust/lua/dart.
+						if tok.NoLookahead && gotoState == popTo.state {
+							parent.setExtra(true)
+						}
 						// Subtree score = this production's dynamic precedence +
 						// the children's accumulated scores.
 						top := coalesceForest(&curIndex, slab, gotoState, parentEnd, popTo,
