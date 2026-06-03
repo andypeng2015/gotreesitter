@@ -26,14 +26,22 @@ const (
 //   - _concat: adjacent selector concatenation (e.g., "#foo.bar")
 type ScssExternalScanner struct{}
 
-func (ScssExternalScanner) Create() any                           { return nil }
+// scssScanState caches the (singleton) Language pointer for the lifetime of one
+// parse's scanner session. Scan() previously called ScssLanguage() on every
+// external-token scan purely to index ExternalSymbols; that loader call takes a
+// global lock and reads time.Now() for LRU bookkeeping, which showed up as ~4%
+// of scss forest parse. The Language is a stable singleton, so resolving it once
+// per parse is behavior-identical.
+type scssScanState struct{ lang *gotreesitter.Language }
+
+func (ScssExternalScanner) Create() any                           { return &scssScanState{} }
 func (ScssExternalScanner) Destroy(payload any)                   {}
 func (ScssExternalScanner) Serialize(payload any, buf []byte) int { return 0 }
 func (ScssExternalScanner) Deserialize(payload any, buf []byte)   {}
 func (ScssExternalScanner) SupportsIncrementalReuse() bool        { return true }
 
 func (ScssExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
-	lang := ScssLanguage()
+	lang := scssScanLang(payload)
 
 	// When error recovery is active, all valid_symbols are true including
 	// ERROR_RECOVERY. Bail out immediately to avoid producing spurious tokens.
@@ -129,6 +137,21 @@ func isScssSpace(ch rune) bool {
 
 func scssValid(validSymbols []bool, idx int) bool {
 	return idx >= 0 && idx < len(validSymbols) && validSymbols[idx]
+}
+
+// scssScanLang returns the scss Language, cached per parse in the scanner
+// payload so the hot Scan path does not re-enter the locking, LRU-tracking
+// embedded-language loader on every external token. Falls back to a direct
+// load if the payload is missing or of an unexpected type.
+func scssScanLang(payload any) *gotreesitter.Language {
+	st, ok := payload.(*scssScanState)
+	if !ok {
+		return ScssLanguage()
+	}
+	if st.lang == nil {
+		st.lang = ScssLanguage()
+	}
+	return st.lang
 }
 
 // scssResolve maps external token index to runtime symbol using the language's ExternalSymbols.
