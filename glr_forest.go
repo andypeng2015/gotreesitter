@@ -899,6 +899,12 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 	slab := acquireGSSForestNodeSlab()
 	defer releaseGSSForestNodeSlab(slab)
 
+	// Honor the same per-parse memory budget the production loop enforces
+	// (parser.go: arena.budgetExhausted → ParseStopMemoryBudget). The forest has
+	// no partial-tree/error-recovery path, so on exhaustion it declines (returns
+	// false) and the production parser re-runs and reports ParseStopMemoryBudget.
+	arena.setBudget(parseMemoryBudgetForParser(p, len(source)))
+
 	// Per-step scratch reused across every token (cleared, not reallocated): the
 	// allocation/GC of fresh maps+slices each step dominated the profile.
 	curIndex := newGSSForestIndex(16)
@@ -908,6 +914,11 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 
 	for {
 		processEpoch++
+		if arena.budgetExhausted() {
+			// Memory budget hit; decline so the production parser re-runs and
+			// reports ParseStopMemoryBudget (the forest has no partial-tree path).
+			return nil, false
+		}
 		if reducer.capped {
 			// A forest reduce exceeded forestReduceStepCap (high-ambiguity
 			// blowup); decline so the caller falls back to the production parser.
