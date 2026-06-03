@@ -5369,17 +5369,33 @@ func hiddenTreeHasFieldIDs(n *Node) bool {
 	if n == nil {
 		return false
 	}
+	// Memoized: field-ID presence is an immutable property once a subtree is
+	// materialized. See nodeFlagFieldIDCacheComputed. Fresh arena nodes start
+	// with flags=0 (cache uncomputed); only read/written during reduce on
+	// already-built immutable child subtrees, so the cache is never stale.
+	if n.flags&nodeFlagFieldIDCacheComputed != 0 {
+		return n.flags&nodeFlagFieldIDCacheHasFieldIDs != 0
+	}
+	result := false
 	for _, fid := range n.fieldIDs {
 		if fid != 0 {
-			return true
+			result = true
+			break
 		}
 	}
-	for _, child := range n.children {
-		if hiddenTreeHasFieldIDs(child) {
-			return true
+	if !result {
+		for _, child := range n.children {
+			if hiddenTreeHasFieldIDs(child) {
+				result = true
+				break
+			}
 		}
 	}
-	return false
+	n.flags |= nodeFlagFieldIDCacheComputed
+	if result {
+		n.flags |= nodeFlagFieldIDCacheHasFieldIDs
+	}
+	return result
 }
 
 func (p *Parser) fieldFlagScratch(childCount int) ([]bool, []bool) {

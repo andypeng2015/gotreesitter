@@ -50,6 +50,15 @@ const (
 	nodeFlagMissing
 	nodeFlagHasError
 	nodeFlagDirty
+	// nodeFlagFieldIDCacheComputed + nodeFlagFieldIDCacheHasFieldIDs memoize
+	// hiddenTreeHasFieldIDs: a materialized subtree's field-ID presence is an
+	// immutable property once built, but it was recomputed by a full subtree
+	// walk at every reduce-time call site (O(n^2)-ish on deeply nested grammars
+	// like scss). Fresh arena nodes start with flags=0 (cache uncomputed); the
+	// bit is set lazily on first query. Only ever read/written during reduce, on
+	// already-built immutable child subtrees.
+	nodeFlagFieldIDCacheComputed
+	nodeFlagFieldIDCacheHasFieldIDs
 )
 
 func (n *Node) hasFlag(flag nodeFlags) bool {
