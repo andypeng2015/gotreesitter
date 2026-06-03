@@ -39,6 +39,7 @@ type Node struct {
 	productionID uint16
 	flags        nodeFlags
 	dirtyFlag    bool
+	subtreeHeight uint8 // forest dedup tie-break cache (0 = uncomputed); see nodeCachedHeight
 }
 
 type nodeFlags uint8

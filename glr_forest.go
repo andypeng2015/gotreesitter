@@ -43,6 +43,48 @@ var glrForestEnabled = os.Getenv("GOT_GLR_FOREST") != "0"
 // SetGLRForestEnabled toggles the GSS-forest path at runtime (tests/benchmarks).
 func SetGLRForestEnabled(on bool) { glrForestEnabled = on }
 
+// nodeCachedHeight returns the subtree height (root = 1), memoized on the node
+// (n.subtreeHeight, 0 = uncomputed). Nodes are immutable after build and arena
+// slots are zeroed on alloc, so the cache is valid within a parse and never stale
+// across parses. Keeps the coalesce dedup tie-break O(1) amortized instead of an
+// O(subtree) walk on every score tie (which 7x'd merge-heavy parses).
+func nodeCachedHeight(n *Node) int {
+	if n == nil {
+		return 0
+	}
+	if n.subtreeHeight != 0 {
+		return int(n.subtreeHeight)
+	}
+	best := 0
+	for _, c := range n.children {
+		if h := nodeCachedHeight(c); h > best {
+			best = h
+		}
+	}
+	h := best + 1
+	if h > 255 {
+		h = 255
+	}
+	n.subtreeHeight = uint8(h)
+	return h
+}
+
+func stackEntrySubtreeHeight(e stackEntry) int {
+	if e.kind != stackEntryKindNode || e.node == nil {
+		return 0
+	}
+	return nodeCachedHeight((*Node)(e.node))
+}
+
+// forestDedupTieReplace reports whether, on a coalesce dedup score tie, the new
+// entry should replace the existing link — true only when the new subtree is
+// taller, mirroring tree-sitter C / production stackCompareMerge's post-score
+// depth tie-break (go type_instantiation_expression over index_expression under
+// the shared `_expression` supertype on `m.T[r.s][r.t]`).
+func forestDedupTieReplace(entry, existing stackEntry) bool {
+	return stackEntrySubtreeHeight(entry) > stackEntrySubtreeHeight(existing)
+}
+
 // ParseForestExperimental parses source with the experimental GSS-forest GLR
 // path and returns a releasable tree (or nil,false if the parse dies — the
 // forest path has no error recovery yet). Exported so out-of-tree benchmarks
@@ -336,6 +378,10 @@ func coalesceForest(index *gssForestIndex, slab *gssForestNodeSlab, state StateI
 				if oldScore == node.minLinkScore {
 					forestRefreshMinLinkScore(node)
 				}
+				node.dirty++
+				replaced = true
+			} else if score == l.score && forestDedupTieReplace(entry, l.subtree) {
+				l.subtree = entry
 				node.dirty++
 				replaced = true
 			}
