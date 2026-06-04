@@ -4,6 +4,8 @@
 //   - Language: grammar generation + per-name caching (sync.Mutex + map).
 //   - Walker: a bundle of *Language + source bytes with CST cursor helpers.
 //   - Parse: the one-stop flow (Language → parse → error check).
+//   - LanguageFromBlob/ParseFromBlob: the same cache/parse flow, but preferring
+//     an embedded pre-generated grammar blob when one is available.
 //
 // The error-leaf finder in Walker.SyntaxError is lifted from
 // ~/work/elio/parse/tree.go (treeWalker.syntaxError): it collects every
@@ -37,6 +39,18 @@ var (
 // grammar. build is called only on a cache miss; subsequent calls for the same
 // name return the cached result without calling build again.
 func Language(name string, build func() *grammargen.Grammar) (*gts.Language, error) {
+	return language(name, nil, build)
+}
+
+// LanguageFromBlob loads and caches (once per name) the tree-sitter Language
+// from blob when possible, falling back to build when blob is empty or corrupt.
+// This is the fast path for DSLs that embed a generated grammar blob but still
+// want a source grammar fallback during development.
+func LanguageFromBlob(name string, blob []byte, build func() *grammargen.Grammar) (*gts.Language, error) {
+	return language(name, blob, build)
+}
+
+func language(name string, blob []byte, build func() *grammargen.Grammar) (*gts.Language, error) {
 	cacheMu.Lock()
 	defer cacheMu.Unlock()
 
@@ -44,7 +58,20 @@ func Language(name string, build func() *grammargen.Grammar) (*gts.Language, err
 		return e.lang, e.err
 	}
 
-	lang, _, err := grammargen.GenerateLanguageAndBlob(build())
+	var lang *gts.Language
+	var err error
+	if len(blob) > 0 {
+		lang, err = gts.LoadLanguage(blob)
+	}
+	if lang == nil {
+		if build == nil {
+			if err == nil {
+				err = fmt.Errorf("no grammar blob or build function for %q", name)
+			}
+		} else {
+			lang, _, err = grammargen.GenerateLanguageAndBlob(build())
+		}
+	}
 	e := langEntry{lang: lang, err: err}
 	cache[name] = e
 	return e.lang, e.err
@@ -87,6 +114,20 @@ func (w *Walker) Field(n *gts.Node, field string) *gts.Node {
 		return nil
 	}
 	return n.ChildByFieldName(field, w.Lang)
+}
+
+// ChildByType returns the first direct child of n with grammar type typ, or nil.
+func (w *Walker) ChildByType(n *gts.Node, typ string) *gts.Node {
+	if n == nil {
+		return nil
+	}
+	for i := 0; i < n.ChildCount(); i++ {
+		c := n.Child(i)
+		if w.Type(c) == typ {
+			return c
+		}
+	}
+	return nil
 }
 
 // Pos returns the 1-based line and column where n begins.
@@ -172,7 +213,20 @@ func Parse(name string, build func() *grammargen.Grammar, src []byte) (*gts.Node
 	if err != nil {
 		return nil, nil, fmt.Errorf("generate language %q: %w", name, err)
 	}
+	return parseWithLanguage(lang, src)
+}
 
+// ParseFromBlob is the blob-aware variant of Parse. It obtains the language via
+// LanguageFromBlob, then follows the same parse/error flow as Parse.
+func ParseFromBlob(name string, blob []byte, build func() *grammargen.Grammar, src []byte) (*gts.Node, *Walker, error) {
+	lang, err := LanguageFromBlob(name, blob, build)
+	if err != nil {
+		return nil, nil, fmt.Errorf("load language %q: %w", name, err)
+	}
+	return parseWithLanguage(lang, src)
+}
+
+func parseWithLanguage(lang *gts.Language, src []byte) (*gts.Node, *Walker, error) {
 	tree, err := gts.NewParser(lang).Parse(src)
 	if err != nil {
 		return nil, nil, fmt.Errorf("parse: %w", err)

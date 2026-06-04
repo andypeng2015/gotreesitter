@@ -53,6 +53,53 @@ func TestLanguageCachesOnce(t *testing.T) {
 	}
 }
 
+func TestLanguageFromBlobUsesBlobWithoutBuild(t *testing.T) {
+	_, blob, err := grammargen.GenerateLanguageAndBlob(tinyGrammar())
+	if err != nil {
+		t.Fatalf("GenerateLanguageAndBlob: %v", err)
+	}
+
+	calls := 0
+	lang, err := taproot.LanguageFromBlob("blobtest", blob, func() *grammargen.Grammar {
+		calls++
+		return tinyGrammar()
+	})
+	if err != nil {
+		t.Fatalf("LanguageFromBlob: %v", err)
+	}
+	if lang == nil {
+		t.Fatal("LanguageFromBlob returned nil")
+	}
+	if calls != 0 {
+		t.Errorf("build invoked %d times; want 0", calls)
+	}
+
+	root, w, err := taproot.ParseFromBlob("blobparse", blob, nil, []byte("hello ; world"))
+	if err != nil {
+		t.Fatalf("ParseFromBlob: %v", err)
+	}
+	if root == nil || w == nil {
+		t.Fatalf("ParseFromBlob returned root=%v walker=%v", root, w)
+	}
+}
+
+func TestLanguageFromBlobFallsBackToBuild(t *testing.T) {
+	calls := 0
+	lang, err := taproot.LanguageFromBlob("blobfallback", []byte("not a language blob"), func() *grammargen.Grammar {
+		calls++
+		return tinyGrammar()
+	})
+	if err != nil {
+		t.Fatalf("LanguageFromBlob fallback: %v", err)
+	}
+	if lang == nil {
+		t.Fatal("LanguageFromBlob fallback returned nil")
+	}
+	if calls != 1 {
+		t.Errorf("build invoked %d times; want 1", calls)
+	}
+}
+
 // TestParseValid checks that valid source parses without error and returns a
 // walkable root.
 func TestParseValid(t *testing.T) {
@@ -144,5 +191,24 @@ func TestWalkerText(t *testing.T) {
 	got2 := w.Text(secondNode)
 	if got2 != "world" {
 		t.Errorf("Text(second) = %q; want %q", got2, "world")
+	}
+}
+
+func TestWalkerChildByType(t *testing.T) {
+	src := []byte("hello ; world")
+	root, w, err := taproot.Parse("tinychildbytype", tinyGrammar, src)
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+
+	child := w.ChildByType(root, "identifier")
+	if child == nil {
+		t.Fatal("ChildByType(root, identifier) returned nil")
+	}
+	if got := w.Text(child); got != "hello" {
+		t.Errorf("ChildByType text = %q; want hello", got)
+	}
+	if missing := w.ChildByType(root, "does_not_exist"); missing != nil {
+		t.Errorf("ChildByType(root, does_not_exist) = %v; want nil", missing)
 	}
 }
