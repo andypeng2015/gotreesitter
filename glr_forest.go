@@ -101,6 +101,22 @@ func (p *Parser) ParseForestExperimental(source []byte) (*Tree, bool) {
 	return newTreeWithArenas(root, source, p.language, arena, nil), true
 }
 
+// ForestDeclineInfo returns where/why the forest fast path last declined (fell
+// back to production): the byte offset and lookahead symbol at the decline, a
+// short reason code, and (for reason "dead_end") the surviving GLR states. It
+// drives language-burndown triage of forest dead-ends without re-instrumenting.
+// Valid after a ParseForestExperimental that returned ok=false.
+func (p *Parser) ForestDeclineInfo() (offset uint32, sym Symbol, reason string, states []StateID) {
+	return p.forestDeclineByte, p.forestDeclineSym, p.forestDeclineReason, p.forestDeclineStates
+}
+
+func (p *Parser) recordForestDecline(reason string, tok Token, states []StateID) {
+	p.forestDeclineByte = tok.StartByte
+	p.forestDeclineSym = tok.Symbol
+	p.forestDeclineReason = reason
+	p.forestDeclineStates = append(p.forestDeclineStates[:0], states...)
+}
+
 // languageWantsForest reports whether a language dispatches to the GSS-forest
 // GLR fast path by default. Restricted to languages whose production GLR parse
 // suffers the super-linear deep-stack-equivalence blowup AND that are verified
@@ -898,6 +914,9 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 	lang := p.language
 	meta := lang.SymbolMetadata
 	named := func(sym Symbol) bool { return int(sym) < len(meta) && meta[sym].Named }
+	p.forestDeclineReason = ""
+	p.forestDeclineByte, p.forestDeclineSym = 0, 0
+	p.forestDeclineStates = p.forestDeclineStates[:0]
 
 	// Reuse ONE child-builder scratch for every reduce in this parse (like the
 	// production loop). buildReduceChildrenWithPath calls newReduceBuildScratch,
@@ -993,6 +1012,20 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 			for _, act := range p.actionsForParseState(node.state, tok.Symbol, lang.ParseActions) {
 				switch act.Type {
 				case ParseActionReduce:
+					// Synthetic-EOF containment: a NoLookahead token is the synthetic
+					// EOF the token source emits to FLUSH a state stuck mid-extra (a
+					// multi-token comment, e.g. rust `///` = `//`+`/`+doc_comment). It
+					// must not finalize the whole source unit. Reducing the ROOT symbol
+					// (source_file) on it caps a cascade — line_comment → const_item →
+					// … → source_file → ACCEPT — that collapses the file mid-parse and
+					// strands the item-list continuation, so the next top-level item
+					// can no longer shift (rust large__ast.rs dead-ended at a `pub`
+					// after a doc comment). The root reduce is valid only at REAL EOF;
+					// production re-lexes after each synthetic-EOF reduce (parser.go:
+					// needToken=tok.NoLookahead) and meets a real token first.
+					if tok.NoLookahead && p.hasRootSymbol && act.Symbol == p.rootSymbol {
+						continue
+					}
 					cc := int(act.ChildCount)
 					var gotoCache forestGotoCache
 					reducer.reduce(node, cc, func(children []stackEntry, childScore int, popTo *gssForestNode, noExtras bool) {
@@ -1130,6 +1163,7 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 		if eof {
 			root, extras := collectForestRootAndExtras(accepted)
 			if root == nil {
+				p.recordForestDecline("eof_no_root", tok, nil)
 				return nil, false
 			}
 			// Leading/trailing extras live outside the start-symbol node (above or
@@ -1151,6 +1185,7 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 			// a ~7KB run of typedefs). Dispatching that hands the caller a
 			// structurally-incomplete tree. Decline so production re-runs.
 			if !forestRootChildrenCoverNonTrivia(root, source) {
+				p.recordForestDecline("noncontiguous_root", tok, nil)
 				return nil, false
 			}
 			return root, true
@@ -1169,17 +1204,24 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 				}
 			}
 			if len(relex) == 0 {
+				p.recordForestDecline("nolook_relex_empty", tok, nil)
 				return nil, false
 			}
 			noLookaheadSteps++
 			if noLookaheadSteps > maxForestNoLookaheadSteps {
-				return nil, false // runaway no-lookahead chain; fall back to production
+				p.recordForestDecline("nolook_runaway", tok, nil) // fall back to production
+				return nil, false
 			}
 			frontier = append(frontier[:0], relex...)
 			continue
 		}
 		noLookaheadSteps = 0
 		if len(nextFrontier) == 0 {
+			curStates := make([]StateID, 0, len(curIndex.entries))
+			for i := range curIndex.entries {
+				curStates = append(curStates, curIndex.entries[i].node.state)
+			}
+			p.recordForestDecline("dead_end", tok, curStates)
 			return nil, false
 		}
 		// Copy (not alias) so the next step can reset nextFrontier in place;

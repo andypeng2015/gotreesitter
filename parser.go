@@ -35,6 +35,16 @@ type Parser struct {
 	incrementalGSSHint                  uint32
 	rootSymbol                          Symbol
 	hasRootSymbol                       bool
+
+	// Forest-decline diagnostics: the experimental forest fast path records
+	// WHERE and WHY it last declined (fell back to production) so the language
+	// burndown can triage dead-ends without re-instrumenting. Set on the parser
+	// (not package globals) so concurrent parsers don't race. Cleared at the
+	// start of each forest parse.
+	forestDeclineByte   uint32
+	forestDeclineSym    Symbol
+	forestDeclineReason string
+	forestDeclineStates []StateID
 	hasRecoverState                     []bool
 	hasRecoverSymbol                    []bool
 	recoverByState                      [][]recoverSymbolAction
