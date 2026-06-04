@@ -1181,7 +1181,14 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 						nextFrontier = append(nextFrontier, sh)
 					}
 				case ParseActionAccept:
-					accepted = node
+					// Prefer the accept candidate that consumed the MOST input. A
+					// trailing multi-token extra (e.g. a single lua `-- comment` at
+					// EOF) produces a second accept node ABOVE the root whose
+					// byteOffset is larger; the plain root accepts too, and taking the
+					// last-seen one drops the trailing comment. Max-coverage keeps it.
+					if accepted == nil || node.byteOffset > accepted.byteOffset {
+						accepted = node
+					}
 				}
 			}
 		}
@@ -1786,3 +1793,4 @@ func (fr *forestReducer) dfs(cur *gssForestNode, remaining, score int, visit for
 func forestStackEntryIsExtra(e stackEntry) bool {
 	return e.kind == stackEntryKindNode && e.node != nil && (*Node)(e.node).isExtra()
 }
+
