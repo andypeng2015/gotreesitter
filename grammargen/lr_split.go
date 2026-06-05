@@ -19,6 +19,51 @@ func (ctx *lrContext) splitKernelLookaheadsForTransition(predState, transSym int
 	return inherited.clone()
 }
 
+// perPredecessorReduceLookaheads returns a map from prodIdx of reduce items in
+// state `reduceState` to a bitset of lookaheads contributed by lookbacks whose
+// trace passed through `predState` as the immediate predecessor of `reduceState`.
+//
+// Used by the LR(1) splitter to recover per-predecessor reduce lookaheads from
+// the retained DeRemer/Pennello data without rerunning the full digraph.
+// Returns nil if lookback data is not available.
+func (ctx *lrContext) perPredecessorReduceLookaheads(reduceState, predState int) map[int]bitset {
+	if ctx == nil || len(ctx.lalrLookbacks) == 0 || len(ctx.lalrFollowSets) == 0 {
+		return nil
+	}
+	ng := ctx.ng
+	result := make(map[int]bitset)
+	for _, lb := range ctx.lalrLookbacks {
+		if int(lb.stateIdx) != reduceState {
+			continue
+		}
+		if int(lb.lastPredState) != predState {
+			continue
+		}
+		// Look up prodIdx via the stored coreIdx — the materialized item set
+		// preserves the LR(0) core ordering, so the same index applies.
+		if int(lb.stateIdx) >= len(ctx.itemSets) {
+			continue
+		}
+		set := &ctx.itemSets[lb.stateIdx]
+		if int(lb.coreIdx) >= len(set.cores) {
+			continue
+		}
+		ce := &set.cores[lb.coreIdx]
+		prod := &ng.Productions[int(ce.prodIdx)]
+		if int(ce.dot) < len(prod.RHS) {
+			continue
+		}
+		prodIdx := int(ce.prodIdx)
+		if existing, ok := result[prodIdx]; ok {
+			existing.unionWith(&ctx.lalrFollowSets[lb.ntIdx])
+			result[prodIdx] = existing
+		} else {
+			result[prodIdx] = ctx.cloneLookaheadBitset(&ctx.lalrFollowSets[lb.ntIdx])
+		}
+	}
+	return result
+}
+
 func splitActionSignature(actions []lrAction) string {
 	if len(actions) == 0 {
 		return ""
@@ -153,6 +198,14 @@ func localLR1Rebuild(
 			// Close the kernel with full LR(1) closure.
 			closedSet := ctx.closureToSet(kernel)
 
+			// Recover per-predecessor reduce-item lookaheads from retained
+			// DeRemer/Pennello lookback data. The LR(1) closure of a kernel
+			// derived from LALR-merged item lookaheads can still produce the
+			// merged superset on reduce items. perPredLA gives us the subset
+			// contributed by lookbacks whose trace passed through this
+			// predecessor — closer to the LR(1) truth.
+			perPredLA := ctx.perPredecessorReduceLookaheads(stateIdx, pred.predState)
+
 			// Build action table from the closed set.
 			actions := make(map[int][]lrAction)
 			for _, ce := range closedSet.cores {
@@ -162,7 +215,15 @@ func localLR1Rebuild(
 					if int(ce.prodIdx) == ng.AugmentProdID {
 						actions[0] = append(actions[0], lrAction{kind: lrAccept})
 					} else {
-						ce.lookaheads.forEach(func(la int) {
+						// Prefer per-predecessor lookback-derived lookaheads
+						// when available; fall back to LR(1) closure result.
+						reduceLA := ce.lookaheads
+						if perPredLA != nil {
+							if filtered, ok := perPredLA[int(ce.prodIdx)]; ok {
+								reduceLA = filtered
+							}
+						}
+						reduceLA.forEach(func(la int) {
 							actions[la] = append(actions[la], lrAction{
 								kind:    lrReduce,
 								prodIdx: int(ce.prodIdx),

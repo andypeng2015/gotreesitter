@@ -816,6 +816,11 @@ type lrContext struct {
 	// instead of the empty LR(0) kernels emitted by DeRemer/Pennello.
 	lalrFollowByTransition map[[2]int]bitset
 	lalrNTTransitions      []ntTransition
+	// Retained DeRemer/Pennello LALR data for use by the LR(1) splitter.
+	// Only populated when trackProvenance is true.
+	lalrLookbacks      []lookbackEntry
+	lalrFollowSets     []bitset
+	lalrNTTransIndex   map[[2]int]int
 
 	// Merge provenance tracking (diagnostic metadata, does not affect construction)
 	provenance                 *mergeProvenance
