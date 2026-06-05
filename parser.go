@@ -2669,6 +2669,10 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 						if next, ok := dartRepetitionShiftConflictChoice(p.language, currentState, actions); ok {
 							chosen, choice = next, true
 						}
+					case "make":
+						if next, ok := makeRepetitionShiftConflictChoice(p.language, currentState, actions); ok {
+							chosen, choice = next, true
+						}
 					case "swift":
 						if next, ok := swiftBraceTypeExpressionConflictChoice(p.language, tok, currentState, actions); ok {
 							chosen, choice = next, true
@@ -3905,6 +3909,26 @@ func dartRepetitionShiftConflictChoice(lang *Language, state StateID, actions []
 		}
 	case 479:
 		if !allReducesHaveSymbol(lang, actions, "program_repeat4") {
+			return ParseAction{}, false
+		}
+	default:
+		return ParseAction{}, false
+	}
+	return repetitionShiftConflictChoice(actions)
+}
+
+// makeRepetitionShiftConflictChoice collapses Makefile repeat-continuation
+// forks that dominate real-corpus parses. The reduce side closes the current
+// top-level or line-text repeat, while the shift side consumes the next repeat
+// element. Terminators have no repetition shift, so repetitionShiftConflictChoice
+// naturally leaves close/EOF reductions intact.
+func makeRepetitionShiftConflictChoice(lang *Language, state StateID, actions []ParseAction) (ParseAction, bool) {
+	if lang == nil {
+		return ParseAction{}, false
+	}
+	switch state {
+	case 25:
+		if !allReducesHaveSymbol(lang, actions, "makefile_repeat1") {
 			return ParseAction{}, false
 		}
 	default:

@@ -1,0 +1,68 @@
+{
+  "schema": "corpus-manifest-v1",
+  "sets": [
+    {
+      "name": "make_real",
+      "language": "make",
+      "root": "cgo_harness/corpus_real/make",
+      "include": ["*Makefile", "*.mk"],
+      "order": "largest",
+      "max_files": 10,
+      "max_file_bytes": 500000
+    },
+    {
+      "name": "nix_real",
+      "language": "nix",
+      "root": "cgo_harness/corpus_real/nix",
+      "include": ["*.nix"],
+      "order": "largest",
+      "max_files": 10,
+      "max_file_bytes": 500000
+    },
+    {
+      "name": "dart_real",
+      "language": "dart",
+      "root": "cgo_harness/corpus_real/dart",
+      "include": ["*.dart"],
+      "order": "largest",
+      "max_files": 10,
+      "max_file_bytes": 500000
+    },
+    {
+      "name": "rust_real",
+      "language": "rust",
+      "root": "cgo_harness/corpus_real/rust",
+      "include": ["*.rs"],
+      "order": "largest",
+      "max_files": 10,
+      "max_file_bytes": 500000
+    },
+    {
+      "name": "scss_real",
+      "language": "scss",
+      "root": "cgo_harness/corpus_real/scss",
+      "include": ["*.scss"],
+      "order": "largest",
+      "max_files": 10,
+      "max_file_bytes": 500000
+    },
+    {
+      "name": "svelte_real",
+      "language": "svelte",
+      "root": "cgo_harness/corpus_real/svelte",
+      "include": ["*.svelte"],
+      "order": "largest",
+      "max_files": 10,
+      "max_file_bytes": 500000
+    },
+    {
+      "name": "haskell_real",
+      "language": "haskell",
+      "root": "cgo_harness/corpus_real/haskell",
+      "include": ["*.hs"],
+      "order": "largest",
+      "max_files": 10,
+      "max_file_bytes": 500000
+    }
+  ]
+}
