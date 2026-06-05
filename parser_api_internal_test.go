@@ -1338,6 +1338,9 @@ func TestEffectiveParseMergePerKeyCap(t *testing.T) {
 	if got := effectiveParseMergePerKeyCap(&Language{Name: "graphql"}, maxStacksPerMergeKey, false); got != 1 {
 		t.Fatalf("effectiveParseMergePerKeyCap(graphql, default, full) = %d, want 1", got)
 	}
+	if got := effectiveParseMergePerKeyCap(&Language{Name: "haskell"}, maxStacksPerMergeKey, false); got != 1 {
+		t.Fatalf("effectiveParseMergePerKeyCap(haskell, default, full) = %d, want 1", got)
+	}
 	if got := effectiveParseMergePerKeyCap(&Language{Name: "lua"}, maxStacksPerMergeKey, false); got != 1 {
 		t.Fatalf("effectiveParseMergePerKeyCap(lua, default, full) = %d, want 1", got)
 	}
@@ -1430,6 +1433,9 @@ func TestEffectiveParseMergePerKeyCap(t *testing.T) {
 	}
 	if got := effectiveParseMergePerKeyCap(&Language{Name: "graphql"}, maxStacksPerMergeKey, true); got != maxStacksPerMergeKey {
 		t.Fatalf("effectiveParseMergePerKeyCap(graphql, default, incremental) = %d, want %d", got, maxStacksPerMergeKey)
+	}
+	if got := effectiveParseMergePerKeyCap(&Language{Name: "haskell"}, maxStacksPerMergeKey, true); got != maxStacksPerMergeKey {
+		t.Fatalf("effectiveParseMergePerKeyCap(haskell, default, incremental) = %d, want %d", got, maxStacksPerMergeKey)
 	}
 	if got := effectiveParseMergePerKeyCap(&Language{Name: "lua"}, maxStacksPerMergeKey, true); got != maxStacksPerMergeKey {
 		t.Fatalf("effectiveParseMergePerKeyCap(lua, default, incremental) = %d, want %d", got, maxStacksPerMergeKey)
