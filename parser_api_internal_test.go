@@ -330,14 +330,29 @@ func TestHCLRepetitionShiftConflictChoiceAllowsTemplateLiteralRepeats(t *testing
 	}
 }
 
-func TestHCLRepetitionShiftConflictChoiceRejectsBodyRepeat(t *testing.T) {
+func TestHCLRepetitionShiftConflictChoiceAllowsBodyRepeat(t *testing.T) {
 	lang := &Language{SymbolNames: []string{"end", "identifier", "body_repeat1"}}
 	actions := []ParseAction{
 		{Type: ParseActionReduce, Symbol: 2, ChildCount: 2},
 		{Type: ParseActionShift, State: 406, Repetition: true},
 	}
+	chosen, ok := hclRepetitionShiftConflictChoice(lang, 408, actions)
+	if !ok {
+		t.Fatal("hclRepetitionShiftConflictChoice = false, want true")
+	}
+	if chosen.Type != ParseActionShift || chosen.State != 406 || !chosen.Repetition {
+		t.Fatalf("hclRepetitionShiftConflictChoice picked %+v, want body repeat shift", chosen)
+	}
+}
+
+func TestHCLRepetitionShiftConflictChoiceRejectsOtherBodyReduce(t *testing.T) {
+	lang := &Language{SymbolNames: []string{"end", "identifier", "template_literal_repeat1", "other_repeat1"}}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 3, ChildCount: 2},
+		{Type: ParseActionShift, State: 406, Repetition: true},
+	}
 	if _, ok := hclRepetitionShiftConflictChoice(lang, 408, actions); ok {
-		t.Fatal("hclRepetitionShiftConflictChoice = true, want false for body repeat")
+		t.Fatal("hclRepetitionShiftConflictChoice = true, want false for wrong body reduce")
 	}
 }
 

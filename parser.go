@@ -3946,10 +3946,9 @@ func dartRepetitionShiftConflictChoice(lang *Language, state StateID, actions []
 	return repetitionShiftConflictChoice(actions)
 }
 
-// hclRepetitionShiftConflictChoice collapses HCL template-literal continuation
-// forks where the reduce side closes template_literal_repeat1 and the shift
-// side consumes the next template chunk. Body-repeat conflicts stay GLR because
-// they choose between complete attributes/blocks and the next body item.
+// hclRepetitionShiftConflictChoice collapses HCL list-continuation forks where
+// the reduce side closes the current repeat and the shift side consumes the
+// next item.
 func hclRepetitionShiftConflictChoice(lang *Language, state StateID, actions []ParseAction) (ParseAction, bool) {
 	if lang == nil {
 		return ParseAction{}, false
@@ -3957,6 +3956,10 @@ func hclRepetitionShiftConflictChoice(lang *Language, state StateID, actions []P
 	switch state {
 	case 426, 541:
 		if !allReducesHaveSymbol(lang, actions, "template_literal_repeat1") {
+			return ParseAction{}, false
+		}
+	case 408:
+		if !allReducesHaveSymbol(lang, actions, "body_repeat1") {
 			return ParseAction{}, false
 		}
 	default:
