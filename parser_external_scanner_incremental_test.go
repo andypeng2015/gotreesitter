@@ -1,6 +1,7 @@
 package gotreesitter_test
 
 import (
+	"bytes"
 	"testing"
 
 	"github.com/odvcencio/gotreesitter"
@@ -35,6 +36,14 @@ func TestExternalScannerIncrementalReusePolicy(t *testing.T) {
 			wantReuse:      true,
 			wantSubtreeMin: 1,
 			wantNoReparse:  true,
+		},
+		{
+			name:           "svelte",
+			lang:           grammars.SvelteLanguage,
+			source:         makeSvelteBenchmarkSource,
+			marker:         "let v0 = ",
+			wantReuse:      true,
+			wantSubtreeMin: 1,
 		},
 	}
 
@@ -97,4 +106,27 @@ func TestExternalScannerIncrementalReusePolicy(t *testing.T) {
 			}
 		})
 	}
+}
+
+func makeSvelteBenchmarkSource(funcCount int) []byte {
+	var buf bytes.Buffer
+	buf.WriteString("<script>\n")
+	for i := 0; i < funcCount; i++ {
+		buf.WriteString("  let v")
+		buf.WriteString(stringInt(i))
+		buf.WriteString(" = ")
+		buf.WriteString(stringInt(i))
+		buf.WriteString(";\n")
+	}
+	buf.WriteString("</script>\n\n")
+	for i := 0; i < funcCount; i++ {
+		buf.WriteString("{#if v")
+		buf.WriteString(stringInt(i))
+		buf.WriteString(" > 0}\n")
+		buf.WriteString("  <section class=\"item\"><button>{v")
+		buf.WriteString(stringInt(i))
+		buf.WriteString("}</button></section>\n")
+		buf.WriteString("{/if}\n")
+	}
+	return buf.Bytes()
 }

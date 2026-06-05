@@ -32,7 +32,7 @@ func languageUsesExternalScannerCheckpoints(lang *Language) bool {
 		return false
 	}
 	switch lang.Name {
-	case "cmake", "python", "mojo", "starlark":
+	case "cmake", "python", "mojo", "starlark", "svelte":
 		return true
 	default:
 		return false

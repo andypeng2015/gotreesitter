@@ -70,6 +70,8 @@ func (SvelteExternalScanner) Deserialize(payload any, buf []byte) {
 	s.tags = htmlDeserializeTagsInto(s.tags, buf)
 }
 
+func (SvelteExternalScanner) SupportsIncrementalReuse() bool { return true }
+
 func (SvelteExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
 	s := payload.(*svelteState)
 	lx := &goLexerAdapter{lexer}
