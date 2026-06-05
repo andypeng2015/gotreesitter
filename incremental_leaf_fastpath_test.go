@@ -72,6 +72,72 @@ func TestYAMLPlainScalarStableEditAllowsStringAndNumberScalars(t *testing.T) {
 	}
 }
 
+func TestPowerShellCommentTextInvariantEdit(t *testing.T) {
+	oldSource := []byte("# note 1\n")
+	source := []byte("# note 2\n")
+	node := &Node{startByte: 0, endByte: uint32(len(oldSource) - 1)}
+	edit := InputEdit{StartByte: 7, OldEndByte: 8, NewEndByte: 8}
+	if !powershellCommentTextInvariantEdit(source, oldSource, node, edit) {
+		t.Fatal("powershellCommentTextInvariantEdit rejected stable comment text edit")
+	}
+
+	source = []byte("# note #\n")
+	if powershellCommentTextInvariantEdit(source, oldSource, node, edit) {
+		t.Fatal("powershellCommentTextInvariantEdit allowed comment delimiter byte")
+	}
+
+	source = []byte("< note 1\n")
+	edit = InputEdit{StartByte: 0, OldEndByte: 1, NewEndByte: 1}
+	if powershellCommentTextInvariantEdit(source, oldSource, node, edit) {
+		t.Fatal("powershellCommentTextInvariantEdit allowed edit at comment start")
+	}
+}
+
+func TestPowerShellStringTextInvariantEditAllowsStableTextOutsideChildren(t *testing.T) {
+	oldSource := []byte("\"$PSScriptRoot\\..\\build1.ps1\"")
+	source := []byte("\"$PSScriptRoot\\..\\build2.ps1\"")
+	offset := uint32(23)
+	node := &Node{
+		startByte: 0,
+		endByte:   uint32(len(oldSource)),
+		children: []*Node{
+			{startByte: 1, endByte: 14},
+		},
+	}
+	edit := InputEdit{StartByte: offset, OldEndByte: offset + 1, NewEndByte: offset + 1}
+	if !powershellStringTextInvariantEdit(source, oldSource, node, edit) {
+		t.Fatal("powershellStringTextInvariantEdit rejected stable string text edit outside interpolation child")
+	}
+}
+
+func TestPowerShellStringTextInvariantEditRejectsChildAndDelimiterEdits(t *testing.T) {
+	oldSource := []byte("\"$PSScriptRoot\\..\\build1.ps1\"")
+	node := &Node{
+		startByte: 0,
+		endByte:   uint32(len(oldSource)),
+		children: []*Node{
+			{startByte: 1, endByte: 14},
+		},
+	}
+
+	source := []byte("\"$QSScriptRoot\\..\\build1.ps1\"")
+	edit := InputEdit{StartByte: 2, OldEndByte: 3, NewEndByte: 3}
+	if powershellStringTextInvariantEdit(source, oldSource, node, edit) {
+		t.Fatal("powershellStringTextInvariantEdit allowed edit overlapping interpolation child")
+	}
+
+	source = []byte("\"$PSScriptRoot\\..\\build$.ps1\"")
+	edit = InputEdit{StartByte: 23, OldEndByte: 24, NewEndByte: 24}
+	if powershellStringTextInvariantEdit(source, oldSource, node, edit) {
+		t.Fatal("powershellStringTextInvariantEdit allowed interpolation delimiter byte")
+	}
+
+	source = []byte("\"$PSScriptRoot\\..\\build@.ps1\"")
+	if powershellStringTextInvariantEdit(source, oldSource, node, edit) {
+		t.Fatal("powershellStringTextInvariantEdit allowed here-string delimiter byte")
+	}
+}
+
 func TestSnapshotTokenSourceStateRestoresDFATokenSource(t *testing.T) {
 	original := &dfaTokenSource{
 		state:                      42,

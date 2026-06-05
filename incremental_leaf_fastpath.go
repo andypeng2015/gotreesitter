@@ -112,6 +112,8 @@ func (p *Parser) canReuseLanguageTextInvariantNode(source []byte, oldTree *Tree,
 		return oldTree.forestFastPath && node.Type(p.language) == "identifier" &&
 			csharpTokenInvariantIdentifierText(oldTree.source, node) &&
 			csharpTokenInvariantIdentifierText(source, node)
+	case "powershell":
+		return powershellTextInvariantNodeEdit(source, oldTree.source, node, edit, p.language)
 	case "rust":
 		return node.Type(p.language) == "line_comment" && rustLineCommentTextInvariantEdit(source, oldTree.source, node, edit)
 	case "yaml":
@@ -182,6 +184,83 @@ func cssTextInvariantIntegerValueEdit(source, oldSource []byte, edit InputEdit) 
 
 func asciiDigit(b byte) bool {
 	return b >= '0' && b <= '9'
+}
+
+func powershellTextInvariantNodeEdit(source, oldSource []byte, node *Node, edit InputEdit, lang *Language) bool {
+	if !sameLengthEditWithinNode(source, oldSource, node, edit) {
+		return false
+	}
+	switch node.Type(lang) {
+	case "comment":
+		return powershellCommentTextInvariantEdit(source, oldSource, node, edit)
+	case "expandable_string_literal", "expandable_here_string_literal", "verbatim_string_characters":
+		return powershellStringTextInvariantEdit(source, oldSource, node, edit)
+	default:
+		return false
+	}
+}
+
+func powershellCommentTextInvariantEdit(source, oldSource []byte, node *Node, edit InputEdit) bool {
+	if edit.StartByte <= node.startByte {
+		return false
+	}
+	for i := edit.StartByte; i < edit.OldEndByte; i++ {
+		if !powershellCommentStableEditByte(oldSource[i]) || !powershellCommentStableEditByte(source[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func powershellCommentStableEditByte(b byte) bool {
+	switch b {
+	case '\n', '\r', '#', '<', '>':
+		return false
+	default:
+		return true
+	}
+}
+
+func powershellStringTextInvariantEdit(source, oldSource []byte, node *Node, edit InputEdit) bool {
+	if powershellEditOverlapsChild(node, edit) {
+		return false
+	}
+	for i := edit.StartByte; i < edit.OldEndByte; i++ {
+		if !powershellStringStableEditByte(oldSource[i]) || !powershellStringStableEditByte(source[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func powershellEditOverlapsChild(node *Node, edit InputEdit) bool {
+	if node == nil {
+		return true
+	}
+	childCount := nodeChildCountNoMaterialize(node)
+	for i := 0; i < childCount; i++ {
+		entry, ok := nodeChildEntryAtNoMaterialize(node, i)
+		if !ok {
+			return true
+		}
+		if rangesOverlapHalfOpen(stackEntryNodeStartByte(entry), stackEntryNodeEndByte(entry), edit.StartByte, edit.OldEndByte) {
+			return true
+		}
+	}
+	return false
+}
+
+func rangesOverlapHalfOpen(aStart, aEnd, bStart, bEnd uint32) bool {
+	return aStart < bEnd && bStart < aEnd
+}
+
+func powershellStringStableEditByte(b byte) bool {
+	switch b {
+	case '\n', '\r', '"', '\'', '`', '$', '@':
+		return false
+	default:
+		return true
+	}
 }
 
 type yamlScalarKind uint8

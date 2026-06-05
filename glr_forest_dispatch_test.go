@@ -641,6 +641,87 @@ func TestYAMLIncrementalEditScalarTokenInvariantLeafReuseIsCorrect(t *testing.T)
 	}
 }
 
+func TestPowerShellIncrementalEditTextInvariantLeafReuseIsCorrect(t *testing.T) {
+	lang := grm.PowershellLanguage()
+	src := []byte(`# note 1
+. "$PSScriptRoot\..\buildCommon\startNativeExecution.ps1"
+@{ GUID = "56D66100-99A0-4FFC-A12D-EEE9A6718AEF" }
+`)
+	for _, tc := range []struct {
+		name        string
+		needle      string
+		oldByte     byte
+		replacement byte
+	}{
+		{name: "line comment", needle: "# note 1", oldByte: '1', replacement: '2'},
+		{name: "interpolated string text", needle: "startNativeExecution.ps1", oldByte: '1', replacement: '2'},
+		{name: "guid string", needle: "56D66100", oldByte: '5', replacement: '6'},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			offset := strings.Index(string(src), tc.needle)
+			if offset < 0 {
+				t.Fatalf("fixture missing %q", tc.needle)
+			}
+			for offset < len(src) && src[offset] != tc.oldByte {
+				offset++
+			}
+			if offset >= len(src) {
+				t.Fatalf("fixture missing byte %q in %q", tc.oldByte, tc.needle)
+			}
+			edited := append([]byte(nil), src...)
+			edited[offset] = tc.replacement
+			edit := gts.InputEdit{
+				StartByte:   uint32(offset),
+				OldEndByte:  uint32(offset + 1),
+				NewEndByte:  uint32(offset + 1),
+				StartPoint:  pointForOffset(src, offset),
+				OldEndPoint: pointForOffset(src, offset+1),
+				NewEndPoint: pointForOffset(edited, offset+1),
+			}
+
+			parser := gts.NewParser(lang)
+			oldTree, err := parser.Parse(src)
+			if err != nil {
+				t.Fatalf("initial parse: %v", err)
+			}
+			defer oldTree.Release()
+			requireCompleteParse(t, oldTree, src, lang, "initial")
+			oldTree.Edit(edit)
+
+			newTree, profile, err := parser.ParseIncrementalProfiled(edited, oldTree)
+			if err != nil {
+				t.Fatalf("incremental parse: %v", err)
+			}
+			defer newTree.Release()
+			if profile.ReuseUnsupported {
+				leaf := oldTree.RootNode().DescendantForByteRange(uint32(offset), uint32(offset+1))
+				leafType := "<nil>"
+				leafText := ""
+				leafChildren := 0
+				if leaf != nil {
+					leafType = leaf.Type(lang)
+					leafText = leaf.Text(src)
+					leafChildren = leaf.ChildCount()
+				}
+				t.Fatalf("powershell text-invariant edit fell back to fresh parse: %s leaf=%s children=%d text=%q", profile.ReuseUnsupportedReason, leafType, leafChildren, leafText)
+			}
+			if profile.ReusedSubtrees == 0 {
+				t.Fatalf("powershell text-invariant edit reused no subtrees: %+v", profile)
+			}
+			requireCompleteParse(t, newTree, edited, lang, "incremental")
+			freshTree, err := parser.Parse(edited)
+			if err != nil {
+				t.Fatalf("fresh parse: %v", err)
+			}
+			defer freshTree.Release()
+			requireCompleteParse(t, freshTree, edited, lang, "fresh")
+			if got, want := newTree.RootNode().SExpr(lang), freshTree.RootNode().SExpr(lang); got != want {
+				t.Fatalf("incremental PowerShell tree diverged from fresh parse\n got: %s\nwant: %s", got, want)
+			}
+		})
+	}
+}
+
 // TestForestTreeIncrementalEditCMakeFreshFallbackIsCorrect: cmake was demoted
 // from languageAllowsForestIncrementalPath (TestForestIncrementalCorrectness
 // found its forest-incremental reuse produces wrong trees on some valid edits).
