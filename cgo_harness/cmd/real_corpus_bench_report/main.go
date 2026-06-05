@@ -18,43 +18,55 @@ import (
 var benchmarkSuffixRE = regexp.MustCompile(`-\d+$`)
 
 type sample struct {
-	Suite    string             `json:"suite"`
-	Language string             `json:"language"`
-	Backend  string             `json:"backend"`
-	Metrics  map[string]float64 `json:"metrics"`
-	Source   string             `json:"source,omitempty"`
+	Suite      string             `json:"suite"`
+	Language   string             `json:"language"`
+	Backend    string             `json:"backend"`
+	Iterations int64              `json:"iterations"`
+	Metrics    map[string]float64 `json:"metrics"`
+	Source     string             `json:"source,omitempty"`
 }
 
 type metricSummary struct {
-	Samples int     `json:"samples"`
-	Median  float64 `json:"median"`
-	Mean    float64 `json:"mean"`
-	Min     float64 `json:"min"`
-	Max     float64 `json:"max"`
+	Samples         int     `json:"samples"`
+	Median          float64 `json:"median"`
+	Mean            float64 `json:"mean"`
+	Min             float64 `json:"min"`
+	Max             float64 `json:"max"`
+	StdDev          float64 `json:"stddev,omitempty"`
+	RelStdDev       float64 `json:"rel_stddev,omitempty"`
+	MedianAbsDev    float64 `json:"median_abs_dev,omitempty"`
+	RelMedianAbsDev float64 `json:"rel_median_abs_dev,omitempty"`
 }
 
 type benchmarkSummary struct {
-	Suite    string                   `json:"suite"`
-	Language string                   `json:"language"`
-	Backend  string                   `json:"backend"`
-	Metrics  map[string]metricSummary `json:"metrics"`
+	Suite      string                   `json:"suite"`
+	Language   string                   `json:"language"`
+	Backend    string                   `json:"backend"`
+	Iterations metricSummary            `json:"iterations"`
+	Metrics    map[string]metricSummary `json:"metrics"`
 }
 
 type languageReport struct {
-	Language       string                        `json:"language"`
-	FullRatio      float64                       `json:"full_ratio,omitempty"`
-	EditRatio      float64                       `json:"edit_ratio,omitempty"`
-	NoEditRatio    float64                       `json:"noedit_ratio,omitempty"`
-	WorstRatio     float64                       `json:"worst_ratio,omitempty"`
-	FullGoNanos    float64                       `json:"full_go_ns,omitempty"`
-	FullCNanos     float64                       `json:"full_c_ns,omitempty"`
-	EditGoNanos    float64                       `json:"edit_go_ns,omitempty"`
-	EditCNanos     float64                       `json:"edit_c_ns,omitempty"`
-	NoEditGoNanos  float64                       `json:"noedit_go_ns,omitempty"`
-	NoEditCNanos   float64                       `json:"noedit_c_ns,omitempty"`
-	TopAttribution []attributionBucket           `json:"top_attribution,omitempty"`
-	GoSuiteMetrics map[string]map[string]float64 `json:"go_suite_metrics,omitempty"`
-	CSuiteMetrics  map[string]map[string]float64 `json:"c_suite_metrics,omitempty"`
+	Language               string                        `json:"language"`
+	FullRatio              float64                       `json:"full_ratio,omitempty"`
+	EditRatio              float64                       `json:"edit_ratio,omitempty"`
+	NoEditRatio            float64                       `json:"noedit_ratio,omitempty"`
+	WorstRatio             float64                       `json:"worst_ratio,omitempty"`
+	FullGoNanos            float64                       `json:"full_go_ns,omitempty"`
+	FullCNanos             float64                       `json:"full_c_ns,omitempty"`
+	EditGoNanos            float64                       `json:"edit_go_ns,omitempty"`
+	EditCNanos             float64                       `json:"edit_c_ns,omitempty"`
+	NoEditGoNanos          float64                       `json:"noedit_go_ns,omitempty"`
+	NoEditCNanos           float64                       `json:"noedit_c_ns,omitempty"`
+	MinNSOpSamples         int                           `json:"min_ns_op_samples,omitempty"`
+	MaxNSOpRelStdDev       float64                       `json:"max_ns_op_rel_stddev,omitempty"`
+	MaxNSOpRelMedianAbsDev float64                       `json:"max_ns_op_rel_median_abs_dev,omitempty"`
+	MaxRSSKB               int64                         `json:"max_rss_kb,omitempty"`
+	OOMKilled              bool                          `json:"oom_killed,omitempty"`
+	QualityNotes           []string                      `json:"quality_notes,omitempty"`
+	TopAttribution         []attributionBucket           `json:"top_attribution,omitempty"`
+	GoSuiteMetrics         map[string]map[string]float64 `json:"go_suite_metrics,omitempty"`
+	CSuiteMetrics          map[string]map[string]float64 `json:"c_suite_metrics,omitempty"`
 }
 
 type attributionBucket struct {
@@ -67,8 +79,21 @@ type report struct {
 	GeneratedAt string             `json:"generated_at"`
 	Inputs      []string           `json:"inputs"`
 	Samples     int                `json:"samples"`
+	Runs        []runResource      `json:"runs,omitempty"`
 	Benchmarks  []benchmarkSummary `json:"benchmarks"`
 	Languages   []languageReport   `json:"languages"`
+}
+
+type runResource struct {
+	SourceDir     string `json:"source_dir"`
+	Language      string `json:"language,omitempty"`
+	MaxRSSKB      int64  `json:"max_rss_kb,omitempty"`
+	OOMKilled     *bool  `json:"oom_killed,omitempty"`
+	ExitCode      *int   `json:"exit_code,omitempty"`
+	Memory        string `json:"memory,omitempty"`
+	GOMEMLimit    string `json:"gomemlimit,omitempty"`
+	AllowMismatch *bool  `json:"allow_mismatch,omitempty"`
+	SkipMismatch  *bool  `json:"skip_mismatch,omitempty"`
 }
 
 type key struct {
@@ -108,8 +133,12 @@ func main() {
 	if len(samples) == 0 {
 		fatalf("no BenchmarkParityRealCorpusParse lines found")
 	}
+	resources, err := parseRunResources(files)
+	if err != nil {
+		fatalf("parse run resources: %v", err)
+	}
 
-	r := buildReport(files, samples)
+	r := buildReport(files, samples, resources)
 	if err := writeJSON(outJSON, r); err != nil {
 		fatalf("write %s: %v", outJSON, err)
 	}
@@ -189,6 +218,149 @@ func parseBenchmarkFiles(files []string) ([]sample, error) {
 	return samples, nil
 }
 
+func parseRunResources(files []string) ([]runResource, error) {
+	byDir := map[string]*runResource{}
+	for _, path := range files {
+		base := filepath.Base(path)
+		if base != "container.log" && base != "metadata.txt" {
+			continue
+		}
+		dir := filepath.Dir(path)
+		resource := byDir[dir]
+		if resource == nil {
+			resource = &runResource{
+				SourceDir: dir,
+				Language:  inferLanguageFromRunDir(dir),
+			}
+			byDir[dir] = resource
+		}
+		switch base {
+		case "container.log":
+			if err := parseContainerLogResource(path, resource); err != nil {
+				return nil, err
+			}
+		case "metadata.txt":
+			if err := parseMetadataResource(path, resource); err != nil {
+				return nil, err
+			}
+		}
+	}
+	resources := make([]runResource, 0, len(byDir))
+	for _, resource := range byDir {
+		resources = append(resources, *resource)
+	}
+	sort.Slice(resources, func(i, j int) bool {
+		return resources[i].SourceDir < resources[j].SourceDir
+	})
+	return resources, nil
+}
+
+func inferLanguageFromRunDir(path string) string {
+	base := filepath.Base(path)
+	const marker = "real-corpus-bench-"
+	idx := strings.LastIndex(base, marker)
+	if idx < 0 {
+		return ""
+	}
+	return base[idx+len(marker):]
+}
+
+func parseContainerLogResource(path string, resource *runResource) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	const rssPrefix = "Maximum resident set size (kbytes):"
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if !strings.HasPrefix(line, rssPrefix) {
+			continue
+		}
+		value := strings.TrimSpace(strings.TrimPrefix(line, rssPrefix))
+		rssKB, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			return fmt.Errorf("%s: parse max RSS %q: %w", path, value, err)
+		}
+		if rssKB > resource.MaxRSSKB {
+			resource.MaxRSSKB = rssKB
+		}
+	}
+	return scanner.Err()
+}
+
+func parseMetadataResource(path string, resource *runResource) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		key, value, ok := strings.Cut(strings.TrimSpace(scanner.Text()), "=")
+		if !ok {
+			continue
+		}
+		switch key {
+		case "exit_code":
+			n, err := strconv.Atoi(value)
+			if err != nil {
+				return fmt.Errorf("%s: parse exit_code %q: %w", path, value, err)
+			}
+			resource.ExitCode = &n
+		case "oom_killed":
+			b, err := strconv.ParseBool(value)
+			if err != nil {
+				return fmt.Errorf("%s: parse oom_killed %q: %w", path, value, err)
+			}
+			resource.OOMKilled = &b
+		case "memory":
+			resource.Memory = value
+		case "gomemlimit":
+			resource.GOMEMLimit = value
+		case "allow_mismatch":
+			b, err := strconv.ParseBool(value)
+			if err != nil {
+				return fmt.Errorf("%s: parse allow_mismatch %q: %w", path, value, err)
+			}
+			resource.AllowMismatch = &b
+		case "skip_mismatch":
+			b, err := strconv.ParseBool(value)
+			if err != nil {
+				return fmt.Errorf("%s: parse skip_mismatch %q: %w", path, value, err)
+			}
+			resource.SkipMismatch = &b
+		case "command":
+			if b, ok, err := parseCommandEnvBool(value, "GTS_REAL_CORPUS_BENCH_ALLOW_MISMATCH"); err != nil {
+				return fmt.Errorf("%s: parse command allow mismatch: %w", path, err)
+			} else if ok {
+				resource.AllowMismatch = &b
+			}
+			if b, ok, err := parseCommandEnvBool(value, "GTS_REAL_CORPUS_BENCH_SKIP_MISMATCH"); err != nil {
+				return fmt.Errorf("%s: parse command skip mismatch: %w", path, err)
+			} else if ok {
+				resource.SkipMismatch = &b
+			}
+		}
+	}
+	return scanner.Err()
+}
+
+func parseCommandEnvBool(command, name string) (bool, bool, error) {
+	prefix := name + "="
+	for _, field := range strings.Fields(command) {
+		field = strings.Trim(field, `"'`)
+		if !strings.HasPrefix(field, prefix) {
+			continue
+		}
+		raw := strings.Trim(strings.TrimPrefix(field, prefix), `"'`)
+		b, err := strconv.ParseBool(raw)
+		return b, true, err
+	}
+	return false, false, nil
+}
+
 func parseBenchmarkFile(path string) ([]sample, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -230,7 +402,8 @@ func parseBenchmarkLine(line string) (sample, bool, error) {
 	if !ok {
 		return sample{}, false, nil
 	}
-	if _, err := strconv.ParseInt(fields[1], 10, 64); err != nil {
+	iterations, err := strconv.ParseInt(fields[1], 10, 64)
+	if err != nil {
 		return sample{}, false, fmt.Errorf("parse iteration count %q: %w", fields[1], err)
 	}
 	metrics := make(map[string]float64)
@@ -242,7 +415,7 @@ func parseBenchmarkLine(line string) (sample, bool, error) {
 		unit := fields[i+1]
 		metrics[unit] = value
 	}
-	return sample{Suite: suite, Language: lang, Backend: backend, Metrics: metrics}, true, nil
+	return sample{Suite: suite, Language: lang, Backend: backend, Iterations: iterations, Metrics: metrics}, true, nil
 }
 
 func parseBenchmarkName(name string) (suite, language, backend string, ok bool) {
@@ -259,7 +432,7 @@ func parseBenchmarkName(name string) (suite, language, backend string, ok bool) 
 	return suite, parts[1], backend, true
 }
 
-func buildReport(inputs []string, samples []sample) report {
+func buildReport(inputs []string, samples []sample, resources []runResource) report {
 	grouped := make(map[key][]sample)
 	for _, s := range samples {
 		k := key{suite: s.Suite, language: s.Language, backend: s.Backend}
@@ -269,10 +442,11 @@ func buildReport(inputs []string, samples []sample) report {
 	summaries := make([]benchmarkSummary, 0, len(grouped))
 	for k, group := range grouped {
 		summaries = append(summaries, benchmarkSummary{
-			Suite:    k.suite,
-			Language: k.language,
-			Backend:  k.backend,
-			Metrics:  summarizeMetrics(group),
+			Suite:      k.suite,
+			Language:   k.language,
+			Backend:    k.backend,
+			Iterations: summarizeIterations(group),
+			Metrics:    summarizeMetrics(group),
 		})
 	}
 	sort.Slice(summaries, func(i, j int) bool {
@@ -290,8 +464,9 @@ func buildReport(inputs []string, samples []sample) report {
 		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
 		Inputs:      inputs,
 		Samples:     len(samples),
+		Runs:        resources,
 		Benchmarks:  summaries,
-		Languages:   buildLanguageReports(summaries),
+		Languages:   buildLanguageReports(summaries, resources),
 	}
 }
 
@@ -312,31 +487,88 @@ func summarizeMetrics(samples []sample) map[string]metricSummary {
 	return out
 }
 
+func summarizeIterations(samples []sample) metricSummary {
+	values := make([]float64, 0, len(samples))
+	for _, s := range samples {
+		if s.Iterations > 0 {
+			values = append(values, float64(s.Iterations))
+		}
+	}
+	return summarizeValues(values)
+}
+
 func summarizeValues(values []float64) metricSummary {
+	if len(values) == 0 {
+		return metricSummary{}
+	}
 	sort.Float64s(values)
 	sum := 0.0
 	for _, value := range values {
 		sum += value
 	}
+	mean := sum / float64(len(values))
+	median := medianSorted(values)
+	stddev := 0.0
+	if len(values) > 1 {
+		sumSquares := 0.0
+		for _, value := range values {
+			delta := value - mean
+			sumSquares += delta * delta
+		}
+		stddev = math.Sqrt(sumSquares / float64(len(values)-1))
+	}
+	deviations := make([]float64, len(values))
+	for i, value := range values {
+		deviations[i] = math.Abs(value - median)
+	}
+	sort.Float64s(deviations)
+	medianAbsDev := medianSorted(deviations)
+	relStdDev := 0.0
+	if mean != 0 {
+		relStdDev = stddev / math.Abs(mean)
+	}
+	relMedianAbsDev := 0.0
+	if median != 0 {
+		relMedianAbsDev = medianAbsDev / math.Abs(median)
+	}
+	return metricSummary{
+		Samples:         len(values),
+		Median:          median,
+		Mean:            mean,
+		Min:             values[0],
+		Max:             values[len(values)-1],
+		StdDev:          stddev,
+		RelStdDev:       relStdDev,
+		MedianAbsDev:    medianAbsDev,
+		RelMedianAbsDev: relMedianAbsDev,
+	}
+}
+
+func medianSorted(values []float64) float64 {
+	if len(values) == 0 {
+		return 0
+	}
 	median := values[len(values)/2]
 	if len(values)%2 == 0 {
 		median = (values[len(values)/2-1] + values[len(values)/2]) / 2
 	}
-	return metricSummary{
-		Samples: len(values),
-		Median:  median,
-		Mean:    sum / float64(len(values)),
-		Min:     values[0],
-		Max:     values[len(values)-1],
-	}
+	return median
 }
 
-func buildLanguageReports(summaries []benchmarkSummary) []languageReport {
+func buildLanguageReports(summaries []benchmarkSummary, resources []runResource) []languageReport {
 	byKey := make(map[key]benchmarkSummary, len(summaries))
 	languages := map[string]bool{}
 	for _, s := range summaries {
 		byKey[key{suite: s.Suite, language: s.Language, backend: s.Backend}] = s
 		languages[s.Language] = true
+	}
+	resourcesByLanguage := make(map[string][]runResource)
+	for _, resource := range resources {
+		if resource.Language == "" {
+			continue
+		}
+		resourcesByLanguage[resource.Language] = append(resourcesByLanguage[resource.Language], resource)
+		languages[resource.Language] = true
 	}
 	names := make([]string, 0, len(languages))
 	for name := range languages {
@@ -361,6 +593,27 @@ func buildLanguageReports(summaries []benchmarkSummary) []languageReport {
 		lr.EditRatio = ratio(lr.EditGoNanos, lr.EditCNanos)
 		lr.NoEditRatio = ratio(lr.NoEditGoNanos, lr.NoEditCNanos)
 		lr.WorstRatio = maxFloat(lr.FullRatio, lr.EditRatio, lr.NoEditRatio)
+		lr.MinNSOpSamples, lr.MaxNSOpRelStdDev, lr.MaxNSOpRelMedianAbsDev, lr.QualityNotes = languageQuality(byKey, name)
+		for _, resource := range resourcesByLanguage[name] {
+			if resource.MaxRSSKB > lr.MaxRSSKB {
+				lr.MaxRSSKB = resource.MaxRSSKB
+			}
+			if resource.OOMKilled != nil && *resource.OOMKilled {
+				lr.OOMKilled = true
+			}
+			if resource.AllowMismatch != nil && *resource.AllowMismatch {
+				lr.QualityNotes = appendUnique(lr.QualityNotes, "parity precheck disabled")
+			}
+			if resource.SkipMismatch != nil && *resource.SkipMismatch {
+				lr.QualityNotes = appendUnique(lr.QualityNotes, "parity mismatch filtering enabled")
+			}
+			if resource.ExitCode != nil && *resource.ExitCode != 0 {
+				lr.QualityNotes = appendUnique(lr.QualityNotes, fmt.Sprintf("container exit code %d", *resource.ExitCode))
+			}
+		}
+		if lr.OOMKilled {
+			lr.QualityNotes = appendUnique(lr.QualityNotes, "container OOM-killed")
+		}
 		for _, suite := range []string{"Full", "IncrementalSingleByteEdit", "IncrementalNoEdit"} {
 			if metrics := medianMetrics(byKey, suite, name, "gotreesitter"); len(metrics) > 0 {
 				lr.GoSuiteMetrics[suite] = metrics
@@ -379,6 +632,51 @@ func buildLanguageReports(summaries []benchmarkSummary) []languageReport {
 		return reports[i].Language < reports[j].Language
 	})
 	return reports
+}
+
+func languageQuality(byKey map[key]benchmarkSummary, language string) (minSamples int, maxRelStdDev, maxRelMedianAbsDev float64, notes []string) {
+	for _, suite := range []string{"Full", "IncrementalSingleByteEdit", "IncrementalNoEdit"} {
+		for _, backend := range []string{"gotreesitter", "tree-sitter-c"} {
+			summary, ok := byKey[key{suite: suite, language: language, backend: backend}]
+			if !ok {
+				notes = append(notes, fmt.Sprintf("missing %s/%s", suite, backend))
+				continue
+			}
+			nsOp, ok := summary.Metrics["ns/op"]
+			if !ok {
+				notes = append(notes, fmt.Sprintf("missing %s/%s ns/op", suite, backend))
+				continue
+			}
+			if minSamples == 0 || nsOp.Samples < minSamples {
+				minSamples = nsOp.Samples
+			}
+			if nsOp.RelStdDev > maxRelStdDev {
+				maxRelStdDev = nsOp.RelStdDev
+			}
+			if nsOp.RelMedianAbsDev > maxRelMedianAbsDev {
+				maxRelMedianAbsDev = nsOp.RelMedianAbsDev
+			}
+		}
+	}
+	if minSamples > 0 && minSamples < 3 {
+		notes = append(notes, fmt.Sprintf("low sample count n=%d", minSamples))
+	}
+	if maxRelStdDev > 0.05 {
+		notes = append(notes, fmt.Sprintf("ns/op rel stddev %.1f%%", maxRelStdDev*100))
+	}
+	if maxRelMedianAbsDev > 0.03 {
+		notes = append(notes, fmt.Sprintf("ns/op rel MAD %.1f%%", maxRelMedianAbsDev*100))
+	}
+	return minSamples, maxRelStdDev, maxRelMedianAbsDev, notes
+}
+
+func appendUnique(values []string, value string) []string {
+	for _, existing := range values {
+		if existing == value {
+			return values
+		}
+	}
+	return append(values, value)
 }
 
 func medianMetric(byKey map[key]benchmarkSummary, suite, language, backend, metric string) float64 {
@@ -484,12 +782,12 @@ func writeMarkdown(path string, r report) error {
 	fmt.Fprintf(&b, "# Real Corpus Bench Report\n\n")
 	fmt.Fprintf(&b, "Generated: `%s`\n\n", r.GeneratedAt)
 	fmt.Fprintf(&b, "Samples: `%d`\n\n", r.Samples)
-	fmt.Fprintf(&b, "| Language | Full Go | Full C | Full xC | Edit Go | Edit C | Edit xC | No-edit Go | No-edit C | No-edit xC | Top attribution |\n")
-	fmt.Fprintf(&b, "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n")
+	fmt.Fprintf(&b, "| Language | Full Go | Full C | Full xC | Edit Go | Edit C | Edit xC | No-edit Go | No-edit C | No-edit xC | Max RSS | Quality | Top attribution |\n")
+	fmt.Fprintf(&b, "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|\n")
 	for _, lr := range r.Languages {
 		fmt.Fprintf(
 			&b,
-			"| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n",
+			"| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n",
 			lr.Language,
 			formatNanos(lr.FullGoNanos),
 			formatNanos(lr.FullCNanos),
@@ -500,6 +798,8 @@ func writeMarkdown(path string, r report) error {
 			formatNanos(lr.NoEditGoNanos),
 			formatNanos(lr.NoEditCNanos),
 			formatRatio(lr.NoEditRatio),
+			formatRSSKB(lr.MaxRSSKB),
+			formatQuality(lr),
 			formatAttribution(lr.TopAttribution),
 		)
 	}
@@ -531,6 +831,36 @@ func formatRatio(v float64) string {
 		return ""
 	}
 	return fmt.Sprintf("%.2fx", v)
+}
+
+func formatRSSKB(kb int64) string {
+	if kb <= 0 {
+		return ""
+	}
+	const mib = 1024
+	const gib = 1024 * mib
+	if kb >= gib {
+		return fmt.Sprintf("%.2fGiB", float64(kb)/float64(gib))
+	}
+	if kb >= mib {
+		return fmt.Sprintf("%.1fMiB", float64(kb)/float64(mib))
+	}
+	return fmt.Sprintf("%dKiB", kb)
+}
+
+func formatQuality(lr languageReport) string {
+	parts := make([]string, 0, 3+len(lr.QualityNotes))
+	if lr.MinNSOpSamples > 0 {
+		parts = append(parts, fmt.Sprintf("n>=%d", lr.MinNSOpSamples))
+	}
+	if lr.MaxNSOpRelStdDev > 0 {
+		parts = append(parts, fmt.Sprintf("max RSD %.1f%%", lr.MaxNSOpRelStdDev*100))
+	}
+	if lr.MaxNSOpRelMedianAbsDev > 0 {
+		parts = append(parts, fmt.Sprintf("max MAD %.1f%%", lr.MaxNSOpRelMedianAbsDev*100))
+	}
+	parts = append(parts, lr.QualityNotes...)
+	return strings.Join(parts, "<br>")
 }
 
 func formatAttribution(buckets []attributionBucket) string {

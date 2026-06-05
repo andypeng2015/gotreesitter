@@ -70,6 +70,26 @@ type realCorpusRuntimeTotals struct {
 	resultCompatibilityNanos          int64
 	resultParentLinkNanos             int64
 	normalizationNanos                int64
+	reduceRangeNanos                  int64
+	reducePendingParentNanos          int64
+	reduceChildBuildNanos             int64
+	reduceParentBuildNanos            int64
+	reduceSpanNanos                   int64
+	reduceStackPushNanos              int64
+	reduceNoTreeBuildNanos            int64
+	actionExtraShiftNanos             int64
+	actionNoActionNanos               int64
+	actionNoActionRelexNanos          int64
+	actionNoActionMissingNanos        int64
+	actionNoActionRecoverNanos        int64
+	actionNoActionErrorNanos          int64
+	actionConflictChoiceNanos         int64
+	actionConflictForkNanos           int64
+	actionSingleShiftNanos            int64
+	actionSingleReduceNanos           int64
+	actionSingleAcceptNanos           int64
+	actionSingleRecoverNanos          int64
+	actionSingleOtherNanos            int64
 }
 
 type realCorpusIncrementalProfileTotals struct {
@@ -1049,6 +1069,30 @@ func (t *realCorpusRuntimeTotals) add(rt gotreesitter.ParseRuntime) {
 	t.resultCompatibilityNanos += rt.ResultCompatibilityNanos
 	t.resultParentLinkNanos += rt.ResultParentLinkNanos
 	t.normalizationNanos += rt.NormalizationNanos
+	if reduceTiming := rt.ReduceTiming; reduceTiming != nil {
+		t.reduceRangeNanos += reduceTiming.RangeNanos
+		t.reducePendingParentNanos += reduceTiming.PendingParentNanos
+		t.reduceChildBuildNanos += reduceTiming.ChildBuildNanos
+		t.reduceParentBuildNanos += reduceTiming.ParentBuildNanos
+		t.reduceSpanNanos += reduceTiming.SpanNanos
+		t.reduceStackPushNanos += reduceTiming.StackPushNanos
+		t.reduceNoTreeBuildNanos += reduceTiming.NoTreeBuildNanos
+	}
+	if actionTiming := rt.ActionTiming; actionTiming != nil {
+		t.actionExtraShiftNanos += actionTiming.ExtraShiftNanos
+		t.actionNoActionNanos += actionTiming.NoActionNanos
+		t.actionNoActionRelexNanos += actionTiming.NoActionRelexNanos
+		t.actionNoActionMissingNanos += actionTiming.NoActionMissingNanos
+		t.actionNoActionRecoverNanos += actionTiming.NoActionRecoverNanos
+		t.actionNoActionErrorNanos += actionTiming.NoActionErrorNanos
+		t.actionConflictChoiceNanos += actionTiming.ConflictChoiceNanos
+		t.actionConflictForkNanos += actionTiming.ConflictForkNanos
+		t.actionSingleShiftNanos += actionTiming.SingleShiftNanos
+		t.actionSingleReduceNanos += actionTiming.SingleReduceNanos
+		t.actionSingleAcceptNanos += actionTiming.SingleAcceptNanos
+		t.actionSingleRecoverNanos += actionTiming.SingleRecoverNanos
+		t.actionSingleOtherNanos += actionTiming.SingleOtherNanos
+	}
 }
 
 func (t *realCorpusIncrementalProfileTotals) addEdit(d time.Duration) {
@@ -1173,6 +1217,34 @@ func (t realCorpusRuntimeTotals) report(b *testing.B, cases []realCorpusBenchmar
 		t.resultCompatibilityNanos,
 		t.resultParentLinkNanos,
 		t.normalizationNanos,
+	)
+	reportRealCorpusReduceTimingMetrics(
+		b,
+		n,
+		t.reduceRangeNanos,
+		t.reducePendingParentNanos,
+		t.reduceChildBuildNanos,
+		t.reduceParentBuildNanos,
+		t.reduceSpanNanos,
+		t.reduceStackPushNanos,
+		t.reduceNoTreeBuildNanos,
+	)
+	reportRealCorpusActionTimingMetrics(
+		b,
+		n,
+		t.actionExtraShiftNanos,
+		t.actionNoActionNanos,
+		t.actionNoActionRelexNanos,
+		t.actionNoActionMissingNanos,
+		t.actionNoActionRecoverNanos,
+		t.actionNoActionErrorNanos,
+		t.actionConflictChoiceNanos,
+		t.actionConflictForkNanos,
+		t.actionSingleShiftNanos,
+		t.actionSingleReduceNanos,
+		t.actionSingleAcceptNanos,
+		t.actionSingleRecoverNanos,
+		t.actionSingleOtherNanos,
 	)
 }
 
@@ -1332,6 +1404,82 @@ func reportRealCorpusPhaseMetrics(
 	b.ReportMetric(float64(resultParentLinkNanos)/n, "result_parent_link_ns/op")
 	b.ReportMetric(float64(normalizationNanos)/n, "normalization_ns/op")
 	b.ReportMetric(float64(resultAccountedNanos)/n, "result_accounted_ns/op")
+}
+
+func reportRealCorpusReduceTimingMetrics(
+	b *testing.B,
+	n float64,
+	reduceRangeNanos int64,
+	reducePendingParentNanos int64,
+	reduceChildBuildNanos int64,
+	reduceParentBuildNanos int64,
+	reduceSpanNanos int64,
+	reduceStackPushNanos int64,
+	reduceNoTreeBuildNanos int64,
+) {
+	reduceTimedNanos := reduceRangeNanos +
+		reducePendingParentNanos +
+		reduceChildBuildNanos +
+		reduceParentBuildNanos +
+		reduceSpanNanos +
+		reduceStackPushNanos +
+		reduceNoTreeBuildNanos
+	if reduceTimedNanos == 0 {
+		return
+	}
+	b.ReportMetric(float64(reduceRangeNanos)/n, "reduce_range_ns/op")
+	b.ReportMetric(float64(reducePendingParentNanos)/n, "reduce_pending_parent_ns/op")
+	b.ReportMetric(float64(reduceChildBuildNanos)/n, "reduce_child_build_ns/op")
+	b.ReportMetric(float64(reduceParentBuildNanos)/n, "reduce_parent_build_ns/op")
+	b.ReportMetric(float64(reduceSpanNanos)/n, "reduce_span_ns/op")
+	b.ReportMetric(float64(reduceStackPushNanos)/n, "reduce_stack_push_ns/op")
+	b.ReportMetric(float64(reduceNoTreeBuildNanos)/n, "reduce_notree_build_ns/op")
+	b.ReportMetric(float64(reduceTimedNanos)/n, "reduce_timed_ns/op")
+}
+
+func reportRealCorpusActionTimingMetrics(
+	b *testing.B,
+	n float64,
+	actionExtraShiftNanos int64,
+	actionNoActionNanos int64,
+	actionNoActionRelexNanos int64,
+	actionNoActionMissingNanos int64,
+	actionNoActionRecoverNanos int64,
+	actionNoActionErrorNanos int64,
+	actionConflictChoiceNanos int64,
+	actionConflictForkNanos int64,
+	actionSingleShiftNanos int64,
+	actionSingleReduceNanos int64,
+	actionSingleAcceptNanos int64,
+	actionSingleRecoverNanos int64,
+	actionSingleOtherNanos int64,
+) {
+	actionTimedNanos := actionExtraShiftNanos +
+		actionNoActionNanos +
+		actionConflictChoiceNanos +
+		actionConflictForkNanos +
+		actionSingleShiftNanos +
+		actionSingleReduceNanos +
+		actionSingleAcceptNanos +
+		actionSingleRecoverNanos +
+		actionSingleOtherNanos
+	if actionTimedNanos == 0 {
+		return
+	}
+	b.ReportMetric(float64(actionExtraShiftNanos)/n, "action_extra_shift_ns/op")
+	b.ReportMetric(float64(actionNoActionNanos)/n, "action_no_action_ns/op")
+	b.ReportMetric(float64(actionNoActionRelexNanos)/n, "action_no_action_relex_ns/op")
+	b.ReportMetric(float64(actionNoActionMissingNanos)/n, "action_no_action_missing_ns/op")
+	b.ReportMetric(float64(actionNoActionRecoverNanos)/n, "action_no_action_recover_ns/op")
+	b.ReportMetric(float64(actionNoActionErrorNanos)/n, "action_no_action_error_ns/op")
+	b.ReportMetric(float64(actionConflictChoiceNanos)/n, "action_conflict_choice_ns/op")
+	b.ReportMetric(float64(actionConflictForkNanos)/n, "action_conflict_fork_ns/op")
+	b.ReportMetric(float64(actionSingleShiftNanos)/n, "action_single_shift_ns/op")
+	b.ReportMetric(float64(actionSingleReduceNanos)/n, "action_single_reduce_ns/op")
+	b.ReportMetric(float64(actionSingleAcceptNanos)/n, "action_single_accept_ns/op")
+	b.ReportMetric(float64(actionSingleRecoverNanos)/n, "action_single_recover_ns/op")
+	b.ReportMetric(float64(actionSingleOtherNanos)/n, "action_single_other_ns/op")
+	b.ReportMetric(float64(actionTimedNanos)/n, "action_timed_ns/op")
 }
 
 func reportRealCorpusCaseMetrics(b *testing.B, cases []realCorpusBenchmarkCase) {

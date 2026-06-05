@@ -228,6 +228,23 @@ var parityIgnoreKnownSkips = func() bool {
 	}
 }()
 
+var parityParallel = func() bool {
+	raw := strings.TrimSpace(os.Getenv("GTS_PARITY_PARALLEL"))
+	switch strings.ToLower(raw) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}()
+
+func parityMaybeParallel(t *testing.T) {
+	t.Helper()
+	if parityParallel {
+		t.Parallel()
+	}
+}
+
 var parityExcludedLanguages = func() map[string]struct{} {
 	raw := strings.TrimSpace(os.Getenv("GTS_PARITY_SKIP_LANGS"))
 	if raw == "" {
@@ -441,6 +458,9 @@ func releaseGoTree(tree *gotreesitter.Tree) {
 
 func scheduleParityMemoryScavenge(t *testing.T) {
 	t.Helper()
+	if parityParallel {
+		return
+	}
 	t.Cleanup(func() {
 		runtime.GC()
 		debug.FreeOSMemory()
@@ -450,11 +470,6 @@ func scheduleParityMemoryScavenge(t *testing.T) {
 func runParityCase(t *testing.T, tc parityCase, label string, src []byte) {
 	t.Helper()
 
-	goTree, goLang, err := parseWithGo(tc, src, nil)
-	if err != nil {
-		t.Fatalf("[%s/%s] gotreesitter parse error: %v", tc.name, label, err)
-	}
-	defer releaseGoTree(goTree)
 	cLang, err := ParityCLanguage(tc.name)
 	if err != nil {
 		if skipReason := parityReferenceSkipReason(err); skipReason != "" {
@@ -462,6 +477,11 @@ func runParityCase(t *testing.T, tc parityCase, label string, src []byte) {
 		}
 		t.Fatalf("[%s/%s] load C parser from languages.lock: %v", tc.name, label, err)
 	}
+	goTree, goLang, err := parseWithGo(tc, src, nil)
+	if err != nil {
+		t.Fatalf("[%s/%s] gotreesitter parse error: %v", tc.name, label, err)
+	}
+	defer releaseGoTree(goTree)
 
 	cParser := sitter.NewParser()
 	defer cParser.Close()
@@ -749,6 +769,7 @@ func TestParityFreshParse(t *testing.T) {
 		}
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
+			parityMaybeParallel(t)
 			scheduleParityMemoryScavenge(t)
 			if reason := paritySkipReason(tc.name); reason != "" {
 				t.Skipf("known mismatch: %s", reason)
@@ -770,6 +791,7 @@ func TestParityIncrementalParse(t *testing.T) {
 		}
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
+			parityMaybeParallel(t)
 			scheduleParityMemoryScavenge(t)
 			if reason := paritySkipReason(tc.name); reason != "" {
 				t.Skipf("known mismatch: %s", reason)
@@ -949,26 +971,11 @@ func TestParityHasNoErrors(t *testing.T) {
 		}
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
+			parityMaybeParallel(t)
 			scheduleParityMemoryScavenge(t)
 			if reason := paritySkipReason(tc.name); reason != "" {
 				t.Skipf("known mismatch: %s", reason)
 			}
-			cLang, err := ParityCLanguage(tc.name)
-			if err != nil {
-				if skipReason := parityReferenceSkipReason(err); skipReason != "" {
-					t.Skipf("[%s/errors] skip C reference parser: %s", tc.name, skipReason)
-				}
-				t.Fatalf("[%s/errors] load C parser from languages.lock: %v", tc.name, err)
-			}
-			cParser := sitter.NewParser()
-			defer cParser.Close()
-			if err := cParser.SetLanguage(cLang); err != nil {
-				if skipReason := parityReferenceSkipReason(err); skipReason != "" {
-					t.Skipf("[%s/errors] skip C parser SetLanguage: %s", tc.name, skipReason)
-				}
-				t.Fatalf("[%s/errors] C parser SetLanguage error: %v", tc.name, err)
-			}
-
 			tree, _, err := parseWithGo(tc, normalizedSource(tc.name, tc.source), nil)
 			if err != nil {
 				t.Fatalf("[%s/errors] gotreesitter parse error: %v", tc.name, err)

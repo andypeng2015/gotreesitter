@@ -6,6 +6,8 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 RUNNER="$SCRIPT_DIR/run_parity_in_docker.sh"
 
 LANGS_CSV="go,python,rust,java,javascript,typescript,c"
+LANGS_SET=0
+LANG_PROFILE=""
 OUT_ROOT="$REPO_ROOT/harness_out/real_corpus_bench_matrix"
 # Default to higher count + longer benchtime than the legacy values
 # (5×750ms). The legacy defaults produced 28% wall-time variance between
@@ -25,6 +27,8 @@ CPUS_LIMIT="1"
 CPUSET_CPUS="18"
 PIDS_LIMIT="4096"
 GOMAXPROCS_VALUE="1"
+GOMEMLIMIT_VALUE="${GOMEMLIMIT:-6GiB}"
+TEST_TIMEOUT="20m"
 ALLOW_MISMATCH="0"
 SKIP_MISMATCH="0"
 PHASE_TIMING="1"
@@ -46,6 +50,8 @@ then build a ranked markdown/json report from the benchmark logs.
 
 Options:
   --langs <list>          Comma-separated languages (default: go,python,rust,java,javascript,typescript,c)
+  --profile <name>        Language preset: usage-top12, top50-high-value.
+                          May not be combined with --langs.
   --out-root <path>       Output root (default: harness_out/real_corpus_bench_matrix)
   --count <n>             go test benchmark count (default: 10)
   --benchtime <dur>       go test benchmark benchtime (default: 5s)
@@ -57,6 +63,8 @@ Options:
                           back-to-back runs become unreliable without it.
   --pids <count>          Docker PID limit (default: 4096)
   --gomaxprocs <n>        GOMAXPROCS inside container (default: 1)
+  --gomemlimit <value>    GOMEMLIMIT inside container (default: ${GOMEMLIMIT:-6GiB})
+  --timeout <duration>    go test timeout inside container (default: 20m)
   --allow-mismatch        Skip strict fresh parity precheck and time selected files
   --skip-mismatch         Filter out files that fail fresh parity precheck
   --phase-timing <0|1>    Export GOT_PARSE_PHASE_TIMING (default: 1)
@@ -77,9 +85,28 @@ The generated report is written to:
 EOF
 }
 
+lang_profile_csv() {
+  case "$1" in
+    usage|usage-top12|top12)
+      printf '%s\n' "go,typescript,tsx,javascript,java,python,rust,c,cpp,c_sharp,json,css"
+      ;;
+    top50-high-value|top50-no-deferred|top50-real)
+      # Preserve top-50 priority order while deferring gomod and entries that
+      # do not currently have real-corpus inputs in this harness.
+      printf '%s\n' "typescript,tsx,javascript,python,java,c_sharp,php,bash,cpp,go,html,css,sql,c,rust,json,ruby,swift,kotlin,dart,lua,yaml,xml,toml,markdown,svelte,scss,powershell,r,scala,hcl,graphql,perl,elixir,haskell,julia,clojure,erlang,ocaml,nix,objc,make,cmake,d,awk,elm"
+      ;;
+    *)
+      echo "unknown --profile: $1" >&2
+      echo "known profiles: usage-top12, top50-high-value" >&2
+      exit 2
+      ;;
+  esac
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --langs) LANGS_CSV="$2"; shift 2 ;;
+    --langs) LANGS_CSV="$2"; LANGS_SET=1; shift 2 ;;
+    --profile) LANG_PROFILE="$2"; shift 2 ;;
     --out-root) OUT_ROOT="$2"; shift 2 ;;
     --count) COUNT="$2"; shift 2 ;;
     --benchtime) BENCHTIME="$2"; shift 2 ;;
@@ -88,6 +115,8 @@ while [[ $# -gt 0 ]]; do
     --cpuset-cpus) CPUSET_CPUS="$2"; shift 2 ;;
     --pids) PIDS_LIMIT="$2"; shift 2 ;;
     --gomaxprocs) GOMAXPROCS_VALUE="$2"; shift 2 ;;
+    --gomemlimit) GOMEMLIMIT_VALUE="$2"; shift 2 ;;
+    --timeout) TEST_TIMEOUT="$2"; shift 2 ;;
     --allow-mismatch) ALLOW_MISMATCH="1"; shift ;;
     --skip-mismatch) SKIP_MISMATCH="1"; shift ;;
     --phase-timing) PHASE_TIMING="$2"; shift 2 ;;
@@ -111,6 +140,14 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+if [[ -n "$LANG_PROFILE" ]]; then
+  if [[ "$LANGS_SET" == "1" ]]; then
+    echo "--profile may not be combined with --langs" >&2
+    exit 2
+  fi
+  LANGS_CSV="$(lang_profile_csv "$LANG_PROFILE")"
+fi
+
 case "$ORDER" in
   path|largest|smallest) ;;
   *)
@@ -121,6 +158,7 @@ esac
 
 OUT_ROOT="${OUT_ROOT/#\~/$HOME}"
 mkdir -p "$OUT_ROOT"
+OUT_ROOT="$(cd "$OUT_ROOT" && pwd)"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 RUN_DIR="$OUT_ROOT/$STAMP"
 DOCKER_OUT="$RUN_DIR/docker"
@@ -167,15 +205,54 @@ if [[ "$BUILD_IMAGE" == "0" ]]; then
   build_flag=(--no-build)
 fi
 
+GIT_REVISION="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || true)"
+GIT_DIRTY="unknown"
+if git -C "$REPO_ROOT" diff --quiet --ignore-submodules -- 2>/dev/null && git -C "$REPO_ROOT" diff --cached --quiet --ignore-submodules -- 2>/dev/null; then
+  GIT_DIRTY="false"
+elif git -C "$REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  GIT_DIRTY="true"
+fi
+
+{
+  echo "schema=real-corpus-bench-matrix-v1"
+  echo "run_start_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  echo "repo_root=$REPO_ROOT"
+  echo "git_revision=$GIT_REVISION"
+  echo "git_dirty=$GIT_DIRTY"
+  echo "profile=$LANG_PROFILE"
+  echo "langs=${LANGS[*]}"
+  echo "count=$COUNT"
+  echo "benchtime=$BENCHTIME"
+  echo "timeout=$TEST_TIMEOUT"
+  echo "memory=$MEMORY_LIMIT"
+  echo "cpus=$CPUS_LIMIT"
+  echo "cpuset_cpus=$CPUSET_CPUS"
+  echo "pids=$PIDS_LIMIT"
+  echo "gomaxprocs=$GOMAXPROCS_VALUE"
+  echo "gomemlimit=$GOMEMLIMIT_VALUE"
+  echo "allow_mismatch=$ALLOW_MISMATCH"
+  echo "skip_mismatch=$SKIP_MISMATCH"
+  echo "phase_timing=$PHASE_TIMING"
+  echo "max_files=$MAX_FILES"
+  echo "max_bytes=$MAX_BYTES"
+  echo "max_file_bytes=$MAX_FILE_BYTES"
+  echo "min_bytes=$MIN_BYTES"
+  echo "order=$ORDER"
+  echo "keep_going=$KEEP_GOING"
+  echo "extra_env=${EXTRA_ENV[*]:-}"
+} >"$RUN_DIR/matrix_metadata.txt"
+
 for lang in "${LANGS[@]}"; do
   echo "==> real-corpus bench: $lang"
   env_prefix="$(bench_env_prefix "$lang")"
-  inner_cmd="cd /workspace/cgo_harness && $env_prefix go test . -tags treesitter_c_parity -run '^$' -bench 'BenchmarkParityRealCorpusParse(Full|IncrementalSingleByteEdit|IncrementalNoEdit)$' -benchmem -count=$COUNT -benchtime=$BENCHTIME"
+  inner_cmd="cd /workspace/cgo_harness && /usr/bin/time -v $env_prefix go test . -tags treesitter_c_parity -run '^$' -bench 'BenchmarkParityRealCorpusParse(Full|IncrementalSingleByteEdit|IncrementalNoEdit)$' -benchmem -count=$COUNT -benchtime=$BENCHTIME -cpu=$GOMAXPROCS_VALUE -timeout=$TEST_TIMEOUT"
   runner_args=(
     --out-root "$DOCKER_OUT"
     --label "real-corpus-bench-$lang"
     --memory "$MEMORY_LIMIT"
     --cpus "$CPUS_LIMIT"
+    --gomemlimit "$GOMEMLIMIT_VALUE"
+    --timeout "$TEST_TIMEOUT"
     --pids "$PIDS_LIMIT"
   )
   if [[ -n "$CPUSET_CPUS" ]]; then
@@ -195,7 +272,8 @@ for lang in "${LANGS[@]}"; do
   build_flag=(--no-build)
 done
 
-if find "$DOCKER_OUT" -name container.log -type f | grep -q .; then
+REPORT_FAILED=0
+if [[ -n "$(find "$DOCKER_OUT" -name container.log -type f -print -quit)" ]]; then
   if (
     cd "$REPO_ROOT/cgo_harness"
     go run ./cmd/real_corpus_bench_report \
@@ -206,16 +284,38 @@ if find "$DOCKER_OUT" -name container.log -type f | grep -q .; then
     echo "report: $RUN_DIR/REAL_CORPUS_BENCH_REPORT.md"
   else
     echo "report generation failed; inspect logs under $DOCKER_OUT" >&2
+    REPORT_FAILED=1
   fi
 else
   echo "no container logs found under $DOCKER_OUT" >&2
+  REPORT_FAILED=1
 fi
 
 if [[ ${#failures[@]} -gt 0 ]]; then
   printf '%s\n' "${failures[@]}" >"$RUN_DIR/failed_languages.txt"
+  {
+    echo "run_end_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo "failed_languages=${failures[*]}"
+    echo "report_failed=$REPORT_FAILED"
+  } >>"$RUN_DIR/matrix_metadata.txt"
   echo "failed languages: ${failures[*]}" >&2
   exit 1
 fi
+
+if [[ "$REPORT_FAILED" != "0" ]]; then
+  {
+    echo "run_end_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo "failed_languages="
+    echo "report_failed=1"
+  } >>"$RUN_DIR/matrix_metadata.txt"
+  exit 1
+fi
+
+{
+  echo "run_end_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  echo "failed_languages="
+  echo "report_failed=0"
+} >>"$RUN_DIR/matrix_metadata.txt"
 
 echo "real-corpus bench matrix complete"
 echo "artifacts: $RUN_DIR"

@@ -17,6 +17,13 @@ CPUS_LIMIT="4"
 # CFS-quota-only behavior).
 CPUSET_CPUS=""
 PIDS_LIMIT="4096"
+GOMEMLIMIT_VALUE="${GOMEMLIMIT:-6GiB}"
+GOFLAGS_VALUE="${GOFLAGS:--p=1}"
+TEST_PARALLEL="1"
+TEST_TIMEOUT="20m"
+PARITY_PARALLEL="0"
+C_REF_BUILD_JOBS="1"
+C_REF_BUILD_JOBS_SET="0"
 PARITY_RUN='^TestParityFreshParse$|^TestParityIncrementalParse$|^TestParityHasNoErrors$|^TestParityIssue3Repros$|^TestParityGLRCanaryGo$|^TestParityGLRCanarySet$|^TestParityGLRCapPressureTopLanguages$|^TestParityHighlight$'
 STRICT_SCALA=0
 BUILD_IMAGE=1
@@ -44,6 +51,13 @@ Options:
                          benchmark stability suffers — use this for any
                          perf-comparison run.
   --pids <count>         PID limit passed to Docker (default: 4096)
+  --gomemlimit <value>   GOMEMLIMIT inside container (default: 6GiB)
+  --goflags <value>      GOFLAGS inside container (default: -p=1)
+  --test-parallel <n>    go test -parallel value (default: 1)
+  --timeout <duration>   go test -timeout value (default: 20m)
+  --parity-parallel <n>  Enable GTS_PARITY_PARALLEL=1 and set -parallel n.
+                         This is intentionally container-only.
+  --c-ref-build-jobs <n> Concurrent C-reference parser builds (default: 1)
   --run <regex>          go test -run regex for default parity command
   --strict-scala         Also run strict Scala real-world parity probe
   --no-build             Skip docker build step
@@ -64,6 +78,7 @@ Environment passthrough (if set):
   GOT_GLR_FORCE_CONFLICT_WIDTH
   GTS_PARITY_MODE
   GTS_PARITY_SKIP_LANGS
+  GTS_PARITY_C_REF_BUILD_CACHE
 
 Artifacts are written to <out-root>/<timestamp>[-<label>]/:
   - container.log
@@ -107,6 +122,35 @@ while [[ $# -gt 0 ]]; do
       PIDS_LIMIT="$2"
       shift 2
       ;;
+    --gomemlimit)
+      GOMEMLIMIT_VALUE="$2"
+      shift 2
+      ;;
+    --goflags)
+      GOFLAGS_VALUE="$2"
+      shift 2
+      ;;
+    --test-parallel)
+      TEST_PARALLEL="$2"
+      shift 2
+      ;;
+    --timeout)
+      TEST_TIMEOUT="$2"
+      shift 2
+      ;;
+    --parity-parallel)
+      PARITY_PARALLEL="1"
+      TEST_PARALLEL="$2"
+      if [[ "$C_REF_BUILD_JOBS_SET" == "0" ]]; then
+        C_REF_BUILD_JOBS="$2"
+      fi
+      shift 2
+      ;;
+    --c-ref-build-jobs)
+      C_REF_BUILD_JOBS="$2"
+      C_REF_BUILD_JOBS_SET="1"
+      shift 2
+      ;;
     --run)
       PARITY_RUN="$2"
       shift 2
@@ -144,6 +188,19 @@ if [[ ! -d "$REPO_ROOT" ]]; then
 fi
 mkdir -p "$OUT_ROOT"
 
+require_positive_int() {
+  local name="$1"
+  local value="$2"
+  if ! [[ "$value" =~ ^[1-9][0-9]*$ ]]; then
+    echo "$name must be a positive integer, got: $value" >&2
+    exit 2
+  fi
+}
+
+require_positive_int "--test-parallel" "$TEST_PARALLEL"
+require_positive_int "--c-ref-build-jobs" "$C_REF_BUILD_JOBS"
+require_positive_int "--pids" "$PIDS_LIMIT"
+
 sanitize_label() {
   local in="$1"
   in="${in,,}"
@@ -170,9 +227,9 @@ if [[ -n "$LABEL_SLUG" ]]; then
 fi
 mkdir -p "$OUT_DIR"
 
-DEFAULT_CMD="cd /workspace/cgo_harness && /usr/bin/time -v go test . -tags treesitter_c_parity -run '$PARITY_RUN' -count=1 -v"
+DEFAULT_CMD="cd /workspace/cgo_harness && /usr/bin/time -v go test . -tags treesitter_c_parity -run '$PARITY_RUN' -count=1 -parallel '$TEST_PARALLEL' -timeout '$TEST_TIMEOUT' -v"
 if [[ "$STRICT_SCALA" == "1" ]]; then
-  DEFAULT_CMD="$DEFAULT_CMD && /usr/bin/time -v env GTS_PARITY_SCALA_REALWORLD_STRICT=1 go test . -tags treesitter_c_parity -run '^TestParityScalaRealWorldCorpus$' -count=1 -v"
+  DEFAULT_CMD="$DEFAULT_CMD && /usr/bin/time -v env GTS_PARITY_SCALA_REALWORLD_STRICT=1 go test . -tags treesitter_c_parity -run '^TestParityScalaRealWorldCorpus$' -count=1 -parallel '$TEST_PARALLEL' -timeout '$TEST_TIMEOUT' -v"
 fi
 
 if [[ ${#CUSTOM_CMD[@]} -gt 0 ]]; then
@@ -182,8 +239,14 @@ else
 fi
 INNER_CMD="export PATH=/usr/local/go/bin:\$PATH; $INNER_CMD"
 
-ENV_ARGS=()
-for var in GOTOOLCHAIN GOMAXPROCS GOT_GLR_MAX_STACKS GOT_GLR_V2_COMPACT_FULL_LEAVES GOT_GLR_V2_PENDING_PARENTS GOT_PARSE_NODE_LIMIT_SCALE GOT_GLR_FORCE_CONFLICT_WIDTH GTS_PARITY_MODE GTS_PARITY_SKIP_LANGS; do
+ENV_ARGS=(
+  "-e" "GTS_PARITY_IN_DOCKER=1"
+  "-e" "GTS_PARITY_PARALLEL=$PARITY_PARALLEL"
+  "-e" "GTS_PARITY_C_REF_BUILD_JOBS=$C_REF_BUILD_JOBS"
+  "-e" "GOMEMLIMIT=$GOMEMLIMIT_VALUE"
+  "-e" "GOFLAGS=$GOFLAGS_VALUE"
+)
+for var in GOTOOLCHAIN GOMAXPROCS GOT_GLR_MAX_STACKS GOT_GLR_V2_COMPACT_FULL_LEAVES GOT_GLR_V2_PENDING_PARENTS GOT_PARSE_NODE_LIMIT_SCALE GOT_GLR_FORCE_CONFLICT_WIDTH GTS_PARITY_MODE GTS_PARITY_SKIP_LANGS GTS_PARITY_C_REF_BUILD_CACHE; do
   if [[ -n "${!var:-}" ]]; then
     ENV_ARGS+=("-e" "$var=${!var}")
   fi
@@ -206,6 +269,8 @@ if [[ -n "$CPUSET_CPUS" ]]; then
   CPUSET_ARGS+=(--cpuset-cpus "$CPUSET_CPUS")
 fi
 
+RUN_START_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+RUN_START_NS="$(date +%s%N)"
 CID="$(docker create \
   --name "$CONTAINER_NAME" \
   --init \
@@ -224,6 +289,8 @@ CID="$(docker create \
 docker start "$CID" >/dev/null
 docker logs -f "$CID" 2>&1 | tee "$OUT_DIR/container.log"
 EXIT_CODE="$(docker wait "$CID")"
+RUN_END_NS="$(date +%s%N)"
+RUN_END_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 docker inspect "$CID" >"$OUT_DIR/inspect.json"
 
 OOM_KILLED="$(docker inspect -f '{{.State.OOMKilled}}' "$CID")"
@@ -237,10 +304,21 @@ STATE_ERROR="$(docker inspect -f '{{.State.Error}}' "$CID")"
   echo "cpus=$CPUS_LIMIT"
   echo "cpuset_cpus=$CPUSET_CPUS"
   echo "pids=$PIDS_LIMIT"
+  echo "gomemlimit=$GOMEMLIMIT_VALUE"
+  echo "goflags=$GOFLAGS_VALUE"
+  echo "test_parallel=$TEST_PARALLEL"
+  echo "test_timeout=$TEST_TIMEOUT"
+  echo "parity_parallel=$PARITY_PARALLEL"
+  echo "c_ref_build_jobs=$C_REF_BUILD_JOBS"
   echo "strict_scala=$STRICT_SCALA"
   echo "exit_code=$EXIT_CODE"
   echo "oom_killed=$OOM_KILLED"
   echo "state_error=$STATE_ERROR"
+  echo "run_start_utc=$RUN_START_UTC"
+  echo "run_end_utc=$RUN_END_UTC"
+  echo "run_start_ns=$RUN_START_NS"
+  echo "run_end_ns=$RUN_END_NS"
+  echo "elapsed_ns=$((RUN_END_NS - RUN_START_NS))"
   echo "repo_root=$REPO_ROOT"
   echo "out_root=$OUT_ROOT"
   echo "label=$LABEL_SLUG"
