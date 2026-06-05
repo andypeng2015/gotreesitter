@@ -762,7 +762,7 @@ func stackEquivalentForLanguageWithScratch(scratch *glrMergeScratch, lang *Langu
 		// cases where header-only accepts but deep-frontier rejects.
 		headerEq = stacksHeaderEquivalent(a, b)
 		if headerEq {
-			audit.mergeHeaderEqTotal++
+			audit.recordMergeHeaderEq()
 		}
 	}
 	if a.depth() != b.depth() {
@@ -829,14 +829,7 @@ func recordMergeHeaderDivergenceForAudit(audit *runtimeAudit, headerEq, deepEq b
 	if audit == nil {
 		return
 	}
-	if deepEq {
-		audit.mergeDeepTrue++
-	} else {
-		audit.mergeDeepFalse++
-		if headerEq {
-			audit.mergeHeaderDeepDivergent++
-		}
-	}
+	audit.recordMergeDeepResult(headerEq, deepEq)
 }
 
 func stackEquivPairKeyForAudit(a, b glrStack) (runtimeAuditStackEquivPairKey, bool) {

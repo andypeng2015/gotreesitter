@@ -242,6 +242,10 @@ type runtimeStats struct {
 	StackEquivPairRepeatFalse             uint64        `json:"stack_equiv_pair_repeat_false,omitempty"`
 	StackEquivPairRepeatMismatch          uint64        `json:"stack_equiv_pair_repeat_mismatch,omitempty"`
 	StackEquivPairStores                  uint64        `json:"stack_equiv_pair_stores,omitempty"`
+	MergeHeaderEqTotal                    uint64        `json:"merge_header_eq_total,omitempty"`
+	MergeDeepTrue                         uint64        `json:"merge_deep_true,omitempty"`
+	MergeDeepFalse                        uint64        `json:"merge_deep_false,omitempty"`
+	MergeHeaderDeepDivergent              uint64        `json:"merge_header_deep_divergent,omitempty"`
 	EquivCacheLookups                     uint64        `json:"equiv_cache_lookups,omitempty"`
 	EquivCacheHits                        uint64        `json:"equiv_cache_hits,omitempty"`
 	EquivCacheStores                      uint64        `json:"equiv_cache_stores,omitempty"`
@@ -429,6 +433,10 @@ type hotGLRState struct {
 	StackEquivPairRepeatFalse             uint64         `json:"stack_equiv_pair_repeat_false,omitempty"`
 	StackEquivPairRepeatMismatch          uint64         `json:"stack_equiv_pair_repeat_mismatch,omitempty"`
 	StackEquivPairStores                  uint64         `json:"stack_equiv_pair_stores,omitempty"`
+	MergeHeaderEqTotal                    uint64         `json:"merge_header_eq_total,omitempty"`
+	MergeDeepTrue                         uint64         `json:"merge_deep_true,omitempty"`
+	MergeDeepFalse                        uint64         `json:"merge_deep_false,omitempty"`
+	MergeHeaderDeepDivergent              uint64         `json:"merge_header_deep_divergent,omitempty"`
 	EquivSkipError                        uint64         `json:"equiv_skip_error,omitempty"`
 	EquivSkipLeaf                         uint64         `json:"equiv_skip_leaf,omitempty"`
 	EquivSkipFieldMismatch                uint64         `json:"equiv_skip_field_mismatch,omitempty"`
@@ -1364,6 +1372,10 @@ func hotEquivStatesFromRuntime(stats []gotreesitter.ParseEquivStateRuntime, limi
 			StackEquivPairRepeatFalse:             stat.StackEquivPairRepeatFalse,
 			StackEquivPairRepeatMismatch:          stat.StackEquivPairRepeatMismatch,
 			StackEquivPairStores:                  stat.StackEquivPairStores,
+			MergeHeaderEqTotal:                    stat.MergeHeaderEqTotal,
+			MergeDeepTrue:                         stat.MergeDeepTrue,
+			MergeDeepFalse:                        stat.MergeDeepFalse,
+			MergeHeaderDeepDivergent:              stat.MergeHeaderDeepDivergent,
 			EquivCacheLookups:                     stat.EquivCacheLookups,
 			EquivCacheHits:                        stat.EquivCacheHits,
 			EquivCacheStores:                      stat.EquivCacheStores,
@@ -1493,6 +1505,10 @@ func statsFromRuntime(rt gotreesitter.ParseRuntime) runtimeStats {
 		StackEquivPairRepeatFalse:             rt.StackEquivPairRepeatFalse,
 		StackEquivPairRepeatMismatch:          rt.StackEquivPairRepeatMismatch,
 		StackEquivPairStores:                  rt.StackEquivPairStores,
+		MergeHeaderEqTotal:                    rt.MergeHeaderEqTotal,
+		MergeDeepTrue:                         rt.MergeDeepTrue,
+		MergeDeepFalse:                        rt.MergeDeepFalse,
+		MergeHeaderDeepDivergent:              rt.MergeHeaderDeepDivergent,
 		EquivCacheLookups:                     rt.EquivCacheLookups,
 		EquivCacheHits:                        rt.EquivCacheHits,
 		EquivCacheStores:                      rt.EquivCacheStores,

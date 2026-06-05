@@ -33,6 +33,66 @@ func TestRuntimeAuditObserveEntriesSkipsNoTreePayload(t *testing.T) {
 	}
 }
 
+func TestRuntimeAuditMergeHeaderCountersByEquivState(t *testing.T) {
+	audit := &runtimeAudit{equivEnabled: true}
+
+	audit.recordMergeHeaderEq()
+	audit.recordMergeDeepResult(true, false)
+
+	if got := audit.mergeHeaderEqTotal; got != 1 {
+		t.Fatalf("merge header eq total = %d, want 1", got)
+	}
+	if got := audit.mergeDeepFalse; got != 1 {
+		t.Fatalf("merge deep false = %d, want 1", got)
+	}
+	if got := audit.mergeHeaderDeepDivergent; got != 1 {
+		t.Fatalf("merge header deep divergent = %d, want 1", got)
+	}
+	if got := len(audit.equivStateStats()); got != 0 {
+		t.Fatalf("equiv state stats without state = %d, want 0", got)
+	}
+
+	audit.setEquivState(StateID(42))
+	audit.recordMergeHeaderEq()
+	audit.recordMergeDeepResult(true, false)
+	audit.recordMergeDeepResult(false, true)
+	audit.clearEquivState()
+
+	if got := audit.mergeHeaderEqTotal; got != 2 {
+		t.Fatalf("merge header eq total after state = %d, want 2", got)
+	}
+	if got := audit.mergeDeepTrue; got != 1 {
+		t.Fatalf("merge deep true = %d, want 1", got)
+	}
+	if got := audit.mergeDeepFalse; got != 2 {
+		t.Fatalf("merge deep false after state = %d, want 2", got)
+	}
+	if got := audit.mergeHeaderDeepDivergent; got != 2 {
+		t.Fatalf("merge header deep divergent after state = %d, want 2", got)
+	}
+
+	stats := audit.equivStateStats()
+	if len(stats) != 1 {
+		t.Fatalf("equiv state stats = %d, want 1", len(stats))
+	}
+	stat := stats[0]
+	if stat.State != StateID(42) {
+		t.Fatalf("equiv state = %d, want 42", stat.State)
+	}
+	if stat.MergeHeaderEqTotal != 1 {
+		t.Fatalf("state merge header eq total = %d, want 1", stat.MergeHeaderEqTotal)
+	}
+	if stat.MergeDeepTrue != 1 {
+		t.Fatalf("state merge deep true = %d, want 1", stat.MergeDeepTrue)
+	}
+	if stat.MergeDeepFalse != 1 {
+		t.Fatalf("state merge deep false = %d, want 1", stat.MergeDeepFalse)
+	}
+	if stat.MergeHeaderDeepDivergent != 1 {
+		t.Fatalf("state merge header deep divergent = %d, want 1", stat.MergeHeaderDeepDivergent)
+	}
+}
+
 func TestRuntimeAuditChildPayloadSurvivors(t *testing.T) {
 	child := &Node{symbol: 1}
 	retainedParent := &Node{symbol: 2, children: []*Node{child, child}}

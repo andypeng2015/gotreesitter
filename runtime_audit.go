@@ -713,6 +713,39 @@ func (a *runtimeAudit) recordStackEquivPayloadMismatchSignatures(left, right sta
 	}
 }
 
+func (a *runtimeAudit) recordMergeHeaderEq() {
+	if a == nil || !a.equivEnabled {
+		return
+	}
+	a.mergeHeaderEqTotal++
+	if state := a.currentEquivStateInfo(); state != nil {
+		state.mergeHeaderEqTotal++
+	}
+}
+
+func (a *runtimeAudit) recordMergeDeepResult(headerEq, deepEq bool) {
+	if a == nil || !a.equivEnabled {
+		return
+	}
+	if deepEq {
+		a.mergeDeepTrue++
+		if state := a.currentEquivStateInfo(); state != nil {
+			state.mergeDeepTrue++
+		}
+		return
+	}
+	a.mergeDeepFalse++
+	if state := a.currentEquivStateInfo(); state != nil {
+		state.mergeDeepFalse++
+	}
+	if headerEq {
+		a.mergeHeaderDeepDivergent++
+		if state := a.currentEquivStateInfo(); state != nil {
+			state.mergeHeaderDeepDivergent++
+		}
+	}
+}
+
 func (a *runtimeAudit) recordStackEquivEntryCompare() {
 	if a == nil || !a.equivEnabled {
 		return
@@ -1138,6 +1171,10 @@ func (a *runtimeAudit) equivStateStats() []ParseEquivStateRuntime {
 			StackEquivPairRepeatFalse:             info.stackEquivPairRepeatFalse,
 			StackEquivPairRepeatMismatch:          info.stackEquivPairRepeatMismatch,
 			StackEquivPairStores:                  info.stackEquivPairStores,
+			MergeHeaderEqTotal:                    info.mergeHeaderEqTotal,
+			MergeDeepTrue:                         info.mergeDeepTrue,
+			MergeDeepFalse:                        info.mergeDeepFalse,
+			MergeHeaderDeepDivergent:              info.mergeHeaderDeepDivergent,
 			EquivCacheLookups:                     info.equivCacheLookups,
 			EquivCacheHits:                        info.equivCacheHits,
 			EquivCacheStores:                      info.equivCacheStores,
