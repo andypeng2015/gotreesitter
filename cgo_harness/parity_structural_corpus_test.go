@@ -3,7 +3,6 @@
 package cgoharness
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -36,20 +35,10 @@ func TestParityStructuralCorpus(t *testing.T) {
 		t.Fatal("corpus_structural is empty")
 	}
 
-	type fileSummary struct {
-		filename   string
-		lang       string
-		divergeN   int
-		divergeAll []string
-		errMsg     string
-	}
-
 	// Per-language counters.
 	langPass := make(map[string]int)
 	langFail := make(map[string]int)
 	langDivTotal := make(map[string]int)
-
-	var results []fileSummary
 
 	for _, de := range entries {
 		if de.IsDir() {
@@ -66,7 +55,6 @@ func TestParityStructuralCorpus(t *testing.T) {
 		src, err := os.ReadFile(filePath)
 		if err != nil {
 			t.Errorf("read %s: %v", de.Name(), err)
-			results = append(results, fileSummary{filename: de.Name(), lang: langName, errMsg: err.Error()})
 			langFail[langName]++
 			continue
 		}
@@ -76,9 +64,12 @@ func TestParityStructuralCorpus(t *testing.T) {
 			tc := parityCase{name: langName, source: string(src)}
 			goTree, goLang, err := parseWithGo(tc, src, nil)
 			if err != nil {
-				msg := fmt.Sprintf("Go parse error: %v", err)
-				t.Error(msg)
-				results = append(results, fileSummary{filename: de.Name(), lang: langName, errMsg: msg})
+				t.Errorf("Go parse error: %v", err)
+				langFail[langName]++
+				return
+			}
+			if goTree == nil || goTree.RootNode() == nil {
+				t.Error("Go parser returned nil tree")
 				langFail[langName]++
 				return
 			}
@@ -90,9 +81,7 @@ func TestParityStructuralCorpus(t *testing.T) {
 				if skipReason := parityReferenceSkipReason(err); skipReason != "" {
 					t.Skipf("C parser unavailable: %s", skipReason)
 				}
-				msg := fmt.Sprintf("C parser load error: %v", err)
-				t.Error(msg)
-				results = append(results, fileSummary{filename: de.Name(), lang: langName, errMsg: msg})
+				t.Errorf("C parser load error: %v", err)
 				langFail[langName]++
 				return
 			}
@@ -102,17 +91,13 @@ func TestParityStructuralCorpus(t *testing.T) {
 				if skipReason := parityReferenceSkipReason(err); skipReason != "" {
 					t.Skipf("C SetLanguage: %s", skipReason)
 				}
-				msg := fmt.Sprintf("C SetLanguage error: %v", err)
-				t.Error(msg)
-				results = append(results, fileSummary{filename: de.Name(), lang: langName, errMsg: msg})
+				t.Errorf("C SetLanguage error: %v", err)
 				langFail[langName]++
 				return
 			}
 			cTree := cParser.Parse(src, nil)
 			if cTree == nil || cTree.RootNode() == nil {
-				msg := "C parser returned nil tree"
-				t.Error(msg)
-				results = append(results, fileSummary{filename: de.Name(), lang: langName, errMsg: msg})
+				t.Error("C parser returned nil tree")
 				langFail[langName]++
 				return
 			}
@@ -124,7 +109,6 @@ func TestParityStructuralCorpus(t *testing.T) {
 
 			if len(errs) == 0 {
 				t.Logf("PARITY OK: %s (%s, %d bytes)", de.Name(), langName, len(src))
-				results = append(results, fileSummary{filename: de.Name(), lang: langName, divergeN: 0})
 				langPass[langName]++
 				return
 			}
@@ -144,12 +128,6 @@ func TestParityStructuralCorpus(t *testing.T) {
 			t.Logf("--- C tree (%s) ---", de.Name())
 			logTruncated(t, cTreeDump, 100)
 
-			results = append(results, fileSummary{
-				filename:   de.Name(),
-				lang:       langName,
-				divergeN:   len(errs),
-				divergeAll: errs,
-			})
 			langFail[langName]++
 			langDivTotal[langName] += len(errs)
 

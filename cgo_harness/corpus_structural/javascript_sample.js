@@ -17,7 +17,7 @@ const parseOptions = ({ language, timeout = 30, ...rest }) => ({
 // Class with inheritance, getters/setters, private fields
 class BaseParser {
   #language;
-  #cache = new Map();
+  _cache = new Map();
 
   constructor(language, options = {}) {
     this.#language = language;
@@ -43,14 +43,14 @@ class AdvancedParser extends BaseParser {
 
   async parse(source) {
     const cacheKey = Buffer.from(source).toString("base64").slice(0, 32);
-    if (this.#cache?.has(cacheKey)) {
-      return this.#cache.get(cacheKey);
+    if (this._cache?.has(cacheKey)) {
+      return this._cache.get(cacheKey);
     }
 
     for (let attempt = 0; attempt < this.#maxRetries; attempt++) {
       try {
         const tree = await this.#doParse(source);
-        this.#cache?.set(cacheKey, tree);
+        this._cache?.set(cacheKey, tree);
         return tree;
       } catch (err) {
         if (attempt === this.#maxRetries - 1) throw err;
