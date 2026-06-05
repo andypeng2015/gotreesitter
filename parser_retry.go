@@ -504,6 +504,15 @@ func effectiveParseMergePerKeyCap(lang *Language, mergePerKeyCap int, incrementa
 		if !parseMaxMergePerKeyEnvConfigured() && mergePerKeyCap > 1 {
 			return 1
 		}
+	case "ocaml":
+		// OCaml real-corpus full parses can retain over a million same-key
+		// survivors around expression/operator ambiguity. One survivor preserves
+		// strict C parity on the current corpus and removes the merge-equivalence
+		// cliff; incremental reparses and explicit env overrides keep the wider
+		// default.
+		if !parseMaxMergePerKeyEnvConfigured() && mergePerKeyCap > 1 {
+			return 1
+		}
 	case "javascript":
 		// Plain JS can develop many near-equivalent GLR survivors on large
 		// runtime bundles. Keeping more than four alternatives per merge key
