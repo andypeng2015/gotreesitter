@@ -13,6 +13,7 @@ BUILD_IMAGE=1
 STRICT_SCALA=0
 RUN_REGEX=""
 OUT_ROOT=""
+ALLOW_HOST_OVERSUBSCRIBE=0
 declare -a EXPERIMENTS=()
 declare -a CUSTOM_CMD=()
 
@@ -47,6 +48,9 @@ Options:
   --run <regex>                     go test -run regex (default command only)
   --strict-scala                    Include strict scala probe (default command only)
   --out-root <path>                 Shared artifact root for experiment runs
+  --allow-host-oversubscribe        Allow max-parallel * memory to exceed the
+                                    host memory guard. Intended only for
+                                    dedicated CI hosts.
   --no-build                        Skip docker build step
   -h, --help                        Show help
 EOF
@@ -90,6 +94,10 @@ while [[ $# -gt 0 ]]; do
       OUT_ROOT="$2"
       shift 2
       ;;
+    --allow-host-oversubscribe)
+      ALLOW_HOST_OVERSUBSCRIBE=1
+      shift
+      ;;
     --no-build)
       BUILD_IMAGE=0
       shift
@@ -121,6 +129,59 @@ if ! [[ "$MAX_PARALLEL" =~ ^[1-9][0-9]*$ ]]; then
   echo "invalid --max-parallel: $MAX_PARALLEL" >&2
   exit 2
 fi
+
+docker_memory_limit_to_bytes() {
+  local value="$1"
+  local number unit
+  value="${value//[[:space:]]/}"
+  if [[ "$value" =~ ^([0-9]+)([bBkKmMgG]?)$ ]]; then
+    number="${BASH_REMATCH[1]}"
+    unit="${BASH_REMATCH[2],,}"
+  else
+    return 1
+  fi
+  case "$unit" in
+    ""|b) printf '%s\n' "$number" ;;
+    k) printf '%s\n' "$((number * 1024))" ;;
+    m) printf '%s\n' "$((number * 1024 * 1024))" ;;
+    g) printf '%s\n' "$((number * 1024 * 1024 * 1024))" ;;
+    *) return 1 ;;
+  esac
+}
+
+host_mem_available_bytes() {
+  awk '/^MemAvailable:/ { printf "%.0f\n", $2 * 1024 }' /proc/meminfo 2>/dev/null
+}
+
+guard_parallel_memory_budget() {
+  local effective_parallel="$MAX_PARALLEL"
+  if [[ "$effective_parallel" -gt "${#EXPERIMENTS[@]}" ]]; then
+    effective_parallel="${#EXPERIMENTS[@]}"
+  fi
+  if [[ "$effective_parallel" -le 1 || "$ALLOW_HOST_OVERSUBSCRIBE" == "1" ]]; then
+    return 0
+  fi
+  local limit_bytes available_bytes aggregate_bytes guard_bytes
+  limit_bytes="$(docker_memory_limit_to_bytes "$MEMORY_LIMIT" || true)"
+  available_bytes="$(host_mem_available_bytes || true)"
+  if [[ -z "$limit_bytes" || -z "$available_bytes" ]]; then
+    echo "warning: could not parse memory guard inputs; proceeding with --max-parallel=$MAX_PARALLEL memory=$MEMORY_LIMIT" >&2
+    return 0
+  fi
+  aggregate_bytes="$((limit_bytes * effective_parallel))"
+  guard_bytes="$((available_bytes * 80 / 100))"
+  if [[ "$aggregate_bytes" -gt "$guard_bytes" ]]; then
+    {
+      echo "refusing --max-parallel=$MAX_PARALLEL with --memory=$MEMORY_LIMIT: aggregate container memory exceeds 80% of host MemAvailable"
+      echo "effective_parallel=$effective_parallel"
+      echo "aggregate_bytes=$aggregate_bytes memavailable_bytes=$available_bytes guard_bytes=$guard_bytes"
+      echo "lower --max-parallel/--memory or pass --allow-host-oversubscribe on a dedicated host"
+    } >&2
+    exit 2
+  fi
+}
+
+guard_parallel_memory_budget
 
 if [[ "$BUILD_IMAGE" == "1" ]]; then
   docker build -t "$IMAGE_TAG" "$SCRIPT_DIR"
