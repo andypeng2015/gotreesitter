@@ -15,25 +15,47 @@ func normalizeRustCompatibility(root *Node, source []byte, p *Parser, lang *Lang
 		return
 	}
 	flags := rustCompatibilitySourceFlagsFor(source)
-	normalizeRustSourceFileRoot(root, source, lang)
-	normalizeRustRecoveredPatternStatementsRoot(root, source, p)
-	if flags.recoveredFunctionItems {
+	run := func(name string, enabled bool, fn func()) {
+		if p == nil {
+			if enabled {
+				fn()
+			}
+			return
+		}
+		p.runNamedNormalizationPass(name, func() bool {
+			return enabled
+		}, func() normalizationPassCounters {
+			fn()
+			return normalizationPassCounters{}
+		})
+	}
+	run("rust_source_file_root_pre", true, func() {
+		normalizeRustSourceFileRoot(root, source, lang)
+	})
+	run("rust_recovered_pattern_statements_root", true, func() {
+		normalizeRustRecoveredPatternStatementsRoot(root, source, p)
+	})
+	run("rust_recovered_function_items", flags.recoveredFunctionItems, func() {
 		normalizeRustRecoveredFunctionItems(root, source, lang)
-	}
-	normalizeRustRecoveredStructExpressionRoot(root, source, lang)
-	if flags.dotRangeExpressions {
+	})
+	run("rust_recovered_struct_expression_root", true, func() {
+		normalizeRustRecoveredStructExpressionRoot(root, source, lang)
+	})
+	run("rust_dot_range_expressions", flags.dotRangeExpressions, func() {
 		normalizeRustDotRangeExpressions(root, source, lang)
-	}
-	if flags.tokenBindingPatterns || root.HasError() {
+	})
+	run("rust_token_binding_patterns", flags.tokenBindingPatterns || root.HasError(), func() {
 		normalizeRustTokenBindingPatternsAndRecoveredTokenTrees(root, source, lang)
-	}
-	normalizeRustSourceFileRoot(root, source, lang)
-	if flags.docCommentRanges {
+	})
+	run("rust_source_file_root_post", true, func() {
+		normalizeRustSourceFileRoot(root, source, lang)
+	})
+	run("rust_doc_comment_ranges", flags.docCommentRanges, func() {
 		normalizeRustDocCommentRanges(root, source, lang)
-	}
-	if flags.collapsedNamedLeafChildren {
+	})
+	run("rust_collapsed_named_leaf_children", flags.collapsedNamedLeafChildren, func() {
 		normalizeRustCollapsedNamedLeafChildren(root, source, lang)
-	}
+	})
 }
 
 func rustCompatibilitySourceFlagsFor(source []byte) rustCompatibilitySourceFlags {
@@ -334,6 +356,17 @@ func normalizeRustRecoveredPatternStatementsRoot(root *Node, source []byte, p *P
 	if root == nil || p == nil || p.language == nil || p.language.Name != "rust" || p.skipRecoveryReparse || root.Type(p.language) != "ERROR" || len(source) == 0 {
 		return
 	}
+	if rustRecoverSplitTopLevelImplItems(root, source, p) && rustRootLooksLikeTopLevel(root, p.language) {
+		sourceFileSym, ok := symbolByName(p.language, "source_file")
+		if !ok {
+			return
+		}
+		retagResultRootAndRefreshError(root, sourceFileSym, rustNamedForSymbol(p.language, sourceFileSym))
+		if !root.hasError() && root.endByte < uint32(len(source)) && bytesAreTrivia(source[root.endByte:]) {
+			extendNodeEndTo(root, uint32(len(source)), source)
+		}
+		return
+	}
 	recovered, ok := rustRecoverTopLevelChunks(source, p, root.ownerArena)
 	if !ok || len(recovered) == 0 {
 		return
@@ -348,6 +381,43 @@ func normalizeRustRecoveredPatternStatementsRoot(root *Node, source []byte, p *P
 	if root.endByte < uint32(len(source)) && bytesAreTrivia(source[root.endByte:]) {
 		extendNodeEndTo(root, uint32(len(source)), source)
 	}
+}
+
+func rustRecoverSplitTopLevelImplItems(root *Node, source []byte, p *Parser) bool {
+	if root == nil || p == nil || p.language == nil || len(source) == 0 || len(root.children) == 0 {
+		return false
+	}
+	changed := false
+	for i := 0; i < len(root.children); i++ {
+		child := root.children[i]
+		if child == nil || child.symbol != errorSymbol || child.startByte >= child.endByte || int(child.endByte) > len(source) {
+			continue
+		}
+		start, keywordEnd := rustTrimSpaceBounds(source, child.startByte, child.endByte)
+		if !rustKeywordAt(source, start, keywordEnd, "impl") {
+			continue
+		}
+		openBrace, ok := rustFindTopLevelByte(source, start, root.endByte, '{')
+		if !ok {
+			continue
+		}
+		closeBrace := rustFindMatchingDelimiter(source, int(openBrace), '{', '}')
+		if closeBrace < 0 {
+			continue
+		}
+		recoveryEnd := uint32(closeBrace + 1)
+		recovered, ok := rustRecoverImplItemFromRange(source, start, recoveryEnd, p, root.ownerArena)
+		if !ok || recovered == nil {
+			continue
+		}
+		endIndex := i + 1
+		for endIndex < len(root.children) && root.children[endIndex] != nil && root.children[endIndex].startByte < recoveryEnd {
+			endIndex++
+		}
+		replaceChildRangeWithSingleNode(root, i, endIndex, recovered)
+		changed = true
+	}
+	return changed
 }
 
 func normalizeRustRecoveredFunctionItems(root *Node, source []byte, lang *Language) {
