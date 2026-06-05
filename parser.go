@@ -2675,6 +2675,10 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 						if next, ok := dartRepetitionShiftConflictChoice(p.language, currentState, actions); ok {
 							chosen, choice = next, true
 						}
+					case "hcl":
+						if next, ok := hclRepetitionShiftConflictChoice(p.language, currentState, actions); ok {
+							chosen, choice = next, true
+						}
 					case "make":
 						if next, ok := makeRepetitionShiftConflictChoice(p.language, currentState, actions); ok {
 							chosen, choice = next, true
@@ -3934,6 +3938,25 @@ func dartRepetitionShiftConflictChoice(lang *Language, state StateID, actions []
 		}
 	case 479:
 		if !allReducesHaveSymbol(lang, actions, "program_repeat4") {
+			return ParseAction{}, false
+		}
+	default:
+		return ParseAction{}, false
+	}
+	return repetitionShiftConflictChoice(actions)
+}
+
+// hclRepetitionShiftConflictChoice collapses HCL template-literal continuation
+// forks where the reduce side closes template_literal_repeat1 and the shift
+// side consumes the next template chunk. Body-repeat conflicts stay GLR because
+// they choose between complete attributes/blocks and the next body item.
+func hclRepetitionShiftConflictChoice(lang *Language, state StateID, actions []ParseAction) (ParseAction, bool) {
+	if lang == nil {
+		return ParseAction{}, false
+	}
+	switch state {
+	case 426, 541:
+		if !allReducesHaveSymbol(lang, actions, "template_literal_repeat1") {
 			return ParseAction{}, false
 		}
 	default:

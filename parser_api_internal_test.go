@@ -313,6 +313,34 @@ func TestDartRepetitionShiftConflictChoiceRejectsOtherRepeat(t *testing.T) {
 	}
 }
 
+func TestHCLRepetitionShiftConflictChoiceAllowsTemplateLiteralRepeats(t *testing.T) {
+	lang := &Language{SymbolNames: []string{"end", "_template_literal_chunk", "template_literal_repeat1"}}
+	for _, state := range []StateID{426, 541} {
+		actions := []ParseAction{
+			{Type: ParseActionReduce, Symbol: 2, ChildCount: 2},
+			{Type: ParseActionShift, State: state, Repetition: true},
+		}
+		chosen, ok := hclRepetitionShiftConflictChoice(lang, state, actions)
+		if !ok {
+			t.Fatalf("hclRepetitionShiftConflictChoice(state %d) = false, want true", state)
+		}
+		if chosen.Type != ParseActionShift || chosen.State != state || !chosen.Repetition {
+			t.Fatalf("hclRepetitionShiftConflictChoice(state %d) picked %+v, want repetition shift", state, chosen)
+		}
+	}
+}
+
+func TestHCLRepetitionShiftConflictChoiceRejectsBodyRepeat(t *testing.T) {
+	lang := &Language{SymbolNames: []string{"end", "identifier", "body_repeat1"}}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 2, ChildCount: 2},
+		{Type: ParseActionShift, State: 406, Repetition: true},
+	}
+	if _, ok := hclRepetitionShiftConflictChoice(lang, 408, actions); ok {
+		t.Fatal("hclRepetitionShiftConflictChoice = true, want false for body repeat")
+	}
+}
+
 func TestSwiftBraceTypeExpressionConflictChoiceAllowsHotRR(t *testing.T) {
 	lang := &Language{SymbolNames: []string{"end", "{", "_simple_user_type", "_expression"}}
 	actions := []ParseAction{
