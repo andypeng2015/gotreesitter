@@ -46,6 +46,7 @@ func (DartExternalScanner) Create() any                           { return nil }
 func (DartExternalScanner) Destroy(payload any)                   {}
 func (DartExternalScanner) Serialize(payload any, buf []byte) int { return 0 }
 func (DartExternalScanner) Deserialize(payload any, buf []byte)   {}
+func (DartExternalScanner) SupportsIncrementalReuse() bool        { return true }
 
 func (DartExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
 	// Template/string content takes priority.

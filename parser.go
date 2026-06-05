@@ -1376,17 +1376,34 @@ func (p *Parser) parseIncrementalInternal(source []byte, oldTree *Tree, ts Token
 	return tree
 }
 
+const dartIncrementalReuseMaxSourceBytes = 64 * 1024
+
 func tokenSourceSupportsIncrementalReuse(ts TokenSource) bool {
 	if ts == nil {
 		return false
 	}
 	if dts, ok := ts.(*dfaTokenSource); ok {
-		return languageSupportsIncrementalReuse(dts.language)
+		return dfaTokenSourceSupportsIncrementalReuse(dts)
 	}
 	if reusable, ok := ts.(IncrementalReuseTokenSource); ok {
 		return reusable.SupportsIncrementalReuse()
 	}
 	return false
+}
+
+func dfaTokenSourceSupportsIncrementalReuse(dts *dfaTokenSource) bool {
+	if dts == nil || !languageSupportsIncrementalReuse(dts.language) {
+		return false
+	}
+	return !dfaTokenSourceIncrementalReuseBlockedBySource(dts)
+}
+
+func dfaTokenSourceIncrementalReuseBlockedBySource(dts *dfaTokenSource) bool {
+	return dts != nil &&
+		dts.language != nil &&
+		dts.language.Name == "dart" &&
+		dts.lexer != nil &&
+		len(dts.lexer.source) > dartIncrementalReuseMaxSourceBytes
 }
 
 func languageSupportsIncrementalReuse(lang *Language) bool {
@@ -1409,6 +1426,9 @@ func incrementalReuseUnavailableReason(ts TokenSource) string {
 	if dts, ok := ts.(*dfaTokenSource); ok {
 		if dts.language == nil {
 			return "dfa_token_source_no_language"
+		}
+		if dfaTokenSourceIncrementalReuseBlockedBySource(dts) {
+			return "dart_large_external_scanner_unsupported"
 		}
 		if languageSupportsIncrementalReuse(dts.language) {
 			return ""

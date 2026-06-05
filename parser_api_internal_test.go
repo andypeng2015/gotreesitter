@@ -1482,6 +1482,28 @@ func TestIncrementalReuseUnavailableReason(t *testing.T) {
 	if got := incrementalReuseUnavailableReason(safeTS); got != "" {
 		t.Fatalf("incrementalReuseUnavailableReason(safe external scanner) = %q, want empty", got)
 	}
+
+	dartSmallTS := &dfaTokenSource{
+		language: &Language{Name: "dart", ExternalScanner: parserTestSafeExternalScanner{}},
+		lexer:    &Lexer{source: make([]byte, dartIncrementalReuseMaxSourceBytes)},
+	}
+	if !tokenSourceSupportsIncrementalReuse(dartSmallTS) {
+		t.Fatal("tokenSourceSupportsIncrementalReuse(small dart safe scanner) = false, want true")
+	}
+	if got := incrementalReuseUnavailableReason(dartSmallTS); got != "" {
+		t.Fatalf("incrementalReuseUnavailableReason(small dart safe scanner) = %q, want empty", got)
+	}
+
+	dartLargeTS := &dfaTokenSource{
+		language: &Language{Name: "dart", ExternalScanner: parserTestSafeExternalScanner{}},
+		lexer:    &Lexer{source: make([]byte, dartIncrementalReuseMaxSourceBytes+1)},
+	}
+	if tokenSourceSupportsIncrementalReuse(dartLargeTS) {
+		t.Fatal("tokenSourceSupportsIncrementalReuse(large dart safe scanner) = true, want false")
+	}
+	if got := incrementalReuseUnavailableReason(dartLargeTS); got != "dart_large_external_scanner_unsupported" {
+		t.Fatalf("incrementalReuseUnavailableReason(large dart safe scanner) = %q, want %q", got, "dart_large_external_scanner_unsupported")
+	}
 }
 
 func TestParseFullArenaNodeCapacityCapsStaleLargeHintBySourceSize(t *testing.T) {
