@@ -231,6 +231,34 @@ func TestHCLTextInvariantNodeEditRejectsNonDigitsAndOtherLeaves(t *testing.T) {
 	}
 }
 
+func TestDisabledForestCMakeTextInvariantLeafAllowed(t *testing.T) {
+	lang := &Language{Name: "cmake", SymbolNames: []string{"unquoted_argument"}}
+	oldSource := []byte("target_1")
+	source := []byte("target_2")
+	leaf := &Node{symbol: 0, startByte: 0, endByte: uint32(len(oldSource))}
+	edit := InputEdit{StartByte: 7, OldEndByte: 8, NewEndByte: 8}
+	oldTree := &Tree{
+		root:                     leaf,
+		source:                   oldSource,
+		language:                 lang,
+		edits:                    []InputEdit{edit},
+		lastEditedLeaf:           leaf,
+		forestFastPath:           true,
+		incrementalReuseDisabled: true,
+	}
+	parser := &Parser{language: lang}
+	if !parser.disabledOldTreeTokenInvariantLeafAllowed(source, oldTree) {
+		t.Fatal("disabled forest CMake leaf edit was not admitted")
+	}
+
+	source = []byte("target-1")
+	edit = InputEdit{StartByte: 6, OldEndByte: 7, NewEndByte: 7}
+	oldTree.edits = []InputEdit{edit}
+	if parser.disabledOldTreeTokenInvariantLeafAllowed(source, oldTree) {
+		t.Fatal("disabled forest CMake leaf edit admitted delimiter change")
+	}
+}
+
 func TestSnapshotTokenSourceStateRestoresDFATokenSource(t *testing.T) {
 	original := &dfaTokenSource{
 		state:                      42,
