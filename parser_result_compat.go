@@ -96,6 +96,7 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) {
 		normalizePHPCompatibility(ctx.root, ctx.source, ctx.parser, ctx.lang)
 	case "powershell":
 		normalizePowerShellProgramShape(ctx.root, ctx.source, ctx.lang)
+		normalizePowerShellErrorProgramRoot(ctx.root, ctx.lang)
 		normalizePowerShellAssignmentOperatorTokens(ctx.root, ctx.source, ctx.lang)
 	case "pug":
 		normalizeTopLevelTrailingLineBreakSpan(ctx.root, ctx.source, ctx.lang)

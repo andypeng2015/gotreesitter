@@ -503,7 +503,11 @@ func filterRealCorpusBenchmarkFreshParity(b *testing.B, cases []realCorpusBenchm
 	out := make([]realCorpusBenchmarkCase, 0, len(cases))
 	var skipped []string
 	for _, tc := range cases {
-		errs, first := realCorpusBenchmarkFreshParityErrors(b, tc)
+		errs, first, ok, reason := tryRealCorpusBenchmarkFreshParityErrors(b, tc)
+		if !ok {
+			skipped = append(skipped, fmt.Sprintf("%s(%s)", filepath.Base(tc.path), reason))
+			continue
+		}
 		if len(errs) == 0 {
 			out = append(out, tc)
 			continue
@@ -517,6 +521,29 @@ func filterRealCorpusBenchmarkFreshParity(b *testing.B, cases []realCorpusBenchm
 		b.Logf("GTS_REAL_CORPUS_BENCH_SKIP_MISMATCH skipped %d/%d file(s): %s", len(skipped), len(cases), strings.Join(skipped, ", "))
 	}
 	return out
+}
+
+func tryRealCorpusBenchmarkFreshParityErrors(b *testing.B, tc realCorpusBenchmarkCase) ([]string, *DumpV1Divergence, bool, string) {
+	b.Helper()
+	goParser := gotreesitter.NewParser(tc.goLang)
+	goTree, ok := tryParseCompleteRealCorpusGoFull(b, tc, goParser)
+	if !ok {
+		return nil, nil, false, "gotreesitter incomplete fresh parse"
+	}
+	defer releaseGoTree(goTree)
+
+	cParser := newRealCorpusCParser(b, tc)
+	defer cParser.Close()
+	cTree, ok := tryParseCompleteRealCorpusCFull(cParser, tc.source)
+	if !ok {
+		return nil, nil, false, "C incomplete fresh parse"
+	}
+	defer cTree.Close()
+
+	var errs []string
+	compareNodes(goTree.RootNode(), tc.goLang, cTree.RootNode(), "root", &errs)
+	first := FirstDivergenceDumpV1(goTree.RootNode(), tc.goLang, cTree.RootNode())
+	return errs, first, true, ""
 }
 
 func realCorpusBenchmarkFreshParityErrors(b *testing.B, tc realCorpusBenchmarkCase) ([]string, *DumpV1Divergence) {
