@@ -341,6 +341,67 @@ func TestNormalizeTypeScriptSyntaxPassRestoresExistentialTypeStarChild(t *testin
 	}
 }
 
+func TestNormalizeTypeScriptCompatibilityCandidatesApplyIndexedDirectRewrites(t *testing.T) {
+	lang := &Language{
+		Name: "typescript",
+		SymbolNames: []string{
+			"EOF", "program", "call_expression", "type_arguments", "arguments", "predefined_type",
+			"binary_expression", ">", "parenthesized_expression", "<", "identifier", "member_expression",
+			"sequence_expression", "enum_body", "enum_assignment", "import",
+		},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF", Visible: false, Named: false},
+			{Name: "program", Visible: true, Named: true},
+			{Name: "call_expression", Visible: true, Named: true},
+			{Name: "type_arguments", Visible: true, Named: true},
+			{Name: "arguments", Visible: true, Named: true},
+			{Name: "predefined_type", Visible: true, Named: true},
+			{Name: "binary_expression", Visible: true, Named: true},
+			{Name: ">", Visible: true, Named: false},
+			{Name: "parenthesized_expression", Visible: true, Named: true},
+			{Name: "<", Visible: true, Named: false},
+			{Name: "identifier", Visible: true, Named: true},
+			{Name: "member_expression", Visible: true, Named: true},
+			{Name: "sequence_expression", Visible: true, Named: true},
+			{Name: "enum_body", Visible: true, Named: true},
+			{Name: "enum_assignment", Visible: true, Named: true},
+			{Name: "import", Visible: true, Named: false},
+		},
+	}
+
+	arena := newNodeArena(arenaClassFull)
+	source := []byte("type enum E")
+	keyword := newLeafNodeInArena(arena, 7, false, 0, 4, Point{}, Point{Column: 4})
+	identifier := newParentNodeInArena(arena, 10, true, []*Node{keyword}, nil, 0)
+	identifier.startByte = 0
+	identifier.endByte = 4
+	identifier.endPoint = Point{Column: 4}
+	assignment := newLeafNodeInArena(arena, 14, true, 5, 6, Point{Column: 5}, Point{Column: 6})
+	enumBody := newParentNodeInArena(arena, 13, true, []*Node{assignment}, []FieldID{1}, 0)
+	enumBody.fieldSources = []uint8{fieldSourceDirect}
+	root := newParentNodeInArena(arena, 1, true, []*Node{identifier, enumBody}, nil, 0)
+
+	stats := normalizeJavaScriptTypeScriptStatementKeywordsAndPrecedenceWithDetailedStats(root, source, lang)
+	if !stats.typeScriptCompatibility.built {
+		t.Fatal("typeScriptCompatibility candidate index was not built")
+	}
+	if got := stats.typeScriptCompatibility.len(); got != 2 {
+		t.Fatalf("candidate event count = %d, want 2", got)
+	}
+
+	normalizeTypeScriptCompatibilityCandidates(stats.typeScriptCompatibility, source, lang)
+
+	if got := identifier.ChildCount(); got != 0 {
+		t.Fatalf("identifier child count after candidate compatibility = %d, want 0", got)
+	}
+	if got := enumBody.fieldIDs[0]; got != 0 {
+		t.Fatalf("enum_body fieldIDs[0] = %d, want cleared", got)
+	}
+	if got := enumBody.fieldSources[0]; got != fieldSourceNone {
+		t.Fatalf("enum_body fieldSources[0] = %d, want none", got)
+	}
+}
+
 func TestTypeScriptBinaryOperatorCompatibilityGate(t *testing.T) {
 	ctx := typeScriptNormalizationContext{
 		binaryExpressionSym: 1,

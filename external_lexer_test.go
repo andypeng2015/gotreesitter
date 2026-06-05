@@ -2,6 +2,16 @@ package gotreesitter
 
 import "testing"
 
+func tokenAfterResult(t *testing.T, l *ExternalLexer, sym Symbol) Token {
+	t.Helper()
+	l.SetResultSymbol(sym)
+	tok, ok := l.token()
+	if !ok {
+		t.Fatal("token() returned !ok")
+	}
+	return tok
+}
+
 func TestExternalLexerDefaultEndWithoutMarkEnd(t *testing.T) {
 	l := newExternalLexer([]byte("abc"), 0, 0, 0)
 	l.Advance(false) // consume 'a'
@@ -16,6 +26,40 @@ func TestExternalLexerDefaultEndWithoutMarkEnd(t *testing.T) {
 	}
 	if got, want := tok.EndByte, uint32(1); got != want {
 		t.Fatalf("EndByte=%d want=%d", got, want)
+	}
+}
+
+func TestExternalLexerAdvanceSpacesSkip(t *testing.T) {
+	l := newExternalLexer([]byte("   x"), 0, 2, 4)
+	if got := l.AdvanceSpaces(true); got != 3 {
+		t.Fatalf("AdvanceSpaces consumed %d, want 3", got)
+	}
+	if l.Lookahead() != 'x' {
+		t.Fatalf("Lookahead after AdvanceSpaces = %q, want x", l.Lookahead())
+	}
+	tok := tokenAfterResult(t, l, 7)
+	if tok.StartByte != 3 || tok.EndByte != 3 {
+		t.Fatalf("token range = %d..%d, want 3..3", tok.StartByte, tok.EndByte)
+	}
+	if tok.StartPoint.Row != 2 || tok.StartPoint.Column != 7 {
+		t.Fatalf("token start point = %d:%d, want 2:7", tok.StartPoint.Row, tok.StartPoint.Column)
+	}
+}
+
+func TestExternalLexerAdvanceUntilNewlineSkip(t *testing.T) {
+	l := newExternalLexer([]byte("abcπ\nx"), 0, 1, 2)
+	if got := l.AdvanceUntilNewline(true); got != len("abcπ") {
+		t.Fatalf("AdvanceUntilNewline consumed %d, want %d", got, len("abcπ"))
+	}
+	if l.Lookahead() != '\n' {
+		t.Fatalf("Lookahead after AdvanceUntilNewline = %q, want newline", l.Lookahead())
+	}
+	tok := tokenAfterResult(t, l, 11)
+	if tok.StartByte != uint32(len("abcπ")) || tok.EndByte != uint32(len("abcπ")) {
+		t.Fatalf("token range = %d..%d, want %d..%d", tok.StartByte, tok.EndByte, len("abcπ"), len("abcπ"))
+	}
+	if tok.StartPoint.Row != 1 || tok.StartPoint.Column != uint32(2+len("abcπ")) {
+		t.Fatalf("token start point = %d:%d, want 1:%d", tok.StartPoint.Row, tok.StartPoint.Column, 2+len("abcπ"))
 	}
 }
 

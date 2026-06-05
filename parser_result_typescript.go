@@ -145,6 +145,287 @@ func normalizeTypeScriptCompatibility(root *Node, source []byte, lang *Language)
 	})
 }
 
+type typeScriptCompatibilityCandidateKind uint8
+
+const (
+	typeScriptCompatibilityCandidateIdentifierAlias typeScriptCompatibilityCandidateKind = iota
+	typeScriptCompatibilityCandidateImportKeyword
+	typeScriptCompatibilityCandidateMemberModifier
+	typeScriptCompatibilityCandidateEnumBody
+	typeScriptCompatibilityCandidateChild
+)
+
+type typeScriptCompatibilityCandidate struct {
+	kind  typeScriptCompatibilityCandidateKind
+	node  *Node
+	child javaScriptTypeScriptPrecedenceCandidate
+}
+
+const typeScriptCompatibilityInlineCandidateEvents = 64
+
+type typeScriptCompatibilityCandidates struct {
+	inline   [typeScriptCompatibilityInlineCandidateEvents]typeScriptCompatibilityCandidate
+	overflow []typeScriptCompatibilityCandidate
+	count    int
+	built    bool
+}
+
+func (candidates *typeScriptCompatibilityCandidates) append(candidate typeScriptCompatibilityCandidate) {
+	if candidates == nil {
+		return
+	}
+	if candidates.count < len(candidates.inline) {
+		candidates.inline[candidates.count] = candidate
+	} else {
+		candidates.overflow = append(candidates.overflow, candidate)
+	}
+	candidates.count++
+}
+
+func (candidates *typeScriptCompatibilityCandidates) len() int {
+	if candidates == nil {
+		return 0
+	}
+	return candidates.count
+}
+
+func (candidates *typeScriptCompatibilityCandidates) forEach(fn func(typeScriptCompatibilityCandidate)) {
+	if candidates == nil || fn == nil {
+		return
+	}
+	inlineCount := candidates.count
+	if inlineCount > len(candidates.inline) {
+		inlineCount = len(candidates.inline)
+	}
+	for i := 0; i < inlineCount; i++ {
+		fn(candidates.inline[i])
+	}
+	for _, candidate := range candidates.overflow {
+		fn(candidate)
+	}
+}
+
+func collectTypeScriptCompatibilityNodeCandidate(candidates *typeScriptCompatibilityCandidates, node *Node, ctx *typeScriptNormalizationContext) {
+	if candidates == nil || node == nil || ctx == nil {
+		return
+	}
+	candidates.built = true
+	if ctx.identifierSym != 0 && node.symbol == ctx.identifierSym && typeScriptIdentifierKeywordAliasCandidate(node, ctx) {
+		candidates.append(typeScriptCompatibilityCandidate{
+			kind: typeScriptCompatibilityCandidateIdentifierAlias,
+			node: node,
+		})
+		return
+	}
+	if ctx.hasImportSym && node.symbol == ctx.importSym && typeScriptImportKeywordNamednessWouldChange(node, ctx) {
+		candidates.append(typeScriptCompatibilityCandidate{
+			kind: typeScriptCompatibilityCandidateImportKeyword,
+			node: node,
+		})
+		return
+	}
+	if ctx.accessibilityModSym != 0 &&
+		((ctx.methodDefinitionSym != 0 && node.symbol == ctx.methodDefinitionSym) ||
+			(ctx.methodSignatureSym != 0 && node.symbol == ctx.methodSignatureSym) ||
+			(ctx.abstractMethodSignatureSym != 0 && node.symbol == ctx.abstractMethodSignatureSym) ||
+			(ctx.propertySignatureSym != 0 && node.symbol == ctx.propertySignatureSym) ||
+			(ctx.publicFieldDefinitionSym != 0 && node.symbol == ctx.publicFieldDefinitionSym)) &&
+		typeScriptMemberPrefixStartsWithModifier(ctx.source, node.startByte, node.endByte) {
+		candidates.append(typeScriptCompatibilityCandidate{
+			kind: typeScriptCompatibilityCandidateMemberModifier,
+			node: node,
+		})
+		return
+	}
+	if ctx.canClearEnumBodyFields && node.symbol == ctx.enumBodySym && typeScriptEnumBodyHasUnclearedAssignmentFields(node, ctx) {
+		candidates.append(typeScriptCompatibilityCandidate{
+			kind: typeScriptCompatibilityCandidateEnumBody,
+			node: node,
+		})
+	}
+}
+
+func collectTypeScriptCompatibilityChildCandidate(candidates *typeScriptCompatibilityCandidates, parent *Node, childIndex int, child *Node, ctx *typeScriptNormalizationContext) {
+	if candidates == nil || parent == nil || child == nil || ctx == nil {
+		return
+	}
+	candidates.built = true
+	if !typeScriptCompatibilityChildMightRewrite(child, ctx) {
+		return
+	}
+	candidates.append(typeScriptCompatibilityCandidate{
+		kind: typeScriptCompatibilityCandidateChild,
+		child: javaScriptTypeScriptPrecedenceCandidate{
+			parent:     parent,
+			childIndex: childIndex,
+		},
+	})
+}
+
+func typeScriptCompatibilityIsMemberModifierCandidate(node *Node, ctx *typeScriptNormalizationContext) bool {
+	if node == nil || ctx == nil || ctx.accessibilityModSym == 0 {
+		return false
+	}
+	return (ctx.methodDefinitionSym != 0 && node.symbol == ctx.methodDefinitionSym) ||
+		(ctx.methodSignatureSym != 0 && node.symbol == ctx.methodSignatureSym) ||
+		(ctx.abstractMethodSignatureSym != 0 && node.symbol == ctx.abstractMethodSignatureSym) ||
+		(ctx.propertySignatureSym != 0 && node.symbol == ctx.propertySignatureSym) ||
+		(ctx.publicFieldDefinitionSym != 0 && node.symbol == ctx.publicFieldDefinitionSym)
+}
+
+func typeScriptIdentifierKeywordAliasCandidate(node *Node, ctx *typeScriptNormalizationContext) bool {
+	if node == nil || ctx == nil || ctx.identifierSym == 0 || node.symbol != ctx.identifierSym || len(node.children) != 1 {
+		return false
+	}
+	child := node.children[0]
+	if child == nil || child.IsNamed() || child.IsExtra() {
+		return false
+	}
+	return child.startByte == node.startByte &&
+		child.endByte == node.endByte &&
+		child.startPoint == node.startPoint &&
+		child.endPoint == node.endPoint
+}
+
+func typeScriptImportKeywordNamednessWouldChange(node *Node, ctx *typeScriptNormalizationContext) bool {
+	if node == nil || ctx == nil || !ctx.hasImportSym || node.symbol != ctx.importSym {
+		return false
+	}
+	return node.isNamed() != (typeScriptNextNonspaceByte(ctx.source, node.endByte) == '(')
+}
+
+func typeScriptCompatibilityChildMightRewrite(child *Node, ctx *typeScriptNormalizationContext) bool {
+	if child == nil || ctx == nil {
+		return false
+	}
+	switch child.symbol {
+	case ctx.binaryExpressionSym:
+		return (ctx.canRewriteGenericCalls && typeScriptBinaryOperatorCouldBeGenericCall(child, ctx)) ||
+			(ctx.canRewriteAsExpressions && typeScriptBinaryOperatorCouldBeAsTypeChain(child, ctx))
+	case ctx.callSym:
+		return ctx.canRewriteInstantiatedCalls && typeScriptCallCouldBeInstantiated(child, ctx)
+	case ctx.asExpressionSym:
+		return ctx.canRewriteAsExpressions && typeScriptAsAssignmentOrTernaryCandidate(child, ctx)
+	case ctx.typeAssertionSym:
+		return ctx.canRewriteGenericArrows && typeScriptGenericArrowTypeAssertionCandidate(child, ctx)
+	case ctx.expressionStatementSym:
+		return ctx.canRewriteClassDeclarations && typeScriptClassExpressionStatementCandidate(child, ctx)
+	default:
+		return false
+	}
+}
+
+func typeScriptAsAssignmentOrTernaryCandidate(node *Node, ctx *typeScriptNormalizationContext) bool {
+	if node == nil || ctx == nil || node.symbol != ctx.asExpressionSym || len(node.children) < 2 {
+		return false
+	}
+	value := node.children[0]
+	if value == nil {
+		return false
+	}
+	switch value.symbol {
+	case ctx.assignmentExprSym:
+		return len(value.children) >= 2
+	case ctx.ternaryExprSym:
+		return len(value.children) >= 3
+	default:
+		return false
+	}
+}
+
+func typeScriptGenericArrowTypeAssertionCandidate(node *Node, ctx *typeScriptNormalizationContext) bool {
+	if node == nil || ctx == nil || node.symbol != ctx.typeAssertionSym || len(node.children) < 2 {
+		return false
+	}
+	typeArgs := node.children[0]
+	arrow := node.children[len(node.children)-1]
+	return typeArgs != nil &&
+		arrow != nil &&
+		typeArgs.symbol == ctx.typeArgsSym &&
+		arrow.symbol == ctx.arrowFunctionSym &&
+		typeScriptTypeArgumentsCanConvertToParameters(typeArgs, ctx)
+}
+
+func typeScriptTypeArgumentsCanConvertToParameters(typeArgs *Node, ctx *typeScriptNormalizationContext) bool {
+	if typeArgs == nil || ctx == nil || typeArgs.symbol != ctx.typeArgsSym || len(typeArgs.children) == 0 {
+		return false
+	}
+	convertedNamed := 0
+	for _, child := range typeArgs.children {
+		if child == nil || !child.isNamed() {
+			continue
+		}
+		if child.symbol != ctx.typeIdentifierSym {
+			return false
+		}
+		convertedNamed++
+	}
+	return convertedNamed != 0
+}
+
+func typeScriptClassExpressionStatementCandidate(node *Node, ctx *typeScriptNormalizationContext) bool {
+	if node == nil || ctx == nil || node.symbol != ctx.expressionStatementSym {
+		return false
+	}
+	var classNode *Node
+	for _, child := range node.children {
+		if child == nil || child.isExtra() {
+			continue
+		}
+		if child.symbol == ctx.classSym {
+			if classNode != nil {
+				return false
+			}
+			classNode = child
+			continue
+		}
+		if child.isNamed() {
+			return false
+		}
+	}
+	return classNode != nil && typeScriptClassExpressionHasName(classNode, ctx)
+}
+
+func normalizeTypeScriptCompatibilityCandidates(candidates typeScriptCompatibilityCandidates, source []byte, lang *Language) {
+	if candidates.len() == 0 {
+		return
+	}
+	ctx, ok := newTypeScriptNormalizationContext(source, lang)
+	if !ok {
+		return
+	}
+	candidates.forEach(func(candidate typeScriptCompatibilityCandidate) {
+		switch candidate.kind {
+		case typeScriptCompatibilityCandidateIdentifierAlias:
+			normalizeTypeScriptIdentifierKeywordAliases(candidate.node, &ctx)
+		case typeScriptCompatibilityCandidateImportKeyword:
+			normalizeTypeScriptImportKeywordNamedness(candidate.node, &ctx)
+		case typeScriptCompatibilityCandidateMemberModifier:
+			normalizeTypeScriptRecoveredMemberModifiers(candidate.node, &ctx)
+		case typeScriptCompatibilityCandidateEnumBody:
+			normalizeTypeScriptEnumBodyCompatibility(candidate.node, &ctx)
+		case typeScriptCompatibilityCandidateChild:
+			normalizeTypeScriptCompatibilityChildCandidate(candidate.child, &ctx)
+		}
+	})
+}
+
+func normalizeTypeScriptCompatibilityChildCandidate(candidate javaScriptTypeScriptPrecedenceCandidate, ctx *typeScriptNormalizationContext) {
+	for {
+		child := javaScriptTypeScriptPrecedenceCandidateNode(candidate)
+		if !typeScriptCompatibilityChildCanRewrite(child, ctx) {
+			return
+		}
+		rewritten := rewriteTypeScriptCompatibilityChild(child, ctx)
+		if rewritten == nil {
+			return
+		}
+		if !replaceJavaScriptTypeScriptPrecedenceCandidate(candidate, rewritten) {
+			return
+		}
+	}
+}
+
 type typeScriptCompatibilityStats struct {
 	total                       normalizationPassCounters
 	identifierAliases           normalizationPassCounters
@@ -161,6 +442,110 @@ type typeScriptCompatibilityStats struct {
 	asChildren                  normalizationPassCounters
 	typeAssertionChildren       normalizationPassCounters
 	expressionStatementChildren normalizationPassCounters
+}
+
+func normalizeTypeScriptCompatibilityCandidatesWithStats(candidates typeScriptCompatibilityCandidates, source []byte, lang *Language) typeScriptCompatibilityStats {
+	var stats typeScriptCompatibilityStats
+	if candidates.len() == 0 {
+		return stats
+	}
+	ctx, ok := newTypeScriptNormalizationContext(source, lang)
+	if !ok {
+		return stats
+	}
+	candidates.forEach(func(candidate typeScriptCompatibilityCandidate) {
+		stats.total.nodesVisited++
+		switch candidate.kind {
+		case typeScriptCompatibilityCandidateIdentifierAlias:
+			stats.identifierAliases.nodesVisited++
+			before := len(candidate.node.children)
+			normalizeTypeScriptIdentifierKeywordAliases(candidate.node, &ctx)
+			if len(candidate.node.children) != before {
+				stats.identifierAliases.nodesRewritten++
+				stats.total.nodesRewritten++
+			}
+		case typeScriptCompatibilityCandidateImportKeyword:
+			stats.importKeywords.nodesVisited++
+			before := candidate.node.isNamed()
+			normalizeTypeScriptImportKeywordNamedness(candidate.node, &ctx)
+			if candidate.node.isNamed() != before {
+				stats.importKeywords.nodesRewritten++
+				stats.total.nodesRewritten++
+			}
+		case typeScriptCompatibilityCandidateMemberModifier:
+			stats.memberModifiers.nodesVisited++
+			beforeSymbol := candidate.node.symbol
+			beforeChildren := len(candidate.node.children)
+			normalizeTypeScriptRecoveredMemberModifiers(candidate.node, &ctx)
+			if candidate.node.symbol != beforeSymbol || len(candidate.node.children) != beforeChildren {
+				stats.memberModifiers.nodesRewritten++
+				stats.total.nodesRewritten++
+			}
+		case typeScriptCompatibilityCandidateEnumBody:
+			stats.enumBodies.nodesVisited++
+			beforeCleared := typeScriptEnumBodyClearedFieldCount(candidate.node, &ctx)
+			normalizeTypeScriptEnumBodyCompatibility(candidate.node, &ctx)
+			if typeScriptEnumBodyClearedFieldCount(candidate.node, &ctx) != beforeCleared {
+				stats.enumBodies.nodesRewritten++
+				stats.total.nodesRewritten++
+			}
+		case typeScriptCompatibilityCandidateChild:
+			normalizeTypeScriptCompatibilityChildCandidateWithStats(candidate.child, &ctx, &stats)
+		}
+	})
+	return stats
+}
+
+func normalizeTypeScriptCompatibilityChildCandidateWithStats(candidate javaScriptTypeScriptPrecedenceCandidate, ctx *typeScriptNormalizationContext, stats *typeScriptCompatibilityStats) {
+	for {
+		child := javaScriptTypeScriptPrecedenceCandidateNode(candidate)
+		bucket := typeScriptCompatibilityChildStatsBucket(child, ctx, stats)
+		if bucket == nil {
+			return
+		}
+		binaryGenericCandidate := false
+		binaryAsTypeCandidate := false
+		if child != nil && child.symbol == ctx.binaryExpressionSym {
+			binaryGenericCandidate = ctx.canRewriteGenericCalls && typeScriptBinaryOperatorCouldBeGenericCall(child, ctx)
+			binaryAsTypeCandidate = ctx.canRewriteAsExpressions && typeScriptBinaryOperatorCouldBeAsTypeChain(child, ctx)
+			if binaryGenericCandidate {
+				stats.binaryGenericChildren.nodesVisited++
+			}
+			if binaryAsTypeCandidate {
+				stats.binaryAsTypeChildren.nodesVisited++
+			}
+			if !binaryGenericCandidate && !binaryAsTypeCandidate {
+				stats.binaryFastSkipped.nodesVisited++
+			}
+		}
+		callInstantiatedCandidate := false
+		if child != nil && child.symbol == ctx.callSym && ctx.canRewriteInstantiatedCalls {
+			callInstantiatedCandidate = typeScriptCallCouldBeInstantiated(child, ctx)
+			if callInstantiatedCandidate {
+				stats.callInstantiatedChildren.nodesVisited++
+			} else {
+				stats.callFastSkipped.nodesVisited++
+			}
+		}
+		bucket.nodesVisited++
+		rewritten := rewriteTypeScriptCompatibilityChild(child, ctx)
+		if rewritten == nil {
+			return
+		}
+		if !replaceJavaScriptTypeScriptPrecedenceCandidate(candidate, rewritten) {
+			return
+		}
+		bucket.nodesRewritten++
+		if binaryGenericCandidate {
+			stats.binaryGenericChildren.nodesRewritten++
+		} else if binaryAsTypeCandidate {
+			stats.binaryAsTypeChildren.nodesRewritten++
+		}
+		if callInstantiatedCandidate {
+			stats.callInstantiatedChildren.nodesRewritten++
+		}
+		stats.total.nodesRewritten++
+	}
 }
 
 func normalizeTypeScriptCompatibilityWithStats(root *Node, source []byte, lang *Language) typeScriptCompatibilityStats {
@@ -355,6 +740,23 @@ func typeScriptEnumBodyClearedFieldCount(n *Node, ctx *typeScriptNormalizationCo
 		}
 	}
 	return cleared
+}
+
+func typeScriptEnumBodyHasUnclearedAssignmentFields(n *Node, ctx *typeScriptNormalizationContext) bool {
+	if n == nil || ctx == nil || !ctx.canClearEnumBodyFields || n.symbol != ctx.enumBodySym || len(n.fieldIDs) == 0 {
+		return false
+	}
+	limit := len(n.children)
+	if len(n.fieldIDs) < limit {
+		limit = len(n.fieldIDs)
+	}
+	for i := 0; i < limit; i++ {
+		child := n.children[i]
+		if child != nil && child.symbol == ctx.enumAssignmentSym && n.fieldIDs[i] != 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func rewriteTypeScriptCompatibilityChild(child *Node, ctx *typeScriptNormalizationContext) *Node {
@@ -883,6 +1285,34 @@ func newTypeScriptNormalizationContext(source []byte, lang *Language) (typeScrip
 	}
 
 	return ctx, ctx.canRewriteGenericCalls || ctx.canRewriteInstantiatedCalls || ctx.canRewriteAsExpressions || ctx.canRewriteGenericArrows || ctx.canRewriteClassDeclarations || ctx.canClearEnumBodyFields
+}
+
+func newTypeScriptNormalizationContextForSourceFlags(source []byte, lang *Language, flags typeScriptCompatSourceFlags) (typeScriptNormalizationContext, bool) {
+	ctx, ok := newTypeScriptNormalizationContext(source, lang)
+	if !ok {
+		return ctx, false
+	}
+	if !flags.hasCallAngle {
+		ctx.canRewriteGenericCalls = false
+		ctx.canRewriteInstantiatedCalls = false
+		ctx.canRewriteGenericArrows = false
+	}
+	if !flags.hasAsKeyword {
+		ctx.canRewriteAsExpressions = false
+	}
+	if !flags.hasClassKeyword {
+		ctx.canRewriteClassDeclarations = false
+	}
+	if !flags.hasEnumKeyword {
+		ctx.canClearEnumBodyFields = false
+	}
+	if !flags.hasMemberModifier {
+		ctx.accessibilityModSym = 0
+	}
+	if !flags.hasImportKeyword {
+		ctx.hasImportSym = false
+	}
+	return ctx, true
 }
 
 type typeScriptMemberTokenKind uint8

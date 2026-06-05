@@ -15,33 +15,36 @@ type dfaTokenSource struct {
 	language *Language
 	state    StateID
 
-	lookupActionIndex          func(state StateID, sym Symbol) uint16
-	lexModeStarts              []lexModeStart
-	hasKeywordState            []bool
-	externalValidByState       [][]uint16
-	externalPayload            any
-	externalValid              []bool
-	externalSnapshot           []byte
-	externalRetrySnap          []byte
-	externalTokenStart         []byte
-	externalTokenEnd           []byte
-	externalCompare            []byte
-	externalLexer              ExternalLexer
-	externalRetryLexer         ExternalLexer
-	lastExternalTokenStartByte uint32
-	lastExternalTokenEndByte   uint32
-	lastExternalTokenValid     bool
-	singleState                [1]StateID
-	glrStates                  []StateID // all active GLR stack states
-	hasExternalScanner         bool
-	hasExternalSymbols         bool
-	usesExternalCheckpoints    bool
-	isBash                     bool
-	isBashGenerated            bool
-	isComment                  bool
-	isFortran                  bool
-	hasZeroWidthTokens         bool
-	hasZeroWidthStartAccept    bool
+	lookupActionIndex           func(state StateID, sym Symbol) uint16
+	lexModeStarts               []lexModeStart
+	hasKeywordState             []bool
+	externalValidByState        [][]uint16
+	externalValidMaskByState    []uint64
+	externalPayload             any
+	externalValid               []bool
+	externalSnapshot            []byte
+	externalRetrySnap           []byte
+	externalTokenStart          []byte
+	externalTokenEnd            []byte
+	externalCompare             []byte
+	externalLexer               ExternalLexer
+	externalRetryLexer          ExternalLexer
+	lastExternalTokenStartByte  uint32
+	lastExternalTokenEndByte    uint32
+	lastExternalTokenValid      bool
+	externalTokenEndSameAsStart bool
+	singleState                 [1]StateID
+	glrStates                   []StateID // all active GLR stack states
+	hasExternalScanner          bool
+	hasExternalSymbols          bool
+	usesExternalCheckpoints     bool
+	isBash                      bool
+	isBashGenerated             bool
+	isComment                   bool
+	isFortran                   bool
+	isSwift                     bool
+	hasZeroWidthTokens          bool
+	hasZeroWidthStartAccept     bool
 
 	// maskedScratch is a reusable buffer for runExternalScannerWithRetry,
 	// avoiding a per-call heap allocation when masking already-tried symbols.
@@ -99,7 +102,7 @@ var dfaTokenSourcePool = sync.Pool{
 	},
 }
 
-func initDFATokenSource(ts *dfaTokenSource, lexer *Lexer, language *Language, lookupActionIndex func(state StateID, sym Symbol) uint16, hasKeywordState []bool, externalValidByState [][]uint16) {
+func initDFATokenSource(ts *dfaTokenSource, lexer *Lexer, language *Language, lookupActionIndex func(state StateID, sym Symbol) uint16, hasKeywordState []bool, externalValidByState [][]uint16, externalValidMaskByState []uint64) {
 	ts.lexer = lexer
 	ts.language = language
 	ts.state = 0
@@ -107,6 +110,7 @@ func initDFATokenSource(ts *dfaTokenSource, lexer *Lexer, language *Language, lo
 	ts.lexModeStarts = nil
 	ts.hasKeywordState = hasKeywordState
 	ts.externalValidByState = externalValidByState
+	ts.externalValidMaskByState = externalValidMaskByState
 	if lexer != nil && language != nil {
 		ts.lexer.states = language.LexStates
 		ts.lexer.immediateTokens = language.ImmediateTokens
@@ -122,6 +126,7 @@ func initDFATokenSource(ts *dfaTokenSource, lexer *Lexer, language *Language, lo
 		ts.isBashGenerated = ts.isBash && language.GeneratedByGrammargen
 		ts.isComment = language.Name == "comment"
 		ts.isFortran = language.Name == "fortran"
+		ts.isSwift = language.Name == "swift"
 		ts.hasZeroWidthTokens = languageHasZeroWidthTokens(language)
 		ts.hasZeroWidthStartAccept = languageHasZeroWidthStartAccept(language)
 	}
@@ -130,10 +135,10 @@ func initDFATokenSource(ts *dfaTokenSource, lexer *Lexer, language *Language, lo
 	}
 }
 
-func acquireDFATokenSource(lexer *Lexer, language *Language, lookupActionIndex func(state StateID, sym Symbol) uint16, hasKeywordState []bool, externalValidByState [][]uint16) *dfaTokenSource {
+func acquireDFATokenSource(lexer *Lexer, language *Language, lookupActionIndex func(state StateID, sym Symbol) uint16, hasKeywordState []bool, externalValidByState [][]uint16, externalValidMaskByState []uint64) *dfaTokenSource {
 	ts := dfaTokenSourcePool.Get().(*dfaTokenSource)
 	resetPooledDFATokenSource(ts)
-	initDFATokenSource(ts, lexer, language, lookupActionIndex, hasKeywordState, externalValidByState)
+	initDFATokenSource(ts, lexer, language, lookupActionIndex, hasKeywordState, externalValidByState, externalValidMaskByState)
 	return ts
 }
 
@@ -168,14 +173,14 @@ func resetPooledDFATokenSource(ts *dfaTokenSource) {
 	ts.extZeroTried = savedExtZeroTried
 }
 
-func newDFATokenSourceDirect(lexer *Lexer, language *Language, lookupActionIndex func(state StateID, sym Symbol) uint16, hasKeywordState []bool, externalValidByState [][]uint16) *dfaTokenSource {
+func newDFATokenSourceDirect(lexer *Lexer, language *Language, lookupActionIndex func(state StateID, sym Symbol) uint16, hasKeywordState []bool, externalValidByState [][]uint16, externalValidMaskByState []uint64) *dfaTokenSource {
 	ts := &dfaTokenSource{
 		extZeroPos:             -1,
 		zeroWidthPos:           -1,
 		bashArithmeticCachePos: -1,
 		noPool:                 true,
 	}
-	initDFATokenSource(ts, lexer, language, lookupActionIndex, hasKeywordState, externalValidByState)
+	initDFATokenSource(ts, lexer, language, lookupActionIndex, hasKeywordState, externalValidByState, externalValidMaskByState)
 	return ts
 }
 
@@ -240,6 +245,7 @@ func (d *dfaTokenSource) Reset(source []byte) {
 	d.lastExternalTokenStartByte = 0
 	d.lastExternalTokenEndByte = 0
 	d.lastExternalTokenValid = false
+	d.externalTokenEndSameAsStart = false
 	if d.language == nil || d.language.ExternalScanner == nil {
 		return
 	}
@@ -259,6 +265,7 @@ func (d *dfaTokenSource) Close() {
 	d.lookupActionIndex = nil
 	d.hasKeywordState = nil
 	d.externalValidByState = nil
+	d.externalValidMaskByState = nil
 	d.glrStates = nil
 	d.extZeroPos = -1
 	d.extZeroState = 0
@@ -271,6 +278,7 @@ func (d *dfaTokenSource) Close() {
 	d.lastExternalTokenStartByte = 0
 	d.lastExternalTokenEndByte = 0
 	d.lastExternalTokenValid = false
+	d.externalTokenEndSameAsStart = false
 	if !d.noPool {
 		dfaTokenSourcePool.Put(d)
 	}
@@ -300,6 +308,7 @@ func (d *dfaTokenSource) Next() Token {
 		if d.shouldForceEOFLookahead() {
 			tok := d.syntheticEOFLookaheadToken()
 			d.lastExternalTokenValid = false
+			d.externalTokenEndSameAsStart = false
 			if DebugDFA.Load() {
 				fmt.Printf("  SYN tok %d  %d %d state=%d\n", tok.Symbol, tok.StartByte, tok.EndByte, d.state)
 			}
@@ -446,7 +455,13 @@ func (d *dfaTokenSource) Next() Token {
 			fmt.Printf("  %s tok %d %s %d %d %s state=%d\n", prefix, tok.Symbol, name, tok.StartByte, tok.EndByte, tok.Text, d.state)
 		}
 		if d.usesExternalCheckpoints && tok.Symbol != 0 && !tok.NoLookahead {
-			d.captureExternalScannerStateInto(&d.externalTokenEnd)
+			if tokenFromExternal {
+				d.captureExternalScannerStateInto(&d.externalTokenEnd)
+				d.externalTokenEndSameAsStart = false
+			} else {
+				d.externalTokenEnd = d.externalTokenEnd[:0]
+				d.externalTokenEndSameAsStart = true
+			}
 			d.lastExternalTokenStartByte = tok.StartByte
 			d.lastExternalTokenEndByte = tok.EndByte
 			d.lastExternalTokenValid = true
@@ -455,11 +470,12 @@ func (d *dfaTokenSource) Next() Token {
 			if len(externalStartSnapshot) == 0 {
 				d.externalTokenStart = d.externalTokenStart[:0]
 			}
-			if len(d.externalTokenEnd) == 0 {
+			if tokenFromExternal && len(d.externalTokenEnd) == 0 {
 				d.externalTokenEnd = d.externalTokenEnd[:0]
 			}
 		} else {
 			d.lastExternalTokenValid = false
+			d.externalTokenEndSameAsStart = false
 		}
 		return tok
 	}
@@ -471,6 +487,20 @@ func (d *dfaTokenSource) SetParserState(state StateID) {
 
 func (d *dfaTokenSource) SetGLRStates(states []StateID) {
 	d.glrStates = states
+}
+
+func (d *dfaTokenSource) setExternalScannerCheckpointsEnabled(enabled bool) {
+	if d == nil {
+		return
+	}
+	d.usesExternalCheckpoints = enabled && languageUsesExternalScannerCheckpoints(d.language)
+	if d.usesExternalCheckpoints {
+		return
+	}
+	d.lastExternalTokenValid = false
+	d.externalTokenEndSameAsStart = false
+	d.externalTokenStart = d.externalTokenStart[:0]
+	d.externalTokenEnd = d.externalTokenEnd[:0]
 }
 
 func (d *dfaTokenSource) nextDFAToken() Token {
@@ -705,7 +735,9 @@ func (d *dfaTokenSource) scanDFATokenForState(state StateID, lexState uint32) (T
 		}
 	}
 	tok = d.promoteKeyword(tok)
-	tok = d.demoteSwiftMemberKeyword(tok)
+	if d.isSwift {
+		tok = d.demoteSwiftMemberKeyword(tok)
+	}
 	tok, endPos, endRow, endCol := d.normalizeDFAToken(tok, d.lexer.pos, d.lexer.row, d.lexer.col)
 
 	d.lexer.pos = savedPos
@@ -805,6 +837,14 @@ func (d *dfaTokenSource) isAtWhitespacePosition() bool {
 	if d == nil || d.lexer == nil || d.lexer.pos < 0 || d.lexer.pos >= len(d.lexer.source) {
 		return false
 	}
+	if ch := d.lexer.source[d.lexer.pos]; ch < utf8.RuneSelf {
+		switch ch {
+		case ' ', '\t', '\n', '\r', '\v', '\f':
+			return true
+		default:
+			return false
+		}
+	}
 	r, _ := utf8.DecodeRune(d.lexer.source[d.lexer.pos:])
 	return unicode.IsSpace(r)
 }
@@ -812,6 +852,14 @@ func (d *dfaTokenSource) isAtWhitespacePosition() bool {
 func (d *dfaTokenSource) isAfterWhitespacePosition() bool {
 	if d == nil || d.lexer == nil || d.lexer.pos <= 0 || d.lexer.pos > len(d.lexer.source) {
 		return false
+	}
+	if ch := d.lexer.source[d.lexer.pos-1]; ch < utf8.RuneSelf {
+		switch ch {
+		case ' ', '\t', '\n', '\r', '\v', '\f':
+			return true
+		default:
+			return false
+		}
 	}
 	r, _ := utf8.DecodeLastRune(d.lexer.source[:d.lexer.pos])
 	return unicode.IsSpace(r)
@@ -1698,20 +1746,35 @@ func (d *dfaTokenSource) nextExternalToken() (Token, bool) {
 	}
 
 	if valid == nil {
-		if cap(d.externalValid) < len(d.language.ExternalSymbols) {
-			d.externalValid = make([]bool, len(d.language.ExternalSymbols))
+		externalSymbolCount := len(d.language.ExternalSymbols)
+		if cap(d.externalValid) < externalSymbolCount {
+			d.externalValid = make([]bool, externalSymbolCount)
 		}
-		valid = d.externalValid[:len(d.language.ExternalSymbols)]
-		for i := range valid {
-			valid[i] = false
-		}
+		valid = d.externalValid[:externalSymbolCount]
 
 		// Compute valid external symbols as the union across all active GLR
 		// stacks. Different stacks may be in different parser states with
 		// different valid external tokens. The scanner needs to see the union
 		// so it can produce tokens that any stack might need. Stacks that
 		// can't use the resulting token will be pruned by the action phase.
-		if len(d.language.ExternalLexStates) > 0 {
+		if len(d.language.ExternalLexStates) == 0 && len(d.externalValidMaskByState) > 0 {
+			var mask uint64
+			for _, st := range states {
+				if int(st) >= len(d.externalValidMaskByState) {
+					continue
+				}
+				mask |= d.externalValidMaskByState[int(st)]
+			}
+			if mask != 0 {
+				anyValid = true
+			}
+			for i := range valid {
+				valid[i] = mask&(uint64(1)<<uint(i)) != 0
+			}
+		} else if len(d.language.ExternalLexStates) > 0 {
+			for i := range valid {
+				valid[i] = false
+			}
 			// Use the precise external lex states table (matches C tree-sitter's
 			// ts_external_scanner_states). Each parser state maps to an external
 			// lex state ID via LexModes, and each external lex state ID maps to
@@ -1733,6 +1796,9 @@ func (d *dfaTokenSource) nextExternalToken() (Token, bool) {
 				}
 			}
 		} else if len(d.externalValidByState) > 0 {
+			for i := range valid {
+				valid[i] = false
+			}
 			for _, st := range states {
 				if int(st) >= len(d.externalValidByState) {
 					continue
@@ -1747,6 +1813,9 @@ func (d *dfaTokenSource) nextExternalToken() (Token, bool) {
 				}
 			}
 		} else {
+			for i := range valid {
+				valid[i] = false
+			}
 			// Fallback: probe the parse action table for each external symbol.
 			// This is less precise than ExternalLexStates (may include error
 			// recovery actions) but works for grammars without the table.
@@ -2280,13 +2349,24 @@ func (d *dfaTokenSource) runExternalScannerWithRetry(el *ExternalLexer, valid []
 	if d == nil || d.language == nil || d.language.ExternalScanner == nil || el == nil {
 		return false
 	}
-	snapshot := d.captureExternalScannerStateInto(&d.externalRetrySnap)
-	if RunExternalScanner(d.language, d.externalPayload, el, valid) {
-		return true
-	}
-	if !el.hasResult {
-		d.restoreExternalScannerState(snapshot)
-		return false
+	var snapshot []byte
+	if d.externalScannerPreservesStateOnScanFailure() {
+		if RunExternalScanner(d.language, d.externalPayload, el, valid) {
+			return true
+		}
+		if !el.hasResult {
+			return false
+		}
+		snapshot = d.captureExternalScannerStateInto(&d.externalRetrySnap)
+	} else {
+		snapshot = d.captureExternalScannerStateInto(&d.externalRetrySnap)
+		if RunExternalScanner(d.language, d.externalPayload, el, valid) {
+			return true
+		}
+		if !el.hasResult {
+			d.restoreExternalScannerState(snapshot)
+			return false
+		}
 	}
 	// Reuse maskedScratch to avoid a per-retry heap allocation.
 	if cap(d.maskedScratch) < len(valid) {
@@ -2330,6 +2410,14 @@ func (d *dfaTokenSource) runExternalScannerWithRetry(el *ExternalLexer, valid []
 	}
 }
 
+func (d *dfaTokenSource) externalScannerPreservesStateOnScanFailure() bool {
+	if d == nil || d.language == nil || d.language.ExternalScanner == nil {
+		return false
+	}
+	preserving, ok := d.language.ExternalScanner.(FailurePreservingExternalScanner)
+	return ok && preserving.PreservesStateOnScanFailure()
+}
+
 func (d *dfaTokenSource) captureExternalScannerStateInto(dst *[]byte) []byte {
 	if d == nil || d.language == nil || d.language.ExternalScanner == nil {
 		return nil
@@ -2361,9 +2449,13 @@ func (d *dfaTokenSource) lastExternalScannerCheckpoint() (externalScannerCheckpo
 	if d == nil || !d.lastExternalTokenValid {
 		return externalScannerCheckpoint{}, 0, 0, false
 	}
+	end := d.externalTokenEnd
+	if d.externalTokenEndSameAsStart {
+		end = d.externalTokenStart
+	}
 	return externalScannerCheckpoint{
 		start: d.externalTokenStart,
-		end:   d.externalTokenEnd,
+		end:   end,
 	}, d.lastExternalTokenStartByte, d.lastExternalTokenEndByte, true
 }
 
@@ -2969,22 +3061,102 @@ func (d *dfaTokenSource) lexKeywordSource(source []byte) (Token, bool) {
 	if d == nil || d.language == nil {
 		return Token{}, false
 	}
-	kw := Lexer{
-		states:     d.language.KeywordLexStates,
-		asciiTable: d.language.KeywordLexAsciiTable(),
-		source:     source,
-	}
-	kwTok := kw.Next(0)
-	if kwTok.Symbol == 0 {
+	states := d.language.KeywordLexStates
+	if len(states) == 0 {
 		return Token{}, false
 	}
-	if kwTok.StartByte != 0 {
+
+	curState := int32(0)
+	scanPos := 0
+	tokenStartPos := 0
+	acceptPos := -1
+	acceptStartPos := 0
+	acceptSymbol := Symbol(0)
+	acceptSkip := false
+	acceptPriorityBest := int16(32767)
+	eofHops := 0
+	asciiTable := d.language.KeywordLexAsciiTable()
+
+	for {
+		if curState < 0 || int(curState) >= len(states) {
+			break
+		}
+		st := &states[int(curState)]
+
+		if st.AcceptToken > 0 || st.Skip {
+			newPrio := st.AcceptPriority
+			if acceptPos < 0 || newPrio < acceptPriorityBest || (newPrio == acceptPriorityBest && scanPos > acceptPos) {
+				acceptPos = scanPos
+				acceptStartPos = tokenStartPos
+				acceptSymbol = st.AcceptToken
+				acceptSkip = st.Skip
+				acceptPriorityBest = newPrio
+			}
+		}
+
+		if scanPos >= len(source) {
+			if st.EOF >= 0 && eofHops <= len(states) {
+				curState = int32(st.EOF)
+				eofHops++
+				continue
+			}
+			break
+		}
+		eofHops = 0
+
+		b := source[scanPos]
+		var r rune
+		size := 1
+		if b < 0x80 {
+			r = rune(b)
+		} else {
+			r, size = utf8.DecodeRune(source[scanPos:])
+		}
+
+		nextState := int32(-1)
+		skipTransition := false
+		if b < 0x80 && asciiTable != nil && int(curState) < len(asciiTable) {
+			v := asciiTable[curState][b]
+			if v != lexAsciiNoMatch {
+				nextState = v & ^lexAsciiSkipBit
+				skipTransition = v&lexAsciiSkipBit != 0
+			}
+		} else {
+			for i := range st.Transitions {
+				tr := &st.Transitions[i]
+				if r >= tr.Lo && r <= tr.Hi {
+					nextState = int32(tr.NextState)
+					skipTransition = tr.Skip
+					break
+				}
+			}
+		}
+		skipTransition = skipTransition && nextState >= 0
+		if nextState < 0 && st.Default >= 0 {
+			nextState = int32(st.Default)
+			skipTransition = false
+		}
+		if nextState < 0 {
+			break
+		}
+
+		scanPos += size
+		if skipTransition {
+			tokenStartPos = scanPos
+			acceptPos = -1
+			acceptSymbol = 0
+			acceptSkip = false
+		}
+		curState = nextState
+	}
+
+	if acceptSymbol == 0 || acceptSkip || acceptStartPos != 0 || acceptPos != len(source) {
 		return Token{}, false
 	}
-	if kwTok.EndByte != uint32(len(source)) {
-		return Token{}, false
-	}
-	return kwTok, true
+	return Token{
+		Symbol:  acceptSymbol,
+		EndByte: uint32(acceptPos),
+	}, true
 }
 
 func (d *dfaTokenSource) sqlUppercaseKeywordSource(source []byte) ([]byte, bool) {

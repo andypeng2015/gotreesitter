@@ -56,6 +56,20 @@ func normalizeCollapsedNamedLeafChildrenWithStats(root *Node, lang *Language, pa
 		}
 	}
 	childNamed := symbolIsNamed(lang, childSym)
+	if lang.Name == "rust" {
+		walkResultTreeSidecarFirst(root, func(n *Node) {
+			counters.nodesVisited++
+			childCount := resultChildCount(n)
+			if n.symbol == parentSym && childCount == 0 {
+				child := newLeafNodeInArena(n.ownerArena, childSym, childNamed, n.startByte, n.endByte, n.startPoint, n.endPoint)
+				child.parent = n
+				child.childIndex = 0
+				n.children = cloneNodeSliceInArena(n.ownerArena, []*Node{child})
+				counters.nodesRewritten++
+			}
+		})
+		return counters
+	}
 	walkResultTree(root, func(n *Node) {
 		counters.nodesVisited++
 		childCount := resultChildCount(n)
@@ -96,6 +110,25 @@ func normalizeCollapsedNamedLeafChildrenBySourceWithStats(root *Node, source []b
 		childNamed[childSym] = symbolIsNamed(lang, childSym)
 	}
 	if len(childSyms) == 0 {
+		return counters
+	}
+	if lang.Name == "rust" {
+		walkResultTreeSidecarFirst(root, func(n *Node) {
+			counters.nodesVisited++
+			childCount := resultChildCount(n)
+			if n.symbol != parentSym || childCount != 0 || int(n.startByte) > len(source) || int(n.endByte) > len(source) || n.startByte > n.endByte {
+				return
+			}
+			childSym, ok := childSyms[string(source[n.startByte:n.endByte])]
+			if !ok {
+				return
+			}
+			child := newLeafNodeInArena(n.ownerArena, childSym, childNamed[childSym], n.startByte, n.endByte, n.startPoint, n.endPoint)
+			child.parent = n
+			child.childIndex = 0
+			n.children = cloneNodeSliceInArena(n.ownerArena, []*Node{child})
+			counters.nodesRewritten++
+		})
 		return counters
 	}
 	walkResultTree(root, func(n *Node) {

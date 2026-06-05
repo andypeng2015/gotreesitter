@@ -227,44 +227,6 @@ func gssEntryHashViaAccessors(prev uint64, entry stackEntry) uint64 {
 	}
 	h ^= flags
 	h *= gssHashPrime
-	if n := stackEntryNode(entry); n != nil {
-		h = gssNodeShallowMergeHashViaAccessors(h, n)
-	}
-	return h
-}
-
-func gssNodeShallowMergeHashViaAccessors(h uint64, n *Node) uint64 {
-	if n == nil {
-		h ^= gssNilNodeSentinel
-		h *= gssHashPrime
-		return h
-	}
-	h ^= uint64(len(n.fieldIDs))
-	h *= gssHashPrime
-	for i := range n.fieldIDs {
-		h ^= uint64(n.fieldIDs[i])
-		h *= gssHashPrime
-	}
-	for i := range n.children {
-		child := n.children[i]
-		if child == nil {
-			h ^= gssNilNodeSentinel
-			h *= gssHashPrime
-			continue
-		}
-		h ^= uint64(child.symbol)
-		h *= gssHashPrime
-		h ^= (uint64(child.startByte) << 32) | uint64(child.endByte)
-		h *= gssHashPrime
-		h ^= uint64(child.preGotoState)
-		h *= gssHashPrime
-		h ^= uint64(nodeChildCountNoMaterialize(child))
-		h *= gssHashPrime
-		h ^= uint64(len(child.fieldIDs))
-		h *= gssHashPrime
-		h ^= gssEntryFlagHash(child.flags & nodeStackEquivNoMissingFlagMask)
-		h *= gssHashPrime
-	}
 	return h
 }
 

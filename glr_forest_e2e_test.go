@@ -114,7 +114,7 @@ func mustParseSExpr(t *testing.T, lang *Language, src []byte) string {
 func forestParseSExpr(t *testing.T, lang *Language, src []byte) (string, bool) {
 	arena := acquireNodeArena(arenaClassFull)
 	defer arena.Release()
-	root, ok := NewParser(lang).parseForest(arena, src)
+	root, ok := NewParser(lang).parseForest(arena, src, true)
 	if !ok || root == nil {
 		return "", false
 	}

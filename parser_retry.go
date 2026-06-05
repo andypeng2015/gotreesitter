@@ -15,10 +15,11 @@ const (
 	// that already proved the default merge budget was insufficient.
 	fullParseRetryMaxMergePerKey = 24
 	// Java's default full-parse merge cap stays intentionally narrow for large
-	// generated bodies, but repeatable annotation declarations can need a wider
-	// bounded retry to preserve the declaration branch.
+	// generated bodies, but annotation-heavy declarations can need a wider
+	// bounded accepted-error retry to preserve the expression/declaration branch
+	// that C selects.
 	javaFullParseRetryMaxGLRStacks   = 64
-	javaFullParseRetryMaxMergePerKey = 6
+	javaFullParseRetryMaxMergePerKey = 16
 	javaTightMergeCapSourceLen       = 256 * 1024
 	// Retry node-limit full parses with a bounded larger node budget instead of
 	// globally raising the default cap for every parse.
@@ -58,8 +59,7 @@ func shouldRetryAcceptedErrorParse(tree *Tree, sourceLen int, initialMaxStacks i
 	if sourceLen <= 0 || sourceLen > fullParseRetryMaxSourceBytes {
 		return false
 	}
-	root := rawRootOrNil(tree)
-	if root == nil || !root.HasError() {
+	if !retryTreeHasError(tree) {
 		return false
 	}
 	rt := tree.ParseRuntime()
@@ -90,7 +90,7 @@ func treeParseClean(tree *Tree) bool {
 		return false
 	}
 	root := rawRootOrNil(tree)
-	if root == nil || root.HasError() {
+	if root == nil || retryNodeSubtreeHasError(root, 0) {
 		return false
 	}
 	rt := tree.ParseRuntime()
@@ -139,7 +139,25 @@ func retryTreeHasError(tree *Tree) bool {
 	if root == nil {
 		return true
 	}
-	return root.HasError()
+	return retryNodeSubtreeHasError(root, 0)
+}
+
+func retryNodeSubtreeHasError(node *Node, depth int) bool {
+	if node == nil {
+		return false
+	}
+	if node.IsError() || node.HasError() {
+		return true
+	}
+	if depth >= maxTreeWalkDepth {
+		return false
+	}
+	for i := 0; i < resultChildCount(node); i++ {
+		if retryNodeSubtreeHasError(resultChildAt(node, i), depth+1) {
+			return true
+		}
+	}
+	return false
 }
 
 func retryStopRank(rt ParseRuntime) int {
@@ -444,6 +462,16 @@ func effectiveParseMergePerKeyCap(lang *Language, mergePerKeyCap int, incrementa
 		// same-key merge survivors are redundant on the current parity surface.
 		// One full-parse survivor removes the result-selection churn while
 		// preserving explicit env overrides for grammar diagnosis.
+		if !parseMaxMergePerKeyEnvConfigured() && mergePerKeyCap > 1 {
+			return 1
+		}
+	case "rust":
+		// Rust's impl/match-heavy full parses keep redundant same-key recovery
+		// branches alive through large AST-shaped sources. One survivor cuts
+		// full-parse GLR work while the Rust recovery path now clones recovered
+		// top-level chunks directly into the result arena, avoiding the old
+		// offset-root allocation cliff. Incremental reparses and explicit env
+		// overrides keep the wider default.
 		if !parseMaxMergePerKeyEnvConfigured() && mergePerKeyCap > 1 {
 			return 1
 		}
@@ -811,7 +839,7 @@ func (p *Parser) retryFullParse(source []byte, initialMaxStacks int, tree *Tree,
 func (p *Parser) retryFullParseWithDFA(source []byte, initialMaxStacks int, deterministicExternalConflicts bool, tree *Tree) *Tree {
 	result := p.retryFullParse(source, initialMaxStacks, tree, func(maxStacks int, maxMergePerKeyOverride int, maxNodes int) *Tree {
 		retryLexer := NewLexer(p.language.LexStates, source)
-		retryTS := acquireDFATokenSource(retryLexer, p.language, p.lookupActionIndex, p.hasKeywordState, p.externalValidByState)
+		retryTS := acquireDFATokenSource(retryLexer, p.language, p.lookupActionIndex, p.hasKeywordState, p.externalValidByState, p.externalValidMaskByState)
 		defer retryTS.Close()
 		return p.parseInternal(
 			source,

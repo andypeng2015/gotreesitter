@@ -6,14 +6,83 @@ func normalizeRustCompatibility(root *Node, source []byte, p *Parser, lang *Lang
 	normalizeRustRecoveredFunctionItems(root, source, lang)
 	normalizeRustRecoveredStructExpressionRoot(root, source, lang)
 	normalizeRustDotRangeExpressions(root, source, lang)
-	normalizeRustTokenBindingPatterns(root, source, lang)
-	normalizeRustRecoveredTokenTrees(root, source, lang)
+	normalizeRustTokenBindingPatternsAndRecoveredTokenTrees(root, source, lang)
 	normalizeRustSourceFileRoot(root, source, lang)
 	normalizeRustDocCommentRanges(root, source, lang)
-	normalizeCollapsedNamedLeafChildrenBySource(root, source, lang, "boolean_literal", "true", "false")
-	normalizeCollapsedNamedLeafChildrenBySource(root, source, lang, "empty_statement", ";")
-	normalizeCollapsedNamedLeafChildrenBySource(root, source, lang, "remaining_field_pattern", "..")
-	normalizeCollapsedNamedLeafChildrenBySource(root, source, lang, "range_expression", "..", "..=")
+	normalizeRustCollapsedNamedLeafChildren(root, source, lang)
+}
+
+func normalizeRustCollapsedNamedLeafChildren(root *Node, source []byte, lang *Language) {
+	if root == nil || lang == nil || lang.Name != "rust" || len(source) == 0 {
+		return
+	}
+	booleanLiteralSym, hasBooleanLiteral := rustResultSymbolByName(lang, "boolean_literal", true)
+	emptyStatementSym, hasEmptyStatement := rustResultSymbolByName(lang, "empty_statement", true)
+	remainingFieldPatternSym, hasRemainingFieldPattern := rustResultSymbolByName(lang, "remaining_field_pattern", true)
+	rangeExpressionSym, hasRangeExpression := rustResultSymbolByName(lang, "range_expression", true)
+	trueSym, hasTrue := rustResultSymbolByName(lang, "true", false)
+	falseSym, hasFalse := rustResultSymbolByName(lang, "false", false)
+	semicolonSym, hasSemicolon := rustResultSymbolByName(lang, ";", false)
+	dotDotSym, hasDotDot := rustResultSymbolByName(lang, "..", false)
+	dotDotEqSym, hasDotDotEq := rustResultSymbolByName(lang, "..=", false)
+	trueNamed := symbolIsNamed(lang, trueSym)
+	falseNamed := symbolIsNamed(lang, falseSym)
+	semicolonNamed := symbolIsNamed(lang, semicolonSym)
+	dotDotNamed := symbolIsNamed(lang, dotDotSym)
+	dotDotEqNamed := symbolIsNamed(lang, dotDotEqSym)
+
+	walkResultTreeSidecarFirst(root, func(n *Node) {
+		if n == nil || resultChildCount(n) != 0 || n.startByte > n.endByte || int(n.endByte) > len(source) {
+			return
+		}
+		start := int(n.startByte)
+		width := int(n.endByte - n.startByte)
+		var childSym Symbol
+		var childNamed bool
+		ok := false
+		switch {
+		case hasBooleanLiteral && n.symbol == booleanLiteralSym:
+			switch {
+			case hasTrue && width == 4 && source[start] == 't' && source[start+1] == 'r' && source[start+2] == 'u' && source[start+3] == 'e':
+				childSym, childNamed, ok = trueSym, trueNamed, true
+			case hasFalse && width == 5 && source[start] == 'f' && source[start+1] == 'a' && source[start+2] == 'l' && source[start+3] == 's' && source[start+4] == 'e':
+				childSym, childNamed, ok = falseSym, falseNamed, true
+			}
+		case hasEmptyStatement && n.symbol == emptyStatementSym:
+			if hasSemicolon && width == 1 && source[start] == ';' {
+				childSym, childNamed, ok = semicolonSym, semicolonNamed, true
+			}
+		case hasRemainingFieldPattern && n.symbol == remainingFieldPatternSym:
+			if hasDotDot && width == 2 && source[start] == '.' && source[start+1] == '.' {
+				childSym, childNamed, ok = dotDotSym, dotDotNamed, true
+			}
+		case hasRangeExpression && n.symbol == rangeExpressionSym:
+			switch {
+			case hasDotDot && width == 2 && source[start] == '.' && source[start+1] == '.':
+				childSym, childNamed, ok = dotDotSym, dotDotNamed, true
+			case hasDotDotEq && width == 3 && source[start] == '.' && source[start+1] == '.' && source[start+2] == '=':
+				childSym, childNamed, ok = dotDotEqSym, dotDotEqNamed, true
+			}
+		}
+		if !ok {
+			return
+		}
+		child := newLeafNodeInArena(n.ownerArena, childSym, childNamed, n.startByte, n.endByte, n.startPoint, n.endPoint)
+		child.parent = n
+		child.childIndex = 0
+		n.children = cloneNodeSliceInArena(n.ownerArena, []*Node{child})
+	})
+}
+
+func rustResultSymbolByName(lang *Language, name string, named bool) (Symbol, bool) {
+	if lang == nil {
+		return 0, false
+	}
+	sym, ok := lang.symbolByNameAndNamed(name, named)
+	if ok {
+		return sym, true
+	}
+	return symbolByName(lang, name)
 }
 
 func normalizeRustDocCommentRanges(root *Node, source []byte, lang *Language) {
@@ -25,7 +94,7 @@ func normalizeRustDocCommentRanges(root *Node, source []byte, lang *Language) {
 		return
 	}
 	docCommentSym, _ := symbolByName(lang, "doc_comment")
-	walkResultTreePostorder(root, func(node *Node) {
+	walkResultTreePostorderSidecarFirst(root, func(node *Node) {
 		if node == nil || node.symbol != lineCommentSym || int(node.endByte) > len(source) {
 			return
 		}
@@ -38,7 +107,8 @@ func normalizeRustDocCommentRanges(root *Node, source []byte, lang *Language) {
 		}
 		nextEnd := node.endByte + 1
 		node.endByte = nextEnd
-		node.endPoint = advancePointByBytes(Point{}, source[:nextEnd])
+		node.endPoint.Row++
+		node.endPoint.Column = 0
 		for i := 0; i < resultChildCount(node); i++ {
 			child := resultChildAt(node, i)
 			if child == nil || child.symbol != docCommentSym {
@@ -111,95 +181,79 @@ func rustEnsureDocCommentMarkerToken(marker *Node, source []byte, lang *Language
 	replaceNodeChildrenUnfielded(marker, []*Node{token})
 }
 
-func normalizeRustTokenBindingPatterns(root *Node, source []byte, lang *Language) {
+func normalizeRustTokenBindingPatternsAndRecoveredTokenTrees(root *Node, source []byte, lang *Language) {
 	if root == nil || lang == nil || lang.Name != "rust" || len(source) == 0 {
 		return
 	}
 	tokenBindingPatternSym, ok := symbolByName(lang, "token_binding_pattern")
-	if !ok {
-		return
-	}
+	tokenBindingOK := ok
 	tokenTreePatternSym, ok := symbolByName(lang, "token_tree_pattern")
-	if !ok {
-		return
-	}
+	tokenBindingOK = tokenBindingOK && ok
 	metavariableSym, ok := symbolByName(lang, "metavariable")
-	if !ok {
-		return
-	}
+	tokenBindingOK = tokenBindingOK && ok
 	colonSym, ok := symbolByName(lang, ":")
-	if !ok {
-		return
-	}
+	tokenBindingOK = tokenBindingOK && ok
 	identifierSym, ok := symbolByName(lang, "identifier")
-	if !ok {
-		return
-	}
+	tokenBindingOK = tokenBindingOK && ok
 	fragmentSpecifierSym, ok := symbolByName(lang, "fragment_specifier")
-	if !ok {
+	tokenBindingOK = tokenBindingOK && ok
+	tokenTreeSym, recoverTokenTrees := symbolByName(lang, "token_tree")
+	if !tokenBindingOK && !recoverTokenTrees {
 		return
 	}
 	tokenBindingPatternNamed := symbolIsNamed(lang, tokenBindingPatternSym)
 	fragmentSpecifierNamed := symbolIsNamed(lang, fragmentSpecifierSym)
 
-	walkResultTreePostorder(root, func(node *Node) {
-		if node.symbol != tokenTreePatternSym || len(node.children) < 3 {
-			return
+	changedRecoveredTokenTree := false
+	walkResultTreePostorderSidecarFirst(root, func(node *Node) {
+		if tokenBindingOK {
+			normalizeRustTokenBindingPatternNode(node, source, tokenTreePatternSym, metavariableSym, colonSym, identifierSym, fragmentSpecifierSym, tokenBindingPatternSym, tokenBindingPatternNamed, fragmentSpecifierNamed)
 		}
-		for i := 0; i+2 < len(node.children); i++ {
-			meta := node.children[i]
-			colon := node.children[i+1]
-			frag := node.children[i+2]
-			if meta == nil || colon == nil || frag == nil {
-				continue
+		if recoverTokenTrees && node.symbol == tokenTreeSym && node.HasError() {
+			recovered, ok := rustBuildRecoveredTokenTree(node.ownerArena, source, lang, node.startByte, node.endByte)
+			if !ok || recovered == nil {
+				return
 			}
-			if meta.symbol != metavariableSym || colon.symbol != colonSym || frag.symbol != identifierSym {
-				continue
-			}
-			if !rustFragmentSpecifierFollowsColon(meta, colon, frag, source) {
-				continue
-			}
-			fragClone := cloneNodeInArena(frag.ownerArena, frag)
-			fragClone.symbol = fragmentSpecifierSym
-			fragClone.setNamed(fragmentSpecifierNamed)
-			fragClone.children = nil
-			fragClone.fieldIDs = nil
-			fragClone.fieldSources = nil
-
-			binding := cloneNodeInArena(node.ownerArena, meta)
-			binding.symbol = tokenBindingPatternSym
-			binding.setNamed(tokenBindingPatternNamed)
-			replaceNodeChildrenUnfielded(binding, cloneNodeSliceInArena(binding.ownerArena, []*Node{meta, fragClone}))
-			binding.productionID = 0
-
-			replaceChildRangeWithSingleNode(node, i, i+3, binding)
+			*node = *recovered
+			changedRecoveredTokenTree = true
 		}
 	})
+	if changedRecoveredTokenTree {
+		rustRefreshRecoveredErrorFlags(root)
+	}
 }
 
-func normalizeRustRecoveredTokenTrees(root *Node, source []byte, lang *Language) {
-	if root == nil || lang == nil || lang.Name != "rust" || len(source) == 0 {
+func normalizeRustTokenBindingPatternNode(node *Node, source []byte, tokenTreePatternSym, metavariableSym, colonSym, identifierSym, fragmentSpecifierSym, tokenBindingPatternSym Symbol, tokenBindingPatternNamed, fragmentSpecifierNamed bool) {
+	if node == nil || node.symbol != tokenTreePatternSym || len(node.children) < 3 {
 		return
 	}
-	tokenTreeSym, ok := symbolByName(lang, "token_tree")
-	if !ok {
-		return
-	}
+	for i := 0; i+2 < len(node.children); i++ {
+		meta := node.children[i]
+		colon := node.children[i+1]
+		frag := node.children[i+2]
+		if meta == nil || colon == nil || frag == nil {
+			continue
+		}
+		if meta.symbol != metavariableSym || colon.symbol != colonSym || frag.symbol != identifierSym {
+			continue
+		}
+		if !rustFragmentSpecifierFollowsColon(meta, colon, frag, source) {
+			continue
+		}
+		fragClone := cloneNodeInArena(frag.ownerArena, frag)
+		fragClone.symbol = fragmentSpecifierSym
+		fragClone.setNamed(fragmentSpecifierNamed)
+		fragClone.children = nil
+		fragClone.fieldIDs = nil
+		fragClone.fieldSources = nil
 
-	changed := false
-	walkResultTreePostorder(root, func(node *Node) {
-		if node.symbol != tokenTreeSym || !node.HasError() {
-			return
-		}
-		recovered, ok := rustBuildRecoveredTokenTree(node.ownerArena, source, lang, node.startByte, node.endByte)
-		if !ok || recovered == nil {
-			return
-		}
-		*node = *recovered
-		changed = true
-	})
-	if changed {
-		rustRefreshRecoveredErrorFlags(root)
+		binding := cloneNodeInArena(node.ownerArena, meta)
+		binding.symbol = tokenBindingPatternSym
+		binding.setNamed(tokenBindingPatternNamed)
+		replaceNodeChildrenUnfielded(binding, cloneNodeSliceInArena(binding.ownerArena, []*Node{meta, fragClone}))
+		binding.productionID = 0
+
+		replaceChildRangeWithSingleNode(node, i, i+3, binding)
 	}
 }
 
@@ -843,11 +897,11 @@ func rustRecoverTopLevelChunkNodesFromRange(source []byte, start, end uint32, p 
 	}
 	chunk := source[start:end]
 	tree, err := p.parseForRecovery(chunk)
-	if err == nil && tree != nil && tree.RootNode() != nil {
+	if err == nil && tree != nil {
+		root := tree.RootNode()
 		startPoint := advancePointByBytes(Point{}, source[:start])
-		offsetRoot := tree.RootNodeWithOffset(start, startPoint)
-		if offsetRoot != nil && !offsetRoot.HasError() {
-			nodes := rustExtractRecoveredTopLevelNodes(offsetRoot, p.language, arena)
+		if root != nil && !root.HasError() {
+			nodes := rustExtractRecoveredTopLevelNodesWithOffset(root, p.language, arena, start, startPoint)
 			tree.Release()
 			if len(nodes) > 0 && !rustRecoveredNodesNeedFunctionFallback(source, start, end, p.language, nodes) {
 				return nodes, true
@@ -930,6 +984,39 @@ func rustExtractRecoveredTopLevelNodes(root *Node, lang *Language, arena *nodeAr
 		} else {
 			out = append(out, child)
 		}
+	}
+	return out
+}
+
+func rustExtractRecoveredTopLevelNodesWithOffset(root *Node, lang *Language, arena *nodeArena, offsetBytes uint32, offsetExtent Point) []*Node {
+	if root == nil || lang == nil {
+		return nil
+	}
+	if offsetBytes == 0 && offsetExtent == (Point{}) {
+		return rustExtractRecoveredTopLevelNodes(root, lang, arena)
+	}
+	if arena == nil {
+		offsetRoot := cloneTreeNodesWithOffset(root, offsetBytes, offsetExtent)
+		return rustExtractRecoveredTopLevelNodes(offsetRoot, lang, nil)
+	}
+	offset := &cloneOffset{
+		byteDelta: offsetBytes,
+		point:     offsetExtent,
+		baseRow:   root.startPoint.Row,
+	}
+	if root.Type(lang) != "source_file" {
+		if root.IsNamed() {
+			return []*Node{cloneTreeNodesIntoArenaWithOffset(root, arena, offset)}
+		}
+		return nil
+	}
+	out := make([]*Node, 0, root.NamedChildCount())
+	for i := 0; i < root.NamedChildCount(); i++ {
+		child := root.NamedChild(i)
+		if child == nil {
+			continue
+		}
+		out = append(out, cloneTreeNodesIntoArenaWithOffset(child, arena, offset))
 	}
 	return out
 }

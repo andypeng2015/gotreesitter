@@ -143,6 +143,53 @@ func walkResultTreePostorder(root *Node, visit func(*Node)) {
 	walk(root)
 }
 
+func walkResultTreeSidecarFirst(root *Node, visit func(*Node)) {
+	if visit == nil {
+		return
+	}
+	var walk func(*Node)
+	walk = func(n *Node) {
+		if n == nil {
+			return
+		}
+		visit(n)
+		if n.childIndex > finalChildSidecarIndexBase || n.ownerArena == nil {
+			for _, child := range n.children {
+				walk(child)
+			}
+			return
+		}
+		for i := 0; i < resultChildCount(n); i++ {
+			walk(resultChildAt(n, i))
+		}
+	}
+	walk(root)
+}
+
+func walkResultTreePostorderSidecarFirst(root *Node, visit func(*Node)) {
+	if visit == nil {
+		return
+	}
+	var walk func(*Node)
+	walk = func(n *Node) {
+		if n == nil {
+			return
+		}
+		if n.childIndex > finalChildSidecarIndexBase || n.ownerArena == nil {
+			for _, child := range n.children {
+				walk(child)
+			}
+			visit(n)
+			return
+		}
+		for i := 0; i < resultChildCount(n); i++ {
+			walk(resultChildAt(n, i))
+		}
+		visit(n)
+	}
+	walk(root)
+}
+
 func walkResultTreeBounded(root *Node, visit func(*Node)) {
 	if visit == nil {
 		return

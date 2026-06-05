@@ -22,23 +22,23 @@ type Range struct {
 type Node struct {
 	// Layout is performance-sensitive. Keep TestNodeLayoutSizeBudget updated
 	// when changing field order or adding fields.
-	children     []*Node
-	fieldIDs     []FieldID // parallel to children, 0 = no field
-	fieldSources []uint8   // parallel to children, 0 = none, 1 = direct, 2 = inherited
-	parent       *Node
-	ownerArena   *nodeArena
-	startPoint   Point
-	endPoint     Point
-	startByte    uint32
-	endByte      uint32
-	parseState   StateID // parser state after this node was pushed
-	preGotoState StateID // parser state before goto (state exposed after popping children)
-	equivVersion uint32
-	childIndex   int32
-	symbol       Symbol
-	productionID uint16
-	flags        nodeFlags
-	dirtyFlag    bool
+	children      []*Node
+	fieldIDs      []FieldID // parallel to children, 0 = no field
+	fieldSources  []uint8   // parallel to children, 0 = none, 1 = direct, 2 = inherited
+	parent        *Node
+	ownerArena    *nodeArena
+	startPoint    Point
+	endPoint      Point
+	startByte     uint32
+	endByte       uint32
+	parseState    StateID // parser state after this node was pushed
+	preGotoState  StateID // parser state before goto (state exposed after popping children)
+	equivVersion  uint32
+	childIndex    int32
+	symbol        Symbol
+	productionID  uint16
+	flags         nodeFlags
+	dirtyFlag     bool
 	subtreeHeight uint8 // forest dedup tie-break cache (0 = uncomputed); see nodeCachedHeight
 }
 

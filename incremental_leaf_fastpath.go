@@ -105,6 +105,13 @@ func (p *Parser) canReuseLanguageTextInvariantNode(source []byte, oldTree *Tree,
 	case "cmake":
 		return oldTree.forestFastPath && node.Type(p.language) == "unquoted_argument" &&
 			cmakeTextInvariantEdit(source, oldTree.source, edit)
+	case "css":
+		return oldTree.forestFastPath && node.Type(p.language) == "integer_value" &&
+			cssTextInvariantIntegerValueEdit(source, oldTree.source, edit)
+	case "c_sharp":
+		return oldTree.forestFastPath && node.Type(p.language) == "identifier" &&
+			csharpTokenInvariantIdentifierText(oldTree.source, node) &&
+			csharpTokenInvariantIdentifierText(source, node)
 	case "rust":
 		return node.Type(p.language) == "line_comment" && rustLineCommentTextInvariantEdit(source, oldTree.source, node, edit)
 	default:
@@ -160,6 +167,19 @@ func cmakeTextInvariantUnquotedByte(b byte) bool {
 		(b >= 'a' && b <= 'z') ||
 		(b >= 'A' && b <= 'Z') ||
 		b == '_'
+}
+
+func cssTextInvariantIntegerValueEdit(source, oldSource []byte, edit InputEdit) bool {
+	for i := edit.StartByte; i < edit.OldEndByte; i++ {
+		if !asciiDigit(oldSource[i]) || !asciiDigit(source[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func asciiDigit(b byte) bool {
+	return b >= '0' && b <= '9'
 }
 
 func (p *Parser) tokenInvariantLeafEditCandidate(source []byte, oldTree *Tree) (*Node, InputEdit, bool) {
@@ -548,7 +568,10 @@ func reuseTreeWithNewSource(oldTree *Tree, source []byte, dirtyNode *Node, clear
 	} else {
 		clearDirtyPathToRoot(dirtyNode)
 	}
-	return newTreeWithUniqueArenas(oldTree.root, source, oldTree.language, arena, borrowed)
+	tree := newTreeWithUniqueArenas(oldTree.root, source, oldTree.language, arena, borrowed)
+	tree.forestFastPath = oldTree.forestFastPath
+	tree.incrementalReuseDisabled = oldTree.incrementalReuseDisabled
+	return tree
 }
 
 func clearDirtySubtreeAndPath(n *Node) {

@@ -112,6 +112,12 @@ func TestBuildExternalValidByStateUsesCompactExternalIndexes(t *testing.T) {
 		t.Fatalf("buildExternalValidByState() = %#v, want %#v", got, want)
 	}
 
+	gotMasks := buildExternalValidMaskByState(got, len(lang.ExternalSymbols))
+	wantMasks := []uint64{0b11, 0, 0b10}
+	if !reflect.DeepEqual(gotMasks, wantMasks) {
+		t.Fatalf("buildExternalValidMaskByState() = %#v, want %#v", gotMasks, wantMasks)
+	}
+
 	lang.ExternalLexStates = [][]bool{{false, false}}
 	if got := p.buildExternalValidByState(); got != nil {
 		t.Fatalf("buildExternalValidByState() with external lex states = %#v, want nil", got)

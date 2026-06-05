@@ -75,6 +75,127 @@ func oldTreeDisablesIncrementalReuse(oldTree *Tree) bool {
 	return oldTree != nil && oldTree.incrementalReuseDisabled
 }
 
+func (p *Parser) tryTokenInvariantReuseForDisabledOldTree(source []byte, oldTree *Tree, timing *incrementalParseTiming) (*Tree, bool) {
+	if !oldTreeDisablesIncrementalReuse(oldTree) {
+		return nil, false
+	}
+	if p == nil || p.language == nil {
+		return nil, false
+	}
+	if !p.disabledOldTreeTokenInvariantLeafAllowed(source, oldTree) {
+		return nil, false
+	}
+	if p.checkDFALexer() != nil {
+		return nil, false
+	}
+	prevFactory := p.reparseFactory
+	p.reparseFactory = p.dfaReparseFactory()
+	defer func() {
+		p.reparseFactory = prevFactory
+	}()
+	lexer := NewLexer(p.language.LexStates, source)
+	ts := acquireDFATokenSource(lexer, p.language, p.lookupActionIndex, p.hasKeywordState, p.externalValidByState, p.externalValidMaskByState)
+	defer ts.Close()
+	tree, ok := p.tryTokenInvariantLeafEdit(source, oldTree, p.wrapIncludedRanges(ts), timing)
+	if !ok {
+		return nil, false
+	}
+	normalizeReturnedIncrementalTree(tree, oldTree, source, p.language)
+	return tree, true
+}
+
+func (p *Parser) disabledOldTreeTokenInvariantLeafAllowed(source []byte, oldTree *Tree) bool {
+	root, edit, ok := p.tokenInvariantLeafEditCandidate(source, oldTree)
+	if !ok {
+		return false
+	}
+	node := oldTree.lastEditedLeaf
+	if node == nil || !node.containsByteRange(edit.StartByte, edit.OldEndByte) {
+		node = root.DescendantForByteRange(edit.StartByte, edit.OldEndByte)
+	}
+	if p.language.Name == "css" && p.canReuseLanguageTextInvariantNode(source, oldTree, node, edit) {
+		return true
+	}
+	if !tokenInvariantLeafReusable(node) {
+		return false
+	}
+	switch p.language.Name {
+	case "go":
+		return true
+	case "css":
+		return cssDisabledTreeTokenInvariantLeafAllowed(oldTree, node)
+	case "c_sharp":
+		return csharpDisabledTreeTokenInvariantLeafAllowed(p.language, node, oldTree.source, source)
+	default:
+		return false
+	}
+}
+
+func cssDisabledTreeTokenInvariantLeafAllowed(oldTree *Tree, leaf *Node) bool {
+	return oldTree != nil && oldTree.forestFastPath && tokenInvariantLeafReusable(leaf)
+}
+
+func csharpDisabledTreeTokenInvariantLeafAllowed(lang *Language, leaf *Node, oldSource, newSource []byte) bool {
+	switch leaf.Type(lang) {
+	case "integer_literal", "real_literal":
+		return true
+	case "identifier":
+		return csharpTokenInvariantIdentifierText(oldSource, leaf) &&
+			csharpTokenInvariantIdentifierText(newSource, leaf)
+	default:
+		return false
+	}
+}
+
+func csharpTokenInvariantIdentifierText(source []byte, leaf *Node) bool {
+	if leaf == nil || leaf.startByte >= leaf.endByte || int(leaf.endByte) > len(source) {
+		return false
+	}
+	text := source[leaf.startByte:leaf.endByte]
+	if !csharpSimpleIdentifierBytes(text) {
+		return false
+	}
+	return !csharpTokenInvariantIdentifierKeyword(string(text))
+}
+
+func csharpSimpleIdentifierBytes(text []byte) bool {
+	if len(text) == 0 {
+		return false
+	}
+	if !csharpIdentifierStartByte(text[0]) {
+		return false
+	}
+	for _, b := range text[1:] {
+		if !csharpIdentifierContinueByte(b) {
+			return false
+		}
+	}
+	return true
+}
+
+func csharpTokenInvariantIdentifierKeyword(text string) bool {
+	switch text {
+	case "abstract", "add", "alias", "as", "ascending", "async", "await", "base",
+		"bool", "break", "by", "byte", "case", "catch", "char", "checked",
+		"class", "const", "continue", "decimal", "default", "delegate",
+		"descending", "do", "double", "dynamic", "else", "enum", "equals",
+		"event", "explicit", "extern", "false", "file", "finally", "fixed",
+		"float", "for", "foreach", "from", "get", "global", "goto", "group",
+		"if", "implicit", "in", "init", "int", "interface", "internal", "into",
+		"is", "join", "let", "lock", "long", "namespace", "new", "notnull",
+		"null", "object", "on", "operator", "orderby", "out", "override",
+		"params", "partial", "private", "protected", "public", "readonly",
+		"record", "ref", "remove", "return", "sbyte", "scoped", "sealed",
+		"select", "set", "short", "sizeof", "stackalloc", "static", "string",
+		"struct", "switch", "this", "throw", "true", "try", "typeof", "uint",
+		"ulong", "unchecked", "unsafe", "ushort", "using", "var", "virtual",
+		"void", "volatile", "when", "where", "while", "with", "yield":
+		return true
+	default:
+		return false
+	}
+}
+
 func profileFreshParseFallback(start time.Time, tree *Tree, reason string) IncrementalParseProfile {
 	profile := IncrementalParseProfile{
 		ReparseNanos:           time.Since(start).Nanoseconds(),
@@ -106,7 +227,7 @@ func (p *Parser) dfaReparseFactory() TokenSourceFactory {
 	}
 	return func(source []byte) (TokenSource, error) {
 		lexer := NewLexer(p.language.LexStates, source)
-		return newDFATokenSourceDirect(lexer, p.language, p.lookupActionIndex, p.hasKeywordState, p.externalValidByState), nil
+		return newDFATokenSourceDirect(lexer, p.language, p.lookupActionIndex, p.hasKeywordState, p.externalValidByState, p.externalValidMaskByState), nil
 	}
 }
 
@@ -523,7 +644,7 @@ func (p *Parser) Parse(source []byte) (*Tree, error) {
 		p.reparseFactory = prevFactory
 	}()
 	lexer := NewLexer(p.language.LexStates, source)
-	ts := acquireDFATokenSource(lexer, p.language, p.lookupActionIndex, p.hasKeywordState, p.externalValidByState)
+	ts := acquireDFATokenSource(lexer, p.language, p.lookupActionIndex, p.hasKeywordState, p.externalValidByState, p.externalValidMaskByState)
 	if p.noTreeBenchmarkOnly && !p.noTreeCheckpointBenchmarkOnly {
 		ts.usesExternalCheckpoints = false
 	}
@@ -671,6 +792,9 @@ func (p *Parser) ParseIncremental(source []byte, oldTree *Tree) (*Tree, error) {
 		return oldTree, nil
 	}
 	if oldTreeDisablesIncrementalReuse(oldTree) {
+		if tree, ok := p.tryTokenInvariantReuseForDisabledOldTree(source, oldTree, nil); ok {
+			return tree, nil
+		}
 		return p.Parse(source)
 	}
 	if err := p.checkDFALexer(); err != nil {
@@ -682,7 +806,7 @@ func (p *Parser) ParseIncremental(source []byte, oldTree *Tree) (*Tree, error) {
 		p.reparseFactory = prevFactory
 	}()
 	lexer := NewLexer(p.language.LexStates, source)
-	ts := acquireDFATokenSource(lexer, p.language, p.lookupActionIndex, p.hasKeywordState, p.externalValidByState)
+	ts := acquireDFATokenSource(lexer, p.language, p.lookupActionIndex, p.hasKeywordState, p.externalValidByState, p.externalValidMaskByState)
 	defer ts.Close()
 	tree := p.parseIncrementalInternal(source, oldTree, p.wrapIncludedRanges(ts), nil)
 	normalizeReturnedIncrementalTree(tree, oldTree, source, p.language)
@@ -772,6 +896,10 @@ func (p *Parser) ParseIncrementalProfiled(source []byte, oldTree *Tree) (*Tree, 
 		return oldTree, IncrementalParseProfile{}, nil
 	}
 	if oldTreeDisablesIncrementalReuse(oldTree) {
+		timing := &incrementalParseTiming{}
+		if tree, ok := p.tryTokenInvariantReuseForDisabledOldTree(source, oldTree, timing); ok {
+			return tree, timing.toProfile(), nil
+		}
 		start := time.Now()
 		tree, err := p.Parse(source)
 		return tree, profileFreshParseFallback(start, tree, forestIncrementalReuseUnsupportedReason), err
@@ -785,7 +913,7 @@ func (p *Parser) ParseIncrementalProfiled(source []byte, oldTree *Tree) (*Tree, 
 		p.reparseFactory = prevFactory
 	}()
 	lexer := NewLexer(p.language.LexStates, source)
-	ts := acquireDFATokenSource(lexer, p.language, p.lookupActionIndex, p.hasKeywordState, p.externalValidByState)
+	ts := acquireDFATokenSource(lexer, p.language, p.lookupActionIndex, p.hasKeywordState, p.externalValidByState, p.externalValidMaskByState)
 	defer ts.Close()
 	timing := &incrementalParseTiming{}
 	tree := p.parseIncrementalInternal(source, oldTree, p.wrapIncludedRanges(ts), timing)

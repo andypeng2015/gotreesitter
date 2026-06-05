@@ -18,33 +18,33 @@ import (
 // Parser is not safe for concurrent use. Use one parser per goroutine, a
 // ParserPool, or guard shared parser instances with external synchronization.
 type Parser struct {
-	language                            *Language
-	reuseCursor                         reuseCursor
-	reuseScratch                        reuseScratch
-	reuseMu                             sync.Mutex
-	reparseFactory                      TokenSourceFactory
-	recoveryParser                      *Parser
-	skipRecoveryReparse                 bool
-	compatibilityBorrowedArenas         []*nodeArena
-	fullArenaHint                       uint32
-	pendingFullArenaHint                uint32
-	compactFullArenaHint                uint32
-	finalChildRefArenaHint              uint32
-	incrementalArenaHint                uint32
-	fullGSSHint                         uint32
-	incrementalGSSHint                  uint32
-	rootSymbol                          Symbol
-	hasRootSymbol                       bool
+	language                    *Language
+	reuseCursor                 reuseCursor
+	reuseScratch                reuseScratch
+	reuseMu                     sync.Mutex
+	reparseFactory              TokenSourceFactory
+	recoveryParser              *Parser
+	skipRecoveryReparse         bool
+	compatibilityBorrowedArenas []*nodeArena
+	fullArenaHint               uint32
+	pendingFullArenaHint        uint32
+	compactFullArenaHint        uint32
+	finalChildRefArenaHint      uint32
+	incrementalArenaHint        uint32
+	fullGSSHint                 uint32
+	incrementalGSSHint          uint32
+	rootSymbol                  Symbol
+	hasRootSymbol               bool
 
 	// Forest-decline diagnostics: the experimental forest fast path records
 	// WHERE and WHY it last declined (fell back to production) so the language
 	// burndown can triage dead-ends without re-instrumenting. Set on the parser
 	// (not package globals) so concurrent parsers don't race. Cleared at the
 	// start of each forest parse.
-	forestDeclineByte   uint32
-	forestDeclineSym    Symbol
-	forestDeclineReason string
-	forestDeclineStates []StateID
+	forestDeclineByte                   uint32
+	forestDeclineSym                    Symbol
+	forestDeclineReason                 string
+	forestDeclineStates                 []StateID
 	hasRecoverState                     []bool
 	hasRecoverSymbol                    []bool
 	recoverByState                      [][]recoverSymbolAction
@@ -77,6 +77,7 @@ type Parser struct {
 	smallLookup                         [][]smallActionPair
 	smallTokenLookup                    [][]uint16
 	externalValidByState                [][]uint16
+	externalValidMaskByState            []uint64
 	classifiedActions                   []classifiedParseAction
 	reduceChainHints                    []reduceChainHint
 	reduceChainHintByState              []int
@@ -84,6 +85,7 @@ type Parser struct {
 	aliasTargetSymbol                   []bool
 	singleTokenWrapperSymbol            []bool
 	reduceHasFields                     []bool
+	reduceFieldPlans                    []reduceFieldPlan
 	fieldIDScratch                      []FieldID
 	fieldInheritedScratch               []bool
 	fieldConflictedScratch              []bool
@@ -370,6 +372,7 @@ func NewParser(lang *Language) *Parser {
 			p.smallLookup = buildSmallLookup(lang, p.smallTokenLookup)
 		}
 		p.externalValidByState = p.buildExternalValidByState()
+		p.externalValidMaskByState = buildExternalValidMaskByState(p.externalValidByState, len(lang.ExternalSymbols))
 		p.classifiedActions = buildClassifiedParseActions(lang)
 		p.reduceChainHints = buildReduceChainHints(lang)
 		p.reduceChainHintByState = buildReduceChainHintIndex(p.reduceChainHints)
@@ -377,6 +380,7 @@ func NewParser(lang *Language) *Parser {
 		p.aliasTargetSymbol = buildAliasTargetSymbols(lang)
 		p.singleTokenWrapperSymbol = buildSingleTokenWrapperSymbols(lang)
 		p.reduceHasFields = buildReduceFieldPresence(lang)
+		p.reduceFieldPlans = buildReduceFieldPlans(lang)
 		p.recoverByState, p.hasRecoverState, p.hasRecoverSymbol = buildRecoverActionsByState(lang)
 		p.hasKeywordState = buildKeywordStates(lang)
 		p.spanExtendingInvisibleSymbols, p.nonSpanExtendingInvisibleSymbols = buildInvisibleSpanSymbolTables(lang.SymbolNames)
@@ -766,6 +770,10 @@ func (p *Parser) canRelexExternalTokenWithCurrentStateDFA(tok Token) bool {
 }
 
 func (p *Parser) canFinalizeNoActionEOF(s *glrStack) bool {
+	return p.canFinalizeNoActionEOFAt(s, 0, nil)
+}
+
+func (p *Parser) canFinalizeNoActionEOFAt(s *glrStack, expectedEOFByte uint32, source []byte) bool {
 	if s == nil || s.dead {
 		return false
 	}
@@ -787,12 +795,14 @@ func (p *Parser) canFinalizeNoActionEOF(s *glrStack) bool {
 
 	nonExtraCount := 0
 	onlyNonExtraSymbol := Symbol(0)
+	onlyNonExtraEndByte := uint32(0)
 	countEntry := func(e stackEntry) bool {
 		if !stackEntryHasNode(e) || stackEntryNodeIsExtra(e) {
 			return false
 		}
 		nonExtraCount++
 		onlyNonExtraSymbol = stackEntryNodeSymbol(e)
+		onlyNonExtraEndByte = stackEntryNodeEndByte(e)
 		return nonExtraCount > 1
 	}
 
@@ -816,7 +826,18 @@ func (p *Parser) canFinalizeNoActionEOF(s *glrStack) bool {
 	if onlyNonExtraSymbol == errorSymbol {
 		return false
 	}
-	return uint32(onlyNonExtraSymbol) >= tokenCount
+	if uint32(onlyNonExtraSymbol) < tokenCount {
+		return false
+	}
+	if expectedEOFByte > onlyNonExtraEndByte {
+		if int(expectedEOFByte) > len(source) || !isWhitespaceOnlySource(source[onlyNonExtraEndByte:expectedEOFByte]) {
+			return false
+		}
+		if onlyNonExtraSymbol != p.rootSymbol {
+			return false
+		}
+	}
+	return true
 }
 
 func (p *Parser) tryInsertMissingSingleShift(s *glrStack, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) bool {
@@ -883,6 +904,64 @@ func (p *Parser) tryInsertMissingSingleShift(s *glrStack, tok Token, nodeCount *
 	}
 	p.applyAction(s, candidateAct, missingTok, new(bool), nodeCount, arena, entryScratch, gssScratch, nil, false, trackChildErrors)
 	s.shifted = false
+	return true
+}
+
+func (p *Parser) tryRecoverPreviousShiftAsError(s *glrStack, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, trackChildErrors *bool) bool {
+	if p == nil || p.language == nil || s == nil || s.dead || tok.NoLookahead || tok.Missing || tok.Symbol == 0 {
+		return false
+	}
+	entries := s.ensureEntries(entryScratch)
+	if len(entries) < 2 {
+		return false
+	}
+	topIndex := len(entries) - 1
+	topEntry := entries[topIndex]
+	if !stackEntryHasNode(topEntry) || stackEntryNodeIsExtra(topEntry) || stackEntryNodeIsMissing(topEntry) {
+		return false
+	}
+	topSymbol := stackEntryNodeSymbol(topEntry)
+	if topSymbol == errorSymbol || uint32(topSymbol) >= p.language.TokenCount || stackEntryNodeChildCount(topEntry) != 0 {
+		return false
+	}
+	topStartByte := stackEntryNodeStartByte(topEntry)
+	topEndByte := stackEntryNodeEndByte(topEntry)
+	if topEndByte == topStartByte || topEndByte > tok.StartByte {
+		return false
+	}
+	prevState := entries[topIndex-1].state
+	if prevState == topEntry.state {
+		return false
+	}
+	actionIdx := p.lookupActionIndex(prevState, tok.Symbol)
+	if actionIdx == 0 || int(actionIdx) >= len(p.language.ParseActions) || len(p.language.ParseActions[actionIdx].Actions) == 0 {
+		return false
+	}
+
+	errNode := newLeafNodeInArena(arena, errorSymbol, true,
+		topStartByte, topEndByte,
+		stackEntryNodeStartPoint(topEntry), stackEntryNodeEndPoint(topEntry))
+	errNode.setExtra(true)
+	errNode.setHasError(true)
+	errNode.parseState = prevState
+	if perfCountersEnabled {
+		perfRecordErrorNode()
+	}
+	if nodeCount != nil {
+		*nodeCount = *nodeCount + 1
+	}
+	entries[topIndex] = newStackEntryNode(prevState, errNode)
+	s.entries = entries
+	s.gss = gssStack{}
+	s.cacheEntries = true
+	s.byteOffset = stackByteOffset(entries)
+	s.shifted = false
+	if s.recoverabilityKnown && !s.mayRecover && p.stateCanRecover(prevState) {
+		s.mayRecover = true
+	}
+	if trackChildErrors != nil {
+		*trackChildErrors = true
+	}
 	return true
 }
 
@@ -990,7 +1069,7 @@ func normalizeSQLRecoveredMissingNull(root *Node, arena *nodeArena, lang *Langua
 	walk(root)
 }
 
-func (p *Parser) tryAdvanceEOFOnSingleStack(s *glrStack, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry) bool {
+func (p *Parser) tryAdvanceEOFOnSingleStack(s *glrStack, tok Token, expectedEOFByte uint32, source []byte, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry) bool {
 	if p == nil || p.language == nil || s == nil || s.dead || s.depth() == 0 {
 		return false
 	}
@@ -1003,7 +1082,7 @@ func (p *Parser) tryAdvanceEOFOnSingleStack(s *glrStack, tok Token, nodeCount *i
 		}
 		actionIdx := p.lookupActionIndex(s.top().state, 0)
 		if actionIdx == 0 || int(actionIdx) >= len(parseActions) {
-			return p.canFinalizeNoActionEOF(s)
+			return p.canFinalizeNoActionEOFAt(s, expectedEOFByte, source)
 		}
 		actions := parseActions[actionIdx].Actions
 		if len(actions) != 1 {
@@ -1120,7 +1199,7 @@ func (p *Parser) tryRecoverTrailingEOFSuffix(s *glrStack, tok Token, nodeCount *
 				continue
 			}
 			prefixEOF := eofTokenForTrailingCut(tok, entries, cut, node)
-			insertedMissing, advanced := p.advanceTrailingEOFPrefix(&prefix, prefixEOF, nodeCount, arena, entryScratch, gssScratch, tmpEntries)
+			insertedMissing, advanced := p.advanceTrailingEOFPrefix(&prefix, prefixEOF, prefixEOF.EndByte, source, nodeCount, arena, entryScratch, gssScratch, tmpEntries)
 			if !advanced {
 				continue
 			}
@@ -1178,14 +1257,14 @@ func eofTokenForTrailingCut(tok Token, entries []stackEntry, cut int, fallback *
 	return prefixEOF
 }
 
-func (p *Parser) advanceTrailingEOFPrefix(prefix *glrStack, prefixEOF Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry) (bool, bool) {
-	if p.tryAdvanceEOFOnSingleStack(prefix, prefixEOF, nodeCount, arena, entryScratch, gssScratch, tmpEntries) {
+func (p *Parser) advanceTrailingEOFPrefix(prefix *glrStack, prefixEOF Token, expectedEOFByte uint32, source []byte, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry) (bool, bool) {
+	if p.tryAdvanceEOFOnSingleStack(prefix, prefixEOF, expectedEOFByte, source, nodeCount, arena, entryScratch, gssScratch, tmpEntries) {
 		return false, true
 	}
 	if !p.tryInsertMissingSingleShiftAtEOF(prefix, prefixEOF, nodeCount, arena, entryScratch, gssScratch) {
 		return false, false
 	}
-	if !p.tryAdvanceEOFOnSingleStack(prefix, prefixEOF, nodeCount, arena, entryScratch, gssScratch, tmpEntries) {
+	if !p.tryAdvanceEOFOnSingleStack(prefix, prefixEOF, expectedEOFByte, source, nodeCount, arena, entryScratch, gssScratch, tmpEntries) {
 		return false, false
 	}
 	return true, true
@@ -2383,7 +2462,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 						continue
 					}
 					if len(stacks) == 1 {
-						if p.canFinalizeNoActionEOF(s) {
+						if p.canFinalizeNoActionEOFAt(s, expectedEOFByte, source) {
 							if actionTiming != nil {
 								recordNoActionTiming()
 							}
@@ -2435,6 +2514,16 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 						}
 						goto retryAction
 					}
+				}
+				if p.tryRecoverPreviousShiftAsError(s, tok, &nodeCount, arena, &scratch.entries, &trackChildErrors) {
+					anyReduced = true
+					needToken = false
+					consecutiveReduces = 0
+					if actionTiming != nil {
+						ns := recordNoActionTiming()
+						actionTiming.actionNoActionRecoverNanos += ns
+					}
+					continue
 				}
 				if len(stacks) > 1 {
 					if p.glrTrace {
@@ -2499,7 +2588,12 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				}
 				var chosen ParseAction
 				choice := false
-				if reuse == nil && p.language != nil {
+				if p.language != nil && p.language.Name == "gomod" {
+					if next, ok := gomodRepetitionShiftConflictChoice(p.language, currentState, actions); ok {
+						chosen, choice = next, true
+					}
+				}
+				if !choice && reuse == nil && p.language != nil {
 					switch p.language.Name {
 					case "java":
 						if next, ok := p.javaSwitchArrowConflictChoice(s, tok, actions); ok {
@@ -2711,6 +2805,10 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				anyReduced = true
 				needToken = false
 				consecutiveReduces = 0
+			} else if p.tryRecoverPreviousShiftAsError(&stacks[0], tok, &nodeCount, arena, &scratch.entries, &trackChildErrors) {
+				anyReduced = true
+				needToken = false
+				consecutiveReduces = 0
 			} else if depth, recoverAct, ok := p.findRecoverActionOnStack(&stacks[0], tok.Symbol, timing); ok {
 				if stacks[0].truncate(depth + 1) {
 					p.applyAction(&stacks[0], recoverAct, tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
@@ -2748,7 +2846,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 						if tree, ok := tryFinalizeTrailingEOFSuffix(&stacks[0], tok); ok {
 							return tree
 						}
-						if p.canFinalizeNoActionEOF(&stacks[0]) {
+						if p.canFinalizeNoActionEOFAt(&stacks[0], expectedEOFByte, source) {
 							return finalize(stacks, ParseStopAccepted)
 						}
 						return finalize(stacks, ParseStopNoStacksAlive)
@@ -2923,8 +3021,8 @@ func (p *Parser) configureParseCaps(source []byte, reuse *reuseCursor, arenaClas
 	if tsxFullParseNeedsTypedArrowMergeWidth(p.language, source, reuse) && mergePerKeyCap < 2 {
 		mergePerKeyCap = 2
 	}
-	if javaFullParseNeedsAnnotationDeclarationMergeWidth(p.language, source, reuse) && mergePerKeyCap < maxStacksPerMergeKey {
-		mergePerKeyCap = maxStacksPerMergeKey
+	if javaFullParseNeedsAnnotationDeclarationMergeWidth(p.language, source, reuse) && mergePerKeyCap < javaFullParseRetryMaxMergePerKey {
+		mergePerKeyCap = javaFullParseRetryMaxMergePerKey
 	}
 	if maxMergePerKeyOverride > mergePerKeyCap {
 		mergePerKeyCap = maxMergePerKeyOverride
@@ -2988,7 +3086,7 @@ func languageDefersExactDedupe(lang *Language, noTreeBenchmarkOnly bool) bool {
 		return false
 	}
 	switch lang.Name {
-	case "dart", "typescript", "tsx", "rust":
+	case "dart", "java", "typescript", "tsx", "rust":
 		return true
 	default:
 		return false
@@ -3725,6 +3823,28 @@ func phpRepetitionShiftConflictChoice(lang *Language, tok Token, state StateID, 
 	case symbolHasName(lang, tok.Symbol, "class"):
 	case symbolHasName(lang, tok.Symbol, "while"):
 	case symbolHasName(lang, tok.Symbol, "echo"):
+	default:
+		return ParseAction{}, false
+	}
+	return repetitionShiftConflictChoice(actions)
+}
+
+// gomodRepetitionShiftConflictChoice keeps parenthesized require lists on the
+// repetition-shift path. On real go.mod corpora, state 37 forks for every
+// following require_spec starter; C continues the list deterministically.
+func gomodRepetitionShiftConflictChoice(lang *Language, state StateID, actions []ParseAction) (ParseAction, bool) {
+	if lang == nil {
+		return ParseAction{}, false
+	}
+	switch state {
+	case 3:
+		if !allReducesHaveSymbol(lang, actions, "source_file_repeat1") {
+			return ParseAction{}, false
+		}
+	case 37:
+		if !allReducesHaveSymbol(lang, actions, "require_directive_repeat1") {
+			return ParseAction{}, false
+		}
 	default:
 		return ParseAction{}, false
 	}

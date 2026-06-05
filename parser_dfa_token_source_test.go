@@ -53,7 +53,7 @@ func TestNextExternalTokenPrefersCandidateUsableByPrimaryState(t *testing.T) {
 		}
 	}
 
-	ts := acquireDFATokenSource(NewLexer(nil, []byte("x")), lang, lookup, nil, nil)
+	ts := acquireDFATokenSource(NewLexer(nil, []byte("x")), lang, lookup, nil, nil, nil)
 	defer ts.Close()
 	ts.SetParserState(2)
 	ts.SetGLRStates([]StateID{2, 1})
@@ -65,6 +65,30 @@ func TestNextExternalTokenPrefersCandidateUsableByPrimaryState(t *testing.T) {
 	if got, want := scored.Symbol, Symbol(2); got != want {
 		t.Fatalf("scored external token symbol = %d, want %d", got, want)
 	}
+
+	tok, ok := ts.nextExternalToken()
+	if !ok {
+		t.Fatal("expected external token")
+	}
+	if got, want := tok.Symbol, Symbol(2); got != want {
+		t.Fatalf("external token symbol = %d, want %d", got, want)
+	}
+}
+
+func TestNextExternalTokenUsesExternalValidMaskByState(t *testing.T) {
+	lang := &Language{
+		Name:            "test",
+		SymbolNames:     []string{"EOF", "first", "second"},
+		ExternalScanner: dualChoiceExternalScanner{},
+		ExternalSymbols: []Symbol{1, 2},
+	}
+	lookup := func(StateID, Symbol) uint16 { return 0 }
+	externalValidByState := [][]uint16{nil, []uint16{1}}
+	externalValidMaskByState := buildExternalValidMaskByState(externalValidByState, len(lang.ExternalSymbols))
+
+	ts := acquireDFATokenSource(NewLexer(nil, []byte("x")), lang, lookup, nil, externalValidByState, externalValidMaskByState)
+	defer ts.Close()
+	ts.SetParserState(1)
 
 	tok, ok := ts.nextExternalToken()
 	if !ok {
@@ -230,12 +254,49 @@ func (byteStateExternalScanner) Scan(payload any, lexer *ExternalLexer, valid []
 	return false
 }
 
+type preservingCountingExternalScanner struct {
+	serializeCalls *int
+}
+
+func (s preservingCountingExternalScanner) Create() any { return nil }
+func (s preservingCountingExternalScanner) Destroy(any) {}
+func (s preservingCountingExternalScanner) Serialize(any, []byte) int {
+	*s.serializeCalls++
+	return 0
+}
+func (s preservingCountingExternalScanner) Deserialize(any, []byte) {}
+func (s preservingCountingExternalScanner) PreservesStateOnScanFailure() bool {
+	return true
+}
+func (s preservingCountingExternalScanner) Scan(any, *ExternalLexer, []bool) bool {
+	return true
+}
+
+func TestRunExternalScannerWithRetryDefersSnapshotForFailurePreservingScanner(t *testing.T) {
+	serializeCalls := 0
+	lang := &Language{
+		Name:            "test",
+		ExternalScanner: preservingCountingExternalScanner{serializeCalls: &serializeCalls},
+	}
+	ts := acquireDFATokenSource(NewLexer(nil, nil), lang, nil, nil, nil, nil)
+	defer ts.Close()
+
+	el := &ExternalLexer{}
+	el.reset(nil, 0, 0, 0)
+	if !ts.runExternalScannerWithRetry(el, []bool{true}) {
+		t.Fatal("runExternalScannerWithRetry = false, want true")
+	}
+	if serializeCalls != 0 {
+		t.Fatalf("Serialize calls = %d, want 0 for first-pass success", serializeCalls)
+	}
+}
+
 func TestCaptureExternalScannerStateUsesIndependentReusableBuffers(t *testing.T) {
 	lang := &Language{
 		Name:            "test",
 		ExternalScanner: byteStateExternalScanner{},
 	}
-	ts := acquireDFATokenSource(NewLexer(nil, nil), lang, nil, nil, nil)
+	ts := acquireDFATokenSource(NewLexer(nil, nil), lang, nil, nil, nil, nil)
 	defer ts.Close()
 
 	state := ts.externalPayload.(*byte)
@@ -266,24 +327,52 @@ func TestCaptureExternalScannerStateUsesIndependentReusableBuffers(t *testing.T)
 	}
 }
 
+func TestLastExternalScannerCheckpointCanUseStartAsEndWithoutAliasingScratch(t *testing.T) {
+	ts := &dfaTokenSource{
+		externalTokenStart:          []byte{7},
+		externalTokenEnd:            make([]byte, 0, externalScannerSerializationBufferSize),
+		lastExternalTokenStartByte:  12,
+		lastExternalTokenEndByte:    34,
+		lastExternalTokenValid:      true,
+		externalTokenEndSameAsStart: true,
+	}
+
+	cp, startByte, endByte, ok := ts.lastExternalScannerCheckpoint()
+	if !ok {
+		t.Fatal("lastExternalScannerCheckpoint ok = false, want true")
+	}
+	if startByte != 12 || endByte != 34 {
+		t.Fatalf("checkpoint bytes = (%d, %d), want (12, 34)", startByte, endByte)
+	}
+	if len(cp.start) != 1 || cp.start[0] != 7 || len(cp.end) != 1 || cp.end[0] != 7 {
+		t.Fatalf("checkpoint = start %v end %v, want both [7]", cp.start, cp.end)
+	}
+
+	ts.externalTokenEnd = append(ts.externalTokenEnd, 99)
+	if got, want := ts.externalTokenStart[0], byte(7); got != want {
+		t.Fatalf("externalTokenEnd scratch aliases start: start[0] = %d, want %d", got, want)
+	}
+}
+
 func TestResetPooledDFATokenSourcePreservesScannerScratch(t *testing.T) {
 	lookup := func(StateID, Symbol) uint16 { return 0 }
 	ts := &dfaTokenSource{
-		language:                   &Language{Name: "old"},
-		lookupActionIndex:          lookup,
-		externalValid:              make([]bool, 3, 8),
-		externalTokenStart:         make([]byte, 2, externalScannerSerializationBufferSize),
-		externalTokenEnd:           make([]byte, 3, externalScannerSerializationBufferSize),
-		externalSnapshot:           make([]byte, 4, externalScannerSerializationBufferSize),
-		externalRetrySnap:          make([]byte, 5, externalScannerSerializationBufferSize),
-		externalCompare:            make([]byte, 6, externalScannerSerializationBufferSize),
-		maskedScratch:              make([]bool, 7, 9),
-		extZeroTried:               make([]bool, 4, 10),
-		extZeroPos:                 99,
-		zeroWidthPos:               77,
-		lastExternalTokenValid:     true,
-		lastExternalTokenStartByte: 12,
-		lastExternalTokenEndByte:   34,
+		language:                    &Language{Name: "old"},
+		lookupActionIndex:           lookup,
+		externalValid:               make([]bool, 3, 8),
+		externalTokenStart:          make([]byte, 2, externalScannerSerializationBufferSize),
+		externalTokenEnd:            make([]byte, 3, externalScannerSerializationBufferSize),
+		externalSnapshot:            make([]byte, 4, externalScannerSerializationBufferSize),
+		externalRetrySnap:           make([]byte, 5, externalScannerSerializationBufferSize),
+		externalCompare:             make([]byte, 6, externalScannerSerializationBufferSize),
+		maskedScratch:               make([]bool, 7, 9),
+		extZeroTried:                make([]bool, 4, 10),
+		extZeroPos:                  99,
+		zeroWidthPos:                77,
+		lastExternalTokenValid:      true,
+		externalTokenEndSameAsStart: true,
+		lastExternalTokenStartByte:  12,
+		lastExternalTokenEndByte:    34,
 	}
 
 	resetPooledDFATokenSource(ts)
@@ -320,8 +409,8 @@ func TestResetPooledDFATokenSourcePreservesScannerScratch(t *testing.T) {
 		len(ts.maskedScratch) != 0 || len(ts.extZeroTried) != 0 {
 		t.Fatalf("reset should keep scratch capacity with zero length: %+v", ts)
 	}
-	if ts.extZeroPos != -1 || ts.zeroWidthPos != -1 || ts.lastExternalTokenValid {
-		t.Fatalf("reset did not clear scanner state: extZeroPos=%d zeroWidthPos=%d lastValid=%t", ts.extZeroPos, ts.zeroWidthPos, ts.lastExternalTokenValid)
+	if ts.extZeroPos != -1 || ts.zeroWidthPos != -1 || ts.lastExternalTokenValid || ts.externalTokenEndSameAsStart {
+		t.Fatalf("reset did not clear scanner state: extZeroPos=%d zeroWidthPos=%d lastValid=%t endSameStart=%t", ts.extZeroPos, ts.zeroWidthPos, ts.lastExternalTokenValid, ts.externalTokenEndSameAsStart)
 	}
 }
 
@@ -330,7 +419,7 @@ func TestDFATokenSourceResetClearsScannerAndLexerState(t *testing.T) {
 		Name:            "test",
 		ExternalScanner: byteStateExternalScanner{},
 	}
-	ts := acquireDFATokenSource(NewLexer(nil, []byte("abc")), lang, nil, nil, nil)
+	ts := acquireDFATokenSource(NewLexer(nil, []byte("abc")), lang, nil, nil, nil, nil)
 	defer ts.Close()
 
 	state := ts.externalPayload.(*byte)

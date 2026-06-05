@@ -146,6 +146,63 @@ func TestNormalizeRustRangeExpressionRestoresOperatorChild(t *testing.T) {
 	}
 }
 
+func TestRustExtractRecoveredTopLevelNodesWithOffsetClonesIntoDestinationArena(t *testing.T) {
+	lang := &Language{
+		Name:        "rust",
+		SymbolNames: []string{"", "source_file", "line_comment", "function_item", "identifier"},
+		SymbolMetadata: []SymbolMetadata{
+			{},
+			{Name: "source_file", Visible: true, Named: true},
+			{Name: "line_comment", Visible: true, Named: true},
+			{Name: "function_item", Visible: true, Named: true},
+			{Name: "identifier", Visible: true, Named: true},
+		},
+	}
+	source := []byte("// c\nfn f() {}\n")
+	srcArena := acquireNodeArena(arenaClassFull)
+	comment := newLeafNodeInArena(srcArena, 2, true, 0, 4, Point{}, Point{Column: 4})
+	ident := newLeafNodeInArena(srcArena, 4, true, 8, 9, Point{Row: 1, Column: 3}, Point{Row: 1, Column: 4})
+	fn := newParentNodeInArena(srcArena, 3, true, []*Node{ident}, nil, 0)
+	fn.startByte = 5
+	fn.endByte = 14
+	fn.startPoint = Point{Row: 1}
+	fn.endPoint = Point{Row: 1, Column: 9}
+	root := newParentNodeInArena(srcArena, 1, true, []*Node{comment, fn}, nil, 0)
+	root.startByte = 0
+	root.endByte = uint32(len(source))
+	root.startPoint = Point{}
+	root.endPoint = Point{Row: 2}
+	populateParentNode(root, root.children)
+
+	dstArena := acquireNodeArena(arenaClassFull)
+	nodes := rustExtractRecoveredTopLevelNodesWithOffset(root, lang, dstArena, 100, Point{Row: 10, Column: 5})
+	if got, want := len(nodes), 2; got != want {
+		t.Fatalf("recovered node count = %d, want %d", got, want)
+	}
+	if nodes[0].ownerArena != dstArena || nodes[1].ownerArena != dstArena {
+		t.Fatal("recovered nodes were not cloned into destination arena")
+	}
+	if got, want := nodes[0].StartByte(), uint32(100); got != want {
+		t.Fatalf("comment start byte = %d, want %d", got, want)
+	}
+	if got, want := nodes[0].StartPoint(), (Point{Row: 10, Column: 5}); got != want {
+		t.Fatalf("comment start point = %+v, want %+v", got, want)
+	}
+	if got, want := nodes[1].StartByte(), uint32(105); got != want {
+		t.Fatalf("function start byte = %d, want %d", got, want)
+	}
+	if got, want := nodes[1].StartPoint(), (Point{Row: 11, Column: 0}); got != want {
+		t.Fatalf("function start point = %+v, want %+v", got, want)
+	}
+	child := nodes[1].NamedChild(0)
+	if child == nil {
+		t.Fatal("function identifier child = nil")
+	}
+	if got, want := child.StartPoint(), (Point{Row: 11, Column: 3}); got != want {
+		t.Fatalf("identifier start point = %+v, want %+v", got, want)
+	}
+}
+
 func TestRustCanonicalDotRangeBuildsOperatorChildren(t *testing.T) {
 	lang := &Language{
 		Name:        "rust",
@@ -237,7 +294,7 @@ func TestNormalizeRustTokenBindingPatterns(t *testing.T) {
 	}, nil, 0)
 	root := newParentNodeInArena(arena, 1, true, []*Node{tokenTree}, nil, 0)
 
-	normalizeRustTokenBindingPatterns(root, source, lang)
+	normalizeRustTokenBindingPatternsAndRecoveredTokenTrees(root, source, lang)
 
 	pattern := root.Child(0)
 	if pattern == nil || pattern.Type(lang) != "token_tree_pattern" {

@@ -802,6 +802,32 @@ func TestCppAcceptedErrorRetryPreservesTruncatedMergeRetry(t *testing.T) {
 	}
 }
 
+func TestJavaAcceptedErrorRetryUsesWideMergeRetry(t *testing.T) {
+	errChild := &Node{
+		symbol: errorSymbol,
+		flags:  nodeFlagHasError,
+	}
+	tree := &Tree{
+		language: &Language{Name: "java"},
+		root: &Node{
+			endByte: 128,
+			children: []*Node{
+				errChild,
+			},
+		},
+		parseRuntime: ParseRuntime{
+			StopReason:      ParseStopAccepted,
+			ExpectedEOFByte: 128,
+			RootEndByte:     128,
+			MaxStacksSeen:   1,
+		},
+	}
+
+	if got := fullParseRetryMergePerKeyOverride(tree, 128, 6); got != javaFullParseRetryMaxMergePerKey {
+		t.Fatalf("fullParseRetryMergePerKeyOverride(java accepted error) = %d, want %d", got, javaFullParseRetryMaxMergePerKey)
+	}
+}
+
 func TestShouldRepeatExternalScannerFullParseSkipsDart(t *testing.T) {
 	tree := &Tree{
 		root: &Node{
@@ -1140,7 +1166,7 @@ func TestParseMaxMergePerKeyValue(t *testing.T) {
 }
 
 func TestLanguageDefersExactDedupe(t *testing.T) {
-	for _, name := range []string{"dart", "typescript", "tsx", "rust"} {
+	for _, name := range []string{"dart", "java", "typescript", "tsx", "rust"} {
 		if !languageDefersExactDedupe(&Language{Name: name}, false) {
 			t.Fatalf("languageDefersExactDedupe(%s, full tree) = false, want true", name)
 		}
@@ -1239,6 +1265,9 @@ func TestEffectiveParseMergePerKeyCap(t *testing.T) {
 	if got := effectiveParseMergePerKeyCap(&Language{Name: "ruby"}, maxStacksPerMergeKey, false); got != 1 {
 		t.Fatalf("effectiveParseMergePerKeyCap(ruby, default, full) = %d, want 1", got)
 	}
+	if got := effectiveParseMergePerKeyCap(&Language{Name: "rust"}, maxStacksPerMergeKey, false); got != 1 {
+		t.Fatalf("effectiveParseMergePerKeyCap(rust, default, full) = %d, want 1", got)
+	}
 	if got := effectiveParseMergePerKeyCap(&Language{Name: "svelte"}, maxStacksPerMergeKey, false); got != 1 {
 		t.Fatalf("effectiveParseMergePerKeyCap(svelte, default, full) = %d, want 1", got)
 	}
@@ -1311,6 +1340,9 @@ func TestEffectiveParseMergePerKeyCap(t *testing.T) {
 	if got := effectiveParseMergePerKeyCap(&Language{Name: "ruby"}, maxStacksPerMergeKey, true); got != maxStacksPerMergeKey {
 		t.Fatalf("effectiveParseMergePerKeyCap(ruby, default, incremental) = %d, want %d", got, maxStacksPerMergeKey)
 	}
+	if got := effectiveParseMergePerKeyCap(&Language{Name: "rust"}, maxStacksPerMergeKey, true); got != maxStacksPerMergeKey {
+		t.Fatalf("effectiveParseMergePerKeyCap(rust, default, incremental) = %d, want %d", got, maxStacksPerMergeKey)
+	}
 	if got := effectiveParseMergePerKeyCap(&Language{Name: "svelte"}, maxStacksPerMergeKey, true); got != maxStacksPerMergeKey {
 		t.Fatalf("effectiveParseMergePerKeyCap(svelte, default, incremental) = %d, want %d", got, maxStacksPerMergeKey)
 	}
@@ -1336,6 +1368,9 @@ func TestEffectiveParseMergePerKeyCapJavaExplicitOverride(t *testing.T) {
 	if got := effectiveParseMergePerKeyCap(&Language{Name: "cpp"}, 4, false); got != 4 {
 		t.Fatalf("effectiveParseMergePerKeyCap(cpp, explicit, full) = %d, want 4", got)
 	}
+	if got := effectiveParseMergePerKeyCap(&Language{Name: "rust"}, 4, false); got != 4 {
+		t.Fatalf("effectiveParseMergePerKeyCap(rust, explicit, full) = %d, want 4", got)
+	}
 }
 
 func TestJavaAnnotationInterfaceSourceUsesWideMergeCap(t *testing.T) {
@@ -1345,6 +1380,9 @@ func TestJavaAnnotationInterfaceSourceUsesWideMergeCap(t *testing.T) {
 
 	if !javaFullParseNeedsAnnotationDeclarationMergeWidth(&Language{Name: "java"}, []byte("@interface Demo {}"), nil) {
 		t.Fatal("javaFullParseNeedsAnnotationDeclarationMergeWidth = false, want true")
+	}
+	if javaFullParseNeedsAnnotationDeclarationMergeWidth(&Language{Name: "java"}, []byte(`class Demo { @Generated("x") void f() {} }`), nil) {
+		t.Fatal("javaFullParseNeedsAnnotationDeclarationMergeWidth(@Generated) = true, want false")
 	}
 	if javaFullParseNeedsAnnotationDeclarationMergeWidth(&Language{Name: "java"}, []byte("class Demo {}"), nil) {
 		t.Fatal("javaFullParseNeedsAnnotationDeclarationMergeWidth(class) = true, want false")

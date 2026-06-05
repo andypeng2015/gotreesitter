@@ -42,6 +42,12 @@ type reduceChainHint struct {
 	maxSteps       uint16
 }
 
+type reduceFieldPlan struct {
+	childCount uint8
+	fieldIDs   []FieldID
+	inherited  []bool
+}
+
 func buildReduceChainHintIndex(hints []reduceChainHint) []int {
 	if len(hints) == 0 {
 		return nil
@@ -268,23 +274,64 @@ func buildReduceFieldPresence(lang *Language) []bool {
 	return out
 }
 
+func buildReduceFieldPlans(lang *Language) []reduceFieldPlan {
+	if lang == nil || len(lang.FieldMapSlices) == 0 || len(lang.FieldMapEntries) == 0 {
+		return nil
+	}
+	out := make([]reduceFieldPlan, len(lang.FieldMapSlices))
+	seen := make([]bool, len(out))
+	any := false
+	for _, entry := range lang.ParseActions {
+		for _, act := range entry.Actions {
+			if act.Type != ParseActionReduce {
+				continue
+			}
+			pid := int(act.ProductionID)
+			if pid < 0 || pid >= len(out) || seen[pid] {
+				continue
+			}
+			fieldIDs, inherited := buildFieldPlanForProduction(lang, int(act.ChildCount), act.ProductionID)
+			if fieldIDs == nil {
+				continue
+			}
+			out[pid] = reduceFieldPlan{
+				childCount: act.ChildCount,
+				fieldIDs:   fieldIDs,
+				inherited:  inherited,
+			}
+			seen[pid] = true
+			any = true
+		}
+	}
+	if !any {
+		return nil
+	}
+	return out
+}
+
 func fieldMapHasEffectiveFields(lang *Language, childCount int, productionID uint16) bool {
+	fieldIDs, _ := buildFieldPlanForProduction(lang, childCount, productionID)
+	return fieldIDSliceHasAny(fieldIDs)
+}
+
+func buildFieldPlanForProduction(lang *Language, childCount int, productionID uint16) ([]FieldID, []bool) {
 	if lang == nil || childCount <= 0 || len(lang.FieldMapEntries) == 0 {
-		return false
+		return nil, nil
 	}
 	pid := int(productionID)
 	if pid < 0 || pid >= len(lang.FieldMapSlices) {
-		return false
+		return nil, nil
 	}
 	fm := lang.FieldMapSlices[pid]
 	count := int(fm[1])
 	if count == 0 {
-		return false
+		return nil, nil
 	}
 	fieldIDs := make([]FieldID, childCount)
 	inherited := make([]bool, childCount)
 	conflictedInherited := make([]bool, childCount)
 	start := int(fm[0])
+	assigned := false
 	for i := 0; i < count; i++ {
 		entryIdx := start + i
 		if entryIdx >= len(lang.FieldMapEntries) {
@@ -316,8 +363,12 @@ func fieldMapHasEffectiveFields(lang *Language, childCount int, productionID uin
 			fieldIDs[idx] = entry.FieldID
 			inherited[idx] = entry.Inherited
 		}
+		assigned = true
 	}
-	return fieldIDSliceHasAny(fieldIDs)
+	if !assigned {
+		return nil, nil
+	}
+	return fieldIDs, inherited
 }
 
 func buildSingleTokenWrapperSymbols(lang *Language) []bool {
@@ -1413,6 +1464,59 @@ func (p *Parser) tryFastVisibleReduceActionFromGSS(s *glrStack, act ParseAction,
 	return true
 }
 
+func (p *Parser) tryFastUnaryCollapseFromGSS(s *glrStack, act ParseAction, tok Token, anyReduced *bool, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry) bool {
+	if p == nil || s == nil || s.gss.head == nil || p.language == nil || arena == nil {
+		return false
+	}
+	if p.reduceTiming != nil || arena.breakdownEnabled || tok.NoLookahead || act.ChildCount != 1 {
+		return false
+	}
+	if p.reduceProductionHasEffectiveFields(1, act.ProductionID, arena) || len(p.reduceAliasSequence(act.ProductionID)) != 0 {
+		return false
+	}
+
+	head := s.gss.head
+	child := stackEntryNode(head.entry)
+	if child == nil || child.isExtra() || child.ownerArena != arena || child.parent != nil || !p.isVisibleSymbol(child.symbol) {
+		return false
+	}
+	if head.prev == nil {
+		return false
+	}
+	collapsed, _ := p.collapseUnaryChildForReductionWithRule(act, arena, child)
+	if collapsed == nil {
+		return false
+	}
+
+	targetDepth := s.depth() - 1
+	if targetDepth < 0 {
+		return false
+	}
+	topState := head.prev.entry.state
+	gotoState := p.lookupGoto(topState, act.Symbol)
+	targetState := topState
+	if gotoState != 0 {
+		targetState = gotoState
+	}
+	collapsed.productionID = act.ProductionID
+	collapsed.preGotoState = topState
+	collapsed.parseState = targetState
+	nodeBumpEquivVersion(collapsed)
+	if !s.truncateBeforePush(targetDepth) {
+		s.dead = true
+		if tmpEntries != nil {
+			*tmpEntries = (*tmpEntries)[:0]
+		}
+		return true
+	}
+	p.pushStackNode(s, targetState, collapsed, entryScratch, gssScratch)
+	markReduceApplied(s, act, anyReduced)
+	if tmpEntries != nil {
+		*tmpEntries = (*tmpEntries)[:0]
+	}
+	return true
+}
+
 func (p *Parser) applyNoTreeReduceActionFromGSS(s *glrStack, act ParseAction, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, tmp []stackEntry, trackChildErrors bool) {
 	timing := p.reduceTiming
 	rangeStart := time.Time{}
@@ -1452,6 +1556,9 @@ func (p *Parser) applyNoTreeReduceActionFromGSS(s *glrStack, act ParseAction, to
 func (p *Parser) applyReduceActionFromGSS(s *glrStack, act ParseAction, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, tmp []stackEntry, deferParentLinks bool, trackChildErrors bool) {
 	if p != nil && p.noTreeBenchmarkOnly {
 		p.applyNoTreeReduceActionFromGSS(s, act, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, tmp, trackChildErrors)
+		return
+	}
+	if p.tryFastUnaryCollapseFromGSS(s, act, tok, anyReduced, arena, entryScratch, gssScratch, tmpEntries) {
 		return
 	}
 	if p.tryFastVisibleReduceActionFromGSS(s, act, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors) {
@@ -5426,6 +5533,12 @@ func (p *Parser) buildFieldIDs(childCount int, productionID uint16, _ *nodeArena
 	pid := int(productionID)
 	if pid >= len(p.language.FieldMapSlices) {
 		return nil, nil
+	}
+	if pid < len(p.reduceFieldPlans) {
+		plan := p.reduceFieldPlans[pid]
+		if plan.fieldIDs != nil && int(plan.childCount) == childCount {
+			return plan.fieldIDs, plan.inherited
+		}
 	}
 	fm := p.language.FieldMapSlices[pid]
 	count := int(fm[1])

@@ -255,6 +255,32 @@ func (p *Parser) buildExternalValidByState() [][]uint16 {
 	return rows
 }
 
+func buildExternalValidMaskByState(rows [][]uint16, externalSymbolCount int) []uint64 {
+	if len(rows) == 0 || externalSymbolCount <= 0 || externalSymbolCount > 64 {
+		return nil
+	}
+	masks := make([]uint64, len(rows))
+	any := false
+	for state, row := range rows {
+		var mask uint64
+		for _, extIdx := range row {
+			i := int(extIdx)
+			if i < 0 || i >= externalSymbolCount {
+				continue
+			}
+			mask |= uint64(1) << uint(i)
+		}
+		masks[state] = mask
+		if mask != 0 {
+			any = true
+		}
+	}
+	if !any {
+		return nil
+	}
+	return masks
+}
+
 func (p *Parser) forEachActionIndexInState(state StateID, visit func(sym Symbol, idx uint16) bool) {
 	if p == nil || p.language == nil || visit == nil {
 		return

@@ -92,7 +92,7 @@ func forestDedupTieReplace(entry, existing stackEntry) bool {
 // drive it; not part of the stable API.
 func (p *Parser) ParseForestExperimental(source []byte) (*Tree, bool) {
 	arena := acquireNodeArena(arenaClassFull)
-	root, ok := p.parseForest(arena, source)
+	root, ok := p.parseForest(arena, source, true)
 	if !ok || root == nil {
 		arena.Release()
 		return nil, false
@@ -161,6 +161,7 @@ func (p *Parser) recordForestDecline(reason string, tok Token, states []StateID)
 //   - generics `T[X]` dedup tie-break (taller subtree wins a coalesce score tie,
 //     under the shared `_expression` supertype), with cached node height; 880124ca
 //   - blank_identifier `import _` C-oracle-seeded gap collapse; adb1a0fd
+//
 // One pre-existing gotreesitter-vs-C span quirk (off-by-3 on a few files) is
 // SHARED with production (not a forest regression), so it does not block.
 func languageWantsForest(name string) bool {
@@ -184,7 +185,8 @@ func (p *Parser) tryForestFastPath(source []byte) *Tree {
 		return nil
 	}
 	arena := acquireNodeArena(arenaClassFull)
-	root, ok := p.parseForest(arena, source)
+	allowIncremental := languageAllowsForestIncrementalPath(p.language.Name)
+	root, ok := p.parseForest(arena, source, allowIncremental)
 	if !ok || root == nil || root.HasError() {
 		arena.Release()
 		return nil // production fallback handles failures and error recovery
@@ -209,7 +211,7 @@ func (p *Parser) tryForestFastPath(source []byte) *Tree {
 	tree := newTreeWithArenas(root, source, p.language, arena, nil)
 	tree.setParseRuntime(forestAcceptedRuntime(root, source))
 	tree.forestFastPath = true
-	if !languageAllowsForestIncrementalPath(p.language.Name) {
+	if !allowIncremental {
 		tree.incrementalReuseDisabled = true
 	}
 	p.normalizeReturnedTree(rawRootOrNil(tree), source)
@@ -251,6 +253,7 @@ func forestAcceptedRuntime(root *Node, source []byte) ParseRuntime {
 // yields a 413-byte s-expr vs the correct 377KB). erlang (49/66 valid edits) and
 // javascript (13/66) are byte-for-byte incremental==fresh; the rest are demoted
 // to fresh-forest-parse fallback on edits (correct) until the reuse bug is fixed.
+// A 2026-06-04 Go probe failed the same gate (21/28 valid edits diverged).
 // Do NOT re-add a language here without it passing TestForestIncrementalCorrectness.
 func languageAllowsForestIncrementalPath(name string) bool {
 	switch name {
@@ -363,13 +366,12 @@ type gssForestNode struct {
 //
 // Stage 1 scaffold: builds the DAG. Correct trees require Stage 2 (reduce walks
 // every link); until then this is exercised only under the flag + parity gate.
-func coalesceForest(index *gssForestIndex, slab *gssForestNodeSlab, state StateID, byteOffset uint32, prev *gssForestNode, entry stackEntry, score, errorCost int) *gssForestNode {
+func coalesceForest(index *gssForestIndex, slab *gssForestNodeSlab, state StateID, byteOffset uint32, prev *gssForestNode, entry stackEntry, score, errorCost int, linkCap int) *gssForestNode {
 	if perfCountersEnabled {
 		perfRecordForestCoalesceCall()
 	}
 	key := gssForestKey{state: state, byteOffset: byteOffset}
 	node := index.lookup(key)
-	linkNoExtraDepth := forestLinkNoExtraDepth(prev, entry)
 	if node == nil {
 		node = slab.alloc(state, byteOffset, score, errorCost)
 		index.set(key, node)
@@ -415,8 +417,8 @@ func coalesceForest(index *gssForestIndex, slab *gssForestNodeSlab, state StateI
 				node.dirty++
 				replaced = true
 			}
-			if l.prevDirty != forestNodeDirty(prev) {
-				l.prevDirty = forestNodeDirty(prev)
+			if prevDirty := forestNodeDirty(prev); l.prevDirty != prevDirty {
+				l.prevDirty = prevDirty
 				node.dirty++
 			}
 			if perfCountersEnabled {
@@ -429,7 +431,7 @@ func coalesceForest(index *gssForestIndex, slab *gssForestNodeSlab, state StateI
 	// a cap, a repeated/ambiguous structure accumulates O(n) links on one node and
 	// reduceOverForest enumerates O(n^childCount) paths. Keep the best-score links;
 	// replace the weakest when full.
-	if len(node.links) >= forestMaxLinksPerNode {
+	if len(node.links) >= linkCap {
 		worst := 0
 		for i := 1; i < len(node.links); i++ {
 			if node.links[i].score < node.links[worst].score {
@@ -439,6 +441,7 @@ func coalesceForest(index *gssForestIndex, slab *gssForestNodeSlab, state StateI
 		if score > node.links[worst].score {
 			node.links[worst] = gssLink{prev: prev, prevDirty: forestNodeDirty(prev), subtree: entry, score: score}
 			forestRefreshMinLinkScore(node)
+			linkNoExtraDepth := forestLinkNoExtraDepth(prev, entry)
 			forestRecordNoExtraDepth(node, false, linkNoExtraDepth)
 			node.dirty++
 			if perfCountersEnabled {
@@ -450,6 +453,7 @@ func coalesceForest(index *gssForestIndex, slab *gssForestNodeSlab, state StateI
 		return node
 	}
 	firstLink := len(node.links) == 0
+	linkNoExtraDepth := forestLinkNoExtraDepth(prev, entry)
 	node.links = append(node.links, gssLink{prev: prev, prevDirty: forestNodeDirty(prev), subtree: entry, score: score})
 	forestRecordMinLinkScore(node, firstLink, score)
 	forestRecordNoExtraDepth(node, firstLink, linkNoExtraDepth)
@@ -483,12 +487,12 @@ func (c *forestGotoCache) lookup(p *Parser, state StateID, sym Symbol) StateID {
 	return target
 }
 
-func forestCoalesceWouldDropForCap(index *gssForestIndex, state StateID, byteOffset uint32, score, errorCost int) bool {
+func forestCoalesceWouldDropForCap(index *gssForestIndex, state StateID, byteOffset uint32, score, errorCost int, linkCap int) bool {
 	if index == nil {
 		return false
 	}
 	node := index.lookup(gssForestKey{state: state, byteOffset: byteOffset})
-	if node == nil || len(node.links) < forestMaxLinksPerNode {
+	if node == nil || len(node.links) < linkCap {
 		return false
 	}
 	if errorCost < node.errorCost {
@@ -500,6 +504,13 @@ func forestCoalesceWouldDropForCap(index *gssForestIndex, state StateID, byteOff
 // forestMaxLinksPerNode caps the alternative fan-out coalesced at one
 // (state, byteOffset) node, bounding reduceOverForest's path enumeration.
 const forestMaxLinksPerNode = 8
+
+func forestLinkCapForLanguage(name string) int {
+	if name == "cmake" {
+		return 2
+	}
+	return forestMaxLinksPerNode
+}
 
 // entrySymSpan returns a materialized node entry's symbol and byte span for cheap
 // alternative-deduplication (no deep structural comparison).
@@ -910,7 +921,7 @@ func (s *gssForestNodeSlab) retainedBytes() int {
 // returned, or (nil,false) if the parse dies. This is the forest path the
 // GOT_GLR_FOREST flag dispatches into; parity-iteration (extras, recovery,
 // external scanners, full GLR-lexing) is layered on this core.
-func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
+func (p *Parser) parseForest(arena *nodeArena, source []byte, captureExternalCheckpoints bool) (*Node, bool) {
 	lang := p.language
 	meta := lang.SymbolMetadata
 	named := func(sym Symbol) bool { return int(sym) < len(meta) && meta[sym].Named }
@@ -932,7 +943,8 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 	// selection, immediate tokens, external scanners and GLR-lexing all match
 	// the production parser. State is set per step from the frontier.
 	lexer := NewLexer(lang.LexStates, source)
-	ts := acquireDFATokenSource(lexer, lang, p.lookupActionIndex, p.hasKeywordState, p.externalValidByState)
+	ts := acquireDFATokenSource(lexer, lang, p.lookupActionIndex, p.hasKeywordState, p.externalValidByState, p.externalValidMaskByState)
+	ts.setExternalScannerCheckpointsEnabled(captureExternalCheckpoints)
 
 	// tree-sitter convention: state 0 is the error state, state 1 is the start.
 	start := &gssForestNode{state: 1, byteOffset: 0}
@@ -941,6 +953,7 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 	reducer := &forestReducer{}
 	slab := acquireGSSForestNodeSlab()
 	defer releaseGSSForestNodeSlab(slab)
+	linkCap := forestLinkCapForLanguage(lang.Name)
 
 	// Honor the same per-parse memory budget the production loop enforces
 	// (parser.go: arena.budgetExhausted → ParseStopMemoryBudget). The forest has
@@ -1088,7 +1101,7 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 						if reducedEnd < len(children) && reducedEnd > 0 {
 							parentEnd = stackEntryNodeEndByte(children[reducedEnd-1])
 						}
-						if forestCoalesceWouldDropForCap(&curIndex, gotoState, parentEnd, score, popTo.errorCost) {
+						if forestCoalesceWouldDropForCap(&curIndex, gotoState, parentEnd, score, popTo.errorCost, linkCap) {
 							if perfCountersEnabled {
 								perfRecordForestCoalescePreCapDrop()
 							}
@@ -1148,7 +1161,7 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 						// the children's accumulated scores.
 						top := coalesceForest(&curIndex, slab, gotoState, parentEnd, popTo,
 							stackEntry{node: unsafe.Pointer(parent), state: gotoState, kind: stackEntryKindNode},
-							score, popTo.errorCost)
+							score, popTo.errorCost, linkCap)
 						for _, ex := range children[reducedEnd:] {
 							extra := (*Node)(ex.node)
 							extra.parseState = gotoState
@@ -1156,7 +1169,7 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 							exEnd := extra.endByte
 							top = coalesceForest(&curIndex, slab, gotoState, exEnd, top,
 								stackEntry{node: ex.node, state: gotoState, kind: stackEntryKindNode},
-								0, top.errorCost)
+								0, top.errorCost, linkCap)
 						}
 						work = append(work, top)
 					})
@@ -1178,7 +1191,7 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 					before := nextIndex.len()
 					sh := coalesceForest(&nextIndex, slab, target, tok.EndByte, node,
 						stackEntry{node: unsafe.Pointer(leaf), state: target, kind: stackEntryKindNode},
-						0, node.errorCost) // a shifted leaf carries no dynamic precedence
+						0, node.errorCost, linkCap) // a shifted leaf carries no dynamic precedence
 					if nextIndex.len() != before {
 						nextFrontier = append(nextFrontier, sh)
 					}
@@ -1795,4 +1808,3 @@ func (fr *forestReducer) dfs(cur *gssForestNode, remaining, score int, visit for
 func forestStackEntryIsExtra(e stackEntry) bool {
 	return e.kind == stackEntryKindNode && e.node != nil && (*Node)(e.node).isExtra()
 }
-

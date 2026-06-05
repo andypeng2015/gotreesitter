@@ -166,6 +166,8 @@ func (PythonExternalScanner) Deserialize(payload any, buf []byte) {
 
 func (PythonExternalScanner) SupportsIncrementalReuse() bool { return true }
 
+func (PythonExternalScanner) PreservesStateOnScanFailure() bool { return true }
+
 func (PythonExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
 	s := payload.(*pythonScannerState)
 	if len(s.indents) == 0 {
@@ -301,8 +303,7 @@ func (PythonExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer
 			indentLength = 0
 			lexer.Advance(true)
 		case ' ':
-			indentLength++
-			lexer.Advance(true)
+			indentLength += uint16(lexer.AdvanceSpaces(true))
 		case '\r', '\f':
 			indentLength = 0
 			lexer.Advance(true)
@@ -317,9 +318,7 @@ func (PythonExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer
 				if firstCommentIndentLength == -1 {
 					firstCommentIndentLength = int32(indentLength)
 				}
-				for lexer.Lookahead() != 0 && lexer.Lookahead() != '\n' {
-					lexer.Advance(true)
-				}
+				lexer.AdvanceUntilNewline(true)
 				lexer.Advance(true)
 				indentLength = 0
 				continue

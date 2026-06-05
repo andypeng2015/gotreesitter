@@ -182,6 +182,14 @@ type IncrementalReuseExternalScanner interface {
 	SupportsIncrementalReuse() bool
 }
 
+// FailurePreservingExternalScanner is implemented by external scanners whose
+// Scan method does not mutate serialized scanner payload state before returning
+// false. The token source can defer snapshotting until retry is actually needed.
+type FailurePreservingExternalScanner interface {
+	ExternalScanner
+	PreservesStateOnScanFailure() bool
+}
+
 // ReduceChainTerminalAction describes the action class expected after a
 // generated reduce-chain hint finishes applying deterministic reductions.
 type ReduceChainTerminalAction uint8

@@ -25,9 +25,9 @@ func byteToPoint(src []byte, off int) gts.Point {
 }
 
 type forestEdit struct {
-	desc    string
-	edited  []byte
-	inEdit  gts.InputEdit
+	desc   string
+	edited []byte
+	inEdit gts.InputEdit
 }
 
 func replaceEdit(src []byte, p int) forestEdit {
@@ -85,17 +85,19 @@ func TestForestIncrementalCorrectness(t *testing.T) {
 		file string
 		lang func() *gts.Language
 	}{
-		// All six are forest-default languages (languageWantsForest). erlang +
+		// These are forest-default languages (languageWantsForest). erlang +
 		// javascript do real forest-incremental reuse (must match fresh); scss,
-		// css, cmake are forest for full parses but demoted from the incremental
-		// path, so they reach the same assertion via fresh-parse fallback. (python
-		// is NOT a forest language and its PRODUCTION incremental reuse has its own
-		// pre-existing bug — tracked separately — so it is out of scope here.)
+		// css, cmake and go are forest for full parses but demoted from the
+		// incremental path, so they reach the same assertion via fresh-parse
+		// fallback. (python is NOT a forest language and its PRODUCTION incremental
+		// reuse has its own pre-existing bug — tracked separately — so it is out of
+		// scope here.)
 		{"javascript", "cgo_harness/corpus_real/javascript/large__jquery.js", grammars.JavascriptLanguage},
 		{"scss", "cgo_harness/corpus_real/scss/large__github.com.scss", grammars.ScssLanguage},
 		{"css", "cgo_harness/corpus_real/css/large__github.com.css", grammars.CssLanguage},
 		{"erlang", "cgo_harness/corpus_real/erlang/medium__attributes.erl", grammars.ErlangLanguage},
 		{"cmake", "cgo_harness/corpus_real/cmake/medium__CMakeLists.txt", grammars.CmakeLanguage},
+		{"go", "cgo_harness/corpus_real/go/medium__letter_test.go", grammars.GoLanguage},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

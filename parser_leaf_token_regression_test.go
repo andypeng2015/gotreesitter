@@ -199,6 +199,49 @@ func TestParseJavaCollapsedModifierAndWildcardChildren(t *testing.T) {
 	}
 }
 
+func TestParseJavaDottedFieldAssignmentStatement(t *testing.T) {
+	src := `class X {
+  @Generated("com.github.javaparser.generator.metamodel.MetaModelGenerator")
+  private static void initializePropertyMetaModels() {
+    nodeMetaModel.commentPropertyMetaModel = new PropertyMetaModel(
+        nodeMetaModel,
+        "comment",
+        com.github.javaparser.ast.comments.Comment.class,
+        Optional.of(commentMetaModel),
+        true,
+        false,
+        false,
+        false);
+  }
+
+  void f() {
+    nodeMetaModel.commentPropertyMetaModel = new PropertyMetaModel(nodeMetaModel, "comment");
+  }
+}
+`
+	entry := grammars.DetectLanguage("Test.java")
+	lang := entry.Language()
+	parser := gotreesitter.NewParser(lang)
+	tree, err := parser.ParseWithTokenSource([]byte(src), entry.TokenSourceFactory([]byte(src), lang))
+	if err != nil {
+		t.Fatalf("java parse failed: %v", err)
+	}
+	t.Cleanup(tree.Release)
+
+	root := tree.RootNode()
+	t.Logf("runtime: %s", tree.ParseRuntime().Summary())
+	sexpr := root.SExpr(lang)
+	if root.HasError() {
+		t.Fatalf("java parse has error: %s root=%s", tree.ParseRuntime().Summary(), sexpr)
+	}
+	if !strings.Contains(sexpr, "(expression_statement (assignment_expression (field_access") {
+		t.Fatalf("missing dotted field assignment expression; root=%s", sexpr)
+	}
+	if strings.Contains(sexpr, "local_variable_declaration") {
+		t.Fatalf("dotted field assignment parsed as local variable declaration; root=%s", sexpr)
+	}
+}
+
 func TestParsePythonCollapsedWildcardImportChild(t *testing.T) {
 	src := "from os import *\n"
 	tree, lang := parseLanguageSample(t, "python", src)

@@ -128,6 +128,9 @@ func (b *resultRootBuild) syntheticRootSymbol(originalNodes, rootChildren []*Nod
 	if b.isLanguage("swift") {
 		return b.expectedRootSymbol
 	}
+	if b.isLanguage("gomod") {
+		return b.expectedRootSymbol
+	}
 	return errorSymbol
 }
 

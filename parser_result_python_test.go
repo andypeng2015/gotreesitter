@@ -1053,6 +1053,13 @@ func TestPythonCompatibilitySourceGatesPreferCodeTokens(t *testing.T) {
 	}
 }
 
+func TestPythonContinuationEscapeOffsets(t *testing.T) {
+	got := pythonContinuationEscapeOffsets([]byte("a\\\nb\\\r\nc\\td"))
+	if len(got) != 2 || got[0] != 1 || got[1] != 4 {
+		t.Fatalf("pythonContinuationEscapeOffsets() = %#v, want []uint32{1, 4}", got)
+	}
+}
+
 func TestBuildResultFromNodesUnwrapsPythonModuleSimpleStatements(t *testing.T) {
 	lang := &Language{
 		Name: "python",

@@ -1888,13 +1888,14 @@ func mergeStacksSmallDeferExact(alive []glrStack, scratch *glrMergeScratch, lang
 		perKeyCap = scratch.perKeyCap
 	}
 	result := alive[:0]
+	var resultKeys [maxGLRStacks]glrMergeKey
 	for i := range alive {
 		stack := alive[i]
 		key := mergeKeyForStack(stack)
 		duplicateIndex := -1
 		sameKeyCount := 0
 		for j := range result {
-			if mergeKeyForStack(result[j]) != key {
+			if resultKeys[j] != key {
 				continue
 			}
 			sameKeyCount++
@@ -1919,6 +1920,7 @@ func mergeStacksSmallDeferExact(alive []glrStack, scratch *glrMergeScratch, lang
 			}
 		}
 		if duplicateIndex < 0 {
+			resultKeys[len(result)] = key
 			result = append(result, stack)
 			continue
 		}
@@ -1942,14 +1944,26 @@ func mergeStacksWithScratch(stacks []glrStack, scratch *glrMergeScratch) []glrSt
 		perfRecordMergeCall(len(stacks))
 	}
 
-	// Remove dead stacks first.
-	alive := stacks[:0]
+	// Remove dead stacks first. Most merge calls have no dead stacks; avoid
+	// copying the full live slice in that case.
+	alive := stacks
 	deadCount := 0
+	firstDead := -1
 	for i := range stacks {
-		if !stacks[i].dead {
+		if stacks[i].dead {
+			firstDead = i
+			deadCount = 1
+			break
+		}
+	}
+	if firstDead >= 0 {
+		alive = stacks[:firstDead]
+		for i := firstDead + 1; i < len(stacks); i++ {
+			if stacks[i].dead {
+				deadCount++
+				continue
+			}
 			alive = append(alive, stacks[i])
-		} else {
-			deadCount++
 		}
 	}
 	if perfCountersEnabled {
