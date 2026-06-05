@@ -2,11 +2,12 @@
 set -euo pipefail
 
 # Per-grammar Docker runner for grammargen real corpus parity.
-# Runs ONE grammar at a time in its own container with strict memory limits.
+# Runs each grammar in its own container with strict memory limits.
 # If one grammar OOMs, only its container dies — WSL stays alive.
 #
 # Usage:
 #   ./run_single_grammar_parity.sh python          # test one grammar
+#   ./run_single_grammar_parity.sh --langs css,c_lang --jobs 2
 #   ./run_single_grammar_parity.sh --all            # test all grammars sequentially
 #   ./run_single_grammar_parity.sh --list           # list available grammars
 #   ./run_single_grammar_parity.sh --failing        # test only grammars with gaps
@@ -23,6 +24,7 @@ DEFAULT_MAX_CASES="25"
 DEFAULT_PROFILE="aggressive"
 DEFAULT_GOMAXPROCS_VALUE=""
 DEFAULT_GOFLAGS_VALUE=""
+DEFAULT_JOBS="1"
 
 FORTRAN_SAFE_MEMORY_LIMIT="3g"
 FORTRAN_SAFE_CPUS_LIMIT="1"
@@ -50,6 +52,8 @@ LR0_CORE_BUDGET=""
 GENERATE_TIMEOUT=""
 FORTRAN_SAFE_DEFAULTS=1
 REQUIRE_PARITY=0
+JOBS="$DEFAULT_JOBS"
+ALLOW_HOST_OVERSUBSCRIBE=0
 
 MEMORY_SET=0
 CPUS_SET=0
@@ -86,13 +90,14 @@ FAILING_GRAMMARS=(
 
 usage() {
   cat <<'USAGE'
-Usage: run_single_grammar_parity.sh [options] <grammar|--all|--failing|--list>
+Usage: run_single_grammar_parity.sh [options] <grammar|--langs <list>|--all|--failing|--list>
 
 Run grammargen real corpus parity for individual grammars in isolated Docker
 containers. Each grammar gets its own container with strict memory limits.
 
 Arguments:
   <grammar>        Test a single grammar by name (e.g. python, bash, scala)
+  --langs <list>   Test a comma-separated grammar list (e.g. css,c_lang)
   --all            Test all grammars sequentially
   --failing        Test only grammars with known parity gaps
   --list           List all available grammar names
@@ -128,6 +133,13 @@ Options:
                        use memory=3g, cpus=1, pids=512, GOMAXPROCS=1,
                        GOFLAGS=-p=1, lr0_core_budget=160000000, and
                        generate_timeout=15m.
+  --jobs <n>           Concurrent per-grammar containers (default: 1).
+                       Each grammar still runs in its own memory/pid-limited
+                       container. Aggregate container memory is guarded
+                       against host MemAvailable by default.
+  --allow-host-oversubscribe
+                       Allow --jobs * --memory to exceed the host memory
+                       guard. Intended only for dedicated CI hosts.
   --no-build           Skip Docker image build
   -h, --help           Show this help
 
@@ -139,6 +151,7 @@ USAGE
 
 MODE=""
 TARGET_GRAMMAR=""
+LANGS_CSV=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -153,6 +166,15 @@ while [[ $# -gt 0 ]]; do
     --list)
       MODE="list"
       shift
+      ;;
+    --langs)
+      if [[ -n "$MODE" ]]; then
+        echo "cannot combine --langs with grammar name/--all/--failing/--list" >&2
+        exit 2
+      fi
+      MODE="langs"
+      LANGS_CSV="$2"
+      shift 2
       ;;
     --memory)
       MEMORY_LIMIT="$2"
@@ -225,6 +247,14 @@ while [[ $# -gt 0 ]]; do
       FORTRAN_SAFE_DEFAULTS=0
       shift
       ;;
+    --jobs)
+      JOBS="$2"
+      shift 2
+      ;;
+    --allow-host-oversubscribe)
+      ALLOW_HOST_OVERSUBSCRIBE=1
+      shift
+      ;;
     --no-build)
       BUILD_IMAGE=0
       shift
@@ -240,7 +270,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     *)
       if [[ -n "$MODE" ]]; then
-        echo "cannot combine grammar name with --all/--failing/--list" >&2
+        echo "cannot combine grammar name with --langs/--all/--failing/--list" >&2
         exit 2
       fi
       MODE="single"
@@ -251,7 +281,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "$MODE" ]]; then
-  echo "error: specify a grammar name, --all, --failing, or --list" >&2
+  echo "error: specify a grammar name, --langs, --all, --failing, or --list" >&2
   usage >&2
   exit 2
 fi
@@ -260,6 +290,32 @@ if [[ "$MODE" == "list" ]]; then
   printf '%s\n' "${ALL_GRAMMARS[@]}"
   exit 0
 fi
+
+canonical_grammar() {
+  local grammar
+  grammar="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+  grammar="${grammar//[[:space:]]/}"
+  case "$grammar" in
+    c) echo "c_lang" ;;
+    go) echo "go_lang" ;;
+    c++|cplusplus) echo "cpp" ;;
+    c#|csharp) echo "c_sharp" ;;
+    js) echo "javascript" ;;
+    ts) echo "typescript" ;;
+    *) echo "$grammar" ;;
+  esac
+}
+
+is_known_grammar() {
+  local grammar="$1"
+  local known
+  for known in "${ALL_GRAMMARS[@]}"; do
+    if [[ "$known" == "$grammar" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
 
 # Validate seed dir if provided.
 CONTAINER_SEED_DIR=""
@@ -288,18 +344,101 @@ fi
 
 mkdir -p "$REPORT_DIR"
 
-# Build image once.
-if [[ "$BUILD_IMAGE" == "1" ]]; then
-  echo "Building Docker image..."
-  docker build -t "$IMAGE_TAG" "$SCRIPT_DIR"
-  echo ""
-fi
+require_positive_int() {
+  local name="$1"
+  local value="$2"
+  if ! [[ "$value" =~ ^[1-9][0-9]*$ ]]; then
+    echo "$name must be a positive integer, got: $value" >&2
+    exit 2
+  fi
+}
+
+docker_memory_limit_to_bytes() {
+  local value="$1"
+  local number unit
+  value="${value//[[:space:]]/}"
+  if [[ "$value" =~ ^([0-9]+)([bBkKmMgG]?)$ ]]; then
+    number="${BASH_REMATCH[1]}"
+    unit="${BASH_REMATCH[2],,}"
+  else
+    return 1
+  fi
+  case "$unit" in
+    ""|b) printf '%s\n' "$number" ;;
+    k) printf '%s\n' "$((number * 1024))" ;;
+    m) printf '%s\n' "$((number * 1024 * 1024))" ;;
+    g) printf '%s\n' "$((number * 1024 * 1024 * 1024))" ;;
+    *) return 1 ;;
+  esac
+}
+
+host_mem_available_bytes() {
+  awk '/^MemAvailable:/ { printf "%.0f\n", $2 * 1024 }' /proc/meminfo 2>/dev/null
+}
+
+guard_parallel_memory_budget() {
+  local target_count="${1:-0}"
+  local effective_jobs="$JOBS"
+  if [[ "$target_count" =~ ^[1-9][0-9]*$ && "$effective_jobs" -gt "$target_count" ]]; then
+    effective_jobs="$target_count"
+  fi
+  if [[ "$effective_jobs" -le 1 || "$ALLOW_HOST_OVERSUBSCRIBE" == "1" ]]; then
+    return 0
+  fi
+  local limit_bytes available_bytes aggregate_bytes guard_bytes
+  limit_bytes="$(docker_memory_limit_to_bytes "$MEMORY_LIMIT" || true)"
+  available_bytes="$(host_mem_available_bytes || true)"
+  if [[ -z "$limit_bytes" || -z "$available_bytes" ]]; then
+    echo "warning: could not parse memory guard inputs; proceeding with --jobs=$JOBS memory=$MEMORY_LIMIT" >&2
+    return 0
+  fi
+  aggregate_bytes="$((limit_bytes * effective_jobs))"
+  guard_bytes="$((available_bytes * 80 / 100))"
+  if [[ "$aggregate_bytes" -gt "$guard_bytes" ]]; then
+    {
+      echo "refusing --jobs=$JOBS with --memory=$MEMORY_LIMIT: aggregate container memory exceeds 80% of host MemAvailable"
+      echo "effective_jobs=$effective_jobs"
+      echo "aggregate_bytes=$aggregate_bytes memavailable_bytes=$available_bytes guard_bytes=$guard_bytes"
+      echo "lower --jobs/--memory or pass --allow-host-oversubscribe on a dedicated host"
+    } >&2
+    exit 2
+  fi
+}
+
+require_positive_int "--jobs" "$JOBS"
 
 # Determine grammar list.
 declare -a GRAMMARS
 case "$MODE" in
   single)
-    GRAMMARS=("$TARGET_GRAMMAR")
+    GRAMMARS=("$(canonical_grammar "$TARGET_GRAMMAR")")
+    if ! is_known_grammar "${GRAMMARS[0]}"; then
+      echo "unknown grammar: $TARGET_GRAMMAR" >&2
+      exit 2
+    fi
+    ;;
+  langs)
+    declare -A seen_grammars=()
+    IFS=',' read -r -a raw_grammars <<< "$LANGS_CSV"
+    for raw_grammar in "${raw_grammars[@]}"; do
+      grammar="$(canonical_grammar "$raw_grammar")"
+      if [[ -z "$grammar" ]]; then
+        continue
+      fi
+      if ! is_known_grammar "$grammar"; then
+        echo "unknown grammar in --langs: $raw_grammar" >&2
+        exit 2
+      fi
+      if [[ -n "${seen_grammars[$grammar]:-}" ]]; then
+        continue
+      fi
+      seen_grammars[$grammar]=1
+      GRAMMARS+=("$grammar")
+    done
+    if [[ "${#GRAMMARS[@]}" -eq 0 ]]; then
+      echo "--langs selected no grammars" >&2
+      exit 2
+    fi
     ;;
   all)
     GRAMMARS=("${ALL_GRAMMARS[@]}")
@@ -308,6 +447,15 @@ case "$MODE" in
     GRAMMARS=("${FAILING_GRAMMARS[@]}")
     ;;
 esac
+
+guard_parallel_memory_budget "${#GRAMMARS[@]}"
+
+# Build image once.
+if [[ "$BUILD_IMAGE" == "1" ]]; then
+  echo "Building Docker image..."
+  docker build -t "$IMAGE_TAG" "$SCRIPT_DIR"
+  echo ""
+fi
 
 # Clone function for Docker inner command.
 make_clone_block() {
@@ -621,15 +769,17 @@ echo "Running $total grammar(s) with per-grammar Docker isolation"
 echo "Memory: $MEMORY_LIMIT | Timeout: $TIMEOUT_PER_GRAMMAR | Profile: $PROFILE | Cases: $MAX_CASES"
 echo "Require parity: $REQUIRE_PARITY (typescript is always strict)"
 echo "Fortran bounded preset: $FORTRAN_SAFE_DEFAULTS"
+echo "Jobs: $JOBS | Allow host oversubscribe: $ALLOW_HOST_OVERSUBSCRIBE"
 echo "Reports: $REPORT_DIR"
 echo ""
 
 passed=0
 failed=0
 oom=0
-for grammar in "${GRAMMARS[@]}"; do
-  run_grammar "$grammar" || true
-  # Check result from log.
+
+record_grammar_result() {
+  local grammar="$1"
+  local log
   log="$REPORT_DIR/diag_${grammar}.log"
   if grep -q '^oom_killed: true$' "$log" 2>/dev/null; then
     ((oom++)) || true
@@ -639,7 +789,59 @@ for grammar in "${GRAMMARS[@]}"; do
   else
     ((failed++)) || true
   fi
-done
+}
+
+if [[ "$JOBS" -eq 1 || "$total" -eq 1 ]]; then
+  for grammar in "${GRAMMARS[@]}"; do
+    run_grammar "$grammar" || true
+    record_grammar_result "$grammar"
+  done
+else
+  declare -a pids=()
+  declare -a pid_grammars=()
+
+  wait_for_one() {
+    local finished_pid grammar idx rc
+    if [[ "${#pids[@]}" -eq 0 ]]; then
+      return 0
+    fi
+    if wait -n -p finished_pid "${pids[@]}"; then
+      rc=0
+    else
+      rc=$?
+    fi
+    grammar="$finished_pid"
+    for idx in "${!pids[@]}"; do
+      if [[ "${pids[$idx]}" == "$finished_pid" ]]; then
+        grammar="${pid_grammars[$idx]}"
+        unset 'pids[idx]'
+        unset 'pid_grammars[idx]'
+        pids=("${pids[@]}")
+        pid_grammars=("${pid_grammars[@]}")
+        break
+      fi
+    done
+    echo "[done] grammar parity: $grammar exit=$rc"
+  }
+
+  for grammar in "${GRAMMARS[@]}"; do
+    while [[ "${#pids[@]}" -ge "$JOBS" ]]; do
+      wait_for_one
+    done
+    echo "[start] grammar parity: $grammar"
+    run_grammar "$grammar" &
+    pids+=("$!")
+    pid_grammars+=("$grammar")
+  done
+
+  while [[ "${#pids[@]}" -gt 0 ]]; do
+    wait_for_one
+  done
+
+  for grammar in "${GRAMMARS[@]}"; do
+    record_grammar_result "$grammar"
+  done
+fi
 
 echo "========================================="
 echo "SUMMARY: $passed passed, $failed failed, $oom OOM out of $total grammars"
