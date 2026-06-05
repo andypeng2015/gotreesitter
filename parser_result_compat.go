@@ -83,6 +83,8 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) {
 		normalizeNginxAttributeLineBreaks(ctx.root, ctx.source, ctx.lang)
 	case "nim":
 		normalizeNimTopLevelCallEnd(ctx.root, ctx.source, ctx.lang)
+	case "ocaml":
+		normalizeOCamlCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "pascal":
 		normalizePascalTopLevelProgramEnd(ctx.root, ctx.source, ctx.lang)
 		normalizePascalTrailingExtraTrivia(ctx.root, ctx.source, ctx.lang)
