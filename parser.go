@@ -1376,7 +1376,9 @@ func (p *Parser) parseIncrementalInternal(source []byte, oldTree *Tree, ts Token
 	return tree
 }
 
-const dartIncrementalReuseMaxSourceBytes = 64 * 1024
+// Dart's external scanner is stateless enough for subtree reuse, but keep a
+// bounded source-size guard so very large generated files fall back safely.
+const dartIncrementalReuseMaxSourceBytes = 256 * 1024
 
 func tokenSourceSupportsIncrementalReuse(ts TokenSource) bool {
 	if ts == nil {
