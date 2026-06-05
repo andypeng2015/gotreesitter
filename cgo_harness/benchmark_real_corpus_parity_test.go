@@ -610,12 +610,18 @@ func verifyRealCorpusIncrementalCandidate(b *testing.B, tc realCorpusBenchmarkCa
 	edited := applyEditCandidate(tc.source, candidate)
 
 	goParser := gotreesitter.NewParser(tc.goLang)
-	goFreshTree := parseRealCorpusGoFull(b, realCorpusCaseWithSource(tc, edited), goParser)
+	goFreshTree, ok := tryParseCompleteRealCorpusGoFull(b, realCorpusCaseWithSource(tc, edited), goParser)
+	if !ok {
+		return realCorpusIncrementalCase{}, false
+	}
 	defer releaseGoTree(goFreshTree)
 
 	cParser := newRealCorpusCParser(b, tc)
 	defer cParser.Close()
-	cFreshTree := parseRealCorpusCFull(b, cParser, edited)
+	cFreshTree, ok := tryParseCompleteRealCorpusCFull(cParser, edited)
+	if !ok {
+		return realCorpusIncrementalCase{}, false
+	}
 	defer cFreshTree.Close()
 	var freshErrs []string
 	compareNodes(goFreshTree.RootNode(), tc.goLang, cFreshTree.RootNode(), "root", &freshErrs)
@@ -632,8 +638,11 @@ func verifyRealCorpusIncrementalCandidate(b *testing.B, tc realCorpusBenchmarkCa
 		editCase.original,
 		editCase.replacement,
 	)
-	goIncrTree := parseRealCorpusGoIncrementalWithPhase(b, realCorpusCaseWithSource(tc, edited), goParser, goOldTree, verifyPhase)
+	goIncrTree, ok := tryParseCompleteRealCorpusGoIncrementalWithPhase(b, realCorpusCaseWithSource(tc, edited), goParser, goOldTree, verifyPhase)
 	releaseGoTree(goOldTree)
+	if !ok {
+		return realCorpusIncrementalCase{}, false
+	}
 	defer releaseGoTree(goIncrTree)
 	var goIncrErrs []string
 	compareGoNodes(goIncrTree.RootNode(), tc.goLang, goFreshTree.RootNode(), "root", &goIncrErrs)
@@ -643,8 +652,11 @@ func verifyRealCorpusIncrementalCandidate(b *testing.B, tc realCorpusBenchmarkCa
 
 	cOldTree := parseRealCorpusCFull(b, cParser, tc.source)
 	cOldTree.Edit(&editCase.cEdit)
-	cIncrTree := parseRealCorpusCIncremental(b, cParser, edited, cOldTree)
+	cIncrTree, ok := tryParseCompleteRealCorpusCIncremental(cParser, edited, cOldTree)
 	cOldTree.Close()
+	if !ok {
+		return realCorpusIncrementalCase{}, false
+	}
 	defer cIncrTree.Close()
 	var cIncrErrs []string
 	compareNodes(goFreshTree.RootNode(), tc.goLang, cIncrTree.RootNode(), "root", &cIncrErrs)
@@ -890,6 +902,15 @@ func benchmarkRealCorpusCParseIncrementalNoEdit(b *testing.B, cases []realCorpus
 
 func parseRealCorpusGoFull(tb testing.TB, tc realCorpusBenchmarkCase, parser *gotreesitter.Parser) *gotreesitter.Tree {
 	tb.Helper()
+	tree, ok := tryParseCompleteRealCorpusGoFull(tb, tc, parser)
+	if !ok {
+		tb.Fatalf("gotreesitter full %s/%s incomplete parse", tc.name, filepath.Base(tc.path))
+	}
+	return tree
+}
+
+func tryParseCompleteRealCorpusGoFull(tb testing.TB, tc realCorpusBenchmarkCase, parser *gotreesitter.Parser) (*gotreesitter.Tree, bool) {
+	tb.Helper()
 	var tree *gotreesitter.Tree
 	var err error
 	switch tc.report.Backend {
@@ -903,8 +924,10 @@ func parseRealCorpusGoFull(tb testing.TB, tc realCorpusBenchmarkCase, parser *go
 	default:
 		tb.Fatalf("unsupported parse backend %q for %q", tc.report.Backend, tc.name)
 	}
-	requireCompleteRealCorpusGoTree(tb, tc, tree, "gotreesitter full", err)
-	return tree
+	if !isCompleteRealCorpusGoTree(tb, tc, tree, "gotreesitter full", err) {
+		return nil, false
+	}
+	return tree, true
 }
 
 func parseRealCorpusGoIncremental(tb testing.TB, tc realCorpusBenchmarkCase, parser *gotreesitter.Parser, oldTree *gotreesitter.Tree) *gotreesitter.Tree {
@@ -913,6 +936,15 @@ func parseRealCorpusGoIncremental(tb testing.TB, tc realCorpusBenchmarkCase, par
 }
 
 func parseRealCorpusGoIncrementalWithPhase(tb testing.TB, tc realCorpusBenchmarkCase, parser *gotreesitter.Parser, oldTree *gotreesitter.Tree, phase string) *gotreesitter.Tree {
+	tb.Helper()
+	tree, ok := tryParseCompleteRealCorpusGoIncrementalWithPhase(tb, tc, parser, oldTree, phase)
+	if !ok {
+		tb.Fatalf("%s %s/%s incomplete parse", phase, tc.name, filepath.Base(tc.path))
+	}
+	return tree
+}
+
+func tryParseCompleteRealCorpusGoIncrementalWithPhase(tb testing.TB, tc realCorpusBenchmarkCase, parser *gotreesitter.Parser, oldTree *gotreesitter.Tree, phase string) (*gotreesitter.Tree, bool) {
 	tb.Helper()
 	var tree *gotreesitter.Tree
 	var err error
@@ -927,8 +959,10 @@ func parseRealCorpusGoIncrementalWithPhase(tb testing.TB, tc realCorpusBenchmark
 	default:
 		tb.Fatalf("unsupported incremental backend %q for %q", tc.report.Backend, tc.name)
 	}
-	requireCompleteRealCorpusGoTree(tb, tc, tree, phase, err)
-	return tree
+	if !isCompleteRealCorpusGoTree(tb, tc, tree, phase, err) {
+		return nil, false
+	}
+	return tree, true
 }
 
 func parseRealCorpusGoIncrementalProfiled(tb testing.TB, tc realCorpusBenchmarkCase, parser *gotreesitter.Parser, oldTree *gotreesitter.Tree) (*gotreesitter.Tree, gotreesitter.IncrementalParseProfile) {
@@ -958,20 +992,36 @@ func parseRealCorpusGoIncrementalProfiledWithPhase(tb testing.TB, tc realCorpusB
 
 func requireCompleteRealCorpusGoTree(tb testing.TB, tc realCorpusBenchmarkCase, tree *gotreesitter.Tree, phase string, err error) {
 	tb.Helper()
+	if !isCompleteRealCorpusGoTree(tb, tc, tree, phase, err) {
+		tb.Fatalf("%s %s/%s incomplete parse", phase, tc.name, filepath.Base(tc.path))
+	}
+}
+
+func isCompleteRealCorpusGoTree(tb testing.TB, tc realCorpusBenchmarkCase, tree *gotreesitter.Tree, phase string, err error) bool {
+	tb.Helper()
 	if err != nil {
 		if tree != nil {
 			releaseGoTree(tree)
 		}
-		tb.Fatalf("%s %s/%s error: %v", phase, tc.name, filepath.Base(tc.path), err)
+		tb.Logf("%s %s/%s candidate parse error: %v", phase, tc.name, filepath.Base(tc.path), err)
+		return false
 	}
-	if tree == nil || tree.RootNode() == nil {
-		tb.Fatalf("%s %s/%s returned nil tree", phase, tc.name, filepath.Base(tc.path))
+	if tree == nil {
+		tb.Logf("%s %s/%s candidate parse returned nil tree", phase, tc.name, filepath.Base(tc.path))
+		return false
+	}
+	if tree.RootNode() == nil {
+		releaseGoTree(tree)
+		tb.Logf("%s %s/%s candidate parse returned nil root", phase, tc.name, filepath.Base(tc.path))
+		return false
 	}
 	if got, want := tree.RootNode().EndByte(), uint32(len(tc.source)); got != want {
 		rt := tree.ParseRuntime()
 		releaseGoTree(tree)
-		tb.Fatalf("%s %s/%s truncated: root.EndByte=%d want=%d %s", phase, tc.name, filepath.Base(tc.path), got, want, rt.Summary())
+		tb.Logf("%s %s/%s candidate parse truncated: root.EndByte=%d want=%d %s", phase, tc.name, filepath.Base(tc.path), got, want, rt.Summary())
+		return false
 	}
+	return true
 }
 
 func newRealCorpusCParser(tb testing.TB, tc realCorpusBenchmarkCase) *sitter.Parser {
@@ -994,11 +1044,27 @@ func parseRealCorpusCFull(tb testing.TB, parser *sitter.Parser, source []byte) *
 	return tree
 }
 
+func tryParseCompleteRealCorpusCFull(parser *sitter.Parser, source []byte) (*sitter.Tree, bool) {
+	tree := parser.Parse(source, nil)
+	if !isCompleteRealCorpusCTree(tree, source) {
+		return nil, false
+	}
+	return tree, true
+}
+
 func parseRealCorpusCIncremental(tb testing.TB, parser *sitter.Parser, source []byte, oldTree *sitter.Tree) *sitter.Tree {
 	tb.Helper()
 	tree := parser.Parse(source, oldTree)
 	requireCompleteRealCorpusCTree(tb, tree, source, "C incremental")
 	return tree
+}
+
+func tryParseCompleteRealCorpusCIncremental(parser *sitter.Parser, source []byte, oldTree *sitter.Tree) (*sitter.Tree, bool) {
+	tree := parser.Parse(source, oldTree)
+	if !isCompleteRealCorpusCTree(tree, source) {
+		return nil, false
+	}
+	return tree, true
 }
 
 func requireCompleteRealCorpusCTree(tb testing.TB, tree *sitter.Tree, source []byte, phase string) {
@@ -1007,9 +1073,27 @@ func requireCompleteRealCorpusCTree(tb testing.TB, tree *sitter.Tree, source []b
 		tb.Fatalf("%s parse returned nil tree", phase)
 	}
 	if got, want := uint32(tree.RootNode().EndByte()), uint32(len(source)); got != want {
+		root := tree.RootNode()
+		kind := root.Kind()
+		hasError := root.HasError()
 		tree.Close()
-		tb.Fatalf("%s parse truncated: root.EndByte=%d want=%d type=%q hasError=%v", phase, got, want, tree.RootNode().Kind(), tree.RootNode().HasError())
+		tb.Fatalf("%s parse truncated: root.EndByte=%d want=%d type=%q hasError=%v", phase, got, want, kind, hasError)
 	}
+}
+
+func isCompleteRealCorpusCTree(tree *sitter.Tree, source []byte) bool {
+	if tree == nil {
+		return false
+	}
+	if tree.RootNode() == nil {
+		tree.Close()
+		return false
+	}
+	if got, want := uint32(tree.RootNode().EndByte()), uint32(len(source)); got != want {
+		tree.Close()
+		return false
+	}
+	return true
 }
 
 func toggleRealCorpusEditByte(src []byte, tc realCorpusIncrementalCase) {

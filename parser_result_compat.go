@@ -61,6 +61,8 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) {
 		normalizeTopLevelTrailingLineBreakSpan(ctx.root, ctx.source, ctx.lang)
 	case "go":
 		normalizeGoReturnedTreeCompatibility(ctx.root, ctx.source, ctx.parser, ctx.lang)
+	case "graphql":
+		normalizeGraphQLCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "haskell":
 		normalizeHaskellCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "hcl":
