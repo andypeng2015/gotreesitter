@@ -259,6 +259,30 @@ func TestDisabledForestCMakeTextInvariantLeafAllowed(t *testing.T) {
 	}
 }
 
+func TestAwkTextInvariantNumberEdit(t *testing.T) {
+	lang := &Language{Name: "awk", SymbolNames: []string{"number", "identifier"}}
+	oldSource := []byte("123")
+	source := []byte("124")
+	node := &Node{symbol: 0, startByte: 0, endByte: uint32(len(oldSource))}
+	edit := InputEdit{StartByte: 2, OldEndByte: 3, NewEndByte: 3}
+	tree := &Tree{source: oldSource, forestFastPath: true}
+	parser := &Parser{language: lang}
+	if !parser.canReuseLanguageTextInvariantNode(source, tree, node, edit) {
+		t.Fatal("AWK number digit edit was not reusable")
+	}
+
+	source = []byte("12x")
+	if parser.canReuseLanguageTextInvariantNode(source, tree, node, edit) {
+		t.Fatal("AWK number edit admitted non-digit replacement")
+	}
+
+	node.symbol = 1
+	source = []byte("124")
+	if parser.canReuseLanguageTextInvariantNode(source, tree, node, edit) {
+		t.Fatal("AWK text-invariant edit admitted non-number node")
+	}
+}
+
 func TestSnapshotTokenSourceStateRestoresDFATokenSource(t *testing.T) {
 	original := &dfaTokenSource{
 		state:                      42,

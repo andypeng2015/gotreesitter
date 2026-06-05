@@ -243,6 +243,62 @@ func TestForestTreeIncrementalEditCSharpNumericLiteralFastRescue(t *testing.T) {
 	}
 }
 
+func TestForestTreeIncrementalEditAwkNumberFastRescue(t *testing.T) {
+	gts.SetGLRForestEnabled(true)
+	defer gts.SetGLRForestEnabled(true)
+
+	src := []byte("BEGIN { print 1 }\n")
+	offset := strings.Index(string(src), "1")
+	if offset < 0 || src[offset] != '1' {
+		t.Fatalf("AWK fixture drifted: byte %d", offset)
+	}
+	edited := append([]byte(nil), src...)
+	edited[offset] = '2'
+
+	lang := grm.AwkLanguage()
+	parser := gts.NewParser(lang)
+	oldTree, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("initial parse: %v", err)
+	}
+	defer oldTree.Release()
+	if rt := oldTree.ParseRuntime(); rt.StopReason != gts.ParseStopAccepted || !rt.LastTokenWasEOF || rt.TokensConsumed != 0 {
+		t.Fatalf("initial parse did not use forest fast path: %s", rt.Summary())
+	}
+	oldTree.Edit(gts.InputEdit{
+		StartByte:   uint32(offset),
+		OldEndByte:  uint32(offset + 1),
+		NewEndByte:  uint32(offset + 1),
+		StartPoint:  pointForOffset(src, offset),
+		OldEndPoint: pointForOffset(src, offset+1),
+		NewEndPoint: pointForOffset(edited, offset+1),
+	})
+
+	newTree, profile, err := parser.ParseIncrementalProfiled(edited, oldTree)
+	if err != nil {
+		t.Fatalf("incremental parse: %v", err)
+	}
+	defer newTree.Release()
+	requireCompleteParse(t, newTree, edited, lang, "incremental")
+	if profile.ReuseUnsupported {
+		t.Fatalf("AWK number edit fell back to fresh parse: %s", profile.ReuseUnsupportedReason)
+	}
+	if profile.ReparseNanos != 0 {
+		t.Fatalf("ReparseNanos = %d, want 0 for token-invariant AWK number edit", profile.ReparseNanos)
+	}
+	if profile.ReusedSubtrees == 0 {
+		t.Fatalf("AWK number edit reused no subtrees: %+v", profile)
+	}
+	freshTree, err := parser.Parse(edited)
+	if err != nil {
+		t.Fatalf("fresh parse: %v", err)
+	}
+	defer freshTree.Release()
+	if got, want := newTree.RootNode().SExpr(lang), freshTree.RootNode().SExpr(lang); got != want {
+		t.Fatalf("incremental AWK tree diverged from fresh parse\n got: %s\nwant: %s", got, want)
+	}
+}
+
 func TestForestTreeIncrementalEditCSharpIdentifierFastRescue(t *testing.T) {
 	gts.SetGLRForestEnabled(true)
 	defer gts.SetGLRForestEnabled(true)

@@ -102,6 +102,9 @@ func (p *Parser) canReuseLanguageTextInvariantNode(source []byte, oldTree *Tree,
 		return false
 	}
 	switch p.language.Name {
+	case "awk":
+		return oldTree.forestFastPath && node.Type(p.language) == "number" &&
+			asciiDigitTextInvariantEdit(source, oldTree.source, edit)
 	case "clojure":
 		return clojureTextInvariantNodeEdit(source, oldTree.source, node, edit, p.language)
 	case "cmake":
@@ -178,6 +181,10 @@ func cmakeTextInvariantUnquotedByte(b byte) bool {
 }
 
 func cssTextInvariantIntegerValueEdit(source, oldSource []byte, edit InputEdit) bool {
+	return asciiDigitTextInvariantEdit(source, oldSource, edit)
+}
+
+func asciiDigitTextInvariantEdit(source, oldSource []byte, edit InputEdit) bool {
 	for i := edit.StartByte; i < edit.OldEndByte; i++ {
 		if !asciiDigit(oldSource[i]) || !asciiDigit(source[i]) {
 			return false
