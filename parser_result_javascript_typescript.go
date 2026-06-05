@@ -1024,9 +1024,7 @@ func normalizeJavaScriptTypeScriptStatementKeywordsAndPrecedenceWithDetailedStat
 	// actually appears in the file, mirroring the standalone pass's gate so we
 	// don't slow down files that have no chance of matching.
 	optionalChainSym, hasOptionalChainSym := symbolByName(lang, "optional_chain")
-	optionalChainTokenSym, hasOptionalChainTokenSym := symbolByName(lang, "?.")
-	optionalChainTokenNamed := hasOptionalChainTokenSym && symbolIsNamed(lang, optionalChainTokenSym)
-	enableOptionalChain := hasOptionalChainSym && hasOptionalChainTokenSym && bytes.Contains(source, []byte("?."))
+	enableOptionalChain := hasOptionalChainSym && bytes.Contains(source, []byte("?."))
 
 	index := rewriteJavaScriptTypeScriptStatementKeywordsCallPrecedenceAndBuildUnaryBinaryIndex(
 		root, source, lang,
@@ -1036,7 +1034,7 @@ func normalizeJavaScriptTypeScriptStatementKeywordsAndPrecedenceWithDetailedStat
 		ifStmtSym, hasIfStmt, ifSym, ifNamed, hasIf,
 		whileStmtSym, hasWhileStmt, whileSym, whileNamed, hasWhile,
 		closeBraceSym, hasCloseBrace,
-		optionalChainSym, optionalChainTokenSym, optionalChainTokenNamed, enableOptionalChain,
+		optionalChainSym, enableOptionalChain,
 	)
 	stats.emptyStatement = index.emptyStatement
 	stats.existentialType = index.existentialType
@@ -1141,8 +1139,6 @@ func rewriteJavaScriptTypeScriptStatementKeywordsCallPrecedenceAndBuildUnaryBina
 	closeBraceSym Symbol,
 	hasCloseBrace bool,
 	optionalChainSym Symbol,
-	optionalChainTokenSym Symbol,
-	optionalChainTokenNamed bool,
 	enableOptionalChain bool,
 ) javaScriptTypeScriptUnaryBinaryPrecedenceIndex {
 	var index javaScriptTypeScriptUnaryBinaryPrecedenceIndex
