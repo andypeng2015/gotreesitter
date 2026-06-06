@@ -482,6 +482,14 @@ func effectiveParseMergePerKeyCap(lang *Language, mergePerKeyCap int, incrementa
 		if !parseMaxMergePerKeyEnvConfigured() && mergePerKeyCap > 1 {
 			return 1
 		}
+	case "make":
+		// Makefile line-text ambiguities need both the open-repeat and
+		// close-repeat branches to preserve the C-compatible tree; one survivor
+		// misrecovers the current corpus. Two same-key survivors keep that
+		// branch pair alive while cutting most of the redundant GLR frontier.
+		if !parseMaxMergePerKeyEnvConfigured() && mergePerKeyCap > 2 {
+			return 2
+		}
 	case "lua":
 		// Lua's string/call-heavy recovery can keep redundant alternatives
 		// alive even on small files. One full-parse survivor bounds the GLR
