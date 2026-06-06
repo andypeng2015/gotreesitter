@@ -128,7 +128,7 @@ jobs:
   parity-cgo:
     if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -138,12 +138,17 @@ jobs:
 
       - name: CGo Parity Smoke Gate
         run: |
-          cd cgo_harness
           GTS_PARITY_MODE=smoke \
-          go test . -tags treesitter_c_parity \
-            -run '^TestParityFreshParse$|^TestParityIncrementalParse$|^TestParityHasNoErrors$|^TestParityIssue3Repros$|^TestParityGLRCanaryGo$|^TestParityGLRCanarySet$|^TestParityGLRCapPressureTopLanguages$|^TestParityGateCoverageRatchet$|^TestParityHighlight$' \
-            -timeout=20m \
-            -count=1 -v
+          bash cgo_harness/docker/run_parity_in_docker.sh \
+            --label ci-parity-cgo-smoke \
+            --memory 8g \
+            --cpus 2 \
+            --pids 4096 \
+            --gomemlimit 6GiB \
+            --goflags -p=1 \
+            --test-parallel 1 \
+            --timeout 20m \
+            --run '^TestParityFreshParse$|^TestParityIncrementalParse$|^TestParityHasNoErrors$|^TestParityIssue3Repros$|^TestParityGLRCanaryGo$|^TestParityGLRCanarySet$|^TestParityGLRCapPressureTopLanguages$|^TestParityGateCoverageRatchet$|^TestParityHighlight$'
 
   parity-cgo-exhaustive:
     if: github.event_name == 'workflow_dispatch'

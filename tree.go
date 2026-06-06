@@ -652,6 +652,7 @@ type ParseEquivStateRuntime struct {
 // ParseRuntime captures parser-loop diagnostics for a completed tree.
 type ParseRuntime struct {
 	StopReason                                   ParseStopReason
+	ForestFastPath                               bool
 	SourceLen                                    uint32
 	ExpectedEOFByte                              uint32
 	RootEndByte                                  uint32
@@ -1057,8 +1058,8 @@ func (rt ParseRuntime) Summary() string {
 		stopReason = ParseStopNone
 	}
 	return fmt.Sprintf(
-		"truncated=%v stopReason=%s tokenEOFEarly=%v tokens=%d lastTokenEnd=%d expectedEOF=%d lastTokenSymbol=%d lastTokenEOF=%v iterations=%d/%d nodes=%d/%d arena=%d/%d scratch=%d(entry=%d gss=%d)/%d peakDepth=%d/%d maxStacks=%d",
-		rt.Truncated, stopReason, rt.TokenSourceEOFEarly, rt.TokensConsumed,
+		"truncated=%v stopReason=%s forestFastPath=%v tokenEOFEarly=%v tokens=%d lastTokenEnd=%d expectedEOF=%d lastTokenSymbol=%d lastTokenEOF=%v iterations=%d/%d nodes=%d/%d arena=%d/%d scratch=%d(entry=%d gss=%d)/%d peakDepth=%d/%d maxStacks=%d",
+		rt.Truncated, stopReason, rt.ForestFastPath, rt.TokenSourceEOFEarly, rt.TokensConsumed,
 		rt.LastTokenEndByte, rt.ExpectedEOFByte, rt.LastTokenSymbol, rt.LastTokenWasEOF,
 		rt.Iterations, rt.IterationLimit, rt.NodesAllocated, rt.NodeLimit,
 		rt.ArenaBytesAllocated, rt.MemoryBudgetBytes,

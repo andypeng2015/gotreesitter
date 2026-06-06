@@ -116,6 +116,9 @@ func TestForestDispatchReportsAcceptedRuntime(t *testing.T) {
 	if rt.StopReason != gts.ParseStopAccepted {
 		t.Fatalf("forest dispatch stop reason = %q, want %q (%s)", rt.StopReason, gts.ParseStopAccepted, rt.Summary())
 	}
+	if !rt.ForestFastPath {
+		t.Fatalf("forest dispatch ForestFastPath = false, want true (%s)", rt.Summary())
+	}
 	if rt.SourceLen != uint32(len(src)) || rt.ExpectedEOFByte != uint32(len(src)) || rt.LastTokenEndByte != uint32(len(src)) || !rt.LastTokenWasEOF {
 		t.Fatalf("forest dispatch runtime mismatch: %s", rt.Summary())
 	}
@@ -144,7 +147,7 @@ func TestForestDispatchPromotesJavaScript(t *testing.T) {
 		t.Fatalf("JavaScript forest dispatch diverged\n got: %s\nwant: %s", got, want)
 	}
 	rt := tree.ParseRuntime()
-	if rt.StopReason != gts.ParseStopAccepted || !rt.LastTokenWasEOF || rt.TokensConsumed != 0 {
+	if rt.StopReason != gts.ParseStopAccepted || !rt.ForestFastPath || !rt.LastTokenWasEOF || rt.TokensConsumed != 0 {
 		t.Fatalf("JavaScript did not use forest accepted runtime: %s", rt.Summary())
 	}
 }
@@ -181,7 +184,7 @@ class C {
 		t.Fatalf("C# forest dispatch diverged\n got: %s\nwant: %s", got, want)
 	}
 	rt := tree.ParseRuntime()
-	if rt.StopReason != gts.ParseStopAccepted || !rt.LastTokenWasEOF || rt.TokensConsumed != 0 {
+	if rt.StopReason != gts.ParseStopAccepted || !rt.ForestFastPath || !rt.LastTokenWasEOF || rt.TokensConsumed != 0 {
 		t.Fatalf("C# did not use forest accepted runtime: %s", rt.Summary())
 	}
 }
@@ -206,7 +209,7 @@ func TestForestTreeIncrementalEditCSharpNumericLiteralFastRescue(t *testing.T) {
 		t.Fatalf("initial parse: %v", err)
 	}
 	defer oldTree.Release()
-	if rt := oldTree.ParseRuntime(); rt.StopReason != gts.ParseStopAccepted || !rt.LastTokenWasEOF || rt.TokensConsumed != 0 {
+	if rt := oldTree.ParseRuntime(); rt.StopReason != gts.ParseStopAccepted || !rt.ForestFastPath || !rt.LastTokenWasEOF || rt.TokensConsumed != 0 {
 		t.Fatalf("initial parse did not use forest fast path: %s", rt.Summary())
 	}
 	oldTree.Edit(gts.InputEdit{
@@ -262,7 +265,7 @@ func TestForestTreeIncrementalEditAwkNumberFastRescue(t *testing.T) {
 		t.Fatalf("initial parse: %v", err)
 	}
 	defer oldTree.Release()
-	if rt := oldTree.ParseRuntime(); rt.StopReason != gts.ParseStopAccepted || !rt.LastTokenWasEOF || rt.TokensConsumed != 0 {
+	if rt := oldTree.ParseRuntime(); rt.StopReason != gts.ParseStopAccepted || !rt.ForestFastPath || !rt.LastTokenWasEOF || rt.TokensConsumed != 0 {
 		t.Fatalf("initial parse did not use forest fast path: %s", rt.Summary())
 	}
 	oldTree.Edit(gts.InputEdit{
@@ -330,7 +333,7 @@ record F<T1, T2> where T1 : I1, I2, new() where T2 : I2 { }
 		t.Fatalf("initial parse: %v", err)
 	}
 	defer oldTree.Release()
-	if rt := oldTree.ParseRuntime(); rt.StopReason != gts.ParseStopAccepted || !rt.LastTokenWasEOF || rt.TokensConsumed != 0 {
+	if rt := oldTree.ParseRuntime(); rt.StopReason != gts.ParseStopAccepted || !rt.ForestFastPath || !rt.LastTokenWasEOF || rt.TokensConsumed != 0 {
 		t.Fatalf("initial parse did not use forest fast path: %s", rt.Summary())
 	}
 
@@ -412,7 +415,7 @@ func TestForestTreeIncrementalEditCSharpContextualIdentifierStillFallsBack(t *te
 		t.Fatalf("initial parse: %v", err)
 	}
 	defer oldTree.Release()
-	if rt := oldTree.ParseRuntime(); rt.StopReason != gts.ParseStopAccepted || !rt.LastTokenWasEOF || rt.TokensConsumed != 0 {
+	if rt := oldTree.ParseRuntime(); rt.StopReason != gts.ParseStopAccepted || !rt.ForestFastPath || !rt.LastTokenWasEOF || rt.TokensConsumed != 0 {
 		t.Fatalf("initial parse did not use forest fast path: %s", rt.Summary())
 	}
 	oldTree.Edit(edit)
@@ -467,7 +470,7 @@ func TestForestTreeIncrementalEditCSharpStringLiteralStillFallsBack(t *testing.T
 		t.Fatalf("initial parse: %v", err)
 	}
 	defer oldTree.Release()
-	if rt := oldTree.ParseRuntime(); rt.StopReason != gts.ParseStopAccepted || !rt.LastTokenWasEOF || rt.TokensConsumed != 0 {
+	if rt := oldTree.ParseRuntime(); rt.StopReason != gts.ParseStopAccepted || !rt.ForestFastPath || !rt.LastTokenWasEOF || rt.TokensConsumed != 0 {
 		t.Fatalf("initial parse did not use forest fast path: %s", rt.Summary())
 	}
 	oldTree.Edit(edit)

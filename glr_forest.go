@@ -229,6 +229,7 @@ func forestAcceptedRuntime(root *Node, source []byte) ParseRuntime {
 	sourceLen := uint32(len(source))
 	return ParseRuntime{
 		StopReason:       ParseStopAccepted,
+		ForestFastPath:   true,
 		SourceLen:        sourceLen,
 		ExpectedEOFByte:  sourceLen,
 		RootEndByte:      root.EndByte(),
