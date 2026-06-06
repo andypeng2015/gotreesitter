@@ -114,6 +114,47 @@ func loadEmbeddedLanguage(blobName string) *gotreesitter.Language {
 	return loadEmbeddedLanguageBase(blobName)
 }
 
+// LoadLanguage deserializes a raw grammar blob and attaches registered
+// gotreesitter/grammars runtime support for name, including external scanners
+// and external lex-state tables. Use this instead of gotreesitter.LoadLanguage
+// when loading blobs that came from BlobByName, grammar_subset, or a remote WASM
+// bundle and the caller knows the language name.
+func LoadLanguage(name string, data []byte) (*gotreesitter.Language, error) {
+	lang, err := gotreesitter.LoadLanguage(data)
+	if err != nil {
+		return nil, err
+	}
+	AttachLanguageSupport(name, lang)
+	return lang, nil
+}
+
+// AttachLanguageSupport attaches registered scanner support for name to lang.
+// It returns true when scanner or external lex-state support was attached.
+func AttachLanguageSupport(name string, lang *gotreesitter.Language) bool {
+	if lang == nil {
+		return false
+	}
+	lookupName := canonicalLanguageName(name)
+	if lookupName == "" {
+		lookupName = canonicalLanguageName(lang.Name)
+	}
+	if lang.Name == "" {
+		lang.Name = lookupName
+	}
+	return AdaptScannerForLanguage(lookupName, lang)
+}
+
+func canonicalLanguageName(name string) string {
+	name = strings.TrimSuffix(strings.TrimSpace(name), ".bin")
+	if name == "" {
+		return ""
+	}
+	if entry := DetectLanguageByName(name); entry != nil {
+		return entry.Name
+	}
+	return strings.ToLower(name)
+}
+
 func loadEmbeddedLanguageBase(blobName string) *gotreesitter.Language {
 	entry := getEmbeddedLanguageCacheEntry(blobName)
 	entry.once.Do(func() {

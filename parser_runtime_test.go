@@ -1,6 +1,7 @@
 package gotreesitter
 
 import (
+	"errors"
 	"testing"
 	"time"
 )
@@ -311,6 +312,32 @@ func TestParserCancellationFlagStopsParse(t *testing.T) {
 	}
 }
 
+func TestParseStrictReturnsStoppedEarlyError(t *testing.T) {
+	lang := buildArithmeticLanguage()
+	parser := NewParser(lang)
+
+	var cancelled uint32 = 1
+	parser.SetCancellationFlag(&cancelled)
+
+	tree, err := parser.ParseStrict([]byte("1+2"))
+	if tree == nil {
+		t.Fatal("ParseStrict returned nil tree, want partial tree")
+	}
+	if !errors.Is(err, ErrParseStoppedEarly) {
+		t.Fatalf("ParseStrict error = %v, want ErrParseStoppedEarly", err)
+	}
+	var stopped *ParseStoppedEarlyError
+	if !errors.As(err, &stopped) {
+		t.Fatalf("ParseStrict error type = %T, want *ParseStoppedEarlyError", err)
+	}
+	if stopped.Reason != ParseStopCancelled {
+		t.Fatalf("stopped reason = %q, want %q", stopped.Reason, ParseStopCancelled)
+	}
+	if stopped.Runtime.StopReason != ParseStopCancelled {
+		t.Fatalf("runtime stop reason = %q, want %q", stopped.Runtime.StopReason, ParseStopCancelled)
+	}
+}
+
 func TestParserTimeoutMicrosStopsParse(t *testing.T) {
 	lang := buildArithmeticLanguage()
 	parser := NewParser(lang)
@@ -335,6 +362,34 @@ func TestParserTimeoutMicrosStopsParse(t *testing.T) {
 	}
 	if !tree.ParseStoppedEarly() {
 		t.Fatal("ParseStoppedEarly() = false, want true")
+	}
+}
+
+func TestParseWithTokenSourceStrictReturnsTimeoutError(t *testing.T) {
+	lang := buildArithmeticLanguage()
+	parser := NewParser(lang)
+	parser.SetTimeoutMicros(200)
+
+	ts := &slowArithmeticTokenSource{
+		delay: 2 * time.Millisecond,
+		tokens: []Token{
+			{Symbol: 1, StartByte: 0, EndByte: 1},
+			{Symbol: 0, StartByte: 1, EndByte: 1},
+		},
+	}
+	tree, err := parser.ParseWithTokenSourceStrict([]byte("1"), ts)
+	if tree == nil {
+		t.Fatal("ParseWithTokenSourceStrict returned nil tree, want partial tree")
+	}
+	if !errors.Is(err, ErrParseStoppedEarly) {
+		t.Fatalf("ParseWithTokenSourceStrict error = %v, want ErrParseStoppedEarly", err)
+	}
+	var stopped *ParseStoppedEarlyError
+	if !errors.As(err, &stopped) {
+		t.Fatalf("ParseWithTokenSourceStrict error type = %T, want *ParseStoppedEarlyError", err)
+	}
+	if stopped.Reason != ParseStopTimeout {
+		t.Fatalf("stopped reason = %q, want %q", stopped.Reason, ParseStopTimeout)
 	}
 }
 

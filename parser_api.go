@@ -13,6 +13,54 @@ type parseConfig struct {
 	profiling   bool
 }
 
+// ParseStoppedEarlyError reports a parse that returned a tree but stopped
+// before accepting the input. The returned tree is still available to callers
+// that want diagnostics or partial output.
+type ParseStoppedEarlyError struct {
+	Reason  ParseStopReason
+	Runtime ParseRuntime
+}
+
+func (e *ParseStoppedEarlyError) Error() string {
+	if e == nil {
+		return ErrParseStoppedEarly.Error()
+	}
+	reason := e.Reason
+	if reason == "" {
+		reason = ParseStopNone
+	}
+	return fmt.Sprintf("%s: %s", ErrParseStoppedEarly, reason)
+}
+
+func (e *ParseStoppedEarlyError) Is(target error) bool {
+	return target == ErrParseStoppedEarly
+}
+
+func parseStoppedEarlyError(tree *Tree) error {
+	if tree == nil || !tree.ParseStoppedEarly() {
+		return nil
+	}
+	rt := tree.ParseRuntime()
+	reason := rt.StopReason
+	if reason == "" {
+		reason = tree.ParseStopReason()
+	}
+	return &ParseStoppedEarlyError{
+		Reason:  reason,
+		Runtime: rt,
+	}
+}
+
+func strictParseResult(tree *Tree, err error) (*Tree, error) {
+	if err != nil {
+		return tree, err
+	}
+	if stoppedErr := parseStoppedEarlyError(tree); stoppedErr != nil {
+		return tree, stoppedErr
+	}
+	return tree, nil
+}
+
 // TokenSourceFactory builds a token source for parser source bytes.
 type TokenSourceFactory func(source []byte) (TokenSource, error)
 
@@ -471,8 +519,11 @@ func (p *Parser) Logger() ParserLogger {
 	return p.logger
 }
 
-// SetTimeoutMicros configures a per-parse timeout in microseconds.
-// A value of 0 disables timeout checks.
+// SetTimeoutMicros configures a per-parse timeout in microseconds. A value of 0
+// disables timeout checks. Parse methods preserve tree-sitter's partial-tree
+// behavior on timeout: they return a tree and nil error, with
+// tree.ParseStopReason() == ParseStopTimeout and tree.ParseStoppedEarly() true.
+// Use ParseStrict or another strict parse method to treat early stops as errors.
 func (p *Parser) SetTimeoutMicros(timeoutMicros uint64) {
 	if p == nil {
 		return
@@ -662,6 +713,13 @@ func (p *Parser) Parse(source []byte) (*Tree, error) {
 	return tree, nil
 }
 
+// ParseStrict is like Parse, but returns ErrParseStoppedEarly when parsing
+// returns a partial tree due to timeout, cancellation, token-source EOF, or a
+// parser safety limit. The partial tree is returned alongside the error.
+func (p *Parser) ParseStrict(source []byte) (*Tree, error) {
+	return strictParseResult(p.Parse(source))
+}
+
 // ParseNoTreeBenchmarkOnly parses source while suppressing parent/child tree
 // materialization in reduce actions. It is intended only for parser-loop
 // performance experiments; the returned tree is not API-compatible.
@@ -768,6 +826,12 @@ func (p *Parser) ParseWithTokenSource(source []byte, ts TokenSource) (*Tree, err
 	return p.parseWithTokenSource(source, ts, p.tokenSourceReparseFactory(ts))
 }
 
+// ParseWithTokenSourceStrict is like ParseWithTokenSource, but returns
+// ErrParseStoppedEarly when parsing returns a partial tree.
+func (p *Parser) ParseWithTokenSourceStrict(source []byte, ts TokenSource) (*Tree, error) {
+	return strictParseResult(p.ParseWithTokenSource(source, ts))
+}
+
 // ParseWithTokenSourceFactory parses source using a freshly built custom token
 // source. The factory is also retained for recovery reparses.
 func (p *Parser) ParseWithTokenSourceFactory(source []byte, factory TokenSourceFactory) (*Tree, error) {
@@ -779,6 +843,12 @@ func (p *Parser) ParseWithTokenSourceFactory(source []byte, factory TokenSourceF
 		return nil, err
 	}
 	return p.parseWithTokenSource(source, ts, factory)
+}
+
+// ParseWithTokenSourceFactoryStrict is like ParseWithTokenSourceFactory, but
+// returns ErrParseStoppedEarly when parsing returns a partial tree.
+func (p *Parser) ParseWithTokenSourceFactoryStrict(source []byte, factory TokenSourceFactory) (*Tree, error) {
+	return strictParseResult(p.ParseWithTokenSourceFactory(source, factory))
 }
 
 // ParseIncremental re-parses source after edits were applied to oldTree.
@@ -811,6 +881,12 @@ func (p *Parser) ParseIncremental(source []byte, oldTree *Tree) (*Tree, error) {
 	tree := p.parseIncrementalInternal(source, oldTree, p.wrapIncludedRanges(ts), nil)
 	normalizeReturnedIncrementalTree(tree, oldTree, source, p.language)
 	return tree, nil
+}
+
+// ParseIncrementalStrict is like ParseIncremental, but returns
+// ErrParseStoppedEarly when parsing returns a partial tree.
+func (p *Parser) ParseIncrementalStrict(source []byte, oldTree *Tree) (*Tree, error) {
+	return strictParseResult(p.ParseIncremental(source, oldTree))
 }
 
 // ParseIncrementalUTF16 re-parses UTF-16 source after edits were applied to
@@ -864,6 +940,12 @@ func (p *Parser) ParseIncrementalWithTokenSource(source []byte, oldTree *Tree, t
 	return p.parseIncrementalWithTokenSource(source, oldTree, ts, p.tokenSourceReparseFactory(ts))
 }
 
+// ParseIncrementalWithTokenSourceStrict is like ParseIncrementalWithTokenSource,
+// but returns ErrParseStoppedEarly when parsing returns a partial tree.
+func (p *Parser) ParseIncrementalWithTokenSourceStrict(source []byte, oldTree *Tree, ts TokenSource) (*Tree, error) {
+	return strictParseResult(p.ParseIncrementalWithTokenSource(source, oldTree, ts))
+}
+
 // ParseIncrementalWithTokenSourceFactory is like ParseWithTokenSourceFactory
 // for an edited old tree.
 func (p *Parser) ParseIncrementalWithTokenSourceFactory(source []byte, oldTree *Tree, factory TokenSourceFactory) (*Tree, error) {
@@ -875,6 +957,13 @@ func (p *Parser) ParseIncrementalWithTokenSourceFactory(source []byte, oldTree *
 		return nil, err
 	}
 	return p.parseIncrementalWithTokenSource(source, oldTree, ts, factory)
+}
+
+// ParseIncrementalWithTokenSourceFactoryStrict is like
+// ParseIncrementalWithTokenSourceFactory, but returns ErrParseStoppedEarly when
+// parsing returns a partial tree.
+func (p *Parser) ParseIncrementalWithTokenSourceFactoryStrict(source []byte, oldTree *Tree, factory TokenSourceFactory) (*Tree, error) {
+	return strictParseResult(p.ParseIncrementalWithTokenSourceFactory(source, oldTree, factory))
 }
 
 func attachUTF16Source(tree *Tree, source []uint16, sourceMap *utf16SourceMap) {
@@ -987,8 +1076,25 @@ func (p *Parser) ParseWith(source []byte, opts ...ParseOption) (ParseResult, err
 	return ParseResult{Tree: tree, ProfileAvailable: false}, err
 }
 
+// ParseWithStrict is like ParseWith, but returns ErrParseStoppedEarly when
+// parsing returns a partial tree. The ParseResult still carries that tree.
+func (p *Parser) ParseWithStrict(source []byte, opts ...ParseOption) (ParseResult, error) {
+	result, err := p.ParseWith(source, opts...)
+	if err != nil {
+		return result, err
+	}
+	if stoppedErr := parseStoppedEarlyError(result.Tree); stoppedErr != nil {
+		return result, stoppedErr
+	}
+	return result, nil
+}
+
 // ErrNoLanguage is returned when a Parser has no language configured.
 var ErrNoLanguage = errors.New("parser has no language configured")
+
+// ErrParseStoppedEarly is matched by ParseStoppedEarlyError when a strict parse
+// returns a partial tree.
+var ErrParseStoppedEarly = errors.New("parse stopped before accepting input")
 
 // ErrNoTokenSourceFactory is returned when a factory-based parse is called
 // without a token source factory.

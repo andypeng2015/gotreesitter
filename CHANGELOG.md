@@ -7,7 +7,17 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
-- Nothing yet.
+### Added
+
+- Strict parse variants return `ErrParseStoppedEarly` for timeout,
+  cancellation, token-source EOF, and parser safety-limit partial trees while
+  preserving the returned tree for diagnostics.
+- `NodeAtByte` and `NamedNodeAtByte` helpers on `Tree` and `Node` for editor
+  offset lookup without hand-written tree walks.
+- `grammars.LoadLanguage(name, blob)` attaches registered external scanners and
+  external lex-state tables when loading raw grammar blobs.
+- `Language.Size()` reports approximate decoded table and lookup-cache bytes for
+  diagnostics and cache policy decisions.
 
 ## [0.20.0-rc3] - 2026-05-30
 

@@ -8,6 +8,7 @@ package gotreesitter
 import (
 	"slices"
 	"sync"
+	"unsafe"
 )
 
 // Symbol is a grammar symbol ID (terminal or nonterminal).
@@ -519,6 +520,149 @@ func (l *Language) CompatibleWithRuntime() bool {
 		return true
 	}
 	return v >= MinCompatibleLanguageVersion && v <= RuntimeLanguageVersion
+}
+
+// Size returns an approximate number of bytes retained by the decoded language
+// tables and lazily-built lookup caches. It is intended for diagnostics and
+// cache policy decisions, not as an exact Go heap accounting API.
+func (l *Language) Size() int64 {
+	if l == nil {
+		return 0
+	}
+	size := int64(unsafe.Sizeof(*l))
+	size += languageStringBytes(l.Name)
+	size += languageStringsSize(l.SymbolNames)
+	size += languageSliceSize(l.SymbolMetadata)
+	size += languageStringsSize(l.FieldNames)
+	size += languageTable2DUint16Size(l.ParseTable)
+	size += languageSliceSize(l.SmallParseTable)
+	size += languageSliceSize(l.SmallParseTableMap)
+	size += languageParseActionsSize(l.ParseActions)
+	size += languageReduceChainHintsSize(l.ReduceChainHints)
+	size += languageLexStatesSize(l.LexStates)
+	size += languageLexStatesSize(l.KeywordLexStates)
+	size += languageSliceSize(l.LexModes)
+	size += languageSliceSize(l.FieldMapSlices)
+	size += languageSliceSize(l.FieldMapEntries)
+	size += languageSymbolTable2DSize(l.AliasSequences)
+	size += languageSliceSize(l.PrimaryStateIDs)
+	size += languageSliceSize(l.ReservedWords)
+	size += languageSliceSize(l.SupertypeSymbols)
+	size += languageSliceSize(l.SupertypeMapSlices)
+	size += languageSliceSize(l.SupertypeMapEntries)
+	size += languageSliceSize(l.ExternalSymbols)
+	size += languageSliceSize(l.ImmediateTokens)
+	size += languageSliceSize(l.ZeroWidthTokens)
+	size += languageBoolTable2DSize(l.ExternalLexStates)
+	size += languageSymbolMapSize(l.symbolNameMap)
+	size += languageSymbolNamedMapSize(l.symbolNameNamedMap)
+	size += languageSymbolNamedMapSize(l.visibleSymbolNameMap)
+	size += languageTokenSymbolMapSize(l.tokenSymbolNameMap)
+	size += languageSliceSize(l.publicSymbolMap)
+	size += languageSliceSize(l.publicNamedSymbolMap)
+	size += languageSliceSize(l.publicAnonymousSymbolMap)
+	size += languageFieldMapSize(l.fieldNameMap)
+	size += languageSliceSize(l.lexAsciiTable)
+	size += languageSliceSize(l.keywordLexAsciiTable)
+	size += languageSliceSize(l.lexModeStarts)
+	return size
+}
+
+func languageStringBytes(s string) int64 {
+	return int64(len(s))
+}
+
+func languageSliceSize[T any](s []T) int64 {
+	var zero T
+	return int64(cap(s)) * int64(unsafe.Sizeof(zero))
+}
+
+func languageStringsSize(ss []string) int64 {
+	size := languageSliceSize(ss)
+	for _, s := range ss {
+		size += languageStringBytes(s)
+	}
+	return size
+}
+
+func languageTable2DUint16Size(table [][]uint16) int64 {
+	size := languageSliceSize(table)
+	for _, row := range table {
+		size += languageSliceSize(row)
+	}
+	return size
+}
+
+func languageSymbolTable2DSize(table [][]Symbol) int64 {
+	size := languageSliceSize(table)
+	for _, row := range table {
+		size += languageSliceSize(row)
+	}
+	return size
+}
+
+func languageBoolTable2DSize(table [][]bool) int64 {
+	size := languageSliceSize(table)
+	for _, row := range table {
+		size += languageSliceSize(row)
+	}
+	return size
+}
+
+func languageParseActionsSize(actions []ParseActionEntry) int64 {
+	size := languageSliceSize(actions)
+	for _, entry := range actions {
+		size += languageSliceSize(entry.Actions)
+	}
+	return size
+}
+
+func languageReduceChainHintsSize(hints []ReduceChainHint) int64 {
+	size := languageSliceSize(hints)
+	for _, hint := range hints {
+		size += languageSliceSize(hint.TerminalStates)
+	}
+	return size
+}
+
+func languageLexStatesSize(states []LexState) int64 {
+	size := languageSliceSize(states)
+	for _, state := range states {
+		size += languageSliceSize(state.Transitions)
+	}
+	return size
+}
+
+func languageSymbolMapSize(m map[string]Symbol) int64 {
+	size := int64(0)
+	for k := range m {
+		size += languageStringBytes(k) + int64(unsafe.Sizeof(Symbol(0)))
+	}
+	return size
+}
+
+func languageSymbolNamedMapSize(m map[symbolNameNamedKey]Symbol) int64 {
+	size := int64(0)
+	for k := range m {
+		size += languageStringBytes(k.name) + int64(unsafe.Sizeof(k.named)) + int64(unsafe.Sizeof(Symbol(0)))
+	}
+	return size
+}
+
+func languageTokenSymbolMapSize(m map[string][]Symbol) int64 {
+	size := int64(0)
+	for k, syms := range m {
+		size += languageStringBytes(k) + languageSliceSize(syms)
+	}
+	return size
+}
+
+func languageFieldMapSize(m map[string]FieldID) int64 {
+	size := int64(0)
+	for k := range m {
+		size += languageStringBytes(k) + int64(unsafe.Sizeof(FieldID(0)))
+	}
+	return size
 }
 
 // SymbolByName returns the symbol ID for a given name, or (0, false) if not found.

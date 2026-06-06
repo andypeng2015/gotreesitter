@@ -43,3 +43,34 @@ func TestBlobByName_ConsistentBytes(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadLanguageAttachesExternalScannerSupport(t *testing.T) {
+	blob := BlobByName("python")
+	if len(blob) == 0 {
+		t.Fatal("expected python blob")
+	}
+	lang, err := LoadLanguage("python", blob)
+	if err != nil {
+		t.Fatalf("LoadLanguage(python) error = %v", err)
+	}
+	if lang.ExternalScanner == nil {
+		t.Fatal("LoadLanguage(python) did not attach external scanner")
+	}
+	if len(lang.ExternalLexStates) == 0 {
+		t.Fatal("LoadLanguage(python) did not attach external lex states")
+	}
+}
+
+func TestLoadLanguageAcceptsAliases(t *testing.T) {
+	blob := BlobByName("golang")
+	if len(blob) == 0 {
+		t.Fatal("expected go blob")
+	}
+	lang, err := LoadLanguage("golang", blob)
+	if err != nil {
+		t.Fatalf("LoadLanguage(golang) error = %v", err)
+	}
+	if lang.Name != "go" {
+		t.Fatalf("LoadLanguage(golang).Name = %q, want %q", lang.Name, "go")
+	}
+}

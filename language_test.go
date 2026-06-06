@@ -48,6 +48,40 @@ func TestLanguageVersionCompatibility(t *testing.T) {
 	}
 }
 
+func TestLanguageSizeReportsDecodedTables(t *testing.T) {
+	var nilLang *Language
+	if got := nilLang.Size(); got != 0 {
+		t.Fatalf("nil Language Size = %d, want 0", got)
+	}
+
+	base := (&Language{Name: "tiny"}).Size()
+	lang := &Language{
+		Name:        "larger",
+		SymbolNames: []string{"end", "identifier", "expression"},
+		ParseTable: [][]uint16{
+			{0, 1, 2},
+			{3, 4, 5},
+		},
+		LexStates: []LexState{
+			{Transitions: []LexTransition{{Lo: 'a', Hi: 'z', NextState: 1}}},
+		},
+		ParseActions: []ParseActionEntry{
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 1}}},
+		},
+	}
+	if got := lang.Size(); got <= base {
+		t.Fatalf("populated Language Size = %d, want > base %d", got, base)
+	}
+
+	beforeMaps := lang.Size()
+	if _, ok := lang.SymbolByName("identifier"); !ok {
+		t.Fatal("SymbolByName(identifier) = false")
+	}
+	if got := lang.Size(); got <= beforeMaps {
+		t.Fatalf("Language Size after lazy maps = %d, want > %d", got, beforeMaps)
+	}
+}
+
 func TestLexAsciiTableFillsRangesPreservingFirstMatch(t *testing.T) {
 	lang := &Language{
 		LexStates: []LexState{

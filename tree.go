@@ -1468,10 +1468,37 @@ func (n *Node) DescendantForByteRange(startByte, endByte uint32) *Node {
 	return n.descendantForByteRange(startByte, endByte, false)
 }
 
+// NodeAtByte returns the smallest descendant that contains byteOffset. If the
+// offset is exactly at this node's end byte, it performs a zero-width lookup at
+// that boundary. Returns nil when the offset is outside this node.
+func (n *Node) NodeAtByte(byteOffset uint32) *Node {
+	if n == nil || byteOffset < n.startByte || byteOffset > n.endByte {
+		return nil
+	}
+	endByte := byteOffset
+	if byteOffset < n.endByte {
+		endByte = byteOffset + 1
+	}
+	return n.DescendantForByteRange(byteOffset, endByte)
+}
+
 // NamedDescendantForByteRange returns the smallest named descendant that fully
 // contains the given byte range, or nil when no such descendant exists.
 func (n *Node) NamedDescendantForByteRange(startByte, endByte uint32) *Node {
 	return n.descendantForByteRange(startByte, endByte, true)
+}
+
+// NamedNodeAtByte returns the smallest named descendant that contains
+// byteOffset. It follows the same boundary behavior as NodeAtByte.
+func (n *Node) NamedNodeAtByte(byteOffset uint32) *Node {
+	if n == nil || byteOffset < n.startByte || byteOffset > n.endByte {
+		return nil
+	}
+	endByte := byteOffset
+	if byteOffset < n.endByte {
+		endByte = byteOffset + 1
+	}
+	return n.NamedDescendantForByteRange(byteOffset, endByte)
 }
 
 // DescendantForPointRange returns the smallest descendant that fully contains
@@ -3006,6 +3033,23 @@ func (t *Tree) ParseStopReason() ParseStopReason {
 		return ParseStopNone
 	}
 	return t.parseRuntime.StopReason
+}
+
+// NodeAtByte returns the smallest root descendant that contains byteOffset.
+func (t *Tree) NodeAtByte(byteOffset uint32) *Node {
+	if t == nil {
+		return nil
+	}
+	return t.RootNode().NodeAtByte(byteOffset)
+}
+
+// NamedNodeAtByte returns the smallest named root descendant that contains
+// byteOffset.
+func (t *Tree) NamedNodeAtByte(byteOffset uint32) *Node {
+	if t == nil {
+		return nil
+	}
+	return t.RootNode().NamedNodeAtByte(byteOffset)
 }
 
 // ParseStoppedEarly reports whether parsing hit an early-stop condition.

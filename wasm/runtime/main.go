@@ -6,6 +6,7 @@ import (
 	"syscall/js"
 
 	"github.com/odvcencio/gotreesitter"
+	"github.com/odvcencio/gotreesitter/grammars"
 )
 
 func main() {
@@ -34,7 +35,7 @@ func loadBlob(this js.Value, args []js.Value) interface{} {
 	blob := make([]byte, length)
 	js.CopyBytesToGo(blob, jsArr)
 
-	lang, langErr := gotreesitter.LoadLanguage(blob)
+	lang, langErr := grammars.LoadLanguage(name, blob)
 	if langErr != nil {
 		return err("load blob: " + langErr.Error())
 	}
