@@ -14,6 +14,10 @@ for tags and release notes while still in `0.x`.
   preserving the returned tree for diagnostics.
 - `NodeAtByte` and `NamedNodeAtByte` helpers on `Tree` and `Node` for editor
   offset lookup without hand-written tree walks.
+- One-pass code-understanding helpers for common definition spans, call
+  references, heritage edges, and enclosing-definition lookup.
+- Benchmarks comparing the one-pass code-understanding helpers against the
+  tags-query path for both parse-plus-inspect and already-parsed trees.
 - `grammars.LoadLanguage(name, blob)` attaches registered external scanners and
   external lex-state tables when loading raw grammar blobs.
 - `Language.Size()` reports approximate decoded table and lookup-cache bytes for

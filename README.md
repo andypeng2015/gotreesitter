@@ -82,6 +82,24 @@ node := tree.NamedNodeAtByte(offset)
 The helpers return the smallest matching descendant and handle exact end-byte
 boundaries without requiring callers to hand-roll a tree walk.
 
+### Code-understanding helpers
+
+For hot indexing paths that need common symbols but not arbitrary tags-query
+semantics, use the one-pass extractors instead of running a fanout of queries:
+
+```go
+defs := gotreesitter.ExtractDefinitionSpans(tree)
+calls := gotreesitter.ExtractCalls(tree)
+bases := gotreesitter.ExtractHeritage(tree)
+
+enclosing, ok := tree.EnclosingDefinition(offset)
+```
+
+These helpers cover common Go, JavaScript, TypeScript/TSX, Python, Starlark,
+and Java definitions/calls, plus JavaScript/TypeScript, Python, and Java
+heritage edges. Unsupported languages or ambiguous shapes are skipped
+conservatively.
+
 ### Queries
 
 ```go
