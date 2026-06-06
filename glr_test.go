@@ -38,6 +38,73 @@ func TestPendingChildEntrySizeBudget(t *testing.T) {
 	}
 }
 
+func TestGLRStackClonePreservesRecoverability(t *testing.T) {
+	original := glrStack{
+		entries:             []stackEntry{{state: 1}, {state: 2}},
+		cacheEntries:        true,
+		byteOffset:          12,
+		score:               7,
+		recoverabilityKnown: true,
+		mayRecover:          false,
+		branchOrder:         3,
+	}
+
+	entryClone := original.clone()
+	if !entryClone.recoverabilityKnown {
+		t.Fatal("entry clone lost recoverabilityKnown")
+	}
+	if entryClone.mayRecover {
+		t.Fatal("entry clone changed mayRecover")
+	}
+
+	var scratch gssScratch
+	original.ensureGSS(&scratch)
+	gssClone := original.clone()
+	if !gssClone.recoverabilityKnown {
+		t.Fatal("GSS clone lost recoverabilityKnown")
+	}
+	if gssClone.mayRecover {
+		t.Fatal("GSS clone changed mayRecover")
+	}
+
+	scratchClone := original.cloneWithScratch(&scratch)
+	if !scratchClone.recoverabilityKnown {
+		t.Fatal("scratch clone lost recoverabilityKnown")
+	}
+	if scratchClone.mayRecover {
+		t.Fatal("scratch clone changed mayRecover")
+	}
+
+	original.mayRecover = true
+	recoveringClone := original.cloneWithScratch(&scratch)
+	if !recoveringClone.recoverabilityKnown || !recoveringClone.mayRecover {
+		t.Fatalf("recovering clone flags = known:%v may:%v, want true/true", recoveringClone.recoverabilityKnown, recoveringClone.mayRecover)
+	}
+}
+
+func TestGLRStackCloneWithScratchPreservesRecoverabilityFromEntries(t *testing.T) {
+	original := glrStack{
+		entries:             []stackEntry{{state: 1}, {state: 2}},
+		recoverabilityKnown: true,
+		mayRecover:          false,
+	}
+
+	var scratch gssScratch
+	gssClone := original.cloneWithScratch(&scratch)
+	if !gssClone.recoverabilityKnown {
+		t.Fatal("cloneWithScratch lost recoverabilityKnown")
+	}
+	if gssClone.mayRecover {
+		t.Fatal("cloneWithScratch changed mayRecover")
+	}
+
+	original.mayRecover = true
+	recoveringClone := original.cloneWithScratch(&scratch)
+	if !recoveringClone.recoverabilityKnown || !recoveringClone.mayRecover {
+		t.Fatalf("recovering clone flags = known:%v may:%v, want true/true", recoveringClone.recoverabilityKnown, recoveringClone.mayRecover)
+	}
+}
+
 func TestPendingChildEntryRoundTripsKindAndState(t *testing.T) {
 	arena := newNodeArena(arenaClassFull)
 	node := newLeafNodeInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})

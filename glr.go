@@ -229,31 +229,37 @@ func (s *glrStack) clone() glrStack {
 		entries := make([]stackEntry, len(s.entries))
 		copy(entries, s.entries)
 		return glrStack{
-			entries:      entries,
-			cacheEntries: s.cacheEntries,
-			byteOffset:   s.byteOffset,
-			score:        s.score,
-			branchOrder:  s.branchOrder,
+			entries:             entries,
+			cacheEntries:        s.cacheEntries,
+			byteOffset:          s.byteOffset,
+			score:               s.score,
+			recoverabilityKnown: s.recoverabilityKnown,
+			mayRecover:          s.mayRecover,
+			branchOrder:         s.branchOrder,
 		}
 	}
 	s.ensureGSS(nil)
 	return glrStack{
-		gss:          s.gss.clone(),
-		cacheEntries: s.cacheEntries,
-		byteOffset:   s.byteOffset,
-		score:        s.score,
-		branchOrder:  s.branchOrder,
+		gss:                 s.gss.clone(),
+		cacheEntries:        s.cacheEntries,
+		byteOffset:          s.byteOffset,
+		score:               s.score,
+		recoverabilityKnown: s.recoverabilityKnown,
+		mayRecover:          s.mayRecover,
+		branchOrder:         s.branchOrder,
 	}
 }
 
 func (s *glrStack) cloneWithScratch(scratch *gssScratch) glrStack {
 	s.ensureGSS(scratch)
 	return glrStack{
-		gss:          s.gss.clone(),
-		cacheEntries: false,
-		byteOffset:   s.byteOffset,
-		score:        s.score,
-		branchOrder:  s.branchOrder,
+		gss:                 s.gss.clone(),
+		cacheEntries:        false,
+		byteOffset:          s.byteOffset,
+		score:               s.score,
+		recoverabilityKnown: s.recoverabilityKnown,
+		mayRecover:          s.mayRecover,
+		branchOrder:         s.branchOrder,
 	}
 }
 
