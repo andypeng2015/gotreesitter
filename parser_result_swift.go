@@ -9,10 +9,11 @@ import "bytes"
 // _optionally_valueful_control_keyword in a way that loses the anonymous
 // token, leaving either a childless node (bare `return`) or a node whose
 // span starts at the result expression (`return 42`).
-func normalizeSwiftCompatibility(root *Node, source []byte, lang *Language) {
+func normalizeSwiftCompatibility(root *Node, source []byte, p *Parser, lang *Language) {
 	if root == nil || lang == nil || lang.Name != "swift" {
 		return
 	}
+	normalizeSwiftRecoveredTopLevelDeclarations(root, source, p, lang)
 	// Bare keyword case (childCount=0, span covers exactly the keyword).
 	normalizeCollapsedNamedLeafChildrenBySource(
 		root, source, lang,
@@ -22,6 +23,115 @@ func normalizeSwiftCompatibility(root *Node, source []byte, lang *Language) {
 	// `return <expr>` case: existing children present but the keyword leaf is
 	// missing as the first child and the span starts at the result expression.
 	prependSwiftControlTransferKeyword(root, source, lang)
+}
+
+func normalizeSwiftRecoveredTopLevelDeclarations(root *Node, source []byte, p *Parser, lang *Language) {
+	if root == nil || p == nil || p.skipRecoveryReparse || lang == nil || root.ownerArena == nil || len(source) == 0 {
+		return
+	}
+	if root.Type(lang) != "source_file" || len(root.children) == 0 {
+		return
+	}
+	recoveredChildren := make([]*Node, 0, len(root.children))
+	changed := false
+	for i, child := range root.children {
+		if child == nil {
+			continue
+		}
+		if !child.HasError() {
+			recoveredChildren = append(recoveredChildren, child)
+			continue
+		}
+		start := child.startByte
+		end := uint32(len(source))
+		if i+1 < len(root.children) && root.children[i+1] != nil && root.children[i+1].startByte > start {
+			end = root.children[i+1].startByte
+		}
+		if recovered, ok := swiftRecoverTopLevelDeclarationFromRange(source, start, end, p, lang, root.ownerArena); ok {
+			recoveredChildren = append(recoveredChildren, recovered)
+			changed = true
+			continue
+		}
+		recoveredChildren = append(recoveredChildren, child)
+	}
+	if !changed {
+		return
+	}
+	root.children = cloneNodeSliceIfArena(root.ownerArena, recoveredChildren)
+	populateParentNode(root, root.children)
+	if !swiftAnyChildHasError(root) {
+		root.setHasError(false)
+	}
+	if len(root.children) > 0 {
+		last := root.children[len(root.children)-1]
+		if last != nil && last.endByte > root.endByte {
+			root.endByte = last.endByte
+			root.endPoint = last.endPoint
+		}
+	}
+}
+
+func swiftRecoverTopLevelDeclarationFromRange(source []byte, start, end uint32, p *Parser, lang *Language, arena *nodeArena) (*Node, bool) {
+	if p == nil || lang == nil || arena == nil || start >= end || int(end) > len(source) {
+		return nil, false
+	}
+	start, end = swiftTrimSpaceBounds(source, start, end)
+	if start >= end {
+		return nil, false
+	}
+	tree, err := p.parseForRecovery(source[start:end])
+	if err != nil || tree == nil || tree.RootNode() == nil {
+		if tree != nil {
+			tree.Release()
+		}
+		return nil, false
+	}
+	defer tree.Release()
+	startPoint := advancePointByBytes(Point{}, source[:start])
+	offsetRoot := tree.RootNodeWithOffset(start, startPoint)
+	if offsetRoot == nil || offsetRoot.HasError() {
+		return nil, false
+	}
+	for _, child := range offsetRoot.children {
+		if child == nil || child.IsExtra() || child.HasError() {
+			continue
+		}
+		return cloneTreeNodesIntoArena(child, arena), true
+	}
+	return nil, false
+}
+
+func swiftTrimSpaceBounds(source []byte, start, end uint32) (uint32, uint32) {
+	for start < end && int(start) < len(source) {
+		switch source[start] {
+		case ' ', '\t', '\n', '\r':
+			start++
+		default:
+			goto trimRight
+		}
+	}
+trimRight:
+	for end > start && int(end) <= len(source) {
+		switch source[end-1] {
+		case ' ', '\t', '\n', '\r':
+			end--
+		default:
+			return start, end
+		}
+	}
+	return start, end
+}
+
+func swiftAnyChildHasError(root *Node) bool {
+	if root == nil {
+		return false
+	}
+	for _, child := range root.children {
+		if child != nil && child.HasError() {
+			return true
+		}
+	}
+	return false
 }
 
 func prependSwiftControlTransferKeyword(root *Node, source []byte, lang *Language) {
