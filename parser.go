@@ -2667,6 +2667,10 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 						if next, ok := phpRepetitionShiftConflictChoice(p.language, tok, currentState, actions); ok {
 							chosen, choice = next, true
 						}
+					case "perl":
+						if next, ok := perlRepetitionShiftConflictChoice(p.language, currentState, actions); ok {
+							chosen, choice = next, true
+						}
 					case "sql":
 						if next, ok := sqlRepetitionShiftConflictChoice(p.language, tok, currentState, actions); ok {
 							chosen, choice = next, true
@@ -3880,6 +3884,30 @@ func phpRepetitionShiftConflictChoice(lang *Language, tok Token, state StateID, 
 	case symbolHasName(lang, tok.Symbol, "class"):
 	case symbolHasName(lang, tok.Symbol, "while"):
 	case symbolHasName(lang, tok.Symbol, "echo"):
+	default:
+		return ParseAction{}, false
+	}
+	return repetitionShiftConflictChoice(actions)
+}
+
+// perlRepetitionShiftConflictChoice keeps top-level Perl statements and
+// heredoc content on their repeat-continuation paths. Profiling the real-corpus
+// shard showed state 27/source_file_repeat1 and state 2853/heredoc_content_repeat1
+// dominate Perl fork pressure; terminators do not carry a repetition shift and
+// are excluded by repetitionShiftConflictChoice.
+func perlRepetitionShiftConflictChoice(lang *Language, state StateID, actions []ParseAction) (ParseAction, bool) {
+	if lang == nil || lang.GeneratedByGrammargen {
+		return ParseAction{}, false
+	}
+	switch state {
+	case 27:
+		if !allReducesHaveSymbol(lang, actions, "source_file_repeat1") {
+			return ParseAction{}, false
+		}
+	case 2853:
+		if !allReducesHaveSymbol(lang, actions, "heredoc_content_repeat1") {
+			return ParseAction{}, false
+		}
 	default:
 		return ParseAction{}, false
 	}

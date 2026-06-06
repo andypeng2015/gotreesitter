@@ -236,6 +236,67 @@ func TestPHPRepetitionShiftConflictChoiceRejectsOtherState(t *testing.T) {
 	}
 }
 
+func TestPerlRepetitionShiftConflictChoiceAllowsHotRepeats(t *testing.T) {
+	lang := &Language{SymbolNames: []string{"end", "source_file_repeat1", "heredoc_content_repeat1"}}
+	for _, tc := range []struct {
+		name       string
+		state      StateID
+		reduceSym  Symbol
+		shiftState StateID
+	}{
+		{name: "source_file", state: 27, reduceSym: 1, shiftState: 28},
+		{name: "heredoc_content", state: 2853, reduceSym: 2, shiftState: 2854},
+	} {
+		actions := []ParseAction{
+			{Type: ParseActionReduce, Symbol: tc.reduceSym, ChildCount: 2},
+			{Type: ParseActionShift, State: tc.shiftState, Repetition: true},
+		}
+		chosen, ok := perlRepetitionShiftConflictChoice(lang, tc.state, actions)
+		if !ok {
+			t.Fatalf("perlRepetitionShiftConflictChoice(%s) = false, want true", tc.name)
+		}
+		if chosen.Type != ParseActionShift || chosen.State != tc.shiftState || !chosen.Repetition {
+			t.Fatalf("perlRepetitionShiftConflictChoice(%s) picked %+v, want repetition shift", tc.name, chosen)
+		}
+	}
+}
+
+func TestPerlRepetitionShiftConflictChoiceRejectsOtherRepeat(t *testing.T) {
+	lang := &Language{SymbolNames: []string{"end", "source_file_repeat1", "other_repeat1"}}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 2, ChildCount: 2},
+		{Type: ParseActionShift, State: 28, Repetition: true},
+	}
+	if _, ok := perlRepetitionShiftConflictChoice(lang, 27, actions); ok {
+		t.Fatal("perlRepetitionShiftConflictChoice = true, want false")
+	}
+}
+
+func TestPerlRepetitionShiftConflictChoiceRejectsOtherState(t *testing.T) {
+	lang := &Language{SymbolNames: []string{"end", "source_file_repeat1"}}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 1, ChildCount: 2},
+		{Type: ParseActionShift, State: 28, Repetition: true},
+	}
+	if _, ok := perlRepetitionShiftConflictChoice(lang, 28, actions); ok {
+		t.Fatal("perlRepetitionShiftConflictChoice = true, want false")
+	}
+}
+
+func TestPerlRepetitionShiftConflictChoiceRejectsGrammargenLanguage(t *testing.T) {
+	lang := &Language{
+		GeneratedByGrammargen: true,
+		SymbolNames:           []string{"end", "source_file_repeat1"},
+	}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 1, ChildCount: 2},
+		{Type: ParseActionShift, State: 28, Repetition: true},
+	}
+	if _, ok := perlRepetitionShiftConflictChoice(lang, 27, actions); ok {
+		t.Fatal("perlRepetitionShiftConflictChoice = true, want false for grammargen language")
+	}
+}
+
 func TestSQLRepetitionShiftConflictChoiceAllowsSelectClauseComma(t *testing.T) {
 	lang := &Language{SymbolNames: []string{"end", ",", "select_clause_body_repeat1"}}
 	actions := []ParseAction{
