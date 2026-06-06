@@ -625,45 +625,70 @@ run_real_corpus_phase() {
 
   declare -a pids=()
   declare -a pid_langs=()
+  declare -a pid_statuses=()
+  local status_dir
+  status_dir="$(mktemp -d "${TMPDIR:-/tmp}/gts-focus-real.XXXXXX")"
 
   wait_for_one_real() {
-    local finished_pid lang idx rc
+    local running_pids status_file lang idx rc
     if [[ "${#pids[@]}" -eq 0 ]]; then
       return 0
     fi
-    if wait -n -p finished_pid "${pids[@]}"; then
-      rc=0
-    else
-      rc=$?
-    fi
-    lang="$finished_pid"
-    for idx in "${!pids[@]}"; do
-      if [[ "${pids[$idx]}" == "$finished_pid" ]]; then
+    while true; do
+      running_pids="$(jobs -pr || true)"
+      for idx in "${!pids[@]}"; do
+        status_file="${pid_statuses[$idx]}"
+        if [[ -f "$status_file" ]]; then
+          rc="$(<"$status_file")"
+        elif [[ $'\n'"$running_pids"$'\n' != *$'\n'"${pids[$idx]}"$'\n'* ]]; then
+          set +e
+          wait "${pids[$idx]}"
+          rc=$?
+          set -e
+        else
+          continue
+        fi
         lang="${pid_langs[$idx]}"
+        set +e
+        wait "${pids[$idx]}" 2>/dev/null
+        set -e
         unset 'pids[idx]'
         unset 'pid_langs[idx]'
+        unset 'pid_statuses[idx]'
         pids=("${pids[@]}")
         pid_langs=("${pid_langs[@]}")
-        break
-      fi
+        pid_statuses=("${pid_statuses[@]}")
+        echo "[done] real-corpus: $lang exit=$rc"
+        record_real_rc "$lang" "$rc"
+        return
+      done
+      sleep 0.2
     done
-    echo "[done] real-corpus: $lang exit=$rc"
-    record_real_rc "$lang" "$rc"
   }
 
+  local job_id=0
   for lang in "${TARGET_LANGS[@]}"; do
     while [[ "${#pids[@]}" -ge "$JOBS" ]]; do
       wait_for_one_real
     done
     echo "[start] real-corpus: $lang"
-    run_real_corpus_lang "$lang" &
+    local status_file="$status_dir/$job_id.status"
+    (
+      set +e
+      run_real_corpus_lang "$lang"
+      printf '%s\n' "$?" >"$status_file.tmp"
+      mv "$status_file.tmp" "$status_file"
+    ) &
     pids+=("$!")
     pid_langs+=("$lang")
+    pid_statuses+=("$status_file")
+    ((job_id+=1)) || true
   done
 
   while [[ "${#pids[@]}" -gt 0 ]]; do
     wait_for_one_real
   done
+  rm -rf "$status_dir"
 }
 
 run_cgo_phase() {
@@ -682,45 +707,70 @@ run_cgo_phase() {
 
   declare -a pids=()
   declare -a pid_langs=()
+  declare -a pid_statuses=()
+  local status_dir
+  status_dir="$(mktemp -d "${TMPDIR:-/tmp}/gts-focus-cgo.XXXXXX")"
 
   wait_for_one_cgo() {
-    local finished_pid lang idx rc
+    local running_pids status_file lang idx rc
     if [[ "${#pids[@]}" -eq 0 ]]; then
       return 0
     fi
-    if wait -n -p finished_pid "${pids[@]}"; then
-      rc=0
-    else
-      rc=$?
-    fi
-    lang="$finished_pid"
-    for idx in "${!pids[@]}"; do
-      if [[ "${pids[$idx]}" == "$finished_pid" ]]; then
+    while true; do
+      running_pids="$(jobs -pr || true)"
+      for idx in "${!pids[@]}"; do
+        status_file="${pid_statuses[$idx]}"
+        if [[ -f "$status_file" ]]; then
+          rc="$(<"$status_file")"
+        elif [[ $'\n'"$running_pids"$'\n' != *$'\n'"${pids[$idx]}"$'\n'* ]]; then
+          set +e
+          wait "${pids[$idx]}"
+          rc=$?
+          set -e
+        else
+          continue
+        fi
         lang="${pid_langs[$idx]}"
+        set +e
+        wait "${pids[$idx]}" 2>/dev/null
+        set -e
         unset 'pids[idx]'
         unset 'pid_langs[idx]'
+        unset 'pid_statuses[idx]'
         pids=("${pids[@]}")
         pid_langs=("${pid_langs[@]}")
-        break
-      fi
+        pid_statuses=("${pid_statuses[@]}")
+        echo "[done] cgo: $lang exit=$rc"
+        record_cgo_rc "$lang" "$rc"
+        return
+      done
+      sleep 0.2
     done
-    echo "[done] cgo: $lang exit=$rc"
-    record_cgo_rc "$lang" "$rc"
   }
 
+  local job_id=0
   for lang in "${TARGET_LANGS[@]}"; do
     while [[ "${#pids[@]}" -ge "$JOBS" ]]; do
       wait_for_one_cgo
     done
     echo "[start] cgo: $lang"
-    run_cgo_lang "$lang" &
+    local status_file="$status_dir/$job_id.status"
+    (
+      set +e
+      run_cgo_lang "$lang"
+      printf '%s\n' "$?" >"$status_file.tmp"
+      mv "$status_file.tmp" "$status_file"
+    ) &
     pids+=("$!")
     pid_langs+=("$lang")
+    pid_statuses+=("$status_file")
+    ((job_id+=1)) || true
   done
 
   while [[ "${#pids[@]}" -gt 0 ]]; do
     wait_for_one_cgo
   done
+  rm -rf "$status_dir"
 }
 
 if [[ "$JOBS" -gt 1 && "$BUILD_IMAGE" == "1" ]]; then

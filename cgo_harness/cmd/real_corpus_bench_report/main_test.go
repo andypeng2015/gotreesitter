@@ -120,12 +120,12 @@ Maximum resident set size (kbytes): 1156904
 	}
 	metadata := filepath.Join(runDir, "metadata.txt")
 	if err := os.WriteFile(metadata, []byte(`
-memory=4g
-gomemlimit=3GiB
-exit_code=0
-oom_killed=false
-command=env GOMAXPROCS=1 GTS_REAL_CORPUS_BENCH_ALLOW_MISMATCH=1 GTS_REAL_CORPUS_BENCH_SKIP_MISMATCH=0 go test .
-`), 0o644); err != nil {
+	memory = 4g
+	gomemlimit = 3GiB
+	exit_code = 0
+	oom_killed = false
+	command=env GOMAXPROCS=1 GTS_REAL_CORPUS_BENCH_ALLOW_MISMATCH=1 GTS_REAL_CORPUS_BENCH_SKIP_MISMATCH=0 go test .
+	`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	files, err := expandInputs([]string{root})

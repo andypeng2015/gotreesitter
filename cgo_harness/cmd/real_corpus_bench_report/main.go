@@ -302,6 +302,8 @@ func parseMetadataResource(path string, resource *runResource) error {
 		if !ok {
 			continue
 		}
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
 		switch key {
 		case "exit_code":
 			n, err := strconv.Atoi(value)

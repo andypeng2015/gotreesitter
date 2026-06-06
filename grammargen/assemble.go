@@ -61,6 +61,7 @@ func assemble(
 	symbolCount := len(ng.Symbols)
 
 	lang := &gotreesitter.Language{
+		Name:                  ng.GrammarName,
 		SymbolCount:           uint32(symbolCount),
 		TokenCount:            uint32(tokenCount),
 		ExternalTokenCount:    uint32(len(ng.ExternalSymbols)),

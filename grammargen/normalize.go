@@ -78,6 +78,7 @@ type TerminalPattern struct {
 
 // NormalizedGrammar is the output of the normalize step.
 type NormalizedGrammar struct {
+	GrammarName   string
 	Symbols       []SymbolInfo
 	Productions   []Production
 	Terminals     []TerminalPattern
@@ -304,7 +305,7 @@ func Normalize(g *Grammar) (*NormalizedGrammar, error) {
 	}
 	st.choiceLiftThreshold = g.ChoiceLiftThreshold
 	st.gRules = g.Rules
-	ng := &NormalizedGrammar{}
+	ng := &NormalizedGrammar{GrammarName: g.Name}
 
 	// Phase 1: Collect all string literals and register terminal symbols.
 	// Walk all rules to find string literals (anonymous terminals).
@@ -1693,12 +1694,12 @@ func ruleReachesAlias(r *Rule, gRules map[string]*Rule, seen map[string]bool, de
 	return false
 }
 
-
 // prepareRule normalizes a rule tree for production extraction:
-// - Expands Optional(x) → Choice(x, Blank())
-// - Replaces Repeat(x) and Repeat1(x) with auxiliary nonterminal symbols
-// - Hoists Alias(Repeat/Repeat1(X), name) into an aux nonterminal so the
-//   alias attaches to a single child slot
+//   - Expands Optional(x) → Choice(x, Blank())
+//   - Replaces Repeat(x) and Repeat1(x) with auxiliary nonterminal symbols
+//   - Hoists Alias(Repeat/Repeat1(X), name) into an aux nonterminal so the
+//     alias attaches to a single child slot
+//
 // This handles repeat/repeat1 at ALL levels including the root.
 func prepareRule(r *Rule, parentName string, st *symbolTable, auxRules map[string]*Rule, auxOrigins map[string]map[string]bool, counter *int) *Rule {
 	if r == nil {

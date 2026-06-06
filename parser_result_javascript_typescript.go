@@ -1056,7 +1056,7 @@ func normalizeJavaScriptTypeScriptStatementKeywordsAndPrecedenceWithDetailedStat
 	optionalChainSym, hasOptionalChainSym := symbolByName(lang, "optional_chain")
 	optionalChainTokenSym, hasOptionalChainTokenSym := symbolByName(lang, "?.")
 	optionalChainTokenNamed := hasOptionalChainTokenSym && symbolIsNamed(lang, optionalChainTokenSym)
-	enableOptionalChain := hasOptionalChainSym && hasOptionalChainTokenSym && bytes.Contains(source, []byte("?."))
+	enableOptionalChain := hasOptionalChainSym && bytes.Contains(source, []byte("?."))
 	dynamicImportSym, hasDynamicImport := lang.symbolByNameAndNamed("import", true)
 	importKeywordSym, hasImportKeyword := lang.symbolByNameAndNamed("import", false)
 	enableDynamicImport := hasDynamicImport && hasImportKeyword && bytes.Contains(source, []byte("import"))

@@ -30,6 +30,9 @@ func TestJSONGenerateLanguage(t *testing.T) {
 	if lang == nil {
 		t.Fatal("language is nil")
 	}
+	if lang.Name != g.Name {
+		t.Fatalf("Language.Name = %q, want %q", lang.Name, g.Name)
+	}
 
 	t.Logf("SymbolCount: %d", lang.SymbolCount)
 	t.Logf("TokenCount: %d", lang.TokenCount)
