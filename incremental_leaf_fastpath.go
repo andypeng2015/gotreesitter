@@ -105,6 +105,8 @@ func (p *Parser) canReuseLanguageTextInvariantNode(source []byte, oldTree *Tree,
 	case "awk":
 		return oldTree.forestFastPath && node.Type(p.language) == "number" &&
 			asciiDigitTextInvariantEdit(source, oldTree.source, edit)
+	case "bash":
+		return oldTree.forestFastPath && bashTextInvariantNodeEdit(source, oldTree.source, node, edit, p.language)
 	case "clojure":
 		return clojureTextInvariantNodeEdit(source, oldTree.source, node, edit, p.language)
 	case "cmake":
@@ -217,6 +219,42 @@ func asciiDigitTextInvariantEdit(source, oldSource []byte, edit InputEdit) bool 
 
 func asciiDigit(b byte) bool {
 	return b >= '0' && b <= '9'
+}
+
+func bashTextInvariantNodeEdit(source, oldSource []byte, node *Node, edit InputEdit, lang *Language) bool {
+	if !sameLengthEditWithinNode(source, oldSource, node, edit) {
+		return false
+	}
+	switch node.Type(lang) {
+	case "comment":
+		return hashLineCommentTextInvariantEdit(source, oldSource, node, edit)
+	case "number":
+		return asciiDigitTextInvariantEdit(source, oldSource, edit) &&
+			bashStableNumberText(oldSource, node) &&
+			bashStableNumberText(source, node)
+	default:
+		return false
+	}
+}
+
+func bashStableNumberText(source []byte, node *Node) bool {
+	if node == nil || node.startByte >= node.endByte || int(node.endByte) > len(source) {
+		return false
+	}
+	text := source[node.startByte:node.endByte]
+	i := 0
+	if text[i] == '-' || text[i] == '+' {
+		i++
+		if i == len(text) {
+			return false
+		}
+	}
+	for ; i < len(text); i++ {
+		if !asciiDigit(text[i]) {
+			return false
+		}
+	}
+	return true
 }
 
 func hclTextInvariantNodeEdit(source, oldSource []byte, node *Node, edit InputEdit, lang *Language) bool {

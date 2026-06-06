@@ -283,6 +283,46 @@ func TestAwkTextInvariantNumberEdit(t *testing.T) {
 	}
 }
 
+func TestBashTextInvariantLeafEdit(t *testing.T) {
+	lang := &Language{Name: "bash", SymbolNames: []string{"comment", "number", "word"}}
+	oldSource := []byte("# look for old 0.x cruft\n")
+	source := []byte("# look for old 1.x cruft\n")
+	node := &Node{symbol: 0, startByte: 0, endByte: uint32(len(oldSource) - 1)}
+	edit := InputEdit{StartByte: 15, OldEndByte: 16, NewEndByte: 16}
+	tree := &Tree{source: oldSource, forestFastPath: true}
+	parser := &Parser{language: lang}
+	if !parser.canReuseLanguageTextInvariantNode(source, tree, node, edit) {
+		t.Fatal("Bash comment digit edit was not reusable")
+	}
+
+	oldSource = []byte("-9")
+	source = []byte("-0")
+	node = &Node{symbol: 1, startByte: 0, endByte: uint32(len(oldSource))}
+	edit = InputEdit{StartByte: 1, OldEndByte: 2, NewEndByte: 2}
+	tree.source = oldSource
+	if !parser.canReuseLanguageTextInvariantNode(source, tree, node, edit) {
+		t.Fatal("Bash number digit edit was not reusable")
+	}
+
+	source = []byte("-x")
+	if parser.canReuseLanguageTextInvariantNode(source, tree, node, edit) {
+		t.Fatal("Bash number edit admitted non-digit replacement")
+	}
+
+	source = []byte("+9")
+	edit = InputEdit{StartByte: 0, OldEndByte: 1, NewEndByte: 1}
+	if parser.canReuseLanguageTextInvariantNode(source, tree, node, edit) {
+		t.Fatal("Bash number edit admitted sign replacement")
+	}
+
+	node.symbol = 2
+	source = []byte("-0")
+	edit = InputEdit{StartByte: 1, OldEndByte: 2, NewEndByte: 2}
+	if parser.canReuseLanguageTextInvariantNode(source, tree, node, edit) {
+		t.Fatal("Bash text-invariant edit admitted non-number node")
+	}
+}
+
 func TestElixirTextInvariantIdentifierEdit(t *testing.T) {
 	lang := &Language{Name: "elixir", SymbolNames: []string{"identifier", "atom"}}
 	oldSource := []byte("defprotocol")

@@ -124,6 +124,20 @@ func TestExternalScannerTokenInvariantLeafReuse(t *testing.T) {
 			replacement: 'w',
 		},
 		{
+			name:        "bash comment",
+			lang:        grammars.BashLanguage,
+			source:      []byte("# look for old 0.x cruft\n"),
+			marker:      []byte("0"),
+			replacement: '1',
+		},
+		{
+			name:        "bash number",
+			lang:        grammars.BashLanguage,
+			source:      []byte("echo -9\n"),
+			marker:      []byte("9"),
+			replacement: '0',
+		},
+		{
 			name:        "julia line comment",
 			lang:        grammars.JuliaLanguage,
 			source:      []byte("# This file is part of Julia.\nx = 1\n"),
