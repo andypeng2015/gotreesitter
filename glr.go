@@ -81,12 +81,14 @@ type glrMergeScratch struct {
 	audit            *runtimeAudit
 	equivEpoch       uint32
 	equivCache       []glrNodeEquivCacheEntry
+	stackEquivCache  []glrStackEquivCacheEntry
 	pythonShallow    bool
 	budgetBytes      int64
 	resultBytes      int64
 	slotBytes        int64
 	largeSlotBytes   int64
 	equivCacheBytes  int64
+	stackEquivBytes  int64
 }
 
 type glrMergeKey struct {
@@ -120,6 +122,13 @@ type glrNodeEquivCacheEntry struct {
 	epoch    uint32
 	depth    uint16
 	result   bool
+}
+
+type glrStackEquivCacheEntry struct {
+	a      uintptr
+	b      uintptr
+	epoch  uint32
+	result bool
 }
 
 type glrEntryScratch struct {
@@ -409,6 +418,12 @@ const (
 	// in ~2× the set count, which is the JS/Rust real-corpus shape.
 	glrNodeEquivCacheSize     = 16384
 	glrNodeEquivCacheSetCount = glrNodeEquivCacheSize / 2 // 8192 sets × 2 ways
+	// glrStackEquivCacheSize memoizes GSS head-pair equivalence across merge
+	// calls in a parse epoch. GSS nodes are immutable inside an epoch, so pointer
+	// pairs are stable; this avoids repeatedly walking long shared stack tails in
+	// GLR-heavy grammars such as Dart.
+	glrStackEquivCacheSize     = 4096
+	glrStackEquivCacheSetCount = glrStackEquivCacheSize / 2
 	// Depth is part of the cache key. Keep it bounded so large recursive
 	// comparisons cannot alias through a narrowing conversion.
 	glrNodeEquivCacheMaxDepth = 1<<16 - 1
@@ -424,12 +439,80 @@ func (s *glrMergeScratch) beginEquivEpoch() {
 	}
 	if s.equivEpoch == ^uint32(0) {
 		clear(s.equivCache)
+		clear(s.stackEquivCache)
 		s.equivEpoch = 0
 	}
 	s.equivEpoch++
 	if len(s.equivCache) == 0 {
 		s.equivCache = make([]glrNodeEquivCacheEntry, glrNodeEquivCacheSize)
 		s.equivCacheBytes = glrNodeEquivCacheBytesForCap(cap(s.equivCache))
+	}
+}
+
+func orderedGSSNodePair(a, b *gssNode) (uintptr, uintptr, bool) {
+	if a == nil || b == nil {
+		return 0, 0, false
+	}
+	ap := uintptr(unsafe.Pointer(a))
+	bp := uintptr(unsafe.Pointer(b))
+	if ap == 0 || bp == 0 {
+		return 0, 0, false
+	}
+	if ap > bp {
+		ap, bp = bp, ap
+	}
+	return ap, bp, true
+}
+
+func stackEquivCacheIndex(ap, bp uintptr) int {
+	x := uint64(ap)
+	y := uint64(bp)
+	h := x ^ (y + 0x9e3779b97f4a7c15 + (x << 6) + (x >> 2))
+	h ^= (x >> 4) * 0x85ebca6b
+	h ^= (y >> 7) * 0xc2b2ae35
+	return int(h&uint64(glrStackEquivCacheSetCount-1)) << 1
+}
+
+func lookupGSSStackEquivCache(scratch *glrMergeScratch, a, b *gssNode) (bool, bool) {
+	if scratch == nil || len(scratch.stackEquivCache) == 0 || scratch.equivEpoch == 0 {
+		return false, false
+	}
+	ap, bp, ok := orderedGSSNodePair(a, b)
+	if !ok {
+		return false, false
+	}
+	idx := stackEquivCacheIndex(ap, bp)
+	primary := &scratch.stackEquivCache[idx]
+	if primary.epoch == scratch.equivEpoch && primary.a == ap && primary.b == bp {
+		return primary.result, true
+	}
+	victim := &scratch.stackEquivCache[idx+1]
+	if victim.epoch == scratch.equivEpoch && victim.a == ap && victim.b == bp {
+		scratch.stackEquivCache[idx], scratch.stackEquivCache[idx+1] = scratch.stackEquivCache[idx+1], scratch.stackEquivCache[idx]
+		return scratch.stackEquivCache[idx].result, true
+	}
+	return false, false
+}
+
+func storeGSSStackEquivCache(scratch *glrMergeScratch, a, b *gssNode, result bool) {
+	if scratch == nil || scratch.equivEpoch == 0 {
+		return
+	}
+	ap, bp, ok := orderedGSSNodePair(a, b)
+	if !ok {
+		return
+	}
+	if len(scratch.stackEquivCache) == 0 {
+		scratch.stackEquivCache = make([]glrStackEquivCacheEntry, glrStackEquivCacheSize)
+		scratch.stackEquivBytes = glrStackEquivCacheBytesForCap(cap(scratch.stackEquivCache))
+	}
+	idx := stackEquivCacheIndex(ap, bp)
+	scratch.stackEquivCache[idx+1] = scratch.stackEquivCache[idx]
+	scratch.stackEquivCache[idx] = glrStackEquivCacheEntry{
+		a:      ap,
+		b:      bp,
+		epoch:  scratch.equivEpoch,
+		result: result,
 	}
 }
 
@@ -696,36 +779,47 @@ func gssStacksEqualForLanguageWithScratch(scratch *glrMergeScratch, lang *Langua
 		}
 		return false
 	}
+	if hit, ok := lookupGSSStackEquivCache(scratch, a.head, b.head); ok {
+		return hit
+	}
 	audit := activeEquivAudit(scratch)
 	if audit == nil {
 		for an, bn := a.head, b.head; an != nil && bn != nil; an, bn = an.prev, bn.prev {
 			if an == bn {
+				storeGSSStackEquivCache(scratch, a.head, b.head, true)
 				return true
 			}
 			if an.entry.state != bn.entry.state {
+				storeGSSStackEquivCache(scratch, a.head, b.head, false)
 				return false
 			}
 			if !stackEntryPayloadsEquivalentForLanguageWithScratch(scratch, lang, an.entry, bn.entry) {
+				storeGSSStackEquivCache(scratch, a.head, b.head, false)
 				return false
 			}
 		}
+		storeGSSStackEquivCache(scratch, a.head, b.head, true)
 		return true
 	}
 	for an, bn, depthFromTop := a.head, b.head, 0; an != nil && bn != nil; an, bn, depthFromTop = an.prev, bn.prev, depthFromTop+1 {
 		if an == bn {
+			storeGSSStackEquivCache(scratch, a.head, b.head, true)
 			return true
 		}
 		audit.recordStackEquivEntryCompare()
 		if an.entry.state != bn.entry.state {
 			audit.recordStackEquivStateMismatchAt(depthFromTop)
+			storeGSSStackEquivCache(scratch, a.head, b.head, false)
 			return false
 		}
 		if !stackEntryPayloadsEquivalentForLanguageWithScratch(scratch, lang, an.entry, bn.entry) {
 			audit.recordStackEquivPayloadMismatchAt(depthFromTop)
 			audit.recordStackEquivPayloadMismatchSignatures(an.entry, bn.entry)
+			storeGSSStackEquivCache(scratch, a.head, b.head, false)
 			return false
 		}
 	}
+	storeGSSStackEquivCache(scratch, a.head, b.head, true)
 	return true
 }
 
@@ -2496,7 +2590,7 @@ func (s *glrMergeScratch) allocatedBytes() int64 {
 	if s == nil {
 		return 0
 	}
-	return s.resultBytes + s.slotBytes + s.largeSlotBytes + s.equivCacheBytes
+	return s.resultBytes + s.slotBytes + s.largeSlotBytes + s.equivCacheBytes + s.stackEquivBytes
 }
 
 func (s *glrMergeScratch) reset() {
@@ -2528,6 +2622,7 @@ func (s *glrMergeScratch) reset() {
 		s.largeSlotBytes = glrMergeLargeSlotBytesForCap(cap(s.largeSlots))
 	}
 	s.equivCacheBytes = glrNodeEquivCacheBytesForCap(cap(s.equivCache))
+	s.stackEquivBytes = glrStackEquivCacheBytesForCap(cap(s.stackEquivCache))
 	s.perKeyCap = 0
 	s.language = nil
 	s.audit = nil
@@ -2560,6 +2655,13 @@ func glrNodeEquivCacheBytesForCap(n int) int64 {
 		return 0
 	}
 	return int64(n) * int64(unsafe.Sizeof(glrNodeEquivCacheEntry{}))
+}
+
+func glrStackEquivCacheBytesForCap(n int) int64 {
+	if n <= 0 {
+		return 0
+	}
+	return int64(n) * int64(unsafe.Sizeof(glrStackEquivCacheEntry{}))
 }
 
 func (s *glrEntryScratch) alloc(n int) []stackEntry {

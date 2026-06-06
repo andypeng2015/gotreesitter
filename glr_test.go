@@ -2387,6 +2387,48 @@ func TestNodeEquivCacheZeroVersionInvalidatesAfterBump(t *testing.T) {
 	}
 }
 
+func TestGSSStackEquivCacheSymmetricAndEpochScoped(t *testing.T) {
+	var scratch glrMergeScratch
+	scratch.beginEquivEpoch()
+	var gss gssScratch
+	a := buildGSSStack([]stackEntry{{state: 1}, {state: 2}}, &gss)
+	b := buildGSSStack([]stackEntry{{state: 1}, {state: 2}}, &gss)
+
+	storeGSSStackEquivCache(&scratch, a.head, b.head, true)
+	if hit, ok := lookupGSSStackEquivCache(&scratch, b.head, a.head); !ok || !hit {
+		t.Fatalf("reversed lookup = (%v, %v), want (true, true)", hit, ok)
+	}
+
+	scratch.beginEquivEpoch()
+	if hit, ok := lookupGSSStackEquivCache(&scratch, a.head, b.head); ok || hit {
+		t.Fatalf("lookup after epoch bump = (%v, %v), want (false, false)", hit, ok)
+	}
+}
+
+func TestGSSStacksEqualStoresStackEquivCache(t *testing.T) {
+	var merge glrMergeScratch
+	merge.beginEquivEpoch()
+	var gss gssScratch
+	arena := newNodeArena(arenaClassFull)
+
+	aEntries := []stackEntry{{state: 1}}
+	bEntries := []stackEntry{{state: 1}}
+	for i := 0; i < 12; i++ {
+		aNode := newLeafNodeInArena(arena, Symbol(10+i), true, uint32(i), uint32(i+1), Point{Column: uint32(i)}, Point{Column: uint32(i + 1)})
+		bNode := newLeafNodeInArena(arena, Symbol(10+i), true, uint32(i), uint32(i+1), Point{Column: uint32(i)}, Point{Column: uint32(i + 1)})
+		aEntries = append(aEntries, newStackEntryNode(StateID(i+2), aNode))
+		bEntries = append(bEntries, newStackEntryNode(StateID(i+2), bNode))
+	}
+	a := buildGSSStack(aEntries, &gss)
+	b := buildGSSStack(bEntries, &gss)
+	if !gssStacksEqualForLanguageWithScratch(&merge, nil, a, b) {
+		t.Fatal("gssStacksEqualForLanguageWithScratch = false, want true")
+	}
+	if hit, ok := lookupGSSStackEquivCache(&merge, a.head, b.head); !ok || !hit {
+		t.Fatalf("cached stack equivalence = (%v, %v), want (true, true)", hit, ok)
+	}
+}
+
 func TestPythonShallowEquivalentMatchesFrontierDepthZero(t *testing.T) {
 	cases := []struct {
 		name string
