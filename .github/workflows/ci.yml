@@ -214,7 +214,11 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PERF_LEGACY_BASE_SHA: 7a29f591d7fcc54b3d0639b3e38a1bacd8fcb386
-          PERF_BENCH_CONTRACT_BASE_SHA: 4dc6480f7f26809877d3a4937e582f975794891a
+          # Forest-default parsing intentionally moved the Go full-parse
+          # allocation/RSS profile while improving wall time. Gate PRs against
+          # the accepted forest release-bucket contract, and keep the PR-base
+          # comparison below as non-blocking diagnostic output.
+          PERF_BENCH_CONTRACT_BASE_SHA: 143936b2a62b44eb779dda835b09abe0c26cc6d5
         run: |
           set -euo pipefail
 
