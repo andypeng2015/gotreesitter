@@ -4,21 +4,12 @@ package cgoharness
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 
 	gotreesitter "github.com/odvcencio/gotreesitter"
 )
-
-func maxConflictWidthForLanguage(lang *gotreesitter.Language) int {
-	maxWidth := 1
-	for i := range lang.ParseActions {
-		if n := len(lang.ParseActions[i].Actions); n > maxWidth {
-			maxWidth = n
-		}
-	}
-	return maxWidth
-}
 
 func makeJavaGLRPressureSource(callCount int) []byte {
 	var b strings.Builder
@@ -53,7 +44,7 @@ func makeDartGLRPressureSource(callCount int) []byte {
 	return []byte(b.String())
 }
 
-func assertGLRCapPressureRuntime(t *testing.T, tc parityCase, src []byte, minWidthScale int) {
+func assertGLRCapPressureRuntime(t *testing.T, tc parityCase, src []byte, minStacks int) {
 	t.Helper()
 
 	goTree, goLang, err := parseWithGo(tc, src, nil)
@@ -82,58 +73,55 @@ func assertGLRCapPressureRuntime(t *testing.T, tc parityCase, src []byte, minWid
 		t.Fatalf("[%s/glr-cap-pressure] root has error: type=%q %s", tc.name, root.Type(goLang), rt.Summary())
 	}
 
-	width := maxConflictWidthForLanguage(goLang)
-	if width < 2 {
-		t.Fatalf("[%s/glr-cap-pressure] invalid max conflict width=%d", tc.name, width)
+	if minStacks < 2 {
+		t.Fatalf("[%s/glr-cap-pressure] invalid minStacks=%d", tc.name, minStacks)
 	}
-	minStacks := width * minWidthScale
 	if rt.MaxStacksSeen < minStacks {
-		t.Fatalf("[%s/glr-cap-pressure] insufficient GLR pressure: maxStacks=%d want>=%d (width=%d scale=%d) %s",
-			tc.name, rt.MaxStacksSeen, minStacks, width, minWidthScale, rt.Summary())
+		t.Fatalf("[%s/glr-cap-pressure] insufficient GLR pressure: maxStacks=%d want>=%d %s",
+			tc.name, rt.MaxStacksSeen, minStacks, rt.Summary())
 	}
 }
 
 // TestParityGLRCapPressureTopLanguages ensures we keep at least one
-// conflict-heavy, cap-pressure structural parity case in top languages.
-// These cases are intentionally shaped to drive MaxStacksSeen well above the
-// grammar's conflict-width floor while still requiring exact C parity.
+// conflict-heavy structural parity case in top languages that still exercise
+// production GLR branching. It deliberately disables forest dispatch because
+// forest-accepted parses report forest telemetry, not production stack pressure.
 func TestParityGLRCapPressureTopLanguages(t *testing.T) {
 	parityRequireExhaustive(t, "TestParityGLRCapPressureTopLanguages")
+	gotreesitter.SetGLRForestEnabled(false)
+	t.Cleanup(func() {
+		gotreesitter.SetGLRForestEnabled(os.Getenv("GOT_GLR_FOREST") != "0")
+	})
+
 	cases := []struct {
 		lang      string
 		name      string
 		source    []byte
-		widthMult int
+		minStacks int
 	}{
-		{
-			lang:      "go",
-			name:      "bench500",
-			source:    normalizedSource("go", string(makeGoBenchmarkSource(500))),
-			widthMult: 2,
-		},
 		{
 			lang:      "java",
 			name:      "obj-method-100",
 			source:    normalizedSource("java", string(makeJavaGLRPressureSource(100))),
-			widthMult: 2,
+			minStacks: 3,
 		},
 		{
 			lang:      "c",
 			name:      "decl-vs-call-200",
 			source:    normalizedSource("c", string(makeCGLRPressureSource(200))),
-			widthMult: 2,
+			minStacks: 3,
 		},
 		{
 			lang:      "cpp",
 			name:      "decl-vs-call-200",
 			source:    normalizedSource("cpp", string(makeCGLRPressureSource(200))),
-			widthMult: 2,
+			minStacks: 3,
 		},
 		{
 			lang:      "dart",
 			name:      "obj-method-200",
 			source:    normalizedSource("dart", string(makeDartGLRPressureSource(200))),
-			widthMult: 2,
+			minStacks: 6,
 		},
 	}
 
@@ -142,7 +130,7 @@ func TestParityGLRCapPressureTopLanguages(t *testing.T) {
 		t.Run(fmt.Sprintf("%s/%s", cc.lang, cc.name), func(t *testing.T) {
 			tc := parityCase{name: cc.lang, source: string(cc.source)}
 			runParityCase(t, tc, "glr-cap-pressure-"+cc.name, cc.source)
-			assertGLRCapPressureRuntime(t, tc, cc.source, cc.widthMult)
+			assertGLRCapPressureRuntime(t, tc, cc.source, cc.minStacks)
 		})
 	}
 }

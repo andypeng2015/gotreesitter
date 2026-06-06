@@ -157,6 +157,7 @@ func (r *dockerParityRunner) runTest(t *testing.T, opts containerOpts) *parityRe
 	// Pass through recognized env vars from host, then overlay opts.EnvVars.
 	passthroughEnvs := []string{
 		"GOMAXPROCS",
+		"GOT_GLR_FOREST",
 		"GOT_GLR_MAX_STACKS",
 		"GOT_PARSE_NODE_LIMIT_SCALE",
 		"GOT_GLR_FORCE_CONFLICT_WIDTH",
