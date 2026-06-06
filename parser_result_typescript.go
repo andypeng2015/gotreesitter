@@ -94,6 +94,8 @@ type typeScriptNormalizationContext struct {
 	enumAssignmentSym          Symbol
 	importSym                  Symbol
 	hasImportSym               bool
+	dynamicImportSym           Symbol
+	hasDynamicImportSym        bool
 	typeQuerySym               Symbol
 	nameFieldID                FieldID
 	typeParametersFieldID      FieldID
@@ -117,6 +119,10 @@ func normalizeTypeScriptCompatibility(root *Node, source []byte, lang *Language)
 		case ctx.importSym:
 			if ctx.hasImportSym {
 				normalizeTypeScriptImportKeywordNamedness(n, &ctx)
+			}
+		case ctx.dynamicImportSym:
+			if ctx.hasDynamicImportSym {
+				normalizeTypeScriptDynamicImportLeaf(n, &ctx)
 			}
 		case ctx.methodDefinitionSym, ctx.methodSignatureSym, ctx.abstractMethodSignatureSym, ctx.propertySignatureSym, ctx.publicFieldDefinitionSym:
 			if ctx.accessibilityModSym != 0 {
@@ -150,6 +156,7 @@ type typeScriptCompatibilityCandidateKind uint8
 const (
 	typeScriptCompatibilityCandidateIdentifierAlias typeScriptCompatibilityCandidateKind = iota
 	typeScriptCompatibilityCandidateImportKeyword
+	typeScriptCompatibilityCandidateDynamicImport
 	typeScriptCompatibilityCandidateMemberModifier
 	typeScriptCompatibilityCandidateEnumBody
 	typeScriptCompatibilityCandidateChild
@@ -220,6 +227,13 @@ func collectTypeScriptCompatibilityNodeCandidate(candidates *typeScriptCompatibi
 	if ctx.hasImportSym && node.symbol == ctx.importSym && typeScriptImportKeywordNamednessWouldChange(node, ctx) {
 		candidates.append(typeScriptCompatibilityCandidate{
 			kind: typeScriptCompatibilityCandidateImportKeyword,
+			node: node,
+		})
+		return
+	}
+	if ctx.hasDynamicImportSym && node.symbol == ctx.dynamicImportSym && resultChildCount(node) == 0 {
+		candidates.append(typeScriptCompatibilityCandidate{
+			kind: typeScriptCompatibilityCandidateDynamicImport,
 			node: node,
 		})
 		return
@@ -400,6 +414,8 @@ func normalizeTypeScriptCompatibilityCandidates(candidates typeScriptCompatibili
 			normalizeTypeScriptIdentifierKeywordAliases(candidate.node, &ctx)
 		case typeScriptCompatibilityCandidateImportKeyword:
 			normalizeTypeScriptImportKeywordNamedness(candidate.node, &ctx)
+		case typeScriptCompatibilityCandidateDynamicImport:
+			normalizeTypeScriptDynamicImportLeaf(candidate.node, &ctx)
 		case typeScriptCompatibilityCandidateMemberModifier:
 			normalizeTypeScriptRecoveredMemberModifiers(candidate.node, &ctx)
 		case typeScriptCompatibilityCandidateEnumBody:
@@ -469,6 +485,14 @@ func normalizeTypeScriptCompatibilityCandidatesWithStats(candidates typeScriptCo
 			before := candidate.node.isNamed()
 			normalizeTypeScriptImportKeywordNamedness(candidate.node, &ctx)
 			if candidate.node.isNamed() != before {
+				stats.importKeywords.nodesRewritten++
+				stats.total.nodesRewritten++
+			}
+		case typeScriptCompatibilityCandidateDynamicImport:
+			stats.importKeywords.nodesVisited++
+			before := resultChildCount(candidate.node)
+			normalizeTypeScriptDynamicImportLeaf(candidate.node, &ctx)
+			if resultChildCount(candidate.node) != before {
 				stats.importKeywords.nodesRewritten++
 				stats.total.nodesRewritten++
 			}
@@ -572,6 +596,16 @@ func normalizeTypeScriptCompatibilityWithStats(root *Node, source []byte, lang *
 				before := n.isNamed()
 				normalizeTypeScriptImportKeywordNamedness(n, &ctx)
 				if n.isNamed() != before {
+					stats.importKeywords.nodesRewritten++
+					stats.total.nodesRewritten++
+				}
+			}
+		case ctx.dynamicImportSym:
+			if ctx.hasDynamicImportSym {
+				stats.importKeywords.nodesVisited++
+				beforeCC := resultChildCount(n)
+				normalizeTypeScriptDynamicImportLeaf(n, &ctx)
+				if resultChildCount(n) != beforeCC {
 					stats.importKeywords.nodesRewritten++
 					stats.total.nodesRewritten++
 				}
@@ -857,13 +891,27 @@ func normalizeTypeScriptImportKeywordNamedness(node *Node, ctx *typeScriptNormal
 	if node == nil || ctx == nil || !ctx.hasImportSym || node.symbol != ctx.importSym {
 		return
 	}
-	if typeScriptNextNonspaceByte(ctx.source, node.endByte) == '(' {
-		node.setNamed(true)
-		return
-	}
+	// Dynamic import expressions (import(...)) are handled by
+	// normalizeTypeScriptDynamicImportLeaf for the named import symbol
+	// (dynamicImportSym). The anonymous import keyword (importSym)
+	// should stay anonymous — C tree-sitter keeps it as an anonymous
+	// child of the named import node.
 	node.setNamed(false)
 }
 
+// normalizeTypeScriptDynamicImportLeaf adds a collapsed-leaf child to the
+// named import node in dynamic import() expressions. C tree-sitter produces
+// a 1-child structure with an anonymous "import" keyword token.
+func normalizeTypeScriptDynamicImportLeaf(node *Node, ctx *typeScriptNormalizationContext) {
+	if node == nil || ctx == nil || !ctx.hasDynamicImportSym || node.symbol != ctx.dynamicImportSym {
+		return
+	}
+	if resultChildCount(node) == 0 && node.endByte > node.startByte {
+		// Use the anonymous import symbol (ctx.importSym, sym 14) as the child.
+		child := newLeafNodeInArena(node.ownerArena, ctx.importSym, false, node.startByte, node.endByte, node.startPoint, node.endPoint)
+		replaceNodeChildrenUnfielded(node, cloneNodeSliceInArena(node.ownerArena, []*Node{child}))
+	}
+}
 func normalizeTypeScriptRecoveredNamespaceRoot(root *Node, source []byte, lang *Language) {
 	if root == nil || lang == nil || len(root.children) < 4 {
 		return
@@ -989,6 +1037,292 @@ func normalizeTypeScriptRecoveredNamespaceRoot(root *Node, source []byte, lang *
 		retagResultRoot(root, programSym, symbolIsNamed(lang, programSym))
 	}
 	replaceNodeChildrenUnfielded(root, newChildren)
+}
+
+func normalizeTypeScriptRecoveredTernaryGenericCallRoot(root *Node, source []byte, lang *Language) {
+	if root == nil || lang == nil || root.symbol != errorSymbol {
+		return
+	}
+	switch lang.Name {
+	case "tsx", "typescript":
+	default:
+		return
+	}
+	ctx, ok := newTypeScriptNormalizationContext(source, lang)
+	if !ok || !ctx.canRewriteGenericCalls || !ctx.canRewriteAsExpressions {
+		return
+	}
+	programSym, ok := symbolByName(lang, "program")
+	if !ok || ctx.identifierSym == 0 || ctx.argsSym == 0 || ctx.typeArgsSym == 0 ||
+		ctx.callSym == 0 || ctx.ternaryExprSym == 0 || ctx.asExpressionSym == 0 || ctx.lessThanSym == 0 ||
+		ctx.greaterThanSym == 0 {
+		return
+	}
+	expressionStatementSym, ok := symbolByName(lang, "expression_statement")
+	if !ok {
+		return
+	}
+	openParenSym, ok := symbolByName(lang, "(")
+	if !ok {
+		return
+	}
+	closeParenSym, ok := symbolByName(lang, ")")
+	if !ok {
+		return
+	}
+	colonSym, ok := symbolByName(lang, ":")
+	if !ok {
+		return
+	}
+	asSym, ok := symbolByName(lang, "as")
+	if !ok {
+		return
+	}
+
+	children := resultDenseChildrenFallbackForMutation(root)
+	if len(children) != 12 {
+		return
+	}
+	condition := children[0]
+	question := children[1]
+	trueOpen := children[2]
+	trueGreater := children[3]
+	trueParams := children[4]
+	colon := children[5]
+	falseCalleeRecovery := children[6]
+	falseOpen := children[7]
+	falseArg := children[8]
+	falseCloseRecovery := children[9]
+	asLeaf := children[10]
+	falseType := children[11]
+	if condition == nil || question == nil || trueOpen == nil || trueGreater == nil || trueParams == nil ||
+		colon == nil || falseCalleeRecovery == nil || falseOpen == nil || falseArg == nil ||
+		falseCloseRecovery == nil || asLeaf == nil || falseType == nil {
+		return
+	}
+	questionSym, ok := typeScriptRecoveredConcreteSymbolForText(source, lang, question, "?", "_ternary_qmark")
+	if !ok {
+		return
+	}
+	falseCloseSym := closeParenSym
+	if recoveredCloseSym, ok := typeScriptRecoveredConcreteSymbolForText(source, lang, falseCloseRecovery, ")", ")"); ok {
+		falseCloseSym = recoveredCloseSym
+	}
+	if condition.symbol != ctx.binaryExpressionSym || trueOpen.symbol != ctx.binaryExpressionSym ||
+		trueGreater.symbol != ctx.greaterThanSym || trueParams.Type(lang) != "formal_parameters" ||
+		colon.symbol != colonSym || falseOpen.symbol != openParenSym || falseArg.symbol != ctx.callSym ||
+		asLeaf.symbol != asSym {
+		return
+	}
+	if !typeScriptRecoveredNodeTextEquals(source, question, "?") ||
+		!typeScriptRecoveredNodeTextEquals(source, trueGreater, ">") ||
+		!typeScriptRecoveredNodeTextEquals(source, trueParams, "()") ||
+		!typeScriptRecoveredNodeTextEquals(source, colon, ":") ||
+		!typeScriptRecoveredNodeTextEquals(source, falseOpen, "(") ||
+		!typeScriptRecoveredNodeTextEquals(source, falseCloseRecovery, ")") ||
+		!typeScriptRecoveredNodeTextEquals(source, asLeaf, "as") {
+		return
+	}
+	if !typeScriptRecoveredIdentifierLikeText(source, falseCalleeRecovery) ||
+		!typeScriptRecoveredIdentifierLikeText(source, falseType) {
+		return
+	}
+	trueOpenChildren := resultDenseChildrenFallbackForMutation(trueOpen)
+	trueParamsChildren := resultDenseChildrenFallbackForMutation(trueParams)
+	if len(trueOpenChildren) != 3 || len(trueParamsChildren) != 2 {
+		return
+	}
+	trueCallee := trueOpenChildren[0]
+	trueLess := trueOpenChildren[1]
+	trueType := trueOpenChildren[2]
+	trueOpenParen := trueParamsChildren[0]
+	trueCloseParen := trueParamsChildren[1]
+	if trueCallee == nil || trueLess == nil || trueType == nil || trueOpenParen == nil || trueCloseParen == nil ||
+		trueCallee.symbol != ctx.identifierSym || trueLess.symbol != ctx.lessThanSym ||
+		trueOpenParen.symbol != openParenSym || trueCloseParen.symbol != closeParenSym ||
+		!typeScriptRecoveredIdentifierLikeText(source, trueType) {
+		return
+	}
+
+	arena := root.ownerArena
+	conditionClone := cloneNodeInArena(arena, condition)
+	trueCall := buildTypeScriptRecoveredGenericCall(arena, &ctx, source, trueCallee, trueLess, trueType, trueGreater, trueOpenParen, trueCloseParen)
+	falseCall := buildTypeScriptRecoveredFalseArmCall(arena, &ctx, source, falseCalleeRecovery, falseOpen, falseArg, falseCloseRecovery, falseCloseSym)
+	if conditionClone == nil || trueCall == nil || falseCall == nil {
+		return
+	}
+	falseAs := buildTypeScriptRecoveredAsExpression(arena, &ctx, source, falseCall, asLeaf, falseType)
+	if falseAs == nil {
+		return
+	}
+
+	ternaryChildren := phpAllocChildren(arena, 5)
+	ternaryChildren[0] = conditionClone
+	ternaryChildren[1] = typeScriptRecoveredLeafFromNode(arena, source, questionSym, symbolIsNamed(lang, questionSym), question)
+	ternaryChildren[2] = trueCall
+	ternaryChildren[3] = typeScriptRecoveredLeafFromNode(arena, source, colonSym, symbolIsNamed(lang, colonSym), colon)
+	ternaryChildren[4] = falseAs
+	if ternaryChildren[1] == nil || ternaryChildren[3] == nil {
+		return
+	}
+	ternary := newParentNodeInArena(arena, ctx.ternaryExprSym, ctx.ternaryExprNamed, ternaryChildren, nil, 0)
+	statement := newParentNodeInArena(arena, expressionStatementSym, symbolIsNamed(lang, expressionStatementSym), []*Node{ternary}, nil, 0)
+
+	retagResultRoot(root, programSym, symbolIsNamed(lang, programSym))
+	replaceNodeChildrenUnfielded(root, []*Node{statement})
+	root.setHasError(false)
+	extendNodeEndTo(root, uint32(len(source)), source)
+}
+
+func buildTypeScriptRecoveredGenericCall(arena *nodeArena, ctx *typeScriptNormalizationContext, source []byte, calleeNode, lessNode, typeNode, greaterNode, openNode, closeNode *Node) *Node {
+	if ctx == nil || ctx.lang == nil {
+		return nil
+	}
+	callee := cloneNodeInArena(arena, calleeNode)
+	less := typeScriptRecoveredLeafFromNode(arena, source, ctx.lessThanSym, symbolIsNamed(ctx.lang, ctx.lessThanSym), lessNode)
+	typeArgSym := ctx.identifierSym
+	typeArgNamed := symbolIsNamed(ctx.lang, typeArgSym)
+	if ctx.hasTypeIdentifierSym {
+		typeArgSym = ctx.typeIdentifierSym
+		typeArgNamed = ctx.typeIdentifierNamed
+	}
+	typeArg := typeScriptRecoveredLeafFromNode(arena, source, typeArgSym, typeArgNamed, typeNode)
+	greater := typeScriptRecoveredLeafFromNode(arena, source, ctx.greaterThanSym, symbolIsNamed(ctx.lang, ctx.greaterThanSym), greaterNode)
+	open := typeScriptRecoveredLeafFromNode(arena, source, openNode.symbol, symbolIsNamed(ctx.lang, openNode.symbol), openNode)
+	close := typeScriptRecoveredLeafFromNode(arena, source, closeNode.symbol, symbolIsNamed(ctx.lang, closeNode.symbol), closeNode)
+	if callee == nil || less == nil || typeArg == nil || greater == nil || open == nil || close == nil {
+		return nil
+	}
+	typeArgs := newParentNodeInArena(arena, ctx.typeArgsSym, ctx.typeArgsNamed, []*Node{less, typeArg, greater}, nil, 0)
+	args := newParentNodeInArena(arena, ctx.argsSym, ctx.argsNamed, []*Node{open, close}, nil, 0)
+	return buildTypeScriptRecoveredCallExpression(arena, ctx, callee, typeArgs, args)
+}
+
+func buildTypeScriptRecoveredFalseArmCall(arena *nodeArena, ctx *typeScriptNormalizationContext, source []byte, calleeNode, openNode, argNode, closeNode *Node, closeParenSym Symbol) *Node {
+	if ctx == nil || ctx.lang == nil {
+		return nil
+	}
+	callee := typeScriptRecoveredLeafFromNode(arena, source, ctx.identifierSym, symbolIsNamed(ctx.lang, ctx.identifierSym), calleeNode)
+	open := typeScriptRecoveredLeafFromNode(arena, source, openNode.symbol, symbolIsNamed(ctx.lang, openNode.symbol), openNode)
+	arg := cloneNodeInArena(arena, argNode)
+	close := typeScriptRecoveredLeafFromNode(arena, source, closeParenSym, symbolIsNamed(ctx.lang, closeParenSym), closeNode)
+	if callee == nil || open == nil || arg == nil || close == nil {
+		return nil
+	}
+	args := newParentNodeInArena(arena, ctx.argsSym, ctx.argsNamed, []*Node{open, arg, close}, nil, 0)
+	return buildTypeScriptRecoveredCallExpression(arena, ctx, callee, nil, args)
+}
+
+func buildTypeScriptRecoveredCallExpression(arena *nodeArena, ctx *typeScriptNormalizationContext, callee, typeArgs, args *Node) *Node {
+	if ctx == nil || callee == nil || args == nil {
+		return nil
+	}
+	childCount := 2
+	if typeArgs != nil {
+		childCount = 3
+	}
+	children := phpAllocChildren(arena, childCount)
+	children[0] = callee
+	var fieldIDs []FieldID
+	if ctx.functionFieldID != 0 || ctx.typeArgsFieldID != 0 || ctx.argumentsFieldID != 0 {
+		if arena != nil {
+			fieldIDs = arena.allocFieldIDSlice(childCount)
+		} else {
+			fieldIDs = make([]FieldID, childCount)
+		}
+		fieldIDs[0] = ctx.functionFieldID
+	}
+	if typeArgs != nil {
+		children[1] = typeArgs
+		children[2] = args
+		if len(fieldIDs) == childCount {
+			fieldIDs[1] = ctx.typeArgsFieldID
+			fieldIDs[2] = ctx.argumentsFieldID
+		}
+	} else {
+		children[1] = args
+		if len(fieldIDs) == childCount {
+			fieldIDs[1] = ctx.argumentsFieldID
+		}
+	}
+	call := newParentNodeInArena(arena, ctx.callSym, ctx.callNamed, children, fieldIDs, 0)
+	call.fieldSources = defaultFieldSourcesInArena(arena, fieldIDs)
+	return call
+}
+
+func buildTypeScriptRecoveredAsExpression(arena *nodeArena, ctx *typeScriptNormalizationContext, source []byte, value, asNode, typeNode *Node) *Node {
+	if ctx == nil || ctx.lang == nil || value == nil || asNode == nil {
+		return nil
+	}
+	as := typeScriptRecoveredLeafFromNode(arena, source, asNode.symbol, symbolIsNamed(ctx.lang, asNode.symbol), asNode)
+	typeSym := ctx.identifierSym
+	typeNamed := symbolIsNamed(ctx.lang, typeSym)
+	if ctx.hasTypeIdentifierSym {
+		typeSym = ctx.typeIdentifierSym
+		typeNamed = ctx.typeIdentifierNamed
+	}
+	typeLeaf := typeScriptRecoveredLeafFromNode(arena, source, typeSym, typeNamed, typeNode)
+	if as == nil || typeLeaf == nil {
+		return nil
+	}
+	return newParentNodeInArena(arena, ctx.asExpressionSym, ctx.asExpressionNamed, []*Node{value, as, typeLeaf}, nil, 0)
+}
+
+func typeScriptRecoveredLeafFromNode(arena *nodeArena, source []byte, sym Symbol, named bool, node *Node) *Node {
+	if node == nil || node.startByte > node.endByte || int(node.endByte) > len(source) {
+		return nil
+	}
+	return newLeafNodeInArena(arena, sym, named, node.startByte, node.endByte, node.startPoint, node.endPoint)
+}
+
+func typeScriptRecoveredConcreteSymbolForText(source []byte, lang *Language, node *Node, text, fallbackName string) (Symbol, bool) {
+	if sym, ok := typeScriptRecoveredConcreteSymbolForTextInTree(source, node, text); ok {
+		return sym, true
+	}
+	if fallbackName != "" {
+		if sym, ok := symbolByName(lang, fallbackName); ok {
+			return sym, true
+		}
+	}
+	return symbolByName(lang, text)
+}
+
+func typeScriptRecoveredConcreteSymbolForTextInTree(source []byte, node *Node, text string) (Symbol, bool) {
+	if node == nil || node.startByte > node.endByte || int(node.endByte) > len(source) {
+		return 0, false
+	}
+	if node.symbol != errorSymbol && resultChildCount(node) == 0 && typeScriptRecoveredNodeTextEquals(source, node, text) {
+		return node.symbol, true
+	}
+	for i := 0; i < resultChildCount(node); i++ {
+		if sym, ok := typeScriptRecoveredConcreteSymbolForTextInTree(source, resultChildAt(node, i), text); ok {
+			return sym, true
+		}
+	}
+	return 0, false
+}
+
+func typeScriptRecoveredNodeTextEquals(source []byte, node *Node, text string) bool {
+	if node == nil || node.startByte > node.endByte || int(node.endByte) > len(source) {
+		return false
+	}
+	if int(node.endByte-node.startByte) != len(text) {
+		return false
+	}
+	return string(source[node.startByte:node.endByte]) == text
+}
+
+func typeScriptRecoveredIdentifierLikeText(source []byte, node *Node) bool {
+	if node == nil || node.startByte >= node.endByte || int(node.endByte) > len(source) {
+		return false
+	}
+	for _, c := range source[node.startByte:node.endByte] {
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '$' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func normalizeTypeScriptRecoveredInternalModuleRoot(root *Node, source []byte, lang *Language, module *Node, moduleIdx int, stmtBlockSym, exprStmtSym Symbol, hasExprStmtSym bool, programSym Symbol, hasProgramSym bool) {
@@ -1245,6 +1579,8 @@ func newTypeScriptNormalizationContext(source []byte, lang *Language) (typeScrip
 		}
 	}
 	ctx.importSym, ctx.hasImportSym = lang.SymbolByName("import")
+	// Dynamic import() uses a separate named 'import' symbol (e.g. sym 173).
+	ctx.dynamicImportSym, ctx.hasDynamicImportSym = lang.symbolByNameAndNamed("import", true)
 	ctx.typeQuerySym, _ = lang.SymbolByName("type_query")
 
 	if syms, ok := visibleLanguageSymbols(lang, true,

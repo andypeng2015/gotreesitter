@@ -78,6 +78,7 @@ type Parser struct {
 	smallTokenLookup                    [][]uint16
 	externalValidByState                [][]uint16
 	externalValidMaskByState            []uint64
+	hasExtraChainActions                bool
 	classifiedActions                   []classifiedParseAction
 	reduceChainHints                    []reduceChainHint
 	reduceChainHintByState              []int
@@ -373,6 +374,7 @@ func NewParser(lang *Language) *Parser {
 		}
 		p.externalValidByState = p.buildExternalValidByState()
 		p.externalValidMaskByState = buildExternalValidMaskByState(p.externalValidByState, len(lang.ExternalSymbols))
+		p.hasExtraChainActions = languageHasExtraChainActions(lang)
 		p.classifiedActions = buildClassifiedParseActions(lang)
 		p.reduceChainHints = buildReduceChainHints(lang)
 		p.reduceChainHintByState = buildReduceChainHintIndex(p.reduceChainHints)
@@ -389,6 +391,20 @@ func NewParser(lang *Language) *Parser {
 		p.maxConflictWidth = computeMaxConflictWidth(lang)
 	}
 	return p
+}
+
+func languageHasExtraChainActions(lang *Language) bool {
+	if lang == nil {
+		return false
+	}
+	for _, entry := range lang.ParseActions {
+		for _, action := range entry.Actions {
+			if action.ExtraChain {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func snippetParserPool(lang *Language) *sync.Pool {
@@ -909,6 +925,12 @@ func (p *Parser) tryInsertMissingSingleShift(s *glrStack, tok Token, nodeCount *
 
 func (p *Parser) tryRecoverPreviousShiftAsError(s *glrStack, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, trackChildErrors *bool) bool {
 	if p == nil || p.language == nil || s == nil || s.dead || tok.NoLookahead || tok.Missing || tok.Symbol == 0 {
+		return false
+	}
+	// Go has contextual identifier aliases after keywords such as package and
+	// func; extra-chain grammars use synthetic states where replacing the prior
+	// shift corrupts nested visible extras.
+	if p.language.Name == "go" || p.hasExtraChainActions {
 		return false
 	}
 	entries := s.ensureEntries(entryScratch)
@@ -2537,7 +2559,8 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 						goto retryAction
 					}
 				}
-				if p.tryRecoverPreviousShiftAsError(s, tok, &nodeCount, arena, &scratch.entries, &trackChildErrors) {
+				if _, _, hasRecoverAction := p.findRecoverActionOnStack(s, tok.Symbol, timing); !hasRecoverAction &&
+					p.tryRecoverPreviousShiftAsError(s, tok, &nodeCount, arena, &scratch.entries, &trackChildErrors) {
 					anyReduced = true
 					needToken = false
 					consecutiveReduces = 0
@@ -2847,7 +2870,8 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				anyReduced = true
 				needToken = false
 				consecutiveReduces = 0
-			} else if p.tryRecoverPreviousShiftAsError(&stacks[0], tok, &nodeCount, arena, &scratch.entries, &trackChildErrors) {
+			} else if _, _, hasRecoverAction := p.findRecoverActionOnStack(&stacks[0], tok.Symbol, timing); !hasRecoverAction &&
+				p.tryRecoverPreviousShiftAsError(&stacks[0], tok, &nodeCount, arena, &scratch.entries, &trackChildErrors) {
 				anyReduced = true
 				needToken = false
 				consecutiveReduces = 0

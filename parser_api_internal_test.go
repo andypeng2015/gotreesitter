@@ -1353,8 +1353,8 @@ func TestEffectiveFullParseInitialMaxStacks(t *testing.T) {
 	if got := effectiveFullParseInitialMaxStacks(&Language{Name: "go"}, maxGLRStacks); got != 32 {
 		t.Fatalf("effectiveFullParseInitialMaxStacks(go) = %d, want 32", got)
 	}
-	if got := effectiveFullParseInitialMaxStacks(&Language{Name: "markdown"}, maxGLRStacks); got != 4 {
-		t.Fatalf("effectiveFullParseInitialMaxStacks(markdown) = %d, want 4", got)
+	if got := effectiveFullParseInitialMaxStacks(&Language{Name: "markdown"}, maxGLRStacks); got != 5 {
+		t.Fatalf("effectiveFullParseInitialMaxStacks(markdown) = %d, want 5", got)
 	}
 	if got := effectiveFullParseInitialMaxStacks(&Language{Name: "markdown_inline"}, maxGLRStacks); got != 4 {
 		t.Fatalf("effectiveFullParseInitialMaxStacks(markdown_inline) = %d, want 4", got)

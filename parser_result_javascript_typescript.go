@@ -26,6 +26,7 @@ func normalizeTypeScriptTreeCompatibilityWithParser(root *Node, source []byte, p
 		// OptionalChainLeaves was fused into the statement-keyword walk; one less
 		// tree traversal per file containing "?." (most modern JS/TS).
 		syntaxStats := normalizeJavaScriptTypeScriptStatementKeywordsAndPrecedenceWithDetailedStats(root, source, lang)
+		normalizeTypeScriptRecoveredTernaryGenericCallRoot(root, source, lang)
 		normalizeTypeScriptRecoveredNamespaceRoot(root, source, lang)
 		normalizeJavaScriptTopLevelDeclarationBounds(root, lang)
 		if syntaxStats.typeScriptCompatibility.built {
@@ -88,6 +89,9 @@ func normalizeTypeScriptTreeCompatibilityWithParser(root *Node, source []byte, p
 			return syntaxStats.binary
 		}
 		return normalizeJavaScriptTypeScriptBinaryPrecedenceWithStats(root, lang)
+	})
+	runVoid("ts_recovered_ternary_generic_call_root", func() {
+		normalizeTypeScriptRecoveredTernaryGenericCallRoot(root, source, lang)
 	})
 	runVoid("ts_recovered_namespace_root", func() {
 		normalizeTypeScriptRecoveredNamespaceRoot(root, source, lang)
@@ -879,28 +883,27 @@ func normalizeJavaScriptTypeScriptOptionalChainLeaves(root *Node, source []byte,
 	if !ok {
 		return
 	}
-	optionalChainTokenSym, ok := symbolByName(lang, "?.")
-	if !ok {
-		return
-	}
 
 	walkResultTreeDenseFirst(root, func(n *Node) {
-		if n.symbol != optionalChainSym || len(n.children) != 0 {
+		if n.symbol != optionalChainSym || len(n.children) != 1 {
 			return
 		}
-		if n.endByte <= n.startByte || int(n.endByte) > len(source) || !bytes.Equal(source[n.startByte:n.endByte], []byte("?.")) {
+		// The C reference parser emits optional_chain as a 0-child leaf.
+		// The Go parser sometimes materializes a "?." anonymous token as
+		// a child. Strip it to match C's structure.
+		child := n.children[0]
+		if child == nil {
 			return
 		}
-		child := newLeafNodeInArena(n.ownerArena, optionalChainTokenSym, symbolIsNamed(lang, optionalChainTokenSym), n.startByte, n.endByte, n.startPoint, n.endPoint)
-		children := phpAllocChildren(n.ownerArena, 1)
-		children[0] = child
-		n.children = children
+		if child.endByte <= child.startByte || int(child.endByte) > len(source) || !bytes.Equal(source[child.startByte:child.endByte], []byte("?.")) {
+			return
+		}
+		n.children = nil
 		n.fieldIDs = nil
 		n.fieldSources = nil
 		if n.ownerArena != nil {
 			n.ownerArena.clearFinalChildRefs(n)
 		}
-		populateParentNode(n, n.children)
 	})
 }
 
@@ -1054,6 +1057,9 @@ func normalizeJavaScriptTypeScriptStatementKeywordsAndPrecedenceWithDetailedStat
 	optionalChainTokenSym, hasOptionalChainTokenSym := symbolByName(lang, "?.")
 	optionalChainTokenNamed := hasOptionalChainTokenSym && symbolIsNamed(lang, optionalChainTokenSym)
 	enableOptionalChain := hasOptionalChainSym && hasOptionalChainTokenSym && bytes.Contains(source, []byte("?."))
+	dynamicImportSym, hasDynamicImport := lang.symbolByNameAndNamed("import", true)
+	importKeywordSym, hasImportKeyword := lang.symbolByNameAndNamed("import", false)
+	enableDynamicImport := hasDynamicImport && hasImportKeyword && bytes.Contains(source, []byte("import"))
 
 	var typeScriptCtx *typeScriptNormalizationContext
 	if lang.Name == "typescript" || lang.Name == "tsx" {
@@ -1072,6 +1078,7 @@ func normalizeJavaScriptTypeScriptStatementKeywordsAndPrecedenceWithDetailedStat
 		whileStmtSym, hasWhileStmt, whileSym, whileNamed, hasWhile,
 		closeBraceSym, hasCloseBrace,
 		optionalChainSym, optionalChainTokenSym, optionalChainTokenNamed, enableOptionalChain,
+		dynamicImportSym, importKeywordSym, enableDynamicImport,
 		typeScriptCtx,
 	)
 	stats.emptyStatement = index.emptyStatement
@@ -1181,6 +1188,9 @@ func rewriteJavaScriptTypeScriptStatementKeywordsCallPrecedenceAndBuildUnaryBina
 	optionalChainTokenSym Symbol,
 	optionalChainTokenNamed bool,
 	enableOptionalChain bool,
+	dynamicImportSym Symbol,
+	importKeywordSym Symbol,
+	enableDynamicImport bool,
 	typeScriptCtx *typeScriptNormalizationContext,
 ) javaScriptTypeScriptUnaryBinaryPrecedenceIndex {
 	var index javaScriptTypeScriptUnaryBinaryPrecedenceIndex
@@ -1193,7 +1203,7 @@ func rewriteJavaScriptTypeScriptStatementKeywordsCallPrecedenceAndBuildUnaryBina
 	// other compat passes.
 	if !hasCallSym && !hasUnarySym && !hasBinarySym &&
 		!hasEmptyStatement && !hasExistentialType &&
-		!hasIfStmt && !hasWhileStmt && !enableOptionalChain &&
+		!hasIfStmt && !hasWhileStmt && !enableOptionalChain && !enableDynamicImport &&
 		typeScriptCtx == nil {
 		return index
 	}
@@ -1243,18 +1253,23 @@ func rewriteJavaScriptTypeScriptStatementKeywordsCallPrecedenceAndBuildUnaryBina
 				}
 			}
 		case optionalChainSym:
-			if enableOptionalChain && len(n.children) == 0 &&
-				n.endByte > n.startByte && int(n.endByte) <= len(source) && bytes.Equal(source[n.startByte:n.endByte], []byte("?.")) {
-				child := newLeafNodeInArena(n.ownerArena, optionalChainTokenSym, optionalChainTokenNamed, n.startByte, n.endByte, n.startPoint, n.endPoint)
-				children := phpAllocChildren(n.ownerArena, 1)
-				children[0] = child
-				n.children = children
+			if enableOptionalChain && len(n.children) == 1 {
+				// The C reference parser emits optional_chain as a 0-child leaf.
+				// Strip the materialized "?." child to match C.
+				child := n.children[0]
+				if child == nil || child.endByte <= child.startByte || int(child.endByte) > len(source) || !bytes.Equal(source[child.startByte:child.endByte], []byte("?.")) {
+					break
+				}
+				n.children = nil
 				n.fieldIDs = nil
 				n.fieldSources = nil
 				if n.ownerArena != nil {
 					n.ownerArena.clearFinalChildRefs(n)
 				}
-				populateParentNode(n, n.children)
+			}
+		case dynamicImportSym:
+			if enableDynamicImport {
+				normalizeJavaScriptTypeScriptDynamicImportLeafWithSymbolChanged(n, importKeywordSym)
 			}
 		}
 		collectTypeScriptCompatibilityNodeCandidate(&index.typeScriptCompatibility, n, typeScriptCtx)
@@ -1408,6 +1423,15 @@ func normalizeJavaScriptTypeScriptCollapsedLeafWithSymbolChanged(node *Node, chi
 		return false
 	}
 	child := newLeafNodeInArena(node.ownerArena, childSym, childNamed, node.startByte, node.endByte, node.startPoint, node.endPoint)
+	replaceNodeChildrenUnfielded(node, cloneNodeSliceInArena(node.ownerArena, []*Node{child}))
+	return true
+}
+
+func normalizeJavaScriptTypeScriptDynamicImportLeafWithSymbolChanged(node *Node, importKeywordSym Symbol) bool {
+	if node == nil || resultChildCount(node) != 0 || node.endByte <= node.startByte {
+		return false
+	}
+	child := newLeafNodeInArena(node.ownerArena, importKeywordSym, false, node.startByte, node.endByte, node.startPoint, node.endPoint)
 	replaceNodeChildrenUnfielded(node, cloneNodeSliceInArena(node.ownerArena, []*Node{child}))
 	return true
 }

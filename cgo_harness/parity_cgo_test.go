@@ -137,9 +137,12 @@ var smokeParityLanguages = map[string]bool{
 	"c_sharp":    true,
 	"go":         true,
 	"html":       true,
+	"java":       true,
 	"javascript": true,
 	"python":     true,
 	"rust":       true,
+	"tsx":        true,
+	"typescript": true,
 	"yaml":       true,
 }
 
@@ -338,7 +341,7 @@ func compareNodes(goNode *gotreesitter.Node, goLang *gotreesitter.Language, cNod
 		*errs = append(*errs, fmt.Sprintf("%s: IsMissing go=%v c=%v", path, gs.IsMissing, cs.IsMissing))
 	}
 	if gs.ChildCount != cs.ChildCount {
-		*errs = append(*errs, fmt.Sprintf("%s: ChildCount go=%d c=%d", path, gs.ChildCount, cs.ChildCount))
+		*errs = append(*errs, fmt.Sprintf("%s: ChildCount go=%d c=%d (goType=%q cType=%q goBytes=[%d-%d] cBytes=[%d-%d])", path, gs.ChildCount, cs.ChildCount, gs.Type, cs.Type, gs.StartByte, gs.EndByte, cs.StartByte, cs.EndByte))
 		return
 	}
 

@@ -389,7 +389,7 @@ func TestParseTSXGenericCallUnionTypeArgument(t *testing.T) {
 	}
 }
 
-func TestParseTSXOptionalChainKeepsTokenChild(t *testing.T) {
+func TestParseTSXOptionalChainIsLeaf(t *testing.T) {
 	src := "const value = elements?.concat(wildcards);\n"
 	tree, lang := parseLanguageSample(t, "tsx", src)
 	t.Cleanup(tree.Release)
@@ -408,14 +408,43 @@ func TestParseTSXOptionalChainKeepsTokenChild(t *testing.T) {
 	if node == nil {
 		t.Fatalf("missing optional_chain node: %s", tree.RootNode().SExpr(lang))
 	}
-	if got, want := node.ChildCount(), 1; got != want {
+	// C tree-sitter emits optional_chain as a 0-child leaf; the Go parser
+	// should match after normalization strips any materialized "?." child.
+	if got, want := node.ChildCount(), 0; got != want {
 		t.Fatalf("optional_chain child count = %d, want %d; root=%s", got, want, tree.RootNode().SExpr(lang))
 	}
-	if child := node.Child(0); child == nil || child.Type(lang) != "?." {
-		if child == nil {
-			t.Fatal("optional_chain token child is nil")
-		}
-		t.Fatalf("optional_chain token child type = %q, want ?.", child.Type(lang))
+}
+
+func TestParseJavaScriptTypeScriptDynamicImportKeepsKeywordChild(t *testing.T) {
+	for _, tc := range []struct {
+		lang string
+		src  string
+	}{
+		{lang: "javascript", src: "async function load(name) { return import(`./${name}.js`); }\n"},
+		{lang: "typescript", src: "async function load(name: string) { return import(\"fs\"); }\n"},
+	} {
+		t.Run(tc.lang, func(t *testing.T) {
+			tree, lang := parseLanguageSample(t, tc.lang, tc.src)
+			t.Cleanup(tree.Release)
+
+			node := firstNodeByTypeAndText(tree.RootNode(), lang, []byte(tc.src), "import", "import")
+			if node == nil {
+				t.Fatalf("missing dynamic import node: %s", tree.RootNode().SExpr(lang))
+			}
+			if got, want := node.ChildCount(), 1; got != want {
+				t.Fatalf("dynamic import child count = %d, want %d; root=%s", got, want, tree.RootNode().SExpr(lang))
+			}
+			child := node.Child(0)
+			if child == nil {
+				t.Fatal("dynamic import keyword child is nil")
+			}
+			if got, want := child.Type(lang), "import"; got != want {
+				t.Fatalf("dynamic import child type = %q, want %q", got, want)
+			}
+			if child.IsNamed() {
+				t.Fatal("dynamic import keyword child is named, want anonymous")
+			}
+		})
 	}
 }
 

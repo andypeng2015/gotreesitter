@@ -100,6 +100,24 @@ and Java definitions/calls, plus JavaScript/TypeScript, Python, and Java
 heritage edges. Unsupported languages or ambiguous shapes are skipped
 conservatively.
 
+### Taproot DSL harness
+
+The `taproot` package is a small front-end harness for grammargen-backed DSLs.
+It caches generated or blob-loaded languages, parses source, returns a `Walker`
+with common CST helpers, and reports syntax errors while still returning the
+partial root for diagnostics:
+
+```go
+root, walker, err := taproot.ParseFromBlob("dsl", blob, buildGrammar, src)
+if err != nil {
+    fmt.Println(err)
+}
+fmt.Println(walker.Type(root))
+```
+
+Use `taproot.LanguageFromBlob` when a DSL embeds a generated grammar blob but
+still wants a source-grammar fallback during development.
+
 ### Queries
 
 ```go

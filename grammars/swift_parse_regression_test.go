@@ -65,3 +65,72 @@ func TestSwiftMemberKeywordSelfAfterDotStaysNavigable(t *testing.T) {
 		t.Fatalf("navigation suffix count = %d, want %d; tree: %s", got, want, sexpr)
 	}
 }
+
+func TestSwiftImportThenClassParsesAsTopLevelDeclarations(t *testing.T) {
+	lang := SwiftLanguage()
+	src := []byte("import Foundation\nclass Foo {}\n")
+	parser := gotreesitter.NewParser(lang)
+	tree, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse swift import/class: %v", err)
+	}
+	defer tree.Release()
+
+	root := tree.RootNode()
+	if root.HasError() {
+		t.Fatalf("swift import/class fixture has parse errors: %s", root.SExpr(lang))
+	}
+	if got, want := root.Type(lang), "source_file"; got != want {
+		t.Fatalf("root type = %q, want %q", got, want)
+	}
+	if got, want := root.EndByte(), uint32(len(src)); got != want {
+		t.Fatalf("root end = %d, want %d; tree: %s", got, want, root.SExpr(lang))
+	}
+	sexpr := root.SExpr(lang)
+	for _, want := range []string{"(import_declaration", "(class_declaration"} {
+		if !strings.Contains(sexpr, want) {
+			t.Fatalf("missing %s in tree: %s", want, sexpr)
+		}
+	}
+}
+
+func TestSwiftLicenseHeaderImportThenClassParses(t *testing.T) {
+	lang := SwiftLanguage()
+	src := []byte(`//
+//  Foo.swift
+//
+//  Copyright (c) 2025 Foo Foundation (http://example.org/)
+//
+//  Permission is hereby granted, free of charge, to any person obtaining a copy
+//  of this software and associated documentation files (the "Software"), to deal
+
+import Foundation
+class Foo {}
+`)
+	parser := gotreesitter.NewParser(lang)
+	tree, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse swift license header: %v", err)
+	}
+	defer tree.Release()
+
+	root := tree.RootNode()
+	if root.HasError() {
+		t.Fatalf("swift license header fixture has parse errors: %s", root.SExpr(lang))
+	}
+	if got, want := root.Type(lang), "source_file"; got != want {
+		t.Fatalf("root type = %q, want %q", got, want)
+	}
+	if got, want := root.EndByte(), uint32(len(src)); got != want {
+		t.Fatalf("root end = %d, want %d; tree: %s", got, want, root.SExpr(lang))
+	}
+	sexpr := root.SExpr(lang)
+	if strings.Count(sexpr, "(comment)") < 7 {
+		t.Fatalf("license header comments were not preserved as comments: %s", sexpr)
+	}
+	for _, want := range []string{"(import_declaration", "(class_declaration"} {
+		if !strings.Contains(sexpr, want) {
+			t.Fatalf("missing %s in tree: %s", want, sexpr)
+		}
+	}
+}
