@@ -2429,6 +2429,88 @@ func TestGSSStacksEqualStoresStackEquivCache(t *testing.T) {
 	}
 }
 
+func TestPerlFrontierMergeHashPreservesGenericEquivalentStacks(t *testing.T) {
+	var merge glrMergeScratch
+	merge.beginEquivEpoch()
+	merge.frontierMergeHash = true
+	lang := &Language{Name: "perl"}
+
+	a := perlFrontierHashTestStack(perlFrontierHashTestNode(30))
+	b := perlFrontierHashTestStack(perlFrontierHashTestNode(30))
+
+	hashA := stackHashForMerge(&merge, lang, a)
+	hashB := stackHashForMerge(&merge, lang, b)
+	if hashA != hashB {
+		t.Fatalf("Perl frontier merge hashes differ for equivalent stacks: %x != %x", hashA, hashB)
+	}
+	if !stackEquivalentForLanguageWithScratch(&merge, lang, a, b) {
+		t.Fatal("Perl frontier hash test stacks are not generically equivalent")
+	}
+}
+
+func TestPerlFrontierMergeHashRejectsDeepDivergentStacks(t *testing.T) {
+	var merge glrMergeScratch
+	merge.beginEquivEpoch()
+	merge.frontierMergeHash = true
+	lang := &Language{Name: "perl"}
+
+	a := perlFrontierHashTestStack(perlFrontierHashTestNode(30))
+	b := perlFrontierHashTestStack(perlFrontierHashTestNode(31))
+
+	if stackEquivalentForLanguageWithScratch(&merge, lang, a, b) {
+		t.Fatal("Perl frontier hash test stacks are unexpectedly equivalent")
+	}
+	hashA := stackHashForMerge(&merge, lang, a)
+	hashB := stackHashForMerge(&merge, lang, b)
+	if hashA == hashB {
+		t.Fatalf("Perl frontier merge hashes matched for divergent stacks: %x", hashA)
+	}
+	if _, ok := lookupStackFrontierHashCache(&merge, a.gss.head); !ok {
+		t.Fatal("Perl frontier hash for stack A was not cached")
+	}
+	if _, ok := lookupStackFrontierHashCache(&merge, b.gss.head); !ok {
+		t.Fatal("Perl frontier hash for stack B was not cached")
+	}
+}
+
+func perlFrontierHashTestStack(root *Node) glrStack {
+	var gss gssScratch
+	stack := glrStack{
+		gss:        buildGSSStack([]stackEntry{{state: 1}, newStackEntryNode(27, root)}, &gss),
+		byteOffset: root.endByte,
+	}
+	return stack
+}
+
+func perlFrontierHashTestNode(grandchild Symbol) *Node {
+	leaf := &Node{
+		symbol:       grandchild,
+		startByte:    2,
+		endByte:      3,
+		flags:        nodeFlagNamed,
+		parseState:   6,
+		productionID: 7,
+	}
+	child := &Node{
+		children:     []*Node{leaf},
+		symbol:       20,
+		startByte:    1,
+		endByte:      4,
+		flags:        nodeFlagNamed,
+		parseState:   4,
+		productionID: 5,
+	}
+	return &Node{
+		children:     []*Node{child},
+		symbol:       10,
+		startByte:    0,
+		endByte:      5,
+		flags:        nodeFlagNamed,
+		parseState:   2,
+		productionID: 3,
+	}
+}
+
 func TestPythonShallowEquivalentMatchesFrontierDepthZero(t *testing.T) {
 	cases := []struct {
 		name string

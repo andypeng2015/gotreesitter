@@ -3135,6 +3135,16 @@ func languageDefersExactDedupe(lang *Language, noTreeBenchmarkOnly bool) bool {
 	}
 }
 
+func (p *Parser) usesGenericFrontierMergeHash() bool {
+	return p != nil &&
+		p.language != nil &&
+		p.language.Name == "perl" &&
+		!p.noTreeBenchmarkOnly &&
+		!p.compactFullShiftLeaves &&
+		!p.pendingFullParents &&
+		!p.finalChildRefs
+}
+
 type parseStackPrepResult struct {
 	stacks     []glrStack
 	stopReason ParseStopReason
@@ -3163,6 +3173,7 @@ func (p *Parser) prepareParseStacksForIteration(stacks []glrStack, scratch *pars
 	}
 	scratch.merge.language = p.language
 	scratch.merge.deferExactDedupe = languageDefersExactDedupe(p.language, p.noTreeBenchmarkOnly)
+	scratch.merge.frontierMergeHash = p.usesGenericFrontierMergeHash()
 	if p.ambiguityProfile != nil {
 		p.ambiguityProfile.recordMergeBefore(stacks)
 	}
