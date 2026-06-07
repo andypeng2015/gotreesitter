@@ -82,9 +82,16 @@ func normalizeGoDotLeafChildren(root *Node, source []byte, lang *Language) {
 		return
 	}
 	childNamed := symbolIsNamed(lang, childSym)
-	var walk func(*Node)
-	walk = func(n *Node) {
-		if n == nil {
+
+	// maxWalkDepth guards against unbounded recursion when the arena
+	// materialises nodes that form cycles (e.g. shared sub-trees or
+	// self-referencing sidecar entries).  2048 is far beyond any
+	// legitimate Go AST depth.
+	const maxWalkDepth = 2048
+
+	var walk func(*Node, int)
+	walk = func(n *Node, depth int) {
+		if n == nil || depth >= maxWalkDepth {
 			return
 		}
 		childCount := resultChildCount(n)
@@ -94,14 +101,14 @@ func normalizeGoDotLeafChildren(root *Node, source []byte, lang *Language) {
 		}
 		if n.ownerArena == nil || n.childIndex > finalChildSidecarIndexBase {
 			for _, child := range n.children {
-				walk(child)
+				walk(child, depth+1)
 			}
 			return
 		}
 		view := resultMutableChildrenForMutation(n)
 		if !view.hasFinalChildRefs() {
 			for i := 0; i < childCount; i++ {
-				walk(resultChildAt(n, i))
+				walk(resultChildAt(n, i), depth+1)
 			}
 			return
 		}
@@ -113,10 +120,10 @@ func normalizeGoDotLeafChildren(root *Node, source []byte, lang *Language) {
 			if stackEntryNodeSymbol(entry) != parentSym && stackEntryNodeChildCount(entry) == 0 {
 				continue
 			}
-			walk(resultChildAt(n, i))
+			walk(resultChildAt(n, i), depth+1)
 		}
 	}
-	walk(root)
+	walk(root, 0)
 }
 
 func normalizeGoDotLeafNode(n *Node, source []byte, childSym Symbol, childNamed bool) {
@@ -190,7 +197,14 @@ func (s goCompatibilitySymbols) isStatementList(sym Symbol) bool {
 }
 
 func normalizeGoCompatibilitySubtree(n *Node, source []byte, syms goCompatibilitySymbols, flags goCompatibilitySourceFlags, incrementalRanges []Range) {
-	if n == nil || !goNodeOverlapsAnyRange(n, incrementalRanges) {
+	// maxSubtreeDepth bounds recursion to prevent stack overflow from
+	// cyclic arena nodes — same class of bug as normalizeGoDotLeafChildren.
+	const maxSubtreeDepth = 2048
+	normalizeGoCompatibilitySubtreeDepth(n, source, syms, flags, incrementalRanges, 0, maxSubtreeDepth)
+}
+
+func normalizeGoCompatibilitySubtreeDepth(n *Node, source []byte, syms goCompatibilitySymbols, flags goCompatibilitySourceFlags, incrementalRanges []Range, depth, maxDepth int) {
+	if n == nil || depth >= maxDepth || !goNodeOverlapsAnyRange(n, incrementalRanges) {
 		return
 	}
 	childCount := resultChildCount(n)
@@ -202,7 +216,7 @@ func normalizeGoCompatibilitySubtree(n *Node, source []byte, syms goCompatibilit
 	}
 	if n.ownerArena == nil || n.childIndex > finalChildSidecarIndexBase {
 		for _, child := range n.children {
-			normalizeGoCompatibilitySubtree(child, source, syms, flags, incrementalRanges)
+			normalizeGoCompatibilitySubtreeDepth(child, source, syms, flags, incrementalRanges, depth+1, maxDepth)
 		}
 	} else {
 		view := resultMutableChildrenForMutation(n)
@@ -212,11 +226,11 @@ func normalizeGoCompatibilitySubtree(n *Node, source []byte, syms goCompatibilit
 				if !ok || stackEntryNodeChildCount(entry) == 0 {
 					continue
 				}
-				normalizeGoCompatibilitySubtree(resultChildAt(n, i), source, syms, flags, incrementalRanges)
+				normalizeGoCompatibilitySubtreeDepth(resultChildAt(n, i), source, syms, flags, incrementalRanges, depth+1, maxDepth)
 			}
 		} else {
 			for i := 0; i < childCount; i++ {
-				normalizeGoCompatibilitySubtree(resultChildAt(n, i), source, syms, flags, incrementalRanges)
+				normalizeGoCompatibilitySubtreeDepth(resultChildAt(n, i), source, syms, flags, incrementalRanges, depth+1, maxDepth)
 			}
 		}
 	}
