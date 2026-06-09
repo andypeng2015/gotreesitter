@@ -95,6 +95,7 @@ func (b *resultRootBuild) tryBuildRealRootTree(nodes []*Node) *Tree {
 		b.finalizeWrappedSubtree(realRoot)
 		return nil
 	}
+	realRoot = flattenInvisibleRootChildren(realRoot, b.arena, b.lang)
 	return b.finishTree(realRoot, b.shouldWireParentLinks, extendTrailing)
 }
 
@@ -132,6 +133,11 @@ func (b *resultRootBuild) syntheticRootSymbol(originalNodes, rootChildren []*Nod
 		return b.expectedRootSymbol
 	}
 	if b.isLanguage("gomod") {
+		return b.expectedRootSymbol
+	}
+	if b.isLanguage("make") {
+		// tree-sitter make keeps `makefile` as the root and embeds ERROR nodes
+		// as children; keep that expected root while preserving HasError.
 		return b.expectedRootSymbol
 	}
 	return errorSymbol
@@ -365,6 +371,9 @@ func (p *Parser) finalizeResultRoot(root *Node, source []byte, linkScratch *[]*N
 	timing := p.currentMaterializationTiming()
 	finalizeStart := materializationTimingStart(timing)
 	defer timing.addResultFinalizeRoot(finalizeStart)
+	if p != nil {
+		root = flattenInvisibleRootChildren(root, root.ownerArena, p.language)
+	}
 	if extendTrailing {
 		start := materializationTimingStart(timing)
 		extendNodeToTrailingWhitespace(root, source)
