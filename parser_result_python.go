@@ -2655,11 +2655,11 @@ func normalizePythonStringContinuationEscapes(root *Node, source []byte, lang *L
 	if len(continuationOffsets) == 0 {
 		return counters
 	}
-	normalizePythonStringContinuationEscapesWalk(root, source, stringContentSym, escapeSym, continuationOffsets, &counters)
+	normalizePythonStringContinuationEscapesWalk(root, source, lang, stringContentSym, escapeSym, continuationOffsets, false, &counters)
 	return counters
 }
 
-func normalizePythonStringContinuationEscapesWalk(n *Node, source []byte, stringContentSym, escapeSym Symbol, continuationOffsets []uint32, counters *normalizationPassCounters) {
+func normalizePythonStringContinuationEscapesWalk(n *Node, source []byte, lang *Language, stringContentSym, escapeSym Symbol, continuationOffsets []uint32, rawString bool, counters *normalizationPassCounters) {
 	if n == nil {
 		return
 	}
@@ -2667,17 +2667,56 @@ func normalizePythonStringContinuationEscapesWalk(n *Node, source []byte, string
 		return
 	}
 	counters.nodesVisited++
-	if n.symbol == stringContentSym && n.startByte < n.endByte && int(n.endByte) <= len(source) {
-		children, changed := addPythonContinuationEscapes(n, source, escapeSym)
-		if changed {
-			n.children = children
-			counters.nodesRewritten++
+	if n.Type(lang) == "string" {
+		// Raw strings (r"...", rb"...", R"...", etc.) do not treat
+		// backslashes as escapes — including backslash-newline line
+		// continuations. C tree-sitter leaves their string_content as a
+		// plain leaf, so skip escape insertion for the descendants.
+		rawString = pythonStringIsRaw(n, source, lang)
+	}
+	if n.symbol == stringContentSym {
+		if !rawString && n.startByte < n.endByte && int(n.endByte) <= len(source) {
+			children, changed := addPythonContinuationEscapes(n, source, escapeSym)
+			if changed {
+				n.children = children
+				counters.nodesRewritten++
+			}
 		}
 		return
 	}
 	for i := 0; i < resultChildCount(n); i++ {
-		normalizePythonStringContinuationEscapesWalk(resultChildAt(n, i), source, stringContentSym, escapeSym, continuationOffsets, counters)
+		normalizePythonStringContinuationEscapesWalk(resultChildAt(n, i), source, lang, stringContentSym, escapeSym, continuationOffsets, rawString, counters)
 	}
+}
+
+// pythonStringIsRaw reports whether a Python string node is a raw string by
+// inspecting the prefix in its string_start child (e.g. r"...", rb"...",
+// R"...", br"..."). A raw prefix contains an 'r' or 'R'.
+func pythonStringIsRaw(stringNode *Node, source []byte, lang *Language) bool {
+	if stringNode == nil {
+		return false
+	}
+	childCount := resultChildCount(stringNode)
+	for i := 0; i < childCount; i++ {
+		child := resultChildAt(stringNode, i)
+		if child == nil || child.Type(lang) != "string_start" {
+			continue
+		}
+		if int(child.startByte) >= int(child.endByte) || int(child.endByte) > len(source) {
+			return false
+		}
+		prefix := source[child.startByte:child.endByte]
+		for _, b := range prefix {
+			if b == '"' || b == '\'' {
+				break
+			}
+			if b == 'r' || b == 'R' {
+				return true
+			}
+		}
+		return false
+	}
+	return false
 }
 
 func addPythonContinuationEscapes(node *Node, source []byte, escapeSym Symbol) ([]*Node, bool) {
