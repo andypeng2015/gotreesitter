@@ -87,6 +87,7 @@ type Parser struct {
 	reduceAliasSeq                      [][]Symbol
 	aliasTargetSymbol                   []bool
 	singleTokenWrapperSymbol            []bool
+	keepSameNamedAnonChildSymbol        []bool
 	reduceHasFields                     []bool
 	reduceFieldPlans                    []reduceFieldPlan
 	fieldIDScratch                      []FieldID
@@ -387,6 +388,7 @@ func NewParser(lang *Language) *Parser {
 		p.reduceAliasSeq = buildReduceAliasSequences(lang)
 		p.aliasTargetSymbol = buildAliasTargetSymbols(lang)
 		p.singleTokenWrapperSymbol = buildSingleTokenWrapperSymbols(lang)
+		p.keepSameNamedAnonChildSymbol = buildKeepSameNamedAnonChildSymbols(lang)
 		p.reduceHasFields = buildReduceFieldPresence(lang)
 		p.reduceFieldPlans = buildReduceFieldPlans(lang)
 		p.recoverByState, p.hasRecoverState, p.hasRecoverSymbol = buildRecoverActionsByState(lang)

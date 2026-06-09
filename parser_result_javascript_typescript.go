@@ -23,8 +23,7 @@ func normalizeTypeScriptTreeCompatibility(root *Node, source []byte, lang *Langu
 func normalizeTypeScriptTreeCompatibilityWithParser(root *Node, source []byte, parser *Parser, lang *Language) {
 	recordPasses := parser != nil && parser.currentMaterializationTiming() != nil
 	if !recordPasses {
-		// OptionalChainLeaves was fused into the statement-keyword walk; one less
-		// tree traversal per file containing "?." (most modern JS/TS).
+		// Statement keyword and precedence normalizers share one indexed walk.
 		syntaxStats := normalizeJavaScriptTypeScriptStatementKeywordsAndPrecedenceWithDetailedStats(root, source, lang)
 		normalizeTypeScriptRecoveredTernaryGenericCallRoot(root, source, lang)
 		normalizeTypeScriptRecoveredNamespaceRoot(root, source, lang)
@@ -829,8 +828,8 @@ func insertJavaScriptStatementBlockComment(parent *Node, childIdx int, comment *
 	populateParentNode(parent, parent.children)
 }
 
-func normalizeJavaScriptTypeScriptOptionalChainLeaves(root *Node, source []byte, lang *Language) {
-	if root == nil || lang == nil || !bytes.Contains(source, []byte("?.")) {
+func normalizeJavaScriptTypeScriptCallPrecedence(root *Node, lang *Language) {
+	if root == nil || lang == nil {
 		return
 	}
 	switch lang.Name {
@@ -838,32 +837,17 @@ func normalizeJavaScriptTypeScriptOptionalChainLeaves(root *Node, source []byte,
 	default:
 		return
 	}
-	optionalChainSym, ok := symbolByName(lang, "optional_chain")
+	callSym, ok := symbolByName(lang, "call_expression")
 	if !ok {
 		return
 	}
+	if lang.Name == "javascript" {
+		_ = normalizeJavaScriptTypeScriptCallPrecedenceFullWalk(root, lang, callSym)
+		return
+	}
 
-	walkResultTreeDenseFirst(root, func(n *Node) {
-		if n.symbol != optionalChainSym || len(n.children) != 1 {
-			return
-		}
-		// The C reference parser emits optional_chain as a 0-child leaf.
-		// The Go parser sometimes materializes a "?." anonymous token as
-		// a child. Strip it to match C's structure.
-		child := n.children[0]
-		if child == nil {
-			return
-		}
-		if child.endByte <= child.startByte || int(child.endByte) > len(source) || !bytes.Equal(source[child.startByte:child.endByte], []byte("?.")) {
-			return
-		}
-		n.children = nil
-		n.fieldIDs = nil
-		n.fieldSources = nil
-		if n.ownerArena != nil {
-			n.ownerArena.clearFinalChildRefs(n)
-		}
-	})
+	index := buildJavaScriptTypeScriptCallPrecedenceIndex(root, callSym)
+	rewriteJavaScriptTypeScriptCallPrecedenceCandidates(index.candidates, lang, callSym)
 }
 
 func normalizeJavaScriptTypeScriptCallPrecedenceWithStats(root *Node, lang *Language) normalizationPassCounters {
@@ -1127,7 +1111,7 @@ func rewriteJavaScriptTypeScriptStatementKeywordsCallPrecedenceAndBuildUnaryBina
 	// other compat passes.
 	if !hasCallSym && !hasUnarySym && !hasBinarySym &&
 		!hasEmptyStatement && !hasExistentialType &&
-		!hasIfStmt && !hasWhileStmt && !enableOptionalChain && !enableDynamicImport &&
+		!hasIfStmt && !hasWhileStmt && !enableDynamicImport &&
 		typeScriptCtx == nil {
 		return index
 	}
@@ -1135,6 +1119,13 @@ func rewriteJavaScriptTypeScriptStatementKeywordsCallPrecedenceAndBuildUnaryBina
 	if typeScriptCtx != nil {
 		index.typeScriptCompatibility.built = true
 	}
+	// optional_chain intentionally retains its visible "?." anonymous-token
+	// child: C tree-sitter emits (optional_chain (?.)) with childCount==1.
+	// The parser already builds that child; no normalization is applied here.
+	_ = enableOptionalChain
+	_ = optionalChainSym
+	_ = optionalChainTokenSym
+	_ = optionalChainTokenNamed
 	enableTypeScriptChildCompatibility := typeScriptCtx != nil &&
 		(typeScriptCtx.canRewriteGenericCalls ||
 			typeScriptCtx.canRewriteInstantiatedCalls ||
@@ -1174,21 +1165,6 @@ func rewriteJavaScriptTypeScriptStatementKeywordsCallPrecedenceAndBuildUnaryBina
 				index.statementKeyword.nodesVisited++
 				if normalizeJavaScriptTypeScriptStatementKeywordLeafWithSymbolChanged(n, source, "while", whileSym, whileNamed, closeBraceSym, hasCloseBrace) {
 					index.statementKeyword.nodesRewritten++
-				}
-			}
-		case optionalChainSym:
-			if enableOptionalChain && len(n.children) == 1 {
-				// The C reference parser emits optional_chain as a 0-child leaf.
-				// Strip the materialized "?." child to match C.
-				child := n.children[0]
-				if child == nil || child.endByte <= child.startByte || int(child.endByte) > len(source) || !bytes.Equal(source[child.startByte:child.endByte], []byte("?.")) {
-					break
-				}
-				n.children = nil
-				n.fieldIDs = nil
-				n.fieldSources = nil
-				if n.ownerArena != nil {
-					n.ownerArena.clearFinalChildRefs(n)
 				}
 			}
 		case dynamicImportSym:
