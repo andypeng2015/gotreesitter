@@ -126,6 +126,9 @@ func (b *resultRootBuild) syntheticRootSymbol(originalNodes, rootChildren []*Nod
 	if b.isLanguage("go") {
 		return b.expectedRootSymbol
 	}
+	if b.isLanguage("proto") && protoSourceFileChildrenLookComplete(rootChildren, b.lang) {
+		return b.expectedRootSymbol
+	}
 	if b.isLanguage("sql") {
 		return b.expectedRootSymbol
 	}
@@ -138,6 +141,15 @@ func (b *resultRootBuild) syntheticRootSymbol(originalNodes, rootChildren []*Nod
 	if b.isLanguage("make") {
 		// tree-sitter make keeps `makefile` as the root and embeds ERROR nodes
 		// as children; keep that expected root while preserving HasError.
+		return b.expectedRootSymbol
+	}
+	// cpon's start rule is document = _value (a single value). A file with
+	// multiple top-level values (e.g. the Sublime syntax-test corpus) cannot
+	// reduce to one document, so the synthetic-root path runs with errors.
+	// tree-sitter C still labels the root `document` and nests the recovered
+	// spans as ERROR children — the root never becomes ERROR. Match that
+	// invariant here, mirroring the sql/swift cases above.
+	if b.isLanguage("cpon") {
 		return b.expectedRootSymbol
 	}
 	return errorSymbol
