@@ -65,6 +65,8 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) ParseStopRea
 		normalizeBashProgramVariableAssignments(ctx.root, ctx.lang)
 		normalizeBashGeneratedCommandAssignments(ctx.root, ctx.source, ctx.lang)
 		normalizeBashCommandNameArguments(ctx.root, ctx.lang)
+	case "arduino":
+		normalizeArduinoBuiltinPrimitiveTypes(ctx.root, ctx.source, ctx.lang)
 	case "c", "cpp":
 		normalizeCCompatibilityWithParser(ctx.root, ctx.source, ctx.parser, ctx.lang)
 	case "c_sharp":
