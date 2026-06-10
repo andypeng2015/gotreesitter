@@ -25,6 +25,7 @@ gitattributes
 gitcommit
 gitignore
 gleam
+gn
 gomod
 hack
 hcl
