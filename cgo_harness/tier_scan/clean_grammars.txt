@@ -41,6 +41,7 @@ janet
 java
 javascript
 jq
+jsdoc
 json
 json5
 jsonnet
