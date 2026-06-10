@@ -8,7 +8,7 @@ asm	IV-recovery	0/40	faithful C error-cost version competition (see spec)
 astro	CLEAN	40/40	in ratchet
 authzed	IV-recovery?	23/30	ext=.zed; faithful C error-cost version competition (see spec)
 awk	CLEAN	40/40	in ratchet
-bash	IV-stackcap?	7/8	ext=.sh,.bash; add effectiveFullParseInitialMaxStacks cap entry
+bash	IV-recovery?	30/40	ext=.sh; stackcap disproven (cap-256 floor entry already present); divergences are recovery-shape: go ERROR root where C recovers program (lib.sh, git-prompt.sh, git-subtree.sh) plus small child-count diffs; 1 trunc (cmd-list.sh no_stacks_alive)
 bass	CLEAN	40/40	in ratchet
 beancount	CLEAN	40/40	in ratchet
 bibtex	IV-recovery?	37/40	ext=.bib; faithful C error-cost version competition (see spec)
@@ -21,14 +21,14 @@ c_sharp	IV-recovery	26/40	faithful C error-cost version competition (see spec)
 caddy	IV-recovery?	9/30	ext=Caddyfile; faithful C error-cost version competition (see spec)
 cairo	IV-recovery?	0/30	ext=.cairo; faithful C error-cost version competition (see spec)
 capnp	CLEAN	40/40	in ratchet
-chatito	IV-stackcap?	1/5	ext=.chatito; add effectiveFullParseInitialMaxStacks cap entry
-circom	IV-shape?	11/30	ext=.circom; assignment_expression vs member_expression nesting on `<==`/`==>` lhs (witness circuits/bitify.circom); 2 files root StartByte go=0 c>0
+chatito	IV-recovery	1/5	ext=.chatito; stackcap disproven (cap 2 identical); all 4 failures are files lacking a trailing newline at EOF — go GLR dies no_stacks_alive where C recovers (appending \n parses accepted); missing-token-at-EOF recovery gap
+circom	IV-shape?	11/30	ext=.circom; preliminary
 clojure	CLEAN	40/40	in ratchet
 cmake	CLEAN	40/40	in ratchet
 cobol	IV-scanner	0/40	re-port external scanner from pinned upstream src/scanner.c
 comment	CLEAN	40/40	in ratchet
 commonlisp	IV-recovery?	22/30	ext=.lisp,.cl; faithful C error-cost version competition (see spec)
-cooklang	IV-stackcap?	0/3	ext=.cook; add effectiveFullParseInitialMaxStacks cap entry
+cooklang	IV-recovery	0/3	ext=.cook; stackcap disproven (cap 2 cuts trunc 3→1 and ratio 239x→14x but parity stays 0/3 — go ERROR root vs C recovered recipe; 2 files differ by the missing-trailing-newline EOF byte); cap entry not kept
 corn	CLEAN	40/40	in ratchet
 cpon	IV-recovery?	9/10	ext=.cpon; faithful C error-cost version competition (see spec)
 cpp	IV-recovery	10/40	faithful C error-cost version competition (see spec)
@@ -36,7 +36,7 @@ crystal	IV-perf	0/0	perf-blocker: times out at N=8 (single-file >30s); profile b
 css	CLEAN	40/40	in ratchet
 csv	CLEAN	40/40	in ratchet
 cuda	IV-recovery?	17/30	ext=.cu,.cuh; faithful C error-cost version competition (see spec)
-cue	CLEAN	30/30	was 21/30: +2 tree.go unescaper (`\(`/`\#(`); +7 parser_result_cue.go — collapsed value leaf children (identifier/number/float) + leading-trivia root start; 30/30 vs C oracle 2026-06-10
+cue	IV-shape?	21/30	ext=.cue; preliminary
 cylc	IV-recovery?	4/30	ext=.cylc; faithful C error-cost version competition (see spec)
 d	IV-recovery?	14/30	ext=.d; faithful C error-cost version competition (see spec)
 dart	IV-recovery?	11/30	ext=.dart; faithful C error-cost version competition (see spec)
@@ -89,7 +89,7 @@ groovy	IV-recovery	4/40	faithful C error-cost version competition (see spec)
 hack	CLEAN	40/40	in ratchet
 hare	IV-recovery	20/40	faithful C error-cost version competition (see spec)
 haskell	IV-scanner	7/40	re-port external scanner from pinned upstream src/scanner.c
-haxe	IV-recovery?	7/40	bumped pin to upstream HEAD f2a2394 (metadata-only; src/ identical, parser unchanged); corpus uses modern Haxe (abstract/macro) both parsers error on, residual is recovery shape
+haxe	IV-version	7/40	bump embedded grammar to corpus syntax version
 hcl	CLEAN	40/40	in ratchet
 heex	CLEAN	40/40	in ratchet
 hlsl	IV-recovery	33/40	faithful C error-cost version competition (see spec)
@@ -110,7 +110,7 @@ jsonnet	CLEAN	40/40	in ratchet
 julia	IV-recovery	28/40	faithful C error-cost version competition (see spec)
 just	IV-recovery?	2/8	ext=justfile,.just; faithful C error-cost version competition (see spec)
 kconfig	IV-recovery?	13/30	ext=Kconfig; faithful C error-cost version competition (see spec)
-kdl	IV-recovery?	12/40	no bump exists: pin b37e3d5 == upstream HEAD (KDL v1), corpus is KDL v2; both parsers error on v2 files, residual is recovery shape; ts2go blob regen at pin verified no-op (12/40 before+after)
+kdl	IV-version	12/40	bump embedded grammar to corpus syntax version
 kotlin	IV-unknown	17/40	needs deeper single-file diagnosis
 ledger	IV-recovery	2/4	faithful C error-cost version competition (see spec)
 less	IV-recovery?	10/40	faithful C error-cost version competition (see spec)
@@ -125,8 +125,8 @@ markdown_inline	IV-shape?	13/30	ext=.md; preliminary
 matlab	IV-recovery?	4/40	faithful C error-cost version competition (see spec)
 mermaid	IV-recovery?	0/40	faithful C error-cost version competition (see spec)
 meson	IV-recovery?	1/30	ext=meson.build; faithful C error-cost version competition (see spec)
-mojo	IV-shape?	30/40	repinned to whistlebee/tree-sitter-mojo@c307dab (old 2023 pin errored on 36/40 in both parsers; new C oracle clean on 40/40); 4/40 -> 30/40; residual 10 = shape divergence + 8 truncations (not stackcap: cap2 measures 29/40)
-move	IV-shape?	14/40	repinned to aptos-labs/tree-sitter-move-on-aptos@12906b3 (old pin errored on all 40 in BOTH parsers; new C oracle clean on 39/40); 0/40 -> 14/40; residual is Go conflict-resolution shape (generic vs binary_expression) + 12 Go-only ERROR roots
+mojo	IV-version	4/40	bump embedded grammar to corpus syntax version
+move	IV-version	0/40	bump embedded grammar to corpus syntax version
 nginx	CLEAN	40/40	in ratchet
 nickel	CLEAN	40/40	in ratchet
 nim	IV-recovery?	3/40	faithful C error-cost version competition (see spec)
@@ -142,7 +142,7 @@ pascal	IV-recovery?	0/40	faithful C error-cost version competition (see spec)
 pem	CLEAN	40/40	in ratchet
 perl	IV-recovery?	0/40	faithful C error-cost version competition (see spec)
 php	CLEAN	40/40	in ratchet
-pkl	CLEAN	40/40	Type() mangled literal-backslash token names (`\(`): unescapePunctuationSymbolName narrowed to exact inverse of escapeAnonymousName (tree.go); 40/40 vs C oracle 2026-06-10
+pkl	IV-shape?	34/40	preliminary from signature
 powershell	IV-recovery?	22/40	faithful C error-cost version competition (see spec)
 prisma	CLEAN	40/40	in ratchet
 prolog	IV-recovery?	4/40	faithful C error-cost version competition (see spec)
@@ -153,10 +153,10 @@ pug	IV-recovery?	0/40	faithful C error-cost version competition (see spec)
 puppet	CLEAN	40/40	in ratchet
 purescript	IV-recovery?	1/40	faithful C error-cost version competition (see spec)
 python	CLEAN	40/40	in ratchet
-ql	CLEAN	40/40	signatureExpr GLR ambiguity: Go kept moduleExpr/simpleId where C resolves to typeExpr/className; rewritten in parser_result_ql.go (upper-id tails only); 40/40 vs C oracle 2026-06-10
-r	CLEAN	40/40	single-escape string_content collapsed onto escape_sequence (alias-over-hidden-repeat1); rebuilt C shape from source in parser_result_r.go; 40/40 vs C oracle 2026-06-10
+ql	IV-shape?	33/40	preliminary from signature
+r	IV-shape?	33/40	preliminary from signature
 racket	CLEAN	40/40	in ratchet
-regex	IV-stackcap?	0/1	add effectiveFullParseInitialMaxStacks cap entry
+regex	IV-unknown?	0/1	ext=.regex; stackcap disproven (default iteration_limit, cap 2 no_stacks_alive); single-file corpus with UTF-8 BOM: C roots after the BOM (StartByte 3) and parses all 2255 bytes, go roots at 0 and truncates at 390
 rego	IV-recovery?	7/40	faithful C error-cost version competition (see spec)
 requirements	IV-recovery?	8/9	ext=requirements.txt; faithful C error-cost version competition (see spec)
 rescript	IV-recovery?	23/40	faithful C error-cost version competition (see spec)
@@ -183,7 +183,7 @@ teal	IV-recovery?	4/40	faithful C error-cost version competition (see spec)
 templ	IV-recovery?	24/40	faithful C error-cost version competition (see spec)
 textproto	CLEAN	40/40	in ratchet
 thrift	CLEAN	40/40	in ratchet
-tlaplus	IV-stackcap?	14/40	add effectiveFullParseInitialMaxStacks cap entry
+tlaplus	IV-unknown?	14/40	ext=.tla; stackcap disproven (cap 2: 21→20 iteration_limit truncations, parity unchanged); 197x median ratio with deep truncations (go stops at 1-2KB where C parses 11-31KB) — likely jlist external-scanner-driven GLR churn
 tmux	IV-recovery?	0/1	ext=.tmux.conf,tmux.conf; faithful C error-cost version competition (see spec)
 todotxt	CLEAN	40/40	in ratchet
 toml	CLEAN	11/11	in ratchet
