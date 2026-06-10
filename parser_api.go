@@ -479,6 +479,11 @@ func (p *Parser) parseIncrementalWithTokenSourceChanged(source []byte, oldTree *
 		p.reparseFactory = prevFactory
 	}()
 	tree := p.parseIncrementalInternal(source, oldTree, p.wrapIncludedRanges(ts), nil)
+	// Never hand oldTree to the retry helper: it releases the losing tree,
+	// and oldTree is owned by the caller.
+	if initialMaxStacks := fullParseInitialMaxStacks(p.language, p.maxConflictWidth); tree != oldTree && shouldRetryIncrementalParseAsFull(tree, len(source), initialMaxStacks) {
+		tree = p.retryIncrementalParseAsFullWithTokenSource(source, ts, initialMaxStacks, tree, nil)
+	}
 	p.normalizeReturnedIncrementalTree(tree, oldTree, source)
 	return tree, nil
 }
@@ -1090,6 +1095,11 @@ func (p *Parser) parseIncrementalWithTokenSourceChangedProfiled(source []byte, o
 	}()
 	timing := &incrementalParseTiming{}
 	tree := p.parseIncrementalInternal(source, oldTree, p.wrapIncludedRanges(ts), timing)
+	// Never hand oldTree to the retry helper: it releases the losing tree,
+	// and oldTree is owned by the caller.
+	if initialMaxStacks := fullParseInitialMaxStacks(p.language, p.maxConflictWidth); tree != oldTree && shouldRetryIncrementalParseAsFull(tree, len(source), initialMaxStacks) {
+		tree = p.retryIncrementalParseAsFullWithTokenSource(source, ts, initialMaxStacks, tree, timing)
+	}
 	p.normalizeReturnedIncrementalTree(tree, oldTree, source)
 	return tree, timing.toProfile(), nil
 }
