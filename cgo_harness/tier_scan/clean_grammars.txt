@@ -59,6 +59,7 @@ python
 ql
 r
 racket
+requirements
 ron
 smithy
 sparql
