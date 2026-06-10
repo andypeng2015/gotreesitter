@@ -98,6 +98,8 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) ParseStopRea
 		normalizeGraphQLCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "git_rebase":
 		normalizeGitRebaseCompatibility(ctx.root, ctx.source, ctx.lang)
+	case "gitcommit":
+		normalizeGitcommitCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "hack":
 		normalizeHackCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "haskell":
