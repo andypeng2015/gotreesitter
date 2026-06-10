@@ -38,6 +38,7 @@ jsdoc
 json
 json5
 llvm
+lua
 nginx
 nickel
 nix
