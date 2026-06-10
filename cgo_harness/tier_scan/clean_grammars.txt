@@ -26,6 +26,7 @@ gitcommit
 gitignore
 gleam
 gn
+godot_resource
 gomod
 hack
 hcl
