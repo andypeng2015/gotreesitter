@@ -40,6 +40,10 @@ type glrStack struct {
 	// branchOrder preserves original GLR fork order for exact-tie selection.
 	// Lower values correspond to earlier parse-table actions.
 	branchOrder uint64
+	// cRec marks the stack as being in tree-sitter C's ERROR_STATE under the
+	// faithful recovery port (parser_recover_c.go). nil for every grammar not
+	// gated by errorCostCompetitionLanguage, and for stacks not in error.
+	cRec *cRecoverState
 }
 
 const (
@@ -236,6 +240,7 @@ func (s *glrStack) clone() glrStack {
 			recoverabilityKnown: s.recoverabilityKnown,
 			mayRecover:          s.mayRecover,
 			branchOrder:         s.branchOrder,
+			cRec:                s.cRec.clone(),
 		}
 	}
 	s.ensureGSS(nil)
@@ -247,6 +252,7 @@ func (s *glrStack) clone() glrStack {
 		recoverabilityKnown: s.recoverabilityKnown,
 		mayRecover:          s.mayRecover,
 		branchOrder:         s.branchOrder,
+		cRec:                s.cRec.clone(),
 	}
 }
 
@@ -260,6 +266,7 @@ func (s *glrStack) cloneWithScratch(scratch *gssScratch) glrStack {
 		recoverabilityKnown: s.recoverabilityKnown,
 		mayRecover:          s.mayRecover,
 		branchOrder:         s.branchOrder,
+		cRec:                s.cRec.clone(),
 	}
 }
 
