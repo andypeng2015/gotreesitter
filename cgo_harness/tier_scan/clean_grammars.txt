@@ -50,6 +50,7 @@ jsdoc
 json
 json5
 just
+ledger
 llvm
 lua
 markdown

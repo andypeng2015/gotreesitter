@@ -111,7 +111,7 @@ just	CLEAN	8/8	in ratchet; C-recovery gate plus just top-level line-break span n
 kconfig	IV-recovery?	13/30	ext=Kconfig; faithful C error-cost version competition (see spec)
 kdl	IV-recovery	12/40	pins at upstream HEAD; C at same pin parses corpus clean — runtime fidelity, not version (oak 2026-06-10)
 kotlin	IV-unknown	17/40	needs deeper single-file diagnosis
-ledger	IV-recovery	2/4	faithful C error-cost version competition (see spec)
+ledger	CLEAN	4/4	in ratchet; ledger date-suffix and year-directive recovery normalization
 less	IV-recovery?	10/40	faithful C error-cost version competition (see spec)
 linkerscript	IV-recovery	1/40	faithful C error-cost version competition (see spec)
 liquid	IV-recovery?	11/36	faithful C error-cost version competition (see spec)
