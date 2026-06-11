@@ -183,7 +183,7 @@
     "tier": "III"
   },
   "enforce": {
-    "tier": "IV"
+    "tier": "unranked"
   },
   "erlang": {
     "tier": "IV"

@@ -24,6 +24,7 @@ eex
 elisp
 elm
 embedded_template
+enforce
 facility
 faust
 fidl

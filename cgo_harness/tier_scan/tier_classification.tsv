@@ -58,7 +58,7 @@ elixir	IV-unknown	0/40	needs deeper single-file diagnosis
 elm	CLEAN	8/8	Elm external lex-state table plus repeatable zero-width _virtual_end_section close clear Deps.elm without broad C recovery (verified 2026-06-11)
 elsa	IV-recovery?	12/27	ext=.lc; faithful C error-cost version competition (see spec)
 embedded_template	CLEAN	40/40	in ratchet
-enforce	IV-shape?	21/30	ext=.c; preliminary
+enforce	CLEAN	40/40	enforce const int formal-parameter compatibility normalization clears declMethod.txt (verified 2026-06-11)
 erlang	IV-recovery	38/40	bif_SUITE ambiguity-selection + binary_SUITE blowup trunc
 facility	CLEAN	6/6	locked real-corpus parity clean (verified 2026-06-11)
 faust	CLEAN	40/40	in ratchet

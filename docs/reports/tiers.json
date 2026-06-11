@@ -1,6 +1,6 @@
 {
- "generated": "2026-06-11T12:41:52Z",
- "commit": "a864c39d",
+ "generated": "2026-06-11T14:05:10Z",
+ "commit": "44ccad17",
  "version": "unreleased",
  "tier_rules": {
   "I": "parity-clean and <=1.5x C full-parse, cold <=5ms, blob <=150KB",
@@ -10,9 +10,9 @@
   "unranked": "parity-clean; perf measurement pending"
  },
  "histogram": {
-  "IV": 109,
+  "IV": 108,
   "II": 46,
-  "I": 38,
+  "I": 39,
   "III": 13
  },
  "grammars": [
@@ -419,10 +419,9 @@
   },
   {
    "grammar": "enforce",
-   "tier": "IV",
-   "iv_cause": "IV-shape?",
-   "parity": "21/30",
-   "notes": "ext=.c; preliminary"
+   "tier": "I",
+   "parity": "clean",
+   "perf_source": "measured"
   },
   {
    "grammar": "erlang",
