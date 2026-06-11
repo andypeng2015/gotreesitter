@@ -232,7 +232,7 @@ func TestMultiGrammarImportRealCorpusParity(t *testing.T) {
 			case "graphql", "json", "regex", "toml", "scheme",
 				"csv", "git_rebase", "pem", "eds", "forth",
 				"comment", "eex", "dot", "todotxt", "ssh_config",
-				"properties", "proto", "requirements", "promql", "json5",
+				"properties", "proto", "requirements", "json5",
 				"gitattributes", "git_config", "ini",
 				"python":
 				gram.BinaryRepeatMode = true

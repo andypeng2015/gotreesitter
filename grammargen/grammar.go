@@ -83,6 +83,7 @@ type Grammar struct {
 	SuppressEquivalentExternalReduceLookaheads bool          // suppress external scanner validity for duplicate reduce-only lookaheads
 	ExternalReduceFollowLookaheads             []string      // external token names that may be valid after reducing in the current state
 	PriorityInlinePatterns                     []string      // anonymous pattern terminals that should win same-length ties against named tokens
+	PreserveHiddenChoicePassthrough            []string      // hidden choice rules whose single-symbol reductions must not be flattened away
 }
 
 // NewGrammar creates a new grammar with the given name.
@@ -336,6 +337,7 @@ func ExtendGrammar(name string, base *Grammar, customize func(g *Grammar)) *Gram
 		SuppressEquivalentExternalReduceLookaheads: base.SuppressEquivalentExternalReduceLookaheads,
 		ExternalReduceFollowLookaheads:             append([]string(nil), base.ExternalReduceFollowLookaheads...),
 		PriorityInlinePatterns:                     append([]string(nil), base.PriorityInlinePatterns...),
+		PreserveHiddenChoicePassthrough:            append([]string(nil), base.PreserveHiddenChoicePassthrough...),
 	}
 
 	// Deep copy rules.

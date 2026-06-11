@@ -479,7 +479,7 @@ func Normalize(g *Grammar) (*NormalizedGrammar, error) {
 	// alternatives. Running this after prepareRule lets us flatten the cc=1
 	// branches introduced by repeat lowering, especially for hidden repeat
 	// helpers and top-level hidden repeat1 rules.
-	processedRules, auxRules = flattenPreparedRules(g.Name, nonterminals, processedRules, auxRules, g.Supertypes, st.flattenRepeatAux)
+	processedRules, auxRules = flattenPreparedRules(g.Name, nonterminals, processedRules, auxRules, g.Supertypes, st.flattenRepeatAux, g.PreserveHiddenChoicePassthrough)
 
 	// Phase 5: Mark extra symbols.
 	extraSymbols := resolveExtras(g, st)
@@ -2212,10 +2212,11 @@ func expandTopLevelRepeat(r *Rule, ruleName string, binaryMode bool) *Rule {
 	return expanded
 }
 
-func flattenPreparedRules(grammarName string, nonterminals []string, processedRules, auxRules map[string]*Rule, supertypes []string, flattenGeneratedRepeatAux bool) (map[string]*Rule, map[string]*Rule) {
+func flattenPreparedRules(grammarName string, nonterminals []string, processedRules, auxRules map[string]*Rule, supertypes []string, flattenGeneratedRepeatAux bool, preserveHiddenChoicePassthrough []string) (map[string]*Rule, map[string]*Rule) {
 	tmp := NewGrammar(grammarName)
 	tmp.Supertypes = append(tmp.Supertypes, supertypes...)
 	tmp.FlattenGeneratedRepeatAux = flattenGeneratedRepeatAux
+	tmp.PreserveHiddenChoicePassthrough = append(tmp.PreserveHiddenChoicePassthrough, preserveHiddenChoicePassthrough...)
 
 	for _, name := range nonterminals {
 		if rule := processedRules[name]; rule != nil {
@@ -3675,6 +3676,7 @@ func deduplicateProductions(prods []Production) []Production {
 func flattenHiddenChoiceAlts(g *Grammar, generatedHiddenRules map[string]bool) *Grammar {
 	// 1. Identify hidden nonterminals with mixed pass-through and compound alts.
 	flattenMap := make(map[string]*flattenInfo)
+	preservePassthrough := stringSetFromSlice(g.PreserveHiddenChoicePassthrough)
 
 	for _, name := range g.RuleOrder {
 		isGeneratedHidden := generatedHiddenRules[name] && g.FlattenGeneratedRepeatAux
@@ -3723,6 +3725,9 @@ func flattenHiddenChoiceAlts(g *Grammar, generatedHiddenRules map[string]bool) *
 		// When a hidden rule with N pass-through alts is referenced in a Seq
 		// with another such rule, production extraction creates N*M alternatives.
 		if len(pt) > 8 {
+			continue
+		}
+		if preservePassthrough[name] {
 			continue
 		}
 
@@ -3897,6 +3902,7 @@ func flattenHiddenChoiceAlts(g *Grammar, generatedHiddenRules map[string]bool) *
 	out.SuppressEquivalentExternalReduceLookaheads = g.SuppressEquivalentExternalReduceLookaheads
 	out.ExternalReduceFollowLookaheads = append(out.ExternalReduceFollowLookaheads, g.ExternalReduceFollowLookaheads...)
 	out.PriorityInlinePatterns = append(out.PriorityInlinePatterns, g.PriorityInlinePatterns...)
+	out.PreserveHiddenChoicePassthrough = append(out.PreserveHiddenChoicePassthrough, g.PreserveHiddenChoicePassthrough...)
 	return out
 }
 

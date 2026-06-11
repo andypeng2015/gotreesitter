@@ -1,6 +1,6 @@
 {
- "generated": "2026-06-11T11:53:15Z",
- "commit": "9931f8b6",
+ "generated": "2026-06-11T12:18:42Z",
+ "commit": "5b174ab8",
  "version": "unreleased",
  "tier_rules": {
   "I": "parity-clean and <=1.5x C full-parse, cold <=5ms, blob <=150KB",
@@ -10,8 +10,8 @@
   "unranked": "parity-clean; perf measurement pending"
  },
  "histogram": {
-  "IV": 113,
-  "II": 43,
+  "IV": 112,
+  "II": 44,
   "I": 38,
   "III": 12
  },
@@ -982,10 +982,9 @@
   },
   {
    "grammar": "promql",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
-   "parity": "0/4",
-   "notes": "faithful C error-cost version competition (see spec)"
+   "tier": "II",
+   "parity": "clean",
+   "perf_source": "measured"
   },
   {
    "grammar": "properties",

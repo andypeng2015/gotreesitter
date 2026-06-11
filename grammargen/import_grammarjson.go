@@ -62,6 +62,11 @@ func applyImportGrammarShapeHints(g *Grammar) {
 		// lookaheads. The upstream binary repeat shape keeps those lookaheads
 		// from leaking into plain variable assignment lex modes.
 		g.BinaryRepeatMode = true
+	case "promql":
+		// PromQL's operator grammar relies on hidden pass-through reductions
+		// through _query and _series_matcher to complete higher-precedence
+		// operands before lower-precedence operator shifts.
+		g.PreserveHiddenChoicePassthrough = []string{"_query", "_series_matcher"}
 	}
 }
 

@@ -63,6 +63,7 @@ pem
 php
 pkl
 prisma
+promql
 properties
 puppet
 python
