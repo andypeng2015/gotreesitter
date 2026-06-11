@@ -3210,6 +3210,10 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 						if next, ok := awkRepetitionShiftConflictChoice(p.language, currentState, actions); ok {
 							chosen, choice = next, true
 						}
+					case "dot":
+						if next, ok := dotRepetitionShiftConflictChoice(p.language, tok, currentState, actions); ok {
+							chosen, choice = next, true
+						}
 					case "kotlin":
 						if next, ok := kotlinObjectLiteralConflictChoice(p.language, actions); ok {
 							chosen, choice = next, true
@@ -3929,6 +3933,10 @@ func (p *Parser) forestResolveConflict(actions []ParseAction) []ParseAction {
 	switch p.language.Name {
 	case "erlang":
 		if chosen, ok := erlangMacroCallExprConflictChoice(p.language, actions); ok {
+			return p.forestSingletonActions(chosen)
+		}
+	case "dot":
+		if chosen, ok := dotRepetitionShiftConflictChoice(p.language, Token{}, 4, actions); ok {
 			return p.forestSingletonActions(chosen)
 		}
 	}
@@ -4793,6 +4801,26 @@ func awkRepetitionShiftConflictChoice(lang *Language, state StateID, actions []P
 		}
 	default:
 		return ParseAction{}, false
+	}
+	return repetitionShiftConflictChoice(actions)
+}
+
+// dotRepetitionShiftConflictChoice collapses DOT's top-level statement-list
+// continuation fork. Upstream's `stmt_list` repeat closes only on `}`, so an
+// `identifier` after an existing statement is always another statement start;
+// taking the repetition shift matches C tree-sitter and prevents large graph
+// files from keeping both list-boundary interpretations alive.
+func dotRepetitionShiftConflictChoice(lang *Language, tok Token, state StateID, actions []ParseAction) (ParseAction, bool) {
+	if lang == nil || state != 4 {
+		return ParseAction{}, false
+	}
+	if tok.Symbol != 0 && !symbolHasName(lang, tok.Symbol, "identifier") {
+		return ParseAction{}, false
+	}
+	for _, act := range actions {
+		if act.Type == ParseActionReduce && !symbolHasName(lang, act.Symbol, "stmt_list_repeat1") {
+			return ParseAction{}, false
+		}
 	}
 	return repetitionShiftConflictChoice(actions)
 }

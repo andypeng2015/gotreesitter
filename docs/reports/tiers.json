@@ -1,6 +1,6 @@
 {
- "generated": "2026-06-11T12:21:57Z",
- "commit": "dda8fa1b",
+ "generated": "2026-06-11T12:36:33Z",
+ "commit": "bba0248b",
  "version": "unreleased",
  "tier_rules": {
   "I": "parity-clean and <=1.5x C full-parse, cold <=5ms, blob <=150KB",
@@ -10,8 +10,8 @@
   "unranked": "parity-clean; perf measurement pending"
  },
  "histogram": {
-  "IV": 111,
-  "II": 44,
+  "IV": 110,
+  "II": 45,
   "I": 38,
   "III": 13
  },
@@ -336,10 +336,9 @@
   },
   {
    "grammar": "dot",
-   "tier": "IV",
-   "iv_cause": "IV-perf",
-   "parity": "39/40",
-   "notes": "bsdarch.dot 2257x agg blowup truncation"
+   "tier": "II",
+   "parity": "clean",
+   "perf_source": "measured"
   },
   {
    "grammar": "doxygen",
