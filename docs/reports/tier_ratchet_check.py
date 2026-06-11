@@ -29,8 +29,9 @@ TIERS = os.path.join(ROOT, "tiers.json")
 CLEAN = os.path.join(REPO, "cgo_harness", "tier_scan", "clean_grammars.txt")
 
 # Tiers are Roman numerals (I best .. IV worst) so "III" never collides with the
-# C language. Mapping from the old A/B/C/D scheme: A=I, B=II, C=III, D=IV.
-RANK = {"I": 3, "II": 2, "III": 1, "IV": 0}  # higher is better
+# C language. `unranked` is parity-clean with perf pending: better than IV, but
+# not yet eligible for a perf tier.
+RANK = {"I": 4, "II": 3, "III": 2, "unranked": 1, "IV": 0}  # higher is better
 
 
 def clean_set():

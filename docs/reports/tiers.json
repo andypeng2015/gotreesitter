@@ -1,6 +1,6 @@
 {
- "generated": "2026-06-11T14:59:16Z",
- "commit": "6a957cfe",
+ "generated": "2026-06-11T15:14:48Z",
+ "commit": "c4e28d62",
  "version": "unreleased",
  "tier_rules": {
   "I": "parity-clean and <=1.5x C full-parse, cold <=5ms, blob <=150KB",
@@ -10,11 +10,11 @@
   "unranked": "parity-clean; perf measurement pending"
  },
  "histogram": {
-  "IV": 106,
+  "IV": 105,
   "II": 46,
   "I": 40,
   "III": 13,
-  "unranked": 1
+  "unranked": 2
  },
  "grammars": [
   {
@@ -1330,10 +1330,9 @@
   },
   {
    "grammar": "wolfram",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
-   "parity": "0/11",
-   "notes": "faithful C error-cost version competition (see spec)"
+   "tier": "unranked",
+   "parity": "clean",
+   "perf_source": null
   },
   {
    "grammar": "xml",

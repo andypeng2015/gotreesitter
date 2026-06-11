@@ -94,6 +94,7 @@ tsx
 turtle
 twig
 vue
+wolfram
 xml
 yaml
 yuck

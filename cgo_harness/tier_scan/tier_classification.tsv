@@ -197,7 +197,7 @@ vimdoc	IV-recovery?	0/30	ext=.txt; faithful C error-cost version competition (se
 vue	CLEAN	40/40	in ratchet
 wat	IV-recovery?	4/34	faithful C error-cost version competition (see spec)
 wgsl	IV-recovery?	20/40	faithful C error-cost version competition (see spec)
-wolfram	IV-recovery?	0/11	faithful C error-cost version competition (see spec)
+wolfram	CLEAN	4/4	Wolfram split infix compatibility pass promoted; Docker real-corpus strict parity verified 2026-06-11
 xml	CLEAN	40/40	in ratchet
 yaml	CLEAN	40/40	in ratchet
 yuck	CLEAN	40/40	in ratchet
