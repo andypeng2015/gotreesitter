@@ -1,6 +1,6 @@
 # Grammar tiers — unreleased
 
-Generated 2026-06-11T10:21:08Z at `f342120a`. Parity vs the
+Generated 2026-06-11T10:44:01Z at `2c278af2`. Parity vs the
 tree-sitter C oracle is the hard gate; performance is the sub-rank
 (rules in `cgo_harness/tier_scan/README.md`).
 
@@ -8,8 +8,8 @@ tree-sitter C oracle is the hard gate; performance is the sub-rank
 | --- | --- |
 | I | 38 |
 | II | 40 |
-| III | 10 |
-| IV | 118 |
+| III | 11 |
+| IV | 117 |
 
 ## Tier I — parity-clean, fast (38)
 
@@ -19,11 +19,11 @@ tree-sitter C oracle is the hard gate; performance is the sub-rank
 
 `arduino`, `bass`, `beancount`, `capnp`, `chatito`, `cmake`, `corn`, `cpon`, `devicetree`, `editorconfig`, `foam`, `forth`, `fortran`, `git_config`, `git_rebase`, `gitattributes`, `gitignore`, `gn`, `godot_resource`, `hack`, `heex`, `janet`, `jq`, `jsdoc`, `json`, `json5`, `markdown`, `ocaml`, `pem`, `python`, `ql`, `requirements`, `ron`, `sparql`, `tablegen`, `textproto`, `todotxt`, `toml`, `twig`, `vue`
 
-## Tier III — parity-clean, poor perf (10)
+## Tier III — parity-clean, poor perf (11)
 
-`desktop`, `diff`, `eds`, `eex`, `embedded_template`, `gomod`, `http`, `nginx`, `ninja`, `properties`
+`desktop`, `diff`, `eds`, `eex`, `embedded_template`, `facility`, `gomod`, `http`, `nginx`, `ninja`, `properties`
 
-## Tier IV — not parity-clean (118)
+## Tier IV — not parity-clean (117)
 
 | grammar | cause | parity |
 | --- | --- | --- |
@@ -67,7 +67,6 @@ tree-sitter C oracle is the hard gate; performance is the sub-rank
 | `elsa` | IV-recovery? | 12/27 |
 | `enforce` | IV-shape? | 21/30 |
 | `erlang` | IV-recovery | 38/40 |
-| `facility` | IV-recovery? | 1/4 |
 | `fennel` | IV-recovery? | 8/30 |
 | `firrtl` | IV-recovery? | 5/27 |
 | `fsharp` | IV-perf | 0/8 |

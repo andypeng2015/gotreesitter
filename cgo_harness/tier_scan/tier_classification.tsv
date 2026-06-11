@@ -61,7 +61,7 @@ elsa	IV-recovery?	12/27	ext=.lc; faithful C error-cost version competition (see 
 embedded_template	CLEAN	40/40	in ratchet
 enforce	IV-shape?	21/30	ext=.c; preliminary
 erlang	IV-recovery	38/40	bif_SUITE ambiguity-selection + binary_SUITE blowup trunc
-facility	IV-recovery?	1/4	ext=.fsd; faithful C error-cost version competition (see spec)
+facility	CLEAN	6/6	locked real-corpus parity clean (verified 2026-06-11)
 faust	CLEAN	40/40	in ratchet
 fennel	IV-recovery?	8/30	ext=.fnl; faithful C error-cost version competition (see spec)
 fidl	CLEAN	40/40	versioned layout modifiers normalized to C oracle recovery shape

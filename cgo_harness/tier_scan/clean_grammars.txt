@@ -21,6 +21,7 @@ eds
 eex
 elisp
 embedded_template
+facility
 faust
 fidl
 fish

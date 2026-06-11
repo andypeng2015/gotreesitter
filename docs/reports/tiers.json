@@ -1,6 +1,6 @@
 {
- "generated": "2026-06-11T10:21:08Z",
- "commit": "f342120a",
+ "generated": "2026-06-11T10:44:01Z",
+ "commit": "2c278af2",
  "version": "unreleased",
  "tier_rules": {
   "I": "parity-clean and <=1.5x C full-parse, cold <=5ms, blob <=150KB",
@@ -10,10 +10,10 @@
   "unranked": "parity-clean; perf measurement pending"
  },
  "histogram": {
-  "IV": 118,
+  "IV": 117,
   "II": 40,
   "I": 38,
-  "III": 10
+  "III": 11
  },
  "grammars": [
   {
@@ -436,10 +436,9 @@
   },
   {
    "grammar": "facility",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
-   "parity": "1/4",
-   "notes": "ext=.fsd; faithful C error-cost version competition (see spec)"
+   "tier": "III",
+   "parity": "clean",
+   "perf_source": "measured"
   },
   {
    "grammar": "faust",
