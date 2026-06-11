@@ -1,6 +1,6 @@
 {
- "generated": "2026-06-11T10:47:26Z",
- "commit": "d586f922",
+ "generated": "2026-06-11T11:18:07Z",
+ "commit": "34300de3",
  "version": "unreleased",
  "tier_rules": {
   "I": "parity-clean and <=1.5x C full-parse, cold <=5ms, blob <=150KB",
@@ -10,8 +10,8 @@
   "unranked": "parity-clean; perf measurement pending"
  },
  "histogram": {
-  "IV": 116,
-  "II": 40,
+  "IV": 115,
+  "II": 41,
   "I": 38,
   "III": 12
  },
@@ -730,10 +730,9 @@
   },
   {
    "grammar": "just",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
-   "parity": "2/8",
-   "notes": "ext=justfile,.just; faithful C error-cost version competition (see spec)"
+   "tier": "II",
+   "parity": "clean",
+   "perf_source": "measured"
   },
   {
    "grammar": "kconfig",

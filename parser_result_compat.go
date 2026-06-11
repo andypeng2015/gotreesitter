@@ -130,6 +130,8 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) ParseStopRea
 		normalizeJavaCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "javascript":
 		normalizeJavaScriptCompatibility(ctx.root, ctx.source, ctx.lang)
+	case "just":
+		normalizeJustTopLevelTrailingLineBreakSpans(ctx.root, ctx.source, ctx.lang)
 	case "kotlin":
 		normalizeKotlinCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "lua":

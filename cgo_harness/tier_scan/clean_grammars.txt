@@ -28,10 +28,10 @@ fish
 foam
 forth
 fortran
+gdscript
 git_config
 git_rebase
 gitattributes
-gdscript
 gitcommit
 gitignore
 gleam
@@ -49,6 +49,7 @@ jq
 jsdoc
 json
 json5
+just
 llvm
 lua
 markdown

@@ -1,29 +1,29 @@
 # Grammar tiers — unreleased
 
-Generated 2026-06-11T10:47:26Z at `d586f922`. Parity vs the
+Generated 2026-06-11T11:18:07Z at `34300de3`. Parity vs the
 tree-sitter C oracle is the hard gate; performance is the sub-rank
 (rules in `cgo_harness/tier_scan/README.md`).
 
 | tier | count |
 | --- | --- |
 | I | 38 |
-| II | 40 |
+| II | 41 |
 | III | 12 |
-| IV | 116 |
+| IV | 115 |
 
 ## Tier I — parity-clean, fast (38)
 
 `astro`, `bibtex`, `clojure`, `css`, `csv`, `cue`, `dhall`, `elisp`, `faust`, `fidl`, `fish`, `gdscript`, `gitcommit`, `gleam`, `hcl`, `java`, `javascript`, `llvm`, `lua`, `nickel`, `nix`, `php`, `pkl`, `prisma`, `puppet`, `r`, `racket`, `smithy`, `squirrel`, `starlark`, `svelte`, `thrift`, `tsx`, `turtle`, `xml`, `yaml`, `yuck`, `zig`
 
-## Tier II — parity-clean, ok (40)
+## Tier II — parity-clean, ok (41)
 
-`arduino`, `bass`, `beancount`, `capnp`, `chatito`, `cmake`, `corn`, `cpon`, `devicetree`, `editorconfig`, `foam`, `forth`, `fortran`, `git_config`, `git_rebase`, `gitattributes`, `gitignore`, `gn`, `godot_resource`, `hack`, `heex`, `janet`, `jq`, `jsdoc`, `json`, `json5`, `markdown`, `ocaml`, `pem`, `python`, `ql`, `requirements`, `ron`, `sparql`, `tablegen`, `textproto`, `todotxt`, `toml`, `twig`, `vue`
+`arduino`, `bass`, `beancount`, `capnp`, `chatito`, `cmake`, `corn`, `cpon`, `devicetree`, `editorconfig`, `foam`, `forth`, `fortran`, `git_config`, `git_rebase`, `gitattributes`, `gitignore`, `gn`, `godot_resource`, `hack`, `heex`, `janet`, `jq`, `jsdoc`, `json`, `json5`, `just`, `markdown`, `ocaml`, `pem`, `python`, `ql`, `requirements`, `ron`, `sparql`, `tablegen`, `textproto`, `todotxt`, `toml`, `twig`, `vue`
 
 ## Tier III — parity-clean, poor perf (12)
 
 `desktop`, `diff`, `eds`, `eex`, `embedded_template`, `facility`, `gomod`, `http`, `nginx`, `ninja`, `properties`, `ssh_config`
 
-## Tier IV — not parity-clean (116)
+## Tier IV — not parity-clean (115)
 
 | grammar | cause | parity |
 | --- | --- | --- |
@@ -85,7 +85,6 @@ tree-sitter C oracle is the hard gate; performance is the sub-rank
 | `jinja2` | IV-recovery | 3/40 |
 | `jsonnet` | IV-recovery? | 39/40 |
 | `julia` | IV-recovery | 28/40 |
-| `just` | IV-recovery? | 2/8 |
 | `kconfig` | IV-recovery? | 13/30 |
 | `kdl` | IV-recovery | 12/40 |
 | `kotlin` | IV-unknown | 17/40 |

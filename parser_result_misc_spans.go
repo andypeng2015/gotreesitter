@@ -112,6 +112,78 @@ func normalizeTopLevelTrailingLineBreakSpan(root *Node, source []byte, lang *Lan
 	extendNodeEndTo(child, root.endByte, source)
 }
 
+func normalizeJustTopLevelTrailingLineBreakSpans(root *Node, source []byte, lang *Language) {
+	if root == nil || lang == nil || lang.Name != "just" || len(source) == 0 || root.Type(lang) != "source_file" {
+		return
+	}
+	normalizeJustTrailingLineBreakSpansInNode(root, root, source, lang)
+}
+
+func normalizeJustTrailingLineBreakSpansInNode(root, parent *Node, source []byte, lang *Language) {
+	if parent == nil {
+		return
+	}
+	count := resultChildCount(parent)
+	for i := 0; i < count; i++ {
+		child := resultChildAt(parent, i)
+		normalizeJustTrailingLineBreakSpan(root, parent, child, i, count, source, lang)
+		normalizeJustTrailingLineBreakSpansInNode(root, child, source, lang)
+	}
+}
+
+func normalizeJustTrailingLineBreakSpan(root, parent, child *Node, idx, count int, source []byte, lang *Language) {
+	if child == nil || child.endByte >= uint32(len(source)) {
+		return
+	}
+	switch child.Type(lang) {
+	case "setting", "assignment", "export", "attribute", "recipe":
+	case "ERROR":
+		if parent != root {
+			return
+		}
+	default:
+		return
+	}
+	limit := parent.endByte
+	if idx+1 < count {
+		next := resultChildAt(parent, idx+1)
+		if next != nil && next.startByte >= child.endByte {
+			limit = next.startByte
+		}
+	}
+	if limit <= child.endByte || limit > uint32(len(source)) {
+		return
+	}
+	gap := source[child.endByte:limit]
+	if !bytesAreTrivia(gap) || !bytesContainLineBreak(gap) {
+		return
+	}
+	end := child.endByte
+	for end < limit {
+		switch source[end] {
+		case '\n':
+			end++
+			if end > child.endByte {
+				extendNodeEndTo(child, end, source)
+			}
+			return
+		case '\r':
+			end++
+			if end < limit && source[end] == '\n' {
+				end++
+			}
+			if end > child.endByte {
+				extendNodeEndTo(child, end, source)
+			}
+			return
+		case ' ', '\t':
+			end++
+		default:
+			return
+		}
+	}
+}
+
 func lineBreakEndAt(source []byte, start, limit uint32) uint32 {
 	if start >= limit || start >= uint32(len(source)) {
 		return 0

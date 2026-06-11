@@ -107,7 +107,7 @@ json	CLEAN	40/40	in ratchet
 json5	CLEAN	40/40	in ratchet
 jsonnet	IV-recovery?	39/40	canonical-frame demotion (one-time reset)
 julia	IV-recovery	28/40	faithful C error-cost version competition (see spec)
-just	IV-recovery?	2/8	ext=justfile,.just; faithful C error-cost version competition (see spec)
+just	CLEAN	8/8	in ratchet; C-recovery gate plus just top-level line-break span normalization
 kconfig	IV-recovery?	13/30	ext=Kconfig; faithful C error-cost version competition (see spec)
 kdl	IV-recovery	12/40	pins at upstream HEAD; C at same pin parses corpus clean — runtime fidelity, not version (oak 2026-06-10)
 kotlin	IV-unknown	17/40	needs deeper single-file diagnosis

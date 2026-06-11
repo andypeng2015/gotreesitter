@@ -170,6 +170,12 @@ func errorCostCompetitionLanguage(lang *Language) bool {
 		// corpus. The sshd_config witness needs C's recovery-cost election to
 		// keep a config root while preserving the local ERROR region.
 		return true
+	case "just":
+		// Tier-IV recovery fan-out: rule110.just needs C's recovery-cost
+		// election to keep a source_file root with localized errors. The
+		// remaining top-level line-break span shape is normalized in
+		// parser_result_misc_spans.go.
+		return true
 	}
 	return false
 }
