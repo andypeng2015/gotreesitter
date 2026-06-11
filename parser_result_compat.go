@@ -81,6 +81,8 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) ParseStopRea
 		normalizeCommentTrailingExtraTrivia(ctx.root, ctx.source, ctx.lang)
 	case "cooklang":
 		normalizeCooklangTrailingStepTail(ctx.root, ctx.source, ctx.lang)
+	case "corn":
+		normalizeCornCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "cpon":
 		normalizeCPONCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "cue":
