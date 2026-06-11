@@ -52,7 +52,7 @@ dtd	IV-recovery?	0/5	ext=.dtd; faithful C error-cost version competition (see sp
 earthfile	IV-recovery?	0/30	ext=Earthfile; faithful C error-cost version competition (see spec)
 ebnf	IV-recovery?	0/30	ext=.ebnf; faithful C error-cost version competition (see spec)
 editorconfig	CLEAN	40/40	in ratchet
-eds	IV-recovery?	0/1	ext=.eds; faithful C error-cost version competition (see spec)
+eds	CLEAN	1/1	in ratchet
 eex	CLEAN	40/40	in ratchet
 elisp	CLEAN	40/40	in ratchet
 elixir	IV-unknown	0/40	needs deeper single-file diagnosis

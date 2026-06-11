@@ -1,6 +1,6 @@
 {
- "generated": "2026-06-11T09:41:28Z",
- "commit": "88c189c5",
+ "generated": "2026-06-11T10:21:08Z",
+ "commit": "f342120a",
  "version": "unreleased",
  "tier_rules": {
   "I": "parity-clean and <=1.5x C full-parse, cold <=5ms, blob <=150KB",
@@ -10,10 +10,10 @@
   "unranked": "parity-clean; perf measurement pending"
  },
  "histogram": {
-  "IV": 120,
+  "IV": 119,
   "II": 40,
   "I": 38,
-  "III": 8
+  "III": 9
  },
  "grammars": [
   {
@@ -377,10 +377,9 @@
   },
   {
    "grammar": "eds",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
-   "parity": "0/1",
-   "notes": "ext=.eds; faithful C error-cost version competition (see spec)"
+   "tier": "III",
+   "parity": "clean",
+   "perf_source": "measured"
   },
   {
    "grammar": "eex",

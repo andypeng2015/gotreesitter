@@ -95,6 +95,8 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) ParseStopRea
 		normalizeElixirCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "ebnf":
 		normalizeEBNFCompatibility(ctx.root, ctx.source, ctx.lang)
+	case "eds":
+		normalizeEDSCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "erlang":
 		normalizeErlangSourceFileForms(ctx.root, ctx.lang)
 	case "fortran":

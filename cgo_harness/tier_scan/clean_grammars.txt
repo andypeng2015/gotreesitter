@@ -17,6 +17,7 @@ devicetree
 dhall
 diff
 editorconfig
+eds
 eex
 elisp
 embedded_template
