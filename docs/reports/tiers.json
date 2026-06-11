@@ -10,10 +10,10 @@
   "unranked": "parity-clean; perf measurement pending"
  },
  "histogram": {
-  "IV": 119,
+  "IV": 118,
   "II": 40,
   "I": 38,
-  "III": 9
+  "III": 10
  },
  "grammars": [
   {
@@ -880,10 +880,9 @@
   },
   {
    "grammar": "ninja",
-   "tier": "IV",
-   "iv_cause": "IV-recovery",
-   "parity": "3/5",
-   "notes": "faithful C error-cost version competition (see spec)"
+   "tier": "III",
+   "parity": "clean",
+   "perf_source": "measured"
   },
   {
    "grammar": "nix",

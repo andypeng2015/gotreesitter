@@ -129,7 +129,6 @@ move	IV-recovery?	14/40	post-repo-switch residual
 nginx	CLEAN	40/40	in ratchet
 nickel	CLEAN	40/40	in ratchet
 nim	IV-recovery?	3/40	faithful C error-cost version competition (see spec)
-ninja	IV-recovery	3/5	faithful C error-cost version competition (see spec)
 nix	CLEAN	40/40	in ratchet
 norg	IV-scanner	0/2	mixed scanner/version, 2-file corpus (maple)
 nushell	IV-recovery?	5/40	faithful C error-cost version competition (see spec)

@@ -159,6 +159,12 @@ func errorCostCompetitionLanguage(lang *Language) bool {
 		// election to preserve the source_file/object envelope before the
 		// remaining quoted path_seg result shape can be normalized.
 		return true
+	case "ninja":
+		// Tier-IV recovery fan-out: 3/5 -> 4/5 on the lock-filtered tier
+		// corpus. The gate lifts both malformed README.ninja metadata files
+		// from whole-file ERROR roots to manifest roots; the remaining emhash
+		// child coalescing shape is normalized in parser_result_ninja.go.
+		return true
 	}
 	return false
 }

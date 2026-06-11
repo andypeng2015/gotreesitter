@@ -53,6 +53,7 @@ lua
 markdown
 nginx
 nickel
+ninja
 nix
 ocaml
 pem

@@ -8,8 +8,8 @@ tree-sitter C oracle is the hard gate; performance is the sub-rank
 | --- | --- |
 | I | 38 |
 | II | 40 |
-| III | 9 |
-| IV | 119 |
+| III | 10 |
+| IV | 118 |
 
 ## Tier I — parity-clean, fast (38)
 
@@ -19,11 +19,11 @@ tree-sitter C oracle is the hard gate; performance is the sub-rank
 
 `arduino`, `bass`, `beancount`, `capnp`, `chatito`, `cmake`, `corn`, `cpon`, `devicetree`, `editorconfig`, `foam`, `forth`, `fortran`, `git_config`, `git_rebase`, `gitattributes`, `gitignore`, `gn`, `godot_resource`, `hack`, `heex`, `janet`, `jq`, `jsdoc`, `json`, `json5`, `markdown`, `ocaml`, `pem`, `python`, `ql`, `requirements`, `ron`, `sparql`, `tablegen`, `textproto`, `todotxt`, `toml`, `twig`, `vue`
 
-## Tier III — parity-clean, poor perf (9)
+## Tier III — parity-clean, poor perf (10)
 
-`desktop`, `diff`, `eds`, `eex`, `embedded_template`, `gomod`, `http`, `nginx`, `properties`
+`desktop`, `diff`, `eds`, `eex`, `embedded_template`, `gomod`, `http`, `nginx`, `ninja`, `properties`
 
-## Tier IV — not parity-clean (119)
+## Tier IV — not parity-clean (118)
 
 | grammar | cause | parity |
 | --- | --- | --- |
@@ -103,7 +103,6 @@ tree-sitter C oracle is the hard gate; performance is the sub-rank
 | `mojo` | IV-recovery? | 30/40 |
 | `move` | IV-recovery? | 14/40 |
 | `nim` | IV-recovery? | 3/40 |
-| `ninja` | IV-recovery | 3/5 |
 | `norg` | IV-scanner | 0/2 |
 | `nushell` | IV-recovery? | 5/40 |
 | `objc` | IV-recovery? | 1/40 |
