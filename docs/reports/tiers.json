@@ -1,6 +1,6 @@
 {
- "generated": "2026-06-11T12:18:42Z",
- "commit": "5b174ab8",
+ "generated": "2026-06-11T12:21:57Z",
+ "commit": "dda8fa1b",
  "version": "unreleased",
  "tier_rules": {
   "I": "parity-clean and <=1.5x C full-parse, cold <=5ms, blob <=150KB",
@@ -10,10 +10,10 @@
   "unranked": "parity-clean; perf measurement pending"
  },
  "histogram": {
-  "IV": 112,
+  "IV": 111,
   "II": 44,
   "I": 38,
-  "III": 12
+  "III": 13
  },
  "grammars": [
   {
@@ -350,10 +350,9 @@
   },
   {
    "grammar": "dtd",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
-   "parity": "0/5",
-   "notes": "ext=.dtd; faithful C error-cost version competition (see spec)"
+   "tier": "III",
+   "parity": "clean",
+   "perf_source": "measured"
   },
   {
    "grammar": "earthfile",

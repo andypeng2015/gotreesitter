@@ -16,6 +16,7 @@ desktop
 devicetree
 dhall
 diff
+dtd
 editorconfig
 eds
 eex

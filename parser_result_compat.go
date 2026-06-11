@@ -91,6 +91,8 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) ParseStopRea
 		normalizeDCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "dart":
 		normalizeDartCompatibility(ctx.root, ctx.source, ctx.lang)
+	case "dtd":
+		normalizeDTDCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "elixir":
 		normalizeElixirCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "ebnf":

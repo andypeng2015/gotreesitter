@@ -176,6 +176,12 @@ func errorCostCompetitionLanguage(lang *Language) bool {
 		// remaining top-level line-break span shape is normalized in
 		// parser_result_misc_spans.go.
 		return true
+	case "dtd":
+		// Tier-IV recovery fan-out: the tiny DTD corpus needs C's recovery-cost
+		// election to keep extSubset roots instead of whole-file ERROR roots.
+		// The remaining `%entity;` declaration-local recovery span is normalized
+		// in parser_result_dtd.go.
+		return true
 	}
 	return false
 }
