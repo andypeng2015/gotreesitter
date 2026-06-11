@@ -10,11 +10,11 @@
   "unranked": "parity-clean; perf measurement pending"
  },
  "histogram": {
-  "IV": 105,
+  "IV": 104,
   "II": 46,
   "I": 40,
   "III": 13,
-  "unranked": 2
+  "unranked": 3
  },
  "grammars": [
   {
@@ -343,10 +343,9 @@
   },
   {
    "grammar": "doxygen",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
-   "parity": "19/30",
-   "notes": "ext=.dox,.doxygen; faithful C error-cost version competition (see spec)"
+   "tier": "unranked",
+   "parity": "clean",
+   "perf_source": null
   },
   {
    "grammar": "dtd",

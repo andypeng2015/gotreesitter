@@ -17,6 +17,7 @@ devicetree
 dhall
 diff
 dot
+doxygen
 dtd
 editorconfig
 eds
