@@ -61,6 +61,8 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) ParseStopRea
 		normalizeAuthzedCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "awk":
 		normalizeAwkCompatibility(ctx.root, ctx.source, ctx.lang)
+	case "bibtex":
+		normalizeRootLeadingTriviaStart(ctx.root, ctx.source)
 	case "bash":
 		normalizeBashProgramVariableAssignments(ctx.root, ctx.lang)
 		normalizeBashGeneratedCommandAssignments(ctx.root, ctx.source, ctx.lang)
@@ -94,6 +96,8 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) ParseStopRea
 	case "fortran":
 		normalizeFortranStatementLineBreaks(ctx.root, ctx.source, ctx.lang)
 		normalizeTopLevelTrailingLineBreakSpan(ctx.root, ctx.source, ctx.lang)
+	case "forth":
+		normalizeForthCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "go":
 		return normalizeGoReturnedTreeCompatibility(ctx.root, ctx.source, ctx.parser, ctx.lang)
 	case "graphql":
