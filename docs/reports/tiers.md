@@ -1,6 +1,6 @@
 # Grammar tiers — unreleased
 
-Generated 2026-06-11T14:33:30Z at `5c3da7e2`. Parity vs the
+Generated 2026-06-11T14:59:16Z at `6a957cfe`. Parity vs the
 tree-sitter C oracle is the hard gate; performance is the sub-rank
 (rules in `cgo_harness/tier_scan/README.md`).
 
@@ -9,7 +9,8 @@ tree-sitter C oracle is the hard gate; performance is the sub-rank
 | I | 40 |
 | II | 46 |
 | III | 13 |
-| IV | 107 |
+| unranked | 1 |
+| IV | 106 |
 
 ## Tier I — parity-clean, fast (40)
 
@@ -23,7 +24,11 @@ tree-sitter C oracle is the hard gate; performance is the sub-rank
 
 `desktop`, `diff`, `dtd`, `eds`, `eex`, `embedded_template`, `facility`, `gomod`, `http`, `nginx`, `ninja`, `properties`, `ssh_config`
 
-## Tier IV — not parity-clean (107)
+## Unranked — parity-clean, perf measurement pending (1)
+
+`ini`
+
+## Tier IV — not parity-clean (106)
 
 | grammar | cause | parity |
 | --- | --- | --- |
@@ -77,7 +82,6 @@ tree-sitter C oracle is the hard gate; performance is the sub-rank
 | `html` | IV-recovery | 0/40 |
 | `hurl` | IV-recovery | 13/40 |
 | `hyprlang` | IV-recovery | 1/2 |
-| `ini` | IV-unknown | 4/11 |
 | `jinja2` | IV-recovery | 3/40 |
 | `jsonnet` | IV-recovery? | 39/40 |
 | `julia` | IV-recovery | 28/40 |

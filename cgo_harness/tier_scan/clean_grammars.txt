@@ -46,6 +46,7 @@ hack
 hcl
 heex
 http
+ini
 janet
 java
 javascript

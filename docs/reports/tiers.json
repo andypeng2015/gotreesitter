@@ -1,6 +1,6 @@
 {
- "generated": "2026-06-11T14:33:30Z",
- "commit": "5c3da7e2",
+ "generated": "2026-06-11T14:59:16Z",
+ "commit": "6a957cfe",
  "version": "unreleased",
  "tier_rules": {
   "I": "parity-clean and <=1.5x C full-parse, cold <=5ms, blob <=150KB",
@@ -10,10 +10,11 @@
   "unranked": "parity-clean; perf measurement pending"
  },
  "histogram": {
-  "IV": 107,
+  "IV": 106,
   "II": 46,
   "I": 40,
-  "III": 13
+  "III": 13,
+  "unranked": 1
  },
  "grammars": [
   {
@@ -656,10 +657,9 @@
   },
   {
    "grammar": "ini",
-   "tier": "IV",
-   "iv_cause": "IV-unknown",
-   "parity": "4/11",
-   "notes": "needs deeper single-file diagnosis"
+   "tier": "unranked",
+   "parity": "clean",
+   "perf_source": null
   },
   {
    "grammar": "janet",

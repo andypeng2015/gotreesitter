@@ -129,7 +129,7 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) ParseStopRea
 	case "http":
 		normalizeHTTPCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "ini":
-		normalizeIniSectionStarts(ctx.root, ctx.lang)
+		normalizeIniCompatibility(ctx.root, ctx.lang)
 	case "java":
 		normalizeJavaCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "javascript":

@@ -69,6 +69,43 @@ func TestNormalizeIniSectionStartsSnapToFirstChild(t *testing.T) {
 	}
 }
 
+func TestNormalizeIniDocumentBlanksDropsRootBlank(t *testing.T) {
+	lang := &Language{
+		Name:        "ini",
+		SymbolNames: []string{"EOF", "document", "comment", "_blank", "section"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF", Visible: false, Named: false},
+			{Name: "document", Visible: true, Named: true},
+			{Name: "comment", Visible: true, Named: true},
+			{Name: "_blank", Visible: true, Named: true},
+			{Name: "section", Visible: true, Named: true},
+		},
+	}
+
+	arena := newNodeArena(arenaClassFull)
+	comment := newLeafNodeInArena(arena, 2, true, 108, 149, Point{}, Point{Column: 41})
+	blank := newLeafNodeInArena(arena, 3, true, 149, 150, Point{Column: 41}, Point{Row: 1})
+	section := newLeafNodeInArena(arena, 4, true, 150, 600, Point{Row: 1}, Point{Row: 20})
+	root := newParentNodeInArena(arena, 1, true, []*Node{comment, blank, section}, nil, 0)
+	root.endByte = 600
+	root.endPoint = Point{Row: 20}
+
+	normalizeIniCompatibility(root, lang)
+
+	if got, want := root.ChildCount(), 2; got != want {
+		t.Fatalf("document child count = %d, want %d", got, want)
+	}
+	if got, want := root.Child(0).Type(lang), "comment"; got != want {
+		t.Fatalf("child[0] type = %q, want %q", got, want)
+	}
+	if got, want := root.Child(1).Type(lang), "section"; got != want {
+		t.Fatalf("child[1] type = %q, want %q", got, want)
+	}
+	if got, want := root.Child(1).childIndex, int32(1); got != want {
+		t.Fatalf("section childIndex = %d, want %d", got, want)
+	}
+}
+
 func TestNormalizeZigEmptyInitListFieldConstantCleared(t *testing.T) {
 	lang := &Language{
 		Name:        "zig",
