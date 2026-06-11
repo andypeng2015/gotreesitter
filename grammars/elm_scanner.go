@@ -360,8 +360,10 @@ func (ElmExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, v
 			}
 		}
 
-		if foundIn && len(s.indents) > 0 {
-			s.indents = s.indents[:len(s.indents)-1]
+		if foundIn {
+			if len(s.indents) > 0 {
+				s.indents = s.indents[:len(s.indents)-1]
+			}
 			s.runback = append(s.runback, 1)
 		}
 

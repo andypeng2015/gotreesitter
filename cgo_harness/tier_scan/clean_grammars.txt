@@ -22,6 +22,7 @@ editorconfig
 eds
 eex
 elisp
+elm
 embedded_template
 facility
 faust

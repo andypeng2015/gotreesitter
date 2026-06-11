@@ -1,6 +1,6 @@
 {
- "generated": "2026-06-11T12:36:33Z",
- "commit": "bba0248b",
+ "generated": "2026-06-11T12:41:52Z",
+ "commit": "a864c39d",
  "version": "unreleased",
  "tier_rules": {
   "I": "parity-clean and <=1.5x C full-parse, cold <=5ms, blob <=150KB",
@@ -10,8 +10,8 @@
   "unranked": "parity-clean; perf measurement pending"
  },
  "histogram": {
-  "IV": 110,
-  "II": 45,
+  "IV": 109,
+  "II": 46,
   "I": 38,
   "III": 13
  },
@@ -400,10 +400,9 @@
   },
   {
    "grammar": "elm",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
-   "parity": "7/8",
-   "notes": "ext=.elm; C-recovery gate tried and REVERTED (parity-neutral 7/8, run 20260610T091230Z-redwood-wave1b): witness Deps.elm \u2014 gate fixes root EndByte (28293) but yields file root with cc go=1 (one whole-file error region) vs c=177; aggRatio blew 18x -> 1450x under gate = stage-2 limitation (c) O(stack) cost queries; needs cost memoization + recovery-shape work"
+   "tier": "II",
+   "parity": "clean",
+   "perf_source": "measured"
   },
   {
    "grammar": "elsa",
