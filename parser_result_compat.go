@@ -100,6 +100,8 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) ParseStopRea
 		normalizeTopLevelTrailingLineBreakSpan(ctx.root, ctx.source, ctx.lang)
 	case "forth":
 		normalizeForthCompatibility(ctx.root, ctx.source, ctx.lang)
+	case "fidl":
+		normalizeFIDLCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "go":
 		return normalizeGoReturnedTreeCompatibility(ctx.root, ctx.source, ctx.parser, ctx.lang)
 	case "graphql":
