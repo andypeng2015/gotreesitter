@@ -2692,6 +2692,8 @@ func (d *dfaTokenSource) allowRepeatedZeroWidthExternalSymbol(sym Symbol) bool {
 	switch d.language.SymbolNames[nameIdx] {
 	case "_implicit_end_tag":
 		return true
+	case "_dedent":
+		return d.language.Name == "gdscript"
 	default:
 		return false
 	}
