@@ -1,6 +1,6 @@
 {
- "generated": "2026-06-11T11:30:04Z",
- "commit": "33da5c87",
+ "generated": "2026-06-11T11:53:15Z",
+ "commit": "9931f8b6",
  "version": "unreleased",
  "tier_rules": {
   "I": "parity-clean and <=1.5x C full-parse, cold <=5ms, blob <=150KB",
@@ -10,8 +10,8 @@
   "unranked": "parity-clean; perf measurement pending"
  },
  "histogram": {
-  "IV": 114,
-  "II": 42,
+  "IV": 113,
+  "II": 43,
   "I": 38,
   "III": 12
  },
@@ -1093,10 +1093,9 @@
   },
   {
    "grammar": "ruby",
-   "tier": "IV",
-   "iv_cause": "IV-shape?",
-   "parity": "25/40",
-   "notes": "preliminary from signature"
+   "tier": "II",
+   "parity": "clean",
+   "perf_source": "measured"
   },
   {
    "grammar": "rust",

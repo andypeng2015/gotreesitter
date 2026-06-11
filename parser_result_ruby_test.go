@@ -70,3 +70,25 @@ func TestNormalizeRubyThenStartsLeavesAdjacent(t *testing.T) {
 		t.Fatalf("then.StartByte() = %d, want %d (already adjacent, unchanged)", got, want)
 	}
 }
+
+func TestNormalizeRubyThenStartsInlineExplicitThen(t *testing.T) {
+	lang := rubyThenLang()
+	arena := newNodeArena(arenaClassFull)
+	pattern := newLeafNodeInArena(arena, 4, true, 18, 25, Point{Row: 1, Column: 5}, Point{Row: 1, Column: 12})
+	thenToken := newLeafNodeInArena(arena, 3, true, 26, 30, Point{Row: 1, Column: 13}, Point{Row: 1, Column: 17})
+	call := newLeafNodeInArena(arena, 4, true, 31, 35, Point{Row: 1, Column: 18}, Point{Row: 1, Column: 22})
+	thenNode := newParentNodeInArena(arena, 3, true, []*Node{thenToken, call}, nil, 0)
+	thenNode.startByte = 25
+	thenNode.endByte = 35
+	thenNode.startPoint = pattern.endPoint
+	whenNode := newParentNodeInArena(arena, 1, true, []*Node{pattern, thenNode}, nil, 0)
+
+	normalizeRubyThenStarts(whenNode, lang)
+
+	if got, want := thenNode.StartByte(), uint32(26); got != want {
+		t.Fatalf("inline then.StartByte() = %d, want %d", got, want)
+	}
+	if got, want := thenNode.startPoint, (Point{Row: 1, Column: 13}); got != want {
+		t.Fatalf("inline then.startPoint = %v, want %v", got, want)
+	}
+}

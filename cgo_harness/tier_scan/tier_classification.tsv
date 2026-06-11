@@ -161,7 +161,7 @@ rescript	IV-recovery?	23/40	faithful C error-cost version competition (see spec)
 robot	IV-recovery?	28/40	faithful C error-cost version competition (see spec)
 ron	CLEAN	40/40	in ratchet
 rst	IV-perf	1/8	timeout-or-fail at 1200s canonical budget
-ruby	IV-shape?	25/40	preliminary from signature
+ruby	CLEAN	40/40	in ratchet; inline Ruby when-then body StartByte normalized to C oracle
 rust	IV-recovery?	21/40	faithful C error-cost version competition (see spec)
 scala	IV-recovery?	25/40	faithful C error-cost version competition (see spec)
 scheme	IV-perf	36/40	stage-2 clears 5/6 shape files under GOT_C_RECOVERY=scheme; s/5_3.ss is a GLR merge wall and remains the perf blocker

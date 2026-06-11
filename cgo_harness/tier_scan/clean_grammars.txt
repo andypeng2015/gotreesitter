@@ -71,6 +71,7 @@ r
 racket
 requirements
 ron
+ruby
 smithy
 sparql
 squirrel
