@@ -78,6 +78,7 @@ requirements
 ron
 ruby
 smithy
+solidity
 sparql
 squirrel
 ssh_config

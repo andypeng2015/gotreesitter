@@ -49,3 +49,71 @@ func normalizeSolidityMemberObjectWrappers(root *Node, lang *Language) {
 		}
 	})
 }
+
+// normalizeSolidityCallExpressionAliases rewrites generated-only
+// constructor/type-cast call wrappers to match the C oracle.
+//
+// Upstream tree-sitter-solidity's generated C parser reports call-shaped
+// `new Type(...)` and `uint256(...)` expressions as `call_expression`, with
+// the specific `new_expression` / `type_cast_expression` node wrapped as the
+// callee expression. The Go grammargen path keeps the specific node as the
+// outer wrapper. Rewrite only cases with an explicit `call_argument` child so
+// bare `new Type` or non-call type expressions keep their grammar-specific
+// shape.
+func normalizeSolidityCallExpressionAliases(root *Node, lang *Language) {
+	if root == nil || lang == nil || lang.Name != "solidity" {
+		return
+	}
+	callSym, callNamed, ok := symbolMeta(lang, "call_expression")
+	if !ok {
+		return
+	}
+	exprSym, exprNamed, ok := symbolMeta(lang, "expression")
+	if !ok {
+		return
+	}
+	walkResultTree(root, func(n *Node) {
+		oldSym := n.symbol
+		oldNamed := n.isNamed()
+		nodeType := n.Type(lang)
+		switch n.Type(lang) {
+		case "new_expression", "type_cast_expression":
+		default:
+			return
+		}
+		callArgIndex := solidityCallArgumentIndex(n, lang)
+		if callArgIndex <= 0 {
+			return
+		}
+		children := resultChildSliceForMutation(n)
+		if callArgIndex >= len(children) {
+			return
+		}
+		arena := n.ownerArena
+		var wrapper *Node
+		outerTailIndex := callArgIndex
+		if nodeType == "type_cast_expression" && len(children) > 0 {
+			wrapper = newParentNodeInArena(arena, exprSym, exprNamed, []*Node{children[0]}, nil, 0)
+			outerTailIndex = 1
+		} else {
+			innerChildren := cloneNodeSliceIfArena(arena, children[:callArgIndex])
+			inner := newParentNodeInArena(arena, oldSym, oldNamed, innerChildren, nil, n.productionID)
+			wrapper = newParentNodeInArena(arena, exprSym, exprNamed, []*Node{inner}, nil, 0)
+		}
+		callChildren := make([]*Node, 0, len(children)-callArgIndex+1)
+		callChildren = append(callChildren, wrapper)
+		callChildren = append(callChildren, children[outerTailIndex:]...)
+		n.symbol = callSym
+		n.setNamed(callNamed)
+		replaceNodeChildrenUnfielded(n, cloneNodeSliceIfArena(arena, callChildren))
+	})
+}
+
+func solidityCallArgumentIndex(n *Node, lang *Language) int {
+	for i := 0; i < resultChildCount(n); i++ {
+		if child := resultChildAt(n, i); child != nil && child.Type(lang) == "call_argument" {
+			return i
+		}
+	}
+	return -1
+}

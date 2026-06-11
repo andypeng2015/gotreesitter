@@ -1,6 +1,6 @@
 {
- "generated": "2026-06-11T14:05:10Z",
- "commit": "44ccad17",
+ "generated": "2026-06-11T14:33:30Z",
+ "commit": "5c3da7e2",
  "version": "unreleased",
  "tier_rules": {
   "I": "parity-clean and <=1.5x C full-parse, cold <=5ms, blob <=150KB",
@@ -10,9 +10,9 @@
   "unranked": "parity-clean; perf measurement pending"
  },
  "histogram": {
-  "IV": 108,
+  "IV": 107,
   "II": 46,
-  "I": 39,
+  "I": 40,
   "III": 13
  },
  "grammars": [
@@ -1128,10 +1128,9 @@
   },
   {
    "grammar": "solidity",
-   "tier": "IV",
-   "iv_cause": "IV-shape?",
-   "parity": "10/40",
-   "notes": "preliminary from signature"
+   "tier": "I",
+   "parity": "clean",
+   "perf_source": "measured"
   },
   {
    "grammar": "sparql",

@@ -7,13 +7,20 @@ import "testing"
 func solidityMemberLang() *Language {
 	return &Language{
 		Name:        "solidity",
-		SymbolNames: []string{"EOF", "member_expression", "expression", "identifier", "."},
+		SymbolNames: []string{"EOF", "member_expression", "expression", "identifier", ".", "new_expression", "type_cast_expression", "call_expression", "type_name", "call_argument", "number_literal", "primitive_type"},
 		SymbolMetadata: []SymbolMetadata{
 			{Name: "EOF"},
 			{Name: "member_expression", Visible: true, Named: true},
 			{Name: "expression", Visible: true, Named: true},
 			{Name: "identifier", Visible: true, Named: true},
 			{Name: ".", Visible: true, Named: false},
+			{Name: "new_expression", Visible: true, Named: true},
+			{Name: "type_cast_expression", Visible: true, Named: true},
+			{Name: "call_expression", Visible: true, Named: true},
+			{Name: "type_name", Visible: true, Named: true},
+			{Name: "call_argument", Visible: true, Named: true},
+			{Name: "number_literal", Visible: true, Named: true},
+			{Name: "primitive_type", Visible: true, Named: true},
 		},
 	}
 }
@@ -97,5 +104,92 @@ func TestNormalizeSolidityMemberObjectWrappersLeavesSpanMismatch(t *testing.T) {
 
 	if got, want := member.Child(0).Type(lang), "expression"; got != want {
 		t.Fatalf("span-mismatched object type = %q, want %q (must be untouched)", got, want)
+	}
+}
+
+func TestNormalizeSolidityCallExpressionAliasesWrapsCallShapedNodes(t *testing.T) {
+	lang := solidityMemberLang()
+	arena := newNodeArena(arenaClassFull)
+
+	newKeyword := newLeafNodeInArena(arena, 3, true, 0, 3, Point{}, Point{})
+	typeName := newParentNodeInArena(arena, 8, true, []*Node{
+		newLeafNodeInArena(arena, 3, true, 4, 9, Point{}, Point{}),
+	}, nil, 0)
+	arg := newParentNodeInArena(arena, 9, true, []*Node{
+		newLeafNodeInArena(arena, 10, true, 10, 11, Point{}, Point{}),
+	}, nil, 0)
+	ctor := newParentNodeInArena(arena, 5, true, []*Node{newKeyword, typeName, arg}, nil, 0)
+
+	normalizeSolidityCallExpressionAliases(ctor, lang)
+
+	if got, want := ctor.Type(lang), "call_expression"; got != want {
+		t.Fatalf("constructor call type = %q, want %q", got, want)
+	}
+	if !ctor.IsNamed() {
+		t.Fatal("constructor call alias lost named metadata")
+	}
+	if got, want := resultChildCount(ctor), 2; got != want {
+		t.Fatalf("constructor call child count = %d, want %d", got, want)
+	}
+	wrapper := ctor.Child(0)
+	if got, want := wrapper.Type(lang), "expression"; got != want {
+		t.Fatalf("constructor callee wrapper type = %q, want %q", got, want)
+	}
+	inner := wrapper.Child(0)
+	if got, want := inner.Type(lang), "new_expression"; got != want {
+		t.Fatalf("constructor inner type = %q, want %q", got, want)
+	}
+	if got, want := resultChildCount(inner), 2; got != want {
+		t.Fatalf("constructor inner child count = %d, want %d", got, want)
+	}
+	if ctor.Child(1) != arg {
+		t.Fatal("call argument not preserved as outer call child")
+	}
+}
+
+func TestNormalizeSolidityCallExpressionAliasesLeavesNonCallNewExpression(t *testing.T) {
+	lang := solidityMemberLang()
+	arena := newNodeArena(arenaClassFull)
+
+	typeName := newParentNodeInArena(arena, 8, true, []*Node{
+		newLeafNodeInArena(arena, 3, true, 4, 9, Point{}, Point{}),
+	}, nil, 0)
+	ctor := newParentNodeInArena(arena, 5, true, []*Node{typeName}, nil, 0)
+
+	normalizeSolidityCallExpressionAliases(ctor, lang)
+
+	if got, want := ctor.Type(lang), "new_expression"; got != want {
+		t.Fatalf("non-call constructor type = %q, want %q", got, want)
+	}
+}
+
+func TestNormalizeSolidityCallExpressionAliasesWrapsTypeCastCallee(t *testing.T) {
+	lang := solidityMemberLang()
+	arena := newNodeArena(arenaClassFull)
+
+	primitive := newLeafNodeInArena(arena, 11, true, 0, 7, Point{}, Point{})
+	openParen := newLeafNodeInArena(arena, 3, false, 7, 8, Point{}, Point{})
+	arg := newParentNodeInArena(arena, 9, true, []*Node{
+		newLeafNodeInArena(arena, 10, true, 8, 9, Point{}, Point{}),
+	}, nil, 0)
+	cast := newParentNodeInArena(arena, 6, true, []*Node{primitive, openParen, arg}, nil, 0)
+
+	normalizeSolidityCallExpressionAliases(cast, lang)
+
+	if got, want := cast.Type(lang), "call_expression"; got != want {
+		t.Fatalf("type-cast call type = %q, want %q", got, want)
+	}
+	wrapper := cast.Child(0)
+	if got, want := wrapper.Type(lang), "expression"; got != want {
+		t.Fatalf("type-cast callee wrapper type = %q, want %q", got, want)
+	}
+	if got, want := wrapper.Child(0).Type(lang), "primitive_type"; got != want {
+		t.Fatalf("type-cast callee type = %q, want %q", got, want)
+	}
+	if cast.Child(1) != openParen {
+		t.Fatal("open paren was not preserved as an outer call child")
+	}
+	if cast.Child(2) != arg {
+		t.Fatal("call argument was not preserved as an outer call child")
 	}
 }

@@ -510,7 +510,7 @@
     "tier": "I"
   },
   "solidity": {
-    "tier": "IV"
+    "tier": "unranked"
   },
   "sparql": {
     "tier": "II"

@@ -1,19 +1,19 @@
 # Grammar tiers — unreleased
 
-Generated 2026-06-11T14:05:10Z at `44ccad17`. Parity vs the
+Generated 2026-06-11T14:33:30Z at `5c3da7e2`. Parity vs the
 tree-sitter C oracle is the hard gate; performance is the sub-rank
 (rules in `cgo_harness/tier_scan/README.md`).
 
 | tier | count |
 | --- | --- |
-| I | 39 |
+| I | 40 |
 | II | 46 |
 | III | 13 |
-| IV | 108 |
+| IV | 107 |
 
-## Tier I — parity-clean, fast (39)
+## Tier I — parity-clean, fast (40)
 
-`astro`, `bibtex`, `clojure`, `css`, `csv`, `cue`, `dhall`, `elisp`, `enforce`, `faust`, `fidl`, `fish`, `gdscript`, `gitcommit`, `gleam`, `hcl`, `java`, `javascript`, `llvm`, `lua`, `nickel`, `nix`, `php`, `pkl`, `prisma`, `puppet`, `r`, `racket`, `smithy`, `squirrel`, `starlark`, `svelte`, `thrift`, `tsx`, `turtle`, `xml`, `yaml`, `yuck`, `zig`
+`astro`, `bibtex`, `clojure`, `css`, `csv`, `cue`, `dhall`, `elisp`, `enforce`, `faust`, `fidl`, `fish`, `gdscript`, `gitcommit`, `gleam`, `hcl`, `java`, `javascript`, `llvm`, `lua`, `nickel`, `nix`, `php`, `pkl`, `prisma`, `puppet`, `r`, `racket`, `smithy`, `solidity`, `squirrel`, `starlark`, `svelte`, `thrift`, `tsx`, `turtle`, `xml`, `yaml`, `yuck`, `zig`
 
 ## Tier II — parity-clean, ok (46)
 
@@ -23,7 +23,7 @@ tree-sitter C oracle is the hard gate; performance is the sub-rank
 
 `desktop`, `diff`, `dtd`, `eds`, `eex`, `embedded_template`, `facility`, `gomod`, `http`, `nginx`, `ninja`, `properties`, `ssh_config`
 
-## Tier IV — not parity-clean (108)
+## Tier IV — not parity-clean (107)
 
 | grammar | cause | parity |
 | --- | --- | --- |
@@ -117,7 +117,6 @@ tree-sitter C oracle is the hard gate; performance is the sub-rank
 | `scala` | IV-recovery? | 25/40 |
 | `scheme` | IV-perf | 36/40 |
 | `scss` | IV-recovery? | 6/40 |
-| `solidity` | IV-shape? | 10/40 |
 | `sql` | IV-recovery? | 8/40 |
 | `swift` | IV-recovery? | 0/40 |
 | `tcl` | IV-recovery? | 10/40 |
