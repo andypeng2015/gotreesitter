@@ -9,7 +9,7 @@
     "tier": "IV"
   },
   "apex": {
-    "tier": "IV"
+    "tier": "unranked"
   },
   "arduino": {
     "tier": "II"
@@ -294,7 +294,7 @@
     "tier": "IV"
   },
   "ini": {
-    "tier": "IV"
+    "tier": "unranked"
   },
   "janet": {
     "tier": "II"

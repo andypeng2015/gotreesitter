@@ -1,20 +1,20 @@
 # Grammar tiers — unreleased
 
-Generated 2026-06-11T15:14:48Z at `c4e28d62`. Parity vs the
+Generated 2026-06-11T15:41:33Z at `e52a9993`. Parity vs the
 tree-sitter C oracle is the hard gate; performance is the sub-rank
 (rules in `cgo_harness/tier_scan/README.md`).
 
 | tier | count |
 | --- | --- |
-| I | 40 |
+| I | 38 |
 | II | 46 |
 | III | 13 |
-| unranked | 3 |
-| IV | 104 |
+| unranked | 6 |
+| IV | 103 |
 
-## Tier I — parity-clean, fast (40)
+## Tier I — parity-clean, fast (38)
 
-`astro`, `bibtex`, `clojure`, `css`, `csv`, `cue`, `dhall`, `elisp`, `enforce`, `faust`, `fidl`, `fish`, `gdscript`, `gitcommit`, `gleam`, `hcl`, `java`, `javascript`, `llvm`, `lua`, `nickel`, `nix`, `php`, `pkl`, `prisma`, `puppet`, `r`, `racket`, `smithy`, `solidity`, `squirrel`, `starlark`, `svelte`, `thrift`, `tsx`, `turtle`, `xml`, `yaml`, `yuck`, `zig`
+`astro`, `bibtex`, `clojure`, `css`, `csv`, `cue`, `dhall`, `elisp`, `faust`, `fidl`, `fish`, `gdscript`, `gitcommit`, `gleam`, `hcl`, `java`, `javascript`, `llvm`, `lua`, `nickel`, `nix`, `php`, `pkl`, `prisma`, `puppet`, `r`, `racket`, `smithy`, `squirrel`, `starlark`, `svelte`, `thrift`, `tsx`, `turtle`, `xml`, `yaml`, `yuck`, `zig`
 
 ## Tier II — parity-clean, ok (46)
 
@@ -24,18 +24,17 @@ tree-sitter C oracle is the hard gate; performance is the sub-rank
 
 `desktop`, `diff`, `dtd`, `eds`, `eex`, `embedded_template`, `facility`, `gomod`, `http`, `nginx`, `ninja`, `properties`, `ssh_config`
 
-## Unranked — parity-clean, perf measurement pending (3)
+## Unranked — parity-clean, perf measurement pending (6)
 
-`doxygen`, `ini`, `wolfram`
+`apex`, `doxygen`, `enforce`, `ini`, `solidity`, `wolfram`
 
-## Tier IV — not parity-clean (104)
+## Tier IV — not parity-clean (103)
 
 | grammar | cause | parity |
 | --- | --- | --- |
 | `ada` | IV-shape? | 24/30 |
 | `agda` | IV-scanner | 2/40 |
 | `angular` | IV-recovery? | 35/40 |
-| `apex` | IV-shape? | 17/30 |
 | `asm` | IV-recovery | 0/40 |
 | `authzed` | IV-recovery? | 23/30 |
 | `awk` | IV-recovery | 28/29 |

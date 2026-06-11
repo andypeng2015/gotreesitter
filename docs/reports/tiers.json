@@ -1,6 +1,6 @@
 {
- "generated": "2026-06-11T15:14:48Z",
- "commit": "c4e28d62",
+ "generated": "2026-06-11T15:41:33Z",
+ "commit": "e52a9993",
  "version": "unreleased",
  "tier_rules": {
   "I": "parity-clean and <=1.5x C full-parse, cold <=5ms, blob <=150KB",
@@ -10,11 +10,11 @@
   "unranked": "parity-clean; perf measurement pending"
  },
  "histogram": {
-  "IV": 104,
+  "IV": 103,
+  "unranked": 6,
   "II": 46,
-  "I": 40,
-  "III": 13,
-  "unranked": 3
+  "I": 38,
+  "III": 13
  },
  "grammars": [
   {
@@ -40,16 +40,15 @@
   },
   {
    "grammar": "apex",
-   "tier": "IV",
-   "iv_cause": "IV-shape?",
-   "parity": "17/30",
-   "notes": "ext=.cls,.trigger,.apex; preliminary"
+   "tier": "unranked",
+   "parity": "clean",
+   "perf_source": null
   },
   {
    "grammar": "arduino",
    "tier": "II",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "asm",
@@ -62,7 +61,7 @@
    "grammar": "astro",
    "tier": "I",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "authzed",
@@ -89,19 +88,19 @@
    "grammar": "bass",
    "tier": "II",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "beancount",
    "tier": "II",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "bibtex",
    "tier": "I",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "bicep",
@@ -163,13 +162,13 @@
    "grammar": "capnp",
    "tier": "II",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "chatito",
    "tier": "II",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "circom",
@@ -182,13 +181,13 @@
    "grammar": "clojure",
    "tier": "I",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "cmake",
    "tier": "II",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "cobol",
@@ -222,13 +221,13 @@
    "grammar": "corn",
    "tier": "II",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "cpon",
    "tier": "II",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "cpp",
@@ -248,13 +247,13 @@
    "grammar": "css",
    "tier": "I",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "csv",
    "tier": "I",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "cuda",
@@ -267,7 +266,7 @@
    "grammar": "cue",
    "tier": "I",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "cylc",
@@ -294,25 +293,25 @@
    "grammar": "desktop",
    "tier": "III",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "devicetree",
    "tier": "II",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "dhall",
    "tier": "I",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "diff",
    "tier": "III",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "disassembly",
@@ -339,7 +338,7 @@
    "grammar": "dot",
    "tier": "II",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "doxygen",
@@ -351,7 +350,7 @@
    "grammar": "dtd",
    "tier": "III",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "earthfile",
@@ -371,25 +370,25 @@
    "grammar": "editorconfig",
    "tier": "II",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "eds",
    "tier": "III",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "eex",
    "tier": "III",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "elisp",
    "tier": "I",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "elixir",
@@ -402,7 +401,7 @@
    "grammar": "elm",
    "tier": "II",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "elsa",
@@ -415,13 +414,13 @@
    "grammar": "embedded_template",
    "tier": "III",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "enforce",
-   "tier": "I",
+   "tier": "unranked",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": null
   },
   {
    "grammar": "erlang",
@@ -434,13 +433,13 @@
    "grammar": "facility",
    "tier": "III",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "faust",
    "tier": "I",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "fennel",
@@ -453,7 +452,7 @@
    "grammar": "fidl",
    "tier": "I",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "firrtl",
@@ -466,25 +465,25 @@
    "grammar": "fish",
    "tier": "I",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "foam",
    "tier": "II",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "forth",
    "tier": "II",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "fortran",
    "tier": "II",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "fsharp",
@@ -497,43 +496,43 @@
    "grammar": "gdscript",
    "tier": "I",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "git_config",
    "tier": "II",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "git_rebase",
    "tier": "II",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "gitattributes",
    "tier": "II",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "gitcommit",
    "tier": "I",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "gitignore",
    "tier": "II",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "gleam",
    "tier": "I",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "glsl",
@@ -546,7 +545,7 @@
    "grammar": "gn",
    "tier": "II",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "go",
@@ -559,13 +558,13 @@
    "grammar": "godot_resource",
    "tier": "II",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "gomod",
    "tier": "III",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "graphql",
@@ -585,7 +584,7 @@
    "grammar": "hack",
    "tier": "II",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "hare",
@@ -612,13 +611,13 @@
    "grammar": "hcl",
    "tier": "I",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "heex",
    "tier": "II",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "hlsl",
@@ -638,7 +637,7 @@
    "grammar": "http",
    "tier": "III",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "hurl",
@@ -664,19 +663,19 @@
    "grammar": "janet",
    "tier": "II",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "java",
    "tier": "I",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "javascript",
    "tier": "I",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "jinja2",
@@ -689,25 +688,25 @@
    "grammar": "jq",
    "tier": "II",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "jsdoc",
    "tier": "II",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "json",
    "tier": "II",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "json5",
    "tier": "II",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "jsonnet",
@@ -727,7 +726,7 @@
    "grammar": "just",
    "tier": "II",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "kconfig",
@@ -754,7 +753,7 @@
    "grammar": "ledger",
    "tier": "II",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "less",
@@ -781,13 +780,13 @@
    "grammar": "llvm",
    "tier": "I",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "lua",
    "tier": "I",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "luau",
@@ -807,7 +806,7 @@
    "grammar": "markdown",
    "tier": "II",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "markdown_inline",
@@ -855,13 +854,13 @@
    "grammar": "nginx",
    "tier": "III",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "nickel",
    "tier": "I",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "nim",
@@ -874,13 +873,13 @@
    "grammar": "ninja",
    "tier": "III",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "nix",
    "tier": "I",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "norg",
@@ -907,7 +906,7 @@
    "grammar": "ocaml",
    "tier": "II",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "odin",
@@ -934,7 +933,7 @@
    "grammar": "pem",
    "tier": "II",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "perl",
@@ -947,13 +946,13 @@
    "grammar": "php",
    "tier": "I",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "pkl",
    "tier": "I",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "powershell",
@@ -966,7 +965,7 @@
    "grammar": "prisma",
    "tier": "I",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "prolog",
@@ -979,13 +978,13 @@
    "grammar": "promql",
    "tier": "II",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "properties",
    "tier": "III",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "proto",
@@ -1005,7 +1004,7 @@
    "grammar": "puppet",
    "tier": "I",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "purescript",
@@ -1018,25 +1017,25 @@
    "grammar": "python",
    "tier": "II",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "ql",
    "tier": "II",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "r",
    "tier": "I",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "racket",
    "tier": "I",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "regex",
@@ -1056,7 +1055,7 @@
    "grammar": "requirements",
    "tier": "II",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "rescript",
@@ -1076,7 +1075,7 @@
    "grammar": "ron",
    "tier": "II",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "rst",
@@ -1089,7 +1088,7 @@
    "grammar": "ruby",
    "tier": "II",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "rust",
@@ -1123,19 +1122,19 @@
    "grammar": "smithy",
    "tier": "I",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "solidity",
-   "tier": "I",
+   "tier": "unranked",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": null
   },
   {
    "grammar": "sparql",
    "tier": "II",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "sql",
@@ -1148,25 +1147,25 @@
    "grammar": "squirrel",
    "tier": "I",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "ssh_config",
    "tier": "III",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "starlark",
    "tier": "I",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "svelte",
    "tier": "I",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "swift",
@@ -1179,7 +1178,7 @@
    "grammar": "tablegen",
    "tier": "II",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "tcl",
@@ -1206,13 +1205,13 @@
    "grammar": "textproto",
    "tier": "II",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "thrift",
    "tier": "I",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "tlaplus",
@@ -1232,31 +1231,31 @@
    "grammar": "todotxt",
    "tier": "II",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "toml",
    "tier": "II",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "tsx",
    "tier": "I",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "turtle",
    "tier": "I",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "twig",
    "tier": "II",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "typescript",
@@ -1311,7 +1310,7 @@
    "grammar": "vue",
    "tier": "II",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "wat",
@@ -1337,25 +1336,25 @@
    "grammar": "xml",
    "tier": "I",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "yaml",
    "tier": "I",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "yuck",
    "tier": "I",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   },
   {
    "grammar": "zig",
    "tier": "I",
    "parity": "clean",
-   "perf_source": "measured"
+   "perf_source": "floor"
   }
  ]
 }

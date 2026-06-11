@@ -2,7 +2,7 @@ grammar	tier	parity	fix
 ada	IV-shape?	24/30	ext=.adb,.ads; preliminary
 agda	IV-scanner	2/40	layout scanner, deep port needed (maple)
 angular	IV-recovery?	35/40	ext=.component.html,.ng.html; faithful C error-cost version competition (see spec)
-apex	IV-shape?	17/30	ext=.cls,.trigger,.apex; preliminary
+apex	CLEAN	30/30	Apex generic local declarations and .class literal compatibility normalized to C oracle; Docker parity verified 2026-06-11
 arduino	CLEAN	40/40	in ratchet
 asm	IV-recovery	0/40	faithful C error-cost version competition (see spec)
 astro	CLEAN	40/40	in ratchet

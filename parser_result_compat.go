@@ -57,6 +57,8 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) ParseStopRea
 	}
 
 	switch ctx.lang.Name {
+	case "apex":
+		normalizeApexCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "authzed":
 		normalizeAuthzedCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "awk":
