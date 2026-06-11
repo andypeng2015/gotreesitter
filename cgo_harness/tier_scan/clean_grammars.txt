@@ -39,6 +39,7 @@ json
 json5
 llvm
 lua
+markdown
 nginx
 nickel
 nix
