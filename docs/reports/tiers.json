@@ -1,6 +1,6 @@
 {
- "generated": "2026-06-11T10:44:01Z",
- "commit": "2c278af2",
+ "generated": "2026-06-11T10:47:26Z",
+ "commit": "d586f922",
  "version": "unreleased",
  "tier_rules": {
   "I": "parity-clean and <=1.5x C full-parse, cold <=5ms, blob <=150KB",
@@ -10,10 +10,10 @@
   "unranked": "parity-clean; perf measurement pending"
  },
  "histogram": {
-  "IV": 117,
+  "IV": 116,
   "II": 40,
   "I": 38,
-  "III": 11
+  "III": 12
  },
  "grammars": [
   {
@@ -1162,10 +1162,9 @@
   },
   {
    "grammar": "ssh_config",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
-   "parity": "1/2",
-   "notes": "canonical-frame demotion (one-time reset)"
+   "tier": "III",
+   "parity": "clean",
+   "perf_source": "measured"
   },
   {
    "grammar": "starlark",

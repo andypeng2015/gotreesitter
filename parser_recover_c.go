@@ -165,6 +165,11 @@ func errorCostCompetitionLanguage(lang *Language) bool {
 		// from whole-file ERROR roots to manifest roots; the remaining emhash
 		// child coalescing shape is normalized in parser_result_ninja.go.
 		return true
+	case "ssh_config":
+		// Tier-IV recovery fan-out: 1/2 -> 2/2 on the tiny lock-filtered
+		// corpus. The sshd_config witness needs C's recovery-cost election to
+		// keep a config root while preserving the local ERROR region.
+		return true
 	}
 	return false
 }
