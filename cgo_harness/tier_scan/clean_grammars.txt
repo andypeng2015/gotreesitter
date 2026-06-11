@@ -1,6 +1,7 @@
 apex
 arduino
 astro
+authzed
 bass
 beancount
 bibtex

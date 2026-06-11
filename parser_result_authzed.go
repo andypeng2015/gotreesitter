@@ -3,6 +3,7 @@ package gotreesitter
 import "bytes"
 
 func normalizeAuthzedCompatibility(root *Node, source []byte, lang *Language) {
+	normalizeAuthzedCleanRootShape(root, source, lang)
 	normalizeAuthzedObjectCaveatRecovery(root, source, lang)
 	normalizeAuthzedUnclosedCaveatRecovery(root, source, lang)
 	normalizeAuthzedStrayCaveatTailRecovery(root, source, lang)
@@ -12,6 +13,120 @@ func normalizeAuthzedCompatibility(root *Node, source []byte, lang *Language) {
 	normalizeAuthzedMalformedDefinitionRoot(root, source, lang)
 	normalizeAuthzedMissingPermissionExpression(root, source, lang)
 	normalizeAuthzedWholeRootErrorTrivia(root, source, lang)
+}
+
+func normalizeAuthzedCleanRootShape(root *Node, source []byte, lang *Language) {
+	if root == nil || lang == nil || lang.Name != "authzed" || root.hasError() || symbolTypeName(lang, root.symbol) != "source_file" {
+		return
+	}
+	children := resultChildSliceForMutation(root)
+	if len(children) == 0 {
+		return
+	}
+	out := make([]*Node, 0, len(children))
+	changed := false
+	for i := 0; i < len(children); {
+		child := children[i]
+		if child == nil {
+			i++
+			continue
+		}
+		switch symbolTypeName(lang, child.symbol) {
+		case "_whitespace":
+			changed = true
+			i++
+			continue
+		case "definition_literal":
+			if def, next, ok := authzedDefinitionFromFlatRootChildren(children, i, source, root.ownerArena, lang); ok {
+				out = append(out, def)
+				changed = true
+				i = next
+				continue
+			}
+		}
+		out = append(out, child)
+		i++
+	}
+	if !changed {
+		return
+	}
+	if len(source) == 0 || source[len(source)-1] != '\n' {
+		if eof := authzedEOFLeaf(root.ownerArena, lang, source); eof != nil {
+			out = append(out, eof)
+		}
+	}
+	root.children = cloneNodeSliceInArena(root.ownerArena, out)
+	root.fieldIDs = nil
+	root.fieldSources = nil
+	populateParentNode(root, root.children)
+	root.setHasError(false)
+	root.startByte = 0
+	root.endByte = uint32(len(source))
+	root.startPoint = Point{}
+	root.endPoint = advancePointByBytes(Point{}, source)
+}
+
+func authzedDefinitionFromFlatRootChildren(children []*Node, start int, source []byte, arena *nodeArena, lang *Language) (*Node, int, bool) {
+	if start < 0 || start >= len(children) || children[start] == nil || symbolTypeName(lang, children[start].symbol) != "definition_literal" {
+		return nil, start, false
+	}
+	defSym, ok := symbolByName(lang, "definition")
+	if !ok {
+		return nil, start, false
+	}
+	blockSym, ok := symbolByName(lang, "block")
+	if !ok {
+		return nil, start, false
+	}
+	nextContent := func(i int) int {
+		for i < len(children) {
+			if children[i] == nil {
+				i++
+				continue
+			}
+			switch symbolTypeName(lang, children[i].symbol) {
+			case "_whitespace", "\n":
+				i++
+				continue
+			default:
+				return i
+			}
+		}
+		return -1
+	}
+	nameIdx := nextContent(start + 1)
+	if nameIdx < 0 || symbolTypeName(lang, children[nameIdx].symbol) != "identifier" {
+		return nil, start, false
+	}
+	lbraceIdx := nextContent(nameIdx + 1)
+	if lbraceIdx < 0 || symbolTypeName(lang, children[lbraceIdx].symbol) != "{" {
+		return nil, start, false
+	}
+	blockChildren := make([]*Node, 0, 6)
+	blockChildren = append(blockChildren, children[lbraceIdx])
+	for i := lbraceIdx + 1; i < len(children); i++ {
+		child := children[i]
+		if child == nil {
+			continue
+		}
+		switch symbolTypeName(lang, child.symbol) {
+		case "_whitespace", "\n":
+			continue
+		case "}":
+			blockChildren = append(blockChildren, child)
+			block := newParentNodeInArena(arena, blockSym, symbolIsNamed(lang, blockSym), cloneNodeSliceInArena(arena, blockChildren), nil, 0)
+			authzedSetNodeRange(block, source, int(children[lbraceIdx].startByte), int(child.endByte))
+			defChildren := cloneNodeSliceInArena(arena, []*Node{children[start], children[nameIdx], block})
+			def := newParentNodeInArena(arena, defSym, symbolIsNamed(lang, defSym), defChildren, authzedDefinitionFieldIDs(arena, lang), 0)
+			authzedSetNodeRange(def, source, int(children[start].startByte), int(child.endByte))
+			return def, i + 1, true
+		case "relation", "permission":
+			blockChildren = append(blockChildren, child)
+		default:
+			return nil, start, false
+		}
+	}
+	return nil, start, false
 }
 
 func normalizeAuthzedUnclosedCaveatRecovery(root *Node, source []byte, lang *Language) {

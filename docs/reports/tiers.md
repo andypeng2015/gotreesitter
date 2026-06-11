@@ -1,6 +1,6 @@
 # Grammar tiers — unreleased
 
-Generated 2026-06-11T15:41:33Z at `e52a9993`. Parity vs the
+Generated 2026-06-11T15:56:14Z at `d82667ae`. Parity vs the
 tree-sitter C oracle is the hard gate; performance is the sub-rank
 (rules in `cgo_harness/tier_scan/README.md`).
 
@@ -9,8 +9,8 @@ tree-sitter C oracle is the hard gate; performance is the sub-rank
 | I | 38 |
 | II | 46 |
 | III | 13 |
-| unranked | 6 |
-| IV | 103 |
+| unranked | 7 |
+| IV | 102 |
 
 ## Tier I — parity-clean, fast (38)
 
@@ -24,11 +24,11 @@ tree-sitter C oracle is the hard gate; performance is the sub-rank
 
 `desktop`, `diff`, `dtd`, `eds`, `eex`, `embedded_template`, `facility`, `gomod`, `http`, `nginx`, `ninja`, `properties`, `ssh_config`
 
-## Unranked — parity-clean, perf measurement pending (6)
+## Unranked — parity-clean, perf measurement pending (7)
 
-`apex`, `doxygen`, `enforce`, `ini`, `solidity`, `wolfram`
+`apex`, `authzed`, `doxygen`, `enforce`, `ini`, `solidity`, `wolfram`
 
-## Tier IV — not parity-clean (103)
+## Tier IV — not parity-clean (102)
 
 | grammar | cause | parity |
 | --- | --- | --- |
@@ -36,7 +36,6 @@ tree-sitter C oracle is the hard gate; performance is the sub-rank
 | `agda` | IV-scanner | 2/40 |
 | `angular` | IV-recovery? | 35/40 |
 | `asm` | IV-recovery | 0/40 |
-| `authzed` | IV-recovery? | 23/30 |
 | `awk` | IV-recovery | 28/29 |
 | `bash` | IV-recovery? | 30/40 |
 | `bicep` | IV-recovery? | 24/30 |
