@@ -1,6 +1,6 @@
 {
- "generated": "2026-06-11T15:56:14Z",
- "commit": "d82667ae",
+ "generated": "2026-06-11T16:06:12Z",
+ "commit": "5a2d8938",
  "version": "unreleased",
  "tier_rules": {
   "I": "parity-clean and <=1.5x C full-parse, cold <=5ms, blob <=150KB",
@@ -10,8 +10,8 @@
   "unranked": "parity-clean; perf measurement pending"
  },
  "histogram": {
-  "IV": 102,
-  "unranked": 7,
+  "unranked": 8,
+  "IV": 101,
   "II": 46,
   "I": 38,
   "III": 13
@@ -19,10 +19,9 @@
  "grammars": [
   {
    "grammar": "ada",
-   "tier": "IV",
-   "iv_cause": "IV-shape?",
-   "parity": "24/30",
-   "notes": "ext=.adb,.ads; preliminary"
+   "tier": "unranked",
+   "parity": "clean",
+   "perf_source": null
   },
   {
    "grammar": "agda",

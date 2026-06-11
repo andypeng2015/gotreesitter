@@ -1,5 +1,5 @@
 grammar	tier	parity	fix
-ada	IV-shape?	24/30	ext=.adb,.ads; preliminary
+ada	CLEAN	30/30	Ada aggregate/index-constraint compatibility normalized to C oracle; Docker tier parity verified 2026-06-11
 agda	IV-scanner	2/40	layout scanner, deep port needed (maple)
 angular	IV-recovery?	35/40	ext=.component.html,.ng.html; faithful C error-cost version competition (see spec)
 apex	CLEAN	30/30	Apex generic local declarations and .class literal compatibility normalized to C oracle; Docker parity verified 2026-06-11
