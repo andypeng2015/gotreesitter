@@ -1,6 +1,6 @@
 {
- "generated": "2026-06-12T21:48:43Z",
- "commit": "824bd684",
+ "generated": "2026-06-12T21:59:21Z",
+ "commit": "2524d807",
  "version": "unreleased",
  "tier_rules": {
   "I": "parity-clean and <=1.5x C full-parse, cold <=5ms, blob <=150KB",
@@ -1030,9 +1030,9 @@
   {
    "grammar": "regex",
    "tier": "IV",
-   "iv_cause": "IV-unknown?",
+   "iv_cause": "IV-perf",
    "parity": "0/1",
-   "notes": "ext=.regex; stackcap disproven (default iteration_limit, cap 2 no_stacks_alive); single-file corpus with UTF-8 BOM: C roots after the BOM (StartByte 3) and parses all 2255 bytes, go roots at 0 and truncates at 390"
+   "notes": "ext=.regex; single-file BOM corpus, but BOM preprocessing is not the cause: StartByte 3 is already correct. C completes pattern->term to byte 2255; Go truncates before EOF reductions/materialization, with probes stopping at iteration_limit (3:391), node_limit after higher iteration budget (3:583, ~2035604 KB RSS), and cap-2 no_stacks_alive (3:2049)."
   },
   {
    "grammar": "rego",

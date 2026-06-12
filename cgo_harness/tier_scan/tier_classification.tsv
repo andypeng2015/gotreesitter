@@ -153,7 +153,7 @@ python	CLEAN	40/40	in ratchet
 ql	CLEAN	40/40	in ratchet; verified after willow shape fixes
 r	CLEAN	40/40	in ratchet; verified after willow shape fixes
 racket	CLEAN	40/40	in ratchet
-regex	IV-unknown?	0/1	ext=.regex; stackcap disproven (default iteration_limit, cap 2 no_stacks_alive); single-file corpus with UTF-8 BOM: C roots after the BOM (StartByte 3) and parses all 2255 bytes, go roots at 0 and truncates at 390
+regex	IV-perf	0/1	ext=.regex; single-file BOM corpus, but BOM preprocessing is not the cause: StartByte 3 is already correct. C completes pattern->term to byte 2255; Go truncates before EOF reductions/materialization, with probes stopping at iteration_limit (3:391), node_limit after higher iteration budget (3:583, ~2035604 KB RSS), and cap-2 no_stacks_alive (3:2049).
 rego	IV-recovery?	7/40	faithful C error-cost version competition (see spec)
 requirements	CLEAN	9/9	in ratchet; first IV-recovery clear via faithful C-recovery port (errorCostCompetitionLanguage gate)
 rescript	IV-recovery?	29/40	Rescript value_identifier_path alias normalization cleared clean-root shape residuals; remaining 11/40 are Go root ERROR vs C source_file with trunc=0/panics=0, requiring faithful C error-cost version competition
