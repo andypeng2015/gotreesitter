@@ -1,34 +1,29 @@
 # Grammar tiers — unreleased
 
-Generated 2026-06-12T02:37:27Z at `34a4ecb9`. Parity vs the
+Generated 2026-06-12T02:51:44Z at `b6f88d77`. Parity vs the
 tree-sitter C oracle is the hard gate; performance is the sub-rank
 (rules in `cgo_harness/tier_scan/README.md`).
 
 | tier | count |
 | --- | --- |
-| I | 38 |
-| II | 46 |
-| III | 13 |
-| unranked | 12 |
-| IV | 97 |
+| I | 42 |
+| II | 53 |
+| III | 15 |
+| IV | 96 |
 
-## Tier I — parity-clean, fast (38)
+## Tier I — parity-clean, fast (42)
 
-`astro`, `bibtex`, `clojure`, `css`, `csv`, `cue`, `dhall`, `elisp`, `faust`, `fidl`, `fish`, `gdscript`, `gitcommit`, `gleam`, `hcl`, `java`, `javascript`, `llvm`, `lua`, `nickel`, `nix`, `php`, `pkl`, `prisma`, `puppet`, `r`, `racket`, `smithy`, `squirrel`, `starlark`, `svelte`, `thrift`, `tsx`, `turtle`, `xml`, `yaml`, `yuck`, `zig`
+`astro`, `bibtex`, `bicep`, `clojure`, `css`, `csv`, `cue`, `dhall`, `doxygen`, `elisp`, `enforce`, `faust`, `fidl`, `fish`, `gdscript`, `gitcommit`, `gleam`, `hcl`, `java`, `javascript`, `llvm`, `lua`, `nickel`, `nix`, `php`, `pkl`, `prisma`, `puppet`, `r`, `racket`, `smithy`, `solidity`, `squirrel`, `starlark`, `svelte`, `thrift`, `tsx`, `turtle`, `xml`, `yaml`, `yuck`, `zig`
 
-## Tier II — parity-clean, ok (46)
+## Tier II — parity-clean, ok (53)
 
-`arduino`, `bass`, `beancount`, `capnp`, `chatito`, `cmake`, `corn`, `cpon`, `devicetree`, `dot`, `editorconfig`, `elm`, `foam`, `forth`, `fortran`, `git_config`, `git_rebase`, `gitattributes`, `gitignore`, `gn`, `godot_resource`, `hack`, `heex`, `janet`, `jq`, `jsdoc`, `json`, `json5`, `just`, `ledger`, `markdown`, `ocaml`, `pem`, `promql`, `python`, `ql`, `requirements`, `ron`, `ruby`, `sparql`, `tablegen`, `textproto`, `todotxt`, `toml`, `twig`, `vue`
+`ada`, `apex`, `arduino`, `authzed`, `bass`, `beancount`, `capnp`, `chatito`, `cmake`, `corn`, `cpon`, `devicetree`, `dot`, `editorconfig`, `elm`, `foam`, `forth`, `fortran`, `git_config`, `git_rebase`, `gitattributes`, `gitignore`, `gn`, `godot_resource`, `graphql`, `hack`, `heex`, `hlsl`, `ini`, `janet`, `jq`, `jsdoc`, `json`, `json5`, `just`, `ledger`, `markdown`, `ocaml`, `pem`, `promql`, `python`, `ql`, `requirements`, `ron`, `ruby`, `sparql`, `tablegen`, `textproto`, `todotxt`, `toml`, `twig`, `vue`, `wolfram`
 
-## Tier III — parity-clean, poor perf (13)
+## Tier III — parity-clean, poor perf (15)
 
-`desktop`, `diff`, `dtd`, `eds`, `eex`, `embedded_template`, `facility`, `gomod`, `http`, `nginx`, `ninja`, `properties`, `ssh_config`
+`comment`, `desktop`, `diff`, `dtd`, `eds`, `eex`, `embedded_template`, `facility`, `gomod`, `http`, `hyprlang`, `nginx`, `ninja`, `properties`, `ssh_config`
 
-## Unranked — parity-clean, perf measurement pending (12)
-
-`ada`, `apex`, `authzed`, `bicep`, `comment`, `doxygen`, `enforce`, `graphql`, `hyprlang`, `ini`, `solidity`, `wolfram`
-
-## Tier IV — not parity-clean (97)
+## Tier IV — not parity-clean (96)
 
 | grammar | cause | parity |
 | --- | --- | --- |
@@ -71,7 +66,6 @@ tree-sitter C oracle is the hard gate; performance is the sub-rank
 | `hare` | IV-recovery | 20/40 |
 | `haskell` | IV-scanner | 11/40 |
 | `haxe` | IV-recovery | 7/40 |
-| `hlsl` | IV-recovery | 33/40 |
 | `html` | IV-recovery | 0/40 |
 | `hurl` | IV-recovery | 13/40 |
 | `jinja2` | IV-recovery | 3/40 |

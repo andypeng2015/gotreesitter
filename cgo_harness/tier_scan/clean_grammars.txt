@@ -52,6 +52,7 @@ gomod
 hack
 hcl
 heex
+hlsl
 http
 hyprlang
 ini

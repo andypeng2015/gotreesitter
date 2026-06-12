@@ -199,6 +199,12 @@ func errorCostCompetitionLanguage(lang *Language) bool {
 		// with extension-sample roots becoming whole-file ERROR nodes; C
 		// recovery keeps infrastructure roots and localizes the ERROR regions.
 		return true
+	case "hlsl":
+		// Tier-IV recovery fan-out: baseline direct C-oracle parity is 33/40.
+		// The C recovery election lifts malformed call/cbuffer witnesses out of
+		// whole-file ERROR roots; the residual deterministic HLSL expression/type
+		// shape choices are normalized in parser_result_hlsl.go.
+		return true
 	}
 	return false
 }

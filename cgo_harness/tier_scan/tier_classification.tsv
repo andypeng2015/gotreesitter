@@ -90,7 +90,7 @@ haskell	IV-scanner	11/40	layout scanner, deep port needed (maple)
 haxe	IV-recovery	7/40	pins at upstream HEAD; C at same pin parses corpus clean — runtime fidelity, not version (oak 2026-06-10)
 hcl	CLEAN	40/40	in ratchet
 heex	CLEAN	40/40	in ratchet
-hlsl	IV-recovery	33/40	faithful C error-cost version competition (see spec)
+hlsl	CLEAN	40/40	C recovery election plus HLSL result-shape compatibility normalization clears default cgo oracle gate (verified 2026-06-12)
 html	IV-recovery	0/40	faithful C error-cost version competition (see spec)
 http	CLEAN	11/11	full available HTTP corpus parity in Docker after section-fold compatibility fix (2026-06-11)
 hurl	IV-recovery	13/40	faithful C error-cost version competition (see spec)
