@@ -1,6 +1,6 @@
 {
- "generated": "2026-06-11T16:06:12Z",
- "commit": "5a2d8938",
+ "generated": "2026-06-12T00:29:36Z",
+ "commit": "62512a4a",
  "version": "unreleased",
  "tier_rules": {
   "I": "parity-clean and <=1.5x C full-parse, cold <=5ms, blob <=150KB",
@@ -10,8 +10,8 @@
   "unranked": "parity-clean; perf measurement pending"
  },
  "histogram": {
-  "unranked": 8,
-  "IV": 101,
+  "unranked": 9,
+  "IV": 100,
   "II": 46,
   "I": 38,
   "III": 13
@@ -646,10 +646,9 @@
   },
   {
    "grammar": "hyprlang",
-   "tier": "IV",
-   "iv_cause": "IV-recovery",
-   "parity": "1/2",
-   "notes": "ext=.conf; C-recovery gate tried and REVERTED (parity-neutral 1/2, run 20260610T091230Z-redwood-wave1b): witness hyprland.conf root ERROR vs C configuration unchanged under gate, plus a non-recovery deep diff (root[92][9][2] go string vs c boolean) \u2014 two divergence classes; recover shape needs stage-2, the string/boolean diff needs lex/shape triage"
+   "tier": "unranked",
+   "parity": "clean",
+   "perf_source": null
   },
   {
    "grammar": "ini",

@@ -50,6 +50,7 @@ hack
 hcl
 heex
 http
+hyprlang
 ini
 janet
 java

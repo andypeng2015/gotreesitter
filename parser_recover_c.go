@@ -170,6 +170,13 @@ func errorCostCompetitionLanguage(lang *Language) bool {
 		// corpus. The sshd_config witness needs C's recovery-cost election to
 		// keep a config root while preserving the local ERROR region.
 		return true
+	case "hyprlang":
+		// Tier-IV recovery fan-out: baseline direct C-oracle parity is 1/2
+		// with hyprland.conf rooted as ERROR while C keeps a configuration
+		// root. GOT_C_RECOVERY=hyprlang clears that root-shape class with
+		// no truncation or panic; the remaining bare boolean value shape is
+		// normalized in parser_result_hyprlang.go.
+		return true
 	case "just":
 		// Tier-IV recovery fan-out: rule110.just needs C's recovery-cost
 		// election to keep a source_file root with localized errors. The
