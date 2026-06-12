@@ -180,7 +180,7 @@ teal	IV-recovery?	4/40	faithful C error-cost version competition (see spec)
 templ	IV-recovery?	33/40	faithful C error-cost version competition (see spec)
 textproto	CLEAN	40/40	in ratchet
 thrift	CLEAN	40/40	in ratchet
-tlaplus	IV-unknown?	14/40	ext=.tla; stackcap disproven (cap 2: 21→20 iteration_limit truncations, parity unchanged); 197x median ratio with deep truncations (go stops at 1-2KB where C parses 11-31KB) — likely jlist external-scanner-driven GLR churn
+tlaplus	IV-perf	14/40	ext=.tla; reproduced on origin/parity/c-oracle-clears b52df6d9: 14/40, median 201x, agg 847x, trunc 21/40, max RSS 5.9GB; cap 2 stays 14/40 (trunc 20/40), so not IV-stackcap. Dominant family is early stop under GLR churn (memory_budget, iteration_limit, node_limit, no_stacks_alive) where C parses full files; residual accepted divergences include scanner/shape-sensitive operator forms such as DOMAIN(f) bound_nonfix_op vs bound_prefix_op.
 tmux	IV-recovery?	0/1	ext=.tmux.conf,tmux.conf; faithful C error-cost version competition (see spec)
 todotxt	CLEAN	40/40	in ratchet
 toml	CLEAN	11/11	in ratchet
