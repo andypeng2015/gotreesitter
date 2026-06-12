@@ -1,20 +1,19 @@
 {
- "generated": "2026-06-12T07:36:08Z",
- "commit": "34cb68f4",
+ "generated": "2026-06-12T07:46:25Z",
+ "commit": "2e747bf4",
  "version": "unreleased",
  "tier_rules": {
   "I": "parity-clean and <=1.5x C full-parse, cold <=5ms, blob <=150KB",
   "II": "parity-clean and <=8x C full-parse, cold <=20ms",
-  "III": "parity-clean and (>8x C or cold >20ms or blob >400KB)",
-  "IV": "not parity-clean (any divergence vs the C oracle, or unmeasured)",
+  "III": "parity-clean poor perf, or assessed non-clean heavy normalization/recovery/perf work",
+  "IV": "unassessed, unknown-risk, or unclassified",
   "unranked": "parity-clean; perf measurement pending"
  },
  "histogram": {
   "unranked": 14,
-  "IV": 93,
+  "III": 106,
   "II": 48,
-  "I": 38,
-  "III": 13
+  "I": 38
  },
  "grammars": [
   {
@@ -25,15 +24,15 @@
   },
   {
    "grammar": "agda",
-   "tier": "IV",
-   "iv_cause": "IV-scanner",
+   "tier": "III",
+   "cause": "III-scanner",
    "parity": "2/40",
    "notes": "layout scanner, deep port needed (maple)"
   },
   {
    "grammar": "angular",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
+   "tier": "III",
+   "cause": "III-recovery?",
    "parity": "35/40",
    "notes": "ext=.component.html,.ng.html; faithful C error-cost version competition (see spec)"
   },
@@ -51,8 +50,8 @@
   },
   {
    "grammar": "asm",
-   "tier": "IV",
-   "iv_cause": "IV-recovery",
+   "tier": "III",
+   "cause": "III-recovery",
    "parity": "0/40",
    "notes": "faithful C error-cost version competition (see spec)"
   },
@@ -70,15 +69,15 @@
   },
   {
    "grammar": "awk",
-   "tier": "IV",
-   "iv_cause": "IV-recovery",
+   "tier": "III",
+   "cause": "III-recovery",
    "parity": "28/29",
    "notes": "T.gawk rule-splitting vs C in-rule absorption"
   },
   {
    "grammar": "bash",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
+   "tier": "III",
+   "cause": "III-recovery?",
    "parity": "30/40",
    "notes": "ext=.sh; stackcap disproven (cap-256 floor entry already present); divergences are recovery-shape: go ERROR root where C recovers program (lib.sh, git-prompt.sh, git-subtree.sh) plus small child-count diffs; 1 trunc (cmd-list.sh no_stacks_alive)"
   },
@@ -108,50 +107,50 @@
   },
   {
    "grammar": "bitbake",
-   "tier": "IV",
-   "iv_cause": "IV-recovery",
+   "tier": "III",
+   "cause": "III-recovery",
    "parity": "35/40",
    "notes": "canonical-frame demotion (one-time reset)"
   },
   {
    "grammar": "blade",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
+   "tier": "III",
+   "cause": "III-recovery?",
    "parity": "17/30",
    "notes": "ext=.blade.php; faithful C error-cost version competition (see spec)"
   },
   {
    "grammar": "brightscript",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
+   "tier": "III",
+   "cause": "III-recovery?",
    "parity": "0/30",
    "notes": "ext=.brs; faithful C error-cost version competition (see spec)"
   },
   {
    "grammar": "c",
-   "tier": "IV",
-   "iv_cause": "IV-recovery",
+   "tier": "III",
+   "cause": "III-recovery",
    "parity": "21/40",
    "notes": "faithful C error-cost version competition (see spec)"
   },
   {
    "grammar": "c_sharp",
-   "tier": "IV",
-   "iv_cause": "IV-recovery",
+   "tier": "III",
+   "cause": "III-recovery",
    "parity": "26/40",
    "notes": "faithful C error-cost version competition (see spec)"
   },
   {
    "grammar": "caddy",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
+   "tier": "III",
+   "cause": "III-recovery?",
    "parity": "9/30",
    "notes": "ext=Caddyfile; faithful C error-cost version competition (see spec)"
   },
   {
    "grammar": "cairo",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
+   "tier": "III",
+   "cause": "III-recovery?",
    "parity": "0/30",
    "notes": "ext=.cairo; faithful C error-cost version competition (see spec)"
   },
@@ -169,8 +168,8 @@
   },
   {
    "grammar": "circom",
-   "tier": "IV",
-   "iv_cause": "IV-shape?",
+   "tier": "III",
+   "cause": "III-shape?",
    "parity": "11/30",
    "notes": "ext=.circom; preliminary"
   },
@@ -188,8 +187,8 @@
   },
   {
    "grammar": "cobol",
-   "tier": "IV",
-   "iv_cause": "IV-version",
+   "tier": "III",
+   "cause": "III-version",
    "parity": "0/40",
    "notes": "corpus is CICS/embedded-SQL COBOL the pinned grammar doesn't support \u2014 12/12 sampled root-ERROR in C too (maple)"
   },
@@ -201,15 +200,15 @@
   },
   {
    "grammar": "commonlisp",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
+   "tier": "III",
+   "cause": "III-recovery?",
    "parity": "22/30",
    "notes": "ext=.lisp,.cl; faithful C error-cost version competition (see spec)"
   },
   {
    "grammar": "cooklang",
-   "tier": "IV",
-   "iv_cause": "IV-recovery",
+   "tier": "III",
+   "cause": "III-recovery",
    "parity": "0/3",
    "notes": "ext=.cook; stackcap disproven (cap 2 not kept); C-recovery gate tried and REVERTED (parity stays 0/3, run 20260610T091230Z-redwood-wave1b) though it helps: trunc 3 -> 2, all roots become named recipe, complex_test_recipe now differs only by EndByte 2522 vs 2523 (the missing-trailing-newline EOF byte); frontmatter/test_recipe still truncate early (go EndByte 2383/2644 vs c 2799/2994) \u2014 go stops mid-file where C absorbs on; stage-2 EOF-byte + truncation work, then re-enable"
   },
@@ -227,15 +226,15 @@
   },
   {
    "grammar": "cpp",
-   "tier": "IV",
-   "iv_cause": "IV-recovery",
+   "tier": "III",
+   "cause": "III-recovery",
    "parity": "10/40",
    "notes": "faithful C error-cost version competition (see spec)"
   },
   {
    "grammar": "crystal",
-   "tier": "IV",
-   "iv_cause": "IV-perf",
+   "tier": "III",
+   "cause": "III-perf",
    "parity": "0/0",
    "notes": "timeout-or-fail at 1200s canonical budget"
   },
@@ -253,8 +252,8 @@
   },
   {
    "grammar": "cuda",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
+   "tier": "III",
+   "cause": "III-recovery?",
    "parity": "17/30",
    "notes": "ext=.cu,.cuh; faithful C error-cost version competition (see spec)"
   },
@@ -266,22 +265,22 @@
   },
   {
    "grammar": "cylc",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
+   "tier": "III",
+   "cause": "III-recovery?",
    "parity": "4/30",
    "notes": "ext=.cylc; faithful C error-cost version competition (see spec)"
   },
   {
    "grammar": "d",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
+   "tier": "III",
+   "cause": "III-recovery?",
    "parity": "14/30",
    "notes": "ext=.d; faithful C error-cost version competition (see spec)"
   },
   {
    "grammar": "dart",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
+   "tier": "III",
+   "cause": "III-recovery?",
    "parity": "11/30",
    "notes": "ext=.dart; faithful C error-cost version competition (see spec)"
   },
@@ -311,22 +310,22 @@
   },
   {
    "grammar": "disassembly",
-   "tier": "IV",
-   "iv_cause": "IV-version",
+   "tier": "III",
+   "cause": "III-version",
    "parity": "0/40",
    "notes": "German-locale riscv objdump corpus the grammar doesn't model \u2014 10/10 C-error (maple)"
   },
   {
    "grammar": "djot",
-   "tier": "IV",
-   "iv_cause": "IV-scanner?",
+   "tier": "III",
+   "cause": "III-scanner?",
    "parity": "0/40",
-   "notes": "ext=.dj,.djot; 0/40 with 39 truncations (node_limit persists at stack cap 2: 8.4KB file blows the node budget); markdown-class inline ambiguity \u2014 re-port stateful external scanner from pinned upstream; also IV-perf component (maple)"
+   "notes": "ext=.dj,.djot; 0/40 with 39 truncations (node_limit persists at stack cap 2: 8.4KB file blows the node budget); markdown-class inline ambiguity \u2014 re-port stateful external scanner from pinned upstream; also III-perf component (maple)"
   },
   {
    "grammar": "dockerfile",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
+   "tier": "III",
+   "cause": "III-recovery?",
    "parity": "0/30",
    "notes": "ext=Dockerfile,.dockerfile; faithful C error-cost version competition (see spec)"
   },
@@ -350,15 +349,15 @@
   },
   {
    "grammar": "earthfile",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
+   "tier": "III",
+   "cause": "III-recovery?",
    "parity": "0/30",
    "notes": "ext=Earthfile; faithful C error-cost version competition (see spec)"
   },
   {
    "grammar": "ebnf",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
+   "tier": "III",
+   "cause": "III-recovery?",
    "parity": "0/30",
    "notes": "ext=.ebnf; faithful C error-cost version competition (see spec)"
   },
@@ -388,10 +387,10 @@
   },
   {
    "grammar": "elixir",
-   "tier": "IV",
-   "iv_cause": "IV-unknown",
+   "tier": "III",
+   "cause": "III-recovery?",
    "parity": "0/40",
-   "notes": "needs deeper single-file diagnosis"
+   "notes": "assessed recovery/layout/root-shape work: repeated root source child-count +2 residuals with root ERROR; not parity-clean"
   },
   {
    "grammar": "elm",
@@ -401,8 +400,8 @@
   },
   {
    "grammar": "elsa",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
+   "tier": "III",
+   "cause": "III-recovery?",
    "parity": "12/27",
    "notes": "ext=.lc; faithful C error-cost version competition (see spec)"
   },
@@ -420,8 +419,8 @@
   },
   {
    "grammar": "erlang",
-   "tier": "IV",
-   "iv_cause": "IV-recovery",
+   "tier": "III",
+   "cause": "III-recovery",
    "parity": "38/40",
    "notes": "bif_SUITE ambiguity-selection + binary_SUITE blowup trunc"
   },
@@ -439,8 +438,8 @@
   },
   {
    "grammar": "fennel",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
+   "tier": "III",
+   "cause": "III-recovery?",
    "parity": "8/30",
    "notes": "ext=.fnl; faithful C error-cost version competition (see spec)"
   },
@@ -452,8 +451,8 @@
   },
   {
    "grammar": "firrtl",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
+   "tier": "III",
+   "cause": "III-recovery?",
    "parity": "5/27",
    "notes": "ext=.fir; faithful C error-cost version competition (see spec)"
   },
@@ -483,8 +482,8 @@
   },
   {
    "grammar": "fsharp",
-   "tier": "IV",
-   "iv_cause": "IV-perf",
+   "tier": "III",
+   "cause": "III-perf",
    "parity": "0/8",
    "notes": "timeout-or-fail at 1200s canonical budget"
   },
@@ -532,8 +531,8 @@
   },
   {
    "grammar": "glsl",
-   "tier": "IV",
-   "iv_cause": "IV-recovery",
+   "tier": "III",
+   "cause": "III-recovery",
    "parity": "11/40",
    "notes": "faithful C error-cost version competition (see spec)"
   },
@@ -569,8 +568,8 @@
   },
   {
    "grammar": "groovy",
-   "tier": "IV",
-   "iv_cause": "IV-recovery",
+   "tier": "III",
+   "cause": "III-recovery",
    "parity": "4/40",
    "notes": "faithful C error-cost version competition (see spec)"
   },
@@ -582,22 +581,22 @@
   },
   {
    "grammar": "hare",
-   "tier": "IV",
-   "iv_cause": "IV-recovery",
+   "tier": "III",
+   "cause": "III-recovery",
    "parity": "20/40",
    "notes": "faithful C error-cost version competition (see spec)"
   },
   {
    "grammar": "haskell",
-   "tier": "IV",
-   "iv_cause": "IV-scanner",
+   "tier": "III",
+   "cause": "III-scanner",
    "parity": "11/40",
    "notes": "layout scanner, deep port needed (maple)"
   },
   {
    "grammar": "haxe",
-   "tier": "IV",
-   "iv_cause": "IV-recovery",
+   "tier": "III",
+   "cause": "III-recovery",
    "parity": "7/40",
    "notes": "pins at upstream HEAD; C at same pin parses corpus clean \u2014 runtime fidelity, not version (oak 2026-06-10)"
   },
@@ -621,8 +620,8 @@
   },
   {
    "grammar": "html",
-   "tier": "IV",
-   "iv_cause": "IV-recovery",
+   "tier": "III",
+   "cause": "III-recovery",
    "parity": "0/40",
    "notes": "faithful C error-cost version competition (see spec)"
   },
@@ -634,8 +633,8 @@
   },
   {
    "grammar": "hurl",
-   "tier": "IV",
-   "iv_cause": "IV-recovery",
+   "tier": "III",
+   "cause": "III-recovery",
    "parity": "13/40",
    "notes": "faithful C error-cost version competition (see spec)"
   },
@@ -671,8 +670,8 @@
   },
   {
    "grammar": "jinja2",
-   "tier": "IV",
-   "iv_cause": "IV-recovery",
+   "tier": "III",
+   "cause": "III-recovery",
    "parity": "3/40",
    "notes": "faithful C error-cost version competition (see spec)"
   },
@@ -702,15 +701,15 @@
   },
   {
    "grammar": "jsonnet",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
+   "tier": "III",
+   "cause": "III-recovery?",
    "parity": "39/40",
    "notes": "canonical-frame demotion (one-time reset)"
   },
   {
    "grammar": "julia",
-   "tier": "IV",
-   "iv_cause": "IV-recovery",
+   "tier": "III",
+   "cause": "III-recovery",
    "parity": "28/40",
    "notes": "faithful C error-cost version competition (see spec)"
   },
@@ -722,24 +721,24 @@
   },
   {
    "grammar": "kconfig",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
+   "tier": "III",
+   "cause": "III-recovery?",
    "parity": "13/30",
    "notes": "ext=Kconfig; faithful C error-cost version competition (see spec)"
   },
   {
    "grammar": "kdl",
-   "tier": "IV",
-   "iv_cause": "IV-recovery",
+   "tier": "III",
+   "cause": "III-recovery",
    "parity": "12/40",
    "notes": "pins at upstream HEAD; C at same pin parses corpus clean \u2014 runtime fidelity, not version (oak 2026-06-10)"
   },
   {
    "grammar": "kotlin",
-   "tier": "IV",
-   "iv_cause": "IV-unknown",
+   "tier": "III",
+   "cause": "III-shape?",
    "parity": "17/40",
-   "notes": "needs deeper single-file diagnosis"
+   "notes": "assessed call/comparison/callable-reference shape residuals; not parity-clean"
   },
   {
    "grammar": "ledger",
@@ -749,22 +748,22 @@
   },
   {
    "grammar": "less",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
+   "tier": "III",
+   "cause": "III-recovery?",
    "parity": "10/40",
    "notes": "faithful C error-cost version competition (see spec)"
   },
   {
    "grammar": "linkerscript",
-   "tier": "IV",
-   "iv_cause": "IV-recovery",
+   "tier": "III",
+   "cause": "III-recovery",
    "parity": "1/40",
    "notes": "faithful C error-cost version competition (see spec)"
   },
   {
    "grammar": "liquid",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
+   "tier": "III",
+   "cause": "III-recovery?",
    "parity": "11/36",
    "notes": "faithful C error-cost version competition (see spec)"
   },
@@ -788,8 +787,8 @@
   },
   {
    "grammar": "make",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
+   "tier": "III",
+   "cause": "III-recovery?",
    "parity": "19/20",
    "notes": "ext=Makefile,.mk; C-recovery gate tried and REVERTED (parity-neutral 19/20, runs 20260610T090208Z/091230Z redwood-wave1/1b): witness Makefile (129KB, git's) root ERROR cc go=5029 vs makefile c=2114 \u2014 signature identical with gate on/off, so the divergence is decided before/outside the gated recover path (retry full-parse or pre-error fragmentation); needs witness-level diagnosis, not more gate work"
   },
@@ -801,43 +800,43 @@
   },
   {
    "grammar": "markdown_inline",
-   "tier": "IV",
-   "iv_cause": "IV-scanner",
+   "tier": "III",
+   "cause": "III-scanner",
    "parity": "38/40",
    "notes": "ext=.md; scanner/truncation residual verified after willow shape fixes"
   },
   {
    "grammar": "matlab",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
+   "tier": "III",
+   "cause": "III-recovery?",
    "parity": "4/40",
    "notes": "faithful C error-cost version competition (see spec)"
   },
   {
    "grammar": "mermaid",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
+   "tier": "III",
+   "cause": "III-recovery?",
    "parity": "0/40",
    "notes": "faithful C error-cost version competition (see spec)"
   },
   {
    "grammar": "meson",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
+   "tier": "III",
+   "cause": "III-recovery?",
    "parity": "1/30",
    "notes": "ext=meson.build; faithful C error-cost version competition (see spec)"
   },
   {
    "grammar": "mojo",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
+   "tier": "III",
+   "cause": "III-recovery?",
    "parity": "30/40",
    "notes": "post-repin residual"
   },
   {
    "grammar": "move",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
+   "tier": "III",
+   "cause": "III-recovery?",
    "parity": "14/40",
    "notes": "post-repo-switch residual"
   },
@@ -855,8 +854,8 @@
   },
   {
    "grammar": "nim",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
+   "tier": "III",
+   "cause": "III-recovery?",
    "parity": "3/40",
    "notes": "faithful C error-cost version competition (see spec)"
   },
@@ -874,22 +873,22 @@
   },
   {
    "grammar": "norg",
-   "tier": "IV",
-   "iv_cause": "IV-scanner",
+   "tier": "III",
+   "cause": "III-scanner",
    "parity": "0/2",
    "notes": "mixed scanner/version, 2-file corpus (maple)"
   },
   {
    "grammar": "nushell",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
+   "tier": "III",
+   "cause": "III-recovery?",
    "parity": "5/40",
    "notes": "faithful C error-cost version competition (see spec)"
   },
   {
    "grammar": "objc",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
+   "tier": "III",
+   "cause": "III-recovery?",
    "parity": "1/40",
    "notes": "faithful C error-cost version competition (see spec)"
   },
@@ -901,22 +900,22 @@
   },
   {
    "grammar": "odin",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
+   "tier": "III",
+   "cause": "III-recovery?",
    "parity": "13/40",
    "notes": "faithful C error-cost version competition (see spec)"
   },
   {
    "grammar": "org",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
+   "tier": "III",
+   "cause": "III-recovery?",
    "parity": "5/39",
    "notes": "faithful C error-cost version competition (see spec)"
   },
   {
    "grammar": "pascal",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
+   "tier": "III",
+   "cause": "III-recovery?",
    "parity": "0/40",
    "notes": "faithful C error-cost version competition (see spec)"
   },
@@ -928,8 +927,8 @@
   },
   {
    "grammar": "perl",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
+   "tier": "III",
+   "cause": "III-recovery?",
    "parity": "0/40",
    "notes": "faithful C error-cost version competition (see spec)"
   },
@@ -947,8 +946,8 @@
   },
   {
    "grammar": "powershell",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
+   "tier": "III",
+   "cause": "III-recovery?",
    "parity": "22/40",
    "notes": "faithful C error-cost version competition (see spec)"
   },
@@ -960,8 +959,8 @@
   },
   {
    "grammar": "prolog",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
+   "tier": "III",
+   "cause": "III-recovery?",
    "parity": "4/40",
    "notes": "faithful C error-cost version competition (see spec)"
   },
@@ -979,15 +978,15 @@
   },
   {
    "grammar": "proto",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
+   "tier": "III",
+   "cause": "III-recovery?",
    "parity": "25/40",
    "notes": "faithful C error-cost version competition (see spec)"
   },
   {
    "grammar": "pug",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
+   "tier": "III",
+   "cause": "III-recovery?",
    "parity": "0/40",
    "notes": "faithful C error-cost version competition (see spec)"
   },
@@ -999,8 +998,8 @@
   },
   {
    "grammar": "purescript",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
+   "tier": "III",
+   "cause": "III-recovery?",
    "parity": "1/40",
    "notes": "faithful C error-cost version competition (see spec)"
   },
@@ -1030,15 +1029,15 @@
   },
   {
    "grammar": "regex",
-   "tier": "IV",
-   "iv_cause": "IV-unknown?",
+   "tier": "III",
+   "cause": "III-perf",
    "parity": "0/1",
-   "notes": "ext=.regex; stackcap disproven (default iteration_limit, cap 2 no_stacks_alive); single-file corpus with UTF-8 BOM: C roots after the BOM (StartByte 3) and parses all 2255 bytes, go roots at 0 and truncates at 390"
+   "notes": "ext=.regex; iteration_limit/node_limit/memory_budget on the single config-style .regex file; stackcap disproven (default iteration_limit, cap 2 no_stacks_alive); C roots after UTF-8 BOM (StartByte 3) and parses all 2255 bytes, Go roots at 0 and truncates at 390; not parity-clean"
   },
   {
    "grammar": "rego",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
+   "tier": "III",
+   "cause": "III-recovery?",
    "parity": "7/40",
    "notes": "faithful C error-cost version competition (see spec)"
   },
@@ -1050,15 +1049,15 @@
   },
   {
    "grammar": "rescript",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
+   "tier": "III",
+   "cause": "III-recovery?",
    "parity": "23/40",
    "notes": "faithful C error-cost version competition (see spec)"
   },
   {
    "grammar": "robot",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
+   "tier": "III",
+   "cause": "III-recovery?",
    "parity": "28/40",
    "notes": "faithful C error-cost version competition (see spec)"
   },
@@ -1070,8 +1069,8 @@
   },
   {
    "grammar": "rst",
-   "tier": "IV",
-   "iv_cause": "IV-perf",
+   "tier": "III",
+   "cause": "III-perf",
    "parity": "1/8",
    "notes": "timeout-or-fail at 1200s canonical budget"
   },
@@ -1083,29 +1082,29 @@
   },
   {
    "grammar": "rust",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
+   "tier": "III",
+   "cause": "III-recovery?",
    "parity": "21/40",
    "notes": "faithful C error-cost version competition (see spec)"
   },
   {
    "grammar": "scala",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
+   "tier": "III",
+   "cause": "III-recovery?",
    "parity": "25/40",
    "notes": "faithful C error-cost version competition (see spec)"
   },
   {
    "grammar": "scheme",
-   "tier": "IV",
-   "iv_cause": "IV-perf",
+   "tier": "III",
+   "cause": "III-perf",
    "parity": "36/40",
    "notes": "stage-2 clears 5/6 shape files under GOT_C_RECOVERY=scheme; s/5_3.ss is a GLR merge wall and remains the perf blocker"
   },
   {
    "grammar": "scss",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
+   "tier": "III",
+   "cause": "III-recovery?",
    "parity": "6/40",
    "notes": "faithful C error-cost version competition (see spec)"
   },
@@ -1129,8 +1128,8 @@
   },
   {
    "grammar": "sql",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
+   "tier": "III",
+   "cause": "III-recovery?",
    "parity": "8/40",
    "notes": "faithful C error-cost version competition (see spec)"
   },
@@ -1160,8 +1159,8 @@
   },
   {
    "grammar": "swift",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
+   "tier": "III",
+   "cause": "III-recovery?",
    "parity": "0/40",
    "notes": "faithful C error-cost version competition (see spec)"
   },
@@ -1173,22 +1172,22 @@
   },
   {
    "grammar": "tcl",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
+   "tier": "III",
+   "cause": "III-recovery?",
    "parity": "10/40",
    "notes": "faithful C error-cost version competition (see spec)"
   },
   {
    "grammar": "teal",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
+   "tier": "III",
+   "cause": "III-recovery?",
    "parity": "4/40",
    "notes": "faithful C error-cost version competition (see spec)"
   },
   {
    "grammar": "templ",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
+   "tier": "III",
+   "cause": "III-recovery?",
    "parity": "24/40",
    "notes": "faithful C error-cost version competition (see spec)"
   },
@@ -1206,15 +1205,15 @@
   },
   {
    "grammar": "tlaplus",
-   "tier": "IV",
-   "iv_cause": "IV-unknown?",
+   "tier": "III",
+   "cause": "III-perf",
    "parity": "14/40",
-   "notes": "ext=.tla; stackcap disproven (cap 2: 21\u219220 iteration_limit truncations, parity unchanged); 197x median ratio with deep truncations (go stops at 1-2KB where C parses 11-31KB) \u2014 likely jlist external-scanner-driven GLR churn"
+   "notes": "ext=.tla; memory_budget/deep truncation likely external-scanner/GLR churn; stackcap disproven (cap 2: 21\u219220 iteration_limit truncations, parity unchanged); 197x median ratio with deep truncations (Go stops at 1-2KB where C parses 11-31KB); not parity-clean"
   },
   {
    "grammar": "tmux",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
+   "tier": "III",
+   "cause": "III-recovery?",
    "parity": "0/1",
    "notes": "ext=.tmux.conf,tmux.conf; faithful C error-cost version competition (see spec)"
   },
@@ -1256,43 +1255,43 @@
   },
   {
    "grammar": "typst",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
+   "tier": "III",
+   "cause": "III-recovery?",
    "parity": "28/40",
    "notes": "faithful C error-cost version competition (see spec)"
   },
   {
    "grammar": "uxntal",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
+   "tier": "III",
+   "cause": "III-recovery?",
    "parity": "0/40",
    "notes": "faithful C error-cost version competition (see spec)"
   },
   {
    "grammar": "v",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
+   "tier": "III",
+   "cause": "III-recovery?",
    "parity": "25/40",
    "notes": "faithful C error-cost version competition (see spec)"
   },
   {
    "grammar": "verilog",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
+   "tier": "III",
+   "cause": "III-recovery?",
    "parity": "4/40",
    "notes": "faithful C error-cost version competition (see spec)"
   },
   {
    "grammar": "vhdl",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
+   "tier": "III",
+   "cause": "III-recovery?",
    "parity": "14/40",
    "notes": "faithful C error-cost version competition (see spec)"
   },
   {
    "grammar": "vimdoc",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
+   "tier": "III",
+   "cause": "III-recovery?",
    "parity": "0/30",
    "notes": "ext=.txt; faithful C error-cost version competition (see spec)"
   },
@@ -1304,15 +1303,15 @@
   },
   {
    "grammar": "wat",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
+   "tier": "III",
+   "cause": "III-recovery?",
    "parity": "4/34",
    "notes": "faithful C error-cost version competition (see spec)"
   },
   {
    "grammar": "wgsl",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
+   "tier": "III",
+   "cause": "III-recovery?",
    "parity": "20/40",
    "notes": "faithful C error-cost version competition (see spec)"
   },

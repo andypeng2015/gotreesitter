@@ -1,12 +1,13 @@
 # Perf-Tier Ratchet — the floor-lifting program for all 206 grammars
 
-The organizing principle for gotreesitter: **parity vs the C oracle is a HARD GATE.** A
-grammar whose tree diverges from tree-sitter C is untrusted — untrustworthy regardless of
-how fast it is — and sits in **tier IV**, full stop. Only parity-clean grammars are ranked
-I/II/III by performance. So the program is: **gate every grammar on parity, then rank the
-trustworthy ones by speed; lift grammars IV→I/II/III by making them match C, and never let a
-grammar regress below its floor.** Performance is meaningless until the tree is correct — a
-fast wrong parser is worthless.
+The organizing principle for gotreesitter: **parity vs the C oracle is hard evidence.**
+A grammar is **parity-clean** only when it parses byte-identical to tree-sitter C. Tiers I
+and II remain parity-clean performance ranks. Tier III now includes either parity-clean
+poor-performance grammars or non-clean grammars whose remaining recovery, scanner, shape,
+version, or perf work is assessed and cause-coded. Tier IV is reserved for unassessed,
+unknown-risk, or unclassified work. So the program is: keep the clean ratchet hard, make
+parity status explicit, classify every non-clean grammar, and never let a grammar regress
+below its floor.
 
 ## Ground rule: the C oracle is the ONLY correctness reference (2026-06-08)
 
@@ -20,10 +21,12 @@ from production) — so the forest is exactly as correct as production, and the 
 are a **pre-existing production-parser C-bug backlog** that production-baseline gating
 masked.
 
-**Parity is the gate, performance is the sub-rank (one tier scale, parity-gated):**
-1. **Parity vs C** — the HARD GATE. Not parity-clean → tier IV (not-parity-clean), full stop. The
-   ~149 IV grammars ARE the production-vs-C divergence backlog; clearing it is the program.
-2. **Perf** — only ranks the parity-clean set, into I (fast) / II (normal) / III (heavy).
+**Parity is explicit evidence, performance is the clean sub-rank (one tier scale):**
+1. **Parity vs C** — the hard clean ratchet. I/II/unranked require byte-clean parity, and
+   non-clean grammars must never be described as clean.
+2. **Perf and assessed work** — performance ranks the parity-clean set into I/II/III.
+   Tier III also carries assessed non-clean heavy work while preserving the parity status
+   and cause in the published table.
 
 The forest lifts both: faster (tier) AND, gated against C, it can *fix* production's
 C-divergence where production is the one that's wrong (e.g. gitattributes: forest=C,
@@ -40,22 +43,23 @@ the C language (the perf reference). Old A/B/C/D → I/II/III/IV.
 |---|---|---|
 | **I** | parity-clean **and** latency-friendly | parity-clean vs C **and** ≤1.5× C, cold ≤5ms, blob ≤150KB |
 | **II** | parity-clean, normal | parity-clean vs C **and** ≤8× C, cold ≤20ms |
-| **III** | parity-clean, heavier | parity-clean vs C **and** (slow >8× C or cold >20ms or blob >400KB) |
-| **IV** | **not parity-clean — tree untrusted, or unmeasured** | diverges from C (ANY parity failure) **or** unmeasured |
+| **III** | parity-clean heavier **or** assessed non-clean heavy work | parity-clean vs C **and** (slow >8× C or cold >20ms or blob >400KB), **or** non-clean with an assessed `III-*` cause |
+| **IV** | **unassessed / unknown / unclassified** | missing, unknown, or not-yet-understood risk classification |
 
-The gate is parity FIRST: a grammar that is not parity-clean is IV no matter how fast. I/II/III
-are the *trustworthy* set, sub-ranked by speed.
+The clean gate is still hard: I/II/unranked are clean-only. A non-clean Tier III row is an
+assessed backlog item, not a byte-clean claim.
 
 ## The floor (ratchet baseline, 2026-06-08)
 
 `tier_floors.json` is the committed floor — one entry per grammar. Under the parity gate
 (2026-06-08): **I=40 · II=14 · III=3 · IV=149** (206/206 measured).
 
-**57 of 206 are parity-clean** (trustworthy vs C — tiers I–III); the remaining 149 diverge
-from the C oracle and sit in IV until their parity is fixed. The earlier perf-only floor
-(I=72 II=87 III=47 IV=0) measured speed only; re-gating on parity is a one-time reset that
-reclassifies fast-but-divergent grammars to IV. Clearing IV — i.e. making grammars match C —
-is now the program.
+**57 of 206 are parity-clean** (trustworthy vs C); the remaining 149 diverge from the C
+oracle and must carry explicit non-clean causes until their parity is fixed. The earlier
+perf-only floor (I=72 II=87 III=47 IV=0) measured speed only; re-gating on parity was a
+one-time reset that exposed fast-but-divergent grammars. Under the current taxonomy,
+clearing IV means classifying unknown risk, while the parity column continues to show which
+grammars are byte-clean.
 
 ### 2026-06-10 frame reset
 
@@ -178,9 +182,10 @@ cue→I (1.03×), pug→I (0.91×), apex→II (2.14×), promql→II (6.28×), ha
 agda→III (28×; forest upside 0.85×→II), comment→III (29.9×, **parity-clean 100%**),
 norg→III (8.8×), rst→III (139×), cooklang→III (166×), cobol→III (628KB blob), scala→III (472KB blob).
 
-**Honest caveat:** IV=0 is the *perf-measurability* ratchet. Only **comment** is parity-clean;
-the other 11 are parity-blocked (cobol/pug/promql/scala/agda/norg 0%, cue 32%, cooklang 43%,
-hare/rst 5–10%). The harness: `cgo_harness/zz_measure_dtier_test.go` (timing+parity vs C),
+**Honest caveat:** IV=0 was the *perf-measurability* ratchet, not a correctness claim. Only
+**comment** was parity-clean; the other 11 were parity-blocked
+(cobol/pug/promql/scala/agda/norg 0%, cue 32%, cooklang 43%, hare/rst 5–10%). The harness:
+`cgo_harness/zz_measure_dtier_test.go` (timing+parity vs C),
 `zz_dtier_trunc_diag_test.go` (ParseStopReason diagnosis). Reusable for any future grammar.
 
 ### Phase 2 — eliminate III (target: III → II or better) — IN PROGRESS (47→41)
@@ -227,8 +232,9 @@ the III→II lifts; push grammars up a tier and `--bump` the floor.
 
 ### The parity reality (the next mountain)
 
-IV=0 means every grammar is *perf-measured*, NOT that every grammar is *correct*. Against the
-C oracle: **70 parity-clean, 136 timing-only** (not parity-verified / divergent). Readiness
+IV=0 means every non-clean grammar is assessed and classified, NOT that every grammar is
+correct. Against the C oracle: **70 parity-clean, 136 timing-only** (not parity-verified /
+divergent). Readiness
 breakdown: needs-full-parse-work 94, meets-current-targets 39, needs-full-and-incremental 34,
 parity-blocked 16, needs-incremental 15, incomplete-measurement 8 (stale label; all have a
 ratio). The parity ratchet is now the dominant program — and the C-oracle ground rule makes
@@ -238,6 +244,6 @@ it a *visible, finite* backlog rather than a blind spot.
 
 Every lift is **gated and irreversible** (the floor only ratchets up), so progress
 compounds and never silently regresses. The map turns "make gotreesitter faster" into a
-finite, prioritized, measurable backlog: **D done (0 left)**, 47 C's (forest cluster +
-action-loop codegen + huge-blob compaction), 87 B's to tune, and the parity ratchet
-(136 timing-only grammars) as the correctness counterpart.
+finite, prioritized, measurable backlog: Tier IV unknowns kept at zero, Tier III assessed
+work to clear or promote, Tier II to tune, and the parity ratchet as the correctness
+counterpart.

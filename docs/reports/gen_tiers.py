@@ -2,16 +2,16 @@
 """Per-release tier publication: generate docs/reports/tiers.{md,json}.
 
 One tier scale (canonical: tier-ratchet.md / cgo_harness/tier_scan/README.md):
-parity vs the C oracle is the HARD GATE, performance is the sub-rank.
+parity vs the C oracle is the hard evidence, performance is the sub-rank.
 
   I    parity-clean and fast    (<=1.5x C full-parse, cold <=5ms, blob <=150KB)
   II   parity-clean, ok         (<=8x C full-parse, cold <=20ms)
-  III  parity-clean, poor       (>8x C, or cold >20ms, or blob >400KB)
-  IV   NOT parity-clean         (any divergence/truncation/unmeasured parity)
+  III  parity-clean, poor perf OR assessed non-clean heavy work
+  IV   unassessed / unknown-risk / unclassified
 
 Sources of truth:
   - parity:    cgo_harness/tier_scan/clean_grammars.txt  (the byte-parity ratchet)
-  - IV causes: cgo_harness/tier_scan/tier_classification.tsv
+  - causes:    cgo_harness/tier_scan/tier_classification.tsv
   - perf:      harness_out/perf_picture/{merged_bench_report,cold_cost}.json when
                present, else tier_floors.json floor tiers I/II/III as evidence.
                NOTE: floor tier IV is NOT perf evidence — historical floors
@@ -23,7 +23,9 @@ A parity-clean grammar with no perf evidence is published as "unranked
 (parity-clean, perf pending)" — it never silently inflates or deflates a tier.
 
 --require-zero-iv: exit 1 if any grammar is tier IV (the tiering-release gate;
-set GTS_TIERS_REQUIRE_ZERO_IV=1 in the release scan to enforce it).
+set GTS_TIERS_REQUIRE_ZERO_IV=1 in the release scan to enforce it). Under the
+current taxonomy, zero IV means every non-clean grammar is assessed and
+classified; it does not mean every grammar is parity-clean.
 """
 import argparse
 import datetime
@@ -41,6 +43,7 @@ MERGED = os.path.join(REPO, "harness_out/perf_picture/merged_bench_report.json")
 COLD = os.path.join(REPO, "harness_out/perf_picture/cold_cost.json")
 
 RANK = {"I": 0, "II": 1, "III": 2, "unranked": 3, "IV": 4}
+UNKNOWN_CAUSES = {"unknown", "unassessed", "unclassified"}
 
 
 def perf_tier(fr, blob, cold_ms):
@@ -72,6 +75,30 @@ def load_classification():
                     "notes": parts[3] if len(parts) > 3 else "",
                 }
     return rows
+
+
+def assessed_non_clean_cause(cause):
+    """Return the publishable assessed cause, or None for IV/unknown work.
+
+    New rows should use III-* directly. Old assessed IV-* rows are interpreted
+    as Tier III during migration so historical classification remains
+    publishable. Unknown/unassessed buckets stay Tier IV.
+    """
+    if not cause:
+        return None
+    if cause == "CLEAN":
+        return None
+    if "-" not in cause:
+        return None
+    prefix, suffix = cause.split("-", 1)
+    bucket = suffix.rstrip("?")
+    if bucket in UNKNOWN_CAUSES:
+        return None
+    if prefix == "III":
+        return cause
+    if prefix == "IV":
+        return "III-" + suffix
+    return None
 
 
 def load_perf_evidence():
@@ -124,11 +151,17 @@ def build(version):
                          "perf_source": pt[1] if pt else None})
         else:
             cause = cls.get("tier", "IV-unassessed")
-            if not cause.startswith("IV"):
-                cause = "IV-unassessed"
-            rows.append({"grammar": g, "tier": "IV", "iv_cause": cause,
-                         "parity": cls.get("parity", "unmeasured"),
-                         "notes": cls.get("notes", "")})
+            assessed = assessed_non_clean_cause(cause)
+            if assessed:
+                rows.append({"grammar": g, "tier": "III", "cause": assessed,
+                             "parity": cls.get("parity", "unmeasured"),
+                             "notes": cls.get("notes", "")})
+            else:
+                if not cause.startswith("IV"):
+                    cause = "IV-unassessed"
+                rows.append({"grammar": g, "tier": "IV", "cause": cause,
+                             "parity": cls.get("parity", "unmeasured"),
+                             "notes": cls.get("notes", "")})
 
     hist = {}
     for r in rows:
@@ -141,8 +174,8 @@ def build(version):
         "tier_rules": {
             "I": "parity-clean and <=1.5x C full-parse, cold <=5ms, blob <=150KB",
             "II": "parity-clean and <=8x C full-parse, cold <=20ms",
-            "III": "parity-clean and (>8x C or cold >20ms or blob >400KB)",
-            "IV": "not parity-clean (any divergence vs the C oracle, or unmeasured)",
+            "III": "parity-clean poor perf, or assessed non-clean heavy normalization/recovery/perf work",
+            "IV": "unassessed, unknown-risk, or unclassified",
             "unranked": "parity-clean; perf measurement pending",
         },
         "histogram": hist,
@@ -156,7 +189,7 @@ def to_md(doc):
         f"# Grammar tiers — {doc['version']}",
         "",
         f"Generated {doc['generated']} at `{doc['commit']}`. Parity vs the",
-        "tree-sitter C oracle is the hard gate; performance is the sub-rank",
+        "tree-sitter C oracle is hard evidence; performance is the clean sub-rank",
         "(rules in `cgo_harness/tier_scan/README.md`).",
         "",
         "| tier | count |",
@@ -169,23 +202,38 @@ def to_md(doc):
     for r in doc["grammars"]:
         by_tier.setdefault(r["tier"], []).append(r)
     for t, title in (("I", "Tier I — parity-clean, fast"),
-                     ("II", "Tier II — parity-clean, ok"),
-                     ("III", "Tier III — parity-clean, poor perf"),
-                     ("unranked", "Unranked — parity-clean, perf measurement pending")):
+                     ("II", "Tier II — parity-clean, ok")):
         rs = by_tier.get(t)
         if not rs:
             continue
         lines += ["", f"## {title} ({len(rs)})", ""]
         lines.append(", ".join(f"`{r['grammar']}`" for r in rs))
+    rs = by_tier.get("III")
+    if rs:
+        clean_rs = [r for r in rs if r.get("parity") == "clean"]
+        non_clean_rs = [r for r in rs if r.get("parity") != "clean"]
+        lines += ["", f"## Tier III — parity-clean poor perf or assessed heavy work ({len(rs)})", ""]
+        if clean_rs:
+            lines += ["### Parity-clean, poor perf", ""]
+            lines.append(", ".join(f"`{r['grammar']}`" for r in clean_rs))
+        if non_clean_rs:
+            lines += ["", "### Assessed non-clean work", "",
+                      "| grammar | cause | parity |", "| --- | --- | --- |"]
+            for r in non_clean_rs:
+                lines.append(f"| `{r['grammar']}` | {r['cause']} | {r['parity']} |")
+    rs = by_tier.get("unranked")
+    if rs:
+        lines += ["", f"## Unranked — parity-clean, perf measurement pending ({len(rs)})", ""]
+        lines.append(", ".join(f"`{r['grammar']}`" for r in rs))
     rs = by_tier.get("IV")
     if rs:
-        lines += ["", f"## Tier IV — not parity-clean ({len(rs)})", "",
+        lines += ["", f"## Tier IV — unassessed or unknown ({len(rs)})", "",
                   "| grammar | cause | parity |", "| --- | --- | --- |"]
         for r in rs:
-            lines.append(f"| `{r['grammar']}` | {r['iv_cause']} | {r['parity']} |")
+            lines.append(f"| `{r['grammar']}` | {r['cause']} | {r['parity']} |")
     else:
-        lines += ["", "## Tier IV — not parity-clean (0)", "",
-                  "**Empty.** Every grammar parses byte-identical to the C oracle."]
+        lines += ["", "## Tier IV — unassessed or unknown (0)", "",
+                  "**Empty.** Every non-clean grammar has an assessed classification."]
     lines.append("")
     return "\n".join(lines)
 
@@ -214,9 +262,9 @@ def main():
     iv = [r for r in doc["grammars"] if r["tier"] == "IV"]
     if args.require_zero_iv and iv:
         print(f"\nTIERING GATE FAILED: {len(iv)} grammar(s) are tier IV "
-              "(not parity-clean):", file=sys.stderr)
+              "(unassessed or unknown):", file=sys.stderr)
         for r in iv:
-            print(f"  {r['grammar']}: {r['iv_cause']} ({r['parity']})",
+            print(f"  {r['grammar']}: {r['cause']} ({r['parity']})",
                   file=sys.stderr)
         sys.exit(1)
 

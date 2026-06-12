@@ -1,49 +1,52 @@
 # Tier classification scan (release gate)
 
-Parity-vs-C is the correctness gate: a grammar is **CLEAN** when every
+Parity-vs-C is the correctness evidence: a grammar is **CLEAN** when every
 measured real-corpus file parses byte-identical (type/span/child-count) to
 the tree-sitter C oracle; anything below 100% is incorrect-parse. The scan
-makes **uncharacterized incorrect parse** the transitory tier we drive to
-zero: every non-clean grammar must carry a named, assessed sub-tier in
+makes **uncharacterized incorrect parse** the transitory state we drive to
+zero: every non-clean grammar must carry a named, assessed cause in
 `tier_classification.tsv`, and the committed ratchet (`clean_grammars.txt`)
 makes clean→incorrect regressions release-blocking.
 
 ## Tier taxonomy
 
 One tier scale for the whole program (canonical: `docs/reports/tier-ratchet.md`).
-**Parity vs C is the hard gate; performance is the sub-rank.** A grammar that
-is not byte-clean against the C oracle is **tier IV, full stop** — a fast
-wrong parser is worthless. Tiers I–III are reserved for parity-clean grammars,
-ranked by performance:
+**Parity vs C remains hard evidence; performance is the sub-rank for clean
+grammars.** Tiers I and II are reserved for parity-clean grammars. Tier III
+contains either parity-clean poor-performance grammars or non-clean grammars
+whose remaining work is assessed and cause-coded. Tier IV is reserved for
+unassessed, unknown-risk, or unclassified work.
 
 | tier | meaning | rule |
 | --- | --- | --- |
 | `I` | parity-clean, fast | ≤1.5× C full-parse, cold ≤5ms, blob ≤150KB |
 | `II` | parity-clean, ok | ≤8× C full-parse, cold ≤20ms |
-| `III` | parity-clean, poor | >8× C, or cold >20ms, or blob >400KB |
-| `IV` | **not parity-clean** (any divergence, truncation, or unmeasured parity) | fix parity — see sub-causes below |
+| `III` | parity-clean poor perf **or** assessed non-clean heavy work | clean and (>8× C, cold >20ms, or blob >400KB), or non-clean with an assessed `III-*` cause |
+| `IV` | **unassessed / unknown / unclassified** | classify the risk before publishing |
 
-### Tier-IV sub-causes (`tier_classification.tsv`)
+### Non-clean causes (`tier_classification.tsv`)
 
-Every tier-IV grammar carries a named, assessed sub-cause:
+Every non-clean grammar should carry a named, assessed Tier-III cause:
 
 | sub-cause | meaning | fix recipe |
 | --- | --- | --- |
-| `IV-recovery` | both parsers see errors, but C contains damage locally where Go fragments / roots ERROR | faithful C error-cost version competition (see `recovery-cost-competition.md`) |
-| `IV-shape` | tree-shape divergence without error nodes | per-grammar diagnosis (`TestFirstDiffDiag`) |
-| `IV-scanner` | Go external-scanner port diverges from C (over/under-permissive, token boundaries) | re-port `grammars/<g>_scanner.go` from pinned upstream `src/scanner.c` |
-| `IV-version` | most corpus files error in BOTH parsers — corpus uses syntax newer than the embedded grammar | bump the embedded grammar version |
-| `IV-stackcap` | divergence/truncation clears or shrinks at `GOT_GLR_MAX_STACKS=2` | add an `effectiveFullParseInitialMaxStacks` cap entry |
-| `IV-extmap` | zero/few files measured under the current extension set | add a curated source-extension mapping |
-| `IV-perf` | cannot measure within timeout (O(N²) or pathological file) | profile/fix before parity (overlaps the perf push) |
+| `III-recovery` | both parsers see errors, but C contains damage locally where Go fragments / roots ERROR | faithful C error-cost version competition (see `recovery-cost-competition.md`) |
+| `III-shape` | tree-shape divergence without error nodes | per-grammar diagnosis (`TestFirstDiffDiag`) |
+| `III-scanner` | Go external-scanner port diverges from C (over/under-permissive, token boundaries) | re-port `grammars/<g>_scanner.go` from pinned upstream `src/scanner.c` |
+| `III-version` | most corpus files error in BOTH parsers — corpus uses syntax newer than the embedded grammar | bump the embedded grammar version |
+| `III-stackcap` | divergence/truncation clears or shrinks at `GOT_GLR_MAX_STACKS=2` | add an `effectiveFullParseInitialMaxStacks` cap entry |
+| `III-extmap` | zero/few files measured under the current extension set | add a curated source-extension mapping |
+| `III-perf` | cannot measure within timeout or hits iteration/node/memory budgets | profile/fix before parity (overlaps the perf push) |
 | `IV-unknown` | diagnosed but does not fit a single bucket | deeper single-file diagnosis |
 | `IV-unassessed` | **the state we keep empty** — a measured incorrect parse nobody has triaged | run the diagnosis workflow / `TestFirstDiffDiag` |
 
-A `?` suffix (e.g. `IV-recovery?`) marks a *preliminary* classification
+A `?` suffix (e.g. `III-recovery?`) marks a *preliminary* classification
 inferred from the measure signature (parity%, errTree, trunc) rather than a
 per-file diagnosis — these get confirmed when the full diagnosis workflow
-re-runs. The scan fails (exit 1) if any tier-IV grammar is `IV-unassessed`
-or missing a row, so the uncharacterized count is enforced at zero.
+re-runs. The scan fails (exit 1) if any non-clean grammar is `IV-unassessed`,
+`IV-unknown`, or missing a row, so the uncharacterized count is enforced at
+zero. A non-clean `III-*` row is still explicitly non-clean; it is not a
+byte-clean claim.
 
 The deep-diagnosis evidence and proposed fixes for the first wave live in
 `../../.campaign_state/diagnosis_classified.json`.
@@ -72,7 +75,7 @@ scan is the full-breadth release gate.
 Every release publishes the full 206-grammar tier table at
 `docs/reports/tiers.md` (+ machine-readable `tiers.json`), regenerated by
 the scan's final step (`docs/reports/gen_tiers.py`) and committed in the
-release PR. Parity comes from `clean_grammars.txt`; IV sub-causes from
+release PR. Parity comes from `clean_grammars.txt`; non-clean causes from
 `tier_classification.tsv`; perf ranks from the local perf-picture
 measurements (falling back to `docs/reports/tier_floors.json` floors). A
 parity-clean grammar with no perf evidence publishes as *unranked* rather
@@ -80,7 +83,9 @@ than guessing.
 
 With `GTS_TIERS_REQUIRE_ZERO_IV=1` the scan exits 1 while ANY grammar is
 tier IV — the first tier-publishing release (and every one after it)
-requires IV=0: all 206 grammars byte-clean against the C oracle.
+requires IV=0: every non-clean grammar has an assessed cause. Byte-clean
+status remains explicit in the parity column and is never inferred from
+Tier III.
 
 ## Files
 

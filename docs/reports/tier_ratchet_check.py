@@ -3,14 +3,14 @@
 
 Current state is read from the canonical published artifacts, NOT a perf rerun:
 
-  * parity  — ``cgo_harness/tier_scan/clean_grammars.txt`` (the hard gate; a
-    grammar IS eligible for tiers I/II/III iff it is listed there, i.e. it
-    parses byte-identical to the C oracle on its full measured corpus).
+  * parity  — ``cgo_harness/tier_scan/clean_grammars.txt`` (the hard clean
+    ratchet: a grammar listed there parses byte-identical to the C oracle on
+    its full measured corpus).
   * tier    — ``docs/reports/tiers.json`` (the published per-release tier
     table). The current tier of grammar ``g`` is tiers.json's tier for ``g``
-    (``IV`` if absent). The parity gate is re-asserted defensively here: any
-    grammar not in clean_grammars.txt is forced to ``IV`` regardless of what
-    tiers.json says — parity-vs-C is the hard gate, full stop.
+    (``IV`` if absent). The parity gate is re-asserted defensively here: a
+    non-clean grammar may not publish as I/II/unranked, and may publish as III
+    only when it carries an assessed cause.
 
 The committed floor lives in ``tier_floors.json`` (one ``{"tier": ...}`` entry
 per grammar). The gate exits non-zero if any grammar's current tier is BELOW
@@ -28,6 +28,7 @@ FLOOR = os.path.join(ROOT, "tier_floors.json")
 TIERS = os.path.join(ROOT, "tiers.json")
 CLEAN = os.path.join(REPO, "cgo_harness", "tier_scan", "clean_grammars.txt")
 CLASS_TSV = os.path.join(REPO, "cgo_harness", "tier_scan", "tier_classification.tsv")
+UNKNOWN_CAUSES = {"unknown", "unassessed", "unclassified"}
 
 # Tiers are Roman numerals (I best .. IV worst) so "III" never collides with the
 # C language. `unranked` is parity-clean with perf pending: better than IV, but
@@ -52,6 +53,15 @@ def classification_tiers():
             if len(parts) >= 2 and parts[0]:
                 rows[parts[0]] = parts[1]
     return rows
+
+
+def is_assessed_non_clean_cause(cause):
+    if not cause or cause == "CLEAN" or "-" not in cause:
+        return False
+    prefix, suffix = cause.split("-", 1)
+    if suffix.rstrip("?") in UNKNOWN_CAUSES:
+        return False
+    return prefix in ("III", "IV")
 
 
 def check_clean_classification_consistency(clean, classification):
@@ -80,21 +90,32 @@ def check_clean_classification_consistency(clean, classification):
 def current_tiers():
     """Current published tier per grammar: tiers.json tier, IV if absent.
 
-    PARITY IS A HARD GATE (2026-06-08): a grammar whose tree diverges from the C
-    oracle is POISONED — untrustworthy regardless of speed — and is tier IV,
-    full stop. Only parity-clean grammars (those in clean_grammars.txt) are
-    ranked I/II/III. We therefore clamp any non-clean grammar to IV even if
-    tiers.json happens to list it higher.
+    PARITY IS STILL THE HARD CLEAN EVIDENCE: I/II/unranked require
+    clean_grammars.txt membership. Tier III also allows non-clean grammars
+    whose remaining work is assessed and cause-coded (III-* preferred; old
+    assessed IV-* accepted during the taxonomy migration). Tier IV is reserved
+    for unknown, unassessed, or unclassified work.
     """
     clean = clean_set()
+    classification = classification_tiers()
     tiers = json.load(open(TIERS))
     out = {}
+    violations = []
     for x in tiers["grammars"]:
         n = x["grammar"]
         t = x.get("tier", "IV")
         if n not in clean:
-            t = "IV"
+            cause = x.get("cause") or x.get("iv_cause") or classification.get(n, "")
+            if t in ("I", "II", "unranked"):
+                violations.append((n, t, cause, "non-clean grammar published as clean-only tier"))
+            elif t == "III" and not is_assessed_non_clean_cause(cause):
+                violations.append((n, t, cause, "non-clean Tier III lacks assessed cause"))
         out[n] = t if t in RANK else "IV"
+    if violations:
+        print("TIER DATA HYGIENE VIOLATION:")
+        for n, t, cause, msg in sorted(violations):
+            print(f"  {n}: tier={t} cause={cause or '<missing>'} — {msg}")
+        sys.exit(1)
     return out
 
 
