@@ -1,6 +1,6 @@
 {
- "generated": "2026-06-12T02:51:44Z",
- "commit": "b6f88d77",
+ "generated": "2026-06-12T03:36:51Z",
+ "commit": "1ec0afe8",
  "version": "unreleased",
  "tier_rules": {
   "I": "parity-clean and <=1.5x C full-parse, cold <=5ms, blob <=150KB",
@@ -10,8 +10,8 @@
   "unranked": "parity-clean; perf measurement pending"
  },
  "histogram": {
-  "II": 53,
-  "IV": 96,
+  "II": 54,
+  "IV": 95,
   "I": 42,
   "III": 15
  },
@@ -1251,10 +1251,9 @@
   },
   {
    "grammar": "typescript",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
-   "parity": "38/40",
-   "notes": "canonical-frame demotion (one-time reset)"
+   "tier": "II",
+   "parity": "clean",
+   "perf_source": "measured"
   },
   {
    "grammar": "typst",

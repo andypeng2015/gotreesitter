@@ -119,6 +119,7 @@ func normalizeTypeScriptTreeCompatibilityWithParser(root *Node, source []byte, p
 		parser.recordNormalizationMetric("ts_type_as_child_candidates", 1, 1, stats.asChildren.nodesVisited, stats.asChildren.nodesRewritten)
 		parser.recordNormalizationMetric("ts_type_assertion_child_candidates", 1, 1, stats.typeAssertionChildren.nodesVisited, stats.typeAssertionChildren.nodesRewritten)
 		parser.recordNormalizationMetric("ts_type_expression_statement_child_candidates", 1, 1, stats.expressionStatementChildren.nodesVisited, stats.expressionStatementChildren.nodesRewritten)
+		parser.recordNormalizationMetric("ts_type_destructuring_pattern_candidates", 1, 1, stats.destructuringPatterns.nodesVisited, stats.destructuringPatterns.nodesRewritten)
 		return stats.total
 	})
 	runVoid("ts_top_level_expression_bounds", func() {

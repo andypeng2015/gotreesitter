@@ -10,100 +10,108 @@ type typeScriptNormalizationContext struct {
 	canRewriteGenericArrows     bool
 	canRewriteClassDeclarations bool
 	canClearEnumBodyFields      bool
+	canRewriteDestructuring     bool
 
-	callSym                    Symbol
-	callNamed                  bool
-	instantiationExprSym       Symbol
-	instantiationExprNamed     bool
-	typeArgsSym                Symbol
-	typeArgsNamed              bool
-	argsSym                    Symbol
-	argsNamed                  bool
-	predefinedTypeSym          Symbol
-	predefinedTypeNamed        bool
-	asExpressionSym            Symbol
-	asExpressionNamed          bool
-	functionFieldID            FieldID
-	typeArgsFieldID            FieldID
-	argumentsFieldID           FieldID
-	binaryExpressionSym        Symbol
-	assignmentExprSym          Symbol
-	assignmentExprNamed        bool
-	ternaryExprSym             Symbol
-	ternaryExprNamed           bool
-	unionTypeSym               Symbol
-	unionTypeNamed             bool
-	intersectionTypeSym        Symbol
-	intersectionTypeNamed      bool
-	literalTypeSym             Symbol
-	literalTypeNamed           bool
-	hasLiteralTypeSym          bool
-	objectTypeSym              Symbol
-	objectTypeNamed            bool
-	propertySignatureSym       Symbol
-	propertySignatureNamed     bool
-	publicFieldDefinitionSym   Symbol
-	abstractMethodSignatureSym Symbol
-	typeAnnotationSym          Symbol
-	typeAnnotationNamed        bool
-	methodDefinitionSym        Symbol
-	methodSignatureSym         Symbol
-	accessibilityModSym        Symbol
-	accessibilityModNamed      bool
-	objectSym                  Symbol
-	pairSym                    Symbol
-	propertyIdentifierSym      Symbol
-	propertyIdentifierNamed    bool
-	colonSym                   Symbol
-	publicSym                  Symbol
-	privateSym                 Symbol
-	protectedSym               Symbol
-	staticSym                  Symbol
-	readonlySym                Symbol
-	abstractSym                Symbol
-	asyncSym                   Symbol
-	getSym                     Symbol
-	setSym                     Symbol
-	numberSym                  Symbol
-	stringSym                  Symbol
-	stringFragmentSym          Symbol
-	greaterThanSym             Symbol
-	pipeSym                    Symbol
-	ampersandSym               Symbol
-	hasPipeSym                 bool
-	hasAmpersandSym            bool
-	parenthesizedExprSym       Symbol
-	lessThanSym                Symbol
-	identifierSym              Symbol
-	memberExpressionSym        Symbol
-	sequenceExpressionSym      Symbol
-	typeIdentifierSym          Symbol
-	typeIdentifierNamed        bool
-	hasTypeIdentifierSym       bool
-	typeAssertionSym           Symbol
-	arrowFunctionSym           Symbol
-	typeParametersSym          Symbol
-	typeParametersNamed        bool
-	typeParameterSym           Symbol
-	typeParameterNamed         bool
-	expressionStatementSym     Symbol
-	classSym                   Symbol
-	classDeclarationSym        Symbol
-	classDeclarationNamed      bool
-	enumBodySym                Symbol
-	enumAssignmentSym          Symbol
-	importSym                  Symbol
-	hasImportSym               bool
-	dynamicImportSym           Symbol
-	hasDynamicImportSym        bool
-	typeQuerySym               Symbol
-	nameFieldID                FieldID
-	typeParametersFieldID      FieldID
-	parametersFieldID          FieldID
-	returnTypeFieldID          FieldID
-	typeFieldID                FieldID
-	bodyFieldID                FieldID
-	valueFieldID               FieldID
+	arraySym                    Symbol
+	arrayPatternSym             Symbol
+	callSym                     Symbol
+	callNamed                   bool
+	instantiationExprSym        Symbol
+	instantiationExprNamed      bool
+	typeArgsSym                 Symbol
+	typeArgsNamed               bool
+	argsSym                     Symbol
+	argsNamed                   bool
+	predefinedTypeSym           Symbol
+	predefinedTypeNamed         bool
+	asExpressionSym             Symbol
+	asExpressionNamed           bool
+	functionFieldID             FieldID
+	typeArgsFieldID             FieldID
+	argumentsFieldID            FieldID
+	binaryExpressionSym         Symbol
+	assignmentExprSym           Symbol
+	assignmentExprNamed         bool
+	ternaryExprSym              Symbol
+	ternaryExprNamed            bool
+	unionTypeSym                Symbol
+	unionTypeNamed              bool
+	intersectionTypeSym         Symbol
+	intersectionTypeNamed       bool
+	literalTypeSym              Symbol
+	literalTypeNamed            bool
+	hasLiteralTypeSym           bool
+	objectTypeSym               Symbol
+	objectTypeNamed             bool
+	propertySignatureSym        Symbol
+	propertySignatureNamed      bool
+	publicFieldDefinitionSym    Symbol
+	abstractMethodSignatureSym  Symbol
+	typeAnnotationSym           Symbol
+	typeAnnotationNamed         bool
+	methodDefinitionSym         Symbol
+	methodSignatureSym          Symbol
+	nonNullExpressionSym        Symbol
+	objectPatternSym            Symbol
+	accessibilityModSym         Symbol
+	accessibilityModNamed       bool
+	objectSym                   Symbol
+	pairSym                     Symbol
+	pairPatternSym              Symbol
+	propertyIdentifierSym       Symbol
+	propertyIdentifierNamed     bool
+	shorthandPropertySym        Symbol
+	shorthandPropertyPatternSym Symbol
+	colonSym                    Symbol
+	publicSym                   Symbol
+	privateSym                  Symbol
+	protectedSym                Symbol
+	staticSym                   Symbol
+	readonlySym                 Symbol
+	abstractSym                 Symbol
+	asyncSym                    Symbol
+	getSym                      Symbol
+	setSym                      Symbol
+	numberSym                   Symbol
+	stringSym                   Symbol
+	stringFragmentSym           Symbol
+	greaterThanSym              Symbol
+	pipeSym                     Symbol
+	ampersandSym                Symbol
+	hasPipeSym                  bool
+	hasAmpersandSym             bool
+	parenthesizedExprSym        Symbol
+	lessThanSym                 Symbol
+	identifierSym               Symbol
+	memberExpressionSym         Symbol
+	sequenceExpressionSym       Symbol
+	typeIdentifierSym           Symbol
+	typeIdentifierNamed         bool
+	hasTypeIdentifierSym        bool
+	typeAssertionSym            Symbol
+	arrowFunctionSym            Symbol
+	typeParametersSym           Symbol
+	typeParametersNamed         bool
+	typeParameterSym            Symbol
+	typeParameterNamed          bool
+	expressionStatementSym      Symbol
+	classSym                    Symbol
+	classDeclarationSym         Symbol
+	classDeclarationNamed       bool
+	enumBodySym                 Symbol
+	enumAssignmentSym           Symbol
+	importSym                   Symbol
+	hasImportSym                bool
+	dynamicImportSym            Symbol
+	hasDynamicImportSym         bool
+	typeQuerySym                Symbol
+	nameFieldID                 FieldID
+	typeParametersFieldID       FieldID
+	parametersFieldID           FieldID
+	returnTypeFieldID           FieldID
+	typeFieldID                 FieldID
+	bodyFieldID                 FieldID
+	valueFieldID                FieldID
 }
 
 func normalizeTypeScriptCompatibility(root *Node, source []byte, lang *Language) {
@@ -112,6 +120,7 @@ func normalizeTypeScriptCompatibility(root *Node, source []byte, lang *Language)
 		return
 	}
 
+	destructuringErrorRefresh := false
 	walkResultTreeDenseFirst(root, func(n *Node) {
 		switch n.symbol {
 		case ctx.identifierSym:
@@ -133,22 +142,38 @@ func normalizeTypeScriptCompatibility(root *Node, source []byte, lang *Language)
 				normalizeTypeScriptEnumBodyCompatibility(n, &ctx)
 			}
 		}
-		for i, child := range n.children {
+		children := n.children
+		sidecarDestructuringOnly := false
+		if ctx.canRewriteDestructuring && n.ownerArena != nil && n.childIndex <= finalChildSidecarIndexBase {
+			children = resultDenseChildrenFallbackForMutation(n)
+			sidecarDestructuringOnly = true
+		}
+		for i, child := range children {
 			for {
+				if sidecarDestructuringOnly && !typeScriptCompatibilityChildNeedsErrorRefresh(child, &ctx) {
+					break
+				}
 				if !typeScriptCompatibilityChildCanRewrite(child, &ctx) {
 					break
 				}
-				rewritten := rewriteTypeScriptCompatibilityChild(child, &ctx)
+				refreshErrors := typeScriptCompatibilityChildNeedsErrorRefresh(child, &ctx)
+				rewritten := rewriteTypeScriptCompatibilityChild(n, child, &ctx)
 				if rewritten == nil {
 					break
 				}
-				n.children[i] = rewritten
+				children[i] = rewritten
 				rewritten.parent = n
 				rewritten.childIndex = int32(i)
+				if refreshErrors {
+					destructuringErrorRefresh = true
+				}
 				child = rewritten
 			}
 		}
 	})
+	if destructuringErrorRefresh {
+		refreshTypeScriptCompatibilityHasErrorSubtree(root)
+	}
 }
 
 type typeScriptCompatibilityCandidateKind uint8
@@ -432,7 +457,7 @@ func normalizeTypeScriptCompatibilityChildCandidate(candidate javaScriptTypeScri
 		if !typeScriptCompatibilityChildCanRewrite(child, ctx) {
 			return
 		}
-		rewritten := rewriteTypeScriptCompatibilityChild(child, ctx)
+		rewritten := rewriteTypeScriptCompatibilityChild(candidate.parent, child, ctx)
 		if rewritten == nil {
 			return
 		}
@@ -458,6 +483,7 @@ type typeScriptCompatibilityStats struct {
 	asChildren                  normalizationPassCounters
 	typeAssertionChildren       normalizationPassCounters
 	expressionStatementChildren normalizationPassCounters
+	destructuringPatterns       normalizationPassCounters
 }
 
 func normalizeTypeScriptCompatibilityCandidatesWithStats(candidates typeScriptCompatibilityCandidates, source []byte, lang *Language) typeScriptCompatibilityStats {
@@ -552,7 +578,7 @@ func normalizeTypeScriptCompatibilityChildCandidateWithStats(candidate javaScrip
 			}
 		}
 		bucket.nodesVisited++
-		rewritten := rewriteTypeScriptCompatibilityChild(child, ctx)
+		rewritten := rewriteTypeScriptCompatibilityChild(candidate.parent, child, ctx)
 		if rewritten == nil {
 			return
 		}
@@ -579,6 +605,7 @@ func normalizeTypeScriptCompatibilityWithStats(root *Node, source []byte, lang *
 		return stats
 	}
 
+	destructuringErrorRefresh := false
 	walkResultTreeDenseFirst(root, func(n *Node) {
 		stats.total.nodesVisited++
 		switch n.symbol {
@@ -632,8 +659,17 @@ func normalizeTypeScriptCompatibilityWithStats(root *Node, source []byte, lang *
 				}
 			}
 		}
-		for i, child := range n.children {
+		children := n.children
+		sidecarDestructuringOnly := false
+		if ctx.canRewriteDestructuring && n.ownerArena != nil && n.childIndex <= finalChildSidecarIndexBase {
+			children = resultDenseChildrenFallbackForMutation(n)
+			sidecarDestructuringOnly = true
+		}
+		for i, child := range children {
 			for {
+				if sidecarDestructuringOnly && !typeScriptCompatibilityChildNeedsErrorRefresh(child, &ctx) {
+					break
+				}
 				bucket := typeScriptCompatibilityChildStatsBucket(child, &ctx, &stats)
 				if bucket == nil {
 					break
@@ -663,13 +699,17 @@ func normalizeTypeScriptCompatibilityWithStats(root *Node, source []byte, lang *
 					}
 				}
 				bucket.nodesVisited++
-				rewritten := rewriteTypeScriptCompatibilityChild(child, &ctx)
+				refreshErrors := typeScriptCompatibilityChildNeedsErrorRefresh(child, &ctx)
+				rewritten := rewriteTypeScriptCompatibilityChild(n, child, &ctx)
 				if rewritten == nil {
 					break
 				}
-				n.children[i] = rewritten
+				children[i] = rewritten
 				rewritten.parent = n
 				rewritten.childIndex = int32(i)
+				if refreshErrors {
+					destructuringErrorRefresh = true
+				}
 				if bucket != nil {
 					bucket.nodesRewritten++
 				}
@@ -686,6 +726,9 @@ func normalizeTypeScriptCompatibilityWithStats(root *Node, source []byte, lang *
 			}
 		}
 	})
+	if destructuringErrorRefresh {
+		refreshTypeScriptCompatibilityHasErrorSubtree(root)
+	}
 	return stats
 }
 
@@ -704,6 +747,8 @@ func typeScriptCompatibilityChildCanRewrite(child *Node, ctx *typeScriptNormaliz
 		return ctx.canRewriteGenericArrows
 	case ctx.expressionStatementSym:
 		return ctx.canRewriteClassDeclarations
+	case ctx.nonNullExpressionSym:
+		return ctx.canRewriteDestructuring
 	default:
 		return false
 	}
@@ -734,8 +779,16 @@ func typeScriptCompatibilityChildStatsBucket(child *Node, ctx *typeScriptNormali
 		if ctx.canRewriteClassDeclarations {
 			return &stats.expressionStatementChildren
 		}
+	case ctx.nonNullExpressionSym:
+		if ctx.canRewriteDestructuring {
+			return &stats.destructuringPatterns
+		}
 	}
 	return nil
+}
+
+func typeScriptCompatibilityChildNeedsErrorRefresh(child *Node, ctx *typeScriptNormalizationContext) bool {
+	return child != nil && ctx != nil && ctx.canRewriteDestructuring && child.symbol == ctx.nonNullExpressionSym
 }
 
 func normalizeTypeScriptEnumBodyCompatibility(n *Node, ctx *typeScriptNormalizationContext) {
@@ -793,7 +846,7 @@ func typeScriptEnumBodyHasUnclearedAssignmentFields(n *Node, ctx *typeScriptNorm
 	return false
 }
 
-func rewriteTypeScriptCompatibilityChild(child *Node, ctx *typeScriptNormalizationContext) *Node {
+func rewriteTypeScriptCompatibilityChild(parent, child *Node, ctx *typeScriptNormalizationContext) *Node {
 	if child == nil || ctx == nil {
 		return nil
 	}
@@ -825,8 +878,114 @@ func rewriteTypeScriptCompatibilityChild(child *Node, ctx *typeScriptNormalizati
 		if ctx.canRewriteClassDeclarations {
 			return rewriteTypeScriptClassExpressionStatement(child, ctx)
 		}
+	case ctx.nonNullExpressionSym:
+		if ctx.canRewriteDestructuring {
+			return rewriteTypeScriptMissingNonNullDestructuringPattern(parent, child, ctx)
+		}
 	}
 	return nil
+}
+
+func rewriteTypeScriptMissingNonNullDestructuringPattern(parent, node *Node, ctx *typeScriptNormalizationContext) *Node {
+	if node == nil || ctx == nil || !ctx.canRewriteDestructuring || node.symbol != ctx.nonNullExpressionSym || resultChildCount(node) != 2 {
+		return nil
+	}
+	if !typeScriptDestructuringPatternParent(parent, node, ctx) {
+		return nil
+	}
+	value := resultChildAt(node, 0)
+	bang := resultChildAt(node, 1)
+	if value == nil || bang == nil || !bang.isMissing() || bang.startByte != bang.endByte {
+		return nil
+	}
+	if value.symbol != ctx.arraySym && value.symbol != ctx.objectSym {
+		return nil
+	}
+	if int(bang.startByte) < len(ctx.source) && ctx.source[bang.startByte] == '!' {
+		return nil
+	}
+	typeScriptRetagDestructuringPatternTree(value, ctx)
+	refreshTypeScriptCompatibilityHasErrorSubtree(value)
+	return value
+}
+
+func typeScriptDestructuringPatternParent(parent, child *Node, ctx *typeScriptNormalizationContext) bool {
+	if parent == nil || child == nil || ctx == nil {
+		return false
+	}
+	switch parent.symbol {
+	case ctx.arrayPatternSym, ctx.objectPatternSym:
+		return true
+	case ctx.pairPatternSym:
+		childCount := resultChildCount(parent)
+		if childCount == 0 {
+			return false
+		}
+		last := resultChildAt(parent, childCount-1)
+		return last == child ||
+			(last != nil && child != nil &&
+				last.symbol == child.symbol &&
+				last.startByte == child.startByte &&
+				last.endByte == child.endByte)
+	default:
+		return false
+	}
+}
+
+func typeScriptRetagDestructuringPatternTree(node *Node, ctx *typeScriptNormalizationContext) {
+	if node == nil || ctx == nil {
+		return
+	}
+	switch node.symbol {
+	case ctx.arraySym:
+		node.symbol = ctx.arrayPatternSym
+		node.setNamed(symbolIsNamed(ctx.lang, ctx.arrayPatternSym))
+	case ctx.objectSym:
+		node.symbol = ctx.objectPatternSym
+		node.setNamed(symbolIsNamed(ctx.lang, ctx.objectPatternSym))
+	case ctx.pairSym:
+		node.symbol = ctx.pairPatternSym
+		node.setNamed(symbolIsNamed(ctx.lang, ctx.pairPatternSym))
+	case ctx.shorthandPropertySym:
+		node.symbol = ctx.shorthandPropertyPatternSym
+		node.setNamed(symbolIsNamed(ctx.lang, ctx.shorthandPropertyPatternSym))
+	default:
+		switch symbolTypeName(ctx.lang, node.symbol) {
+		case "array":
+			node.symbol = ctx.arrayPatternSym
+			node.setNamed(symbolIsNamed(ctx.lang, ctx.arrayPatternSym))
+		case "object":
+			node.symbol = ctx.objectPatternSym
+			node.setNamed(symbolIsNamed(ctx.lang, ctx.objectPatternSym))
+		case "pair":
+			node.symbol = ctx.pairPatternSym
+			node.setNamed(symbolIsNamed(ctx.lang, ctx.pairPatternSym))
+		case "shorthand_property_identifier":
+			node.symbol = ctx.shorthandPropertyPatternSym
+			node.setNamed(symbolIsNamed(ctx.lang, ctx.shorthandPropertyPatternSym))
+		}
+	}
+	children := node.children
+	if node.ownerArena != nil && node.childIndex <= finalChildSidecarIndexBase {
+		children = resultDenseChildrenFallbackForMutation(node)
+	}
+	for _, child := range children {
+		typeScriptRetagDestructuringPatternTree(child, ctx)
+	}
+}
+
+func refreshTypeScriptCompatibilityHasErrorSubtree(node *Node) bool {
+	if node == nil {
+		return false
+	}
+	hasError := node.symbol == errorSymbol
+	for _, child := range node.children {
+		if refreshTypeScriptCompatibilityHasErrorSubtree(child) {
+			hasError = true
+		}
+	}
+	node.setHasError(hasError)
+	return hasError
 }
 
 func typeScriptBinaryOperatorCouldBeGenericCall(node *Node, ctx *typeScriptNormalizationContext) bool {
@@ -1529,6 +1688,29 @@ func newTypeScriptNormalizationContext(source []byte, lang *Language) (typeScrip
 	}
 
 	if syms, ok := languageSymbols(lang,
+		"array",
+		"array_pattern",
+		"object",
+		"object_pattern",
+		"non_null_expression",
+		"pair",
+		"pair_pattern",
+		"shorthand_property_identifier",
+		"shorthand_property_identifier_pattern",
+	); ok {
+		ctx.canRewriteDestructuring = true
+		ctx.arraySym = syms[0]
+		ctx.arrayPatternSym = syms[1]
+		ctx.objectSym = syms[2]
+		ctx.objectPatternSym = syms[3]
+		ctx.nonNullExpressionSym = syms[4]
+		ctx.pairSym = syms[5]
+		ctx.pairPatternSym = syms[6]
+		ctx.shorthandPropertySym = syms[7]
+		ctx.shorthandPropertyPatternSym = syms[8]
+	}
+
+	if syms, ok := languageSymbols(lang,
 		"method_definition",
 		"method_signature",
 		"accessibility_modifier",
@@ -1620,7 +1802,7 @@ func newTypeScriptNormalizationContext(source []byte, lang *Language) (typeScrip
 		}
 	}
 
-	return ctx, ctx.canRewriteGenericCalls || ctx.canRewriteInstantiatedCalls || ctx.canRewriteAsExpressions || ctx.canRewriteGenericArrows || ctx.canRewriteClassDeclarations || ctx.canClearEnumBodyFields
+	return ctx, ctx.canRewriteGenericCalls || ctx.canRewriteInstantiatedCalls || ctx.canRewriteAsExpressions || ctx.canRewriteGenericArrows || ctx.canRewriteClassDeclarations || ctx.canClearEnumBodyFields || ctx.canRewriteDestructuring
 }
 
 func newTypeScriptNormalizationContextForSourceFlags(source []byte, lang *Language, flags typeScriptCompatSourceFlags) (typeScriptNormalizationContext, bool) {

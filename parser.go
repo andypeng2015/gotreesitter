@@ -3611,7 +3611,12 @@ func (p *Parser) configureParseCaps(source []byte, reuse *reuseCursor, arenaClas
 		retryPass = false
 	}
 	mergePerKeyCap := effectiveParseMergePerKeyCap(p.language, parseMaxMergePerKeyValue(), reuse != nil, len(source))
-	if tsxFullParseNeedsTypedArrowMergeWidth(p.language, source, reuse) && mergePerKeyCap < 2 {
+	tsNeedsTypedArrow := typeScriptFullParseNeedsTypedArrowMergeWidth(p.language, source, reuse)
+	if typeScriptFullParseNeedsDestructuredArrowReturnMergeWidth(p.language, source, reuse) {
+		if mergePerKeyCap < maxStacksPerMergeKey {
+			mergePerKeyCap = maxStacksPerMergeKey
+		}
+	} else if tsNeedsTypedArrow && mergePerKeyCap != 2 {
 		mergePerKeyCap = 2
 	}
 	if javaFullParseNeedsAnnotationDeclarationMergeWidth(p.language, source, reuse) && mergePerKeyCap < javaFullParseRetryMaxMergePerKey {

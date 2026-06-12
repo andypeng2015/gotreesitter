@@ -80,7 +80,6 @@ demotions, with named sub-causes (from the canonical scan / post-merge overlay):
 - **java** IV-recovery? 39/40 — canonical-frame demotion
 - **jsonnet** IV-recovery? 39/40 — canonical-frame demotion
 - **ssh_config** IV-recovery? 1/2 — canonical-frame demotion (2 eligible files under the canonical frame)
-- **typescript** IV-recovery? 38/40 — canonical-frame demotion
 
 Same-day, the mainline merges that landed *after* the scan binary — redwood stage-2
 C-error-recovery gates, hazel lexgen, and oak's mojo/move repins — were folded in via a

@@ -689,12 +689,20 @@ func dartIncrementalFallbackCanUseTightMergeCap(sourceLen ...int) bool {
 	return len(sourceLen) > 0 && sourceLen[0] > dartIncrementalReuseMaxSourceBytes
 }
 
-func tsxFullParseNeedsTypedArrowMergeWidth(lang *Language, source []byte, reuse *reuseCursor) bool {
+func typeScriptFullParseNeedsTypedArrowMergeWidth(lang *Language, source []byte, reuse *reuseCursor) bool {
 	return lang != nil &&
 		reuse == nil &&
 		!parseMaxMergePerKeyEnvConfigured() &&
-		lang.Name == "tsx" &&
+		(lang.Name == "typescript" || lang.Name == "tsx") &&
 		typeScriptSourceHasTypedArrowParameters(source)
+}
+
+func typeScriptFullParseNeedsDestructuredArrowReturnMergeWidth(lang *Language, source []byte, reuse *reuseCursor) bool {
+	return lang != nil &&
+		reuse == nil &&
+		!parseMaxMergePerKeyEnvConfigured() &&
+		(lang.Name == "typescript" || lang.Name == "tsx") &&
+		typeScriptSourceHasDestructuredArrowReturnType(source)
 }
 
 func typeScriptSourceHasTypedArrowParameters(source []byte) bool {
@@ -721,16 +729,79 @@ func typeScriptSourceHasTypedArrowParameters(source []byte) bool {
 			offset = arrow + len("=>")
 			continue
 		}
-		depth := 0
-		for j := i; j >= 0 && i-j <= 2048; j-- {
-			switch source[j] {
-			case ')':
-				depth++
-			case '(':
-				depth--
-				if depth == 0 {
-					return bytes.Contains(source[j:i], []byte(":"))
+		open := matchingOpenParenBefore(source, i, 2048)
+		if open >= 0 && bytes.Contains(source[open:i], []byte(":")) {
+			return true
+		}
+		offset = arrow + len("=>")
+	}
+}
+
+func matchingOpenParenBefore(source []byte, close int, maxDistance int) int {
+	if close < 0 || close >= len(source) || source[close] != ')' {
+		return -1
+	}
+	min := close - maxDistance
+	if min < 0 {
+		min = 0
+	}
+	depth := 0
+	for j := close; j >= min; j-- {
+		switch source[j] {
+		case ')':
+			depth++
+		case '(':
+			depth--
+			if depth == 0 {
+				return j
+			}
+		}
+	}
+	return -1
+}
+
+func typeScriptSourceHasDestructuredArrowReturnType(source []byte) bool {
+	if len(source) == 0 || !bytes.Contains(source, []byte("=>")) {
+		return false
+	}
+	offset := 0
+	for {
+		rel := bytes.Index(source[offset:], []byte("=>"))
+		if rel < 0 {
+			return false
+		}
+		arrow := offset + rel
+		i := arrow - 1
+		for i >= 0 {
+			switch source[i] {
+			case ' ', '\t', '\n', '\r':
+				i--
+				continue
+			}
+			break
+		}
+		colon := -1
+		for j := i; j >= 0 && arrow-j <= 512; j-- {
+			if source[j] == ':' {
+				colon = j
+				break
+			}
+			if source[j] == ')' {
+				break
+			}
+		}
+		if colon >= 0 {
+			close := colon - 1
+			for close >= 0 {
+				switch source[close] {
+				case ' ', '\t', '\n', '\r':
+					close--
+					continue
 				}
+				break
+			}
+			if open := matchingOpenParenBefore(source, close, 2048); open >= 0 && bytes.ContainsAny(source[open:close], "[{") {
+				return true
 			}
 		}
 		offset = arrow + len("=>")

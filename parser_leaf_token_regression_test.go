@@ -465,6 +465,54 @@ func TestParseTSXTypedArrowParameters(t *testing.T) {
 	}
 }
 
+func TestParseTypeScriptTypedArrowParameters(t *testing.T) {
+	src := "const f = (str: string) => str;\n"
+	tree, lang := parseLanguageSample(t, "typescript", src)
+	t.Cleanup(tree.Release)
+
+	root := tree.RootNode()
+	if root.Type(lang) != "program" || root.HasError() {
+		t.Fatalf("typed TypeScript arrow root = %s hasError=%v; tree=%s", root.Type(lang), root.HasError(), root.SExpr(lang))
+	}
+	if sexpr := root.SExpr(lang); !strings.Contains(sexpr, "arrow_function") || !strings.Contains(sexpr, "formal_parameters") {
+		t.Fatalf("typed TypeScript arrow did not preserve formal parameters: %s", sexpr)
+	}
+}
+
+func TestParseTypeScriptNestedDestructuringArrayPattern(t *testing.T) {
+	src := "const { value: [dirPath, { dirName, options, fileNames }] } = result;\n"
+	tree, lang := parseLanguageSample(t, "typescript", src)
+	t.Cleanup(tree.Release)
+
+	root := tree.RootNode()
+	if root.Type(lang) != "program" || root.HasError() {
+		t.Fatalf("nested TypeScript destructuring root = %s hasError=%v; tree=%s", root.Type(lang), root.HasError(), root.SExpr(lang))
+	}
+	sexpr := root.SExpr(lang)
+	for _, want := range []string{"array_pattern", "object_pattern", "shorthand_property_identifier_pattern"} {
+		if !strings.Contains(sexpr, want) {
+			t.Fatalf("nested TypeScript destructuring missing %s: %s", want, sexpr)
+		}
+	}
+	if strings.Contains(sexpr, "non_null_expression") {
+		t.Fatalf("nested TypeScript destructuring retained non_null_expression: %s", sexpr)
+	}
+}
+
+func TestParseTypeScriptDestructuredArrowReturnTypeCallArgument(t *testing.T) {
+	src := "const remainingPaths = arrayFrom(allFileNames.entries(), ([fileName, { isRedirect, isInNodeModules }]): ModulePath => ({ path: fileName, isRedirect, isInNodeModules }));\n"
+	tree, lang := parseLanguageSample(t, "typescript", src)
+	t.Cleanup(tree.Release)
+
+	root := tree.RootNode()
+	if root.Type(lang) != "program" || root.HasError() {
+		t.Fatalf("destructured TypeScript arrow call root = %s hasError=%v; tree=%s", root.Type(lang), root.HasError(), root.SExpr(lang))
+	}
+	if sexpr := root.SExpr(lang); !strings.Contains(sexpr, "arrow_function") || !strings.Contains(sexpr, "array_pattern") || !strings.Contains(sexpr, "type_annotation") {
+		t.Fatalf("destructured TypeScript arrow call did not preserve arrow/type shape: %s", sexpr)
+	}
+}
+
 func TestParseJavaScriptJSXMultipleAttributesAfterExpression(t *testing.T) {
 	src := "const el = <Foo bar=\"string\" baz={2} data-i8n=\"dialogs.welcome.heading\" bam />\n"
 	tree, lang := parseLanguageSample(t, "javascript", src)

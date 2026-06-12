@@ -102,6 +102,7 @@ toml
 tsx
 turtle
 twig
+typescript
 vue
 wolfram
 xml
