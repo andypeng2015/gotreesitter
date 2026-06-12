@@ -1,6 +1,6 @@
 {
- "generated": "2026-06-12T22:17:16Z",
- "commit": "eebd79a5",
+ "generated": "2026-06-12T22:23:20Z",
+ "commit": "0ff66d0b",
  "version": "unreleased",
  "tier_rules": {
   "I": "parity-clean and <=1.5x C full-parse, cold <=5ms, blob <=150KB",
