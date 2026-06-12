@@ -157,7 +157,7 @@ regex	IV-perf	0/1	ext=.regex; single-file BOM corpus, but BOM preprocessing is n
 rego	IV-recovery?	7/40	faithful C error-cost version competition (see spec)
 requirements	CLEAN	9/9	in ratchet; first IV-recovery clear via faithful C-recovery port (errorCostCompetitionLanguage gate)
 rescript	IV-recovery?	29/40	Rescript value_identifier_path alias normalization cleared clean-root shape residuals; remaining 11/40 are Go root ERROR vs C source_file with trunc=0/panics=0, requiring faithful C error-cost version competition
-robot	IV-recovery?	28/40	faithful C error-cost version competition (see spec)
+robot	IV-recovery?	29/40	Robot escaped nested variable normalization cleared one C error-shape residual; remaining 11/40 require faithful C error-cost version competition (see spec)
 ron	CLEAN	40/40	in ratchet
 rst	IV-perf	1/8	timeout-or-fail at 1200s canonical budget
 ruby	CLEAN	40/40	in ratchet; inline Ruby when-then body StartByte normalized to C oracle

@@ -1,6 +1,6 @@
 {
- "generated": "2026-06-12T23:56:23Z",
- "commit": "bb037dd4",
+ "generated": "2026-06-13T00:03:25Z",
+ "commit": "d90c5c67",
  "version": "unreleased",
  "tier_rules": {
   "I": "parity-clean and <=1.5x C full-parse, cold <=5ms, blob <=150KB",
@@ -1058,8 +1058,8 @@
    "grammar": "robot",
    "tier": "IV",
    "iv_cause": "IV-recovery?",
-   "parity": "28/40",
-   "notes": "faithful C error-cost version competition (see spec)"
+   "parity": "29/40",
+   "notes": "Robot escaped nested variable normalization cleared one C error-shape residual; remaining 11/40 require faithful C error-cost version competition (see spec)"
   },
   {
    "grammar": "ron",

@@ -207,6 +207,8 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 		normalizeRSTTopLevelSectionEnd(ctx.root, ctx.source, ctx.lang)
 	case "rescript":
 		normalizeRescriptCompatibility(ctx.root, ctx.lang)
+	case "robot":
+		normalizeRobotCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "rust":
 		normalizeRustCompatibility(ctx.root, ctx.source, ctx.parser, ctx.lang)
 	case "ruby":
