@@ -1,6 +1,6 @@
 {
- "generated": "2026-06-12T08:30:22Z",
- "commit": "4b333919",
+ "generated": "2026-06-12T08:52:44Z",
+ "commit": "e178b15b",
  "version": "unreleased",
  "tier_rules": {
   "I": "parity-clean and <=1.5x C full-parse, cold <=5ms, blob <=150KB",
@@ -737,9 +737,9 @@
   {
    "grammar": "kotlin",
    "tier": "IV",
-   "iv_cause": "IV-unknown",
-   "parity": "17/40",
-   "notes": "needs deeper single-file diagnosis"
+   "iv_cause": "IV-recovery",
+   "parity": "29/40",
+   "notes": "Kotlin collapsed import identifier, callable_reference, receiver-swallowed function name, and leading-trivia root normalizers lifted current real-corpus parity from 17/40 to 29/40; Docker real-corpus max-cases=40 verified 2026-06-12. Remaining 11 current failures are generated ERROR trees on clean C refs (Logger.kt, typeParams.txt, SimpleClassMembers.txt, namedCompanionObject.txt, topLevelMembers.txt, DocCommentsBinding.txt, DynamicReceiver.txt, EnumShortWithOverload.txt, topJvmPackageNameMultifile.txt, topJvmPackageName.txt, enum.txt)."
   },
   {
    "grammar": "ledger",
