@@ -1,6 +1,6 @@
 {
- "generated": "2026-06-12T01:45:15Z",
- "commit": "14632081",
+ "generated": "2026-06-12T02:37:27Z",
+ "commit": "34a4ecb9",
  "version": "unreleased",
  "tier_rules": {
   "I": "parity-clean and <=1.5x C full-parse, cold <=5ms, blob <=150KB",
@@ -10,8 +10,8 @@
   "unranked": "parity-clean; perf measurement pending"
  },
  "histogram": {
-  "unranked": 11,
-  "IV": 98,
+  "unranked": 12,
+  "IV": 97,
   "II": 46,
   "I": 38,
   "III": 13
@@ -102,10 +102,9 @@
   },
   {
    "grammar": "bicep",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
-   "parity": "24/30",
-   "notes": "ext=.bicep; faithful C error-cost version competition (see spec)"
+   "tier": "unranked",
+   "parity": "clean",
+   "perf_source": null
   },
   {
    "grammar": "bitbake",

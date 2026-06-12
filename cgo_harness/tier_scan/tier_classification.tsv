@@ -11,7 +11,7 @@ awk	IV-recovery	28/29	T.gawk rule-splitting vs C in-rule absorption
 bash	IV-recovery?	30/40	ext=.sh; stackcap disproven (cap-256 floor entry already present); divergences are recovery-shape: go ERROR root where C recovers program (lib.sh, git-prompt.sh, git-subtree.sh) plus small child-count diffs; 1 trunc (cmd-list.sh no_stacks_alive)
 bass	CLEAN	40/40	in ratchet
 beancount	CLEAN	40/40	in ratchet
-bicep	IV-recovery?	24/30	ext=.bicep; faithful C error-cost version competition (see spec)
+bicep	CLEAN	40/40	C-recovery gate keeps extension samples under infrastructure roots with localized ERROR regions (verified 2026-06-12)
 bitbake	IV-recovery	35/40	canonical-frame demotion (one-time reset)
 blade	IV-recovery?	17/30	ext=.blade.php; faithful C error-cost version competition (see spec)
 brightscript	IV-recovery?	0/30	ext=.brs; faithful C error-cost version competition (see spec)

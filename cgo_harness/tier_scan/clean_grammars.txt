@@ -5,6 +5,7 @@ astro
 authzed
 bass
 beancount
+bicep
 bibtex
 capnp
 chatito

@@ -194,6 +194,11 @@ func errorCostCompetitionLanguage(lang *Language) bool {
 		// oracle gate once GraphQL recovery absorbs stray triple-quote tokens
 		// instead of recovering through them into a fresh block string.
 		return true
+	case "bicep":
+		// Tier-IV recovery fan-out: baseline direct C-oracle parity is 34/40
+		// with extension-sample roots becoming whole-file ERROR nodes; C
+		// recovery keeps infrastructure roots and localizes the ERROR regions.
+		return true
 	}
 	return false
 }
