@@ -47,6 +47,7 @@ gitignore
 gleam
 graphql
 gn
+go
 godot_resource
 gomod
 hack

@@ -101,6 +101,156 @@ func TestParseGoPackageOnly(t *testing.T) {
 	}
 }
 
+func TestParseGoRangeWithNestedFunctionLiteralBody(t *testing.T) {
+	src := `package p
+
+func TestUnderSize(t *testing.T) {
+	z, err := OpenReader("testdata/readme.zip")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer z.Close()
+
+	for _, f := range z.File {
+		t.Run(f.Name, func(t *testing.T) {
+			rd, err := f.Open()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer rd.Close()
+
+			_, err = io.Copy(io.Discard, rd)
+			if err != ErrFormat {
+				t.Fatalf("Error mismatch\n\tGot:  %v\n\tWant: %v", err, ErrFormat)
+			}
+		})
+	}
+}
+`
+	tree, lang := parseGo(t, src)
+	root := tree.RootNode()
+	defer tree.Release()
+
+	if got := root.Type(lang); got != "source_file" {
+		t.Fatalf("root type = %q, want source_file", got)
+	}
+	if root.HasError() {
+		t.Fatalf("root has error:\n%s", root.SExpr(lang))
+	}
+	if got, want := root.EndByte(), uint32(len(src)); got != want {
+		t.Fatalf("root end = %d, want %d", got, want)
+	}
+	if findNamedChild(lang, root, "for_statement") == nil {
+		t.Fatal("missing for_statement")
+	}
+	if findNamedChild(lang, root, "func_literal") == nil {
+		t.Fatal("missing nested func_literal")
+	}
+	if findNamedChild(lang, root, "defer_statement") == nil {
+		t.Fatal("missing nested defer_statement")
+	}
+}
+
+func TestParseGoRecoveredForIgnoresLineCommentBrace(t *testing.T) {
+	src := `package p
+
+func TestCommentBrace(t *testing.T) {
+	for _, name := range []string{"one"} {
+		_ = name
+		// }
+		t.Run(name, func(t *testing.T) {
+			defer t.Helper()
+		})
+	}
+}
+`
+	assertGoRecoveryCanary(t, src, []string{
+		"for_statement",
+		"func_literal",
+		"defer_statement",
+	}, []string{
+		"t.Run(name, func(t *testing.T)",
+		"defer t.Helper()",
+	})
+}
+
+func TestParseGoRecoveredForIgnoresLiteralAndCommentBraces(t *testing.T) {
+	src := "package p\n\n" +
+		"func TestLiteralBraces(t *testing.T) {\n" +
+		"\tfor _, name := range []string{\"one\"} {\n" +
+		"\t\ttext := \"}\"\n" +
+		"\t\traw := `}`\n" +
+		"\t\t/* } */\n" +
+		"\t\t// }\n" +
+		"\t\tt.Run(text+raw, func(t *testing.T) {\n" +
+		"\t\t\tdefer t.Helper()\n" +
+		"\t\t})\n" +
+		"\t}\n" +
+		"}\n"
+	assertGoRecoveryCanary(t, src, []string{
+		"for_statement",
+		"interpreted_string_literal",
+		"raw_string_literal",
+		"func_literal",
+		"defer_statement",
+	}, []string{
+		"text := \"}\"",
+		"raw := `}`",
+		"defer t.Helper()",
+	})
+}
+
+func TestParseGoRecoveredForFindsBodyAfterRangeCompositeLiteral(t *testing.T) {
+	src := `package p
+
+func TestCompositeRange(t *testing.T) {
+	for _, v := range []struct{ A int }{{1}} {
+		t.Run("case", func(t *testing.T) {
+			_ = v.A
+		})
+	}
+}
+`
+	assertGoRecoveryCanary(t, src, []string{
+		"for_statement",
+		"range_clause",
+		"func_literal",
+		"selector_expression",
+	}, []string{
+		"[]struct{ A int }{{1}}",
+		"_ = v.A",
+	})
+}
+
+func assertGoRecoveryCanary(t *testing.T, src string, wantTypes, wantTexts []string) {
+	t.Helper()
+
+	tree, lang := parseGo(t, src)
+	root := tree.RootNode()
+	defer tree.Release()
+
+	if got := root.Type(lang); got != "source_file" {
+		t.Fatalf("root type = %q, want source_file", got)
+	}
+	if root.HasError() {
+		t.Fatalf("root has error:\n%s", root.SExpr(lang))
+	}
+	if got, want := root.EndByte(), uint32(len(src)); got != want {
+		t.Fatalf("root end = %d, want %d", got, want)
+	}
+	for _, typ := range wantTypes {
+		if findNamedChild(lang, root, typ) == nil {
+			t.Fatalf("missing %s:\n%s", typ, root.SExpr(lang))
+		}
+	}
+	rootText := root.Text(tree.Source())
+	for _, text := range wantTexts {
+		if !bytes.Contains([]byte(rootText), []byte(text)) {
+			t.Fatalf("root text missing %q:\n%s", text, rootText)
+		}
+	}
+}
+
 func TestParseGoImport(t *testing.T) {
 	tree, lang := parseGo(t, "package main\n\nimport \"fmt\"\n")
 	root := tree.RootNode()

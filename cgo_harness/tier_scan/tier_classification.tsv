@@ -79,7 +79,7 @@ gitignore	CLEAN	40/40	in ratchet
 gleam	CLEAN	40/40	in ratchet
 glsl	IV-recovery	11/40	faithful C error-cost version competition (see spec)
 gn	CLEAN	40/40	in ratchet; scanner aligned with upstream C (maple)
-go	IV-recovery	37/40	reader/writer_test root ERROR vs source_file (recovery class)
+go	CLEAN	40/40	Go top-level recovery now replaces signature-only function fragments and recursively recovers for-loop bodies (verified 2026-06-11)
 godot_resource	CLEAN	40/40	in ratchet; scanner aligned with upstream C (maple)
 gomod	CLEAN	40/40	in ratchet
 graphql	CLEAN	1/1	GraphQL C-recovery triple-quote/block-string handling verified 2026-06-11

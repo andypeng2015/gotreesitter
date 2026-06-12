@@ -76,7 +76,6 @@ demotions, with named sub-causes (from the canonical scan / post-merge overlay):
 - **dot** IV-perf 39/40 — bsdarch.dot 2257× agg blowup truncation
 - **erlang** IV-recovery 38/40 — bif_SUITE ambiguity-selection + binary_SUITE blowup trunc
 - **fidl** IV-shape 39/40 — INVERSE: C fragments versioned-FIDL syntax, Go parses clean; must match C error shapes
-- **go** IV-recovery 37/40 — reader/writer_test root ERROR vs source_file (recovery class)
 - **java** IV-recovery? 39/40 — canonical-frame demotion
 - **jsonnet** IV-recovery? 39/40 — canonical-frame demotion
 - **ssh_config** IV-recovery? 1/2 — canonical-frame demotion (2 eligible files under the canonical frame)
@@ -84,7 +83,7 @@ demotions, with named sub-causes (from the canonical scan / post-merge overlay):
 Same-day, the mainline merges that landed *after* the scan binary — redwood stage-2
 C-error-recovery gates, hazel lexgen, and oak's mojo/move repins — were folded in via a
 post-merge overlay measure at the current HEAD: **css, zig, hack, jsdoc lifted to 100%
-(40/40)** and join the ratchet; **go 37/40, mojo 30/40, move 14/40** improved but remain IV.
+(40/40)** and join the ratchet; **mojo 30/40, move 14/40** improved but remain IV.
 Net ratchet **78 → 67** (−12 demoted, +1 newly added: `zig`; css/hack/jsdoc were already
 in the ratchet), but **every remaining entry is canonical-frame-verified**. Published tiers
 after the reset: **I=28 · II=32 · III=7 · IV=139** (206/206).

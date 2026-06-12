@@ -11,9 +11,10 @@
  },
  "histogram": {
   "II": 54,
-  "IV": 95,
+  "IV": 94,
   "I": 42,
-  "III": 15
+  "III": 15,
+  "unranked": 1
  },
  "grammars": [
   {
@@ -544,10 +545,9 @@
   },
   {
    "grammar": "go",
-   "tier": "IV",
-   "iv_cause": "IV-recovery",
-   "parity": "37/40",
-   "notes": "reader/writer_test root ERROR vs source_file (recovery class)"
+   "tier": "unranked",
+   "parity": "clean",
+   "perf_source": null
   },
   {
    "grammar": "godot_resource",

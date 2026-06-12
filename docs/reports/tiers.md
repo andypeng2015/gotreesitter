@@ -9,7 +9,8 @@ tree-sitter C oracle is the hard gate; performance is the sub-rank
 | I | 42 |
 | II | 54 |
 | III | 15 |
-| IV | 95 |
+| unranked | 1 |
+| IV | 94 |
 
 ## Tier I — parity-clean, fast (42)
 
@@ -23,7 +24,11 @@ tree-sitter C oracle is the hard gate; performance is the sub-rank
 
 `comment`, `desktop`, `diff`, `dtd`, `eds`, `eex`, `embedded_template`, `facility`, `gomod`, `http`, `hyprlang`, `nginx`, `ninja`, `properties`, `ssh_config`
 
-## Tier IV — not parity-clean (95)
+## Unranked — parity-clean, perf measurement pending (1)
+
+`go`
+
+## Tier IV — not parity-clean (94)
 
 | grammar | cause | parity |
 | --- | --- | --- |
@@ -61,7 +66,6 @@ tree-sitter C oracle is the hard gate; performance is the sub-rank
 | `firrtl` | IV-recovery? | 5/27 |
 | `fsharp` | IV-perf | 0/8 |
 | `glsl` | IV-recovery | 11/40 |
-| `go` | IV-recovery | 37/40 |
 | `groovy` | IV-recovery | 4/40 |
 | `hare` | IV-recovery | 20/40 |
 | `haskell` | IV-scanner | 11/40 |

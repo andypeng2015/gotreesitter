@@ -85,8 +85,9 @@ func recoverGoRootTopLevelChunks(root *Node, source []byte, p *Parser) {
 		return
 	}
 	children := resultChildSliceForMutation(root)
-	newChildren := make([]*Node, 0, firstBad+len(recovered))
-	newChildren = append(newChildren, children[:firstBad]...)
+	keepPrefix := goRecoveredTopLevelPrefixLen(children, firstBad, recovered, p.language)
+	newChildren := make([]*Node, 0, keepPrefix+len(recovered))
+	newChildren = append(newChildren, children[:keepPrefix]...)
 	newChildren = append(newChildren, recovered...)
 	if !goChildrenLookLikeTopLevel(newChildren, p.language) {
 		return
@@ -97,6 +98,23 @@ func recoverGoRootTopLevelChunks(root *Node, source []byte, p *Parser) {
 		newChildren = buf
 	}
 	replaceNodeChildrenUnfielded(root, newChildren)
+}
+
+func goRecoveredTopLevelPrefixLen(children []*Node, firstBad int, recovered []*Node, lang *Language) int {
+	if firstBad <= 0 || firstBad > len(children) || len(recovered) == 0 || lang == nil {
+		return firstBad
+	}
+	prev := children[firstBad-1]
+	first := recovered[0]
+	if prev == nil || first == nil || prev.startByte != first.startByte || prev.endByte >= first.endByte {
+		return firstBad
+	}
+	switch prev.Type(lang) {
+	case "function_declaration", "method_declaration":
+		return firstBad - 1
+	default:
+		return firstBad
+	}
 }
 
 func firstGoNonTopLevelChildIndex(root *Node, lang *Language) int {
@@ -328,7 +346,366 @@ func goRecoverStatementNodesFromRange(source []byte, start, end uint32, p *Parse
 	if node, ok := goRecoverIfStatementFromRange(source, start, end, p, arena); ok {
 		return []*Node{node}, true
 	}
+	if node, ok := goRecoverForStatementFromRange(source, start, end, p, arena); ok {
+		return []*Node{node}, true
+	}
 	return nil, false
+}
+
+func goRecoverForStatementFromRange(source []byte, start, end uint32, p *Parser, arena *nodeArena) (*Node, bool) {
+	if p == nil || p.language == nil || start >= end || int(end) > len(source) {
+		return nil, false
+	}
+	trimmedStart, trimmedEnd, ok := trimGoSourceRange(source, start, end)
+	if !ok || !bytes.HasPrefix(source[trimmedStart:trimmedEnd], []byte("for")) {
+		return nil, false
+	}
+	if trimmedStart+3 < trimmedEnd {
+		switch source[trimmedStart+3] {
+		case ' ', '\t', '\r', '\n', '{':
+		default:
+			return nil, false
+		}
+	}
+	openBraceAbs, closeBraceAbs, forNode, releaseForHeader, ok := findGoForStatementBlock(source, trimmedStart, trimmedEnd, p)
+	if !ok {
+		return nil, false
+	}
+	defer releaseForHeader()
+	bodyNodes, ok := goRecoverFunctionBodyNodes(source, openBraceAbs+1, closeBraceAbs, p, arena)
+	if !ok {
+		return nil, false
+	}
+	block, ok := goBuildRecoveredBlockNode(source, openBraceAbs, closeBraceAbs, bodyNodes, arena, p.language)
+	if !ok {
+		return nil, false
+	}
+	recoveredFor := cloneTreeNodesIntoArena(forNode, arena)
+	blockIndex := -1
+	for i := recoveredFor.ChildCount() - 1; i >= 0; i-- {
+		if child := recoveredFor.Child(i); child != nil && child.Type(p.language) == "block" {
+			blockIndex = i
+			break
+		}
+	}
+	if blockIndex < 0 {
+		return nil, false
+	}
+	recoveredFor.children[blockIndex] = block
+	block.parent = recoveredFor
+	block.childIndex = int32(blockIndex)
+	populateParentNode(recoveredFor, recoveredFor.children)
+	return recoveredFor, true
+}
+
+func findGoForStatementBlock(source []byte, start, end uint32, p *Parser) (uint32, uint32, *Node, func(), bool) {
+	if p == nil || p.language == nil || start >= end || int(end) > len(source) {
+		return 0, 0, nil, nil, false
+	}
+	candidates, complete := goStatementOpeningBraceCandidates(source, start, end)
+	if !complete {
+		return 0, 0, nil, nil, false
+	}
+	for _, openBraceAbs := range candidates {
+		closeBraceAbs, ok := findMatchingGoBraceByte(source, openBraceAbs, end)
+		if !ok || closeBraceAbs <= openBraceAbs {
+			return 0, 0, nil, nil, false
+		}
+		if !goForStatementHasOnlyTrailingTrivia(source, closeBraceAbs+1, end) {
+			continue
+		}
+		forNode, release, ok := parseGoForHeaderSkeleton(source, start, openBraceAbs, p)
+		if !ok {
+			continue
+		}
+		return openBraceAbs, closeBraceAbs, forNode, release, true
+	}
+	return 0, 0, nil, nil, false
+}
+
+func goStatementOpeningBraceCandidates(source []byte, start, end uint32) ([]uint32, bool) {
+	var (
+		candidates     []uint32
+		parenDepth     int
+		bracketDepth   int
+		inLineComment  bool
+		inBlockComment bool
+		inString       bool
+		inRune         bool
+		inRawString    bool
+		escape         bool
+	)
+	for i := int(start); i < int(end); i++ {
+		b := source[i]
+		if inLineComment {
+			if b == '\n' {
+				inLineComment = false
+			}
+			continue
+		}
+		if inBlockComment {
+			if b == '*' && i+1 < int(end) && source[i+1] == '/' {
+				inBlockComment = false
+				i++
+			}
+			continue
+		}
+		if inString {
+			if escape {
+				escape = false
+				continue
+			}
+			if b == '\\' {
+				escape = true
+				continue
+			}
+			if b == '"' {
+				inString = false
+			}
+			continue
+		}
+		if inRune {
+			if escape {
+				escape = false
+				continue
+			}
+			if b == '\\' {
+				escape = true
+				continue
+			}
+			if b == '\'' {
+				inRune = false
+			}
+			continue
+		}
+		if inRawString {
+			if b == '`' {
+				inRawString = false
+			}
+			continue
+		}
+		switch b {
+		case '/':
+			if i+1 < int(end) && source[i+1] == '/' {
+				inLineComment = true
+				i++
+				continue
+			}
+			if i+1 < int(end) && source[i+1] == '*' {
+				inBlockComment = true
+				i++
+				continue
+			}
+		case '"':
+			inString = true
+		case '\'':
+			inRune = true
+		case '`':
+			inRawString = true
+		case '(':
+			parenDepth++
+		case ')':
+			if parenDepth > 0 {
+				parenDepth--
+			}
+		case '[':
+			bracketDepth++
+		case ']':
+			if bracketDepth > 0 {
+				bracketDepth--
+			}
+		case '{':
+			if parenDepth == 0 && bracketDepth == 0 {
+				candidates = append(candidates, uint32(i))
+			}
+		}
+	}
+	return candidates, !inBlockComment && !inString && !inRune && !inRawString
+}
+
+func findMatchingGoBraceByte(source []byte, openPos, limit uint32) (uint32, bool) {
+	if int(openPos) >= len(source) || int(limit) > len(source) || openPos >= limit || source[openPos] != '{' {
+		return 0, false
+	}
+	var (
+		depth          int
+		inLineComment  bool
+		inBlockComment bool
+		inString       bool
+		inRune         bool
+		inRawString    bool
+		escape         bool
+	)
+	for i := int(openPos); i < int(limit); i++ {
+		b := source[i]
+		if inLineComment {
+			if b == '\n' {
+				inLineComment = false
+			}
+			continue
+		}
+		if inBlockComment {
+			if b == '*' && i+1 < int(limit) && source[i+1] == '/' {
+				inBlockComment = false
+				i++
+			}
+			continue
+		}
+		if inString {
+			if escape {
+				escape = false
+				continue
+			}
+			if b == '\\' {
+				escape = true
+				continue
+			}
+			if b == '"' {
+				inString = false
+			}
+			continue
+		}
+		if inRune {
+			if escape {
+				escape = false
+				continue
+			}
+			if b == '\\' {
+				escape = true
+				continue
+			}
+			if b == '\'' {
+				inRune = false
+			}
+			continue
+		}
+		if inRawString {
+			if b == '`' {
+				inRawString = false
+			}
+			continue
+		}
+		switch b {
+		case '/':
+			if i+1 < int(limit) && source[i+1] == '/' {
+				inLineComment = true
+				i++
+				continue
+			}
+			if i+1 < int(limit) && source[i+1] == '*' {
+				inBlockComment = true
+				i++
+				continue
+			}
+		case '"':
+			inString = true
+		case '\'':
+			inRune = true
+		case '`':
+			inRawString = true
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return uint32(i), true
+			}
+			if depth < 0 {
+				return 0, false
+			}
+		}
+	}
+	return 0, false
+}
+
+func goForStatementHasOnlyTrailingTrivia(source []byte, start, end uint32) bool {
+	for start < end {
+		switch source[start] {
+		case ' ', '\t', '\r', '\n':
+			start++
+		case '/':
+			if start+1 >= end {
+				return false
+			}
+			switch source[start+1] {
+			case '/':
+				start += 2
+				for start < end && source[start] != '\n' {
+					start++
+				}
+			case '*':
+				start += 2
+				for start+1 < end && !(source[start] == '*' && source[start+1] == '/') {
+					start++
+				}
+				if start+1 >= end {
+					return false
+				}
+				start += 2
+			default:
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func parseGoForHeaderSkeleton(source []byte, start, openBrace uint32, p *Parser) (*Node, func(), bool) {
+	const prefix = "package p\nfunc _() {\n"
+	header := source[start:openBrace]
+	skeleton := make([]byte, 0, len(prefix)+len(header)+5)
+	skeleton = append(skeleton, prefix...)
+	skeleton = append(skeleton, header...)
+	skeleton = append(skeleton, '{', '}', '\n', '}', '\n')
+	tree, err := p.parseForRecovery(skeleton)
+	if err != nil || tree == nil || tree.RootNode() == nil || tree.RootNode().HasError() {
+		if tree != nil {
+			tree.Release()
+		}
+		return nil, nil, false
+	}
+
+	startPoint := advancePointByBytes(Point{}, source[:start])
+	prefixPoint := advancePointByBytes(Point{}, []byte(prefix))
+	if startPoint.Row < prefixPoint.Row {
+		tree.Release()
+		return nil, nil, false
+	}
+	offsetRoot := tree.RootNodeWithOffset(
+		start-uint32(len(prefix)),
+		Point{Row: startPoint.Row - prefixPoint.Row, Column: startPoint.Column},
+	)
+	forNode := goFirstNodeOfType(offsetRoot, p.language, "for_statement")
+	if forNode == nil || forNode.ChildCount() == 0 || forNode.startByte != start {
+		tree.Release()
+		return nil, nil, false
+	}
+	return forNode, tree.Release, true
+}
+
+func trimGoSourceRange(source []byte, start, end uint32) (uint32, uint32, bool) {
+	for start < end {
+		switch source[start] {
+		case ' ', '\t', '\r', '\n':
+			start++
+		default:
+			goto startReady
+		}
+	}
+	return 0, 0, false
+
+startReady:
+	for end > start {
+		switch source[end-1] {
+		case ' ', '\t', '\r', '\n':
+			end--
+		default:
+			return start, end, true
+		}
+	}
+	return 0, 0, false
 }
 
 func goRecoverIfStatementFromRange(source []byte, start, end uint32, p *Parser, arena *nodeArena) (*Node, bool) {
@@ -564,6 +941,10 @@ func goFunctionStatementRanges(source []byte, start, end uint32) [][2]uint32 {
 }
 
 func goFirstFunctionLikeChild(root *Node, lang *Language) *Node {
+	return goFirstNodeOfType(root, lang, "function_declaration", "method_declaration")
+}
+
+func goFirstNodeOfType(root *Node, lang *Language, types ...string) *Node {
 	if root == nil || lang == nil {
 		return nil
 	}
@@ -572,9 +953,14 @@ func goFirstFunctionLikeChild(root *Node, lang *Language) *Node {
 		if child == nil {
 			continue
 		}
-		switch child.Type(lang) {
-		case "function_declaration", "method_declaration":
-			return child
+		childType := child.Type(lang)
+		for _, typ := range types {
+			if childType == typ {
+				return child
+			}
+		}
+		if found := goFirstNodeOfType(child, lang, types...); found != nil {
+			return found
 		}
 	}
 	return nil
