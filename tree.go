@@ -1880,8 +1880,8 @@ func (t *Tree) ensureResultCompatibility() {
 			return
 		}
 		if !parsePhaseTimingEnabled() {
-			normalizeResultCompatibility(t.root, t.source, &Parser{language: t.language})
-			t.finishDeferredResultCompatibility()
+			result := normalizeResultCompatibility(t.root, t.source, &Parser{language: t.language})
+			t.finishDeferredResultCompatibility(result)
 			return
 		}
 		timing := &parseMaterializationTiming{}
@@ -1890,20 +1890,21 @@ func (t *Tree) ensureResultCompatibility() {
 			materializationTiming: timing,
 		}
 		start := materializationTimingStart(timing)
-		normalizeResultCompatibility(t.root, t.source, parser)
+		result := normalizeResultCompatibility(t.root, t.source, parser)
 		timing.addResultCompatibility(start)
 		t.parseRuntime.ResultCompatibilityNanos += timing.resultCompatibilityNanos
 		parser.copyNormalizationStats(&t.parseRuntime)
-		t.finishDeferredResultCompatibility()
+		t.finishDeferredResultCompatibility(result)
 	})
 }
 
-func (t *Tree) finishDeferredResultCompatibility() {
+func (t *Tree) finishDeferredResultCompatibility(result resultCompatibilityResult) {
 	if t == nil || t.root == nil || t.language == nil || t.language.Name != "ini" {
 		return
 	}
 	extendNodeToTrailingWhitespace(t.root, t.source)
-	if t.parseRuntime.StopReason == ParseStopNoStacksAlive && iniDeferredCompatibilityAccepted(t.root, t.source, t.language) {
+	wireParentLinksWithScratch(t.root, nil)
+	if t.parseRuntime.StopReason == ParseStopNoStacksAlive && iniDeferredCompatibilityAccepted(t.root, t.source, t.language, result) {
 		t.parseRuntime.StopReason = ParseStopAccepted
 		t.parseRuntime.RootEndByte = t.root.endByte
 		t.parseRuntime.Truncated = false

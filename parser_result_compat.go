@@ -8,16 +8,23 @@ type resultCompatibilityContext struct {
 	stopCheck parseStopCheck
 }
 
+type resultCompatibilityResult struct {
+	stopReason                     ParseStopReason
+	iniMypyEnableErrorContinuation bool
+	iniContinuationStart           uint32
+	iniContinuationEnd             uint32
+}
+
 // normalizeResultCompatibility applies narrow post-build tree rewrites that
 // keep gotreesitter output aligned with C tree-sitter and existing recovery
 // expectations for grammars with known normalization gaps.
-func normalizeResultCompatibility(root *Node, source []byte, p *Parser) ParseStopReason {
+func normalizeResultCompatibility(root *Node, source []byte, p *Parser) resultCompatibilityResult {
 	var lang *Language
 	if p != nil {
 		lang = p.language
 	}
 	if root == nil || lang == nil {
-		return ParseStopNone
+		return resultCompatibilityResult{}
 	}
 	ctx := resultCompatibilityContext{
 		root:      root,
@@ -27,16 +34,19 @@ func normalizeResultCompatibility(root *Node, source []byte, p *Parser) ParseSto
 		stopCheck: p.activeParseStopCheck(),
 	}
 	if reason := ctx.stopReason(); parseStopReasonIsActive(reason) {
-		return reason
+		return resultCompatibilityResult{stopReason: reason}
 	}
-	if reason := runLanguageResultCompatibility(ctx); parseStopReasonIsActive(reason) {
-		return reason
+	result := runLanguageResultCompatibility(ctx)
+	if parseStopReasonIsActive(result.stopReason) {
+		return result
 	}
 	if reason := ctx.stopReason(); parseStopReasonIsActive(reason) {
-		return reason
+		result.stopReason = reason
+		return result
 	}
 	normalizeResultCollapsedNamedLeafChildren(root, lang)
-	return ctx.stopReason()
+	result.stopReason = ctx.stopReason()
+	return result
 }
 
 func (ctx resultCompatibilityContext) stopReason() ParseStopReason {
@@ -50,10 +60,10 @@ func (ctx resultCompatibilityContext) stopReason() ParseStopReason {
 	return reason
 }
 
-func runLanguageResultCompatibility(ctx resultCompatibilityContext) ParseStopReason {
+func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompatibilityResult {
 	if isCobolLanguage(ctx.lang) {
 		normalizeCobolCompatibility(ctx.root, ctx.source, ctx.lang)
-		return ctx.stopReason()
+		return resultCompatibilityResult{stopReason: ctx.stopReason()}
 	}
 
 	switch ctx.lang.Name {
@@ -117,7 +127,7 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) ParseStopRea
 	case "fidl":
 		normalizeFIDLCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "go":
-		return normalizeGoReturnedTreeCompatibility(ctx.root, ctx.source, ctx.parser, ctx.lang)
+		return resultCompatibilityResult{stopReason: normalizeGoReturnedTreeCompatibility(ctx.root, ctx.source, ctx.parser, ctx.lang)}
 	case "graphql":
 		normalizeGraphQLCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "git_rebase":
@@ -139,7 +149,7 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) ParseStopRea
 	case "hyprlang":
 		normalizeHyprlangCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "ini":
-		normalizeIniCompatibility(ctx.root, ctx.source, ctx.lang)
+		return normalizeIniCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "java":
 		normalizeJavaCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "javascript":
@@ -185,8 +195,6 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) ParseStopRea
 		normalizeRCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "python":
 		normalizePythonCompatibilityWithParser(ctx.root, ctx.source, ctx.parser, ctx.lang)
-	case "r":
-		normalizeRCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "rst":
 		normalizeRSTTopLevelSectionEnd(ctx.root, ctx.source, ctx.lang)
 	case "rust":
@@ -223,5 +231,5 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) ParseStopRea
 	case "zig":
 		normalizeZigEmptyInitListFields(ctx.root, ctx.lang)
 	}
-	return ctx.stopReason()
+	return resultCompatibilityResult{stopReason: ctx.stopReason()}
 }

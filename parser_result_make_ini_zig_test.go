@@ -258,8 +258,82 @@ func TestNormalizeIniMypyFlatDocumentContinuationDropsSectionBlanks(t *testing.T
 	if got := root.EndByte(); got != uint32(len(source)) {
 		t.Fatalf("root end = %d, want %d", got, len(source))
 	}
-	if !iniDeferredCompatibilityAccepted(root, source, lang) {
+	if !iniDeferredCompatibilityAccepted(root, source, lang, resultCompatibilityResult{
+		iniMypyEnableErrorContinuation: true,
+		iniContinuationStart:           321,
+		iniContinuationEnd:             402,
+	}) {
 		t.Fatal("iniDeferredCompatibilityAccepted = false, want true")
+	}
+}
+
+func TestNormalizeIniMypyContinuationLinesStopAtBlockBoundary(t *testing.T) {
+	source := []byte("enable_error_code = \n    ignore-without-code,\n    redundant-expr,\n\n    should-not-continue,\n")
+	first := iniFirstContinuationContentStart(source, []byte("enable_error_code = \n"))
+	lines := iniContinuationLinesFrom(source, first)
+	if got := len(lines); got != 2 {
+		t.Fatalf("blank-terminated continuation lines = %d, want 2", got)
+	}
+
+	source = []byte("enable_error_code = \n    ignore-without-code,\n    # stop here\n    should-not-continue,\n")
+	first = iniFirstContinuationContentStart(source, []byte("enable_error_code = \n"))
+	lines = iniContinuationLinesFrom(source, first)
+	if got := len(lines); got != 1 {
+		t.Fatalf("comment-terminated continuation lines = %d, want 1", got)
+	}
+
+	source = []byte("enable_error_code = \n    ignore-without-code,\nnext = setting\n    should-not-continue,\n")
+	first = iniFirstContinuationContentStart(source, []byte("enable_error_code = \n"))
+	lines = iniContinuationLinesFrom(source, first)
+	if got := len(lines); got != 1 {
+		t.Fatalf("setting-terminated continuation lines = %d, want 1", got)
+	}
+}
+
+func TestNormalizeIniDeferredAcceptanceRequiresAppliedContinuationRepair(t *testing.T) {
+	lang := testIniMypyLanguage()
+	source := []byte("[mypy]\nenable_error_code = \n    ignore-without-code,\n")
+	arena := newNodeArena(arenaClassFull)
+	section := newParentNodeInArena(arena, testIniSymbol(lang, "section"), true, []*Node{
+		testIniLeaf(arena, lang, "section_name", source, 0, 7),
+		testIniLeaf(arena, lang, "setting", source, 7, 28),
+	}, nil, 0)
+	section.endByte = iniMypyEnableErrorMarkerEnd(source)
+	section.endPoint = advancePointByBytes(Point{}, source[:section.endByte])
+	errChild := testIniLeaf(arena, lang, "setting_name", source, 32, 52)
+	errNode := newParentNodeInArena(arena, errorSymbol, true, []*Node{errChild}, nil, 0)
+	errNode.setHasError(true)
+	errNode.startByte = 32
+	errNode.startPoint = advancePointByBytes(Point{}, source[:32])
+	errNode.endByte = 52
+	errNode.endPoint = advancePointByBytes(Point{}, source[:52])
+	root := newParentNodeInArena(arena, testIniSymbol(lang, "document"), true, []*Node{section, errNode}, nil, 0)
+	root.setHasError(true)
+	root.endByte = uint32(len(source))
+	root.endPoint = advancePointByBytes(Point{}, source)
+	tree := &Tree{
+		root:     root,
+		source:   source,
+		language: lang,
+		parseRuntime: ParseRuntime{
+			StopReason:  ParseStopNoStacksAlive,
+			RootEndByte: root.endByte,
+		},
+	}
+
+	tree.finishDeferredResultCompatibility(resultCompatibilityResult{})
+	if got := tree.ParseStopReason(); got != ParseStopNoStacksAlive {
+		t.Fatalf("stop reason without repair result = %q, want %q", got, ParseStopNoStacksAlive)
+	}
+
+	tree.parseRuntime.StopReason = ParseStopNoStacksAlive
+	tree.finishDeferredResultCompatibility(resultCompatibilityResult{
+		iniMypyEnableErrorContinuation: true,
+		iniContinuationStart:           32,
+		iniContinuationEnd:             51,
+	})
+	if got := tree.ParseStopReason(); got != ParseStopNoStacksAlive {
+		t.Fatalf("stop reason with wrong repair span = %q, want %q", got, ParseStopNoStacksAlive)
 	}
 }
 
@@ -279,7 +353,9 @@ func TestNormalizeIniMypyContinuationGuardRequiresContinuationPattern(t *testing
 	if got := root.ChildCount(); got != 1 {
 		t.Fatalf("root child count = %d, want unchanged 1", got)
 	}
-	if iniDeferredCompatibilityAccepted(root, source, lang) {
+	if iniDeferredCompatibilityAccepted(root, source, lang, resultCompatibilityResult{
+		iniMypyEnableErrorContinuation: true,
+	}) {
 		t.Fatal("iniDeferredCompatibilityAccepted = true, want false")
 	}
 }

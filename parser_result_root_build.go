@@ -225,8 +225,8 @@ func (b *resultRootBuild) finalizeRoot(root *Node, wireParentLinks, extendTraili
 func (b *resultRootBuild) finalizeWrappedSubtree(root *Node) {
 	p := b.parser
 	if p == nil || (!p.noResultCompatibilityBenchmarkOnly && !p.shouldDeferResultCompatibility(root)) {
-		if reason := normalizeResultCompatibility(root, b.source, p); parseStopReasonIsActive(reason) && p != nil {
-			p.markActiveParseStopped(reason)
+		if compat := normalizeResultCompatibility(root, b.source, p); parseStopReasonIsActive(compat.stopReason) && p != nil {
+			p.markActiveParseStopped(compat.stopReason)
 		}
 	}
 }
@@ -403,8 +403,8 @@ func (p *Parser) finalizeResultRoot(root *Node, source []byte, linkScratch *[]*N
 	timing.addResultNormalizeRootStart(start)
 	if p == nil || (!p.noResultCompatibilityBenchmarkOnly && !p.shouldDeferResultCompatibility(root)) {
 		start = materializationTimingStart(timing)
-		if reason := normalizeResultCompatibility(root, source, p); parseStopReasonIsActive(reason) && p != nil {
-			p.markActiveParseStopped(reason)
+		if compat := normalizeResultCompatibility(root, source, p); parseStopReasonIsActive(compat.stopReason) && p != nil {
+			p.markActiveParseStopped(compat.stopReason)
 		}
 		timing.addResultCompatibility(start)
 		// Per-language compatibility passes can filter trailing trivia children

@@ -2,10 +2,11 @@ package gotreesitter
 
 import "bytes"
 
-func normalizeIniCompatibility(root *Node, source []byte, lang *Language) {
-	normalizeIniMypyContinuationRecovery(root, source, lang)
+func normalizeIniCompatibility(root *Node, source []byte, lang *Language) resultCompatibilityResult {
+	result := normalizeIniMypyContinuationRecovery(root, source, lang)
 	normalizeIniSectionStarts(root, lang)
 	normalizeIniDocumentBlanks(root, lang)
+	return result
 }
 
 func normalizeIniSectionStarts(root *Node, lang *Language) {
@@ -36,20 +37,23 @@ type iniSourceLine struct {
 	contentEnd   uint32
 }
 
-func normalizeIniMypyContinuationRecovery(root *Node, source []byte, lang *Language) {
+func normalizeIniMypyContinuationRecovery(root *Node, source []byte, lang *Language) resultCompatibilityResult {
 	if root == nil || lang == nil || lang.Name != "ini" || len(source) == 0 {
-		return
+		return resultCompatibilityResult{}
 	}
 	if !bytes.Contains(source, []byte("enable_error_code")) {
-		return
+		return resultCompatibilityResult{}
 	}
 	if normalizeIniMypyFlatErrorRoot(root, source, lang) {
-		return
+		return resultCompatibilityResult{}
 	}
-	if normalizeIniMypyFlatDocumentContinuation(root, source, lang) {
-		return
+	if result, ok := normalizeIniMypyFlatDocumentContinuation(root, source, lang); ok {
+		return result
 	}
-	normalizeIniMypyContinuationErrorDocument(root, source, lang)
+	if result, ok := normalizeIniMypyContinuationErrorDocument(root, source, lang); ok {
+		return result
+	}
+	return resultCompatibilityResult{}
 }
 
 func normalizeIniMypyFlatErrorRoot(root *Node, source []byte, lang *Language) bool {
@@ -117,59 +121,64 @@ func normalizeIniMypyFlatErrorRoot(root *Node, source []byte, lang *Language) bo
 	return true
 }
 
-func normalizeIniMypyContinuationErrorDocument(root *Node, source []byte, lang *Language) bool {
+func normalizeIniMypyContinuationErrorDocument(root *Node, source []byte, lang *Language) (resultCompatibilityResult, bool) {
 	if root.Type(lang) != "ERROR" || resultChildCount(root) < 2 || !bytes.Contains(source, []byte("enable_error_code = \n    ")) {
-		return false
+		return resultCompatibilityResult{}, false
 	}
 	documentSym, ok := symbolByName(lang, "document")
 	if !ok {
-		return false
+		return resultCompatibilityResult{}, false
 	}
 	settingNameSym, _, ok := iniRecoverySymbols(lang)
 	if !ok {
-		return false
+		return resultCompatibilityResult{}, false
 	}
 	section := resultChildAt(root, 0)
 	firstErr := resultChildAt(root, 1)
 	if section == nil || firstErr == nil || section.Type(lang) != "section" || firstErr.Type(lang) != "ERROR" || resultChildCount(firstErr) == 0 {
-		return false
+		return resultCompatibilityResult{}, false
 	}
 	firstName := resultChildAt(firstErr, 0)
 	if firstName == nil || firstName.symbol != settingNameSym {
-		return false
+		return resultCompatibilityResult{}, false
 	}
-	errLines := iniContinuationLinesAfter(source, firstErr.startByte)
-	if len(errLines) == 0 {
-		return false
+	continuationLines := iniContinuationLinesFrom(source, firstErr.startByte)
+	if len(continuationLines) <= 1 {
+		return resultCompatibilityResult{}, false
 	}
+	errLines := continuationLines[1:]
 	rebuiltSection := iniRebuildSectionWithLineBreakSpans(section, source, firstErr.startByte)
 	errNode := iniBuildContinuationErrorNode(root.ownerArena, source, firstErr, firstName, errLines)
 	if rebuiltSection == nil || errNode == nil {
-		return false
+		return resultCompatibilityResult{}, false
 	}
 	retagResultRoot(root, documentSym, true)
 	root.setHasError(true)
 	replaceNodeChildrenUnfielded(root, cloneNodeSliceIfArena(root.ownerArena, []*Node{rebuiltSection, errNode}))
 	root.childIndex = -1
 	extendNodeToTrailingWhitespace(root, source)
-	return true
+	return resultCompatibilityResult{
+		iniMypyEnableErrorContinuation: true,
+		iniContinuationStart:           firstErr.startByte,
+		iniContinuationEnd:             errNode.endByte,
+	}, true
 }
 
-func normalizeIniMypyFlatDocumentContinuation(root *Node, source []byte, lang *Language) bool {
+func normalizeIniMypyFlatDocumentContinuation(root *Node, source []byte, lang *Language) (resultCompatibilityResult, bool) {
 	if root.Type(lang) != "document" || resultChildCount(root) < 3 || !bytes.Contains(source, []byte("enable_error_code = \n    ")) {
-		return false
+		return resultCompatibilityResult{}, false
 	}
 	sectionSym, ok := symbolByName(lang, "section")
 	if !ok {
-		return false
+		return resultCompatibilityResult{}, false
 	}
 	settingNameSym, _, ok := iniRecoverySymbols(lang)
 	if !ok {
-		return false
+		return resultCompatibilityResult{}, false
 	}
 	firstContinuation := iniFirstContinuationContentStart(source, []byte("enable_error_code = \n"))
 	if firstContinuation == 0 {
-		return false
+		return resultCompatibilityResult{}, false
 	}
 	firstIdx := -1
 	for i := 0; i < resultChildCount(root); i++ {
@@ -180,29 +189,36 @@ func normalizeIniMypyFlatDocumentContinuation(root *Node, source []byte, lang *L
 		}
 	}
 	if firstIdx <= 0 {
-		return false
+		return resultCompatibilityResult{}, false
 	}
 	section := iniBuildSectionFromTopLevelChildren(root.ownerArena, lang, sectionSym, source, resultChildSliceRangeForMutation(root, 0, firstIdx), firstContinuation)
 	if section == nil {
-		return false
+		return resultCompatibilityResult{}, false
 	}
 	firstName := resultChildAt(root, firstIdx)
 	errLines := iniContinuationLinesFrom(source, firstContinuation)
 	if len(errLines) == 0 {
-		return false
+		return resultCompatibilityResult{}, false
 	}
 	errNode := iniBuildContinuationErrorNode(root.ownerArena, source, firstName, firstName, errLines[1:])
 	if errNode == nil {
-		return false
+		return resultCompatibilityResult{}, false
 	}
 	replaceNodeChildrenUnfielded(root, cloneNodeSliceIfArena(root.ownerArena, []*Node{section, errNode}))
 	root.setHasError(true)
 	root.childIndex = -1
 	extendNodeToTrailingWhitespace(root, source)
-	return true
+	return resultCompatibilityResult{
+		iniMypyEnableErrorContinuation: true,
+		iniContinuationStart:           firstContinuation,
+		iniContinuationEnd:             errNode.endByte,
+	}, true
 }
 
-func iniDeferredCompatibilityAccepted(root *Node, source []byte, lang *Language) bool {
+func iniDeferredCompatibilityAccepted(root *Node, source []byte, lang *Language, result resultCompatibilityResult) bool {
+	if !result.iniMypyEnableErrorContinuation {
+		return false
+	}
 	if root == nil || lang == nil || lang.Name != "ini" || len(source) == 0 {
 		return false
 	}
@@ -212,9 +228,41 @@ func iniDeferredCompatibilityAccepted(root *Node, source []byte, lang *Language)
 	if !bytes.Contains(source, []byte("enable_error_code = \n    ")) {
 		return false
 	}
+	firstContinuation := iniFirstContinuationContentStart(source, []byte("enable_error_code = \n"))
+	if firstContinuation == 0 || firstContinuation != result.iniContinuationStart {
+		return false
+	}
+	continuationLines := iniContinuationLinesFrom(source, firstContinuation)
+	if len(continuationLines) == 0 || continuationLines[len(continuationLines)-1].contentEnd != result.iniContinuationEnd {
+		return false
+	}
 	section := resultChildAt(root, 0)
 	errNode := resultChildAt(root, 1)
-	return section != nil && section.Type(lang) == "section" && errNode != nil && errNode.Type(lang) == "ERROR"
+	if section == nil || section.Type(lang) != "section" || errNode == nil || errNode.Type(lang) != "ERROR" {
+		return false
+	}
+	if markerEnd := iniMypyEnableErrorMarkerEnd(source); markerEnd == 0 || section.endByte != markerEnd {
+		return false
+	}
+	if errNode.startByte != result.iniContinuationStart || errNode.endByte != result.iniContinuationEnd || resultChildCount(errNode) != len(continuationLines) {
+		return false
+	}
+	for i, line := range continuationLines {
+		child := resultChildAt(errNode, i)
+		if child == nil || child.startByte != line.contentStart || child.endByte != line.contentEnd {
+			return false
+		}
+		if i == 0 {
+			if child.Type(lang) != "setting_name" {
+				return false
+			}
+			continue
+		}
+		if child.Type(lang) != "ERROR" {
+			return false
+		}
+	}
+	return true
 }
 
 func iniRecoverySymbols(lang *Language) (Symbol, Symbol, bool) {
@@ -237,23 +285,42 @@ func iniReusableChildrenByStart(section *Node) map[uint32]*Node {
 }
 
 func iniContinuationLinesAfter(source []byte, firstStart uint32) []iniSourceLine {
-	var lines []iniSourceLine
-	for _, line := range iniSourceLines(source) {
-		if line.contentStart > firstStart && line.contentStart < line.contentEnd && line.contentStart > line.start {
-			lines = append(lines, line)
-		}
+	lines := iniContinuationLinesFrom(source, firstStart)
+	if len(lines) <= 1 {
+		return nil
 	}
-	return lines
+	return lines[1:]
 }
 
 func iniContinuationLinesFrom(source []byte, firstStart uint32) []iniSourceLine {
 	var lines []iniSourceLine
+	inBlock := false
 	for _, line := range iniSourceLines(source) {
-		if line.contentStart >= firstStart && line.contentStart < line.contentEnd && line.contentStart > line.start {
+		if !inBlock {
+			if line.contentStart != firstStart {
+				continue
+			}
+			if !iniIsContinuationLine(source, line) {
+				return nil
+			}
+			inBlock = true
 			lines = append(lines, line)
+			continue
 		}
+		if !iniIsContinuationLine(source, line) {
+			break
+		}
+		lines = append(lines, line)
 	}
 	return lines
+}
+
+func iniIsContinuationLine(source []byte, line iniSourceLine) bool {
+	if line.contentStart >= line.contentEnd || line.contentStart <= line.start {
+		return false
+	}
+	text := source[line.contentStart:line.contentEnd]
+	return !bytes.HasPrefix(text, []byte("#")) && !bytes.HasPrefix(text, []byte("["))
 }
 
 func iniFirstContinuationContentStart(source []byte, marker []byte) uint32 {
@@ -274,6 +341,15 @@ func iniFirstContinuationContentStart(source []byte, marker []byte) uint32 {
 		}
 	}
 	return 0
+}
+
+func iniMypyEnableErrorMarkerEnd(source []byte) uint32 {
+	marker := []byte("enable_error_code = \n")
+	idx := bytes.Index(source, marker)
+	if idx < 0 {
+		return 0
+	}
+	return uint32(idx + len(marker))
 }
 
 func iniSourceLines(source []byte) []iniSourceLine {
