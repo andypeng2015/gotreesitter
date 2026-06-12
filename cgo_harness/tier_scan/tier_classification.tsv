@@ -177,7 +177,7 @@ swift	IV-recovery?	0/40	faithful C error-cost version competition (see spec)
 tablegen	CLEAN	40/40	in ratchet
 tcl	IV-recovery?	10/40	faithful C error-cost version competition (see spec)
 teal	IV-recovery?	4/40	faithful C error-cost version competition (see spec)
-templ	IV-recovery?	24/40	faithful C error-cost version competition (see spec)
+templ	IV-recovery?	33/40	faithful C error-cost version competition (see spec)
 textproto	CLEAN	40/40	in ratchet
 thrift	CLEAN	40/40	in ratchet
 tlaplus	IV-unknown?	14/40	ext=.tla; stackcap disproven (cap 2: 21→20 iteration_limit truncations, parity unchanged); 197x median ratio with deep truncations (go stops at 1-2KB where C parses 11-31KB) — likely jlist external-scanner-driven GLR churn

@@ -113,7 +113,7 @@ tree-sitter C oracle is the hard gate; performance is the sub-rank
 | `swift` | IV-recovery? | 0/40 |
 | `tcl` | IV-recovery? | 10/40 |
 | `teal` | IV-recovery? | 4/40 |
-| `templ` | IV-recovery? | 24/40 |
+| `templ` | IV-recovery? | 33/40 |
 | `tlaplus` | IV-unknown? | 14/40 |
 | `tmux` | IV-recovery? | 0/1 |
 | `typst` | IV-recovery? | 28/40 |

@@ -1188,7 +1188,7 @@
    "grammar": "templ",
    "tier": "IV",
    "iv_cause": "IV-recovery?",
-   "parity": "24/40",
+   "parity": "33/40",
    "notes": "faithful C error-cost version competition (see spec)"
   },
   {
