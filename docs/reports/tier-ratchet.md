@@ -74,7 +74,7 @@ demotions, with named sub-causes (from the canonical scan / post-merge overlay):
 - **comment** IV-perf 35/40 — trunc=5, 59× median (blowup truncation)
 - **corn** IV-recovery 22/23 — quoted_keys path_seg child-count
 - **dot** IV-perf 39/40 — bsdarch.dot 2257× agg blowup truncation
-- **erlang** IV-recovery 38/40 — bif_SUITE ambiguity-selection + binary_SUITE blowup trunc
+- **erlang** IV-recovery 39/40 — binary_SUITE memory-budget trunc; bif_SUITE replacement-clause ambiguity-selection cleared 2026-06-12
 - **fidl** IV-shape 39/40 — INVERSE: C fragments versioned-FIDL syntax, Go parses clean; must match C error shapes
 - **java** IV-recovery? 39/40 — canonical-frame demotion
 - **jsonnet** IV-recovery? 39/40 — canonical-frame demotion

@@ -59,7 +59,7 @@ elm	CLEAN	8/8	Elm external lex-state table plus repeatable zero-width _virtual_e
 elsa	IV-recovery?	12/27	ext=.lc; faithful C error-cost version competition (see spec)
 embedded_template	CLEAN	40/40	in ratchet
 enforce	CLEAN	40/40	enforce const int formal-parameter compatibility normalization clears declMethod.txt (verified 2026-06-11)
-erlang	IV-recovery	38/40	bif_SUITE ambiguity-selection + binary_SUITE blowup trunc
+erlang	IV-recovery	39/40	binary_SUITE memory-budget trunc; bif_SUITE replacement-clause ambiguity-selection cleared 2026-06-12
 facility	CLEAN	6/6	locked real-corpus parity clean (verified 2026-06-11)
 faust	CLEAN	40/40	in ratchet
 fennel	IV-recovery?	8/30	ext=.fnl; faithful C error-cost version competition (see spec)

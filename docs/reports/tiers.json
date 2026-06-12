@@ -1,6 +1,6 @@
 {
- "generated": "2026-06-12T21:12:41Z",
- "commit": "ad31baab",
+ "generated": "2026-06-12T21:17:44Z",
+ "commit": "bab5cb9e",
  "version": "unreleased",
  "tier_rules": {
   "I": "parity-clean and <=1.5x C full-parse, cold <=5ms, blob <=150KB",
@@ -421,8 +421,8 @@
    "grammar": "erlang",
    "tier": "IV",
    "iv_cause": "IV-recovery",
-   "parity": "38/40",
-   "notes": "bif_SUITE ambiguity-selection + binary_SUITE blowup trunc"
+   "parity": "39/40",
+   "notes": "binary_SUITE memory-budget trunc; bif_SUITE replacement-clause ambiguity-selection cleared 2026-06-12"
   },
   {
    "grammar": "facility",

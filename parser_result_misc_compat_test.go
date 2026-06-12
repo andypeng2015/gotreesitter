@@ -584,6 +584,68 @@ func TestNormalizeErlangSourceFileFormsSkipsExprsMode(t *testing.T) {
 	}
 }
 
+func TestNormalizeErlangReplacementClauses(t *testing.T) {
+	lang := &Language{
+		Name: "erlang",
+		SymbolNames: []string{
+			"EOF",
+			"source_file",
+			"replacement_cr_clauses",
+			"replacement_function_clauses",
+			"cr_clause",
+			"function_clause",
+			"atom",
+			"call",
+			"var",
+			"expr_args",
+			"clause_body",
+		},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF", Visible: false, Named: false},
+			{Name: "source_file", Visible: true, Named: true},
+			{Name: "replacement_cr_clauses", Visible: true, Named: true},
+			{Name: "replacement_function_clauses", Visible: true, Named: true},
+			{Name: "cr_clause", Visible: true, Named: true},
+			{Name: "function_clause", Visible: true, Named: true},
+			{Name: "atom", Visible: true, Named: true},
+			{Name: "call", Visible: true, Named: true},
+			{Name: "var", Visible: true, Named: true},
+			{Name: "expr_args", Visible: true, Named: true},
+			{Name: "clause_body", Visible: true, Named: true},
+		},
+	}
+
+	arena := newNodeArena(arenaClassFull)
+	name := newLeafNodeInArena(arena, 8, true, 0, 4, Point{}, Point{Column: 4})
+	args := newLeafNodeInArena(arena, 9, true, 4, 8, Point{Column: 4}, Point{Column: 8})
+	call := newParentNodeInArena(arena, 7, true, []*Node{name, args}, nil, 0)
+	body := newLeafNodeInArena(arena, 10, true, 9, 20, Point{Column: 9}, Point{Column: 20})
+	crClause := newParentNodeInArena(arena, 4, true, []*Node{call, body}, nil, 0)
+	replacement := newParentNodeInArena(arena, 2, true, []*Node{crClause}, nil, 0)
+	root := newParentNodeInArena(arena, 1, true, []*Node{replacement}, nil, 0)
+
+	normalizeErlangReplacementClauses(root, lang)
+
+	if got, want := replacement.Type(lang), "replacement_function_clauses"; got != want {
+		t.Fatalf("replacement.Type = %q, want %q", got, want)
+	}
+	if got, want := crClause.Type(lang), "function_clause"; got != want {
+		t.Fatalf("crClause.Type = %q, want %q", got, want)
+	}
+	if got, want := crClause.ChildCount(), 3; got != want {
+		t.Fatalf("crClause.ChildCount = %d, want %d", got, want)
+	}
+	if got, want := crClause.Child(0).Type(lang), "var"; got != want {
+		t.Fatalf("crClause.Child(0).Type = %q, want %q", got, want)
+	}
+	if got, want := crClause.Child(1).Type(lang), "expr_args"; got != want {
+		t.Fatalf("crClause.Child(1).Type = %q, want %q", got, want)
+	}
+	if got, want := crClause.Child(2).Type(lang), "clause_body"; got != want {
+		t.Fatalf("crClause.Child(2).Type = %q, want %q", got, want)
+	}
+}
+
 func TestNormalizeElixirNestedCallTargetFields(t *testing.T) {
 	lang := &Language{
 		Name:        "elixir",

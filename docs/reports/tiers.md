@@ -1,6 +1,6 @@
 # Grammar tiers — unreleased
 
-Generated 2026-06-12T21:12:41Z at `ad31baab`. Parity vs the
+Generated 2026-06-12T21:17:44Z at `bab5cb9e`. Parity vs the
 tree-sitter C oracle is the hard gate; performance is the sub-rank
 (rules in `cgo_harness/tier_scan/README.md`).
 
@@ -60,7 +60,7 @@ tree-sitter C oracle is the hard gate; performance is the sub-rank
 | `ebnf` | IV-recovery? | 0/30 |
 | `elixir` | IV-unknown | 0/40 |
 | `elsa` | IV-recovery? | 12/27 |
-| `erlang` | IV-recovery | 38/40 |
+| `erlang` | IV-recovery | 39/40 |
 | `fennel` | IV-recovery? | 8/30 |
 | `firrtl` | IV-recovery? | 5/27 |
 | `fsharp` | IV-perf | 0/8 |
