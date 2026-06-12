@@ -1,6 +1,6 @@
 {
- "generated": "2026-06-12T12:05:14Z",
- "commit": "e3f345e0",
+ "generated": "2026-06-12T18:52:35Z",
+ "commit": "311d3d23",
  "version": "unreleased",
  "tier_rules": {
   "I": "parity-clean and <=1.5x C full-parse, cold <=5ms, blob <=150KB",
@@ -1051,8 +1051,8 @@
    "grammar": "rescript",
    "tier": "IV",
    "iv_cause": "IV-recovery?",
-   "parity": "23/40",
-   "notes": "faithful C error-cost version competition (see spec)"
+   "parity": "29/40",
+   "notes": "Rescript value_identifier_path alias normalization cleared clean-root shape residuals; remaining 11/40 are Go root ERROR vs C source_file with trunc=0/panics=0, requiring faithful C error-cost version competition"
   },
   {
    "grammar": "robot",
