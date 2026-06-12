@@ -56,7 +56,7 @@ func normalizeBashGeneratedCommandAssignments(root *Node, source []byte, lang *L
 }
 
 func normalizeBashCommandNameArguments(root *Node, lang *Language) {
-	if root == nil || lang == nil || lang.Name != "bash" {
+	if root == nil || lang == nil || lang.Name != "bash" || root.IsError() || root.hasError() {
 		return
 	}
 	commandSym, ok := symbolByName(lang, "command")
@@ -75,48 +75,54 @@ func normalizeBashCommandNameArguments(root *Node, lang *Language) {
 }
 
 func normalizeBashCommandNameArgumentsInNode(node *Node, commandSym, commandNameSym, concatenationSym Symbol) {
-	if node == nil {
+	if node == nil || node.IsError() || node.hasError() {
 		return
 	}
 	for _, child := range node.children {
 		normalizeBashCommandNameArgumentsInNode(child, commandSym, commandNameSym, concatenationSym)
 	}
-	splitBashCommandNameArguments(node, commandSym, commandNameSym, concatenationSym)
+	mergeBashCommandNameArguments(node, commandSym, commandNameSym, concatenationSym)
 }
 
-func splitBashCommandNameArguments(node *Node, commandSym, commandNameSym, concatenationSym Symbol) bool {
-	if node == nil || node.symbol != commandSym || len(node.children) != 1 {
+func mergeBashCommandNameArguments(node *Node, commandSym, commandNameSym, concatenationSym Symbol) bool {
+	if node == nil || node.symbol != commandSym || len(node.children) < 2 || node.IsError() || node.hasError() {
 		return false
 	}
 	commandName := node.children[0]
-	if commandName == nil || commandName.symbol != commandNameSym || len(commandName.children) != 1 {
+	if commandName == nil || commandName.symbol != commandNameSym || len(commandName.children) == 0 || commandName.IsError() || commandName.hasError() {
 		return false
 	}
-	concat := commandName.children[0]
-	if concat == nil || concat.symbol != concatenationSym || len(concat.children) < 2 {
+	if len(commandName.children) == 1 && commandName.children[0] != nil && commandName.children[0].symbol == concatenationSym {
 		return false
 	}
 
 	arena := node.ownerArena
-	parts := concat.children
-	commandWord := parts[0]
-	if commandWord == nil {
+	mergeEnd := 1
+	lastEnd := commandName.endByte
+	for mergeEnd < len(node.children) {
+		child := node.children[mergeEnd]
+		if child == nil || child.IsError() || child.hasError() || child.startByte != lastEnd {
+			break
+		}
+		lastEnd = child.endByte
+		mergeEnd++
+	}
+	if mergeEnd == 1 {
 		return false
 	}
 
-	nameChildren := []*Node{commandWord}
-	if arena != nil {
-		nameChildren = cloneNodeSliceInArena(arena, nameChildren)
-	}
-	replaceNodeChildrenUnfielded(commandName, nameChildren)
-	commandName.startByte = commandWord.startByte
-	commandName.endByte = commandWord.endByte
-	commandName.startPoint = commandWord.startPoint
-	commandName.endPoint = commandWord.endPoint
+	parts := make([]*Node, 0, len(commandName.children)+mergeEnd-1)
+	parts = append(parts, commandName.children...)
+	parts = append(parts, node.children[1:mergeEnd]...)
+	concat := newParentNodeInArena(arena, concatenationSym, true, cloneNodeSliceInArena(arena, parts), nil, 0)
 
-	commandChildren := make([]*Node, 0, len(parts))
+	commandName.endByte = concat.endByte
+	commandName.endPoint = concat.endPoint
+	replaceNodeChildrenUnfielded(commandName, []*Node{concat})
+
+	commandChildren := make([]*Node, 0, len(node.children)-mergeEnd+1)
 	commandChildren = append(commandChildren, commandName)
-	commandChildren = append(commandChildren, parts[1:]...)
+	commandChildren = append(commandChildren, node.children[mergeEnd:]...)
 	if arena != nil {
 		commandChildren = cloneNodeSliceInArena(arena, commandChildren)
 	}

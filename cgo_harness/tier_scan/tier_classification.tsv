@@ -8,7 +8,7 @@ asm	IV-recovery	0/40	faithful C error-cost version competition (see spec)
 astro	CLEAN	40/40	in ratchet
 authzed	CLEAN	30/30	Authzed clean-root definition coalescing promoted; Docker tier-scan parity verified 2026-06-11
 awk	CLEAN	29/29	AWK T.gawk recovered shell command compatibility normalized to C oracle; Docker tier parity verified 2026-06-12
-bash	IV-recovery?	30/40	ext=.sh; stackcap disproven (cap-256 floor entry already present); divergences are recovery-shape: go ERROR root where C recovers program (lib.sh, git-prompt.sh, git-subtree.sh) plus small child-count diffs; 1 trunc (cmd-list.sh no_stacks_alive)
+bash	IV-recovery?	31/40	ext=.sh; Bash command-name concatenation normalization cleared ci/run-static-analysis.sh; split Docker C-oracle verification 2026-06-12 improved 27/34 + 3/6 to 28/34 + 3/6. Remaining divergences are recovery-shape: go ERROR root where C recovers program (lib.sh, git-prompt.sh, git-subtree.sh, git-filter-branch.sh, git-gui askpass/askyesno) plus child-count/error-shape diffs; 1 trunc (cmd-list.sh no_stacks_alive).
 bass	CLEAN	40/40	in ratchet
 beancount	CLEAN	40/40	in ratchet
 bicep	CLEAN	40/40	C-recovery gate keeps extension samples under infrastructure roots with localized ERROR regions (verified 2026-06-12)

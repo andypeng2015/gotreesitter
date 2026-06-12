@@ -1,6 +1,6 @@
 {
- "generated": "2026-06-12T19:11:50Z",
- "commit": "07ea7beb",
+ "generated": "2026-06-12T19:39:35Z",
+ "commit": "65c9fc6b",
  "version": "unreleased",
  "tier_rules": {
   "I": "parity-clean and <=1.5x C full-parse, cold <=5ms, blob <=150KB",
@@ -78,8 +78,8 @@
    "grammar": "bash",
    "tier": "IV",
    "iv_cause": "IV-recovery?",
-   "parity": "30/40",
-   "notes": "ext=.sh; stackcap disproven (cap-256 floor entry already present); divergences are recovery-shape: go ERROR root where C recovers program (lib.sh, git-prompt.sh, git-subtree.sh) plus small child-count diffs; 1 trunc (cmd-list.sh no_stacks_alive)"
+   "parity": "31/40",
+   "notes": "ext=.sh; Bash command-name concatenation normalization cleared ci/run-static-analysis.sh; split Docker C-oracle verification 2026-06-12 improved 27/34 + 3/6 to 28/34 + 3/6. Remaining divergences are recovery-shape: go ERROR root where C recovers program (lib.sh, git-prompt.sh, git-subtree.sh, git-filter-branch.sh, git-gui askpass/askyesno) plus child-count/error-shape diffs; 1 trunc (cmd-list.sh no_stacks_alive)."
   },
   {
    "grammar": "bass",
