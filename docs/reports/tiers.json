@@ -1,6 +1,6 @@
 {
- "generated": "2026-06-12T08:52:44Z",
- "commit": "e178b15b",
+ "generated": "2026-06-12T10:00:39Z",
+ "commit": "2671b348",
  "version": "unreleased",
  "tier_rules": {
   "I": "parity-clean and <=1.5x C full-parse, cold <=5ms, blob <=150KB",
@@ -10,8 +10,8 @@
   "unranked": "parity-clean; perf measurement pending"
  },
  "histogram": {
-  "unranked": 14,
-  "IV": 93,
+  "unranked": 15,
+  "IV": 92,
   "II": 48,
   "I": 38,
   "III": 13
@@ -70,10 +70,9 @@
   },
   {
    "grammar": "awk",
-   "tier": "IV",
-   "iv_cause": "IV-recovery",
-   "parity": "28/29",
-   "notes": "T.gawk rule-splitting vs C in-rule absorption"
+   "tier": "unranked",
+   "parity": "clean",
+   "perf_source": null
   },
   {
    "grammar": "bash",

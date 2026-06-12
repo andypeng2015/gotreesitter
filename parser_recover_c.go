@@ -212,6 +212,12 @@ func errorCostCompetitionLanguage(lang *Language) bool {
 		// the remaining recovered-keyword leaf shape is normalized in
 		// parser_result_luau.go.
 		return true
+	case "awk":
+		// Tier-IV recovery fan-out: T.gawk is a shell-like gawk test driver
+		// with embedded AWK snippets. C recovery preserves a program root and
+		// localizes shell fragments; the residual rule-split shape is normalized
+		// in parser_result_awk.go.
+		return true
 	}
 	return false
 }

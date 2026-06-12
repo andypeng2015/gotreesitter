@@ -3,6 +3,7 @@ apex
 arduino
 astro
 authzed
+awk
 bass
 beancount
 bicep
