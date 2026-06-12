@@ -99,6 +99,12 @@ func errorCostCompetitionLanguage(lang *Language) bool {
 		// (dateBooking_large.chatito) roots ERROR where C keeps source at
 		// the same extent — see tier_classification.tsv.
 		return true
+	case "scheme":
+		// Bounded s/5_3.ss diagnostics require the Scheme merge-per-key cap
+		// to make the perf wall measurable. With that cap, C recovery cost
+		// competition removes two shape-set divergences (ez-grammar-test.ss
+		// and s/4.ss) without adding new divergences in the bounded set.
+		return true
 	case "css":
 		// Stage-2 (redwood): 37/40 -> 40/40. The three diverging copies of
 		// grid_12-825-55-15.css (IE star-hack `*zoom: 1;`) needed the

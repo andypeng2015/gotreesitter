@@ -511,6 +511,14 @@ func effectiveParseMergePerKeyCap(lang *Language, mergePerKeyCap int, incrementa
 		if mergePerKeyCap > 1 {
 			return 1
 		}
+	case "scheme":
+		// Scheme's accepted-error corpus path can retain many same-key
+		// survivors around dense datum/recovery ambiguity. One survivor keeps
+		// the bounded Scheme shape set stable while making the s/5_3.ss wall
+		// measurable; explicit env overrides remain available for diagnosis.
+		if !parseMaxMergePerKeyEnvConfigured() && mergePerKeyCap > 1 {
+			return 1
+		}
 	case "php":
 		// PHP's namespace/modifier-heavy corpus keeps many equivalent recovery
 		// branches alive around statement/declaration ambiguity. One full-parse

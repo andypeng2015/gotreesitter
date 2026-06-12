@@ -1,6 +1,6 @@
 {
- "generated": "2026-06-12T10:00:39Z",
- "commit": "2671b348",
+ "generated": "2026-06-12T11:59:02Z",
+ "commit": "beb390aa",
  "version": "unreleased",
  "tier_rules": {
   "I": "parity-clean and <=1.5x C full-parse, cold <=5ms, blob <=150KB",
@@ -10,8 +10,8 @@
   "unranked": "parity-clean; perf measurement pending"
  },
  "histogram": {
-  "unranked": 15,
-  "IV": 92,
+  "unranked": 16,
+  "IV": 91,
   "II": 48,
   "I": 38,
   "III": 13
@@ -1096,10 +1096,9 @@
   },
   {
    "grammar": "scheme",
-   "tier": "IV",
-   "iv_cause": "IV-perf",
-   "parity": "36/40",
-   "notes": "stage-2 clears 5/6 shape files under GOT_C_RECOVERY=scheme; s/5_3.ss is a GLR merge wall and remains the perf blocker"
+   "tier": "unranked",
+   "parity": "clean",
+   "perf_source": null
   },
   {
    "grammar": "scss",

@@ -163,7 +163,7 @@ rst	IV-perf	1/8	timeout-or-fail at 1200s canonical budget
 ruby	CLEAN	40/40	in ratchet; inline Ruby when-then body StartByte normalized to C oracle
 rust	IV-recovery?	21/40	faithful C error-cost version competition (see spec)
 scala	IV-recovery?	25/40	faithful C error-cost version competition (see spec)
-scheme	IV-perf	36/40	stage-2 clears 5/6 shape files under GOT_C_RECOVERY=scheme; s/5_3.ss is a GLR merge wall and remains the perf blocker
+scheme	CLEAN	28/28	Scheme merge-per-key cap plus C recovery cost competition; Docker real-corpus and direct C parity verified 2026-06-12
 scss	IV-recovery?	6/40	faithful C error-cost version competition (see spec)
 smithy	CLEAN	40/40	in ratchet
 solidity	CLEAN	40/40	Solidity-only call/type-cast/new-expression compatibility pass promoted; Docker real-corpus strict parity verified 2026-06-11

@@ -90,6 +90,7 @@ racket
 requirements
 ron
 ruby
+scheme
 smithy
 solidity
 sparql

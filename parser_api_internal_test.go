@@ -1502,6 +1502,9 @@ func TestEffectiveParseMergePerKeyCap(t *testing.T) {
 	if got := effectiveParseMergePerKeyCap(&Language{Name: "kotlin"}, maxStacksPerMergeKey, false); got != 1 {
 		t.Fatalf("effectiveParseMergePerKeyCap(kotlin, default, full) = %d, want 1", got)
 	}
+	if got := effectiveParseMergePerKeyCap(&Language{Name: "scheme"}, maxStacksPerMergeKey, false); got != 1 {
+		t.Fatalf("effectiveParseMergePerKeyCap(scheme, default, full) = %d, want 1", got)
+	}
 	if got := effectiveParseMergePerKeyCap(&Language{Name: "php"}, maxStacksPerMergeKey, false); got != 1 {
 		t.Fatalf("effectiveParseMergePerKeyCap(php, default, full) = %d, want 1", got)
 	}
@@ -1570,6 +1573,9 @@ func TestEffectiveParseMergePerKeyCap(t *testing.T) {
 	}
 	if got := effectiveParseMergePerKeyCap(&Language{Name: "kotlin"}, maxStacksPerMergeKey, true); got != maxStacksPerMergeKey {
 		t.Fatalf("effectiveParseMergePerKeyCap(kotlin, default, incremental) = %d, want %d", got, maxStacksPerMergeKey)
+	}
+	if got := effectiveParseMergePerKeyCap(&Language{Name: "scheme"}, maxStacksPerMergeKey, true); got != maxStacksPerMergeKey {
+		t.Fatalf("effectiveParseMergePerKeyCap(scheme, default, incremental) = %d, want %d", got, maxStacksPerMergeKey)
 	}
 	if got := effectiveParseMergePerKeyCap(&Language{Name: "javascript"}, maxStacksPerMergeKey, true); got != maxStacksPerMergeKey {
 		t.Fatalf("effectiveParseMergePerKeyCap(javascript, default, incremental) = %d, want %d", got, maxStacksPerMergeKey)
@@ -1697,6 +1703,9 @@ func TestEffectiveParseMergePerKeyCapJavaExplicitOverride(t *testing.T) {
 	if got := effectiveParseMergePerKeyCap(&Language{Name: "ocaml"}, 4, false); got != 4 {
 		t.Fatalf("effectiveParseMergePerKeyCap(ocaml, explicit, full) = %d, want 4", got)
 	}
+	if got := effectiveParseMergePerKeyCap(&Language{Name: "scheme"}, 4, false); got != 4 {
+		t.Fatalf("effectiveParseMergePerKeyCap(scheme, explicit, full) = %d, want 4", got)
+	}
 }
 
 func TestEffectiveParseMergePerKeyCapDartExplicitOverride(t *testing.T) {
@@ -1709,6 +1718,18 @@ func TestEffectiveParseMergePerKeyCapDartExplicitOverride(t *testing.T) {
 	}
 	if got := effectiveParseMergePerKeyCap(&Language{Name: "dart"}, 8, true, dartIncrementalReuseMaxSourceBytes+1); got != 8 {
 		t.Fatalf("effectiveParseMergePerKeyCap(dart, explicit, large incremental fallback) = %d, want 8", got)
+	}
+}
+
+func TestErrorCostCompetitionLanguageSchemeDefault(t *testing.T) {
+	t.Setenv("GOT_C_RECOVERY", "")
+	if !errorCostCompetitionLanguage(&Language{Name: "scheme"}) {
+		t.Fatal("errorCostCompetitionLanguage(scheme) = false, want true")
+	}
+
+	t.Setenv("GOT_C_RECOVERY", "0")
+	if errorCostCompetitionLanguage(&Language{Name: "scheme"}) {
+		t.Fatal("errorCostCompetitionLanguage(scheme, GOT_C_RECOVERY=0) = true, want false")
 	}
 }
 
