@@ -1,5 +1,29 @@
 package gotreesitter
 
+func normalizeProtoCompatibility(root *Node, source []byte, lang *Language) {
+	if root == nil || lang == nil || lang.Name != "proto" || len(source) == 0 || root.HasError() {
+		return
+	}
+	normalizeCollapsedNamedLeafChildrenBySource(
+		root,
+		source,
+		lang,
+		"key_type",
+		"bool",
+		"int32",
+		"int64",
+		"uint32",
+		"uint64",
+		"sint32",
+		"sint64",
+		"fixed32",
+		"fixed64",
+		"sfixed32",
+		"sfixed64",
+		"string",
+	)
+}
+
 // protoSourceFileChildrenLookComplete reports whether a set of top-level
 // result nodes can legitimately reduce to a proto `source_file` root even
 // though one or more children carry parse errors.
