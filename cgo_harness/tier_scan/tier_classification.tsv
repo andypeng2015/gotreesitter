@@ -163,7 +163,7 @@ rst	IV-perf	1/8	timeout-or-fail at 1200s canonical budget
 ruby	CLEAN	40/40	in ratchet; inline Ruby when-then body StartByte normalized to C oracle
 rust	IV-recovery?	21/40	faithful C error-cost version competition (see spec)
 scala	IV-recovery?	25/40	faithful C error-cost version competition (see spec)
-scheme	CLEAN	28/28	Scheme merge-per-key cap plus C recovery cost competition; Docker real-corpus and direct C parity verified 2026-06-12
+scheme	IV-perf	28/28	Available Scheme gates clear 28/28 after merge cap and C recovery cost competition, but the intended .scm/.ss surface includes mats/oop.ss; Docker C-oracle diagnostic on 2026-06-12 still shows Go iteration_limit truncation at byte 3045 vs C full parse with recovery errors, so Scheme remains Tier IV under the hard parity invariant.
 scss	IV-recovery?	6/40	faithful C error-cost version competition (see spec)
 smithy	CLEAN	40/40	in ratchet
 solidity	CLEAN	40/40	Solidity-only call/type-cast/new-expression compatibility pass promoted; Docker real-corpus strict parity verified 2026-06-11

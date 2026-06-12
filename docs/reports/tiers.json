@@ -1,6 +1,6 @@
 {
- "generated": "2026-06-12T11:59:02Z",
- "commit": "beb390aa",
+ "generated": "2026-06-12T12:05:14Z",
+ "commit": "e3f345e0",
  "version": "unreleased",
  "tier_rules": {
   "I": "parity-clean and <=1.5x C full-parse, cold <=5ms, blob <=150KB",
@@ -10,8 +10,8 @@
   "unranked": "parity-clean; perf measurement pending"
  },
  "histogram": {
-  "unranked": 16,
-  "IV": 91,
+  "unranked": 15,
+  "IV": 92,
   "II": 48,
   "I": 38,
   "III": 13
@@ -1096,9 +1096,10 @@
   },
   {
    "grammar": "scheme",
-   "tier": "unranked",
-   "parity": "clean",
-   "perf_source": null
+   "tier": "IV",
+   "iv_cause": "IV-perf",
+   "parity": "28/28",
+   "notes": "Available Scheme gates clear 28/28 after merge cap and C recovery cost competition, but the intended .scm/.ss surface includes mats/oop.ss; Docker C-oracle diagnostic on 2026-06-12 still shows Go iteration_limit truncation at byte 3045 vs C full parse with recovery errors, so Scheme remains Tier IV under the hard parity invariant."
   },
   {
    "grammar": "scss",
