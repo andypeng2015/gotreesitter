@@ -12,7 +12,7 @@ bash	IV-recovery?	31/40	ext=.sh; Bash command-name concatenation normalization c
 bass	CLEAN	40/40	in ratchet
 beancount	CLEAN	40/40	in ratchet
 bicep	CLEAN	40/40	C-recovery gate keeps extension samples under infrastructure roots with localized ERROR regions (verified 2026-06-12)
-bitbake	IV-recovery	35/40	canonical-frame demotion (one-time reset)
+bitbake	IV-recovery	37/40	addtask wrapper normalization landed; remaining 3 shell-function/function-definition recovery-shape residuals
 blade	IV-recovery?	17/30	ext=.blade.php; faithful C error-cost version competition (see spec)
 brightscript	IV-recovery?	0/30	ext=.brs; faithful C error-cost version competition (see spec)
 c	IV-recovery	21/40	faithful C error-cost version competition (see spec)

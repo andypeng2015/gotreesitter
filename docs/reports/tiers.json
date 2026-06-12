@@ -1,6 +1,6 @@
 {
- "generated": "2026-06-12T20:38:20Z",
- "commit": "e47938ba",
+ "generated": "2026-06-12T21:09:33Z",
+ "commit": "342acd10",
  "version": "unreleased",
  "tier_rules": {
   "I": "parity-clean and <=1.5x C full-parse, cold <=5ms, blob <=150KB",
@@ -109,8 +109,8 @@
    "grammar": "bitbake",
    "tier": "IV",
    "iv_cause": "IV-recovery",
-   "parity": "35/40",
-   "notes": "canonical-frame demotion (one-time reset)"
+   "parity": "37/40",
+   "notes": "addtask wrapper normalization landed; remaining 3 shell-function/function-definition recovery-shape residuals"
   },
   {
    "grammar": "blade",
