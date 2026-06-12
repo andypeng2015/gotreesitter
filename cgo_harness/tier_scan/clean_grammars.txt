@@ -68,6 +68,7 @@ just
 ledger
 llvm
 lua
+luau
 markdown
 nginx
 nickel

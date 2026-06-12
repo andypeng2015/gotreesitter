@@ -6,6 +6,20 @@ func parseIterations(sourceLen int) int {
 	return max(10_000, sourceLen*30)
 }
 
+func parseIterationsForLanguage(sourceLen int, lang *Language) int {
+	perByte := 30
+	if lang != nil {
+		switch lang.Name {
+		case "luau":
+			// Luau's table-constructor benchmarks are valid but reduce-dense:
+			// the default budget can stop mid-constructor before the enclosing
+			// function reduces, while C accepts the same file cleanly.
+			perByte = 68
+		}
+	}
+	return max(10_000, sourceLen*perByte)
+}
+
 // parseStackDepth returns the stack depth limit scaled to input size.
 func parseStackDepth(sourceLen int) int {
 	return max(1_000, sourceLen*2)

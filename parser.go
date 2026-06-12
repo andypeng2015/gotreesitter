@@ -3642,7 +3642,7 @@ func (p *Parser) configureParseCaps(source []byte, reuse *reuseCursor, arenaClas
 		retryPass:           retryPass,
 		mergePerKeyCap:      mergePerKeyCap,
 		maxStackCullTrigger: glrStackCullTrigger(maxStacks, arenaClass, languageName(p.language)),
-		maxIter:             parseIterations(len(source)),
+		maxIter:             parseIterationsForLanguage(len(source), p.language),
 		maxDepth:            parseStackDepth(len(source)),
 		maxNodes:            maxNodes,
 	}

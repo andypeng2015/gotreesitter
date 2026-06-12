@@ -11,10 +11,10 @@
  },
  "histogram": {
   "II": 54,
-  "IV": 94,
+  "IV": 93,
   "I": 42,
   "III": 15,
-  "unranked": 1
+  "unranked": 2
  },
  "grammars": [
   {
@@ -782,10 +782,9 @@
   },
   {
    "grammar": "luau",
-   "tier": "IV",
-   "iv_cause": "IV-recovery",
-   "parity": "35/40",
-   "notes": "faithful C error-cost version competition (see spec)"
+   "tier": "unranked",
+   "parity": "clean",
+   "perf_source": null
   },
   {
    "grammar": "make",

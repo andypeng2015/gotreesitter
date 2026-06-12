@@ -205,6 +205,13 @@ func errorCostCompetitionLanguage(lang *Language) bool {
 		// whole-file ERROR roots; the residual deterministic HLSL expression/type
 		// shape choices are normalized in parser_result_hlsl.go.
 		return true
+	case "luau":
+		// Tier-IV recovery fan-out: Luau's class benchmark witnesses contain
+		// unsupported `class` syntax. C recovery preserves the chunk root and
+		// localizes the class header / unmatched closing `end` as ERROR nodes;
+		// the remaining recovered-keyword leaf shape is normalized in
+		// parser_result_luau.go.
+		return true
 	}
 	return false
 }
