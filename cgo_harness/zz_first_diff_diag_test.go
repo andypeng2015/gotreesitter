@@ -12,6 +12,8 @@ package cgoharness
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"strconv"
 	"testing"
 
 	gts "github.com/odvcencio/gotreesitter"
@@ -19,15 +21,189 @@ import (
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
+type fddSignature struct {
+	File           string
+	Path           string
+	DiffKind       string
+	GoRootType     string
+	GoRootStart    uint32
+	GoRootEnd      uint32
+	GoRootChildren int
+	GoRootHasError bool
+	CRootKind      string
+	CRootStart     uint32
+	CRootEnd       uint32
+	CRootChildren  int
+	CRootHasError  bool
+	GoStopReason   string
+	GoType         string
+	GoStart        uint32
+	GoEnd          uint32
+	GoChildren     int
+	CType          string
+	CStart         uint32
+	CEnd           uint32
+	CChildren      int
+	GoText         string
+	CText          string
+}
+
 func fddTxt(src []byte, s, e uint32) string {
 	if int(e) > len(src) {
 		e = uint32(len(src))
+	}
+	if s > e {
+		s = e
 	}
 	r := src[s:e]
 	if len(r) > 80 {
 		r = r[:80]
 	}
 	return fmt.Sprintf("%q", string(r))
+}
+
+func fddExcerpt(src []byte, s, e uint32) string {
+	if int(e) > len(src) {
+		e = uint32(len(src))
+	}
+	if s > e {
+		s = e
+	}
+	const context = 24
+	start, end := s, e
+	if start > context {
+		start -= context
+	} else {
+		start = 0
+	}
+	if maxEnd := uint32(len(src)); end+context < maxEnd {
+		end += context
+	} else {
+		end = maxEnd
+	}
+	r := src[start:end]
+	if len(r) > 120 {
+		r = r[:120]
+	}
+	return string(r)
+}
+
+func fddDiffKind(g *gts.Node, lang *gts.Language, c *sitter.Node) string {
+	switch {
+	case g.Type(lang) != c.Kind():
+		return "type"
+	case g.StartByte() != uint32(c.StartByte()) || g.EndByte() != uint32(c.EndByte()):
+		return "span"
+	case g.ChildCount() != int(c.ChildCount()):
+		return "child-count"
+	case g.IsNamed() != c.IsNamed():
+		return "named"
+	case g.IsMissing() != c.IsMissing():
+		return "missing"
+	default:
+		return ""
+	}
+}
+
+func fddFirst(g *gts.Node, lang *gts.Language, c *sitter.Node, path string) *fddSignature {
+	if kind := fddDiffKind(g, lang, c); kind != "" {
+		return &fddSignature{
+			Path:       path,
+			DiffKind:   kind,
+			GoType:     g.Type(lang),
+			GoStart:    g.StartByte(),
+			GoEnd:      g.EndByte(),
+			GoChildren: g.ChildCount(),
+			CType:      c.Kind(),
+			CStart:     uint32(c.StartByte()),
+			CEnd:       uint32(c.EndByte()),
+			CChildren:  int(c.ChildCount()),
+		}
+	}
+	for i := 0; i < g.ChildCount(); i++ {
+		childPath := fmt.Sprintf("%s[%d]", path, i)
+		gChild := g.Child(i)
+		cChild := c.Child(uint(i))
+		if parityCompareFields {
+			goField := g.FieldNameForChild(i, lang)
+			cField := c.FieldNameForChild(uint32(i))
+			if goField != cField {
+				return &fddSignature{
+					Path:       childPath,
+					DiffKind:   "field-name",
+					GoType:     gChild.Type(lang),
+					GoStart:    gChild.StartByte(),
+					GoEnd:      gChild.EndByte(),
+					GoChildren: gChild.ChildCount(),
+					CType:      cChild.Kind(),
+					CStart:     uint32(cChild.StartByte()),
+					CEnd:       uint32(cChild.EndByte()),
+					CChildren:  int(cChild.ChildCount()),
+				}
+			}
+		}
+		if sig := fddFirst(gChild, lang, cChild, childPath); sig != nil {
+			return sig
+		}
+	}
+	return nil
+}
+
+func fddBuildSignature(file string, goRoot *gts.Node, lang *gts.Language, cRoot *sitter.Node, src []byte, stopReason string) *fddSignature {
+	sig := fddFirst(goRoot, lang, cRoot, "root")
+	if sig == nil {
+		return nil
+	}
+	sig.File = file
+	sig.GoRootType = goRoot.Type(lang)
+	sig.GoRootStart = goRoot.StartByte()
+	sig.GoRootEnd = goRoot.EndByte()
+	sig.GoRootChildren = goRoot.ChildCount()
+	sig.GoRootHasError = goRoot.HasError()
+	sig.CRootKind = cRoot.Kind()
+	sig.CRootStart = uint32(cRoot.StartByte())
+	sig.CRootEnd = uint32(cRoot.EndByte())
+	sig.CRootChildren = int(cRoot.ChildCount())
+	sig.CRootHasError = cRoot.HasError()
+	sig.GoStopReason = stopReason
+	sig.GoText = fddExcerpt(src, sig.GoStart, sig.GoEnd)
+	sig.CText = fddExcerpt(src, sig.CStart, sig.CEnd)
+	return sig
+}
+
+func fddQuote(s string) string {
+	return strconv.Quote(s)
+}
+
+func fddPrintSignature(lang string, sig *fddSignature) {
+	fmt.Printf("DIVERGE-SIG lang=%s file=%s base=%s goRoot=%s goRootSpan=%d:%d goRootCC=%d goRootErr=%v cRoot=%s cRootSpan=%d:%d cRootCC=%d cRootErr=%v goStop=%s path=%s diff=%s goType=%s cType=%s goSpan=%d:%d cSpan=%d:%d goCC=%d cCC=%d goText=%s cText=%s\n",
+		fddQuote(lang),
+		fddQuote(sig.File),
+		fddQuote(filepath.Base(sig.File)),
+		fddQuote(sig.GoRootType),
+		sig.GoRootStart,
+		sig.GoRootEnd,
+		sig.GoRootChildren,
+		sig.GoRootHasError,
+		fddQuote(sig.CRootKind),
+		sig.CRootStart,
+		sig.CRootEnd,
+		sig.CRootChildren,
+		sig.CRootHasError,
+		fddQuote(sig.GoStopReason),
+		fddQuote(sig.Path),
+		fddQuote(sig.DiffKind),
+		fddQuote(sig.GoType),
+		fddQuote(sig.CType),
+		sig.GoStart,
+		sig.GoEnd,
+		sig.CStart,
+		sig.CEnd,
+		sig.GoChildren,
+		sig.CChildren,
+		fddQuote(sig.GoText),
+		fddQuote(sig.CText),
+	)
 }
 
 func fddDumpBoth(g *gts.Node, lang *gts.Language, c *sitter.Node, src []byte, path string, t *testing.T) {
@@ -45,8 +221,7 @@ func fddDumpBoth(g *gts.Node, lang *gts.Language, c *sitter.Node, src []byte, pa
 }
 
 func fddWalk(g *gts.Node, lang *gts.Language, c *sitter.Node, src []byte, path string, t *testing.T) bool {
-	gType, cType := g.Type(lang), c.Kind()
-	if gType != cType || g.StartByte() != uint32(c.StartByte()) || g.EndByte() != uint32(c.EndByte()) || g.ChildCount() != int(c.ChildCount()) {
+	if fddDiffKind(g, lang, c) != "" {
 		fddDumpBoth(g, lang, c, src, path, t)
 		return true
 	}

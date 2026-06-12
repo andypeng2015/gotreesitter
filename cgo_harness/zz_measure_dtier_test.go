@@ -25,6 +25,7 @@ import (
 //	REPRO_EXTS   comma list of extensions to keep (lock-filter; e.g. .agda)
 //	REPRO_N      max files (default 40)
 //	REPRO_FOREST =1 measure the forest path (recovery on) instead of production
+//	REPRO_SIGNATURES=1 emit one compact DIVERGE-SIG line per divergent file
 //
 // Per-file panic recovery + the caller-set GOT_PARSE_MEMORY_BUDGET_MB keep a
 // pathological blowup file from crashing the run (it yields a truncated tree).
@@ -37,6 +38,7 @@ func TestMeasureDtierVsC(t *testing.T) {
 	dir := filepath.Join(root, name)
 	exts := strings.Split(os.Getenv("REPRO_EXTS"), ",")
 	forest := os.Getenv("REPRO_FOREST") == "1"
+	signatures := os.Getenv("REPRO_SIGNATURES") == "1"
 
 	var goLang *gts.Language
 	for _, e := range grammars.AllLanguages() {
@@ -94,7 +96,7 @@ func TestMeasureDtierVsC(t *testing.T) {
 	// notAccepted == the parser stopped early (memory/no-stacks/node-limit) —
 	// the REAL truncation signal (endByte<len is a false positive: trailing
 	// comments/extras legitimately aren't covered by the root, same as C).
-	minParse := func(src []byte) (dur time.Duration, endByte uint32, hasErr, notAccepted, panicked bool) {
+	minParse := func(src []byte) (dur time.Duration, endByte uint32, hasErr, notAccepted bool, stopReason gts.ParseStopReason, panicked bool) {
 		defer func() {
 			if r := recover(); r != nil {
 				panicked = true
@@ -118,13 +120,14 @@ func TestMeasureDtierVsC(t *testing.T) {
 			if i == 2 && tr != nil && tr.RootNode() != nil {
 				endByte = tr.RootNode().EndByte()
 				hasErr = tr.RootNode().HasError()
-				notAccepted = tr.ParseStopReason() != gts.ParseStopAccepted
+				stopReason = tr.ParseStopReason()
+				notAccepted = stopReason != gts.ParseStopAccepted
 			}
 			if tr != nil {
 				tr.Release()
 			}
 		}
-		return best, endByte, hasErr, notAccepted, false
+		return best, endByte, hasErr, notAccepted, stopReason, false
 	}
 
 	var totGo, totC time.Duration
@@ -135,7 +138,7 @@ func TestMeasureDtierVsC(t *testing.T) {
 		if rerr != nil || len(src) == 0 {
 			continue
 		}
-		goDur, endByte, hasErr, notAccepted, panicked := minParse(src)
+		goDur, endByte, hasErr, notAccepted, stopReason, panicked := minParse(src)
 		if panicked {
 			panics++
 			continue
@@ -197,6 +200,11 @@ func TestMeasureDtierVsC(t *testing.T) {
 				if os.Getenv("REPRO_DUMP_DIVERGENCE") == "1" && divergeC <= 6 {
 					fmt.Printf("DIVERGE %s %s: %s\n", name, filepath.Base(f),
 						strings.Join(errs[:min(2, len(errs))], " || "))
+				}
+				if signatures {
+					if sig := fddBuildSignature(f, gtree.RootNode(), goLang, cTree.RootNode(), src, string(stopReason)); sig != nil {
+						fddPrintSignature(name, sig)
+					}
 				}
 			}
 			gtree.Release()
