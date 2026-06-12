@@ -359,3 +359,44 @@ func TestNormalizePowerShellAssignmentOperatorTokensRestoresCommandInvokationOpe
 		t.Fatal("command_invokation_operator child is named")
 	}
 }
+
+func TestNormalizePowerShellPathCommandNameWrapsVariable(t *testing.T) {
+	lang := &Language{
+		Name: "powershell",
+		SymbolNames: []string{
+			"EOF", "program", "command_name", "variable", "path_command_name",
+		},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF", Visible: false, Named: false},
+			{Name: "program", Visible: true, Named: true},
+			{Name: "command_name", Visible: true, Named: true},
+			{Name: "variable", Visible: true, Named: true},
+			{Name: "path_command_name", Visible: true, Named: true},
+		},
+	}
+
+	source := []byte("& $sb")
+	arena := newNodeArena(arenaClassFull)
+	variable := newLeafNodeInArena(arena, 3, true, 2, uint32(len(source)), Point{Column: 2}, Point{Column: uint32(len(source))})
+	commandName := newParentNodeInArena(arena, 2, true, []*Node{variable}, nil, 0)
+	root := newParentNodeInArena(arena, 1, true, []*Node{commandName}, nil, 0)
+
+	normalizePowerShellPathCommandNameVariables(root, source, lang)
+
+	wrapped := commandName.children[0]
+	if got, want := wrapped.Type(lang), "path_command_name"; got != want {
+		t.Fatalf("wrapped.Type = %q, want %q", got, want)
+	}
+	if got, want := len(wrapped.children), 1; got != want {
+		t.Fatalf("len(wrapped.children) = %d, want %d", got, want)
+	}
+	if got, want := wrapped.children[0].Type(lang), "variable"; got != want {
+		t.Fatalf("wrapped.children[0].Type = %q, want %q", got, want)
+	}
+	if got, want := wrapped.startByte, uint32(2); got != want {
+		t.Fatalf("wrapped.startByte = %d, want %d", got, want)
+	}
+	if got, want := wrapped.endByte, uint32(len(source)); got != want {
+		t.Fatalf("wrapped.endByte = %d, want %d", got, want)
+	}
+}

@@ -140,7 +140,7 @@ pem	CLEAN	40/40	in ratchet
 perl	IV-recovery?	0/40	faithful C error-cost version competition (see spec)
 php	CLEAN	40/40	in ratchet
 pkl	CLEAN	40/40	in ratchet; verified after willow shape fixes
-powershell	IV-recovery?	22/40	faithful C error-cost version competition (see spec)
+powershell	IV-recovery?	24/40	PowerShell invocation target path_command_name compatibility clears 3 files with zero new divergers; remaining gaps are recovery/root span and command/statement-list shape
 prisma	CLEAN	40/40	in ratchet
 prolog	IV-recovery?	4/40	faithful C error-cost version competition (see spec)
 promql	CLEAN	25/25	in ratchet; verified strict real-corpus 25/25 and direct C 20/20 after preserving PromQL query pass-through reductions

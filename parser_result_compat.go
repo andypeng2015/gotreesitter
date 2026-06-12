@@ -189,6 +189,7 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 		normalizePowerShellProgramShape(ctx.root, ctx.source, ctx.lang)
 		normalizePowerShellErrorProgramRoot(ctx.root, ctx.lang)
 		normalizePowerShellAssignmentOperatorTokens(ctx.root, ctx.source, ctx.lang)
+		normalizePowerShellPathCommandNameVariables(ctx.root, ctx.source, ctx.lang)
 	case "proto":
 		normalizeProtoCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "pug":

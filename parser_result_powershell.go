@@ -261,6 +261,54 @@ func normalizePowerShellAssignmentOperatorTokens(root *Node, source []byte, lang
 	walk(root)
 }
 
+func normalizePowerShellPathCommandNameVariables(root *Node, source []byte, lang *Language) {
+	if root == nil || lang == nil || lang.Name != "powershell" {
+		return
+	}
+	pathCommandNameSym, pathCommandNameNamed, ok := symbolMeta(lang, "path_command_name")
+	if !ok {
+		return
+	}
+	var walk func(*Node)
+	walk = func(n *Node) {
+		if n == nil {
+			return
+		}
+		if n.Type(lang) != "path_command_name" {
+			for i, child := range n.children {
+				if child != nil && child.Type(lang) == "variable" && powerShellVariableFollowsInvocationOperator(source, child) {
+					pathChildren := []*Node{child}
+					if root.ownerArena != nil {
+						buf := root.ownerArena.allocNodeSlice(1)
+						buf[0] = child
+						pathChildren = buf
+					}
+					n.children[i] = newParentNodeInArena(root.ownerArena, pathCommandNameSym, pathCommandNameNamed, pathChildren, nil, 0)
+				}
+			}
+		}
+		for _, child := range n.children {
+			walk(child)
+		}
+	}
+	walk(root)
+}
+
+func powerShellVariableFollowsInvocationOperator(source []byte, variable *Node) bool {
+	if variable == nil || variable.startByte >= variable.endByte || int(variable.startByte) >= len(source) || source[variable.startByte] != '$' {
+		return false
+	}
+	for i := int(variable.startByte) - 1; i >= 0; i-- {
+		switch source[i] {
+		case ' ', '\t', '\r', '\n':
+			continue
+		default:
+			return source[i] == '&'
+		}
+	}
+	return false
+}
+
 func powerShellAssignmentOperatorToken(text string) bool {
 	switch text {
 	case "=", "+=", "-=", "*=", "/=", "%=":
