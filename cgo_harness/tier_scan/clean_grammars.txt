@@ -43,6 +43,7 @@ gitattributes
 gitcommit
 gitignore
 gleam
+graphql
 gn
 godot_resource
 gomod

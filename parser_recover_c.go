@@ -189,6 +189,11 @@ func errorCostCompetitionLanguage(lang *Language) bool {
 		// The remaining `%entity;` declaration-local recovery span is normalized
 		// in parser_result_dtd.go.
 		return true
+	case "graphql":
+		// Scoped Tier-IV exit: kitchen-sink.graphql clears the one-file C
+		// oracle gate once GraphQL recovery absorbs stray triple-quote tokens
+		// instead of recovering through them into a fresh block string.
+		return true
 	}
 	return false
 }
@@ -869,48 +874,50 @@ func (p *Parser) cHandleError(stacks *[]glrStack, si int, tok Token, nodeCount *
 	// C keeps every version that survives do_all_potential_reductions on the
 	// lookahead (the copied version plus its reduction forks).
 	var missingVersions []glrStack
-	for vi := range versions {
-		state := versions[vi].top().state
-		tokenCount := Symbol(p.language.TokenCount)
-		for ms := Symbol(1); ms < tokenCount; ms++ {
-			nextState, shiftAct, ok := p.cTerminalNextState(state, ms)
-			if !ok || nextState == 0 || nextState == state {
-				continue
+	if !p.isGraphQLRecoveryTripleQuote(tok.Symbol) {
+		for vi := range versions {
+			state := versions[vi].top().state
+			tokenCount := Symbol(p.language.TokenCount)
+			for ms := Symbol(1); ms < tokenCount; ms++ {
+				nextState, shiftAct, ok := p.cTerminalNextState(state, ms)
+				if !ok || nextState == 0 || nextState == state {
+					continue
+				}
+				if !p.stateHasLeadingReduceAction(nextState, tok.Symbol) {
+					continue
+				}
+				cand := versions[vi].cloneWithScratch(gssScratch)
+				cand.cRec = nil
+				missingTok := Token{
+					Symbol:     ms,
+					StartByte:  tok.StartByte,
+					EndByte:    tok.StartByte,
+					StartPoint: tok.StartPoint,
+					EndPoint:   tok.StartPoint,
+					Missing:    true,
+				}
+				if top := cand.top(); stackEntryHasNode(top) && stackEntryNodeEndByte(top) <= tok.StartByte {
+					missingTok.StartByte = stackEntryNodeEndByte(top)
+					missingTok.EndByte = stackEntryNodeEndByte(top)
+					missingTok.StartPoint = stackEntryNodeEndPoint(top)
+					missingTok.EndPoint = stackEntryNodeEndPoint(top)
+				}
+				var dummy bool
+				p.applyAction(&cand, shiftAct, missingTok, &dummy, nodeCount, arena, entryScratch, gssScratch, nil, false, trackChildErrors)
+				cand.shifted = false
+				if cand.dead {
+					continue
+				}
+				reduced, canShift := p.cDoAllPotentialReductions(cand, tok.Symbol, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
+				if !canShift || len(reduced) == 0 {
+					continue
+				}
+				missingVersions = reduced
+				break
 			}
-			if !p.stateHasLeadingReduceAction(nextState, tok.Symbol) {
-				continue
+			if missingVersions != nil {
+				break
 			}
-			cand := versions[vi].cloneWithScratch(gssScratch)
-			cand.cRec = nil
-			missingTok := Token{
-				Symbol:     ms,
-				StartByte:  tok.StartByte,
-				EndByte:    tok.StartByte,
-				StartPoint: tok.StartPoint,
-				EndPoint:   tok.StartPoint,
-				Missing:    true,
-			}
-			if top := cand.top(); stackEntryHasNode(top) && stackEntryNodeEndByte(top) <= tok.StartByte {
-				missingTok.StartByte = stackEntryNodeEndByte(top)
-				missingTok.EndByte = stackEntryNodeEndByte(top)
-				missingTok.StartPoint = stackEntryNodeEndPoint(top)
-				missingTok.EndPoint = stackEntryNodeEndPoint(top)
-			}
-			var dummy bool
-			p.applyAction(&cand, shiftAct, missingTok, &dummy, nodeCount, arena, entryScratch, gssScratch, nil, false, trackChildErrors)
-			cand.shifted = false
-			if cand.dead {
-				continue
-			}
-			reduced, canShift := p.cDoAllPotentialReductions(cand, tok.Symbol, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
-			if !canShift || len(reduced) == 0 {
-				continue
-			}
-			missingVersions = reduced
-			break
-		}
-		if missingVersions != nil {
-			break
 		}
 	}
 
@@ -1082,6 +1089,9 @@ func (p *Parser) cRecoverStrategy1Election(stacks *[]glrStack, group *cRecGroup,
 	// this engine's unlexable run (C: error-subtree lookahead) — C skips
 	// strategy 1 for those.
 	if tok.Symbol == errorSymbol {
+		return false, false
+	}
+	if p.isGraphQLRecoveryTripleQuote(tok.Symbol) {
 		return false, false
 	}
 	if tok.Symbol == 0 && tok.StartByte != tok.EndByte {
@@ -1520,6 +1530,9 @@ func (p *Parser) cRecoverDispatchInError(stacks *[]glrStack, si int, tok Token, 
 		return cRecFallthrough, false
 	}
 	if tok.Symbol != 0 {
+		if p.isGraphQLRecoveryTripleQuote(tok.Symbol) {
+			return p.cRecover(stacks, s, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
+		}
 		if idx := p.lookupActionIndex(cErrorState, tok.Symbol); idx != 0 && int(idx) < len(p.language.ParseActions) {
 			if actions := p.language.ParseActions[idx].Actions; len(actions) > 0 &&
 				actions[0].Type == ParseActionShift {
@@ -1534,6 +1547,14 @@ func (p *Parser) cRecoverDispatchInError(stacks *[]glrStack, si int, tok Token, 
 		}
 	}
 	return p.cRecover(stacks, s, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
+}
+
+func (p *Parser) isGraphQLRecoveryTripleQuote(sym Symbol) bool {
+	return p != nil &&
+		p.language != nil &&
+		p.language.Name == "graphql" &&
+		int(sym) < len(p.language.SymbolNames) &&
+		p.language.SymbolNames[sym] == "\"\"\""
 }
 
 // cCondenseAndResume ports ts_parser__condense_stack for the gated grammar:

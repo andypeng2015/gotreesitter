@@ -82,7 +82,7 @@ gn	CLEAN	40/40	in ratchet; scanner aligned with upstream C (maple)
 go	IV-recovery	37/40	reader/writer_test root ERROR vs source_file (recovery class)
 godot_resource	CLEAN	40/40	in ratchet; scanner aligned with upstream C (maple)
 gomod	CLEAN	40/40	in ratchet
-graphql	IV-recovery	0/1	faithful C error-cost version competition (see spec)
+graphql	CLEAN	1/1	GraphQL C-recovery triple-quote/block-string handling verified 2026-06-11
 groovy	IV-recovery	4/40	faithful C error-cost version competition (see spec)
 hack	CLEAN	40/40	in ratchet; C-recovery gate (stage-2 redwood)
 hare	IV-recovery	20/40	faithful C error-cost version competition (see spec)

@@ -464,6 +464,9 @@ func (ts *GenericTokenSource) blockCommentWithPrefix(sym gotreesitter.Symbol) go
 
 func (ts *GenericTokenSource) stringToken() (gotreesitter.Token, bool) {
 	if ts.tripleQuoteSym != 0 && ts.cur.matchLiteralAtCurrent("\"\"\"") {
+		if ts.lang != nil && ts.lang.Name == "graphql" {
+			return ts.scanGraphQLBlockString(ts.tripleQuoteSym, ts.stringContent)
+		}
 		return ts.scanQuotedString("\"\"\"", ts.tripleQuoteSym, ts.stringContent, ts.escapeSym)
 	}
 	if ts.doubleQuoteSym != 0 && ts.cur.peekByte() == '"' {
@@ -568,6 +571,43 @@ func (ts *GenericTokenSource) scanSplitString(quote string, quoteSym, contentSym
 			segStart = ts.cur.offset
 			segPt = ts.cur.point()
 			continue
+		}
+		ts.cur.advanceRune()
+	}
+
+	if contentSym != 0 && segStart < ts.cur.offset {
+		ts.pending = append(ts.pending, makeToken(contentSym, ts.src, segStart, ts.cur.offset, segPt, ts.cur.point()))
+	}
+	return openTok, true
+}
+
+func (ts *GenericTokenSource) scanGraphQLBlockString(quoteSym, contentSym gotreesitter.Symbol) (gotreesitter.Token, bool) {
+	const quote = "\"\"\""
+	if !ts.cur.matchLiteralAtCurrent(quote) {
+		return gotreesitter.Token{}, false
+	}
+
+	start := ts.cur.offset
+	startPt := ts.cur.point()
+	ts.cur.advanceBytes(len(quote))
+	openTok := makeToken(quoteSym, ts.src, start, ts.cur.offset, startPt, ts.cur.point())
+
+	segStart := ts.cur.offset
+	segPt := ts.cur.point()
+	for !ts.cur.eof() {
+		if ts.cur.matchLiteralAtCurrent(quote) {
+			if ts.cur.offset > 0 && ts.src[ts.cur.offset-1] == '\\' {
+				ts.cur.advanceRune()
+				continue
+			}
+			if contentSym != 0 && segStart < ts.cur.offset {
+				ts.pending = append(ts.pending, makeToken(contentSym, ts.src, segStart, ts.cur.offset, segPt, ts.cur.point()))
+			}
+			closeStart := ts.cur.offset
+			closePt := ts.cur.point()
+			ts.cur.advanceBytes(len(quote))
+			ts.pending = append(ts.pending, makeToken(quoteSym, ts.src, closeStart, ts.cur.offset, closePt, ts.cur.point()))
+			return openTok, true
 		}
 		ts.cur.advanceRune()
 	}

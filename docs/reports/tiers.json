@@ -1,6 +1,6 @@
 {
- "generated": "2026-06-12T00:29:36Z",
- "commit": "62512a4a",
+ "generated": "2026-06-12T01:10:22Z",
+ "commit": "8595c7ab",
  "version": "unreleased",
  "tier_rules": {
   "I": "parity-clean and <=1.5x C full-parse, cold <=5ms, blob <=150KB",
@@ -10,8 +10,8 @@
   "unranked": "parity-clean; perf measurement pending"
  },
  "histogram": {
-  "unranked": 9,
-  "IV": 100,
+  "unranked": 10,
+  "IV": 99,
   "II": 46,
   "I": 38,
   "III": 13
@@ -566,10 +566,9 @@
   },
   {
    "grammar": "graphql",
-   "tier": "IV",
-   "iv_cause": "IV-recovery",
-   "parity": "0/1",
-   "notes": "faithful C error-cost version competition (see spec)"
+   "tier": "unranked",
+   "parity": "clean",
+   "perf_source": null
   },
   {
    "grammar": "groovy",
