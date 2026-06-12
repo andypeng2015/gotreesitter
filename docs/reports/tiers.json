@@ -1,6 +1,6 @@
 {
- "generated": "2026-06-12T21:31:23Z",
- "commit": "495f6de7",
+ "generated": "2026-06-12T21:43:17Z",
+ "commit": "726906b8",
  "version": "unreleased",
  "tier_rules": {
   "I": "parity-clean and <=1.5x C full-parse, cold <=5ms, blob <=150KB",
@@ -388,9 +388,9 @@
   {
    "grammar": "elixir",
    "tier": "IV",
-   "iv_cause": "IV-unknown",
-   "parity": "0/40",
-   "notes": "needs deeper single-file diagnosis"
+   "iv_cause": "IV-recovery",
+   "parity": "9/40",
+   "notes": "Elixir _newline_before_comment extra filtering lifted 0/40 to 9/40 (Docker C-oracle 2026-06-12); remaining 31 are dominated by Go ERROR/root fragmentation where C parses source clean (27 errTree), 3 no_stacks_alive truncations, plus one accepted span-shape residual (engine.ex body starts at 3676 vs C 3667). Representative smart_engine_test.exs: C closes fn -> body as anonymous_function while Go treats end as identifier and cascades into quoted-string recovery."
   },
   {
    "grammar": "elm",

@@ -54,7 +54,7 @@ editorconfig	CLEAN	40/40	in ratchet
 eds	CLEAN	1/1	in ratchet
 eex	CLEAN	40/40	in ratchet
 elisp	CLEAN	40/40	in ratchet
-elixir	IV-unknown	0/40	needs deeper single-file diagnosis
+elixir	IV-recovery	9/40	Elixir _newline_before_comment extra filtering lifted 0/40 to 9/40 (Docker C-oracle 2026-06-12); remaining 31 are dominated by Go ERROR/root fragmentation where C parses source clean (27 errTree), 3 no_stacks_alive truncations, plus one accepted span-shape residual (engine.ex body starts at 3676 vs C 3667). Representative smart_engine_test.exs: C closes fn -> body as anonymous_function while Go treats end as identifier and cascades into quoted-string recovery.
 elm	CLEAN	8/8	Elm external lex-state table plus repeatable zero-width _virtual_end_section close clear Deps.elm without broad C recovery (verified 2026-06-11)
 elsa	IV-recovery?	12/27	ext=.lc; faithful C error-cost version competition (see spec)
 embedded_template	CLEAN	40/40	in ratchet
