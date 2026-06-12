@@ -948,8 +948,8 @@
    "grammar": "powershell",
    "tier": "IV",
    "iv_cause": "IV-recovery?",
-   "parity": "24/40",
-   "notes": "PowerShell invocation target path_command_name compatibility clears 3 files with zero new divergers; remaining gaps are recovery/root span and command/statement-list shape"
+   "parity": "25/40",
+   "notes": "PowerShell invocation target path_command_name plus enum keyword span compatibility clears 4 files with zero new divergers; remaining gaps are recovery/root span and command/statement-list shape"
   },
   {
    "grammar": "prisma",

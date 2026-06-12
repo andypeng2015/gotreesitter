@@ -294,6 +294,30 @@ func normalizePowerShellPathCommandNameVariables(root *Node, source []byte, lang
 	walk(root)
 }
 
+func normalizePowerShellEnumStatementKeywordSpans(root *Node, source []byte, lang *Language) {
+	if root == nil || lang == nil || lang.Name != "powershell" || len(source) == 0 {
+		return
+	}
+	walkResultTree(root, func(n *Node) {
+		if n == nil || n.Type(lang) != "enum_statement" || n.startByte < 5 || int(n.startByte) > len(source) {
+			return
+		}
+		keywordStart := int(n.startByte) - len("enum ")
+		if keywordStart < 0 || string(source[keywordStart:n.startByte]) != "enum " {
+			return
+		}
+		if keywordStart > 0 {
+			switch source[keywordStart-1] {
+			case ' ', '\t', '\r', '\n', ';', '{', '}':
+			default:
+				return
+			}
+		}
+		n.startByte = uint32(keywordStart)
+		n.startPoint = advancePointByBytes(Point{}, source[:keywordStart])
+	})
+}
+
 func powerShellVariableFollowsInvocationOperator(source []byte, variable *Node) bool {
 	if variable == nil || variable.startByte >= variable.endByte || int(variable.startByte) >= len(source) || source[variable.startByte] != '$' {
 		return false

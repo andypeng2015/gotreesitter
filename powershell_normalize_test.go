@@ -400,3 +400,42 @@ func TestNormalizePowerShellPathCommandNameWrapsVariable(t *testing.T) {
 		t.Fatalf("wrapped.endByte = %d, want %d", got, want)
 	}
 }
+
+func TestNormalizePowerShellEnumStatementKeywordSpan(t *testing.T) {
+	lang := &Language{
+		Name: "powershell",
+		SymbolNames: []string{
+			"EOF", "program", "statement_list", "enum_statement", "simple_name", "{", "}",
+		},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF", Visible: false, Named: false},
+			{Name: "program", Visible: true, Named: true},
+			{Name: "statement_list", Visible: true, Named: true},
+			{Name: "enum_statement", Visible: true, Named: true},
+			{Name: "simple_name", Visible: true, Named: true},
+			{Name: "{", Visible: true, Named: false},
+			{Name: "}", Visible: true, Named: false},
+		},
+	}
+
+	source := []byte("enum LogLevel\n{}")
+	arena := newNodeArena(arenaClassFull)
+	name := newLeafNodeInArena(arena, 4, true, 5, 13, Point{Column: 5}, Point{Column: 13})
+	open := newLeafNodeInArena(arena, 5, false, 14, 15, Point{Row: 1, Column: 0}, Point{Row: 1, Column: 1})
+	close := newLeafNodeInArena(arena, 6, false, 15, 16, Point{Row: 1, Column: 1}, Point{Row: 1, Column: 2})
+	enum := newParentNodeInArena(arena, 3, true, []*Node{name, open, close}, nil, 0)
+	list := newParentNodeInArena(arena, 2, true, []*Node{enum}, nil, 0)
+	root := newParentNodeInArena(arena, 1, true, []*Node{list}, nil, 0)
+
+	normalizePowerShellEnumStatementKeywordSpans(root, source, lang)
+
+	if got, want := enum.startByte, uint32(0); got != want {
+		t.Fatalf("enum.startByte = %d, want %d", got, want)
+	}
+	if got, want := enum.startPoint, (Point{}); got != want {
+		t.Fatalf("enum.startPoint = %+v, want %+v", got, want)
+	}
+	if got, want := enum.endByte, uint32(len(source)); got != want {
+		t.Fatalf("enum.endByte = %d, want %d", got, want)
+	}
+}
