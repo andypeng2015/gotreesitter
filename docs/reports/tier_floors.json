@@ -1,826 +1,620 @@
 {
   "ada": {
-    "tier": "unranked",
-    "state": "clean_unranked"
+    "tier": "unranked"
   },
   "agda": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "angular": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "apex": {
-    "tier": "unranked",
-    "state": "clean_unranked"
+    "tier": "unranked"
   },
   "arduino": {
-    "tier": "II",
-    "state": "clean_perf"
+    "tier": "II"
   },
   "asm": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "astro": {
-    "tier": "I",
-    "state": "clean_perf"
+    "tier": "I"
   },
   "authzed": {
-    "tier": "unranked",
-    "state": "clean_unranked"
+    "tier": "unranked"
   },
   "awk": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "bash": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "bass": {
-    "tier": "II",
-    "state": "clean_perf"
+    "tier": "II"
   },
   "beancount": {
-    "tier": "II",
-    "state": "clean_perf"
+    "tier": "II"
   },
   "bibtex": {
-    "tier": "I",
-    "state": "clean_perf"
+    "tier": "I"
   },
   "bicep": {
-    "tier": "unranked",
-    "state": "clean_unranked"
+    "tier": "IV"
   },
   "bitbake": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "blade": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "brightscript": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "c": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "c_sharp": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "caddy": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "cairo": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "capnp": {
-    "tier": "II",
-    "state": "clean_perf"
+    "tier": "II"
   },
   "chatito": {
-    "tier": "II",
-    "state": "clean_perf"
+    "tier": "II"
   },
   "circom": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "clojure": {
-    "tier": "I",
-    "state": "clean_perf"
+    "tier": "I"
   },
   "cmake": {
-    "tier": "II",
-    "state": "clean_perf"
+    "tier": "II"
   },
   "cobol": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "comment": {
-    "tier": "unranked",
-    "state": "clean_unranked"
+    "tier": "IV"
   },
   "commonlisp": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "cooklang": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "corn": {
-    "tier": "II",
-    "state": "clean_perf"
+    "tier": "II"
   },
   "cpon": {
-    "tier": "II",
-    "state": "clean_perf"
+    "tier": "II"
   },
   "cpp": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "crystal": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "css": {
-    "tier": "I",
-    "state": "clean_perf"
+    "tier": "I"
   },
   "csv": {
-    "tier": "I",
-    "state": "clean_perf"
+    "tier": "I"
   },
   "cuda": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "cue": {
-    "tier": "I",
-    "state": "clean_perf"
+    "tier": "I"
   },
   "cylc": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "d": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "dart": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "desktop": {
-    "tier": "III",
-    "state": "clean_perf"
+    "tier": "III"
   },
   "devicetree": {
-    "tier": "II",
-    "state": "clean_perf"
+    "tier": "II"
   },
   "dhall": {
-    "tier": "I",
-    "state": "clean_perf"
+    "tier": "I"
   },
   "diff": {
-    "tier": "III",
-    "state": "clean_perf"
+    "tier": "III"
   },
   "disassembly": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "djot": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "dockerfile": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "dot": {
-    "tier": "II",
-    "state": "clean_perf"
+    "tier": "II"
   },
   "doxygen": {
-    "tier": "unranked",
-    "state": "clean_unranked"
+    "tier": "unranked"
   },
   "dtd": {
-    "tier": "III",
-    "state": "clean_perf"
+    "tier": "III"
   },
   "earthfile": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "ebnf": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "editorconfig": {
-    "tier": "II",
-    "state": "clean_perf"
+    "tier": "II"
   },
   "eds": {
-    "tier": "III",
-    "state": "clean_perf"
+    "tier": "III"
   },
   "eex": {
-    "tier": "III",
-    "state": "clean_perf"
+    "tier": "III"
   },
   "elisp": {
-    "tier": "I",
-    "state": "clean_perf"
+    "tier": "I"
   },
   "elixir": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "elm": {
-    "tier": "II",
-    "state": "clean_perf"
+    "tier": "II"
   },
   "elsa": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "embedded_template": {
-    "tier": "III",
-    "state": "clean_perf"
+    "tier": "III"
   },
   "enforce": {
-    "tier": "unranked",
-    "state": "clean_unranked"
+    "tier": "unranked"
   },
   "erlang": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "facility": {
-    "tier": "III",
-    "state": "clean_perf"
+    "tier": "III"
   },
   "faust": {
-    "tier": "I",
-    "state": "clean_perf"
+    "tier": "I"
   },
   "fennel": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "fidl": {
-    "tier": "I",
-    "state": "clean_perf"
+    "tier": "I"
   },
   "firrtl": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "fish": {
-    "tier": "I",
-    "state": "clean_perf"
+    "tier": "I"
   },
   "foam": {
-    "tier": "II",
-    "state": "clean_perf"
+    "tier": "II"
   },
   "forth": {
-    "tier": "II",
-    "state": "clean_perf"
+    "tier": "II"
   },
   "fortran": {
-    "tier": "II",
-    "state": "clean_perf"
+    "tier": "II"
   },
   "fsharp": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "gdscript": {
-    "tier": "I",
-    "state": "clean_perf"
+    "tier": "I"
   },
   "git_config": {
-    "tier": "II",
-    "state": "clean_perf"
+    "tier": "II"
   },
   "git_rebase": {
-    "tier": "II",
-    "state": "clean_perf"
+    "tier": "II"
   },
   "gitattributes": {
-    "tier": "II",
-    "state": "clean_perf"
+    "tier": "II"
   },
   "gitcommit": {
-    "tier": "I",
-    "state": "clean_perf"
+    "tier": "I"
   },
   "gitignore": {
-    "tier": "II",
-    "state": "clean_perf"
+    "tier": "II"
   },
   "gleam": {
-    "tier": "I",
-    "state": "clean_perf"
+    "tier": "I"
   },
   "glsl": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "gn": {
-    "tier": "II",
-    "state": "clean_perf"
+    "tier": "II"
   },
   "go": {
-    "tier": "unranked",
-    "state": "clean_unranked"
+    "tier": "IV"
   },
   "godot_resource": {
-    "tier": "II",
-    "state": "clean_perf"
+    "tier": "II"
   },
   "gomod": {
-    "tier": "III",
-    "state": "clean_perf"
+    "tier": "III"
   },
   "graphql": {
-    "tier": "unranked",
-    "state": "clean_unranked"
+    "tier": "IV"
   },
   "groovy": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "hack": {
-    "tier": "II",
-    "state": "clean_perf"
+    "tier": "II"
   },
   "hare": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "haskell": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "haxe": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "hcl": {
-    "tier": "I",
-    "state": "clean_perf"
+    "tier": "I"
   },
   "heex": {
-    "tier": "II",
-    "state": "clean_perf"
+    "tier": "II"
   },
   "hlsl": {
-    "tier": "unranked",
-    "state": "clean_unranked"
+    "tier": "IV"
   },
   "html": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "http": {
-    "tier": "III",
-    "state": "clean_perf"
+    "tier": "III"
   },
   "hurl": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "hyprlang": {
-    "tier": "unranked",
-    "state": "clean_unranked"
+    "tier": "IV"
   },
   "ini": {
-    "tier": "II",
-    "state": "clean_perf"
+    "tier": "II"
   },
   "janet": {
-    "tier": "II",
-    "state": "clean_perf"
+    "tier": "II"
   },
   "java": {
-    "tier": "I",
-    "state": "clean_perf"
+    "tier": "I"
   },
   "javascript": {
-    "tier": "I",
-    "state": "clean_perf"
+    "tier": "I"
   },
   "jinja2": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "jq": {
-    "tier": "II",
-    "state": "clean_perf"
+    "tier": "II"
   },
   "jsdoc": {
-    "tier": "II",
-    "state": "clean_perf"
+    "tier": "II"
   },
   "json": {
-    "tier": "II",
-    "state": "clean_perf"
+    "tier": "II"
   },
   "json5": {
-    "tier": "II",
-    "state": "clean_perf"
+    "tier": "II"
   },
   "jsonnet": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "julia": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "just": {
-    "tier": "II",
-    "state": "clean_perf"
+    "tier": "II"
   },
   "kconfig": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "kdl": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "kotlin": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "ledger": {
-    "tier": "II",
-    "state": "clean_perf"
+    "tier": "II"
   },
   "less": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "linkerscript": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "liquid": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "llvm": {
-    "tier": "I",
-    "state": "clean_perf"
+    "tier": "I"
   },
   "lua": {
-    "tier": "I",
-    "state": "clean_perf"
+    "tier": "I"
   },
   "luau": {
-    "tier": "unranked",
-    "state": "clean_unranked"
+    "tier": "IV"
   },
   "make": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "markdown": {
-    "tier": "II",
-    "state": "clean_perf"
+    "tier": "II"
   },
   "markdown_inline": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "matlab": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "mermaid": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "meson": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "mojo": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "move": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "nginx": {
-    "tier": "III",
-    "state": "clean_perf"
+    "tier": "III"
   },
   "nickel": {
-    "tier": "I",
-    "state": "clean_perf"
+    "tier": "I"
   },
   "nim": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "ninja": {
-    "tier": "III",
-    "state": "clean_perf"
+    "tier": "III"
   },
   "nix": {
-    "tier": "I",
-    "state": "clean_perf"
+    "tier": "I"
   },
   "norg": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "nushell": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "objc": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "ocaml": {
-    "tier": "II",
-    "state": "clean_perf"
+    "tier": "II"
   },
   "odin": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "org": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "pascal": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "pem": {
-    "tier": "II",
-    "state": "clean_perf"
+    "tier": "II"
   },
   "perl": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "php": {
-    "tier": "I",
-    "state": "clean_perf"
+    "tier": "I"
   },
   "pkl": {
-    "tier": "I",
-    "state": "clean_perf"
+    "tier": "I"
   },
   "powershell": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "prisma": {
-    "tier": "I",
-    "state": "clean_perf"
+    "tier": "I"
   },
   "prolog": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "promql": {
-    "tier": "II",
-    "state": "clean_perf"
+    "tier": "II"
   },
   "properties": {
-    "tier": "III",
-    "state": "clean_perf"
+    "tier": "III"
   },
   "proto": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "pug": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "puppet": {
-    "tier": "I",
-    "state": "clean_perf"
+    "tier": "I"
   },
   "purescript": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "python": {
-    "tier": "II",
-    "state": "clean_perf"
+    "tier": "II"
   },
   "ql": {
-    "tier": "II",
-    "state": "clean_perf"
+    "tier": "II"
   },
   "r": {
-    "tier": "I",
-    "state": "clean_perf"
+    "tier": "I"
   },
   "racket": {
-    "tier": "I",
-    "state": "clean_perf"
+    "tier": "I"
   },
   "regex": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "rego": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "requirements": {
-    "tier": "II",
-    "state": "clean_perf"
+    "tier": "II"
   },
   "rescript": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "robot": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "ron": {
-    "tier": "II",
-    "state": "clean_perf"
+    "tier": "II"
   },
   "rst": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "ruby": {
-    "tier": "II",
-    "state": "clean_perf"
+    "tier": "II"
   },
   "rust": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "scala": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "scheme": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "scss": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "smithy": {
-    "tier": "I",
-    "state": "clean_perf"
+    "tier": "I"
   },
   "solidity": {
-    "tier": "unranked",
-    "state": "clean_unranked"
+    "tier": "unranked"
   },
   "sparql": {
-    "tier": "II",
-    "state": "clean_perf"
+    "tier": "II"
   },
   "sql": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "squirrel": {
-    "tier": "I",
-    "state": "clean_perf"
+    "tier": "I"
   },
   "ssh_config": {
-    "tier": "III",
-    "state": "clean_perf"
+    "tier": "III"
   },
   "starlark": {
-    "tier": "I",
-    "state": "clean_perf"
+    "tier": "I"
   },
   "svelte": {
-    "tier": "I",
-    "state": "clean_perf"
+    "tier": "I"
   },
   "swift": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "tablegen": {
-    "tier": "II",
-    "state": "clean_perf"
+    "tier": "II"
   },
   "tcl": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "teal": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "templ": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "textproto": {
-    "tier": "II",
-    "state": "clean_perf"
+    "tier": "II"
   },
   "thrift": {
-    "tier": "I",
-    "state": "clean_perf"
+    "tier": "I"
   },
   "tlaplus": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "tmux": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "todotxt": {
-    "tier": "II",
-    "state": "clean_perf"
+    "tier": "II"
   },
   "toml": {
-    "tier": "II",
-    "state": "clean_perf"
+    "tier": "II"
   },
   "tsx": {
-    "tier": "I",
-    "state": "clean_perf"
+    "tier": "I"
   },
   "turtle": {
-    "tier": "I",
-    "state": "clean_perf"
+    "tier": "I"
   },
   "twig": {
-    "tier": "II",
-    "state": "clean_perf"
+    "tier": "II"
   },
   "typescript": {
-    "tier": "II",
-    "state": "clean_perf"
+    "tier": "II"
   },
   "typst": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "uxntal": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "v": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "verilog": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "vhdl": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "vimdoc": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "vue": {
-    "tier": "II",
-    "state": "clean_perf"
+    "tier": "II"
   },
   "wat": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "wgsl": {
-    "tier": "III",
-    "state": "assessed_non_clean"
+    "tier": "IV"
   },
   "wolfram": {
-    "tier": "unranked",
-    "state": "clean_unranked"
+    "tier": "unranked"
   },
   "xml": {
-    "tier": "I",
-    "state": "clean_perf"
+    "tier": "I"
   },
   "yaml": {
-    "tier": "I",
-    "state": "clean_perf"
+    "tier": "I"
   },
   "yuck": {
-    "tier": "I",
-    "state": "clean_perf"
+    "tier": "I"
   },
   "zig": {
-    "tier": "I",
-    "state": "clean_perf"
+    "tier": "I"
   }
 }

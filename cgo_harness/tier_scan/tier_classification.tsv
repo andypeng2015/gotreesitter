@@ -1,75 +1,75 @@
 grammar	tier	parity	fix
 ada	CLEAN	30/30	Ada aggregate/index-constraint compatibility normalized to C oracle; Docker tier parity verified 2026-06-11
-agda	III-scanner	2/40	layout scanner, deep port needed (maple)
-angular	III-recovery?	35/40	ext=.component.html,.ng.html; faithful C error-cost version competition (see spec)
+agda	IV-scanner	2/40	layout scanner, deep port needed (maple)
+angular	IV-recovery?	35/40	ext=.component.html,.ng.html; faithful C error-cost version competition (see spec)
 apex	CLEAN	30/30	Apex generic local declarations and .class literal compatibility normalized to C oracle; Docker parity verified 2026-06-11
 arduino	CLEAN	40/40	in ratchet
-asm	III-recovery	0/40	faithful C error-cost version competition (see spec)
+asm	IV-recovery	0/40	faithful C error-cost version competition (see spec)
 astro	CLEAN	40/40	in ratchet
 authzed	CLEAN	30/30	Authzed clean-root definition coalescing promoted; Docker tier-scan parity verified 2026-06-11
-awk	III-recovery	28/29	T.gawk rule-splitting vs C in-rule absorption
-bash	III-recovery?	30/40	ext=.sh; stackcap disproven (cap-256 floor entry already present); divergences are recovery-shape: go ERROR root where C recovers program (lib.sh, git-prompt.sh, git-subtree.sh) plus small child-count diffs; 1 trunc (cmd-list.sh no_stacks_alive)
+awk	IV-recovery	28/29	T.gawk rule-splitting vs C in-rule absorption
+bash	IV-recovery?	30/40	ext=.sh; stackcap disproven (cap-256 floor entry already present); divergences are recovery-shape: go ERROR root where C recovers program (lib.sh, git-prompt.sh, git-subtree.sh) plus small child-count diffs; 1 trunc (cmd-list.sh no_stacks_alive)
 bass	CLEAN	40/40	in ratchet
 beancount	CLEAN	40/40	in ratchet
 bicep	CLEAN	40/40	C-recovery gate keeps extension samples under infrastructure roots with localized ERROR regions (verified 2026-06-12)
-bitbake	III-recovery	35/40	canonical-frame demotion (one-time reset)
-blade	III-recovery?	17/30	ext=.blade.php; faithful C error-cost version competition (see spec)
-brightscript	III-recovery?	0/30	ext=.brs; faithful C error-cost version competition (see spec)
-c	III-recovery	21/40	faithful C error-cost version competition (see spec)
-c_sharp	III-recovery	26/40	faithful C error-cost version competition (see spec)
-caddy	III-recovery?	9/30	ext=Caddyfile; faithful C error-cost version competition (see spec)
-cairo	III-recovery?	0/30	ext=.cairo; faithful C error-cost version competition (see spec)
+bitbake	IV-recovery	35/40	canonical-frame demotion (one-time reset)
+blade	IV-recovery?	17/30	ext=.blade.php; faithful C error-cost version competition (see spec)
+brightscript	IV-recovery?	0/30	ext=.brs; faithful C error-cost version competition (see spec)
+c	IV-recovery	21/40	faithful C error-cost version competition (see spec)
+c_sharp	IV-recovery	26/40	faithful C error-cost version competition (see spec)
+caddy	IV-recovery?	9/30	ext=Caddyfile; faithful C error-cost version competition (see spec)
+cairo	IV-recovery?	0/30	ext=.cairo; faithful C error-cost version competition (see spec)
 capnp	CLEAN	40/40	in ratchet
 chatito	CLEAN	5/5	trailing EOF alias-body recovery normalized to C on dateBooking_large.chatito
-circom	III-shape?	11/30	ext=.circom; preliminary
+circom	IV-shape?	11/30	ext=.circom; preliminary
 clojure	CLEAN	40/40	in ratchet
 cmake	CLEAN	40/40	in ratchet
-cobol	III-version	0/40	corpus is CICS/embedded-SQL COBOL the pinned grammar doesn't support — 12/12 sampled root-ERROR in C too (maple)
+cobol	IV-version	0/40	corpus is CICS/embedded-SQL COBOL the pinned grammar doesn't support — 12/12 sampled root-ERROR in C too (maple)
 comment	CLEAN	40/40	full-parse stack cap=2 verified 2026-06-12; parity clean, perf floor pending
-commonlisp	III-recovery?	22/30	ext=.lisp,.cl; faithful C error-cost version competition (see spec)
-cooklang	III-recovery	0/3	ext=.cook; stackcap disproven (cap 2 not kept); C-recovery gate tried and REVERTED (parity stays 0/3, run 20260610T091230Z-redwood-wave1b) though it helps: trunc 3 -> 2, all roots become named recipe, complex_test_recipe now differs only by EndByte 2522 vs 2523 (the missing-trailing-newline EOF byte); frontmatter/test_recipe still truncate early (go EndByte 2383/2644 vs c 2799/2994) — go stops mid-file where C absorbs on; stage-2 EOF-byte + truncation work, then re-enable
+commonlisp	IV-recovery?	22/30	ext=.lisp,.cl; faithful C error-cost version competition (see spec)
+cooklang	IV-recovery	0/3	ext=.cook; stackcap disproven (cap 2 not kept); C-recovery gate tried and REVERTED (parity stays 0/3, run 20260610T091230Z-redwood-wave1b) though it helps: trunc 3 -> 2, all roots become named recipe, complex_test_recipe now differs only by EndByte 2522 vs 2523 (the missing-trailing-newline EOF byte); frontmatter/test_recipe still truncate early (go EndByte 2383/2644 vs c 2799/2994) — go stops mid-file where C absorbs on; stage-2 EOF-byte + truncation work, then re-enable
 corn	CLEAN	23/23	C-recovery gate plus quoted whole-path path_seg normalization clears quoted_keys.corn
 cpon	CLEAN	11/11	null literal leaf child normalized to C oracle
-cpp	III-recovery	10/40	faithful C error-cost version competition (see spec)
-crystal	III-perf	0/0	timeout-or-fail at 1200s canonical budget
+cpp	IV-recovery	10/40	faithful C error-cost version competition (see spec)
+crystal	IV-perf	0/0	timeout-or-fail at 1200s canonical budget
 css	CLEAN	40/40	in ratchet; C-recovery gate (stage-2 redwood)
 csv	CLEAN	40/40	in ratchet
-cuda	III-recovery?	17/30	ext=.cu,.cuh; faithful C error-cost version competition (see spec)
+cuda	IV-recovery?	17/30	ext=.cu,.cuh; faithful C error-cost version competition (see spec)
 cue	CLEAN	40/40	in ratchet; C-recovery gate (stage-3 redwood)
-cylc	III-recovery?	4/30	ext=.cylc; faithful C error-cost version competition (see spec)
-d	III-recovery?	14/30	ext=.d; faithful C error-cost version competition (see spec)
-dart	III-recovery?	11/30	ext=.dart; faithful C error-cost version competition (see spec)
+cylc	IV-recovery?	4/30	ext=.cylc; faithful C error-cost version competition (see spec)
+d	IV-recovery?	14/30	ext=.d; faithful C error-cost version competition (see spec)
+dart	IV-recovery?	11/30	ext=.dart; faithful C error-cost version competition (see spec)
 desktop	CLEAN	40/40	in ratchet
 devicetree	CLEAN	40/40	in ratchet
 dhall	CLEAN	40/40	in ratchet; Unicode anonymous terminal display names normalized to C oracle
 diff	CLEAN	40/40	in ratchet
-disassembly	III-version	0/40	German-locale riscv objdump corpus the grammar doesn't model — 10/10 C-error (maple)
-djot	III-scanner?	0/40	ext=.dj,.djot; 0/40 with 39 truncations (node_limit persists at stack cap 2: 8.4KB file blows the node budget); markdown-class inline ambiguity — re-port stateful external scanner from pinned upstream; also III-perf component (maple)
-dockerfile	III-recovery?	0/30	ext=Dockerfile,.dockerfile; faithful C error-cost version competition (see spec)
+disassembly	IV-version	0/40	German-locale riscv objdump corpus the grammar doesn't model — 10/10 C-error (maple)
+djot	IV-scanner?	0/40	ext=.dj,.djot; 0/40 with 39 truncations (node_limit persists at stack cap 2: 8.4KB file blows the node budget); markdown-class inline ambiguity — re-port stateful external scanner from pinned upstream; also IV-perf component (maple)
+dockerfile	IV-recovery?	0/30	ext=Dockerfile,.dockerfile; faithful C error-cost version competition (see spec)
 doxygen	CLEAN	30/30	Doxygen whole-block comment ERROR root compatibility; Docker C-oracle parity verified 2026-06-11
 dtd	CLEAN	3/3	tiny curated DTD corpus clean after C recovery election plus `%entity;` elementdecl recovery-shape normalization (verified 2026-06-11)
-earthfile	III-recovery?	0/30	ext=Earthfile; faithful C error-cost version competition (see spec)
-ebnf	III-recovery?	0/30	ext=.ebnf; faithful C error-cost version competition (see spec)
+earthfile	IV-recovery?	0/30	ext=Earthfile; faithful C error-cost version competition (see spec)
+ebnf	IV-recovery?	0/30	ext=.ebnf; faithful C error-cost version competition (see spec)
 editorconfig	CLEAN	40/40	in ratchet
 eds	CLEAN	1/1	in ratchet
 eex	CLEAN	40/40	in ratchet
 elisp	CLEAN	40/40	in ratchet
-elixir	III-recovery?	0/40	assessed recovery/layout/root-shape work: repeated root source child-count +2 residuals with root ERROR; not parity-clean
+elixir	IV-unknown	0/40	needs deeper single-file diagnosis
 elm	CLEAN	8/8	Elm external lex-state table plus repeatable zero-width _virtual_end_section close clear Deps.elm without broad C recovery (verified 2026-06-11)
-elsa	III-recovery?	12/27	ext=.lc; faithful C error-cost version competition (see spec)
+elsa	IV-recovery?	12/27	ext=.lc; faithful C error-cost version competition (see spec)
 embedded_template	CLEAN	40/40	in ratchet
 enforce	CLEAN	40/40	enforce const int formal-parameter compatibility normalization clears declMethod.txt (verified 2026-06-11)
-erlang	III-recovery	38/40	bif_SUITE ambiguity-selection + binary_SUITE blowup trunc
+erlang	IV-recovery	38/40	bif_SUITE ambiguity-selection + binary_SUITE blowup trunc
 facility	CLEAN	6/6	locked real-corpus parity clean (verified 2026-06-11)
 faust	CLEAN	40/40	in ratchet
-fennel	III-recovery?	8/30	ext=.fnl; faithful C error-cost version competition (see spec)
+fennel	IV-recovery?	8/30	ext=.fnl; faithful C error-cost version competition (see spec)
 fidl	CLEAN	40/40	versioned layout modifiers normalized to C oracle recovery shape
-firrtl	III-recovery?	5/27	ext=.fir; faithful C error-cost version competition (see spec)
+firrtl	IV-recovery?	5/27	ext=.fir; faithful C error-cost version competition (see spec)
 fish	CLEAN	40/40	in ratchet
 foam	CLEAN	40/40	in ratchet
 forth	CLEAN	40/40	in ratchet; cap=2 plus root-leading-trivia normalization and missing end_definition recovery for unterminated word_definition (verified 2026-06-11)
 fortran	CLEAN	40/40	in ratchet
-fsharp	III-perf	0/8	timeout-or-fail at 1200s canonical budget
+fsharp	IV-perf	0/8	timeout-or-fail at 1200s canonical budget
 gdscript	CLEAN	40/40	repeatable zero-width _dedent in DFA external loop guard; scanner token order aligned with upstream C (verified 2026-06-11)
 git_config	CLEAN	7/7	in ratchet
 git_rebase	CLEAN	40/40	in ratchet
@@ -77,126 +77,126 @@ gitattributes	CLEAN	40/40	in ratchet
 gitcommit	CLEAN	13/13	in ratchet
 gitignore	CLEAN	40/40	in ratchet
 gleam	CLEAN	40/40	in ratchet
-glsl	III-recovery	11/40	faithful C error-cost version competition (see spec)
+glsl	IV-recovery	11/40	faithful C error-cost version competition (see spec)
 gn	CLEAN	40/40	in ratchet; scanner aligned with upstream C (maple)
 go	CLEAN	40/40	Go top-level recovery now replaces signature-only function fragments and recursively recovers for-loop bodies (verified 2026-06-11)
 godot_resource	CLEAN	40/40	in ratchet; scanner aligned with upstream C (maple)
 gomod	CLEAN	40/40	in ratchet
 graphql	CLEAN	1/1	GraphQL C-recovery triple-quote/block-string handling verified 2026-06-11
-groovy	III-recovery	4/40	faithful C error-cost version competition (see spec)
+groovy	IV-recovery	4/40	faithful C error-cost version competition (see spec)
 hack	CLEAN	40/40	in ratchet; C-recovery gate (stage-2 redwood)
-hare	III-recovery	20/40	faithful C error-cost version competition (see spec)
-haskell	III-scanner	11/40	layout scanner, deep port needed (maple)
-haxe	III-recovery	7/40	pins at upstream HEAD; C at same pin parses corpus clean — runtime fidelity, not version (oak 2026-06-10)
+hare	IV-recovery	20/40	faithful C error-cost version competition (see spec)
+haskell	IV-scanner	11/40	layout scanner, deep port needed (maple)
+haxe	IV-recovery	7/40	pins at upstream HEAD; C at same pin parses corpus clean — runtime fidelity, not version (oak 2026-06-10)
 hcl	CLEAN	40/40	in ratchet
 heex	CLEAN	40/40	in ratchet
 hlsl	CLEAN	40/40	C recovery election plus HLSL result-shape compatibility normalization clears default cgo oracle gate (verified 2026-06-12)
-html	III-recovery	0/40	faithful C error-cost version competition (see spec)
+html	IV-recovery	0/40	faithful C error-cost version competition (see spec)
 http	CLEAN	11/11	full available HTTP corpus parity in Docker after section-fold compatibility fix (2026-06-11)
-hurl	III-recovery	13/40	faithful C error-cost version competition (see spec)
+hurl	IV-recovery	13/40	faithful C error-cost version competition (see spec)
 hyprlang	CLEAN	2/2	in ratchet; C-recovery gate keeps hyprland.conf under configuration root and hyprlang boolean assignment value normalization matches C boolean literal shape (verified 2026-06-12)
 ini	CLEAN	11/11	mypy-style continuation recovery normalized for both residual witnesses; bounded cgo oracle parity medianRatio=3.98x, verified 2026-06-12
 janet	CLEAN	40/40	in ratchet
 java	CLEAN	40/40	in ratchet; java full-parse stack cap 14
 javascript	CLEAN	40/40	in ratchet
-jinja2	III-recovery	3/40	faithful C error-cost version competition (see spec)
+jinja2	IV-recovery	3/40	faithful C error-cost version competition (see spec)
 jq	CLEAN	40/40	in ratchet
 jsdoc	CLEAN	40/40	in ratchet; C-recovery gate (stage-2 redwood)
 json	CLEAN	40/40	in ratchet
 json5	CLEAN	40/40	in ratchet
-jsonnet	III-recovery?	39/40	canonical-frame demotion (one-time reset)
-julia	III-recovery	28/40	faithful C error-cost version competition (see spec)
+jsonnet	IV-recovery?	39/40	canonical-frame demotion (one-time reset)
+julia	IV-recovery	28/40	faithful C error-cost version competition (see spec)
 just	CLEAN	8/8	in ratchet; C-recovery gate plus just top-level line-break span normalization
-kconfig	III-recovery?	13/30	ext=Kconfig; faithful C error-cost version competition (see spec)
-kdl	III-recovery	12/40	pins at upstream HEAD; C at same pin parses corpus clean — runtime fidelity, not version (oak 2026-06-10)
-kotlin	III-shape?	17/40	assessed call/comparison/callable-reference shape residuals; not parity-clean
+kconfig	IV-recovery?	13/30	ext=Kconfig; faithful C error-cost version competition (see spec)
+kdl	IV-recovery	12/40	pins at upstream HEAD; C at same pin parses corpus clean — runtime fidelity, not version (oak 2026-06-10)
+kotlin	IV-unknown	17/40	needs deeper single-file diagnosis
 ledger	CLEAN	4/4	in ratchet; ledger date-suffix and year-directive recovery normalization
-less	III-recovery?	10/40	faithful C error-cost version competition (see spec)
-linkerscript	III-recovery	1/40	faithful C error-cost version competition (see spec)
-liquid	III-recovery?	11/36	faithful C error-cost version competition (see spec)
+less	IV-recovery?	10/40	faithful C error-cost version competition (see spec)
+linkerscript	IV-recovery	1/40	faithful C error-cost version competition (see spec)
+liquid	IV-recovery?	11/36	faithful C error-cost version competition (see spec)
 llvm	CLEAN	40/40	in ratchet
 lua	CLEAN	40/40	in ratchet; scanner.c port + DFA routing (maple 2026-06-10)
 luau	CLEAN	40/40	C-recovery gate localizes unsupported class syntax; recovered `end` identifier shape and Luau table-constructor iteration budget match C oracle (verified 2026-06-12)
-make	III-recovery?	19/20	ext=Makefile,.mk; C-recovery gate tried and REVERTED (parity-neutral 19/20, runs 20260610T090208Z/091230Z redwood-wave1/1b): witness Makefile (129KB, git's) root ERROR cc go=5029 vs makefile c=2114 — signature identical with gate on/off, so the divergence is decided before/outside the gated recover path (retry full-parse or pre-error fragmentation); needs witness-level diagnosis, not more gate work
+make	IV-recovery?	19/20	ext=Makefile,.mk; C-recovery gate tried and REVERTED (parity-neutral 19/20, runs 20260610T090208Z/091230Z redwood-wave1/1b): witness Makefile (129KB, git's) root ERROR cc go=5029 vs makefile c=2114 — signature identical with gate on/off, so the divergence is decided before/outside the gated recover path (retry full-parse or pre-error fragmentation); needs witness-level diagnosis, not more gate work
 markdown	CLEAN	40/40	in ratchet; verified after willow shape fixes
-markdown_inline	III-scanner	38/40	ext=.md; scanner/truncation residual verified after willow shape fixes
-matlab	III-recovery?	4/40	faithful C error-cost version competition (see spec)
-mermaid	III-recovery?	0/40	faithful C error-cost version competition (see spec)
-meson	III-recovery?	1/30	ext=meson.build; faithful C error-cost version competition (see spec)
-mojo	III-recovery?	30/40	post-repin residual
-move	III-recovery?	14/40	post-repo-switch residual
+markdown_inline	IV-scanner	38/40	ext=.md; scanner/truncation residual verified after willow shape fixes
+matlab	IV-recovery?	4/40	faithful C error-cost version competition (see spec)
+mermaid	IV-recovery?	0/40	faithful C error-cost version competition (see spec)
+meson	IV-recovery?	1/30	ext=meson.build; faithful C error-cost version competition (see spec)
+mojo	IV-recovery?	30/40	post-repin residual
+move	IV-recovery?	14/40	post-repo-switch residual
 nginx	CLEAN	40/40	in ratchet
 nickel	CLEAN	40/40	in ratchet
-nim	III-recovery?	3/40	faithful C error-cost version competition (see spec)
+nim	IV-recovery?	3/40	faithful C error-cost version competition (see spec)
 nix	CLEAN	40/40	in ratchet
-norg	III-scanner	0/2	mixed scanner/version, 2-file corpus (maple)
-nushell	III-recovery?	5/40	faithful C error-cost version competition (see spec)
-objc	III-recovery?	1/40	faithful C error-cost version competition (see spec)
+norg	IV-scanner	0/2	mixed scanner/version, 2-file corpus (maple)
+nushell	IV-recovery?	5/40	faithful C error-cost version competition (see spec)
+objc	IV-recovery?	1/40	faithful C error-cost version competition (see spec)
 ocaml	CLEAN	40/40	in ratchet
-odin	III-recovery?	13/40	faithful C error-cost version competition (see spec)
-org	III-recovery?	5/39	faithful C error-cost version competition (see spec)
-pascal	III-recovery?	0/40	faithful C error-cost version competition (see spec)
+odin	IV-recovery?	13/40	faithful C error-cost version competition (see spec)
+org	IV-recovery?	5/39	faithful C error-cost version competition (see spec)
+pascal	IV-recovery?	0/40	faithful C error-cost version competition (see spec)
 pem	CLEAN	40/40	in ratchet
-perl	III-recovery?	0/40	faithful C error-cost version competition (see spec)
+perl	IV-recovery?	0/40	faithful C error-cost version competition (see spec)
 php	CLEAN	40/40	in ratchet
 pkl	CLEAN	40/40	in ratchet; verified after willow shape fixes
-powershell	III-recovery?	22/40	faithful C error-cost version competition (see spec)
+powershell	IV-recovery?	22/40	faithful C error-cost version competition (see spec)
 prisma	CLEAN	40/40	in ratchet
-prolog	III-recovery?	4/40	faithful C error-cost version competition (see spec)
+prolog	IV-recovery?	4/40	faithful C error-cost version competition (see spec)
 promql	CLEAN	25/25	in ratchet; verified strict real-corpus 25/25 and direct C 20/20 after preserving PromQL query pass-through reductions
 properties	CLEAN	40/40	in ratchet
-proto	III-recovery?	25/40	faithful C error-cost version competition (see spec)
-pug	III-recovery?	0/40	faithful C error-cost version competition (see spec)
+proto	IV-recovery?	25/40	faithful C error-cost version competition (see spec)
+pug	IV-recovery?	0/40	faithful C error-cost version competition (see spec)
 puppet	CLEAN	40/40	in ratchet
-purescript	III-recovery?	1/40	faithful C error-cost version competition (see spec)
+purescript	IV-recovery?	1/40	faithful C error-cost version competition (see spec)
 python	CLEAN	40/40	in ratchet
 ql	CLEAN	40/40	in ratchet; verified after willow shape fixes
 r	CLEAN	40/40	in ratchet; verified after willow shape fixes
 racket	CLEAN	40/40	in ratchet
-regex	III-perf	0/1	ext=.regex; iteration_limit/node_limit/memory_budget on the single config-style .regex file; stackcap disproven (default iteration_limit, cap 2 no_stacks_alive); C roots after UTF-8 BOM (StartByte 3) and parses all 2255 bytes, Go roots at 0 and truncates at 390; not parity-clean
-rego	III-recovery?	7/40	faithful C error-cost version competition (see spec)
-requirements	CLEAN	9/9	in ratchet; first III-recovery clear via faithful C-recovery port (errorCostCompetitionLanguage gate)
-rescript	III-recovery?	23/40	faithful C error-cost version competition (see spec)
-robot	III-recovery?	28/40	faithful C error-cost version competition (see spec)
+regex	IV-unknown?	0/1	ext=.regex; stackcap disproven (default iteration_limit, cap 2 no_stacks_alive); single-file corpus with UTF-8 BOM: C roots after the BOM (StartByte 3) and parses all 2255 bytes, go roots at 0 and truncates at 390
+rego	IV-recovery?	7/40	faithful C error-cost version competition (see spec)
+requirements	CLEAN	9/9	in ratchet; first IV-recovery clear via faithful C-recovery port (errorCostCompetitionLanguage gate)
+rescript	IV-recovery?	23/40	faithful C error-cost version competition (see spec)
+robot	IV-recovery?	28/40	faithful C error-cost version competition (see spec)
 ron	CLEAN	40/40	in ratchet
-rst	III-perf	1/8	timeout-or-fail at 1200s canonical budget
+rst	IV-perf	1/8	timeout-or-fail at 1200s canonical budget
 ruby	CLEAN	40/40	in ratchet; inline Ruby when-then body StartByte normalized to C oracle
-rust	III-recovery?	21/40	faithful C error-cost version competition (see spec)
-scala	III-recovery?	25/40	faithful C error-cost version competition (see spec)
-scheme	III-perf	36/40	stage-2 clears 5/6 shape files under GOT_C_RECOVERY=scheme; s/5_3.ss is a GLR merge wall and remains the perf blocker
-scss	III-recovery?	6/40	faithful C error-cost version competition (see spec)
+rust	IV-recovery?	21/40	faithful C error-cost version competition (see spec)
+scala	IV-recovery?	25/40	faithful C error-cost version competition (see spec)
+scheme	IV-perf	36/40	stage-2 clears 5/6 shape files under GOT_C_RECOVERY=scheme; s/5_3.ss is a GLR merge wall and remains the perf blocker
+scss	IV-recovery?	6/40	faithful C error-cost version competition (see spec)
 smithy	CLEAN	40/40	in ratchet
 solidity	CLEAN	40/40	Solidity-only call/type-cast/new-expression compatibility pass promoted; Docker real-corpus strict parity verified 2026-06-11
 sparql	CLEAN	40/40	in ratchet
-sql	III-recovery?	8/40	faithful C error-cost version competition (see spec)
+sql	IV-recovery?	8/40	faithful C error-cost version competition (see spec)
 squirrel	CLEAN	40/40	in ratchet
 ssh_config	CLEAN	2/2	C-recovery gate promoted; tiny lock-filtered corpus clean (verified 2026-06-11)
 starlark	CLEAN	40/40	in ratchet
 svelte	CLEAN	40/40	in ratchet; recovered raw-text ERROR compatibility normalized to C oracle (verified 2026-06-11)
-swift	III-recovery?	0/40	faithful C error-cost version competition (see spec)
+swift	IV-recovery?	0/40	faithful C error-cost version competition (see spec)
 tablegen	CLEAN	40/40	in ratchet
-tcl	III-recovery?	10/40	faithful C error-cost version competition (see spec)
-teal	III-recovery?	4/40	faithful C error-cost version competition (see spec)
-templ	III-recovery?	24/40	faithful C error-cost version competition (see spec)
+tcl	IV-recovery?	10/40	faithful C error-cost version competition (see spec)
+teal	IV-recovery?	4/40	faithful C error-cost version competition (see spec)
+templ	IV-recovery?	24/40	faithful C error-cost version competition (see spec)
 textproto	CLEAN	40/40	in ratchet
 thrift	CLEAN	40/40	in ratchet
-tlaplus	III-perf	14/40	ext=.tla; memory_budget/deep truncation likely external-scanner/GLR churn; stackcap disproven (cap 2: 21→20 iteration_limit truncations, parity unchanged); 197x median ratio with deep truncations (Go stops at 1-2KB where C parses 11-31KB); not parity-clean
-tmux	III-recovery?	0/1	ext=.tmux.conf,tmux.conf; faithful C error-cost version competition (see spec)
+tlaplus	IV-unknown?	14/40	ext=.tla; stackcap disproven (cap 2: 21→20 iteration_limit truncations, parity unchanged); 197x median ratio with deep truncations (go stops at 1-2KB where C parses 11-31KB) — likely jlist external-scanner-driven GLR churn
+tmux	IV-recovery?	0/1	ext=.tmux.conf,tmux.conf; faithful C error-cost version competition (see spec)
 todotxt	CLEAN	40/40	in ratchet
 toml	CLEAN	11/11	in ratchet
 tsx	CLEAN	40/40	in ratchet
 turtle	CLEAN	40/40	in ratchet
 twig	CLEAN	40/40	in ratchet
 typescript	CLEAN	40/40	typed-arrow merge cap selection and destructuring-pattern normalization; verified 2026-06-12
-typst	III-recovery?	28/40	faithful C error-cost version competition (see spec)
-uxntal	III-recovery?	0/40	faithful C error-cost version competition (see spec)
-v	III-recovery?	25/40	faithful C error-cost version competition (see spec)
-verilog	III-recovery?	4/40	faithful C error-cost version competition (see spec)
-vhdl	III-recovery?	14/40	faithful C error-cost version competition (see spec)
-vimdoc	III-recovery?	0/30	ext=.txt; faithful C error-cost version competition (see spec)
+typst	IV-recovery?	28/40	faithful C error-cost version competition (see spec)
+uxntal	IV-recovery?	0/40	faithful C error-cost version competition (see spec)
+v	IV-recovery?	25/40	faithful C error-cost version competition (see spec)
+verilog	IV-recovery?	4/40	faithful C error-cost version competition (see spec)
+vhdl	IV-recovery?	14/40	faithful C error-cost version competition (see spec)
+vimdoc	IV-recovery?	0/30	ext=.txt; faithful C error-cost version competition (see spec)
 vue	CLEAN	40/40	in ratchet
-wat	III-recovery?	4/34	faithful C error-cost version competition (see spec)
-wgsl	III-recovery?	20/40	faithful C error-cost version competition (see spec)
+wat	IV-recovery?	4/34	faithful C error-cost version competition (see spec)
+wgsl	IV-recovery?	20/40	faithful C error-cost version competition (see spec)
 wolfram	CLEAN	4/4	Wolfram split infix compatibility pass promoted; Docker real-corpus strict parity verified 2026-06-11
 xml	CLEAN	40/40	in ratchet
 yaml	CLEAN	40/40	in ratchet
