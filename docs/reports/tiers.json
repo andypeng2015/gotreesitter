@@ -1,6 +1,6 @@
 {
- "generated": "2026-06-12T18:52:35Z",
- "commit": "311d3d23",
+ "generated": "2026-06-12T19:11:50Z",
+ "commit": "07ea7beb",
  "version": "unreleased",
  "tier_rules": {
   "I": "parity-clean and <=1.5x C full-parse, cold <=5ms, blob <=150KB",
@@ -1311,9 +1311,9 @@
   {
    "grammar": "wgsl",
    "tier": "IV",
-   "iv_cause": "IV-recovery?",
-   "parity": "20/40",
-   "notes": "faithful C error-cost version competition (see spec)"
+   "iv_cause": "IV-recovery",
+   "parity": "31/40",
+   "notes": "C recovery-cost competition enabled for WGSL: lifts 10 whole-file ERROR roots to source_file roots with localized errors; residual 9/40 are recovery/shape choices, trunc=0 panics=0 (verified 2026-06-12)"
   },
   {
    "grammar": "wolfram",

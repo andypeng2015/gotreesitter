@@ -211,6 +211,13 @@ func errorCostCompetitionLanguage(lang *Language) bool {
 		// whole-file ERROR roots; the residual deterministic HLSL expression/type
 		// shape choices are normalized in parser_result_hlsl.go.
 		return true
+	case "wgsl":
+		// Tier-IV recovery fan-out: baseline direct C-oracle parity is 21/40.
+		// The C recovery election lifts ten malformed shader witnesses from
+		// whole-file ERROR roots to source_file roots with localized errors.
+		// Remaining misses are WGSL-specific recovery/shape choices; no
+		// truncation or panic signal.
+		return true
 	case "luau":
 		// Tier-IV recovery fan-out: Luau's class benchmark witnesses contain
 		// unsupported `class` syntax. C recovery preserves the chunk root and
