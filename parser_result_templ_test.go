@@ -127,6 +127,61 @@ func TestNormalizeTemplCompatibilityBuildsSimpleStringArgument(t *testing.T) {
 	}
 }
 
+func TestNormalizeTemplCompatibilityMergesQualifiedComponentImport(t *testing.T) {
+	lang := templCompatibilityTestLanguage()
+	source := []byte(`@templ.JSONScript("scriptData", scriptData)`)
+	arena := newNodeArena(arenaClassFull)
+	atNode := newLeafNodeInArena(arena, 10, false, 0, 1, Point{}, Point{Column: 1})
+	nameNode := newLeafNodeInArena(arena, 11, true, 1, 6, Point{Column: 1}, Point{Column: 6})
+	importNode := newParentNodeInArena(arena, 3, true, []*Node{atNode, nameNode}, nil, 0)
+	tailNode := newLeafNodeInArena(arena, 4, true, 6, uint32(len(source)), Point{Column: 6}, Point{Column: uint32(len(source))})
+	root := newParentNodeInArena(arena, 2, true, []*Node{importNode, tailNode}, nil, 0)
+
+	normalizeTemplCompatibility(root, source, lang)
+
+	if got, want := root.ChildCount(), 1; got != want {
+		t.Fatalf("root child count = %d, want %d", got, want)
+	}
+	child := root.Child(0)
+	if child == nil {
+		t.Fatal("merged child = nil")
+	}
+	if got, want := child.Type(lang), "component_import"; got != want {
+		t.Fatalf("merged child type = %q, want %q", got, want)
+	}
+	if got, want := child.ChildCount(), 5; got != want {
+		t.Fatalf("component_import child count = %d, want %d", got, want)
+	}
+	checks := []struct {
+		idx   int
+		typ   string
+		field string
+		start uint32
+		end   uint32
+	}{
+		{0, "@", "", 0, 1},
+		{1, "package_identifier", "package", 1, 6},
+		{2, ".", "", 6, 7},
+		{3, "component_identifier", "name", 7, 17},
+		{4, "argument_list", "arguments", 17, uint32(len(source))},
+	}
+	for _, check := range checks {
+		got := child.Child(check.idx)
+		if got == nil {
+			t.Fatalf("child %d = nil", check.idx)
+		}
+		if typ := got.Type(lang); typ != check.typ {
+			t.Fatalf("child %d type = %q, want %q", check.idx, typ, check.typ)
+		}
+		if field := child.FieldNameForChild(check.idx, lang); field != check.field {
+			t.Fatalf("child %d field = %q, want %q", check.idx, field, check.field)
+		}
+		if start, end := got.StartByte(), got.EndByte(); start != check.start || end != check.end {
+			t.Fatalf("child %d span = %d:%d, want %d:%d", check.idx, start, end, check.start, check.end)
+		}
+	}
+}
+
 func templCompatibilityTestLanguage() *Language {
 	return &Language{
 		Name: "templ",
@@ -134,7 +189,9 @@ func templCompatibilityTestLanguage() *Language {
 			"EOF", "source_file", "element", "component_import", "element_text",
 			"argument_list", "(", ")", ",", "identifier", "@", "component_identifier",
 			"interpreted_string_literal", "interpreted_string_literal_content", "\"",
+			".", "package_identifier",
 		},
+		FieldNames: []string{"", "package", "name", "arguments"},
 		SymbolMetadata: []SymbolMetadata{
 			{Name: "EOF", Visible: false, Named: false},
 			{Name: "source_file", Visible: true, Named: true},
@@ -151,6 +208,8 @@ func templCompatibilityTestLanguage() *Language {
 			{Name: "interpreted_string_literal", Visible: true, Named: true},
 			{Name: "interpreted_string_literal_content", Visible: true, Named: true},
 			{Name: "\"", Visible: true, Named: false},
+			{Name: ".", Visible: true, Named: false},
+			{Name: "package_identifier", Visible: true, Named: true},
 		},
 	}
 }

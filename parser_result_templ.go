@@ -42,6 +42,18 @@ func normalizeTemplComponentImportArguments(root *Node, source []byte, lang *Lan
 				changed = true
 				continue
 			}
+			if i+1 < len(children) && templCanMergeQualifiedComponentImport(child, children[i+1], source, lang) {
+				args := children[i+1]
+				rewritten := templBuildQualifiedComponentImport(child, args, source, lang, argListSym, argListNamed, hasArgList)
+				if rewritten == nil {
+					out = append(out, child)
+					continue
+				}
+				out = append(out, rewritten)
+				i++
+				changed = true
+				continue
+			}
 			out = append(out, child)
 		}
 		if changed {
@@ -65,6 +77,118 @@ func templCanMergeComponentImportArgs(importNode, argsNode *Node, source []byte,
 	}
 	args := source[argsNode.startByte:argsNode.endByte]
 	return len(args) >= 2 && args[0] == '(' && args[len(args)-1] == ')'
+}
+
+func templCanMergeQualifiedComponentImport(importNode, tailNode *Node, source []byte, lang *Language) bool {
+	if importNode == nil || tailNode == nil {
+		return false
+	}
+	if importNode.Type(lang) != "component_import" || tailNode.Type(lang) != "element_text" {
+		return false
+	}
+	if importNode.endByte != tailNode.startByte || tailNode.startByte >= tailNode.endByte {
+		return false
+	}
+	if int(tailNode.endByte) > len(source) {
+		return false
+	}
+	children := resultChildSliceForMutation(importNode)
+	if len(children) != 2 || children[1] == nil || children[1].Type(lang) != "component_identifier" {
+		return false
+	}
+	tail := source[tailNode.startByte:tailNode.endByte]
+	return templSplitQualifiedImportTail(tail) != nil
+}
+
+type templQualifiedImportTail struct {
+	nameStart int
+	nameEnd   int
+	argsStart int
+}
+
+func templSplitQualifiedImportTail(tail []byte) *templQualifiedImportTail {
+	if len(tail) < 4 || tail[0] != '.' {
+		return nil
+	}
+	if bytes.IndexByte(tail, '\n') >= 0 || bytes.IndexByte(tail, '\r') >= 0 {
+		return nil
+	}
+	i := 1
+	if !templIsIdentifierStart(tail[i]) {
+		return nil
+	}
+	nameStart := i
+	i++
+	for i < len(tail) && templIsIdentifierContinue(tail[i]) {
+		i++
+	}
+	if i >= len(tail) || tail[i] != '(' || tail[len(tail)-1] != ')' {
+		return nil
+	}
+	return &templQualifiedImportTail{nameStart: nameStart, nameEnd: i, argsStart: i}
+}
+
+func templBuildQualifiedComponentImport(importNode, tailNode *Node, source []byte, lang *Language, argListSym Symbol, argListNamed bool, hasArgList bool) *Node {
+	if importNode == nil || tailNode == nil || !hasArgList || int(tailNode.endByte) > len(source) {
+		return nil
+	}
+	dotSym, dotNamed, ok := symbolMeta(lang, ".")
+	if !ok {
+		return nil
+	}
+	packageSym, packageNamed, ok := symbolMeta(lang, "package_identifier")
+	if !ok {
+		return nil
+	}
+	componentSym, componentNamed, ok := symbolMeta(lang, "component_identifier")
+	if !ok {
+		return nil
+	}
+	tail := source[tailNode.startByte:tailNode.endByte]
+	parts := templSplitQualifiedImportTail(tail)
+	if parts == nil {
+		return nil
+	}
+	children := resultChildSliceForMutation(importNode)
+	if len(children) != 2 || children[1] == nil {
+		return nil
+	}
+	arena := importNode.ownerArena
+	pkg := newLeafNodeInArena(arena, packageSym, packageNamed, children[1].startByte, children[1].endByte, children[1].startPoint, children[1].endPoint)
+	dot := newLeafNodeInArena(arena, dotSym, dotNamed, tailNode.startByte, tailNode.startByte+1, tailNode.startPoint, Point{Row: tailNode.startPoint.Row, Column: tailNode.startPoint.Column + 1})
+	nameStart := tailNode.startByte + uint32(parts.nameStart)
+	nameEnd := tailNode.startByte + uint32(parts.nameEnd)
+	name := newLeafNodeInArena(arena, componentSym, componentNamed, nameStart, nameEnd, Point{Row: tailNode.startPoint.Row, Column: tailNode.startPoint.Column + uint32(parts.nameStart)}, Point{Row: tailNode.startPoint.Row, Column: tailNode.startPoint.Column + uint32(parts.nameEnd)})
+
+	argsView := *tailNode
+	argsView.startByte = tailNode.startByte + uint32(parts.argsStart)
+	argsView.startPoint = Point{Row: tailNode.startPoint.Row, Column: tailNode.startPoint.Column + uint32(parts.argsStart)}
+	argsView.children = nil
+	argsView.fieldIDs = nil
+	argsView.fieldSources = nil
+	argList := templBuildSimpleArgumentList(&argsView, source, lang, argListSym, argListNamed)
+	if argList == nil {
+		return nil
+	}
+	fields := templComponentImportFieldIDs(arena, lang)
+	return newParentNodeInArena(arena, importNode.symbol, importNode.isNamed(), cloneNodeSliceInArena(arena, []*Node{children[0], pkg, dot, name, argList}), fields, importNode.productionID)
+}
+
+func templComponentImportFieldIDs(arena *nodeArena, lang *Language) []FieldID {
+	if lang == nil {
+		return nil
+	}
+	fields := make([]FieldID, 5)
+	if fid, ok := lang.FieldByName("package"); ok {
+		fields[1] = fid
+	}
+	if fid, ok := lang.FieldByName("name"); ok {
+		fields[3] = fid
+	}
+	if fid, ok := lang.FieldByName("arguments"); ok {
+		fields[4] = fid
+	}
+	return cloneFieldIDSliceInArena(arena, fields)
 }
 
 func templBuildSimpleArgumentList(argsNode *Node, source []byte, lang *Language, argListSym Symbol, argListNamed bool) *Node {

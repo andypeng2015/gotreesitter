@@ -177,7 +177,7 @@ swift	IV-recovery?	0/40	faithful C error-cost version competition (see spec)
 tablegen	CLEAN	40/40	in ratchet
 tcl	IV-recovery?	10/40	faithful C error-cost version competition (see spec)
 teal	IV-recovery?	4/40	faithful C error-cost version competition (see spec)
-templ	IV-recovery?	33/40	faithful C error-cost version competition (see spec)
+templ	IV-recovery?	34/40	qualified render-call normalization landed; Docker tier parity verified 2026-06-12; remaining residuals are 5 root ERROR files plus one local tag-start/comment shape diff
 textproto	CLEAN	40/40	in ratchet
 thrift	CLEAN	40/40	in ratchet
 tlaplus	IV-perf	14/40	ext=.tla; reproduced on origin/parity/c-oracle-clears b52df6d9: 14/40, median 201x, agg 847x, trunc 21/40, max RSS 5.9GB; cap 2 stays 14/40 (trunc 20/40), so not IV-stackcap. Dominant family is early stop under GLR churn (memory_budget, iteration_limit, node_limit, no_stacks_alive) where C parses full files; residual accepted divergences include scanner/shape-sensitive operator forms such as DOMAIN(f) bound_nonfix_op vs bound_prefix_op.

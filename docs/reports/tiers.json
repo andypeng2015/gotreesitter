@@ -1,6 +1,6 @@
 {
- "generated": "2026-06-12T23:37:11Z",
- "commit": "e853275d",
+ "generated": "2026-06-12T23:51:50Z",
+ "commit": "e6361c80",
  "version": "unreleased",
  "tier_rules": {
   "I": "parity-clean and <=1.5x C full-parse, cold <=5ms, blob <=150KB",
@@ -1188,8 +1188,8 @@
    "grammar": "templ",
    "tier": "IV",
    "iv_cause": "IV-recovery?",
-   "parity": "33/40",
-   "notes": "faithful C error-cost version competition (see spec)"
+   "parity": "34/40",
+   "notes": "qualified render-call normalization landed; Docker tier parity verified 2026-06-12; remaining residuals are 5 root ERROR files plus one local tag-start/comment shape diff"
   },
   {
    "grammar": "textproto",
