@@ -56,7 +56,6 @@ heex
 hlsl
 http
 hyprlang
-ini
 janet
 java
 javascript

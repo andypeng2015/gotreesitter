@@ -27,6 +27,7 @@ REPO = os.path.abspath(os.path.join(ROOT, "..", ".."))
 FLOOR = os.path.join(ROOT, "tier_floors.json")
 TIERS = os.path.join(ROOT, "tiers.json")
 CLEAN = os.path.join(REPO, "cgo_harness", "tier_scan", "clean_grammars.txt")
+CLASS_TSV = os.path.join(REPO, "cgo_harness", "tier_scan", "tier_classification.tsv")
 
 # Tiers are Roman numerals (I best .. IV worst) so "III" never collides with the
 # C language. `unranked` is parity-clean with perf pending: better than IV, but
@@ -38,6 +39,42 @@ def clean_set():
     """Grammars that passed full-corpus parity vs the C oracle (the hard gate)."""
     with open(CLEAN) as f:
         return {ln.strip() for ln in f if ln.strip()}
+
+
+def classification_tiers():
+    """Classification TSV tier by grammar, used to reject contradictory sources."""
+    rows = {}
+    with open(CLASS_TSV) as f:
+        for i, ln in enumerate(f):
+            parts = ln.rstrip("\n").split("\t")
+            if i == 0 and parts and parts[0] == "grammar":
+                continue
+            if len(parts) >= 2 and parts[0]:
+                rows[parts[0]] = parts[1]
+    return rows
+
+
+def check_clean_classification_consistency(clean, classification):
+    clean_with_non_clean_row = sorted(
+        (g, classification[g]) for g in clean
+        if g in classification and classification[g] != "CLEAN"
+    )
+    clean_rows_absent_from_ratchet = sorted(
+        g for g, t in classification.items() if t == "CLEAN" and g not in clean
+    )
+    if not clean_with_non_clean_row and not clean_rows_absent_from_ratchet:
+        return
+
+    print("TIER DATA HYGIENE VIOLATION:")
+    if clean_with_non_clean_row:
+        print("  clean_grammars.txt entries with non-CLEAN classification rows:")
+        for g, t in clean_with_non_clean_row:
+            print(f"    {g}: {t}")
+    if clean_rows_absent_from_ratchet:
+        print("  tier_classification.tsv CLEAN rows absent from clean_grammars.txt:")
+        for g in clean_rows_absent_from_ratchet:
+            print(f"    {g}")
+    sys.exit(1)
 
 
 def current_tiers():
@@ -63,6 +100,8 @@ def current_tiers():
 
 def main():
     bump = "--bump" in sys.argv
+    clean = clean_set()
+    check_clean_classification_consistency(clean, classification_tiers())
     floor = {k: v["tier"] for k, v in json.load(open(FLOOR)).items()}
     cur = current_tiers()
     regressions, lifts = [], []
