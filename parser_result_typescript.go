@@ -978,7 +978,7 @@ func refreshTypeScriptCompatibilityHasErrorSubtree(node *Node) bool {
 	if node == nil {
 		return false
 	}
-	hasError := node.symbol == errorSymbol
+	hasError := node.symbol == errorSymbol || node.isMissing()
 	for _, child := range node.children {
 		if refreshTypeScriptCompatibilityHasErrorSubtree(child) {
 			hasError = true

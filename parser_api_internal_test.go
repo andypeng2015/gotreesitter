@@ -2,6 +2,7 @@ package gotreesitter
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 	"time"
 )
@@ -1644,6 +1645,26 @@ func TestEffectiveParseMergePerKeyCap(t *testing.T) {
 	}
 	if got := effectiveParseMergePerKeyCap(&Language{Name: "ocaml"}, maxStacksPerMergeKey, true); got != maxStacksPerMergeKey {
 		t.Fatalf("effectiveParseMergePerKeyCap(ocaml, default, incremental) = %d, want %d", got, maxStacksPerMergeKey)
+	}
+}
+
+func TestConfigureParseCapsTypedArrowDoesNotLowerLargeTypeScriptCap(t *testing.T) {
+	t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "")
+	ResetParseEnvConfigCacheForTests()
+	defer ResetParseEnvConfigCacheForTests()
+
+	source := []byte(strings.Repeat("const filler = 1;\n", 8192) + "const f = (str: string) => str;\n")
+	parser := &Parser{language: &Language{Name: "typescript"}}
+	var scratch parserScratch
+
+	caps := parser.configureParseCaps(source, nil, arenaClassFull, &scratch, 0, 0, 0)
+	if caps.mergePerKeyCap != maxStacksPerMergeKey {
+		t.Fatalf("configureParseCaps(large TypeScript typed arrow) merge cap = %d, want %d", caps.mergePerKeyCap, maxStacksPerMergeKey)
+	}
+
+	caps = parser.configureParseCaps(source, nil, arenaClassFull, &scratch, 0, 0, -4)
+	if caps.mergePerKeyCap != 4 {
+		t.Fatalf("configureParseCaps(large TypeScript typed arrow, exact retry cap) merge cap = %d, want 4", caps.mergePerKeyCap)
 	}
 }
 

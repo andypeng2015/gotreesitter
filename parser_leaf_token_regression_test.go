@@ -499,6 +499,39 @@ func TestParseTypeScriptNestedDestructuringArrayPattern(t *testing.T) {
 	}
 }
 
+func TestParseTypeScriptDestructuringRefreshPreservesMissingError(t *testing.T) {
+	src := "const { value: [dirPath, { dirName, options, fileNames }] } = result;\nconst broken = ;\n"
+	lang := grammars.TypescriptLanguage()
+	parser := gotreesitter.NewParser(lang)
+	tree, err := parser.Parse([]byte(src))
+	if err != nil {
+		t.Fatalf("typescript parse failed: %v", err)
+	}
+	t.Cleanup(tree.Release)
+
+	root := tree.RootNode()
+	if root.Type(lang) != "program" || !root.HasError() {
+		t.Fatalf("destructuring with missing token root = %s hasError=%v; tree=%s", root.Type(lang), root.HasError(), root.SExpr(lang))
+	}
+	sexpr := root.SExpr(lang)
+	if !strings.Contains(sexpr, "array_pattern") || !strings.Contains(sexpr, "object_pattern") {
+		t.Fatalf("destructuring normalization did not run: %s", sexpr)
+	}
+	foundMissing := false
+	gotreesitter.Walk(root, func(node *gotreesitter.Node, depth int) gotreesitter.WalkAction {
+		if node.IsMissing() {
+			foundMissing = true
+			if !node.HasError() {
+				t.Fatalf("missing node %s did not preserve HasError; tree=%s", node.Type(lang), root.SExpr(lang))
+			}
+		}
+		return gotreesitter.WalkContinue
+	})
+	if !foundMissing {
+		t.Fatalf("missing-token regression did not produce a missing node: %s", root.SExpr(lang))
+	}
+}
+
 func TestParseTypeScriptDestructuredArrowReturnTypeCallArgument(t *testing.T) {
 	src := "const remainingPaths = arrayFrom(allFileNames.entries(), ([fileName, { isRedirect, isInNodeModules }]): ModulePath => ({ path: fileName, isRedirect, isInNodeModules }));\n"
 	tree, lang := parseLanguageSample(t, "typescript", src)

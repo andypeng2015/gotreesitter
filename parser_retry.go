@@ -892,6 +892,14 @@ func fullParseRetryMergePerKeyOverride(tree *Tree, sourceLen int, initialMaxStac
 	if tree.language != nil && tree.language.Name == "java" && rt.StopReason == ParseStopAccepted && retryTreeHasError(tree) {
 		return javaFullParseRetryMaxMergePerKey
 	}
+	if tree.language != nil && (tree.language.Name == "typescript" || tree.language.Name == "tsx") &&
+		rt.StopReason == ParseStopAccepted && retryTreeHasError(tree) && sourceLen > 64*1024 {
+		// Large TypeScript-family files keep the wider steady-state cap, but
+		// some accepted-error parses recover cleanly only when redundant
+		// same-key survivors are pruned. Use a negative override as an exact
+		// cap for this retry; positive retry overrides still only widen caps.
+		return -4
+	}
 	if tree.language != nil && tree.language.Name == "cpp" &&
 		rt.StopReason == ParseStopAccepted && retryTreeHasError(tree) &&
 		!rt.Truncated && !rt.TokenSourceEOFEarly {
@@ -978,7 +986,7 @@ func (p *Parser) retryFullParse(source []byte, initialMaxStacks int, tree *Tree,
 
 	bestTree := tree
 	if shouldRunInitialFullParseMergeRetry(tree) {
-		if initialMergePerKey := fullParseRetryMergePerKeyOverride(tree, len(source), initialMaxStacks); initialMergePerKey > 0 {
+		if initialMergePerKey := fullParseRetryMergePerKeyOverride(tree, len(source), initialMaxStacks); initialMergePerKey != 0 {
 			mergeRetryTree := runRetry(initialMaxStacks, initialMergePerKey, 0)
 			replaceBest(&bestTree, mergeRetryTree)
 			if treeParseClean(bestTree) {
