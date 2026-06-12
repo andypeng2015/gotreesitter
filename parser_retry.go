@@ -369,6 +369,14 @@ func effectiveFullParseInitialMaxStacks(lang *Language, initialMaxStacks int) in
 		if initialMaxStacks == maxGLRStacks {
 			initialMaxStacks = 2
 		}
+	case "comment":
+		// The comment grammar is intentionally broad and line/noise heavy. The
+		// default survivor budget preserves too many equivalent text/URI paths
+		// on real .txt corpus files and hits the iteration cap mid-file; cap 2
+		// keeps the parser on the C-compatible branch and avoids the blowup.
+		if initialMaxStacks == maxGLRStacks {
+			initialMaxStacks = 2
+		}
 	case "php":
 		// PHP's modifier/recovery-heavy top-level sources can need more than the
 		// default stack budget to reach the C-compatible branch. Starting at 16

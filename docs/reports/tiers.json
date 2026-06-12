@@ -1,6 +1,6 @@
 {
- "generated": "2026-06-12T01:10:22Z",
- "commit": "8595c7ab",
+ "generated": "2026-06-12T01:45:15Z",
+ "commit": "14632081",
  "version": "unreleased",
  "tier_rules": {
   "I": "parity-clean and <=1.5x C full-parse, cold <=5ms, blob <=150KB",
@@ -10,8 +10,8 @@
   "unranked": "parity-clean; perf measurement pending"
  },
  "histogram": {
-  "unranked": 10,
-  "IV": 99,
+  "unranked": 11,
+  "IV": 98,
   "II": 46,
   "I": 38,
   "III": 13
@@ -196,10 +196,9 @@
   },
   {
    "grammar": "comment",
-   "tier": "IV",
-   "iv_cause": "IV-perf",
-   "parity": "35/40",
-   "notes": "trunc=5, 59x median \u2014 blowup truncation"
+   "tier": "unranked",
+   "parity": "clean",
+   "perf_source": null
   },
   {
    "grammar": "commonlisp",

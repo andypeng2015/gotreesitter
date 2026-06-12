@@ -10,6 +10,7 @@ capnp
 chatito
 clojure
 cmake
+comment
 corn
 cpon
 css

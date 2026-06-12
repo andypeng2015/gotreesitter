@@ -25,7 +25,7 @@ circom	IV-shape?	11/30	ext=.circom; preliminary
 clojure	CLEAN	40/40	in ratchet
 cmake	CLEAN	40/40	in ratchet
 cobol	IV-version	0/40	corpus is CICS/embedded-SQL COBOL the pinned grammar doesn't support — 12/12 sampled root-ERROR in C too (maple)
-comment	IV-perf	35/40	trunc=5, 59x median — blowup truncation
+comment	CLEAN	40/40	full-parse stack cap=2 verified 2026-06-12; parity clean, perf floor pending
 commonlisp	IV-recovery?	22/30	ext=.lisp,.cl; faithful C error-cost version competition (see spec)
 cooklang	IV-recovery	0/3	ext=.cook; stackcap disproven (cap 2 not kept); C-recovery gate tried and REVERTED (parity stays 0/3, run 20260610T091230Z-redwood-wave1b) though it helps: trunc 3 -> 2, all roots become named recipe, complex_test_recipe now differs only by EndByte 2522 vs 2523 (the missing-trailing-newline EOF byte); frontmatter/test_recipe still truncate early (go EndByte 2383/2644 vs c 2799/2994) — go stops mid-file where C absorbs on; stage-2 EOF-byte + truncation work, then re-enable
 corn	CLEAN	23/23	C-recovery gate plus quoted whole-path path_seg normalization clears quoted_keys.corn
