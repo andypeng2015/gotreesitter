@@ -1342,6 +1342,9 @@ func TestEffectiveFullParseInitialMaxStacks(t *testing.T) {
 	if got := effectiveFullParseInitialMaxStacks(&Language{Name: "hcl"}, maxGLRStacks); got != 2 {
 		t.Fatalf("effectiveFullParseInitialMaxStacks(hcl) = %d, want 2", got)
 	}
+	if got := effectiveFullParseInitialMaxStacks(&Language{Name: "crystal"}, maxGLRStacks); got != 2 {
+		t.Fatalf("effectiveFullParseInitialMaxStacks(crystal) = %d, want 2", got)
+	}
 	if got := effectiveFullParseInitialMaxStacks(&Language{Name: "javascript"}, maxGLRStacks); got != 6 {
 		t.Fatalf("effectiveFullParseInitialMaxStacks(javascript) = %d, want 6", got)
 	}
@@ -1386,6 +1389,9 @@ func TestEffectiveFullParseInitialMaxStacks(t *testing.T) {
 	}
 	if got := effectiveFullParseInitialMaxStacks(&Language{Name: "java"}, 16); got != 16 {
 		t.Fatalf("effectiveFullParseInitialMaxStacks(java, explicit override) = %d, want 16", got)
+	}
+	if got := effectiveFullParseInitialMaxStacks(&Language{Name: "crystal"}, 16); got != 16 {
+		t.Fatalf("effectiveFullParseInitialMaxStacks(crystal, explicit override) = %d, want 16", got)
 	}
 	if got := effectiveFullParseInitialMaxStacks(&Language{Name: "typescript"}, 16); got != 16 {
 		t.Fatalf("effectiveFullParseInitialMaxStacks(typescript, explicit override) = %d, want 16", got)

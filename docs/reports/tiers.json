@@ -1,6 +1,6 @@
 {
- "generated": "2026-06-12T08:03:26Z",
- "commit": "9628467a",
+ "generated": "2026-06-12T08:30:22Z",
+ "commit": "4b333919",
  "version": "unreleased",
  "tier_rules": {
   "I": "parity-clean and <=1.5x C full-parse, cold <=5ms, blob <=150KB",
@@ -235,9 +235,9 @@
   {
    "grammar": "crystal",
    "tier": "IV",
-   "iv_cause": "IV-perf",
-   "parity": "0/0",
-   "notes": "timeout-or-fail at 1200s canonical budget"
+   "iv_cause": "IV-shape?",
+   "parity": "14/40",
+   "notes": "cap=2 landed (was unmeasurable: markd entities.cr 111KB uniform hash literal never finishes at default cap >240s, 95% CPU in glr.go merge-equiv frontier rescans, ~2x input -> ~25x time; cap2 parses it in 130ms; caps 1/2 measure parity-identical 14/40, cap3 truncates entities.cr); MEASURE-DTIER N=40: medianRatio 5.14x aggRatio 18.20x trunc=0 panics=0; remaining 26 div not stack-budget: ERROR-root where C parses clean (spec_helper.cr go-cc=17 c-cc=7, html_entities.cr, node.cr; 18 errTree) + consistent +1 StartByte on hash-literal open brace (decode/entities/legacy.cr root[0][2][2] go=47 c=48)"
   },
   {
    "grammar": "css",
