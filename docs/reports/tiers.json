@@ -1,6 +1,6 @@
 {
- "generated": "2026-06-12T20:29:19Z",
- "commit": "0ca960bc",
+ "generated": "2026-06-12T20:38:20Z",
+ "commit": "e47938ba",
  "version": "unreleased",
  "tier_rules": {
   "I": "parity-clean and <=1.5x C full-parse, cold <=5ms, blob <=150KB",
@@ -137,8 +137,8 @@
    "grammar": "c_sharp",
    "tier": "IV",
    "iv_cause": "IV-recovery",
-   "parity": "26/40",
-   "notes": "faithful C error-cost version competition (see spec)"
+   "parity": "30/40",
+   "notes": "C# target-typed new/null, conditional token, and generic base-list shape normalizations cleared clean residuals; remaining 10/40 are recovery/error-root or ERROR-span cases requiring faithful C error-cost version competition"
   },
   {
    "grammar": "caddy",

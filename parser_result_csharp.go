@@ -28,7 +28,10 @@ func normalizeCSharpCompatibility(root *Node, source []byte, p *Parser, lang *La
 		normalizeCSharpInvocationStatements(root, source, lang)
 		normalizeCSharpDereferenceLogicalAndCasts(root, source, lang)
 		normalizeCSharpConditionalIsPatternInitializers(root, source, lang)
-		normalizeCSharpConditionalIsPatternExpressions(root, lang)
+		normalizeCSharpConditionalIsPatternExpressions(root, source, lang)
+		normalizeCSharpConditionalExpressionTokens(root, source, lang)
+		normalizeCSharpNullLiteralIdentifiers(root, source, lang)
+		normalizeCSharpGenericBaseLists(root, lang)
 		normalizeCSharpTypeConstraintKeywords(root, lang)
 		normalizeCSharpSwitchTupleCasePatterns(root, lang)
 		return
@@ -47,7 +50,10 @@ func normalizeCSharpCompatibility(root *Node, source []byte, p *Parser, lang *La
 	normalizeCSharpInvocationStatements(root, source, lang)
 	normalizeCSharpDereferenceLogicalAndCasts(root, source, lang)
 	normalizeCSharpConditionalIsPatternInitializers(root, source, lang)
-	normalizeCSharpConditionalIsPatternExpressions(root, lang)
+	normalizeCSharpConditionalIsPatternExpressions(root, source, lang)
+	normalizeCSharpConditionalExpressionTokens(root, source, lang)
+	normalizeCSharpNullLiteralIdentifiers(root, source, lang)
+	normalizeCSharpGenericBaseLists(root, lang)
 	normalizeCSharpTypeConstraintKeywords(root, lang)
 	normalizeCSharpSwitchTupleCasePatterns(root, lang)
 }
@@ -60,6 +66,7 @@ func normalizeCSharpSurfaceCompatibility(root *Node, source []byte, lang *Langua
 	modifierSym, hasModifier := symbolByName(lang, "modifier")
 	aliasSym, hasAlias := symbolByName(lang, "alias_qualified_name")
 	identifierSym, hasIdentifier := symbolByName(lang, "identifier")
+	nullSym, hasNull := symbolByName(lang, "null_literal")
 	globalSym, hasGlobal := symbolByName(lang, "global")
 	lambdaSym, ok := symbolByName(lang, "lambda_expression")
 	hasLambda := ok
@@ -67,6 +74,7 @@ func normalizeCSharpSurfaceCompatibility(root *Node, source []byte, lang *Langua
 	stringLiteralSym, hasStringLiteral := symbolByName(lang, "string_literal")
 	globalNamed := symbolIsNamed(lang, globalSym)
 	modifierNamed := symbolIsNamed(lang, modifierSym)
+	nullNamed := symbolIsNamed(lang, nullSym)
 	walkResultTree(root, func(n *Node) {
 		if n == nil {
 			return
@@ -85,6 +93,13 @@ func normalizeCSharpSurfaceCompatibility(root *Node, source []byte, lang *Langua
 				}
 				return
 			}
+		}
+		if hasIdentifier && hasNull && n.Type(lang) == "identifier" &&
+			n.startByte < n.endByte && int(n.endByte) <= len(source) &&
+			string(source[n.startByte:n.endByte]) == "null" {
+			retagResultRoot(n, nullSym, nullNamed)
+			replaceNodeChildrenUnfielded(n, nil)
+			return
 		}
 		if hasAlias && hasIdentifier && hasGlobal && n.symbol == aliasSym && childCount > 0 {
 			first := resultChildAt(n, 0)
@@ -120,6 +135,136 @@ func normalizeCSharpSurfaceCompatibility(root *Node, source []byte, lang *Langua
 			return
 		}
 	})
+}
+
+func normalizeCSharpNullLiteralIdentifiers(root *Node, source []byte, lang *Language) {
+	if root == nil || lang == nil || lang.Name != "c_sharp" || len(source) == 0 {
+		return
+	}
+	nullSym, ok := symbolByName(lang, "null_literal")
+	if !ok {
+		return
+	}
+	nullNamed := symbolIsNamed(lang, nullSym)
+	walkResultTree(root, func(n *Node) {
+		if n == nil || n.Type(lang) != "identifier" || n.startByte >= n.endByte || int(n.endByte) > len(source) {
+			return
+		}
+		if string(source[n.startByte:n.endByte]) != "null" {
+			return
+		}
+		retagResultRoot(n, nullSym, nullNamed)
+		replaceNodeChildrenUnfielded(n, nil)
+	})
+}
+
+func normalizeCSharpGenericBaseLists(root *Node, lang *Language) {
+	if root == nil || lang == nil || lang.Name != "c_sharp" {
+		return
+	}
+	genericNameSym, hasGenericName := symbolByName(lang, "generic_name")
+	typeArgumentListSym, hasTypeArgumentList := symbolByName(lang, "type_argument_list")
+	if !hasGenericName || !hasTypeArgumentList {
+		return
+	}
+	genericNameNamed := symbolIsNamed(lang, genericNameSym)
+	typeArgumentListNamed := symbolIsNamed(lang, typeArgumentListSym)
+	walkResultTree(root, func(n *Node) {
+		if n == nil || n.Type(lang) != "class_declaration" || resultChildCount(n) < 5 {
+			return
+		}
+		csharpMergeClassGenericBaseList(n, lang, genericNameSym, genericNameNamed, typeArgumentListSym, typeArgumentListNamed)
+	})
+}
+
+func csharpMergeClassGenericBaseList(classNode *Node, lang *Language, genericNameSym Symbol, genericNameNamed bool, typeArgumentListSym Symbol, typeArgumentListNamed bool) bool {
+	childCount := resultChildCount(classNode)
+	for i := 0; i+1 < childCount; i++ {
+		baseList := resultChildAt(classNode, i)
+		typeParams := resultChildAt(classNode, i+1)
+		if baseList == nil || typeParams == nil || baseList.Type(lang) != "base_list" || typeParams.Type(lang) != "type_parameter_list" {
+			continue
+		}
+		if baseList.endByte != typeParams.startByte || resultChildCount(baseList) != 2 {
+			continue
+		}
+		colon := resultChildAt(baseList, 0)
+		baseName := resultChildAt(baseList, 1)
+		if colon == nil || baseName == nil || colon.Type(lang) != ":" || baseName.Type(lang) != "identifier" {
+			continue
+		}
+		retagResultRoot(typeParams, typeArgumentListSym, typeArgumentListNamed)
+		csharpUnwrapTypeArgumentListParameters(typeParams, lang)
+		genericChildren := cloneNodeSliceIfArena(classNode.ownerArena, []*Node{baseName, typeParams})
+		genericName := newParentNodeInArena(classNode.ownerArena, genericNameSym, genericNameNamed, genericChildren, nil, 0)
+		genericName.startByte = baseName.startByte
+		genericName.endByte = typeParams.endByte
+		genericName.startPoint = baseName.startPoint
+		genericName.endPoint = typeParams.endPoint
+		genericName.setHasError(false)
+		baseChildren := cloneNodeSliceIfArena(classNode.ownerArena, []*Node{colon, genericName})
+		baseList.children = baseChildren
+		baseList.fieldIDs = nil
+		baseList.fieldSources = nil
+		if baseList.ownerArena != nil {
+			baseList.ownerArena.clearFinalChildRefs(baseList)
+		}
+		baseList.endByte = typeParams.endByte
+		baseList.endPoint = typeParams.endPoint
+		baseList.setHasError(false)
+		populateParentNode(baseList, baseList.children)
+
+		classChildren := resultChildSliceForMutation(classNode)
+		if len(classChildren) != childCount {
+			return false
+		}
+		rebuilt := make([]*Node, 0, childCount-1)
+		rebuilt = append(rebuilt, classChildren[:i+1]...)
+		rebuilt = append(rebuilt, classChildren[i+2:]...)
+		classNode.children = cloneNodeSliceIfArena(classNode.ownerArena, rebuilt)
+		if classNode.ownerArena != nil {
+			classNode.ownerArena.clearFinalChildRefs(classNode)
+		}
+		classNode.fieldIDs = nil
+		classNode.fieldSources = nil
+		classNode.setHasError(false)
+		populateParentNode(classNode, classNode.children)
+		return true
+	}
+	return false
+}
+
+func csharpUnwrapTypeArgumentListParameters(typeArgs *Node, lang *Language) bool {
+	if typeArgs == nil || lang == nil || resultChildCount(typeArgs) == 0 {
+		return false
+	}
+	changed := false
+	children := resultChildSliceForMutation(typeArgs)
+	if len(children) == 0 {
+		return false
+	}
+	for i, child := range children {
+		if child == nil || child.Type(lang) != "type_parameter" || resultChildCount(child) != 1 {
+			continue
+		}
+		inner := resultChildAt(child, 0)
+		if inner == nil || inner.Type(lang) != "identifier" {
+			continue
+		}
+		children[i] = inner
+		changed = true
+	}
+	if !changed {
+		return false
+	}
+	typeArgs.children = cloneNodeSliceIfArena(typeArgs.ownerArena, children)
+	typeArgs.fieldIDs = nil
+	typeArgs.fieldSources = nil
+	if typeArgs.ownerArena != nil {
+		typeArgs.ownerArena.clearFinalChildRefs(typeArgs)
+	}
+	populateParentNode(typeArgs, typeArgs.children)
+	return true
 }
 
 func csharpCollapsedBooleanTokenSymbol(lang *Language, source []byte, n *Node) (Symbol, bool) {

@@ -16,7 +16,7 @@ bitbake	IV-recovery	35/40	canonical-frame demotion (one-time reset)
 blade	IV-recovery?	17/30	ext=.blade.php; faithful C error-cost version competition (see spec)
 brightscript	IV-recovery?	0/30	ext=.brs; faithful C error-cost version competition (see spec)
 c	IV-recovery	21/40	faithful C error-cost version competition (see spec)
-c_sharp	IV-recovery	26/40	faithful C error-cost version competition (see spec)
+c_sharp	IV-recovery	30/40	C# target-typed new/null, conditional token, and generic base-list shape normalizations cleared clean residuals; remaining 10/40 are recovery/error-root or ERROR-span cases requiring faithful C error-cost version competition
 caddy	IV-recovery?	9/30	ext=Caddyfile; faithful C error-cost version competition (see spec)
 cairo	IV-recovery?	0/30	ext=.cairo; faithful C error-cost version competition (see spec)
 capnp	CLEAN	40/40	in ratchet

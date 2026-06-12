@@ -12,6 +12,14 @@ func normalizeCSharpInvocationStatements(root *Node, source []byte, lang *Langua
 	if !ok {
 		return
 	}
+	implicitObjectCreationSym, ok := lang.SymbolByName("implicit_object_creation_expression")
+	if !ok {
+		return
+	}
+	newSym, ok := lang.SymbolByName("new")
+	if !ok {
+		return
+	}
 	memberAccessSym, ok := lang.SymbolByName("member_access_expression")
 	if !ok {
 		return
@@ -33,6 +41,8 @@ func normalizeCSharpInvocationStatements(root *Node, source []byte, lang *Langua
 	}
 	exprStmtNamed := symbolIsNamed(lang, exprStmtSym)
 	invocationNamed := symbolIsNamed(lang, invocationSym)
+	implicitObjectCreationNamed := symbolIsNamed(lang, implicitObjectCreationSym)
+	newNamed := symbolIsNamed(lang, newSym)
 	memberAccessNamed := symbolIsNamed(lang, memberAccessSym)
 	argumentListNamed := symbolIsNamed(lang, argumentListSym)
 	argumentNamed := symbolIsNamed(lang, argumentSym)
@@ -48,6 +58,9 @@ func normalizeCSharpInvocationStatements(root *Node, source []byte, lang *Langua
 		}
 		if n.Type(lang) == "argument_list" {
 			csharpPopulateMissingInvocationArguments(n, source, lang)
+		}
+		if n.Type(lang) == "invocation_expression" {
+			csharpRewriteImplicitObjectCreationInvocation(n, source, lang, implicitObjectCreationSym, implicitObjectCreationNamed, newSym, newNamed)
 		}
 		if n.Type(lang) == "local_declaration_statement" && len(n.children) == 2 {
 			decl := n.children[0]
@@ -80,6 +93,31 @@ func normalizeCSharpInvocationStatements(root *Node, source []byte, lang *Langua
 			}
 		}
 	})
+}
+
+func csharpRewriteImplicitObjectCreationInvocation(n *Node, source []byte, lang *Language, implicitObjectCreationSym Symbol, implicitObjectCreationNamed bool, newSym Symbol, newNamed bool) bool {
+	if n == nil || lang == nil || resultChildCount(n) != 2 || len(source) == 0 {
+		return false
+	}
+	newNode := resultChildAt(n, 0)
+	args := resultChildAt(n, 1)
+	if newNode == nil || args == nil || newNode.Type(lang) != "identifier" || args.Type(lang) != "argument_list" {
+		return false
+	}
+	if newNode.startByte >= newNode.endByte || int(newNode.endByte) > len(source) || string(source[newNode.startByte:newNode.endByte]) != "new" {
+		return false
+	}
+	if args.startByte != newNode.endByte {
+		return false
+	}
+	retagResultRoot(newNode, newSym, newNamed)
+	n.symbol = implicitObjectCreationSym
+	n.setNamed(implicitObjectCreationNamed)
+	n.fieldIDs = nil
+	n.fieldSources = nil
+	n.productionID = 0
+	n.setHasError(false)
+	return true
 }
 
 func csharpPopulateMissingInvocationArguments(n *Node, source []byte, lang *Language) bool {
