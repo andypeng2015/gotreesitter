@@ -90,7 +90,7 @@ func TestNormalizeIniDocumentBlanksDropsRootBlank(t *testing.T) {
 	root.endByte = 600
 	root.endPoint = Point{Row: 20}
 
-	normalizeIniCompatibility(root, lang)
+	normalizeIniCompatibility(root, nil, lang)
 
 	if got, want := root.ChildCount(), 2; got != want {
 		t.Fatalf("document child count = %d, want %d", got, want)
@@ -104,6 +104,217 @@ func TestNormalizeIniDocumentBlanksDropsRootBlank(t *testing.T) {
 	if got, want := root.Child(1).childIndex, int32(1); got != want {
 		t.Fatalf("section childIndex = %d, want %d", got, want)
 	}
+}
+
+func TestNormalizeIniMypyBuildContinuationListMatchesCErrorRoot(t *testing.T) {
+	lang := testIniMypyLanguage()
+	source := []byte("[mypy]\n\n# Please, when adding new files here, also add them to:\n# .github/workflows/mypy.yml\nfiles =\n    Tools/build/check_extension_modules.py,\n    Tools/build/check_warnings.py,\n\npretty = True\npython_version = 3.10\nstrict = True\nextra_checks = True\nenable_error_code = ignore-without-code,redundant-expr\nwarn_unreachable = True\n")
+	arena := newNodeArena(arenaClassFull)
+	sectionName := testIniLeaf(arena, lang, "section_name", source, 0, 7)
+	comment1 := testIniLeaf(arena, lang, "comment", source, 8, 64)
+	comment1.setExtra(true)
+	comment2 := testIniLeaf(arena, lang, "comment", source, 64, 93)
+	comment2.setExtra(true)
+	filesSetting := testIniLeaf(arena, lang, "setting", source, 93, 101)
+	acceptedContinuation := testIniLeaf(arena, lang, "setting", source, 105, 178)
+	section := newParentNodeInArena(arena, testIniSymbol(lang, "section"), true, []*Node{sectionName, comment1, comment2, filesSetting, acceptedContinuation}, nil, 0)
+	section.endByte = uint32(len(source))
+	section.endPoint = advancePointByBytes(Point{}, source)
+	root := newParentNodeInArena(arena, testIniSymbol(lang, "document"), true, []*Node{section}, nil, 0)
+	root.endByte = uint32(len(source))
+	root.endPoint = advancePointByBytes(Point{}, source)
+
+	normalizeIniCompatibility(root, source, lang)
+
+	if got := root.Type(lang); got != "ERROR" {
+		t.Fatalf("root type = %q, want ERROR", got)
+	}
+	if !root.HasError() {
+		t.Fatal("root HasError = false, want true")
+	}
+	if got := root.Child(0).Type(lang); got != "section_name" {
+		t.Fatalf("child[0] = %q, want section_name", got)
+	}
+	if got := root.Child(4).Type(lang); got != "setting_name" {
+		t.Fatalf("first continuation child = %q, want setting_name", got)
+	}
+	if got := root.Child(5).Type(lang); got != "ERROR" {
+		t.Fatalf("second continuation child = %q, want ERROR", got)
+	}
+}
+
+func TestNormalizeIniMypyContinuationErrorBuildsDocumentRoot(t *testing.T) {
+	lang := testIniMypyLanguage()
+	source := []byte("[mypy]\nfiles = Tools/check-c-api-docs/\npretty = True\n\n# We need `_colorize` import:\nmypy_path = $MYPY_CONFIG_FILE_DIR/../../Misc/mypy\n\n# Make sure Python can still be built\n# using Python 3.13 for `PYTHON_FOR_REGEN`...\npython_version = 3.13\n\n# ...And be strict:\nstrict = True\nextra_checks = True\nenable_error_code = \n    ignore-without-code,\n    redundant-expr,\n    truthy-bool,\n    possibly-undefined,\n")
+	arena := newNodeArena(arenaClassFull)
+	section := newParentNodeInArena(arena, testIniSymbol(lang, "section"), true, []*Node{
+		testIniLeaf(arena, lang, "section_name", source, 0, 6),
+		testIniLeaf(arena, lang, "setting", source, 7, 38),
+		testIniLeaf(arena, lang, "setting", source, 39, 52),
+		testIniLeaf(arena, lang, "comment", source, 54, 83),
+		testIniLeaf(arena, lang, "setting", source, 84, 133),
+		testIniLeaf(arena, lang, "comment", source, 135, 172),
+		testIniLeaf(arena, lang, "comment", source, 173, 218),
+		testIniLeaf(arena, lang, "setting", source, 219, 240),
+		testIniLeaf(arena, lang, "comment", source, 242, 261),
+		testIniLeaf(arena, lang, "setting", source, 262, 275),
+		testIniLeaf(arena, lang, "setting", source, 276, 295),
+		testIniLeaf(arena, lang, "setting", source, 296, 316),
+	}, nil, 0)
+	section.endByte = 316
+	section.endPoint = advancePointByBytes(Point{}, source[:316])
+	firstName := testIniLeaf(arena, lang, "setting_name", source, 321, 341)
+	firstErr := newParentNodeInArena(arena, errorSymbol, true, []*Node{firstName}, nil, 0)
+	firstErr.setExtra(true)
+	firstErr.setHasError(true)
+	firstErr.startByte = 321
+	firstErr.endByte = 341
+	firstErr.startPoint = advancePointByBytes(Point{}, source[:321])
+	firstErr.endPoint = advancePointByBytes(Point{}, source[:341])
+	blank := testIniLeaf(arena, lang, "_blank", source, 341, 342)
+	blank.setExtra(true)
+	root := newParentNodeInArena(arena, errorSymbol, true, []*Node{section, firstErr, blank}, nil, 0)
+	root.setHasError(true)
+	root.endByte = uint32(len(source))
+	root.endPoint = advancePointByBytes(Point{}, source)
+
+	normalizeIniCompatibility(root, source, lang)
+
+	if got := root.Type(lang); got != "document" {
+		t.Fatalf("root type = %q, want document", got)
+	}
+	if got := root.ChildCount(); got != 2 {
+		t.Fatalf("root child count = %d, want 2", got)
+	}
+	if got := root.Child(0).EndByte(); got != 317 {
+		t.Fatalf("section end = %d, want 317", got)
+	}
+	if got := root.Child(0).Child(11).EndByte(); got != 317 {
+		t.Fatalf("last setting end = %d, want 317", got)
+	}
+	errNode := root.Child(1)
+	if got := errNode.EndByte(); got != 402 {
+		t.Fatalf("error end = %d, want 402", got)
+	}
+	if got := errNode.ChildCount(); got != 4 {
+		t.Fatalf("error child count = %d, want 4", got)
+	}
+}
+
+func TestNormalizeIniMypyFlatDocumentContinuationDropsSectionBlanks(t *testing.T) {
+	lang := testIniMypyLanguage()
+	source := []byte("[mypy]\nfiles = Tools/check-c-api-docs/\npretty = True\n\n# We need `_colorize` import:\nmypy_path = $MYPY_CONFIG_FILE_DIR/../../Misc/mypy\n\n# Make sure Python can still be built\n# using Python 3.13 for `PYTHON_FOR_REGEN`...\npython_version = 3.13\n\n# ...And be strict:\nstrict = True\nextra_checks = True\nenable_error_code = \n    ignore-without-code,\n    redundant-expr,\n    truthy-bool,\n    possibly-undefined,\n")
+	arena := newNodeArena(arenaClassFull)
+	root := newParentNodeInArena(arena, testIniSymbol(lang, "document"), true, []*Node{
+		testIniLeaf(arena, lang, "section_name", source, 0, 7),
+		testIniLeaf(arena, lang, "setting", source, 7, 39),
+		testIniLeaf(arena, lang, "setting", source, 39, 54),
+		testIniLeaf(arena, lang, "_blank", source, 53, 54),
+		testIniLeaf(arena, lang, "comment", source, 54, 84),
+		testIniLeaf(arena, lang, "setting", source, 84, 135),
+		testIniLeaf(arena, lang, "_blank", source, 134, 135),
+		testIniLeaf(arena, lang, "comment", source, 135, 173),
+		testIniLeaf(arena, lang, "comment", source, 173, 219),
+		testIniLeaf(arena, lang, "setting", source, 219, 242),
+		testIniLeaf(arena, lang, "_blank", source, 241, 242),
+		testIniLeaf(arena, lang, "comment", source, 242, 262),
+		testIniLeaf(arena, lang, "setting", source, 262, 276),
+		testIniLeaf(arena, lang, "setting", source, 276, 296),
+		testIniLeaf(arena, lang, "setting", source, 296, 317),
+		testIniLeaf(arena, lang, "setting_name", source, 321, 341),
+	}, nil, 0)
+	root.endByte = 402
+	root.endPoint = advancePointByBytes(Point{}, source[:402])
+
+	normalizeIniCompatibility(root, source, lang)
+
+	if got := root.Type(lang); got != "document" {
+		t.Fatalf("root type = %q, want document", got)
+	}
+	if got := root.ChildCount(); got != 2 {
+		t.Fatalf("root child count = %d, want 2", got)
+	}
+	section := root.Child(0)
+	if got := section.ChildCount(); got != 12 {
+		t.Fatalf("section child count = %d, want 12", got)
+	}
+	for _, idx := range []int{2, 4, 7} {
+		if got := section.Child(idx).Type(lang); got == "_blank" {
+			t.Fatalf("section child[%d] = _blank, want C-compatible visible child", idx)
+		}
+	}
+	if got := section.Child(2).EndByte(); got != 53 {
+		t.Fatalf("pretty setting end = %d, want 53", got)
+	}
+	if got := section.Child(4).EndByte(); got != 134 {
+		t.Fatalf("mypy_path setting end = %d, want 134", got)
+	}
+	if got := section.Child(7).EndByte(); got != 241 {
+		t.Fatalf("python_version setting end = %d, want 241", got)
+	}
+	if got := section.EndByte(); got != 317 {
+		t.Fatalf("section end = %d, want 317", got)
+	}
+	if got := root.EndByte(); got != uint32(len(source)) {
+		t.Fatalf("root end = %d, want %d", got, len(source))
+	}
+	if !iniDeferredCompatibilityAccepted(root, source, lang) {
+		t.Fatal("iniDeferredCompatibilityAccepted = false, want true")
+	}
+}
+
+func TestNormalizeIniMypyContinuationGuardRequiresContinuationPattern(t *testing.T) {
+	lang := testIniMypyLanguage()
+	source := []byte("[mypy]\nenable_error_code = ignore-without-code\n")
+	arena := newNodeArena(arenaClassFull)
+	setting := testIniLeaf(arena, lang, "setting", source, 7, uint32(len(source)))
+	section := newParentNodeInArena(arena, testIniSymbol(lang, "section"), true, []*Node{setting}, nil, 0)
+	root := newParentNodeInArena(arena, testIniSymbol(lang, "document"), true, []*Node{section}, nil, 0)
+
+	normalizeIniCompatibility(root, source, lang)
+
+	if got := root.Type(lang); got != "document" {
+		t.Fatalf("root type = %q, want unchanged document", got)
+	}
+	if got := root.ChildCount(); got != 1 {
+		t.Fatalf("root child count = %d, want unchanged 1", got)
+	}
+	if iniDeferredCompatibilityAccepted(root, source, lang) {
+		t.Fatal("iniDeferredCompatibilityAccepted = true, want false")
+	}
+}
+
+func testIniMypyLanguage() *Language {
+	return &Language{
+		Name:        "ini",
+		SymbolNames: []string{"EOF", "document", "section", "section_name", "setting", "setting_name", "setting_value", "comment", "text", "_blank", "="},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF", Visible: false, Named: false},
+			{Name: "document", Visible: true, Named: true},
+			{Name: "section", Visible: true, Named: true},
+			{Name: "section_name", Visible: true, Named: true},
+			{Name: "setting", Visible: true, Named: true},
+			{Name: "setting_name", Visible: true, Named: true},
+			{Name: "setting_value", Visible: true, Named: true},
+			{Name: "comment", Visible: true, Named: true},
+			{Name: "text", Visible: true, Named: true},
+			{Name: "_blank", Visible: true, Named: true},
+			{Name: "=", Visible: true, Named: false},
+		},
+	}
+}
+
+func testIniSymbol(lang *Language, name string) Symbol {
+	sym, ok := symbolByName(lang, name)
+	if !ok {
+		panic(name)
+	}
+	return sym
+}
+
+func testIniLeaf(arena *nodeArena, lang *Language, name string, source []byte, start, end uint32) *Node {
+	sym := testIniSymbol(lang, name)
+	return newLeafNodeInArena(arena, sym, symbolIsNamed(lang, sym), start, end, advancePointByBytes(Point{}, source[:start]), advancePointByBytes(Point{}, source[:end]))
 }
 
 func TestNormalizeZigEmptyInitListFieldConstantCleared(t *testing.T) {

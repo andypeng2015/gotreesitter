@@ -1,6 +1,6 @@
 {
- "generated": "2026-06-12T05:44:46Z",
- "commit": "b53aec77",
+ "generated": "2026-06-12T07:19:02Z",
+ "commit": "3500cecd",
  "version": "unreleased",
  "tier_rules": {
   "I": "parity-clean and <=1.5x C full-parse, cold <=5ms, blob <=150KB",
@@ -11,8 +11,8 @@
  },
  "histogram": {
   "unranked": 14,
-  "IV": 94,
-  "II": 47,
+  "IV": 93,
+  "II": 48,
   "I": 38,
   "III": 13
  },
@@ -647,10 +647,9 @@
   },
   {
    "grammar": "ini",
-   "tier": "IV",
-   "iv_cause": "IV-recovery?",
-   "parity": "9/11",
-   "notes": "focused gate still has two failing mypy.ini witnesses; malformed mypy-style continuation lists expose a C/Go recovery-shape mismatch"
+   "tier": "II",
+   "parity": "clean",
+   "perf_source": "floor"
   },
   {
    "grammar": "janet",

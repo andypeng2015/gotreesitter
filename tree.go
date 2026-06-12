@@ -1881,6 +1881,7 @@ func (t *Tree) ensureResultCompatibility() {
 		}
 		if !parsePhaseTimingEnabled() {
 			normalizeResultCompatibility(t.root, t.source, &Parser{language: t.language})
+			t.finishDeferredResultCompatibility()
 			return
 		}
 		timing := &parseMaterializationTiming{}
@@ -1893,7 +1894,20 @@ func (t *Tree) ensureResultCompatibility() {
 		timing.addResultCompatibility(start)
 		t.parseRuntime.ResultCompatibilityNanos += timing.resultCompatibilityNanos
 		parser.copyNormalizationStats(&t.parseRuntime)
+		t.finishDeferredResultCompatibility()
 	})
+}
+
+func (t *Tree) finishDeferredResultCompatibility() {
+	if t == nil || t.root == nil || t.language == nil || t.language.Name != "ini" {
+		return
+	}
+	extendNodeToTrailingWhitespace(t.root, t.source)
+	if t.parseRuntime.StopReason == ParseStopNoStacksAlive && iniDeferredCompatibilityAccepted(t.root, t.source, t.language) {
+		t.parseRuntime.StopReason = ParseStopAccepted
+		t.parseRuntime.RootEndByte = t.root.endByte
+		t.parseRuntime.Truncated = false
+	}
 }
 
 func newParentNode(arena *nodeArena, sym Symbol, named bool, children []*Node, fieldIDs []FieldID, productionID uint16) *Node {
