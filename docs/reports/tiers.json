@@ -1,6 +1,6 @@
 {
- "generated": "2026-06-13T09:11:46Z",
- "commit": "b24a73f8",
+ "generated": "2026-06-13T10:01:18Z",
+ "commit": "5bd89c80",
  "version": "unreleased",
  "tier_rules": {
   "I": "parity-clean and <=1.5x C full-parse, cold <=5ms, blob <=150KB",
@@ -709,8 +709,8 @@
    "grammar": "julia",
    "tier": "IV",
    "iv_cause": "IV-recovery",
-   "parity": "29/40",
-   "notes": "Julia return range recovery normalization clears sort.jl; remaining residuals are ERROR-root recovery, macro_argument_list expression grouping, and 2 truncations"
+   "parity": "30/40",
+   "notes": "Julia macro argument juxtaposition normalization clears reinfer.jl; remaining residuals are ERROR-root recovery, verify.jl matrix/vector grouping, and 2 truncations"
   },
   {
    "grammar": "just",

@@ -2,6 +2,114 @@ package gotreesitter
 
 func normalizeJuliaCompatibility(root *Node, source []byte, lang *Language) {
 	normalizeJuliaRecoveredReturnRange(root, source, lang)
+	normalizeJuliaMacroArgumentJuxtaposition(root, source, lang)
+}
+
+func normalizeJuliaMacroArgumentJuxtaposition(root *Node, source []byte, lang *Language) {
+	if root == nil || lang == nil || lang.Name != "julia" || len(source) == 0 {
+		return
+	}
+	argListSym, ok := symbolByName(lang, "macro_argument_list")
+	if !ok {
+		return
+	}
+	binarySym, ok := symbolByName(lang, "binary_expression")
+	if !ok {
+		return
+	}
+	juxtapositionSym, ok := symbolByName(lang, "juxtaposition_expression")
+	if !ok {
+		return
+	}
+	integerSym, ok := symbolByName(lang, "integer_literal")
+	if !ok {
+		return
+	}
+	stringSym, ok := symbolByName(lang, "string_literal")
+	if !ok {
+		return
+	}
+	walkResultTree(root, func(argList *Node) {
+		if argList == nil || argList.symbol != argListSym || resultChildCount(argList) != 2 {
+			return
+		}
+		first := resultChildAt(argList, 0)
+		second := resultChildAt(argList, 1)
+		switch {
+		case juliaFuseLeadingMacroInteger(argList, first, second, source, binarySym, juxtapositionSym, integerSym):
+		case juliaFuseTrailingMacroString(argList, first, second, source, binarySym, juxtapositionSym, integerSym, stringSym):
+		}
+	})
+}
+
+func juliaFuseLeadingMacroInteger(argList, first, second *Node, source []byte, binarySym, juxtapositionSym, integerSym Symbol) bool {
+	if argList == nil || first == nil || second == nil || first.symbol != integerSym || second.symbol != binarySym || resultChildCount(second) != 3 {
+		return false
+	}
+	left := resultChildAt(second, 0)
+	op := resultChildAt(second, 1)
+	right := resultChildAt(second, 2)
+	if left == nil || op == nil || right == nil {
+		return false
+	}
+	if first.endByte != left.startByte || int(left.startByte) > len(source) {
+		return false
+	}
+	juxtaposition := newParentNodeInArena(argList.ownerArena, juxtapositionSym, true, cloneNodeSliceInArena(argList.ownerArena, []*Node{first, left}), nil, 0)
+	replaceNodeChildrenUnfielded(second, cloneNodeSliceInArena(second.ownerArena, []*Node{juxtaposition, op, right}))
+	second.productionID = 0
+	replaceNodeChildrenUnfielded(argList, cloneNodeSliceInArena(argList.ownerArena, []*Node{second}))
+	return true
+}
+
+func juliaFuseTrailingMacroString(argList, first, second *Node, source []byte, binarySym, juxtapositionSym, integerSym, stringSym Symbol) bool {
+	if argList == nil || first == nil || second == nil || first.symbol != binarySym || second.symbol != stringSym {
+		return false
+	}
+	if !juliaFuseTrailingMacroStringInBinary(first, second, source, binarySym, juxtapositionSym, integerSym) {
+		return false
+	}
+	replaceNodeChildrenUnfielded(argList, cloneNodeSliceInArena(argList.ownerArena, []*Node{first}))
+	return true
+}
+
+func juliaFuseTrailingMacroStringInBinary(binary, str *Node, source []byte, binarySym, juxtapositionSym, integerSym Symbol) bool {
+	if binary == nil || str == nil || binary.symbol != binarySym || resultChildCount(binary) != 3 {
+		return false
+	}
+	children := resultChildSliceForMutation(binary)
+	if len(children) != 3 {
+		return false
+	}
+	right := children[2]
+	if right == nil {
+		return false
+	}
+	if right.symbol == binarySym && juliaFuseTrailingMacroStringInBinary(right, str, source, binarySym, juxtapositionSym, integerSym) {
+		replaceNodeChildrenUnfielded(binary, cloneNodeSliceInArena(binary.ownerArena, children))
+		binary.productionID = 0
+		return true
+	}
+	if right.symbol != integerSym || !juliaMacroWhitespaceGap(source, right.endByte, str.startByte) {
+		return false
+	}
+	juxtaposition := newParentNodeInArena(binary.ownerArena, juxtapositionSym, true, cloneNodeSliceInArena(binary.ownerArena, []*Node{right, str}), nil, 0)
+	children[2] = juxtaposition
+	replaceNodeChildrenUnfielded(binary, cloneNodeSliceInArena(binary.ownerArena, children))
+	binary.productionID = 0
+	return true
+}
+
+func juliaMacroWhitespaceGap(source []byte, start, end uint32) bool {
+	if start >= end || int(end) > len(source) {
+		return false
+	}
+	for _, b := range source[start:end] {
+		if b != ' ' && b != '\t' {
+			return false
+		}
+	}
+	return true
 }
 
 func normalizeJuliaRecoveredReturnRange(root *Node, source []byte, lang *Language) {

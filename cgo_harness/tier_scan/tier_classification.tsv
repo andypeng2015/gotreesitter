@@ -105,7 +105,7 @@ jsdoc	CLEAN	40/40	in ratchet; C-recovery gate (stage-2 redwood)
 json	CLEAN	40/40	in ratchet
 json5	CLEAN	40/40	in ratchet
 jsonnet	IV-recovery?	39/40	canonical-frame demotion (one-time reset)
-julia	IV-recovery	29/40	Julia return range recovery normalization clears sort.jl; remaining residuals are ERROR-root recovery, macro_argument_list expression grouping, and 2 truncations
+julia	IV-recovery	30/40	Julia macro argument juxtaposition normalization clears reinfer.jl; remaining residuals are ERROR-root recovery, verify.jl matrix/vector grouping, and 2 truncations
 just	CLEAN	8/8	in ratchet; C-recovery gate plus just top-level line-break span normalization
 kconfig	IV-recovery?	13/30	ext=Kconfig; faithful C error-cost version competition (see spec)
 kdl	IV-recovery	12/40	pins at upstream HEAD; C at same pin parses corpus clean — runtime fidelity, not version (oak 2026-06-10)
