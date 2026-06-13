@@ -10,6 +10,7 @@ func normalizeKotlinCompatibility(root *Node, source []byte, lang *Language) {
 	normalizeKotlinCollapsedLiteralChildren(root, source, lang)
 	normalizeKotlinCollapsedExpressionChildren(root, source, lang)
 	normalizeKotlinInterpolatedCallExpressions(root, lang)
+	normalizeKotlinRawStringTrailingContent(root, source, lang)
 	normalizeKotlinCollapsedIdentifierChildren(root, source, lang)
 	normalizeKotlinCallableReferenceNavigations(root, source, lang)
 	normalizeKotlinReceiverFunctionNames(root, source, lang)
@@ -222,6 +223,67 @@ func kotlinLeadingTriviaOnly(prefix []byte) bool {
 		}
 	}
 	return true
+}
+
+// normalizeKotlinRawStringTrailingContent restores the final raw-string
+// content chunk after an embedded quote. C tree-sitter keeps parsing
+// string_content until the closing triple quote; the Go parse can stop the
+// child list at the embedded quote even though the string_literal span is
+// correct.
+func normalizeKotlinRawStringTrailingContent(root *Node, source []byte, lang *Language) {
+	if root == nil || lang == nil || lang.Name != "kotlin" || len(source) == 0 {
+		return
+	}
+	stringSym, ok := lang.symbolByNameAndNamed("string_literal", true)
+	if !ok {
+		return
+	}
+	contentSym, ok := lang.symbolByNameAndNamed("string_content", true)
+	if !ok {
+		return
+	}
+	walkResultTree(root, func(n *Node) {
+		if n == nil || n.symbol != stringSym {
+			return
+		}
+		if n.startByte+6 > n.endByte || int(n.endByte) > len(source) {
+			return
+		}
+		if string(source[n.startByte:n.startByte+3]) != `"""` || string(source[n.endByte-3:n.endByte]) != `"""` {
+			return
+		}
+		children := resultChildSliceForMutation(n)
+		if len(children) == 0 {
+			return
+		}
+		last := children[len(children)-1]
+		contentEnd := n.endByte - 3
+		if last == nil || last.symbol != contentSym || last.endByte >= contentEnd {
+			return
+		}
+		gap := source[last.endByte:contentEnd]
+		if len(gap) == 0 || strings.Contains(string(gap), "$") {
+			return
+		}
+		content := newLeafNodeInArena(
+			n.ownerArena,
+			contentSym,
+			symbolIsNamed(lang, contentSym),
+			last.endByte,
+			contentEnd,
+			last.endPoint,
+			advancePointByBytes(last.endPoint, gap),
+		)
+		startByte, endByte := n.startByte, n.endByte
+		startPoint, endPoint := n.startPoint, n.endPoint
+		children = append(append([]*Node{}, children...), content)
+		n.children = cloneNodeSliceInArena(n.ownerArena, children)
+		n.fieldIDs = nil
+		n.fieldSources = nil
+		populateParentNode(n, n.children)
+		n.startByte, n.endByte = startByte, endByte
+		n.startPoint, n.endPoint = startPoint, endPoint
+	})
 }
 
 func normalizeKotlinRecoveredSourceFileRoot(root *Node, source []byte, lang *Language) {

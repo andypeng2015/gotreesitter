@@ -1,6 +1,6 @@
 {
- "generated": "2026-06-13T11:20:21Z",
- "commit": "187ddbb8",
+ "generated": "2026-06-13T11:39:19Z",
+ "commit": "b2e89421",
  "version": "unreleased",
  "tier_rules": {
   "I": "parity-clean and <=1.5x C full-parse, cold <=5ms, blob <=150KB",
@@ -736,8 +736,8 @@
    "grammar": "kotlin",
    "tier": "IV",
    "iv_cause": "IV-recovery",
-   "parity": "29/40",
-   "notes": "Kotlin collapsed import identifier, callable_reference, receiver-swallowed function name, and leading-trivia root normalizers lifted current real-corpus parity from 17/40 to 29/40; Docker real-corpus max-cases=40 verified 2026-06-12. Remaining 11 current failures are generated ERROR trees on clean C refs (Logger.kt, typeParams.txt, SimpleClassMembers.txt, namedCompanionObject.txt, topLevelMembers.txt, DocCommentsBinding.txt, DynamicReceiver.txt, EnumShortWithOverload.txt, topJvmPackageNameMultifile.txt, topJvmPackageName.txt, enum.txt)."
+   "parity": "35/40",
+   "notes": "Kotlin raw triple-quoted string trailing-content normalization lifted current Docker D-tier real-corpus parity from 33/40 to 35/40 on 2026-06-13; no truncation or panics. Prior collapsed import identifier, callable_reference, receiver-swallowed function name, and leading-trivia root normalizers had already cleared the named generated-corpus residuals on this base. Remaining 5 current real-corpus failures are Kotlin-local generic call/type-argument shape (build.gradle.kts, CommunityProjectsBuild.kt, Dokka.kt), prefix-increment comparison precedence (TakeBenchmark.kt), and broad root recovery fragmentation (ReactorPlaysScrabble.kt)."
   },
   {
    "grammar": "ledger",

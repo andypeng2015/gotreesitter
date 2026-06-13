@@ -203,6 +203,73 @@ func kotlinReceiverTestLanguage() *Language {
 	}
 }
 
+func kotlinStringTestLanguage() *Language {
+	return &Language{
+		Name: "kotlin",
+		SymbolNames: []string{
+			"EOF", "source_file", "string_literal", "string_content",
+		},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF"},
+			{Name: "source_file", Visible: true, Named: true},
+			{Name: "string_literal", Visible: true, Named: true},
+			{Name: "string_content", Visible: true, Named: true},
+		},
+	}
+}
+
+func TestNormalizeKotlinRawStringTrailingContent(t *testing.T) {
+	lang := kotlinStringTestLanguage()
+	source := []byte("\"\"\"dispatcher = \"thread-pool-executor\"\nfixed-pool-size = 1\n\"\"\"")
+	arena := newNodeArena(arenaClassFull)
+	firstContent := newLeafNodeInArena(arena, 3, true, 3, 38, Point{Column: 3}, Point{Column: 38})
+	str := newParentNodeInArena(arena, 2, true, []*Node{firstContent}, nil, 0)
+	str.startByte = 0
+	str.endByte = uint32(len(source))
+	str.startPoint = Point{}
+	str.endPoint = advancePointByBytes(Point{}, source)
+	root := newParentNodeInArena(arena, 1, true, []*Node{str}, nil, 0)
+
+	normalizeKotlinCompatibility(root, source, lang)
+
+	if got, want := str.ChildCount(), 2; got != want {
+		t.Fatalf("string child count = %d, want %d", got, want)
+	}
+	trailing := str.Child(1)
+	if got, want := trailing.Type(lang), "string_content"; got != want {
+		t.Fatalf("trailing child type = %q, want %q", got, want)
+	}
+	if trailing.StartByte() != firstContent.EndByte() || trailing.EndByte() != uint32(len(source)-3) {
+		t.Fatalf("trailing span = [%d:%d], want [%d:%d]",
+			trailing.StartByte(), trailing.EndByte(), firstContent.EndByte(), len(source)-3)
+	}
+	if got, want := trailing.Text(source), "\nfixed-pool-size = 1\n"; got != want {
+		t.Fatalf("trailing text = %q, want %q", got, want)
+	}
+	if p := trailing.Parent(); p != str {
+		t.Fatal("trailing child parent not updated")
+	}
+}
+
+func TestNormalizeKotlinRawStringTrailingContentSkipsInterpolation(t *testing.T) {
+	lang := kotlinStringTestLanguage()
+	source := []byte("\"\"\"before \"quote\"\n$value\n\"\"\"")
+	arena := newNodeArena(arenaClassFull)
+	firstContent := newLeafNodeInArena(arena, 3, true, 3, 17, Point{Column: 3}, Point{Column: 17})
+	str := newParentNodeInArena(arena, 2, true, []*Node{firstContent}, nil, 0)
+	str.startByte = 0
+	str.endByte = uint32(len(source))
+	str.startPoint = Point{}
+	str.endPoint = advancePointByBytes(Point{}, source)
+	root := newParentNodeInArena(arena, 1, true, []*Node{str}, nil, 0)
+
+	normalizeKotlinCompatibility(root, source, lang)
+
+	if got, want := str.ChildCount(), 1; got != want {
+		t.Fatalf("string child count = %d, want %d", got, want)
+	}
+}
+
 func TestNormalizeKotlinReceiverFunctionNames(t *testing.T) {
 	lang := kotlinReceiverTestLanguage()
 	// Mirrors `fun A.B.f()` parsed with the dotted path swallowed by the
