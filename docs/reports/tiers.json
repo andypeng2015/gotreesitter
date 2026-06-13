@@ -1,6 +1,6 @@
 {
- "generated": "2026-06-13T02:54:29Z",
- "commit": "e7cdce6a",
+ "generated": "2026-06-13T08:06:22Z",
+ "commit": "a7cc992c",
  "version": "unreleased",
  "tier_rules": {
   "I": "parity-clean and <=1.5x C full-parse, cold <=5ms, blob <=150KB",
@@ -1256,8 +1256,8 @@
    "grammar": "typst",
    "tier": "IV",
    "iv_cause": "IV-recovery?",
-   "parity": "34/40",
-   "notes": "nested list item result normalization verified 2026-06-12; residuals: 2 recovery/error-shape cases and 4 truncations"
+   "parity": "35/40",
+   "notes": "nested list item result normalization verified 2026-06-12; zero-width group comma normalization cleared docs/components/section.typ 2026-06-13; residuals: docs/components/example.typ root ERROR vs C source_file plus 4 truncations"
   },
   {
    "grammar": "uxntal",

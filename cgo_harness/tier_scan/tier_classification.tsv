@@ -188,7 +188,7 @@ tsx	CLEAN	40/40	in ratchet
 turtle	CLEAN	40/40	in ratchet
 twig	CLEAN	40/40	in ratchet
 typescript	CLEAN	40/40	typed-arrow merge cap selection and destructuring-pattern normalization; verified 2026-06-12
-typst	IV-recovery?	34/40	nested list item result normalization verified 2026-06-12; residuals: 2 recovery/error-shape cases and 4 truncations
+typst	IV-recovery?	35/40	nested list item result normalization verified 2026-06-12; zero-width group comma normalization cleared docs/components/section.typ 2026-06-13; residuals: docs/components/example.typ root ERROR vs C source_file plus 4 truncations
 uxntal	IV-recovery?	0/40	faithful C error-cost version competition (see spec)
 v	IV-recovery?	25/40	faithful C error-cost version competition (see spec)
 verilog	IV-recovery?	4/40	faithful C error-cost version competition (see spec)
