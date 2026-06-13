@@ -112,7 +112,7 @@ kdl	IV-recovery	12/40	pins at upstream HEAD; C at same pin parses corpus clean â
 kotlin	IV-recovery	29/40	Kotlin collapsed import identifier, callable_reference, receiver-swallowed function name, and leading-trivia root normalizers lifted current real-corpus parity from 17/40 to 29/40; Docker real-corpus max-cases=40 verified 2026-06-12. Remaining 11 current failures are generated ERROR trees on clean C refs (Logger.kt, typeParams.txt, SimpleClassMembers.txt, namedCompanionObject.txt, topLevelMembers.txt, DocCommentsBinding.txt, DynamicReceiver.txt, EnumShortWithOverload.txt, topJvmPackageNameMultifile.txt, topJvmPackageName.txt, enum.txt).
 ledger	CLEAN	4/4	in ratchet; ledger date-suffix and year-directive recovery normalization
 less	IV-recovery?	10/40	faithful C error-cost version competition (see spec)
-linkerscript	IV-recovery	1/40	faithful C error-cost version competition (see spec)
+linkerscript	IV-recovery	8/40	C-recovery gate lifts baseline 1/40 to 8/40 with a strict subset of divergers and no truncation/panic (Docker 2026-06-13); residuals are local ERROR namedness, root/section child-count, and empty-root span differences.
 liquid	IV-recovery?	11/36	faithful C error-cost version competition (see spec)
 llvm	CLEAN	40/40	in ratchet
 lua	CLEAN	40/40	in ratchet; scanner.c port + DFA routing (maple 2026-06-10)

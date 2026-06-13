@@ -1,6 +1,6 @@
 {
- "generated": "2026-06-13T00:57:39Z",
- "commit": "c0d08704",
+ "generated": "2026-06-13T01:10:21Z",
+ "commit": "fd11b84c",
  "version": "unreleased",
  "tier_rules": {
   "I": "parity-clean and <=1.5x C full-parse, cold <=5ms, blob <=150KB",
@@ -757,8 +757,8 @@
    "grammar": "linkerscript",
    "tier": "IV",
    "iv_cause": "IV-recovery",
-   "parity": "1/40",
-   "notes": "faithful C error-cost version competition (see spec)"
+   "parity": "8/40",
+   "notes": "C-recovery gate lifts baseline 1/40 to 8/40 with a strict subset of divergers and no truncation/panic (Docker 2026-06-13); residuals are local ERROR namedness, root/section child-count, and empty-root span differences."
   },
   {
    "grammar": "liquid",

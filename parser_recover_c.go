@@ -231,6 +231,14 @@ func errorCostCompetitionLanguage(lang *Language) bool {
 		// localizes shell fragments; the residual rule-split shape is normalized
 		// in parser_result_awk.go.
 		return true
+	case "linkerscript":
+		// Tier-IV recovery fan-out: baseline direct C-oracle parity is 1/40,
+		// with 39 witnesses rooted as whole-file ERROR while C keeps a
+		// linkerscript root and localizes damage. The C recovery election lifts
+		// the root-shatter class to 8/40 with a strict subset of divergers and no
+		// truncation or panic; remaining misses are local ERROR namedness,
+		// root/section child-count, and empty-root span residuals.
+		return true
 	}
 	return false
 }
