@@ -236,6 +236,8 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 		normalizeSwiftCompatibility(ctx.root, ctx.source, ctx.parser, ctx.lang)
 	case "templ":
 		normalizeTemplCompatibility(ctx.root, ctx.source, ctx.lang)
+	case "wgsl":
+		normalizeWGSLCompatibility(ctx.root, ctx.lang)
 	case "wolfram":
 		normalizeWolframCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "tsx", "typescript":

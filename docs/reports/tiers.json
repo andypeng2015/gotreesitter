@@ -1312,8 +1312,8 @@
    "grammar": "wgsl",
    "tier": "IV",
    "iv_cause": "IV-recovery",
-   "parity": "31/40",
-   "notes": "C recovery-cost competition enabled for WGSL: lifts 10 whole-file ERROR roots to source_file roots with localized errors; residual 9/40 are recovery/shape choices, trunc=0 panics=0 (verified 2026-06-12)"
+   "parity": "33/40",
+   "notes": "WGSL empty-return semicolon recovery normalized to C ERROR wrapper, clearing composite/updateSprites residuals; remaining 7/40 are WGSL-specific argument-list, atomic type, const assignment, and root recovery/shape choices, trunc=0 panics=0 (verified 2026-06-12)"
   },
   {
    "grammar": "wolfram",
