@@ -105,6 +105,151 @@ func TestNormalizeKotlinCollapsedIdentifierChildren(t *testing.T) {
 	}
 }
 
+func kotlinGenericCallTestLanguage() *Language {
+	return &Language{
+		Name: "kotlin",
+		SymbolNames: []string{
+			"EOF", "source_file", "comparison_expression", "call_expression",
+			"call_suffix", "navigation_expression", "navigation_suffix",
+			"simple_identifier", "type_identifier", "type_arguments",
+			"type_projection", "user_type", "value_arguments", "value_argument",
+			"parenthesized_expression", "annotated_lambda", "<", ">", "(", ")",
+			".",
+		},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF"},
+			{Name: "source_file", Visible: true, Named: true},
+			{Name: "comparison_expression", Visible: true, Named: true},
+			{Name: "call_expression", Visible: true, Named: true},
+			{Name: "call_suffix", Visible: true, Named: true},
+			{Name: "navigation_expression", Visible: true, Named: true},
+			{Name: "navigation_suffix", Visible: true, Named: true},
+			{Name: "simple_identifier", Visible: true, Named: true},
+			{Name: "type_identifier", Visible: true, Named: true},
+			{Name: "type_arguments", Visible: true, Named: true},
+			{Name: "type_projection", Visible: true, Named: true},
+			{Name: "user_type", Visible: true, Named: true},
+			{Name: "value_arguments", Visible: true, Named: true},
+			{Name: "value_argument", Visible: true, Named: true},
+			{Name: "parenthesized_expression", Visible: true, Named: true},
+			{Name: "annotated_lambda", Visible: true, Named: true},
+			{Name: "<", Visible: true, Named: false},
+			{Name: ">", Visible: true, Named: false},
+			{Name: "(", Visible: true, Named: false},
+			{Name: ")", Visible: true, Named: false},
+			{Name: ".", Visible: true, Named: false},
+		},
+	}
+}
+
+func TestNormalizeKotlinGenericCallTypeArguments(t *testing.T) {
+	lang := kotlinGenericCallTestLanguage()
+	// Mirrors `tasks.named<KotlinCompile>("compile") {}` when GLR selects
+	// comparisons for the angle brackets and a separate call for the suffix.
+	source := []byte(`tasks.named<KotlinCompile>("compile") {}`)
+	arena := newNodeArena(arenaClassFull)
+	tasks := newLeafNodeInArena(arena, 7, true, 0, 5, Point{}, Point{Column: 5})
+	dot := newLeafNodeInArena(arena, 20, false, 5, 6, Point{Column: 5}, Point{Column: 6})
+	named := newLeafNodeInArena(arena, 7, true, 6, 11, Point{Column: 6}, Point{Column: 11})
+	suffix := newParentNodeInArena(arena, 6, true, []*Node{dot, named}, nil, 0)
+	nav := newParentNodeInArena(arena, 5, true, []*Node{tasks, suffix}, nil, 0)
+	lt := newLeafNodeInArena(arena, 16, false, 11, 12, Point{Column: 11}, Point{Column: 12})
+	typ := newLeafNodeInArena(arena, 7, true, 12, 25, Point{Column: 12}, Point{Column: 25})
+	leftCmp := newParentNodeInArena(arena, 2, true, []*Node{nav, lt, typ}, nil, 0)
+	gt := newLeafNodeInArena(arena, 17, false, 25, 26, Point{Column: 25}, Point{Column: 26})
+	open := newLeafNodeInArena(arena, 18, false, 26, 27, Point{Column: 26}, Point{Column: 27})
+	arg := newLeafNodeInArena(arena, 7, true, 27, 36, Point{Column: 27}, Point{Column: 36})
+	close := newLeafNodeInArena(arena, 19, false, 36, 37, Point{Column: 36}, Point{Column: 37})
+	paren := newParentNodeInArena(arena, 14, true, []*Node{open, arg, close}, nil, 0)
+	lambda := newLeafNodeInArena(arena, 15, true, 38, 40, Point{Column: 38}, Point{Column: 40})
+	trailingSuffix := newParentNodeInArena(arena, 4, true, []*Node{lambda}, nil, 0)
+	tailCall := newParentNodeInArena(arena, 3, true, []*Node{paren, trailingSuffix}, nil, 0)
+	call := newParentNodeInArena(arena, 2, true, []*Node{leftCmp, gt, tailCall}, nil, 0)
+	root := newParentNodeInArena(arena, 1, true, []*Node{call}, nil, 0)
+
+	normalizeKotlinCompatibility(root, source, lang)
+
+	if got, want := call.Type(lang), "call_expression"; got != want {
+		t.Fatalf("node type = %q, want %q", got, want)
+	}
+	if got, want := call.ChildCount(), 2; got != want {
+		t.Fatalf("call child count = %d, want %d", got, want)
+	}
+	gotSuffix := call.Child(1)
+	if got, want := gotSuffix.Type(lang), "call_suffix"; got != want {
+		t.Fatalf("suffix type = %q, want %q", got, want)
+	}
+	wantTypes := []string{"type_arguments", "value_arguments", "annotated_lambda"}
+	for i, want := range wantTypes {
+		if got := gotSuffix.Child(i).Type(lang); got != want {
+			t.Fatalf("suffix child[%d] type = %q, want %q", i, got, want)
+		}
+	}
+	if got := gotSuffix.Child(0).Child(1).Child(0).Child(0).Type(lang); got != "type_identifier" {
+		t.Fatalf("type argument leaf = %q, want type_identifier", got)
+	}
+	if got := gotSuffix.Child(1).Child(1).Type(lang); got != "value_argument" {
+		t.Fatalf("value argument wrapper = %q, want value_argument", got)
+	}
+	if p := gotSuffix.Parent(); p != call {
+		t.Fatal("rewritten suffix parent not updated")
+	}
+}
+
+func kotlinPrefixComparisonTestLanguage() *Language {
+	return &Language{
+		Name: "kotlin",
+		SymbolNames: []string{
+			"EOF", "source_file", "prefix_expression", "comparison_expression",
+			"simple_identifier", "++", "--", "<",
+		},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF"},
+			{Name: "source_file", Visible: true, Named: true},
+			{Name: "prefix_expression", Visible: true, Named: true},
+			{Name: "comparison_expression", Visible: true, Named: true},
+			{Name: "simple_identifier", Visible: true, Named: true},
+			{Name: "++", Visible: true, Named: false},
+			{Name: "--", Visible: true, Named: false},
+			{Name: "<", Visible: true, Named: false},
+		},
+	}
+}
+
+func TestNormalizeKotlinPrefixComparisonExpressions(t *testing.T) {
+	lang := kotlinPrefixComparisonTestLanguage()
+	source := []byte("++consumed < count")
+	arena := newNodeArena(arenaClassFull)
+	inc := newLeafNodeInArena(arena, 5, false, 0, 2, Point{}, Point{Column: 2})
+	left := newLeafNodeInArena(arena, 4, true, 2, 10, Point{Column: 2}, Point{Column: 10})
+	lt := newLeafNodeInArena(arena, 7, false, 11, 12, Point{Column: 11}, Point{Column: 12})
+	right := newLeafNodeInArena(arena, 4, true, 13, 18, Point{Column: 13}, Point{Column: 18})
+	cmp := newParentNodeInArena(arena, 3, true, []*Node{left, lt, right}, nil, 0)
+	prefix := newParentNodeInArena(arena, 2, true, []*Node{inc, cmp}, nil, 0)
+	root := newParentNodeInArena(arena, 1, true, []*Node{prefix}, nil, 0)
+
+	normalizeKotlinCompatibility(root, source, lang)
+
+	if got, want := prefix.Type(lang), "comparison_expression"; got != want {
+		t.Fatalf("node type = %q, want %q", got, want)
+	}
+	if got, want := prefix.ChildCount(), 3; got != want {
+		t.Fatalf("child count = %d, want %d", got, want)
+	}
+	if got := prefix.Child(0).Type(lang); got != "prefix_expression" {
+		t.Fatalf("left child type = %q, want prefix_expression", got)
+	}
+	if got := prefix.Child(0).Child(1).Text(source); got != "consumed" {
+		t.Fatalf("prefix operand text = %q, want consumed", got)
+	}
+	if got := prefix.Child(2).Text(source); got != "count" {
+		t.Fatalf("comparison right text = %q, want count", got)
+	}
+	if p := prefix.Child(0).Parent(); p != prefix {
+		t.Fatal("rewritten prefix parent not updated")
+	}
+}
+
 func kotlinCallableReferenceTestLanguage() *Language {
 	return &Language{
 		Name: "kotlin",

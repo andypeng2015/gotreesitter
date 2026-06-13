@@ -10,11 +10,254 @@ func normalizeKotlinCompatibility(root *Node, source []byte, lang *Language) {
 	normalizeKotlinCollapsedLiteralChildren(root, source, lang)
 	normalizeKotlinCollapsedExpressionChildren(root, source, lang)
 	normalizeKotlinInterpolatedCallExpressions(root, lang)
+	normalizeKotlinGenericCallTypeArguments(root, source, lang)
+	normalizeKotlinPrefixComparisonExpressions(root, source, lang)
 	normalizeKotlinRawStringTrailingContent(root, source, lang)
 	normalizeKotlinCollapsedIdentifierChildren(root, source, lang)
 	normalizeKotlinCallableReferenceNavigations(root, source, lang)
 	normalizeKotlinReceiverFunctionNames(root, source, lang)
 	normalizeKotlinSourceFileLeadingTriviaStart(root, source, lang)
+}
+
+// normalizeKotlinGenericCallTypeArguments rewrites the GLR choice
+// `f<T>(args)` can take through comparison_expression back into C
+// tree-sitter's call_expression + call_suffix(type_arguments, ...).
+func normalizeKotlinGenericCallTypeArguments(root *Node, source []byte, lang *Language) {
+	if root == nil || lang == nil || lang.Name != "kotlin" || len(source) == 0 {
+		return
+	}
+	comparisonSym, _, ok := symbolMeta(lang, "comparison_expression")
+	if !ok {
+		return
+	}
+	callSym, callNamed, ok := symbolMeta(lang, "call_expression")
+	if !ok {
+		return
+	}
+	callSuffixSym, callSuffixNamed, ok := symbolMeta(lang, "call_suffix")
+	if !ok {
+		return
+	}
+	navigationSym, navigationNamed, ok := symbolMeta(lang, "navigation_expression")
+	if !ok {
+		return
+	}
+	typeArgsSym, typeArgsNamed, ok := symbolMeta(lang, "type_arguments")
+	if !ok {
+		return
+	}
+	typeProjectionSym, typeProjectionNamed, ok := symbolMeta(lang, "type_projection")
+	if !ok {
+		return
+	}
+	userTypeSym, userTypeNamed, ok := symbolMeta(lang, "user_type")
+	if !ok {
+		return
+	}
+	typeIDSym, typeIDNamed, ok := symbolMeta(lang, "type_identifier")
+	if !ok {
+		return
+	}
+	valueArgsSym, valueArgsNamed, ok := symbolMeta(lang, "value_arguments")
+	if !ok {
+		return
+	}
+	valueArgSym, valueArgNamed, ok := symbolMeta(lang, "value_argument")
+	if !ok {
+		return
+	}
+	annotatedLambdaSym, annotatedLambdaNamed, ok := symbolMeta(lang, "annotated_lambda")
+	if !ok {
+		return
+	}
+	walkResultTree(root, func(n *Node) {
+		if n == nil || n.symbol != comparisonSym || resultChildCount(n) != 3 {
+			return
+		}
+		leftCmp, gt, tail := resultChildAt(n, 0), resultChildAt(n, 1), resultChildAt(n, 2)
+		if leftCmp == nil || gt == nil || tail == nil || leftCmp.Type(lang) != "comparison_expression" {
+			return
+		}
+		if !kotlinTokenText(gt, source, ">") || resultChildCount(leftCmp) != 3 || resultChildCount(tail) == 0 {
+			return
+		}
+		base, lt, typeNode := resultChildAt(leftCmp, 0), resultChildAt(leftCmp, 1), resultChildAt(leftCmp, 2)
+		if base == nil || lt == nil || typeNode == nil || !kotlinTokenText(lt, source, "<") || lt.endByte != typeNode.startByte || typeNode.endByte != gt.startByte {
+			return
+		}
+		if typ := typeNode.Type(lang); typ != "simple_identifier" && typ != "type_identifier" {
+			return
+		}
+		if resultChildCount(typeNode) != 0 {
+			return
+		}
+		arena := n.ownerArena
+		typeNode.symbol = typeIDSym
+		typeNode.setNamed(typeIDNamed)
+		userType := newParentNodeInArena(arena, userTypeSym, userTypeNamed, cloneNodeSliceInArena(arena, []*Node{typeNode}), nil, 0)
+		typeProjection := newParentNodeInArena(arena, typeProjectionSym, typeProjectionNamed, cloneNodeSliceInArena(arena, []*Node{userType}), nil, 0)
+		typeArgs := newParentNodeInArena(arena, typeArgsSym, typeArgsNamed, cloneNodeSliceInArena(arena, []*Node{lt, typeProjection, gt}), nil, 0)
+
+		suffixChildren := []*Node{typeArgs}
+		switch tail.Type(lang) {
+		case "call_expression":
+			first := resultChildAt(tail, 0)
+			if first == nil {
+				return
+			}
+			if first.Type(lang) == "navigation_expression" {
+				if resultChildCount(first) != 2 || resultChildCount(tail) < 2 {
+					return
+				}
+				paren, navSuffix := resultChildAt(first, 0), resultChildAt(first, 1)
+				if paren == nil || navSuffix == nil || paren.startByte != gt.endByte {
+					return
+				}
+				if !kotlinRetagParenthesizedAsValueArguments(paren, source, lang, valueArgsSym, valueArgsNamed, valueArgSym, valueArgNamed) {
+					return
+				}
+				innerSuffix := newParentNodeInArena(arena, callSuffixSym, callSuffixNamed, cloneNodeSliceInArena(arena, []*Node{typeArgs, paren}), nil, 0)
+				innerCall := newParentNodeInArena(arena, callSym, callNamed, cloneNodeSliceInArena(arena, []*Node{base, innerSuffix}), nil, 0)
+				nav := newParentNodeInArena(arena, navigationSym, navigationNamed, cloneNodeSliceInArena(arena, []*Node{innerCall, navSuffix}), nil, 0)
+				finalSuffixChildren := make([]*Node, 0, 2)
+				kotlinAppendCallSuffixChildren(&finalSuffixChildren, tail, 1, lang)
+				if len(finalSuffixChildren) == 0 {
+					return
+				}
+				finalSuffix := newParentNodeInArena(arena, callSuffixSym, callSuffixNamed, cloneNodeSliceInArena(arena, finalSuffixChildren), nil, 0)
+				n.symbol = callSym
+				n.setNamed(callNamed)
+				n.productionID = 0
+				replaceNodeChildrenUnfielded(n, cloneNodeSliceInArena(arena, []*Node{nav, finalSuffix}))
+				return
+			}
+			if first.startByte != gt.endByte {
+				return
+			}
+			if !kotlinRetagParenthesizedAsValueArguments(first, source, lang, valueArgsSym, valueArgsNamed, valueArgSym, valueArgNamed) {
+				return
+			}
+			suffixChildren = append(suffixChildren, first)
+			kotlinAppendCallSuffixChildren(&suffixChildren, tail, 1, lang)
+		case "prefix_expression":
+			if resultChildCount(tail) != 2 || tail.startByte <= gt.endByte {
+				return
+			}
+			label, lambda := resultChildAt(tail, 0), resultChildAt(tail, 1)
+			if label == nil || lambda == nil || label.Type(lang) != "label" || lambda.Type(lang) != "lambda_literal" {
+				return
+			}
+			annotatedLambda := newParentNodeInArena(arena, annotatedLambdaSym, annotatedLambdaNamed, cloneNodeSliceInArena(arena, []*Node{label, lambda}), nil, 0)
+			suffixChildren = append(suffixChildren, annotatedLambda)
+		case "lambda_literal":
+			if tail.startByte <= gt.endByte {
+				return
+			}
+			annotatedLambda := newParentNodeInArena(arena, annotatedLambdaSym, annotatedLambdaNamed, cloneNodeSliceInArena(arena, []*Node{tail}), nil, 0)
+			suffixChildren = append(suffixChildren, annotatedLambda)
+		default:
+			return
+		}
+		callSuffix := newParentNodeInArena(arena, callSuffixSym, callSuffixNamed, cloneNodeSliceInArena(arena, suffixChildren), nil, 0)
+		n.symbol = callSym
+		n.setNamed(callNamed)
+		n.productionID = 0
+		replaceNodeChildrenUnfielded(n, cloneNodeSliceInArena(arena, []*Node{base, callSuffix}))
+	})
+}
+
+func kotlinRetagParenthesizedAsValueArguments(paren *Node, source []byte, lang *Language, valueArgsSym Symbol, valueArgsNamed bool, valueArgSym Symbol, valueArgNamed bool) bool {
+	if paren == nil || paren.Type(lang) != "parenthesized_expression" || resultChildCount(paren) < 2 {
+		return false
+	}
+	open := resultChildAt(paren, 0)
+	close := resultChildAt(paren, resultChildCount(paren)-1)
+	if !kotlinTokenText(open, source, "(") || !kotlinTokenText(close, source, ")") {
+		return false
+	}
+	children := []*Node{open}
+	switch resultChildCount(paren) {
+	case 2:
+	case 3:
+		arg := resultChildAt(paren, 1)
+		if arg == nil {
+			return false
+		}
+		if arg.startByte != arg.endByte {
+			valueArg := newParentNodeInArena(paren.ownerArena, valueArgSym, valueArgNamed, cloneNodeSliceInArena(paren.ownerArena, []*Node{arg}), nil, 0)
+			children = append(children, valueArg)
+		}
+	default:
+		return false
+	}
+	children = append(children, close)
+	paren.symbol = valueArgsSym
+	paren.setNamed(valueArgsNamed)
+	replaceNodeChildrenUnfielded(paren, cloneNodeSliceInArena(paren.ownerArena, children))
+	return true
+}
+
+func kotlinAppendCallSuffixChildren(dst *[]*Node, call *Node, start int, lang *Language) {
+	for i := start; i < resultChildCount(call); i++ {
+		child := resultChildAt(call, i)
+		if child == nil {
+			continue
+		}
+		if child.Type(lang) == "call_suffix" {
+			for j := 0; j < resultChildCount(child); j++ {
+				if suffixChild := resultChildAt(child, j); suffixChild != nil {
+					*dst = append(*dst, suffixChild)
+				}
+			}
+			continue
+		}
+		*dst = append(*dst, child)
+	}
+}
+
+// normalizeKotlinPrefixComparisonExpressions fixes the local precedence shape
+// where `++x < y` is materialized as `++(x < y)` rather than `(++x) < y`.
+func normalizeKotlinPrefixComparisonExpressions(root *Node, source []byte, lang *Language) {
+	if root == nil || lang == nil || lang.Name != "kotlin" || len(source) == 0 {
+		return
+	}
+	prefixSym, prefixNamed, ok := symbolMeta(lang, "prefix_expression")
+	if !ok {
+		return
+	}
+	comparisonSym, comparisonNamed, ok := symbolMeta(lang, "comparison_expression")
+	if !ok {
+		return
+	}
+	walkResultTree(root, func(n *Node) {
+		if n == nil || n.symbol != prefixSym || resultChildCount(n) != 2 {
+			return
+		}
+		inc, cmp := resultChildAt(n, 0), resultChildAt(n, 1)
+		if inc == nil || cmp == nil || cmp.symbol != comparisonSym || resultChildCount(cmp) != 3 {
+			return
+		}
+		if !kotlinTokenText(inc, source, "++") && !kotlinTokenText(inc, source, "--") {
+			return
+		}
+		left, op, right := resultChildAt(cmp, 0), resultChildAt(cmp, 1), resultChildAt(cmp, 2)
+		if left == nil || op == nil || right == nil || inc.endByte != left.startByte {
+			return
+		}
+		arena := n.ownerArena
+		prefix := newParentNodeInArena(arena, prefixSym, prefixNamed, cloneNodeSliceInArena(arena, []*Node{inc, left}), nil, 0)
+		n.symbol = comparisonSym
+		n.setNamed(comparisonNamed)
+		n.productionID = 0
+		replaceNodeChildrenUnfielded(n, cloneNodeSliceInArena(arena, []*Node{prefix, op, right}))
+	})
+}
+
+func kotlinTokenText(n *Node, source []byte, text string) bool {
+	if n == nil || n.startByte > n.endByte || int(n.endByte) > len(source) {
+		return false
+	}
+	return string(source[n.startByte:n.endByte]) == text
 }
 
 // normalizeKotlinReceiverFunctionNames splits the function name back out of a
