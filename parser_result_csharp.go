@@ -29,8 +29,10 @@ func normalizeCSharpCompatibility(root *Node, source []byte, p *Parser, lang *La
 		normalizeCSharpDereferenceLogicalAndCasts(root, source, lang)
 		normalizeCSharpConditionalIsPatternInitializers(root, source, lang)
 		normalizeCSharpConditionalIsPatternExpressions(root, source, lang)
+		normalizeCSharpIdentifierIsPatternExpressions(root, source, lang)
 		normalizeCSharpConditionalExpressionTokens(root, source, lang)
 		normalizeCSharpNullLiteralIdentifiers(root, source, lang)
+		normalizeCSharpScopedRefTypes(root, source, lang)
 		normalizeCSharpImplicitVarTypes(root, source, lang)
 		normalizeCSharpParenthesizedVarPatterns(root, source, lang)
 		normalizeCSharpGenericBaseLists(root, lang)
@@ -53,8 +55,10 @@ func normalizeCSharpCompatibility(root *Node, source []byte, p *Parser, lang *La
 	normalizeCSharpDereferenceLogicalAndCasts(root, source, lang)
 	normalizeCSharpConditionalIsPatternInitializers(root, source, lang)
 	normalizeCSharpConditionalIsPatternExpressions(root, source, lang)
+	normalizeCSharpIdentifierIsPatternExpressions(root, source, lang)
 	normalizeCSharpConditionalExpressionTokens(root, source, lang)
 	normalizeCSharpNullLiteralIdentifiers(root, source, lang)
+	normalizeCSharpScopedRefTypes(root, source, lang)
 	normalizeCSharpImplicitVarTypes(root, source, lang)
 	normalizeCSharpParenthesizedVarPatterns(root, source, lang)
 	normalizeCSharpGenericBaseLists(root, lang)
@@ -198,6 +202,186 @@ func csharpNodeCanContainImplicitVarType(n *Node, lang *Language) bool {
 	default:
 		return false
 	}
+}
+
+func normalizeCSharpScopedRefTypes(root *Node, source []byte, lang *Language) {
+	if root == nil || lang == nil || lang.Name != "c_sharp" || len(source) == 0 {
+		return
+	}
+	walkResultTree(root, func(n *Node) {
+		switch n.Type(lang) {
+		case "parameter":
+			csharpRewriteScopedRefParameter(n, source, lang)
+		case "variable_declaration":
+			csharpRewriteScopedRefVariableDeclaration(n, source, lang)
+		}
+	})
+}
+
+func csharpRewriteScopedRefParameter(param *Node, source []byte, lang *Language) bool {
+	if param == nil || param.ownerArena == nil || resultChildCount(param) < 2 {
+		return false
+	}
+	first := resultChildAt(param, 0)
+	second := resultChildAt(param, 1)
+	if !csharpNodeTextIs(source, first, "scoped") || !csharpNodeTextIs(source, second, "ref") {
+		return false
+	}
+	typeStart := csharpSkipSpaceBytes(source, second.endByte)
+	typeNameStart, typeNameEnd, ok := csharpScanIdentifierAt(source, typeStart)
+	if !ok || typeNameStart != typeStart {
+		return false
+	}
+	nameStart, nameEnd, ok := csharpScanIdentifierAt(source, csharpSkipSpaceBytes(source, typeNameEnd))
+	if !ok {
+		return false
+	}
+	if int(nameEnd) > len(source) {
+		return false
+	}
+	trailing := csharpSkipSpaceBytes(source, nameEnd)
+	if trailing >= uint32(len(source)) || source[trailing] != ')' && source[trailing] != ',' {
+		return false
+	}
+	scopedMod, ok := csharpBuildModifierNodeFromSource(param.ownerArena, source, lang, first.startByte, first.endByte)
+	if !ok {
+		return false
+	}
+	refMod, ok := csharpBuildModifierNodeFromSource(param.ownerArena, source, lang, second.startByte, second.endByte)
+	if !ok {
+		return false
+	}
+	typeNode, ok := csharpBuildTypeNameNodeFromSource(param.ownerArena, source, lang, typeNameStart, typeNameEnd)
+	if !ok {
+		return false
+	}
+	nameNode, ok := csharpBuildIdentifierNodeFromSource(source, nameStart, nameEnd, lang, param.ownerArena)
+	if !ok {
+		return false
+	}
+	children := cloneNodeSliceIfArena(param.ownerArena, []*Node{scopedMod, refMod, typeNode, nameNode})
+	replaceNodeChildrenUnfielded(param, children)
+	param.startByte = first.startByte
+	param.endByte = nameEnd
+	recomputeNodePointsFromBytes(param, source)
+	param.productionID = 0
+	param.setHasError(false)
+	return true
+}
+
+func csharpRewriteScopedRefVariableDeclaration(decl *Node, source []byte, lang *Language) bool {
+	if decl == nil || decl.ownerArena == nil || resultChildCount(decl) != 2 {
+		return false
+	}
+	typeCandidate := resultChildAt(decl, 0)
+	declarator := resultChildAt(decl, 1)
+	if !csharpNodeTextIs(source, typeCandidate, "scoped") || declarator == nil || declarator.Type(lang) != "variable_declarator" {
+		return false
+	}
+	refStart := csharpSkipSpaceBytes(source, typeCandidate.endByte)
+	if !csharpHasKeywordAt(source, refStart, "ref") {
+		return false
+	}
+	typeStart := csharpSkipSpaceBytes(source, refStart+uint32(len("ref")))
+	typeNameStart, typeNameEnd, ok := csharpScanIdentifierAt(source, typeStart)
+	if !ok || typeNameStart != typeStart {
+		return false
+	}
+	nameStart, nameEnd, ok := csharpScanIdentifierAt(source, csharpSkipSpaceBytes(source, typeNameEnd))
+	if !ok {
+		return false
+	}
+	eqPos := csharpSkipSpaceBytes(source, nameEnd)
+	if eqPos >= uint32(len(source)) || source[eqPos] != '=' {
+		return false
+	}
+	value := csharpVariableDeclaratorInitializerValue(declarator, lang)
+	if value == nil {
+		return false
+	}
+	scopedType, ok := csharpBuildScopedRefTypeNode(decl.ownerArena, source, lang, typeCandidate.startByte, refStart, typeNameStart, typeNameEnd)
+	if !ok {
+		return false
+	}
+	newDeclarator, ok := csharpBuildVariableDeclaratorNode(source, lang, decl.ownerArena, nameStart, nameEnd, eqPos, value)
+	if !ok {
+		return false
+	}
+	typeID, _ := lang.FieldByName("type")
+	children := cloneNodeSliceIfArena(decl.ownerArena, []*Node{scopedType, newDeclarator})
+	fields := cloneFieldIDSliceInArena(decl.ownerArena, []FieldID{typeID, 0})
+	decl.children = children
+	decl.fieldIDs = fields
+	decl.fieldSources = defaultFieldSourcesInArena(decl.ownerArena, fields)
+	decl.startByte = typeCandidate.startByte
+	decl.endByte = newDeclarator.endByte
+	recomputeNodePointsFromBytes(decl, source)
+	decl.productionID = 0
+	decl.setHasError(false)
+	populateParentNode(decl, decl.children)
+	return true
+}
+
+func csharpVariableDeclaratorInitializerValue(declarator *Node, lang *Language) *Node {
+	if declarator == nil || lang == nil {
+		return nil
+	}
+	for i := resultChildCount(declarator) - 1; i >= 0; i-- {
+		child := resultChildAt(declarator, i)
+		if child != nil && child.IsNamed() && child.Type(lang) != "identifier" {
+			return child
+		}
+	}
+	return nil
+}
+
+func csharpBuildModifierNodeFromSource(arena *nodeArena, source []byte, lang *Language, start, end uint32) (*Node, bool) {
+	if arena == nil || lang == nil || start >= end || int(end) > len(source) {
+		return nil, false
+	}
+	modifierSym, ok := symbolByName(lang, "modifier")
+	if !ok {
+		return nil, false
+	}
+	return newLeafNodeInArena(arena, modifierSym, symbolIsNamed(lang, modifierSym), start, end, advancePointByBytes(Point{}, source[:start]), advancePointByBytes(Point{}, source[:end])), true
+}
+
+func csharpBuildScopedRefTypeNode(arena *nodeArena, source []byte, lang *Language, scopedStart, refStart, typeStart, typeEnd uint32) (*Node, bool) {
+	if arena == nil || lang == nil || scopedStart >= refStart || typeStart >= typeEnd || int(typeEnd) > len(source) {
+		return nil, false
+	}
+	scopedTypeSym, ok := symbolByName(lang, "scoped_type")
+	if !ok {
+		return nil, false
+	}
+	refTypeSym, ok := symbolByName(lang, "ref_type")
+	if !ok {
+		return nil, false
+	}
+	refTok, ok := csharpBuildLeafNodeByName(arena, source, lang, "ref", refStart, refStart+uint32(len("ref")))
+	if !ok {
+		return nil, false
+	}
+	typeNode, ok := csharpBuildTypeNameNodeFromSource(arena, source, lang, typeStart, typeEnd)
+	if !ok {
+		return nil, false
+	}
+	refType := newParentNodeInArena(arena, refTypeSym, symbolIsNamed(lang, refTypeSym), cloneNodeSliceIfArena(arena, []*Node{refTok, typeNode}), nil, 0)
+	refType.setHasError(false)
+	scopedType := newParentNodeInArena(arena, scopedTypeSym, symbolIsNamed(lang, scopedTypeSym), cloneNodeSliceIfArena(arena, []*Node{refType}), nil, 0)
+	scopedType.startByte = scopedStart
+	scopedType.endByte = typeNode.endByte
+	scopedType.startPoint = advancePointByBytes(Point{}, source[:scopedStart])
+	scopedType.endPoint = typeNode.endPoint
+	scopedType.setHasError(false)
+	return scopedType, true
+}
+
+func csharpNodeTextIs(source []byte, n *Node, text string) bool {
+	if n == nil || n.startByte >= n.endByte || int(n.endByte) > len(source) {
+		return false
+	}
+	return string(source[n.startByte:n.endByte]) == text
 }
 
 func normalizeCSharpParenthesizedVarPatterns(root *Node, source []byte, lang *Language) {

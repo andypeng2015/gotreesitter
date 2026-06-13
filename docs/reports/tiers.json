@@ -1,6 +1,6 @@
 {
- "generated": "2026-06-13T22:02:05Z",
- "commit": "ee5202ba",
+ "generated": "2026-06-13T22:16:51Z",
+ "commit": "e4db22b7",
  "version": "unreleased",
  "tier_rules": {
   "I": "parity-clean and <=1.5x C full-parse, cold <=5ms, blob <=150KB",
@@ -137,7 +137,7 @@
    "tier": "IV",
    "iv_cause": "IV-recovery",
    "parity": "30/40",
-   "notes": "C# implicit var type and parenthesized var-pattern normalizations clear the focused C-oracle residuals (20/20 on cgo focus); full tier row remains IV pending a 40-case tier rescan, with aggressive real-corpus residuals still in recovery/error-root plus scoped/ref, switch, try/finally, and generic invocation shapes"
+   "notes": "C# scoped/ref type, generic invocation initializer, and identifier is-pattern normalizations lift aggressive real-corpus deep parity 15/26 to 18/26 while focused C-oracle remains 20/20; full tier row remains IV pending a 40-case tier rescan, with residuals in recovery/error-root plus switch and try/finally shapes"
   },
   {
    "grammar": "caddy",

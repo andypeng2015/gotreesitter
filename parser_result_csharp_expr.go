@@ -31,6 +31,32 @@ func normalizeCSharpConditionalIsPatternExpressions(root *Node, source []byte, l
 	})
 }
 
+func normalizeCSharpIdentifierIsPatternExpressions(root *Node, source []byte, lang *Language) {
+	if root == nil || lang == nil || lang.Name != "c_sharp" {
+		return
+	}
+	isPatternSym, ok := symbolByName(lang, "is_pattern_expression")
+	if !ok {
+		return
+	}
+	constantPatternSym, ok := symbolByName(lang, "constant_pattern")
+	if !ok {
+		return
+	}
+	nullSym, hasNull := symbolByName(lang, "null_literal")
+	nullNamed := symbolIsNamed(lang, nullSym)
+	isPatternNamed := symbolIsNamed(lang, isPatternSym)
+	constantPatternNamed := symbolIsNamed(lang, constantPatternSym)
+	expressionFieldID, _ := lang.FieldByName("expression")
+	patternFieldID, _ := lang.FieldByName("pattern")
+
+	walkResultTree(root, func(n *Node) {
+		if n.Type(lang) == "is_expression" {
+			csharpRewriteConditionalIsPatternExpression(n, source, lang, isPatternSym, isPatternNamed, constantPatternSym, constantPatternNamed, nullSym, nullNamed, hasNull, expressionFieldID, patternFieldID)
+		}
+	})
+}
+
 func normalizeCSharpConditionalExpressionTokens(root *Node, source []byte, lang *Language) {
 	if root == nil || lang == nil || lang.Name != "c_sharp" || len(source) == 0 {
 		return

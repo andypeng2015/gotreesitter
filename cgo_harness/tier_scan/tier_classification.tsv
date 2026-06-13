@@ -16,7 +16,7 @@ bitbake	CLEAN	40/40	BitBake recovered shell-function/function-flag shape normali
 blade	IV-recovery?	17/30	ext=.blade.php; faithful C error-cost version competition (see spec)
 brightscript	IV-recovery?	0/30	ext=.brs; faithful C error-cost version competition (see spec)
 c	IV-recovery	21/40	faithful C error-cost version competition (see spec)
-c_sharp	IV-recovery	30/40	C# implicit var type and parenthesized var-pattern normalizations clear the focused C-oracle residuals (20/20 on cgo focus); full tier row remains IV pending a 40-case tier rescan, with aggressive real-corpus residuals still in recovery/error-root plus scoped/ref, switch, try/finally, and generic invocation shapes
+c_sharp	IV-recovery	30/40	C# scoped/ref type, generic invocation initializer, and identifier is-pattern normalizations lift aggressive real-corpus deep parity 15/26 to 18/26 while focused C-oracle remains 20/20; full tier row remains IV pending a 40-case tier rescan, with residuals in recovery/error-root plus switch and try/finally shapes
 caddy	IV-recovery?	9/30	ext=Caddyfile; faithful C error-cost version competition (see spec)
 cairo	IV-recovery?	0/30	ext=.cairo; faithful C error-cost version competition (see spec)
 capnp	CLEAN	40/40	in ratchet
