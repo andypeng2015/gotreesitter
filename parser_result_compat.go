@@ -240,6 +240,8 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 		normalizeWolframCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "tsx", "typescript":
 		normalizeTypeScriptTreeCompatibilityWithParser(ctx.root, ctx.source, ctx.parser, ctx.lang)
+	case "typst":
+		normalizeTypstCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "yaml":
 		normalizeYAMLRecoveredRoot(ctx.root, ctx.source, ctx.lang)
 	case "zig":

@@ -1,6 +1,6 @@
 {
- "generated": "2026-06-13T00:03:25Z",
- "commit": "d90c5c67",
+ "generated": "2026-06-13T00:05:42Z",
+ "commit": "84f35150",
  "version": "unreleased",
  "tier_rules": {
   "I": "parity-clean and <=1.5x C full-parse, cold <=5ms, blob <=150KB",
@@ -1257,8 +1257,8 @@
    "grammar": "typst",
    "tier": "IV",
    "iv_cause": "IV-recovery?",
-   "parity": "28/40",
-   "notes": "faithful C error-cost version competition (see spec)"
+   "parity": "34/40",
+   "notes": "nested list item result normalization verified 2026-06-12; residuals: 2 recovery/error-shape cases and 4 truncations"
   },
   {
    "grammar": "uxntal",
