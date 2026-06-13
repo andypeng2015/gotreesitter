@@ -1,6 +1,6 @@
 {
- "generated": "2026-06-13T21:45:12Z",
- "commit": "d053a510",
+ "generated": "2026-06-13T22:02:05Z",
+ "commit": "ee5202ba",
  "version": "unreleased",
  "tier_rules": {
   "I": "parity-clean and <=1.5x C full-parse, cold <=5ms, blob <=150KB",
@@ -1186,8 +1186,8 @@
    "grammar": "templ",
    "tier": "IV",
    "iv_cause": "IV-recovery?",
-   "parity": "34/40",
-   "notes": "qualified render-call normalization landed; Docker tier parity verified 2026-06-12; remaining residuals are 5 root ERROR files plus one local tag-start/comment shape diff"
+   "parity": "35/40",
+   "notes": "dangling quote tag_start attribute compatibility normalization cleared the last local shape residual; remaining 5/40 are broad root ERROR recovery cases; Docker D-tier verified 2026-06-13 with trunc=0 panics=0"
   },
   {
    "grammar": "textproto",
