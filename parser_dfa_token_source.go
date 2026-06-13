@@ -758,7 +758,10 @@ func (d *dfaTokenSource) nextGLRUnionDFAToken() (Token, bool) {
 		candTok, candEndPos, candEndRow, candEndCol := d.scanPreferredTokenForState(st)
 
 		score := 0
-		for _, liveState := range d.glrStates {
+		for liveIdx, liveState := range d.glrStates {
+			if d.dedupeGLRUnionScoreStates() && d.priorGLRState(liveIdx, liveState) {
+				continue
+			}
 			if d.lookupActionIndex(liveState, candTok.Symbol) != 0 {
 				score++
 			}
@@ -809,6 +812,10 @@ func (d *dfaTokenSource) nextGLRUnionDFAToken() (Token, bool) {
 	d.lexer.row = bestEndRow
 	d.lexer.col = bestEndCol
 	return bestTok, true
+}
+
+func (d *dfaTokenSource) dedupeGLRUnionScoreStates() bool {
+	return d != nil && d.language != nil && d.language.Name == "markdown_inline"
 }
 
 func (d *dfaTokenSource) lexStateForState(state StateID) uint32 {

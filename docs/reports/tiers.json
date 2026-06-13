@@ -1,6 +1,6 @@
 {
- "generated": "2026-06-13T08:53:57Z",
- "commit": "ba6294b0",
+ "generated": "2026-06-13T09:06:31Z",
+ "commit": "56e7caf2",
  "version": "unreleased",
  "tier_rules": {
   "I": "parity-clean and <=1.5x C full-parse, cold <=5ms, blob <=150KB",
@@ -801,8 +801,8 @@
    "grammar": "markdown_inline",
    "tier": "IV",
    "iv_cause": "IV-scanner",
-   "parity": "38/40",
-   "notes": "ext=.md; scanner/truncation residual verified after willow shape fixes"
+   "parity": "39/40",
+   "notes": "ext=.md; attribute-bearing inline HTML tags now match C; remaining residual is truncation on docs/src/index.md"
   },
   {
    "grammar": "matlab",

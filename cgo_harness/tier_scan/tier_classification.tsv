@@ -119,7 +119,7 @@ lua	CLEAN	40/40	in ratchet; scanner.c port + DFA routing (maple 2026-06-10)
 luau	CLEAN	40/40	C-recovery gate localizes unsupported class syntax; recovered `end` identifier shape and Luau table-constructor iteration budget match C oracle (verified 2026-06-12)
 make	IV-recovery?	19/20	ext=Makefile,.mk; C-recovery gate tried and REVERTED (parity-neutral 19/20, runs 20260610T090208Z/091230Z redwood-wave1/1b): witness Makefile (129KB, git's) root ERROR cc go=5029 vs makefile c=2114 — signature identical with gate on/off, so the divergence is decided before/outside the gated recover path (retry full-parse or pre-error fragmentation); needs witness-level diagnosis, not more gate work
 markdown	CLEAN	40/40	in ratchet; verified after willow shape fixes
-markdown_inline	IV-scanner	38/40	ext=.md; scanner/truncation residual verified after willow shape fixes
+markdown_inline	IV-scanner	39/40	ext=.md; attribute-bearing inline HTML tags now match C; remaining residual is truncation on docs/src/index.md
 matlab	IV-recovery?	4/40	faithful C error-cost version competition (see spec)
 mermaid	IV-recovery?	0/40	faithful C error-cost version competition (see spec)
 meson	IV-recovery?	1/30	ext=meson.build; faithful C error-cost version competition (see spec)
