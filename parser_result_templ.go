@@ -7,6 +7,50 @@ func normalizeTemplCompatibility(root *Node, source []byte, lang *Language) {
 		return
 	}
 	normalizeTemplComponentImportArguments(root, source, lang)
+	normalizeTemplTagStartDanglingQuoteErrors(root, source, lang)
+}
+
+func normalizeTemplTagStartDanglingQuoteErrors(root *Node, source []byte, lang *Language) {
+	walkResultTree(root, func(n *Node) {
+		if n == nil || n.ownerArena == nil || n.Type(lang) != "tag_start" || n.HasError() {
+			return
+		}
+		children := resultChildSliceForMutation(n)
+		if len(children) < 3 {
+			return
+		}
+		closeIdx := len(children) - 1
+		close := children[closeIdx]
+		prev := children[closeIdx-1]
+		if close == nil || prev == nil || close.Type(lang) != ">" || prev.Type(lang) != "attribute" {
+			return
+		}
+		if prev.endByte >= close.startByte || int(close.startByte) > len(source) {
+			return
+		}
+		errStart := prev.endByte
+		if errStart >= uint32(len(source)) || (source[errStart] != '"' && source[errStart] != '\'') {
+			return
+		}
+		quoteSym, quoteNamed, ok := symbolMeta(lang, string(source[errStart]))
+		if !ok {
+			return
+		}
+		for i := errStart + 1; i < close.startByte; i++ {
+			if source[i] != ' ' && source[i] != '\t' && source[i] != '\r' && source[i] != '\n' {
+				return
+			}
+		}
+		quote := templNewLeaf(n.ownerArena, source, quoteSym, quoteNamed, errStart, errStart+1)
+		err := newParentNodeInArena(n.ownerArena, errorSymbol, true, cloneNodeSliceInArena(n.ownerArena, []*Node{quote}), nil, 0)
+		err.setHasError(true)
+		out := make([]*Node, 0, len(children)+1)
+		out = append(out, children[:closeIdx]...)
+		out = append(out, err)
+		out = append(out, children[closeIdx:]...)
+		replaceNodeChildrenUnfielded(n, cloneNodeSliceInArena(n.ownerArena, out))
+		templMarkErrorAncestors(n)
+	})
 }
 
 func normalizeTemplComponentImportArguments(root *Node, source []byte, lang *Language) {
@@ -267,6 +311,19 @@ func templBuildSimpleArgumentList(argsNode *Node, source []byte, lang *Language,
 	closeStart := argsNode.endByte - 1
 	children = append(children, newLeafNodeInArena(arena, closeSym, closeNamed, closeStart, argsNode.endByte, Point{Row: argsNode.endPoint.Row, Column: argsNode.endPoint.Column - 1}, argsNode.endPoint))
 	return newParentNodeInArena(arena, argListSym, argListNamed, cloneNodeSliceInArena(arena, children), nil, 0)
+}
+
+func templNewLeaf(arena *nodeArena, source []byte, sym Symbol, named bool, start, end uint32) *Node {
+	return newLeafNodeInArena(arena, sym, named, start, end,
+		advancePointByBytes(Point{}, source[:start]),
+		advancePointByBytes(Point{}, source[:end]))
+}
+
+func templMarkErrorAncestors(n *Node) {
+	for cur := n; cur != nil; cur = cur.parent {
+		cur.setHasError(true)
+		nodeBumpEquivVersion(cur)
+	}
 }
 
 func templBuildSimpleStringLiteral(argsNode *Node, source []byte, lang *Language, relStart int, stringSym Symbol, stringNamed bool, contentSym Symbol, contentNamed bool, quoteSym Symbol, quoteNamed bool) (*Node, int, bool) {

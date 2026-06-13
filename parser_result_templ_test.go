@@ -182,6 +182,57 @@ func TestNormalizeTemplCompatibilityMergesQualifiedComponentImport(t *testing.T)
 	}
 }
 
+func TestNormalizeTemplCompatibilityAddsDanglingAttributeQuoteError(t *testing.T) {
+	lang := &Language{
+		Name:        "templ",
+		SymbolNames: []string{"EOF", "source_file", "tag_start", "<", "element_identifier", "attribute", ">", "\""},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF", Visible: false, Named: false},
+			{Name: "source_file", Visible: true, Named: true},
+			{Name: "tag_start", Visible: true, Named: true},
+			{Name: "<", Visible: true, Named: false},
+			{Name: "element_identifier", Visible: true, Named: true},
+			{Name: "attribute", Visible: true, Named: true},
+			{Name: ">", Visible: true, Named: false},
+			{Name: "\"", Visible: true, Named: false},
+		},
+	}
+	source := []byte("<a class=\"external-link\"\n\t>")
+	quote := uint32(23)
+	arena := newNodeArena(arenaClassFull)
+	open := newLeafNodeInArena(arena, 3, false, 0, 1, Point{}, Point{Column: 1})
+	name := newLeafNodeInArena(arena, 4, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	attr := newLeafNodeInArena(arena, 5, true, 3, quote, Point{Column: 3}, Point{Column: quote})
+	close := newLeafNodeInArena(arena, 6, false, 26, 27, Point{Row: 1, Column: 1}, Point{Row: 1, Column: 2})
+	tag := newParentNodeInArena(arena, 2, true, []*Node{open, name, attr, close}, nil, 0)
+	root := newParentNodeInArena(arena, 1, true, []*Node{tag}, nil, 0)
+
+	normalizeTemplCompatibility(root, source, lang)
+
+	if got, want := tag.ChildCount(), 5; got != want {
+		t.Fatalf("tag_start child count = %d, want %d; tree=%s", got, want, root.SExpr(lang))
+	}
+	err := tag.Child(3)
+	if err == nil {
+		t.Fatal("inserted error child = nil")
+	}
+	if got, want := err.Type(lang), "ERROR"; got != want {
+		t.Fatalf("inserted child type = %q, want %q", got, want)
+	}
+	if start, end := err.StartByte(), err.EndByte(); start != quote || end != quote+1 {
+		t.Fatalf("ERROR span = %d:%d, want %d:%d", start, end, quote, quote+1)
+	}
+	if got, want := err.ChildCount(), 1; got != want {
+		t.Fatalf("ERROR child count = %d, want %d", got, want)
+	}
+	if child := err.Child(0); child == nil || child.Type(lang) != "\"" {
+		t.Fatalf("ERROR child = %v, want quote token", child)
+	}
+	if !tag.HasError() || !root.HasError() {
+		t.Fatalf("HasError not propagated: tag=%v root=%v", tag.HasError(), root.HasError())
+	}
+}
+
 func templCompatibilityTestLanguage() *Language {
 	return &Language{
 		Name: "templ",
