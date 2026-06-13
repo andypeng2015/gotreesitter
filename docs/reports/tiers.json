@@ -710,8 +710,8 @@
    "grammar": "julia",
    "tier": "IV",
    "iv_cause": "IV-recovery",
-   "parity": "28/40",
-   "notes": "faithful C error-cost version competition (see spec)"
+   "parity": "29/40",
+   "notes": "Julia return range recovery normalization clears sort.jl; remaining residuals are ERROR-root recovery, macro_argument_list expression grouping, and 2 truncations"
   },
   {
    "grammar": "just",

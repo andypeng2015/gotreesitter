@@ -73,7 +73,7 @@ tree-sitter C oracle is the hard gate; performance is the sub-rank
 | `hurl` | IV-recovery | 13/40 |
 | `jinja2` | IV-recovery | 3/40 |
 | `jsonnet` | IV-recovery? | 39/40 |
-| `julia` | IV-recovery | 28/40 |
+| `julia` | IV-recovery | 29/40 |
 | `kconfig` | IV-recovery? | 13/30 |
 | `kdl` | IV-recovery | 12/40 |
 | `kotlin` | IV-recovery | 29/40 |
