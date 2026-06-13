@@ -1,6 +1,6 @@
 {
- "generated": "2026-06-13T08:11:16Z",
- "commit": "4d92717c",
+ "generated": "2026-06-13T08:49:52Z",
+ "commit": "d89fb646",
  "version": "unreleased",
  "tier_rules": {
   "I": "parity-clean and <=1.5x C full-parse, cold <=5ms, blob <=150KB",
@@ -979,8 +979,8 @@
    "grammar": "proto",
    "tier": "IV",
    "iv_cause": "IV-recovery?",
-   "parity": "25/40",
-   "notes": "faithful C error-cost version competition (see spec)"
+   "parity": "26/40",
+   "notes": "faithful C error-cost version competition clears unittest_custom_options_proto3.proto with strict subset/no new divergers; remains Tier IV because residual parse-incorrect errTree files remain"
   },
   {
    "grammar": "pug",

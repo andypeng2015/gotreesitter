@@ -239,6 +239,11 @@ func errorCostCompetitionLanguage(lang *Language) bool {
 		// truncation or panic; remaining misses are local ERROR namedness,
 		// root/section child-count, and empty-root span residuals.
 		return true
+	case "proto":
+		// Tier-IV recovery fan-out: 25/40 -> 26/40, clearing
+		// unittest_custom_options_proto3.proto. The gate-ON diverging file set is
+		// a strict subset of baseline's with no new divergers.
+		return true
 	}
 	return false
 }
