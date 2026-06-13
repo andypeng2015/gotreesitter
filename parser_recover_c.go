@@ -244,6 +244,12 @@ func errorCostCompetitionLanguage(lang *Language) bool {
 		// unittest_custom_options_proto3.proto. The gate-ON diverging file set is
 		// a strict subset of baseline's with no new divergers.
 		return true
+	case "objc":
+		// Tier-IV recovery fan-out: Objective-C D-tier improves 1/40 -> 2/40,
+		// clearing Source/CXXException.m. ObjC's default cap-2 first pass keeps
+		// the large GSXML.m witness from exhausting the per-parse memory budget,
+		// so the default gate has no truncation or panic signal.
+		return true
 	}
 	return false
 }

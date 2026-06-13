@@ -1,6 +1,6 @@
 {
- "generated": "2026-06-13T10:22:01Z",
- "commit": "caab5a26",
+ "generated": "2026-06-13T10:50:10Z",
+ "commit": "fb07f2fd",
  "version": "unreleased",
  "tier_rules": {
   "I": "parity-clean and <=1.5x C full-parse, cold <=5ms, blob <=150KB",
@@ -887,9 +887,9 @@
   {
    "grammar": "objc",
    "tier": "IV",
-   "iv_cause": "IV-recovery?",
-   "parity": "1/40",
-   "notes": "faithful C error-cost version competition (see spec)"
+   "iv_cause": "IV-recovery",
+   "parity": "2/40",
+   "notes": "C-recovery gate plus ObjC cap-2 first pass clears Source/CXXException.m; reproduced on origin/parity/c-oracle-clears fb07f2fd 2026-06-13 with default gate: 2/40, trunc 0, panics 0. The prior forced gate at default cap improved 1/40 -> 2/40 but truncated GSXML.m at memory_budget; cap 2 completes GSXML.m with goStop=accepted."
   },
   {
    "grammar": "ocaml",

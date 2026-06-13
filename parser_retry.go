@@ -274,6 +274,15 @@ func effectiveFullParseInitialMaxStacks(lang *Language, initialMaxStacks int) in
 		if initialMaxStacks == maxGLRStacks {
 			initialMaxStacks = 2
 		}
+	case "objc":
+		// ObjC's recovery-heavy GNUstep sources can keep enough equivalent
+		// Objective-C method/preprocessor branches alive that C-recovery cost
+		// competition exhausts the per-parse memory budget before EOF. Cap 2
+		// preserves the C-recovery parity lift while keeping large witnesses
+		// bounded; explicit overrides remain available for diagnostics.
+		if initialMaxStacks == maxGLRStacks {
+			initialMaxStacks = 2
+		}
 	case "elisp":
 		// Wide survivor budgets multiply elisp's huge quoted data lists across
 		// equivalent stacks until the per-parse arena budget kills the parse

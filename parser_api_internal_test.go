@@ -1342,6 +1342,9 @@ func TestEffectiveFullParseInitialMaxStacks(t *testing.T) {
 	if got := effectiveFullParseInitialMaxStacks(&Language{Name: "hcl"}, maxGLRStacks); got != 2 {
 		t.Fatalf("effectiveFullParseInitialMaxStacks(hcl) = %d, want 2", got)
 	}
+	if got := effectiveFullParseInitialMaxStacks(&Language{Name: "objc"}, maxGLRStacks); got != 2 {
+		t.Fatalf("effectiveFullParseInitialMaxStacks(objc) = %d, want 2", got)
+	}
 	if got := effectiveFullParseInitialMaxStacks(&Language{Name: "crystal"}, maxGLRStacks); got != 2 {
 		t.Fatalf("effectiveFullParseInitialMaxStacks(crystal) = %d, want 2", got)
 	}
@@ -1392,6 +1395,9 @@ func TestEffectiveFullParseInitialMaxStacks(t *testing.T) {
 	}
 	if got := effectiveFullParseInitialMaxStacks(&Language{Name: "crystal"}, 16); got != 16 {
 		t.Fatalf("effectiveFullParseInitialMaxStacks(crystal, explicit override) = %d, want 16", got)
+	}
+	if got := effectiveFullParseInitialMaxStacks(&Language{Name: "objc"}, 16); got != 16 {
+		t.Fatalf("effectiveFullParseInitialMaxStacks(objc, explicit override) = %d, want 16", got)
 	}
 	if got := effectiveFullParseInitialMaxStacks(&Language{Name: "typescript"}, 16); got != 16 {
 		t.Fatalf("effectiveFullParseInitialMaxStacks(typescript, explicit override) = %d, want 16", got)
@@ -1726,10 +1732,16 @@ func TestErrorCostCompetitionLanguageSchemeDefault(t *testing.T) {
 	if !errorCostCompetitionLanguage(&Language{Name: "scheme"}) {
 		t.Fatal("errorCostCompetitionLanguage(scheme) = false, want true")
 	}
+	if !errorCostCompetitionLanguage(&Language{Name: "objc"}) {
+		t.Fatal("errorCostCompetitionLanguage(objc) = false, want true")
+	}
 
 	t.Setenv("GOT_C_RECOVERY", "0")
 	if errorCostCompetitionLanguage(&Language{Name: "scheme"}) {
 		t.Fatal("errorCostCompetitionLanguage(scheme, GOT_C_RECOVERY=0) = true, want false")
+	}
+	if errorCostCompetitionLanguage(&Language{Name: "objc"}) {
+		t.Fatal("errorCostCompetitionLanguage(objc, GOT_C_RECOVERY=0) = true, want false")
 	}
 }
 
