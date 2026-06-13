@@ -1,6 +1,6 @@
 {
- "generated": "2026-06-13T02:01:25Z",
- "commit": "99099c59",
+ "generated": "2026-06-13T02:07:15Z",
+ "commit": "d23dc573",
  "version": "unreleased",
  "tier_rules": {
   "I": "parity-clean and <=1.5x C full-parse, cold <=5ms, blob <=150KB",
@@ -1311,8 +1311,8 @@
    "grammar": "wgsl",
    "tier": "IV",
    "iv_cause": "IV-recovery",
-   "parity": "33/40",
-   "notes": "WGSL empty-return semicolon recovery normalized to C ERROR wrapper, clearing composite/updateSprites residuals; remaining 7/40 are WGSL-specific argument-list, atomic type, const assignment, and root recovery/shape choices, trunc=0 panics=0 (verified 2026-06-12)"
+   "parity": "35/40",
+   "notes": "WGSL argument-list wrapper/trailing missing-identifier and atomic array recovery normalizations cleared opaque/translucent residuals; remaining 5/40 are WGSL-specific const assignment, lhs, and root recovery/shape choices, trunc=0 panics=0 (verified 2026-06-13)"
   },
   {
    "grammar": "wolfram",

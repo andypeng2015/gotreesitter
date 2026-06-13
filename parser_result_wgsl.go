@@ -6,7 +6,11 @@ func normalizeWGSLCompatibility(root *Node, lang *Language) {
 	}
 	walkResultTree(root, func(n *Node) {
 		normalizeWGSLEmptyReturnSemicolonRecovery(n, lang)
+		normalizeWGSLArgumentListErrorWrapper(n, lang)
+		normalizeWGSLTrailingArgumentMissingIdentifier(n, lang)
+		normalizeWGSLAtomicArrayRecovery(n, lang)
 	})
+	refreshWGSLHasError(root)
 }
 
 func normalizeWGSLEmptyReturnSemicolonRecovery(n *Node, lang *Language) {
@@ -55,4 +59,126 @@ func wgslIsEmptyReturnStatement(n *Node, lang *Language) bool {
 	default:
 		return false
 	}
+}
+
+func normalizeWGSLArgumentListErrorWrapper(n *Node, lang *Language) {
+	if n == nil || n.Type(lang) != "argument_list_expression" || resultChildCount(n) != 3 {
+		return
+	}
+	open := resultChildAt(n, 0)
+	err := resultChildAt(n, 1)
+	close := resultChildAt(n, 2)
+	if open == nil || open.Type(lang) != "(" || err == nil || !err.IsError() || close == nil || close.Type(lang) != ")" {
+		return
+	}
+	if err.StartByte() != open.EndByte() || err.EndByte() != close.StartByte() || resultChildCount(err) == 0 {
+		return
+	}
+	errChildren := resultChildSliceForMutation(err)
+	if !wgslLooksLikeArgumentSequence(errChildren, lang) {
+		return
+	}
+	out := make([]*Node, 0, len(errChildren)+2)
+	out = append(out, open)
+	out = append(out, errChildren...)
+	out = append(out, close)
+	replaceNodeChildrenUnfielded(n, out)
+}
+
+func wgslLooksLikeArgumentSequence(children []*Node, lang *Language) bool {
+	wantExpr := true
+	seenExpr := false
+	for _, child := range children {
+		if child == nil {
+			return false
+		}
+		if wantExpr {
+			if child.Type(lang) == "," || child.Type(lang) == ")" || child.IsError() || child.HasError() {
+				return false
+			}
+			seenExpr = true
+			wantExpr = false
+			continue
+		}
+		if child.Type(lang) != "," {
+			return false
+		}
+		wantExpr = true
+	}
+	return seenExpr && !wantExpr
+}
+
+func normalizeWGSLTrailingArgumentMissingIdentifier(n *Node, lang *Language) {
+	if n == nil || n.Type(lang) != "argument_list_expression" || resultChildCount(n) < 4 {
+		return
+	}
+	children := resultChildSliceForMutation(n)
+	if len(children) < 4 {
+		return
+	}
+	close := children[len(children)-1]
+	missing := children[len(children)-2]
+	comma := children[len(children)-3]
+	if close == nil || close.Type(lang) != ")" ||
+		missing == nil || missing.Type(lang) != "identifier" || missing.StartByte() != missing.EndByte() ||
+		comma == nil || comma.Type(lang) != "," || comma.EndByte() != missing.StartByte() {
+		return
+	}
+	out := make([]*Node, 0, len(children)-1)
+	out = append(out, children[:len(children)-2]...)
+	out = append(out, close)
+	replaceNodeChildrenUnfielded(n, out)
+}
+
+func normalizeWGSLAtomicArrayRecovery(n *Node, lang *Language) {
+	if n == nil || n.Type(lang) != "type_declaration" || resultChildCount(n) != 5 {
+		return
+	}
+	children := resultChildSliceForMutation(n)
+	if len(children) != 5 ||
+		children[0] == nil || children[0].Type(lang) != "array" ||
+		children[1] == nil || !children[1].IsError() ||
+		children[2] == nil || children[2].Type(lang) != "<" ||
+		children[3] == nil || children[3].Type(lang) != "type_declaration" ||
+		children[4] == nil || children[4].Type(lang) != ">" {
+		return
+	}
+	errChildren := resultChildSliceForMutation(children[1])
+	if len(errChildren) != 2 ||
+		errChildren[0] == nil || errChildren[0].Type(lang) != "<" ||
+		errChildren[1] == nil || children[1].EndByte() != children[2].StartByte() {
+		return
+	}
+	atomicType := errChildren[1]
+	if atomicType.Type(lang) != "type_declaration" || resultChildCount(atomicType) != 1 {
+		return
+	}
+	atomicIdent := resultChildAt(atomicType, 0)
+	if atomicIdent == nil || atomicIdent.Type(lang) != "identifier" || atomicIdent.StartByte() != errChildren[0].EndByte() {
+		return
+	}
+	open := errChildren[0]
+	nestedOpen := children[2]
+	open.setHasError(false)
+	atomicType.setHasError(false)
+	atomicIdent.setHasError(false)
+	nestedOpen.setHasError(false)
+	err := newParentNodeInArena(n.ownerArena, errorSymbol, true, []*Node{atomicType, nestedOpen}, nil, 0)
+	err.setHasError(true)
+	err.setExtra(true)
+	replaceNodeChildrenUnfielded(n, []*Node{children[0], open, err, children[3], children[4]})
+}
+
+func refreshWGSLHasError(n *Node) bool {
+	if n == nil {
+		return false
+	}
+	hasErr := n.IsError()
+	for i := 0; i < resultChildCount(n); i++ {
+		if refreshWGSLHasError(resultChildAt(n, i)) {
+			hasErr = true
+		}
+	}
+	n.setHasError(hasErr)
+	return hasErr
 }

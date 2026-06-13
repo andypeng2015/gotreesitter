@@ -196,7 +196,7 @@ vhdl	IV-recovery?	14/40	faithful C error-cost version competition (see spec)
 vimdoc	IV-recovery?	0/30	ext=.txt; faithful C error-cost version competition (see spec)
 vue	CLEAN	40/40	in ratchet
 wat	IV-recovery?	4/34	faithful C error-cost version competition (see spec)
-wgsl	IV-recovery	33/40	WGSL empty-return semicolon recovery normalized to C ERROR wrapper, clearing composite/updateSprites residuals; remaining 7/40 are WGSL-specific argument-list, atomic type, const assignment, and root recovery/shape choices, trunc=0 panics=0 (verified 2026-06-12)
+wgsl	IV-recovery	35/40	WGSL argument-list wrapper/trailing missing-identifier and atomic array recovery normalizations cleared opaque/translucent residuals; remaining 5/40 are WGSL-specific const assignment, lhs, and root recovery/shape choices, trunc=0 panics=0 (verified 2026-06-13)
 wolfram	CLEAN	4/4	Wolfram split infix compatibility pass promoted; Docker real-corpus strict parity verified 2026-06-11
 xml	CLEAN	40/40	in ratchet
 yaml	CLEAN	40/40	in ratchet
