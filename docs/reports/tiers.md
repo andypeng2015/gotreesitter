@@ -1,6 +1,6 @@
 # Grammar tiers — unreleased
 
-Generated 2026-06-13T10:54:31Z at `e0269825`. Parity vs the
+Generated 2026-06-13T11:15:51Z at `dc184451`. Parity vs the
 tree-sitter C oracle is the hard gate; performance is the sub-rank
 (rules in `cgo_harness/tier_scan/README.md`).
 
@@ -9,8 +9,8 @@ tree-sitter C oracle is the hard gate; performance is the sub-rank
 | I | 38 |
 | II | 48 |
 | III | 13 |
-| unranked | 16 |
-| IV | 91 |
+| unranked | 17 |
+| IV | 90 |
 
 ## Tier I — parity-clean, fast (38)
 
@@ -24,11 +24,11 @@ tree-sitter C oracle is the hard gate; performance is the sub-rank
 
 `desktop`, `diff`, `dtd`, `eds`, `eex`, `embedded_template`, `facility`, `gomod`, `http`, `nginx`, `ninja`, `properties`, `ssh_config`
 
-## Unranked — parity-clean, perf measurement pending (16)
+## Unranked — parity-clean, perf measurement pending (17)
 
-`ada`, `apex`, `authzed`, `awk`, `bicep`, `bitbake`, `comment`, `doxygen`, `enforce`, `go`, `graphql`, `hlsl`, `hyprlang`, `luau`, `solidity`, `wolfram`
+`ada`, `apex`, `authzed`, `awk`, `bicep`, `bitbake`, `comment`, `doxygen`, `enforce`, `go`, `graphql`, `hlsl`, `hyprlang`, `luau`, `markdown_inline`, `solidity`, `wolfram`
 
-## Tier IV — not parity-clean (91)
+## Tier IV — not parity-clean (90)
 
 | grammar | cause | parity |
 | --- | --- | --- |
@@ -80,7 +80,6 @@ tree-sitter C oracle is the hard gate; performance is the sub-rank
 | `linkerscript` | IV-recovery | 8/40 |
 | `liquid` | IV-recovery? | 11/36 |
 | `make` | IV-recovery? | 19/20 |
-| `markdown_inline` | IV-scanner | 39/40 |
 | `matlab` | IV-recovery? | 4/40 |
 | `mermaid` | IV-recovery? | 0/40 |
 | `meson` | IV-recovery? | 1/30 |

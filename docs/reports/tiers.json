@@ -1,6 +1,6 @@
 {
- "generated": "2026-06-13T10:54:31Z",
- "commit": "e0269825",
+ "generated": "2026-06-13T11:15:51Z",
+ "commit": "dc184451",
  "version": "unreleased",
  "tier_rules": {
   "I": "parity-clean and <=1.5x C full-parse, cold <=5ms, blob <=150KB",
@@ -10,8 +10,8 @@
   "unranked": "parity-clean; perf measurement pending"
  },
  "histogram": {
-  "unranked": 16,
-  "IV": 91,
+  "unranked": 17,
+  "IV": 90,
   "II": 48,
   "I": 38,
   "III": 13
@@ -799,10 +799,9 @@
   },
   {
    "grammar": "markdown_inline",
-   "tier": "IV",
-   "iv_cause": "IV-scanner",
-   "parity": "39/40",
-   "notes": "ext=.md; attribute-bearing inline HTML tags now match C; remaining residual is truncation on docs/src/index.md"
+   "tier": "unranked",
+   "parity": "clean",
+   "perf_source": null
   },
   {
    "grammar": "matlab",
