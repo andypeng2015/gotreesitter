@@ -82,7 +82,7 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 		normalizeBashGeneratedCommandAssignments(ctx.root, ctx.source, ctx.lang)
 		normalizeBashCommandNameArguments(ctx.root, ctx.lang)
 	case "bitbake":
-		normalizeBitbakeCompatibility(ctx.root, ctx.lang)
+		normalizeBitbakeCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "chatito":
 		normalizeChatitoCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "arduino":

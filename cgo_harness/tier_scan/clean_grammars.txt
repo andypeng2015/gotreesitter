@@ -8,6 +8,7 @@ bass
 beancount
 bicep
 bibtex
+bitbake
 capnp
 chatito
 clojure
