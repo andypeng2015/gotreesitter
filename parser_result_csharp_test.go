@@ -185,3 +185,122 @@ func TestNormalizeCSharpCollapsedLeafChildrenRestoresMatrixBlockers(t *testing.T
 		t.Fatalf("interpolated argument start = %d, want %d", got, want)
 	}
 }
+
+func TestNormalizeCSharpImplicitVarTypes(t *testing.T) {
+	lang := &Language{
+		Name: "c_sharp",
+		SymbolNames: []string{
+			"EOF",
+			"root",
+			"variable_declaration",
+			"identifier",
+			"implicit_type",
+			"var",
+			"declaration_pattern",
+			"recursive_pattern",
+			"positional_pattern_clause",
+			"subpattern",
+			"parenthesized_pattern",
+			"(",
+			")",
+		},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF"},
+			{Name: "root", Visible: true, Named: true},
+			{Name: "variable_declaration", Visible: true, Named: true},
+			{Name: "identifier", Visible: true, Named: true},
+			{Name: "implicit_type", Visible: true, Named: true},
+			{Name: "var", Visible: true, Named: false},
+			{Name: "declaration_pattern", Visible: true, Named: true},
+			{Name: "recursive_pattern", Visible: true, Named: true},
+			{Name: "positional_pattern_clause", Visible: true, Named: true},
+			{Name: "subpattern", Visible: true, Named: true},
+			{Name: "parenthesized_pattern", Visible: true, Named: true},
+			{Name: "(", Visible: true, Named: false},
+			{Name: ")", Visible: true, Named: false},
+		},
+	}
+	source := []byte("var x = y;")
+	arena := newNodeArena(arenaClassFull)
+	varIdent := newLeafNodeInArena(arena, 3, true, 0, 3, Point{}, Point{Column: 3})
+	nameIdent := newLeafNodeInArena(arena, 3, true, 4, 5, Point{Column: 4}, Point{Column: 5})
+	decl := newParentNodeInArena(arena, 2, true, []*Node{varIdent, nameIdent}, nil, 0)
+	root := newParentNodeInArena(arena, 1, true, []*Node{decl}, nil, 0)
+
+	normalizeCSharpImplicitVarTypes(root, source, lang)
+
+	typeNode := decl.Child(0)
+	if typeNode == nil || typeNode.Type(lang) != "implicit_type" {
+		t.Fatalf("type child = %#v, want implicit_type", typeNode)
+	}
+	varTok := typeNode.Child(0)
+	if varTok == nil || varTok.Type(lang) != "var" || varTok.IsNamed() {
+		t.Fatalf("implicit type token = %#v, want anonymous var", varTok)
+	}
+	if got := decl.Child(1).Type(lang); got != "identifier" {
+		t.Fatalf("name child type = %q, want identifier", got)
+	}
+}
+
+func TestNormalizeCSharpParenthesizedVarPatterns(t *testing.T) {
+	lang := &Language{
+		Name: "c_sharp",
+		SymbolNames: []string{
+			"EOF",
+			"root",
+			"identifier",
+			"implicit_type",
+			"var",
+			"declaration_pattern",
+			"recursive_pattern",
+			"positional_pattern_clause",
+			"subpattern",
+			"parenthesized_pattern",
+			"(",
+			")",
+		},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF"},
+			{Name: "root", Visible: true, Named: true},
+			{Name: "identifier", Visible: true, Named: true},
+			{Name: "implicit_type", Visible: true, Named: true},
+			{Name: "var", Visible: true, Named: false},
+			{Name: "declaration_pattern", Visible: true, Named: true},
+			{Name: "recursive_pattern", Visible: true, Named: true},
+			{Name: "positional_pattern_clause", Visible: true, Named: true},
+			{Name: "subpattern", Visible: true, Named: true},
+			{Name: "parenthesized_pattern", Visible: true, Named: true},
+			{Name: "(", Visible: true, Named: false},
+			{Name: ")", Visible: true, Named: false},
+		},
+	}
+	source := []byte("(var a)")
+	arena := newNodeArena(arenaClassFull)
+	varIdent := newLeafNodeInArena(arena, 2, true, 1, 4, Point{Column: 1}, Point{Column: 4})
+	nameIdent := newLeafNodeInArena(arena, 2, true, 5, 6, Point{Column: 5}, Point{Column: 6})
+	decl := newParentNodeInArena(arena, 5, true, []*Node{varIdent, nameIdent}, nil, 0)
+	subpattern := newParentNodeInArena(arena, 8, true, []*Node{decl}, nil, 0)
+	clause := newParentNodeInArena(arena, 7, true, []*Node{subpattern}, nil, 0)
+	recursive := newParentNodeInArena(arena, 6, true, []*Node{clause}, nil, 0)
+	recursive.startByte = 0
+	recursive.endByte = 7
+	recursive.startPoint = Point{}
+	recursive.endPoint = Point{Column: 7}
+	root := newParentNodeInArena(arena, 1, true, []*Node{recursive}, nil, 0)
+
+	normalizeCSharpImplicitVarTypes(root, source, lang)
+	normalizeCSharpParenthesizedVarPatterns(root, source, lang)
+
+	if got := recursive.Type(lang); got != "parenthesized_pattern" {
+		t.Fatalf("pattern type = %q, want parenthesized_pattern", got)
+	}
+	if got := recursive.ChildCount(); got != 3 {
+		t.Fatalf("pattern child count = %d, want 3", got)
+	}
+	if got := recursive.Child(1).Type(lang); got != "declaration_pattern" {
+		t.Fatalf("pattern payload type = %q, want declaration_pattern", got)
+	}
+	if got := recursive.Child(1).Child(0).Type(lang); got != "implicit_type" {
+		t.Fatalf("declaration type = %q, want implicit_type", got)
+	}
+}

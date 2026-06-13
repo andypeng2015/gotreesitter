@@ -31,6 +31,8 @@ func normalizeCSharpCompatibility(root *Node, source []byte, p *Parser, lang *La
 		normalizeCSharpConditionalIsPatternExpressions(root, source, lang)
 		normalizeCSharpConditionalExpressionTokens(root, source, lang)
 		normalizeCSharpNullLiteralIdentifiers(root, source, lang)
+		normalizeCSharpImplicitVarTypes(root, source, lang)
+		normalizeCSharpParenthesizedVarPatterns(root, source, lang)
 		normalizeCSharpGenericBaseLists(root, lang)
 		normalizeCSharpTypeConstraintKeywords(root, lang)
 		normalizeCSharpSwitchTupleCasePatterns(root, lang)
@@ -53,6 +55,8 @@ func normalizeCSharpCompatibility(root *Node, source []byte, p *Parser, lang *La
 	normalizeCSharpConditionalIsPatternExpressions(root, source, lang)
 	normalizeCSharpConditionalExpressionTokens(root, source, lang)
 	normalizeCSharpNullLiteralIdentifiers(root, source, lang)
+	normalizeCSharpImplicitVarTypes(root, source, lang)
+	normalizeCSharpParenthesizedVarPatterns(root, source, lang)
 	normalizeCSharpGenericBaseLists(root, lang)
 	normalizeCSharpTypeConstraintKeywords(root, lang)
 	normalizeCSharpSwitchTupleCasePatterns(root, lang)
@@ -156,6 +160,100 @@ func normalizeCSharpNullLiteralIdentifiers(root *Node, source []byte, lang *Lang
 		retagResultRoot(n, nullSym, nullNamed)
 		replaceNodeChildrenUnfielded(n, nil)
 	})
+}
+
+func normalizeCSharpImplicitVarTypes(root *Node, source []byte, lang *Language) {
+	if root == nil || lang == nil || lang.Name != "c_sharp" || len(source) == 0 {
+		return
+	}
+	implicitTypeSym, ok := symbolByName(lang, "implicit_type")
+	if !ok {
+		return
+	}
+	implicitTypeNamed := symbolIsNamed(lang, implicitTypeSym)
+	walkResultTree(root, func(n *Node) {
+		if n == nil || n.ownerArena == nil || !csharpNodeCanContainImplicitVarType(n, lang) {
+			return
+		}
+		for i, child := range n.children {
+			if child == nil || child.Type(lang) != "identifier" || child.startByte >= child.endByte || int(child.endByte) > len(source) {
+				continue
+			}
+			if string(source[child.startByte:child.endByte]) != "var" {
+				continue
+			}
+			varTok, ok := csharpBuildLeafNodeByName(n.ownerArena, source, lang, "var", child.startByte, child.endByte)
+			if !ok {
+				continue
+			}
+			n.children[i] = newParentNodeInArena(n.ownerArena, implicitTypeSym, implicitTypeNamed, []*Node{varTok}, nil, 0)
+		}
+	})
+}
+
+func csharpNodeCanContainImplicitVarType(n *Node, lang *Language) bool {
+	switch n.Type(lang) {
+	case "variable_declaration", "object_creation_expression", "declaration_pattern":
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizeCSharpParenthesizedVarPatterns(root *Node, source []byte, lang *Language) {
+	if root == nil || lang == nil || lang.Name != "c_sharp" || len(source) == 0 {
+		return
+	}
+	parenthesizedPatternSym, ok := symbolByName(lang, "parenthesized_pattern")
+	if !ok {
+		return
+	}
+	parenthesizedPatternNamed := symbolIsNamed(lang, parenthesizedPatternSym)
+	walkResultTree(root, func(n *Node) {
+		if n == nil || n.ownerArena == nil || n.Type(lang) != "recursive_pattern" || resultChildCount(n) != 1 {
+			return
+		}
+		if n.startByte >= n.endByte || int(n.endByte) > len(source) || source[n.startByte] != '(' || source[n.endByte-1] != ')' {
+			return
+		}
+		decl := csharpFindResultDescendantOfType(n, lang, "declaration_pattern")
+		if decl == nil || decl.Type(lang) != "declaration_pattern" || resultChildCount(decl) != 2 {
+			return
+		}
+		typeNode := resultChildAt(decl, 0)
+		if typeNode == nil || typeNode.Type(lang) != "implicit_type" {
+			return
+		}
+		openTok, ok := csharpBuildLeafNodeByName(n.ownerArena, source, lang, "(", n.startByte, n.startByte+1)
+		if !ok {
+			return
+		}
+		closeTok, ok := csharpBuildLeafNodeByName(n.ownerArena, source, lang, ")", n.endByte-1, n.endByte)
+		if !ok {
+			return
+		}
+		retagResultRoot(n, parenthesizedPatternSym, parenthesizedPatternNamed)
+		replaceNodeChildrenUnfielded(n, []*Node{openTok, decl, closeTok})
+	})
+}
+
+func csharpFindResultDescendantOfType(root *Node, lang *Language, want string) *Node {
+	if root == nil || lang == nil {
+		return nil
+	}
+	for i := 0; i < resultChildCount(root); i++ {
+		child := resultChildAt(root, i)
+		if child == nil {
+			continue
+		}
+		if child.Type(lang) == want {
+			return child
+		}
+		if got := csharpFindResultDescendantOfType(child, lang, want); got != nil {
+			return got
+		}
+	}
+	return nil
 }
 
 func normalizeCSharpGenericBaseLists(root *Node, lang *Language) {

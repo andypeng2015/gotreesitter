@@ -1,6 +1,6 @@
 {
- "generated": "2026-06-13T02:09:29Z",
- "commit": "ebdfdd34",
+ "generated": "2026-06-13T02:48:28Z",
+ "commit": "a2849ba1",
  "version": "unreleased",
  "tier_rules": {
   "I": "parity-clean and <=1.5x C full-parse, cold <=5ms, blob <=150KB",
@@ -137,7 +137,7 @@
    "tier": "IV",
    "iv_cause": "IV-recovery",
    "parity": "30/40",
-   "notes": "C# target-typed new/null, conditional token, and generic base-list shape normalizations cleared clean residuals; remaining 10/40 are recovery/error-root or ERROR-span cases requiring faithful C error-cost version competition"
+   "notes": "C# implicit var type and parenthesized var-pattern normalizations clear the focused C-oracle residuals (20/20 on cgo focus); full tier row remains IV pending a 40-case tier rescan, with aggressive real-corpus residuals still in recovery/error-root plus scoped/ref, switch, try/finally, and generic invocation shapes"
   },
   {
    "grammar": "caddy",
