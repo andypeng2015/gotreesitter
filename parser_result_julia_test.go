@@ -105,6 +105,38 @@ func TestJuliaMacroArgumentJuxtapositionCompatibility(t *testing.T) {
 	}
 }
 
+func TestJuliaIndexSingleRowMatrixCompatibility(t *testing.T) {
+	lang := grammars.JuliaLanguage()
+	if lang == nil {
+		t.Fatal("JuliaLanguage returned nil")
+	}
+	source := []byte("edge = di.codelocs[3i-1]\n")
+	parser := gotreesitter.NewParser(lang)
+	tree, err := parser.Parse(source)
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+	if tree == nil || tree.RootNode() == nil {
+		t.Fatal("Parse returned nil tree")
+	}
+	defer tree.Release()
+
+	index := findNodeByText(tree.RootNode(), lang, source, "index_expression", "di.codelocs[3i-1]")
+	if index == nil {
+		t.Fatalf("index_expression not found:\n%s", tree.RootNode().SExpr(lang))
+	}
+	vector := findNodeByText(index, lang, source, "vector_expression", "[3i-1]")
+	if vector == nil {
+		t.Fatalf("vector_expression not found in index; tree:\n%s", tree.RootNode().SExpr(lang))
+	}
+	if got, want := vector.ChildCount(), 3; got != want {
+		t.Fatalf("vector child count = %d, want %d; tree:\n%s", got, want, tree.RootNode().SExpr(lang))
+	}
+	if got := vector.Child(1).Type(lang); got != "binary_expression" {
+		t.Fatalf("vector child[1] = %q, want binary_expression; tree:\n%s", got, tree.RootNode().SExpr(lang))
+	}
+}
+
 func findNodeByText(root *gotreesitter.Node, lang *gotreesitter.Language, source []byte, typ, text string) *gotreesitter.Node {
 	if root == nil {
 		return nil

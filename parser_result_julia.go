@@ -3,6 +3,107 @@ package gotreesitter
 func normalizeJuliaCompatibility(root *Node, source []byte, lang *Language) {
 	normalizeJuliaRecoveredReturnRange(root, source, lang)
 	normalizeJuliaMacroArgumentJuxtaposition(root, source, lang)
+	normalizeJuliaSubscriptSingleRowMatrix(root, source, lang)
+}
+
+func normalizeJuliaSubscriptSingleRowMatrix(root *Node, source []byte, lang *Language) {
+	if root == nil || lang == nil || lang.Name != "julia" || len(source) == 0 {
+		return
+	}
+	matrixSym, ok := symbolByName(lang, "matrix_expression")
+	if !ok {
+		return
+	}
+	matrixRowSym, ok := symbolByName(lang, "matrix_row")
+	if !ok {
+		return
+	}
+	vectorSym, ok := symbolByName(lang, "vector_expression")
+	if !ok {
+		return
+	}
+	binarySym, ok := symbolByName(lang, "binary_expression")
+	if !ok {
+		return
+	}
+	juxtapositionSym, ok := symbolByName(lang, "juxtaposition_expression")
+	if !ok {
+		return
+	}
+	integerSym, ok := symbolByName(lang, "integer_literal")
+	if !ok {
+		return
+	}
+	walkResultTree(root, func(matrix *Node) {
+		if matrix == nil || matrix.symbol != matrixSym {
+			return
+		}
+		children := resultChildSliceForMutation(matrix)
+		rowIndex := 0
+		var open, close *Node
+		if len(children) == 3 {
+			open = children[0]
+			rowIndex = 1
+			close = children[2]
+		} else if len(children) != 1 {
+			return
+		}
+		row := children[rowIndex]
+		if row == nil || row.symbol != matrixRowSym {
+			return
+		}
+		item, ok := juliaSingleIndexMatrixRowItem(row, source, binarySym, juxtapositionSym, integerSym)
+		if !ok {
+			return
+		}
+		if len(children) == 3 {
+			if open == nil || close == nil || open.startByte+1 != open.endByte || close.startByte+1 != close.endByte || int(close.endByte) > len(source) {
+				return
+			}
+			if source[open.startByte] != '[' || source[close.startByte] != ']' {
+				return
+			}
+			children[rowIndex] = item
+		} else {
+			children[0] = item
+		}
+		matrix.symbol = vectorSym
+		matrix.setNamed(symbolIsNamed(lang, vectorSym))
+		matrix.productionID = 0
+		replaceNodeChildrenUnfielded(matrix, cloneNodeSliceInArena(matrix.ownerArena, children))
+	})
+}
+
+func juliaSingleIndexMatrixRowItem(row *Node, source []byte, binarySym, juxtapositionSym, integerSym Symbol) (*Node, bool) {
+	if row == nil {
+		return nil, false
+	}
+	switch resultChildCount(row) {
+	case 1:
+		item := resultChildAt(row, 0)
+		if item == nil || row.startByte != item.startByte || row.endByte != item.endByte {
+			return nil, false
+		}
+		return item, true
+	case 2:
+		first := resultChildAt(row, 0)
+		second := resultChildAt(row, 1)
+		if first == nil || second == nil || first.symbol != integerSym || second.symbol != binarySym || resultChildCount(second) != 3 {
+			return nil, false
+		}
+		left := resultChildAt(second, 0)
+		op := resultChildAt(second, 1)
+		right := resultChildAt(second, 2)
+		if left == nil || op == nil || right == nil || first.endByte != left.startByte || int(left.startByte) > len(source) {
+			return nil, false
+		}
+		juxtaposition := newParentNodeInArena(row.ownerArena, juxtapositionSym, true, cloneNodeSliceInArena(row.ownerArena, []*Node{first, left}), nil, 0)
+		replaceNodeChildrenUnfielded(second, cloneNodeSliceInArena(second.ownerArena, []*Node{juxtaposition, op, right}))
+		second.productionID = 0
+		return second, true
+	default:
+		return nil, false
+	}
 }
 
 func normalizeJuliaMacroArgumentJuxtaposition(root *Node, source []byte, lang *Language) {
