@@ -1,6 +1,6 @@
 {
- "generated": "2026-06-13T23:32:39Z",
- "commit": "2f44ba34",
+ "generated": "2026-06-13T23:44:13Z",
+ "commit": "f41a3704",
  "version": "unreleased",
  "tier_rules": {
   "I": "parity-clean and <=1.5x C full-parse, cold <=5ms, blob <=150KB",
@@ -34,8 +34,8 @@
    "grammar": "angular",
    "tier": "IV",
    "iv_cause": "IV-recovery?",
-   "parity": "36/40",
-   "notes": "Angular non-null assertion recovery normalization clears navigation-list.component.html; ext=.component.html,.ng.html; remaining residuals are faithful C error-cost version competition (see spec)"
+   "parity": "37/40",
+   "notes": "Angular non-null assertion and strong-text ampersand recovery normalization clear navigation-list.component.html and home.component.html; ext=.component.html,.ng.html; remaining residuals are broad root/document recovery cases (see spec)"
   },
   {
    "grammar": "apex",

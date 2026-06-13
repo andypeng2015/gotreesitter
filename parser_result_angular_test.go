@@ -91,6 +91,50 @@ func TestAngularBinaryNonNullAssertionMatchesCRecoveryShape(t *testing.T) {
 	}
 }
 
+func TestAngularStrongAmpersandTextMatchesCRecoveryShape(t *testing.T) {
+	src := []byte("<strong>Opinionated & versatile,</strong>")
+	lang := grammars.AngularLanguage()
+	tree, err := gts.NewParser(lang).Parse(src)
+	if err != nil || tree == nil || tree.RootNode() == nil {
+		t.Fatalf("parse failed: tree=%v err=%v", tree, err)
+	}
+	defer tree.Release()
+
+	root := tree.RootNode()
+	strong := firstNodeByType(root, lang, "element")
+	if strong == nil {
+		t.Fatalf("missing strong element: %s", root.SExpr(lang))
+	}
+	if got, want := strong.ChildCount(), 4; got != want {
+		t.Fatalf("strong child count = %d, want %d; tree=%s", got, want, root.SExpr(lang))
+	}
+	errNode := strong.Child(2)
+	if got := errNode.Type(lang); got != "ERROR" {
+		t.Fatalf("strong child[2] type = %q, want ERROR; tree=%s", got, root.SExpr(lang))
+	}
+	if !errNode.IsExtra() {
+		t.Fatalf("strong ERROR IsExtra = false, want true")
+	}
+	if got, want := errNode.StartByte(), uint32(bytes.Index(src, []byte("& versatile,"))); got != want {
+		t.Fatalf("ERROR start = %d, want %d", got, want)
+	}
+	if got, want := errNode.EndByte(), uint32(bytes.Index(src, []byte("</strong>"))); got != want {
+		t.Fatalf("ERROR end = %d, want %d", got, want)
+	}
+	wantTypes := []string{"ERROR", "regular_expression_flags", "ERROR", "s", "ERROR", "regular_expression_flags", "ERROR", ","}
+	if got, want := errNode.ChildCount(), len(wantTypes); got != want {
+		t.Fatalf("ERROR child count = %d, want %d; tree=%s", got, want, root.SExpr(lang))
+	}
+	for i, want := range wantTypes {
+		if got := errNode.Child(i).Type(lang); got != want {
+			t.Fatalf("ERROR child[%d] type = %q, want %q; tree=%s", i, got, want, root.SExpr(lang))
+		}
+	}
+	if !root.HasError() {
+		t.Fatalf("root HasError = false, want true")
+	}
+}
+
 func firstNodeByType(root *gts.Node, lang *gts.Language, typ string) *gts.Node {
 	if root == nil {
 		return nil

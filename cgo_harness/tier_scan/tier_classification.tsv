@@ -1,7 +1,7 @@
 grammar	tier	parity	fix
 ada	CLEAN	30/30	Ada aggregate/index-constraint compatibility normalized to C oracle; Docker tier parity verified 2026-06-11
 agda	IV-scanner	2/40	layout scanner, deep port needed (maple)
-angular	IV-recovery?	36/40	Angular non-null assertion recovery normalization clears navigation-list.component.html; ext=.component.html,.ng.html; remaining residuals are faithful C error-cost version competition (see spec)
+angular	IV-recovery?	37/40	Angular non-null assertion and strong-text ampersand recovery normalization clear navigation-list.component.html and home.component.html; ext=.component.html,.ng.html; remaining residuals are broad root/document recovery cases (see spec)
 apex	CLEAN	30/30	Apex generic local declarations and .class literal compatibility normalized to C oracle; Docker parity verified 2026-06-11
 arduino	CLEAN	40/40	in ratchet
 asm	IV-recovery	0/40	faithful C error-cost version competition (see spec)
