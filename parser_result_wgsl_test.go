@@ -147,6 +147,76 @@ func TestNormalizeWGSLAtomicArrayRecovery(t *testing.T) {
 	}
 }
 
+func TestNormalizeWGSLRecoveredCallLHSWrapper(t *testing.T) {
+	lang := testWGSLLanguage()
+	arena := newNodeArena(arenaClassFull)
+	ident := newLeafNodeInArena(arena, 16, true, 0, 6, Point{}, Point{Column: 6})
+	lhsSym, lhsNamed, _ := symbolMeta(lang, "lhs_expression")
+	lhs := newParentNodeInArena(arena, lhsSym, lhsNamed, []*Node{ident}, nil, 0)
+	open := newLeafNodeInArena(arena, 11, false, 6, 7, Point{Column: 6}, Point{Column: 7})
+	close := newLeafNodeInArena(arena, 12, false, 7, 8, Point{Column: 7}, Point{Column: 8})
+	err := newParentNodeInArena(arena, errorSymbol, true, []*Node{lhs, open, close}, nil, 0)
+	err.setHasError(true)
+
+	normalizeWGSLCompatibility(err, lang)
+
+	if got, want := err.ChildCount(), 3; got != want {
+		t.Fatalf("ERROR child count = %d, want %d", got, want)
+	}
+	if child := err.Child(0); child == nil || child.Type(lang) != "identifier" {
+		t.Fatalf("first ERROR child = %#v, want identifier", child)
+	}
+	if err.Child(0).StartByte() != 0 || err.Child(0).EndByte() != 6 {
+		t.Fatalf("identifier span = [%d:%d], want [0:6]", err.Child(0).StartByte(), err.Child(0).EndByte())
+	}
+}
+
+func TestNormalizeWGSLConstAssignmentRecovery(t *testing.T) {
+	lang := testWGSLLanguage()
+	arena := newNodeArena(arenaClassFull)
+	open := newLeafNodeInArena(arena, 3, false, 0, 1, Point{}, Point{Column: 1})
+	constIdent := newLeafNodeInArena(arena, 16, true, 2, 7, Point{Column: 2}, Point{Column: 7})
+	constErr := newParentNodeInArena(arena, errorSymbol, true, []*Node{constIdent}, nil, 0)
+	constErr.setHasError(true)
+	name := newLeafNodeInArena(arena, 16, true, 8, 9, Point{Column: 8}, Point{Column: 9})
+	lhsSym, lhsNamed, _ := symbolMeta(lang, "lhs_expression")
+	nameLHS := newParentNodeInArena(arena, lhsSym, lhsNamed, []*Node{name}, nil, 0)
+	eqSym, eqNamed, _ := symbolMeta(lang, "=")
+	eq := newLeafNodeInArena(arena, eqSym, eqNamed, 10, 11, Point{Column: 10}, Point{Column: 11})
+	value := newLeafNodeInArena(arena, 16, true, 12, 13, Point{Column: 12}, Point{Column: 13})
+	assignSym, assignNamed, _ := symbolMeta(lang, "assignment_statement")
+	assign := newParentNodeInArena(arena, assignSym, assignNamed, []*Node{nameLHS, eq, value}, nil, 0)
+	semi := newLeafNodeInArena(arena, 8, false, 13, 14, Point{Column: 13}, Point{Column: 14})
+	close := newLeafNodeInArena(arena, 4, false, 15, 16, Point{Column: 15}, Point{Column: 16})
+	block := newParentNodeInArena(arena, 2, true, []*Node{open, constErr, assign, semi, close}, nil, 0)
+	block.setHasError(true)
+
+	normalizeWGSLCompatibility(block, lang)
+
+	if got, want := block.ChildCount(), 4; got != want {
+		t.Fatalf("compound child count = %d, want %d", got, want)
+	}
+	rewritten := block.Child(1)
+	if rewritten == nil || rewritten.Type(lang) != "assignment_statement" {
+		t.Fatalf("child 1 = %#v, want assignment_statement", rewritten)
+	}
+	if got, want := rewritten.StartByte(), uint32(2); got != want {
+		t.Fatalf("assignment start = %d, want %d", got, want)
+	}
+	for i, want := range []string{"lhs_expression", "ERROR", "=", "identifier"} {
+		if got := rewritten.Child(i).Type(lang); got != want {
+			t.Fatalf("assignment child %d type = %q, want %q", i, got, want)
+		}
+	}
+	nameErr := rewritten.Child(1)
+	if !nameErr.IsExtra() || !nameErr.HasError() {
+		t.Fatalf("name ERROR flags: extra=%v hasError=%v, want both true", nameErr.IsExtra(), nameErr.HasError())
+	}
+	if child := nameErr.Child(0); child == nil || child.Type(lang) != "identifier" || child.StartByte() != 8 {
+		t.Fatalf("name ERROR child = %#v, want identifier at byte 8", child)
+	}
+}
+
 func testWGSLLanguage() *Language {
 	return &Language{
 		Name: "wgsl",
@@ -173,6 +243,9 @@ func testWGSLLanguage() *Language {
 			">",
 			"array",
 			"u32",
+			"assignment_statement",
+			"lhs_expression",
+			"=",
 		},
 		SymbolMetadata: []SymbolMetadata{
 			{Name: "EOF"},
@@ -197,6 +270,9 @@ func testWGSLLanguage() *Language {
 			{Name: ">", Visible: true, Named: false},
 			{Name: "array", Visible: true, Named: false},
 			{Name: "u32", Visible: true, Named: false},
+			{Name: "assignment_statement", Visible: true, Named: true},
+			{Name: "lhs_expression", Visible: true, Named: true},
+			{Name: "=", Visible: true, Named: false},
 		},
 	}
 }

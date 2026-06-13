@@ -9,6 +9,8 @@ func normalizeWGSLCompatibility(root *Node, lang *Language) {
 		normalizeWGSLArgumentListErrorWrapper(n, lang)
 		normalizeWGSLTrailingArgumentMissingIdentifier(n, lang)
 		normalizeWGSLAtomicArrayRecovery(n, lang)
+		normalizeWGSLRecoveredCallLHSWrapper(n, lang)
+		normalizeWGSLConstAssignmentRecovery(n, lang)
 	})
 	refreshWGSLHasError(root)
 }
@@ -167,6 +169,96 @@ func normalizeWGSLAtomicArrayRecovery(n *Node, lang *Language) {
 	err.setHasError(true)
 	err.setExtra(true)
 	replaceNodeChildrenUnfielded(n, []*Node{children[0], open, err, children[3], children[4]})
+}
+
+func normalizeWGSLRecoveredCallLHSWrapper(n *Node, lang *Language) {
+	if n == nil || !n.IsError() || resultChildCount(n) == 0 {
+		return
+	}
+	children := resultChildSliceForMutation(n)
+	changed := false
+	for i, child := range children {
+		if child == nil || child.Type(lang) != "lhs_expression" || resultChildCount(child) != 1 {
+			continue
+		}
+		inner := resultChildAt(child, 0)
+		if inner == nil || inner.Type(lang) != "identifier" || inner.StartByte() != child.StartByte() || inner.EndByte() != child.EndByte() {
+			continue
+		}
+		children[i] = inner
+		changed = true
+	}
+	if changed {
+		replaceNodeChildrenUnfielded(n, children)
+	}
+}
+
+func normalizeWGSLConstAssignmentRecovery(n *Node, lang *Language) {
+	if n == nil || n.Type(lang) != "compound_statement" || resultChildCount(n) < 2 {
+		return
+	}
+	lhsSym, lhsNamed, ok := symbolMeta(lang, "lhs_expression")
+	if !ok {
+		return
+	}
+	children := resultChildSliceForMutation(n)
+	out := make([]*Node, 0, len(children))
+	changed := false
+	for i := 0; i < len(children); i++ {
+		cur := children[i]
+		if i+1 < len(children) && wgslIsConstKeywordError(cur, lang) && wgslLooksLikeConstAssignmentTail(children[i+1], lang) {
+			assign := children[i+1]
+			assignChildren := resultChildSliceForMutation(assign)
+			constIdent := resultChildAt(cur, 0)
+			nameLHS := assignChildren[0]
+			nameIdent := resultChildAt(nameLHS, 0)
+			constLHS := newParentNodeInArena(n.ownerArena, lhsSym, lhsNamed, []*Node{constIdent}, nil, 0)
+			nameErr := newParentNodeInArena(n.ownerArena, errorSymbol, true, []*Node{nameIdent}, nil, 0)
+			nameErr.setExtra(true)
+			nameErr.setHasError(true)
+			rebuiltChildren := make([]*Node, 0, len(assignChildren)+1)
+			rebuiltChildren = append(rebuiltChildren, constLHS, nameErr)
+			rebuiltChildren = append(rebuiltChildren, assignChildren[1:]...)
+			replaceNodeChildrenUnfielded(assign, rebuiltChildren)
+			assign.startByte = cur.StartByte()
+			assign.startPoint = cur.StartPoint()
+			assign.setHasError(true)
+			out = append(out, assign)
+			i++
+			changed = true
+			continue
+		}
+		out = append(out, cur)
+	}
+	if changed {
+		replaceNodeChildrenUnfielded(n, out)
+		n.setHasError(true)
+	}
+}
+
+func wgslIsConstKeywordError(n *Node, lang *Language) bool {
+	if n == nil || !n.IsError() || resultChildCount(n) != 1 {
+		return false
+	}
+	child := resultChildAt(n, 0)
+	return child != nil && child.Type(lang) == "identifier" && child.StartByte() == n.StartByte() &&
+		child.EndByte() == n.EndByte()
+}
+
+func wgslLooksLikeConstAssignmentTail(n *Node, lang *Language) bool {
+	if n == nil || n.Type(lang) != "assignment_statement" || resultChildCount(n) < 3 {
+		return false
+	}
+	lhs := resultChildAt(n, 0)
+	if lhs == nil || lhs.Type(lang) != "lhs_expression" || resultChildCount(lhs) != 1 {
+		return false
+	}
+	name := resultChildAt(lhs, 0)
+	eq := resultChildAt(n, 1)
+	return name != nil && name.Type(lang) == "identifier" &&
+		eq != nil && eq.Type(lang) == "=" &&
+		name.EndByte() == name.StartByte()+1 &&
+		name.EndByte() < eq.StartByte()
 }
 
 func refreshWGSLHasError(n *Node) bool {

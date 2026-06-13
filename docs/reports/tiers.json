@@ -1,6 +1,6 @@
 {
- "generated": "2026-06-13T12:14:48Z",
- "commit": "970fdbc4",
+ "generated": "2026-06-13T12:28:24Z",
+ "commit": "4ffc495a",
  "version": "unreleased",
  "tier_rules": {
   "I": "parity-clean and <=1.5x C full-parse, cold <=5ms, blob <=150KB",
@@ -1310,8 +1310,8 @@
    "grammar": "wgsl",
    "tier": "IV",
    "iv_cause": "IV-recovery",
-   "parity": "35/40",
-   "notes": "WGSL argument-list wrapper/trailing missing-identifier and atomic array recovery normalizations cleared opaque/translucent residuals; remaining 5/40 are WGSL-specific const assignment, lhs, and root recovery/shape choices, trunc=0 panics=0 (verified 2026-06-13)"
+   "parity": "36/40",
+   "notes": "WGSL one-letter const assignment and recovered-call lhs wrapper normalizations cleared common.wgsl; remaining 4/40 are radiosity compound/expression shape plus blur/normalMap/particle root recovery choices, trunc=0 panics=0 (verified 2026-06-13)"
   },
   {
    "grammar": "wolfram",
