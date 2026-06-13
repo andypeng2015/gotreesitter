@@ -148,6 +148,8 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 		normalizeHTMLCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "http":
 		normalizeHTTPCompatibility(ctx.root, ctx.source, ctx.lang)
+	case "hurl":
+		normalizeHurlCompatibility(ctx.root, ctx.lang)
 	case "hlsl":
 		normalizeHLSLCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "hyprlang":

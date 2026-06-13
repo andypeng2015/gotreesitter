@@ -1,6 +1,6 @@
 {
- "generated": "2026-06-13T01:16:48Z",
- "commit": "181ce69f",
+ "generated": "2026-06-13T01:35:27Z",
+ "commit": "385d7d67",
  "version": "unreleased",
  "tier_rules": {
   "I": "parity-clean and <=1.5x C full-parse, cold <=5ms, blob <=150KB",
@@ -635,8 +635,8 @@
    "grammar": "hurl",
    "tier": "IV",
    "iv_cause": "IV-recovery",
-   "parity": "13/40",
-   "notes": "faithful C error-cost version competition (see spec)"
+   "parity": "14/40",
+   "notes": "file, trailing error-root wrapper normalization cleared one exact C-oracle residual; remaining 26 are root recovery/child-count shape with 1 no_stacks_alive truncation"
   },
   {
    "grammar": "hyprlang",
