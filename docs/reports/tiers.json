@@ -1,6 +1,6 @@
 {
- "generated": "2026-06-13T11:43:45Z",
- "commit": "b93c1ed6",
+ "generated": "2026-06-13T12:14:48Z",
+ "commit": "970fdbc4",
  "version": "unreleased",
  "tier_rules": {
   "I": "parity-clean and <=1.5x C full-parse, cold <=5ms, blob <=150KB",
@@ -736,8 +736,8 @@
    "grammar": "kotlin",
    "tier": "IV",
    "iv_cause": "IV-recovery",
-   "parity": "35/40",
-   "notes": "Kotlin raw triple-quoted string trailing-content normalization lifted current Docker D-tier real-corpus parity from 33/40 to 35/40 on 2026-06-13; no truncation or panics. Prior collapsed import identifier, callable_reference, receiver-swallowed function name, and leading-trivia root normalizers had already cleared the named generated-corpus residuals on this base. Remaining 5 current real-corpus failures are Kotlin-local generic call/type-argument shape (build.gradle.kts, CommunityProjectsBuild.kt, Dokka.kt), prefix-increment comparison precedence (TakeBenchmark.kt), and broad root recovery fragmentation (ReactorPlaysScrabble.kt)."
+   "parity": "39/40",
+   "notes": "Kotlin generic call/type-argument and prefix comparison normalizers lifted current Docker D-tier real-corpus parity from 35/40 to 39/40 on 2026-06-13; no truncation or panics. Remaining current real-corpus failure is broad root recovery fragmentation in ReactorPlaysScrabble.kt."
   },
   {
    "grammar": "ledger",
