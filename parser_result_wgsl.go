@@ -11,6 +11,8 @@ func normalizeWGSLCompatibility(root *Node, lang *Language) {
 		normalizeWGSLAtomicArrayRecovery(n, lang)
 		normalizeWGSLRecoveredCallLHSWrapper(n, lang)
 		normalizeWGSLConstAssignmentRecovery(n, lang)
+		normalizeWGSLRecoveredCallAssignment(n, lang)
+		normalizeWGSLRecoveredU32CallArgument(n, lang)
 	})
 	refreshWGSLHasError(root)
 }
@@ -259,6 +261,233 @@ func wgslLooksLikeConstAssignmentTail(n *Node, lang *Language) bool {
 		eq != nil && eq.Type(lang) == "=" &&
 		name.EndByte() == name.StartByte()+1 &&
 		name.EndByte() < eq.StartByte()
+}
+
+type wgslRecoveredCallAssignmentSymbols struct {
+	assignmentStatement              Symbol
+	assignmentStatementNamed         bool
+	lhsExpression                    Symbol
+	lhsExpressionNamed               bool
+	compoundAssignmentOperator       Symbol
+	compoundAssignmentOperatorNamed  bool
+	plusEq                           Symbol
+	plusEqNamed                      bool
+	parenthesizedExpression          Symbol
+	parenthesizedExpressionNamed     bool
+	binaryExpression                 Symbol
+	binaryExpressionNamed            bool
+	compositeValueDecomposition      Symbol
+	compositeValueDecompositionNamed bool
+}
+
+func normalizeWGSLRecoveredCallAssignment(n *Node, lang *Language) {
+	if n == nil || n.Type(lang) != "compound_statement" || resultChildCount(n) == 0 {
+		return
+	}
+	syms, ok := wgslRecoveredCallAssignmentSymbolSet(lang)
+	if !ok {
+		return
+	}
+	children := resultChildSliceForMutation(n)
+	out := make([]*Node, 0, len(children)+1)
+	changed := false
+	for _, child := range children {
+		if assignment, semi, ok := wgslBuildRecoveredCallAssignment(child, lang, syms); ok {
+			out = append(out, assignment, semi)
+			changed = true
+			continue
+		}
+		out = append(out, child)
+	}
+	if changed {
+		replaceNodeChildrenUnfielded(n, out)
+		n.setHasError(true)
+	}
+}
+
+func wgslRecoveredCallAssignmentSymbolSet(lang *Language) (wgslRecoveredCallAssignmentSymbols, bool) {
+	assignSym, assignNamed, ok := symbolMeta(lang, "assignment_statement")
+	if !ok {
+		return wgslRecoveredCallAssignmentSymbols{}, false
+	}
+	lhsSym, lhsNamed, ok := symbolMeta(lang, "lhs_expression")
+	if !ok {
+		return wgslRecoveredCallAssignmentSymbols{}, false
+	}
+	compoundSym, compoundNamed, ok := symbolMeta(lang, "compound_assignment_operator")
+	if !ok {
+		return wgslRecoveredCallAssignmentSymbols{}, false
+	}
+	plusEqSym, plusEqNamed, ok := symbolMeta(lang, "+=")
+	if !ok {
+		return wgslRecoveredCallAssignmentSymbols{}, false
+	}
+	parenSym, parenNamed, ok := symbolMeta(lang, "parenthesized_expression")
+	if !ok {
+		return wgslRecoveredCallAssignmentSymbols{}, false
+	}
+	binarySym, binaryNamed, ok := symbolMeta(lang, "binary_expression")
+	if !ok {
+		return wgslRecoveredCallAssignmentSymbols{}, false
+	}
+	compositeSym, compositeNamed, ok := symbolMeta(lang, "composite_value_decomposition_expression")
+	if !ok {
+		return wgslRecoveredCallAssignmentSymbols{}, false
+	}
+	return wgslRecoveredCallAssignmentSymbols{
+		assignmentStatement:              assignSym,
+		assignmentStatementNamed:         assignNamed,
+		lhsExpression:                    lhsSym,
+		lhsExpressionNamed:               lhsNamed,
+		compoundAssignmentOperator:       compoundSym,
+		compoundAssignmentOperatorNamed:  compoundNamed,
+		plusEq:                           plusEqSym,
+		plusEqNamed:                      plusEqNamed,
+		parenthesizedExpression:          parenSym,
+		parenthesizedExpressionNamed:     parenNamed,
+		binaryExpression:                 binarySym,
+		binaryExpressionNamed:            binaryNamed,
+		compositeValueDecomposition:      compositeSym,
+		compositeValueDecompositionNamed: compositeNamed,
+	}, true
+}
+
+func wgslBuildRecoveredCallAssignment(n *Node, lang *Language, syms wgslRecoveredCallAssignmentSymbols) (*Node, *Node, bool) {
+	if n == nil || !n.IsError() || resultChildCount(n) != 3 {
+		return nil, nil, false
+	}
+	callee := resultChildAt(n, 0)
+	parenLHS := resultChildAt(n, 1)
+	semi := resultChildAt(n, 2)
+	if callee == nil || callee.Type(lang) != "identifier" ||
+		parenLHS == nil || parenLHS.Type(lang) != "lhs_expression" || resultChildCount(parenLHS) != 4 ||
+		semi == nil || semi.Type(lang) != ";" ||
+		callee.EndByte() != parenLHS.StartByte() || parenLHS.EndByte() != semi.StartByte() {
+		return nil, nil, false
+	}
+	open := resultChildAt(parenLHS, 0)
+	argErr := resultChildAt(parenLHS, 1)
+	tailLHS := resultChildAt(parenLHS, 2)
+	close := resultChildAt(parenLHS, 3)
+	if open == nil || open.Type(lang) != "(" ||
+		argErr == nil || !argErr.IsError() || resultChildCount(argErr) != 3 ||
+		tailLHS == nil || tailLHS.Type(lang) != "lhs_expression" || resultChildCount(tailLHS) != 2 ||
+		close == nil || close.Type(lang) != ")" ||
+		open.StartByte() != callee.EndByte() || close.EndByte() != parenLHS.EndByte() {
+		return nil, nil, false
+	}
+	leftComposite, rightErr, ok := wgslBuildRecoveredCallBinaryLeft(argErr, lang, syms)
+	if !ok {
+		return nil, nil, false
+	}
+	star := resultChildAt(tailLHS, 0)
+	right := resultChildAt(tailLHS, 1)
+	if star == nil || star.Type(lang) != "*" || right == nil || right.Type(lang) != "identifier" {
+		return nil, nil, false
+	}
+	binary := newParentNodeInArena(n.ownerArena, syms.binaryExpression, syms.binaryExpressionNamed, []*Node{leftComposite, rightErr, star, right}, nil, 0)
+	binary.setHasError(true)
+	paren := newParentNodeInArena(n.ownerArena, syms.parenthesizedExpression, syms.parenthesizedExpressionNamed, []*Node{open, binary, close}, nil, 0)
+	paren.setHasError(true)
+	lhs := newParentNodeInArena(n.ownerArena, syms.lhsExpression, syms.lhsExpressionNamed, []*Node{callee}, nil, 0)
+	plusEq := newLeafNodeInArena(n.ownerArena, syms.plusEq, syms.plusEqNamed, open.StartByte(), open.StartByte(), open.StartPoint(), open.StartPoint())
+	plusEq.setMissing(true)
+	plusEq.setHasError(true)
+	op := newParentNodeInArena(n.ownerArena, syms.compoundAssignmentOperator, syms.compoundAssignmentOperatorNamed, []*Node{plusEq}, nil, 0)
+	op.setHasError(true)
+	assignment := newParentNodeInArena(n.ownerArena, syms.assignmentStatement, syms.assignmentStatementNamed, []*Node{lhs, op, paren}, nil, 0)
+	assignment.setHasError(true)
+	return assignment, semi, true
+}
+
+func wgslBuildRecoveredCallBinaryLeft(argErr *Node, lang *Language, syms wgslRecoveredCallAssignmentSymbols) (*Node, *Node, bool) {
+	first := resultChildAt(argErr, 0)
+	outerComma := resultChildAt(argErr, 1)
+	outerIdent := resultChildAt(argErr, 2)
+	if first == nil || first.Type(lang) != "lhs_expression" || resultChildCount(first) != 2 ||
+		outerComma == nil || outerComma.Type(lang) != "," ||
+		outerIdent == nil || outerIdent.Type(lang) != "identifier" {
+		return nil, nil, false
+	}
+	base := resultChildAt(first, 0)
+	postfix := resultChildAt(first, 1)
+	if base == nil || base.Type(lang) != "identifier" ||
+		postfix == nil || postfix.Type(lang) != "postfix_expression" || resultChildCount(postfix) != 4 {
+		return nil, nil, false
+	}
+	dot0 := resultChildAt(postfix, 0)
+	fieldErr := resultChildAt(postfix, 1)
+	nextBase := resultChildAt(postfix, 2)
+	nextPostfix := resultChildAt(postfix, 3)
+	if dot0 == nil || dot0.Type(lang) != "." ||
+		fieldErr == nil || !fieldErr.IsError() || resultChildCount(fieldErr) != 2 ||
+		nextBase == nil || nextBase.Type(lang) != "identifier" ||
+		nextPostfix == nil || nextPostfix.Type(lang) != "postfix_expression" || resultChildCount(nextPostfix) != 2 {
+		return nil, nil, false
+	}
+	field := resultChildAt(fieldErr, 0)
+	innerComma := resultChildAt(fieldErr, 1)
+	dot1 := resultChildAt(nextPostfix, 0)
+	nextField := resultChildAt(nextPostfix, 1)
+	if field == nil || field.Type(lang) != "identifier" ||
+		innerComma == nil || innerComma.Type(lang) != "," ||
+		dot1 == nil || dot1.Type(lang) != "." ||
+		nextField == nil || nextField.Type(lang) != "identifier" {
+		return nil, nil, false
+	}
+	innerComposite := newParentNodeInArena(argErr.ownerArena, syms.compositeValueDecomposition, syms.compositeValueDecompositionNamed, []*Node{base, dot0, field}, nil, 0)
+	midErr := newParentNodeInArena(argErr.ownerArena, errorSymbol, true, []*Node{innerComma, nextBase}, nil, 0)
+	midErr.setExtra(true)
+	midErr.setHasError(true)
+	outerComposite := newParentNodeInArena(argErr.ownerArena, syms.compositeValueDecomposition, syms.compositeValueDecompositionNamed, []*Node{innerComposite, midErr, dot1, nextField}, nil, 0)
+	outerComposite.setHasError(true)
+	rightErr := newParentNodeInArena(argErr.ownerArena, errorSymbol, true, []*Node{outerComma, outerIdent}, nil, 0)
+	rightErr.setExtra(true)
+	rightErr.setHasError(true)
+	return outerComposite, rightErr, true
+}
+
+func normalizeWGSLRecoveredU32CallArgument(n *Node, lang *Language) {
+	if n == nil || n.Type(lang) != "parenthesized_expression" || resultChildCount(n) != 4 {
+		return
+	}
+	typeCallSym, typeCallNamed, ok := symbolMeta(lang, "type_constructor_or_function_call_expression")
+	if !ok {
+		return
+	}
+	typeDeclSym, typeDeclNamed, ok := symbolMeta(lang, "type_declaration")
+	if !ok {
+		return
+	}
+	argListSym, argListNamed, ok := symbolMeta(lang, "argument_list_expression")
+	if !ok {
+		return
+	}
+	children := resultChildSliceForMutation(n)
+	open := children[0]
+	err := children[1]
+	argsParen := children[2]
+	close := children[3]
+	if open == nil || open.Type(lang) != "(" ||
+		err == nil || !err.IsError() || resultChildCount(err) != 3 ||
+		argsParen == nil || argsParen.Type(lang) != "parenthesized_expression" || resultChildCount(argsParen) != 3 ||
+		close == nil || close.Type(lang) != ")" {
+		return
+	}
+	errPrefix := resultChildSliceRangeForMutation(err, 0, 2)
+	callee := resultChildAt(err, 2)
+	if callee == nil || callee.Type(lang) != "u32" || errPrefix[1] == nil || errPrefix[1].Type(lang) != "," ||
+		callee.EndByte() != argsParen.StartByte() {
+		return
+	}
+	trimmedErr := newParentNodeInArena(n.ownerArena, errorSymbol, true, errPrefix, nil, 0)
+	trimmedErr.setExtra(true)
+	trimmedErr.setHasError(true)
+	typeDecl := newParentNodeInArena(n.ownerArena, typeDeclSym, typeDeclNamed, []*Node{callee}, nil, 0)
+	argList := newParentNodeInArena(n.ownerArena, argListSym, argListNamed, resultChildSliceForMutation(argsParen), nil, 0)
+	typeCall := newParentNodeInArena(n.ownerArena, typeCallSym, typeCallNamed, []*Node{typeDecl, argList}, nil, 0)
+	replaceNodeChildrenUnfielded(n, []*Node{open, trimmedErr, typeCall, close})
+	n.setHasError(true)
 }
 
 func refreshWGSLHasError(n *Node) bool {
