@@ -98,7 +98,7 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 	case "comment":
 		normalizeCommentTrailingExtraTrivia(ctx.root, ctx.source, ctx.lang)
 	case "cooklang":
-		normalizeCooklangTrailingStepTail(ctx.root, ctx.source, ctx.lang)
+		normalizeCooklangCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "corn":
 		normalizeCornCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "crystal":

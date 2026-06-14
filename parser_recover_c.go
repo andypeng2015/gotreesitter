@@ -257,6 +257,12 @@ func errorCostCompetitionLanguage(lang *Language) bool {
 		// ERROR(type_arguments)+call_suffix artifact is normalized in
 		// parser_result_kotlin.go.
 		return true
+	case "cooklang":
+		// Tiny-corpus Tier-IV probe: Cooklang's three .cook witnesses need C's
+		// recovery-cost election to finish with a recipe root and accepted full
+		// spans. Remaining Cooklang-local result shape is normalized in
+		// parser_result_cooklang.go.
+		return true
 	}
 	return false
 }
