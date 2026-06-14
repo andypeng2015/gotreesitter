@@ -886,8 +886,8 @@
    "grammar": "objc",
    "tier": "IV",
    "iv_cause": "IV-recovery",
-   "parity": "22/40",
-   "notes": "ObjC-local method_type/protocol-argument type_identifier, @ string/concatenated_string, and sizeof(type_identifier) result normalization lifts default cap-2 C-oracle D-tier from 2/40 to 22/40 with trunc 0, panics 0 (Docker 2026-06-14). Residuals are function-pointer declaration-vs-expression, compound/root recovery shape, and remaining type_identifier contexts such as struct/member declarations."
+   "parity": "25/40",
+   "notes": "ObjC-local struct sized_type_specifier, @encode type_identifier, and function-pointer declaration-as-expression normalizations lift default cap-2 C-oracle D-tier from 22/40 to 25/40 with trunc 0, panics 0 (Docker 2026-06-14), clearing NSArray+GNUstepBase.m, NSPropertyList+GNUstepBase.m, and GSObjCRuntime.m. Residuals are compound/root recovery shape, macro-call declaration-as-expression, cast-vs-binary expression shape, comma-expression arity, and remaining parameter_list/declaration shape contexts."
   },
   {
    "grammar": "ocaml",

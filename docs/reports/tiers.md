@@ -87,7 +87,7 @@ tree-sitter C oracle is the hard gate; performance is the sub-rank
 | `nim` | IV-recovery? | 3/40 |
 | `norg` | IV-scanner | 0/2 |
 | `nushell` | IV-recovery? | 5/40 |
-| `objc` | IV-recovery | 22/40 |
+| `objc` | IV-recovery | 25/40 |
 | `odin` | IV-recovery? | 13/40 |
 | `org` | IV-recovery? | 5/39 |
 | `pascal` | IV-recovery? | 0/40 |

@@ -137,6 +137,93 @@ func TestObjcAtConcatenatedStringLiteralIsFlattened(t *testing.T) {
 	}
 }
 
+func TestObjcStructSizedTypeSpecifierIsCoalesced(t *testing.T) {
+	src := []byte("@interface Box : NSObject\n{\n  unsigned long _version;\n}\n@end\n")
+	lang := grammars.ObjcLanguage()
+	tree, err := gts.NewParser(lang).Parse(src)
+	if err != nil || tree == nil || tree.RootNode() == nil {
+		t.Fatalf("parse failed: tree=%v err=%v", tree, err)
+	}
+	defer tree.Release()
+
+	decl := firstObjcNodeByTypeAndText(tree.RootNode(), lang, src, "struct_declaration", "unsigned long _version;")
+	if decl == nil {
+		t.Fatalf("missing struct_declaration: %s", tree.RootNode().SExpr(lang))
+	}
+	if got, want := decl.ChildCount(), 3; got != want {
+		t.Fatalf("struct_declaration child count = %d, want %d; tree=%s", got, want, tree.RootNode().SExpr(lang))
+	}
+	sized := decl.Child(0)
+	if got, want := sized.Type(lang), "sized_type_specifier"; got != want {
+		t.Fatalf("struct_declaration child 0 = %q, want %q; tree=%s", got, want, tree.RootNode().SExpr(lang))
+	}
+	if got, want := sized.ChildCount(), 2; got != want {
+		t.Fatalf("sized_type_specifier child count = %d, want %d; tree=%s", got, want, tree.RootNode().SExpr(lang))
+	}
+}
+
+func TestObjcEncodeTypeUsesTypeIdentifier(t *testing.T) {
+	src := []byte("void f(id coder) { [coder encodeValueOfObjCType: @encode(NSUInteger) at: 0]; }\n")
+	lang := grammars.ObjcLanguage()
+	tree, err := gts.NewParser(lang).Parse(src)
+	if err != nil || tree == nil || tree.RootNode() == nil {
+		t.Fatalf("parse failed: tree=%v err=%v", tree, err)
+	}
+	defer tree.Release()
+
+	typeName := firstObjcNodeByTypeAndText(tree.RootNode(), lang, src, "type_name", "NSUInteger")
+	if typeName == nil {
+		t.Fatalf("missing encode type_name: %s", tree.RootNode().SExpr(lang))
+	}
+	if got, want := typeName.Child(0).Type(lang), "type_identifier"; got != want {
+		t.Fatalf("encode type_name child = %q, want %q; tree=%s", got, want, tree.RootNode().SExpr(lang))
+	}
+}
+
+func TestObjcFunctionPointerDeclarationCanMatchExpressionOracle(t *testing.T) {
+	src := []byte("void f() { NSComparisonResult (*imp)(id, SEL, id); }\n")
+	lang := grammars.ObjcLanguage()
+	tree, err := gts.NewParser(lang).Parse(src)
+	if err != nil || tree == nil || tree.RootNode() == nil {
+		t.Fatalf("parse failed: tree=%v err=%v", tree, err)
+	}
+	defer tree.Release()
+
+	stmt := firstObjcNodeByTypeAndText(tree.RootNode(), lang, src, "expression_statement", "NSComparisonResult (*imp)(id, SEL, id);")
+	if stmt == nil {
+		t.Fatalf("missing expression_statement: %s", tree.RootNode().SExpr(lang))
+	}
+	if firstObjcNodeByTypeAndText(stmt, lang, src, "declaration", "NSComparisonResult (*imp)(id, SEL, id);") != nil {
+		t.Fatalf("function pointer expression retained declaration shape: %s", tree.RootNode().SExpr(lang))
+	}
+	call := firstObjcNodeByTypeAndText(stmt, lang, src, "call_expression", "NSComparisonResult (*imp)(id, SEL, id)")
+	if call == nil {
+		t.Fatalf("missing expression-style call: %s", tree.RootNode().SExpr(lang))
+	}
+}
+
+func TestObjcInitializedFunctionPointerDeclarationCanMatchExpressionOracle(t *testing.T) {
+	src := []byte("void f() { NSComparisonResult (*comp)(id, SEL, id) = 0; }\n")
+	lang := grammars.ObjcLanguage()
+	tree, err := gts.NewParser(lang).Parse(src)
+	if err != nil || tree == nil || tree.RootNode() == nil {
+		t.Fatalf("parse failed: tree=%v err=%v", tree, err)
+	}
+	defer tree.Release()
+
+	stmt := firstObjcNodeByTypeAndText(tree.RootNode(), lang, src, "expression_statement", "NSComparisonResult (*comp)(id, SEL, id) = 0;")
+	if stmt == nil {
+		t.Fatalf("missing expression_statement: %s", tree.RootNode().SExpr(lang))
+	}
+	assign := firstObjcNodeByTypeAndText(stmt, lang, src, "assignment_expression", "NSComparisonResult (*comp)(id, SEL, id) = 0")
+	if assign == nil {
+		t.Fatalf("missing expression-style assignment: %s", tree.RootNode().SExpr(lang))
+	}
+	if firstObjcNodeByTypeAndText(stmt, lang, src, "declaration", "NSComparisonResult (*comp)(id, SEL, id) = 0;") != nil {
+		t.Fatalf("initialized function pointer expression retained declaration shape: %s", tree.RootNode().SExpr(lang))
+	}
+}
+
 func firstObjcNodeByType(n *gts.Node, lang *gts.Language, typ string) *gts.Node {
 	if n == nil {
 		return nil
