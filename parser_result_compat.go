@@ -101,6 +101,8 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 		normalizeCooklangTrailingStepTail(ctx.root, ctx.source, ctx.lang)
 	case "corn":
 		normalizeCornCompatibility(ctx.root, ctx.source, ctx.lang)
+	case "crystal":
+		normalizeCrystalCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "cpon":
 		normalizeCPONCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "cue":

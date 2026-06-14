@@ -1,6 +1,6 @@
 {
- "generated": "2026-06-14T00:27:58Z",
- "commit": "51df7c88",
+ "generated": "2026-06-14T02:16:05Z",
+ "commit": "64a17b94",
  "version": "unreleased",
  "tier_rules": {
   "I": "parity-clean and <=1.5x C full-parse, cold <=5ms, blob <=150KB",
@@ -234,8 +234,8 @@
    "grammar": "crystal",
    "tier": "IV",
    "iv_cause": "IV-shape?",
-   "parity": "14/40",
-   "notes": "cap=2 landed (was unmeasurable: markd entities.cr 111KB uniform hash literal never finishes at default cap >240s, 95% CPU in glr.go merge-equiv frontier rescans, ~2x input -> ~25x time; cap2 parses it in 130ms; caps 1/2 measure parity-identical 14/40, cap3 truncates entities.cr); MEASURE-DTIER N=40: medianRatio 5.14x aggRatio 18.20x trunc=0 panics=0; remaining 26 div not stack-budget: ERROR-root where C parses clean (spec_helper.cr go-cc=17 c-cc=7, html_entities.cr, node.cr; 18 errTree) + consistent +1 StartByte on hash-literal open brace (decode/entities/legacy.cr root[0][2][2] go=47 c=48)"
+   "parity": "19/40",
+   "notes": "cap=2 landed (was unmeasurable: markd entities.cr 111KB uniform hash literal never finishes at default cap >240s, 95% CPU in glr.go merge-equiv frontier rescans, ~2x input -> ~25x time; cap2 parses it in ~130ms); Crystal hash/named_tuple opening-brace compatibility pass cleared decode.cr, entities.cr, legacy.cr, renderer.cr, and history.cr with no new file-level divergers. MEASURE-DTIER N=40: medianRatio 5.42x aggRatio 18.34x trunc=0 panics=0; remaining 21 div not stack-budget: ERROR-root where C parses clean (spec_helper.cr go-cc=17 c-cc=7, html_entities.cr, node.cr; 18 errTree) plus tuple/inline hash span residuals and recovery shape gaps."
   },
   {
    "grammar": "css",
