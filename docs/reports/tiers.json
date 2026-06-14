@@ -1,6 +1,6 @@
 {
- "generated": "2026-06-14T02:22:22Z",
- "commit": "916e87c9",
+ "generated": "2026-06-14T02:50:12Z",
+ "commit": "08653abd",
  "version": "unreleased",
  "tier_rules": {
   "I": "parity-clean and <=1.5x C full-parse, cold <=5ms, blob <=150KB",
@@ -755,8 +755,8 @@
    "grammar": "linkerscript",
    "tier": "IV",
    "iv_cause": "IV-recovery",
-   "parity": "8/40",
-   "notes": "C-recovery gate lifts baseline 1/40 to 8/40 with a strict subset of divergers and no truncation/panic (Docker 2026-06-13); residuals are local ERROR namedness, root/section child-count, and empty-root span differences."
+   "parity": "21/40",
+   "notes": "C-recovery plus Linkerscript-local result normalization lifts baseline 1/40 to 21/40 with a strict subset of divergers and no truncation/panic (Docker 2026-06-14); residuals are root/section child-count and nested ERROR-vs-call recovery shape differences."
   },
   {
    "grammar": "liquid",

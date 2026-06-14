@@ -112,7 +112,7 @@ kdl	IV-recovery	12/40	pins at upstream HEAD; C at same pin parses corpus clean â
 kotlin	CLEAN	40/40	Kotlin C-recovery election preserves ReactorPlaysScrabble.kt's class/member envelope; recovered generic call suffix and direct parenthesized type-argument normalizers clear the remaining local call shapes. D-tier C-oracle parity verified 2026-06-13 with no divergences, truncation, error trees, or panics.
 ledger	CLEAN	4/4	in ratchet; ledger date-suffix and year-directive recovery normalization
 less	IV-recovery?	10/40	faithful C error-cost version competition (see spec)
-linkerscript	IV-recovery	8/40	C-recovery gate lifts baseline 1/40 to 8/40 with a strict subset of divergers and no truncation/panic (Docker 2026-06-13); residuals are local ERROR namedness, root/section child-count, and empty-root span differences.
+linkerscript	IV-recovery	21/40	C-recovery plus Linkerscript-local result normalization lifts baseline 1/40 to 21/40 with a strict subset of divergers and no truncation/panic (Docker 2026-06-14); residuals are root/section child-count and nested ERROR-vs-call recovery shape differences.
 liquid	IV-recovery?	11/36	faithful C error-cost version competition (see spec)
 llvm	CLEAN	40/40	in ratchet
 lua	CLEAN	40/40	in ratchet; scanner.c port + DFA routing (maple 2026-06-10)
