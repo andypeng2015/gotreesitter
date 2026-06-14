@@ -26,6 +26,60 @@ func TestObjcMethodPointerTypeUsesTypeIdentifier(t *testing.T) {
 	}
 }
 
+func TestObjcProtocolArgumentTypeUsesTypeIdentifier(t *testing.T) {
+	src := []byte("@interface CallbackClient : NSObject <ClientProtocol>\n@end\n")
+	lang := grammars.ObjcLanguage()
+	tree, err := gts.NewParser(lang).Parse(src)
+	if err != nil || tree == nil || tree.RootNode() == nil {
+		t.Fatalf("parse failed: tree=%v err=%v", tree, err)
+	}
+	defer tree.Release()
+
+	typeName := firstObjcNodeByTypeAndText(tree.RootNode(), lang, src, "type_name", "ClientProtocol")
+	if typeName == nil {
+		t.Fatalf("missing protocol type_name: %s", tree.RootNode().SExpr(lang))
+	}
+	if got, want := typeName.Child(0).Type(lang), "type_identifier"; got != want {
+		t.Fatalf("protocol argument child = %q, want %q; tree=%s", got, want, tree.RootNode().SExpr(lang))
+	}
+}
+
+func TestObjcSizeofTypeIdentifierOperandMatchesOracleShape(t *testing.T) {
+	src := []byte("void f(){ int a = sizeof(GCInfo); int b = sizeof(int); }\n")
+	lang := grammars.ObjcLanguage()
+	tree, err := gts.NewParser(lang).Parse(src)
+	if err != nil || tree == nil || tree.RootNode() == nil {
+		t.Fatalf("parse failed: tree=%v err=%v", tree, err)
+	}
+	defer tree.Release()
+
+	unknown := firstObjcNodeByTypeAndText(tree.RootNode(), lang, src, "sizeof_expression", "sizeof(GCInfo)")
+	if unknown == nil {
+		t.Fatalf("missing sizeof(GCInfo): %s", tree.RootNode().SExpr(lang))
+	}
+	if got, want := unknown.ChildCount(), 2; got != want {
+		t.Fatalf("sizeof(GCInfo) child count = %d, want %d; tree=%s", got, want, tree.RootNode().SExpr(lang))
+	}
+	paren := unknown.Child(1)
+	if got, want := paren.Type(lang), "parenthesized_expression"; got != want {
+		t.Fatalf("sizeof(GCInfo) child 1 = %q, want %q; tree=%s", got, want, tree.RootNode().SExpr(lang))
+	}
+	if got, want := paren.Child(1).Type(lang), "identifier"; got != want {
+		t.Fatalf("sizeof(GCInfo) operand = %q, want %q; tree=%s", got, want, tree.RootNode().SExpr(lang))
+	}
+
+	primitive := firstObjcNodeByTypeAndText(tree.RootNode(), lang, src, "sizeof_expression", "sizeof(int)")
+	if primitive == nil {
+		t.Fatalf("missing sizeof(int): %s", tree.RootNode().SExpr(lang))
+	}
+	if got, want := primitive.ChildCount(), 4; got != want {
+		t.Fatalf("sizeof(int) child count = %d, want %d; tree=%s", got, want, tree.RootNode().SExpr(lang))
+	}
+	if got, want := primitive.Child(2).Type(lang), "type_descriptor"; got != want {
+		t.Fatalf("sizeof(int) child 2 = %q, want %q; tree=%s", got, want, tree.RootNode().SExpr(lang))
+	}
+}
+
 func TestObjcAtStringLiteralIsFlattened(t *testing.T) {
 	src := []byte("int main() { NSLog(@\"one\"); }\n")
 	lang := grammars.ObjcLanguage()
@@ -92,6 +146,21 @@ func firstObjcNodeByType(n *gts.Node, lang *gts.Language, typ string) *gts.Node 
 	}
 	for i := 0; i < n.ChildCount(); i++ {
 		if found := firstObjcNodeByType(n.Child(i), lang, typ); found != nil {
+			return found
+		}
+	}
+	return nil
+}
+
+func firstObjcNodeByTypeAndText(n *gts.Node, lang *gts.Language, src []byte, typ, text string) *gts.Node {
+	if n == nil {
+		return nil
+	}
+	if n.Type(lang) == typ && string(n.Text(src)) == text {
+		return n
+	}
+	for i := 0; i < n.ChildCount(); i++ {
+		if found := firstObjcNodeByTypeAndText(n.Child(i), lang, src, typ, text); found != nil {
 			return found
 		}
 	}

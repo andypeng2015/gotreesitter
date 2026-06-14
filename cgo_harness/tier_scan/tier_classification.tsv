@@ -131,7 +131,7 @@ nim	IV-recovery?	3/40	faithful C error-cost version competition (see spec)
 nix	CLEAN	40/40	in ratchet
 norg	IV-scanner	0/2	mixed scanner/version, 2-file corpus (maple)
 nushell	IV-recovery?	5/40	faithful C error-cost version competition (see spec)
-objc	IV-recovery	20/40	ObjC-local method_type type_identifier and @ string/concatenated_string result normalization lifts default cap-2 C-oracle D-tier from 2/40 to 20/40 with trunc 0, panics 0 (Docker 2026-06-14). Residuals are sizeof(type) child-count, function-pointer declaration-vs-expression, compound/root recovery shape, and a few remaining type_identifier contexts outside method_type.
+objc	IV-recovery	22/40	ObjC-local method_type/protocol-argument type_identifier, @ string/concatenated_string, and sizeof(type_identifier) result normalization lifts default cap-2 C-oracle D-tier from 2/40 to 22/40 with trunc 0, panics 0 (Docker 2026-06-14). Residuals are function-pointer declaration-vs-expression, compound/root recovery shape, and remaining type_identifier contexts such as struct/member declarations.
 ocaml	CLEAN	40/40	in ratchet
 odin	IV-recovery?	13/40	faithful C error-cost version competition (see spec)
 org	IV-recovery?	5/39	faithful C error-cost version competition (see spec)

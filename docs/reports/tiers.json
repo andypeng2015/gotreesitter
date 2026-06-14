@@ -1,6 +1,6 @@
 {
- "generated": "2026-06-14T04:52:52Z",
- "commit": "695eb00e",
+ "generated": "2026-06-14T05:01:52Z",
+ "commit": "18fa1898",
  "version": "unreleased",
  "tier_rules": {
   "I": "parity-clean and <=1.5x C full-parse, cold <=5ms, blob <=150KB",
@@ -886,8 +886,8 @@
    "grammar": "objc",
    "tier": "IV",
    "iv_cause": "IV-recovery",
-   "parity": "20/40",
-   "notes": "ObjC-local method_type type_identifier and @ string/concatenated_string result normalization lifts default cap-2 C-oracle D-tier from 2/40 to 20/40 with trunc 0, panics 0 (Docker 2026-06-14). Residuals are sizeof(type) child-count, function-pointer declaration-vs-expression, compound/root recovery shape, and a few remaining type_identifier contexts outside method_type."
+   "parity": "22/40",
+   "notes": "ObjC-local method_type/protocol-argument type_identifier, @ string/concatenated_string, and sizeof(type_identifier) result normalization lifts default cap-2 C-oracle D-tier from 2/40 to 22/40 with trunc 0, panics 0 (Docker 2026-06-14). Residuals are function-pointer declaration-vs-expression, compound/root recovery shape, and remaining type_identifier contexts such as struct/member declarations."
   },
   {
    "grammar": "ocaml",
