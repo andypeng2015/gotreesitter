@@ -1,6 +1,6 @@
 {
- "generated": "2026-06-14T03:18:55Z",
- "commit": "403c3872",
+ "generated": "2026-06-14T04:46:31Z",
+ "commit": "f5b51ba2",
  "version": "unreleased",
  "tier_rules": {
   "I": "parity-clean and <=1.5x C full-parse, cold <=5ms, blob <=150KB",
@@ -886,8 +886,8 @@
    "grammar": "objc",
    "tier": "IV",
    "iv_cause": "IV-recovery",
-   "parity": "2/40",
-   "notes": "C-recovery gate plus ObjC cap-2 first pass clears Source/CXXException.m; reproduced on origin/parity/c-oracle-clears fb07f2fd 2026-06-13 with default gate: 2/40, trunc 0, panics 0. The prior forced gate at default cap improved 1/40 -> 2/40 but truncated GSXML.m at memory_budget; cap 2 completes GSXML.m with goStop=accepted."
+   "parity": "20/40",
+   "notes": "ObjC-local method_type type_identifier and @ string/concatenated_string result normalization lifts default cap-2 C-oracle D-tier from 2/40 to 20/40 with trunc 0, panics 0 (Docker 2026-06-14). Residuals are sizeof(type) child-count, function-pointer declaration-vs-expression, compound/root recovery shape, and a few remaining type_identifier contexts outside method_type."
   },
   {
    "grammar": "ocaml",

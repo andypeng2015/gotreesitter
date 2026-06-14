@@ -182,6 +182,8 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 		normalizeMakeConditionalConsequenceFields(ctx.root, ctx.lang)
 	case "nickel":
 		normalizeNickelCompatibility(ctx.root, ctx.source, ctx.lang)
+	case "objc":
+		normalizeObjcCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "nginx":
 		normalizeNginxAttributeLineBreaks(ctx.root, ctx.source, ctx.lang)
 	case "ninja":
