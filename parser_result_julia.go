@@ -4,6 +4,168 @@ func normalizeJuliaCompatibility(root *Node, source []byte, lang *Language) {
 	normalizeJuliaRecoveredReturnRange(root, source, lang)
 	normalizeJuliaMacroArgumentJuxtaposition(root, source, lang)
 	normalizeJuliaSubscriptSingleRowMatrix(root, source, lang)
+	normalizeJuliaTrailingCommaAssignmentTuple(root, source, lang)
+	if normalizeJuliaBracketForComprehensions(root, source, lang) {
+		normalizeJuliaRecoveredSourceRoot(root, source, lang)
+	}
+}
+
+func normalizeJuliaTrailingCommaAssignmentTuple(root *Node, source []byte, lang *Language) {
+	if root == nil || lang == nil || lang.Name != "julia" || len(source) == 0 {
+		return
+	}
+	openTupleSym, ok := symbolByName(lang, "open_tuple")
+	if !ok {
+		return
+	}
+	operatorSym, ok := symbolByName(lang, "operator")
+	if !ok {
+		return
+	}
+	walkResultTree(root, func(tuple *Node) {
+		if tuple == nil || tuple.symbol != openTupleSym || resultChildCount(tuple) < 3 {
+			return
+		}
+		children := resultChildSliceForMutation(tuple)
+		if len(children) < 3 {
+			return
+		}
+		comma := children[len(children)-2]
+		last := children[len(children)-1]
+		if comma == nil || last == nil || comma.startByte+1 != comma.endByte || int(last.startByte) > len(source) || source[comma.startByte] != ',' {
+			return
+		}
+		eq, ok := juliaSingleEqualsGap(source, comma.endByte, last.startByte)
+		if !ok {
+			return
+		}
+		operator := newLeafNodeInArena(tuple.ownerArena, operatorSym, symbolIsNamed(lang, operatorSym), eq, eq+1, advancePointByBytes(Point{}, source[:eq]), advancePointByBytes(Point{}, source[:eq+1]))
+		err := newParentNodeInArena(tuple.ownerArena, errorSymbol, true, cloneNodeSliceInArena(tuple.ownerArena, []*Node{operator}), nil, 0)
+		err.startByte = operator.startByte
+		err.startPoint = operator.startPoint
+		err.endByte = operator.endByte
+		err.endPoint = operator.endPoint
+		err.setHasError(true)
+		out := make([]*Node, 0, len(children)+1)
+		out = append(out, children[:len(children)-1]...)
+		out = append(out, err, last)
+		replaceNodeChildrenUnfielded(tuple, cloneNodeSliceInArena(tuple.ownerArena, out))
+		tuple.setHasError(true)
+		tuple.productionID = 0
+	})
+}
+
+func juliaSingleEqualsGap(source []byte, start, end uint32) (uint32, bool) {
+	if start >= end || int(end) > len(source) {
+		return 0, false
+	}
+	found := uint32(0)
+	for i := start; i < end; i++ {
+		switch source[i] {
+		case ' ', '\t':
+			continue
+		case '=':
+			if found != 0 {
+				return 0, false
+			}
+			found = i
+		default:
+			return 0, false
+		}
+	}
+	if found == 0 {
+		return 0, false
+	}
+	return found, true
+}
+
+func normalizeJuliaBracketForComprehensions(root *Node, source []byte, lang *Language) bool {
+	if root == nil || lang == nil || lang.Name != "julia" || len(source) == 0 {
+		return false
+	}
+	matrixSym, ok := symbolByName(lang, "matrix_expression")
+	if !ok {
+		return false
+	}
+	matrixRowSym, ok := symbolByName(lang, "matrix_row")
+	if !ok {
+		return false
+	}
+	comprehensionSym, ok := symbolByName(lang, "comprehension_expression")
+	if !ok {
+		return false
+	}
+	forClauseSym, ok := symbolByName(lang, "for_clause")
+	if !ok {
+		return false
+	}
+	forStatementSym, ok := symbolByName(lang, "for_statement")
+	if !ok {
+		return false
+	}
+	rewritten := false
+	walkResultTree(root, func(matrix *Node) {
+		if matrix == nil || matrix.symbol != matrixSym || resultChildCount(matrix) != 4 {
+			return
+		}
+		children := resultChildSliceForMutation(matrix)
+		if len(children) != 4 {
+			return
+		}
+		open, exprRow, forRow, close := children[0], children[1], children[2], children[3]
+		if open == nil || exprRow == nil || forRow == nil || close == nil {
+			return
+		}
+		if exprRow.symbol != matrixRowSym || forRow.symbol != matrixRowSym || resultChildCount(exprRow) != 1 || resultChildCount(forRow) != 1 {
+			return
+		}
+		expr := resultChildAt(exprRow, 0)
+		forStmt := resultChildAt(forRow, 0)
+		if expr == nil || forStmt == nil || forStmt.symbol != forStatementSym || resultChildCount(forStmt) < 2 {
+			return
+		}
+		forTok := resultChildAt(forStmt, 0)
+		binding := resultChildAt(forStmt, 1)
+		if forTok == nil || binding == nil {
+			return
+		}
+		if open.startByte+1 != open.endByte || close.startByte+1 != close.endByte || int(close.endByte) > len(source) || int(forTok.endByte) > len(source) {
+			return
+		}
+		if source[open.startByte] != '[' || source[close.startByte] != ']' || string(source[forTok.startByte:forTok.endByte]) != "for" {
+			return
+		}
+		if forTok.startByte != forRow.startByte || forTok.endByte > binding.startByte || binding.endByte > forRow.endByte || forRow.endByte > close.startByte {
+			return
+		}
+		forClause := newParentNodeInArena(matrix.ownerArena, forClauseSym, true, cloneNodeSliceInArena(matrix.ownerArena, []*Node{forTok, binding}), nil, 0)
+		forClause.startByte = forTok.startByte
+		forClause.startPoint = forTok.startPoint
+		forClause.endByte = binding.endByte
+		forClause.endPoint = binding.endPoint
+		forClause.setHasError(false)
+
+		matrix.symbol = comprehensionSym
+		matrix.setNamed(symbolIsNamed(lang, comprehensionSym))
+		matrix.productionID = 0
+		matrix.setHasError(false)
+		replaceNodeChildrenUnfielded(matrix, cloneNodeSliceInArena(matrix.ownerArena, []*Node{open, expr, forClause, close}))
+		rewritten = true
+	})
+	return rewritten
+}
+
+func normalizeJuliaRecoveredSourceRoot(root *Node, source []byte, lang *Language) {
+	if root == nil || lang == nil || root.symbol != errorSymbol || root.startByte != 0 || int(root.endByte) != len(source) || resultChildCount(root) == 0 {
+		return
+	}
+	sourceFileSym, ok := symbolByName(lang, "source_file")
+	if !ok {
+		return
+	}
+	root.symbol = sourceFileSym
+	root.setNamed(symbolIsNamed(lang, sourceFileSym))
+	root.productionID = 0
 }
 
 func normalizeJuliaSubscriptSingleRowMatrix(root *Node, source []byte, lang *Language) {

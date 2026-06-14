@@ -137,6 +137,81 @@ func TestJuliaIndexSingleRowMatrixCompatibility(t *testing.T) {
 	}
 }
 
+func TestJuliaBracketForComprehensionCompatibility(t *testing.T) {
+	lang := grammars.JuliaLanguage()
+	if lang == nil {
+		t.Fatal("JuliaLanguage returned nil")
+	}
+	source := []byte("function f()\n    states = Union{T,Nothing}[\n        State(slottypes[slot])\n        for slot = 1:nslots\n    ]\nend\n")
+	parser := gotreesitter.NewParser(lang)
+	tree, err := parser.Parse(source)
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+	if tree == nil || tree.RootNode() == nil {
+		t.Fatal("Parse returned nil tree")
+	}
+	defer tree.Release()
+
+	index := findNodeByText(tree.RootNode(), lang, source, "index_expression", "Union{T,Nothing}[\n        State(slottypes[slot])\n        for slot = 1:nslots\n    ]")
+	if index == nil {
+		t.Fatalf("index_expression not found:\n%s", tree.RootNode().SExpr(lang))
+	}
+	comprehension := findNodeByText(index, lang, source, "comprehension_expression", "[\n        State(slottypes[slot])\n        for slot = 1:nslots\n    ]")
+	if comprehension == nil {
+		t.Fatalf("comprehension_expression not found in index; tree:\n%s", tree.RootNode().SExpr(lang))
+	}
+	if got, want := comprehension.ChildCount(), 4; got != want {
+		t.Fatalf("comprehension child count = %d, want %d; tree:\n%s", got, want, tree.RootNode().SExpr(lang))
+	}
+	if got := comprehension.Child(1).Type(lang); got != "call_expression" {
+		t.Fatalf("comprehension child[1] = %q, want call_expression; tree:\n%s", got, tree.RootNode().SExpr(lang))
+	}
+	if got := comprehension.Child(2).Type(lang); got != "for_clause" {
+		t.Fatalf("comprehension child[2] = %q, want for_clause; tree:\n%s", got, tree.RootNode().SExpr(lang))
+	}
+	if got := comprehension.Child(2).Text(source); got != "for slot = 1:nslots" {
+		t.Fatalf("for_clause text = %q, want %q", got, "for slot = 1:nslots")
+	}
+}
+
+func TestJuliaTrailingCommaAssignmentTupleCompatibility(t *testing.T) {
+	lang := grammars.JuliaLanguage()
+	if lang == nil {
+		t.Fatal("JuliaLanguage returned nil")
+	}
+	source := []byte("function f()\n    minarg, maxarg, = T_IFUNC[iidx]\nend\n")
+	parser := gotreesitter.NewParser(lang)
+	tree, err := parser.Parse(source)
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+	if tree == nil || tree.RootNode() == nil {
+		t.Fatal("Parse returned nil tree")
+	}
+	defer tree.Release()
+
+	tuple := findNodeByText(tree.RootNode(), lang, source, "open_tuple", "minarg, maxarg, = T_IFUNC[iidx]")
+	if tuple == nil {
+		t.Fatalf("open_tuple not found:\n%s", tree.RootNode().SExpr(lang))
+	}
+	if got, want := tuple.ChildCount(), 6; got != want {
+		t.Fatalf("open_tuple child count = %d, want %d; tree:\n%s", got, want, tree.RootNode().SExpr(lang))
+	}
+	if got := tuple.Child(4).Type(lang); got != "ERROR" {
+		t.Fatalf("open_tuple child[4] = %q, want ERROR; tree:\n%s", got, tree.RootNode().SExpr(lang))
+	}
+	if got := tuple.Child(4).Text(source); got != "=" {
+		t.Fatalf("open_tuple ERROR text = %q, want %q", got, "=")
+	}
+	if got, want := tuple.Child(4).ChildCount(), 1; got != want {
+		t.Fatalf("open_tuple ERROR child count = %d, want %d; tree:\n%s", got, want, tree.RootNode().SExpr(lang))
+	}
+	if got := tuple.Child(4).Child(0).Type(lang); got != "operator" {
+		t.Fatalf("open_tuple ERROR child[0] = %q, want operator; tree:\n%s", got, tree.RootNode().SExpr(lang))
+	}
+}
+
 func findNodeByText(root *gotreesitter.Node, lang *gotreesitter.Language, source []byte, typ, text string) *gotreesitter.Node {
 	if root == nil {
 		return nil

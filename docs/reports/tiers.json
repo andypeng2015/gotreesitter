@@ -1,6 +1,6 @@
 {
- "generated": "2026-06-14T02:55:38Z",
- "commit": "a5689e6e",
+ "generated": "2026-06-14T03:13:15Z",
+ "commit": "230c0193",
  "version": "unreleased",
  "tier_rules": {
   "I": "parity-clean and <=1.5x C full-parse, cold <=5ms, blob <=150KB",
@@ -709,8 +709,8 @@
    "grammar": "julia",
    "tier": "IV",
    "iv_cause": "IV-recovery",
-   "parity": "31/40",
-   "notes": "Julia macro argument juxtaposition and single-row index vector normalization clear reinfer.jl and verify.jl; remaining residuals are recovery-class divergences and 2 truncations"
+   "parity": "32/40",
+   "notes": "Julia macro argument juxtaposition, single-row index vector, bracket comprehension, and trailing-comma tuple recovery normalization clear reinfer.jl, verify.jl, and optimize.jl; remaining residuals are broad ERROR-root recovery divergences and 2 truncations"
   },
   {
    "grammar": "just",
