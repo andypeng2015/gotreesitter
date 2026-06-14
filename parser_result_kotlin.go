@@ -70,7 +70,12 @@ func normalizeKotlinGenericCallTypeArguments(root *Node, source []byte, lang *La
 	if !ok {
 		return
 	}
+	rewroteRecoveredSuffix := false
 	walkResultTree(root, func(n *Node) {
+		if kotlinNormalizeRecoveredGenericCallSuffix(n, lang, callSuffixSym, callSuffixNamed, navigationSym, navigationNamed) {
+			rewroteRecoveredSuffix = true
+			return
+		}
 		if n == nil || n.symbol != comparisonSym || resultChildCount(n) != 3 {
 			return
 		}
@@ -139,6 +144,14 @@ func normalizeKotlinGenericCallTypeArguments(root *Node, source []byte, lang *La
 			}
 			suffixChildren = append(suffixChildren, first)
 			kotlinAppendCallSuffixChildren(&suffixChildren, tail, 1, lang)
+		case "parenthesized_expression":
+			if tail.startByte != gt.endByte {
+				return
+			}
+			if !kotlinRetagParenthesizedAsValueArguments(tail, source, lang, valueArgsSym, valueArgsNamed, valueArgSym, valueArgNamed) {
+				return
+			}
+			suffixChildren = append(suffixChildren, tail)
 		case "prefix_expression":
 			if resultChildCount(tail) != 2 || tail.startByte <= gt.endByte {
 				return
@@ -164,6 +177,75 @@ func normalizeKotlinGenericCallTypeArguments(root *Node, source []byte, lang *La
 		n.productionID = 0
 		replaceNodeChildrenUnfielded(n, cloneNodeSliceInArena(arena, []*Node{base, callSuffix}))
 	})
+	if rewroteRecoveredSuffix {
+		kotlinRecomputeHasError(root)
+	}
+}
+
+func kotlinNormalizeRecoveredGenericCallSuffix(n *Node, lang *Language, callSuffixSym Symbol, callSuffixNamed bool, navigationSym Symbol, navigationNamed bool) bool {
+	if n == nil || n.Type(lang) != "call_expression" || resultChildCount(n) != 3 {
+		return false
+	}
+	base, errNode, suffix := resultChildAt(n, 0), resultChildAt(n, 1), resultChildAt(n, 2)
+	if base == nil || errNode == nil || suffix == nil {
+		return false
+	}
+	if !errNode.IsError() || suffix.Type(lang) != "call_suffix" {
+		return false
+	}
+	if base.endByte != errNode.startByte || errNode.endByte != suffix.startByte {
+		return false
+	}
+	callBase := base
+	var typeArgs *Node
+	switch resultChildCount(errNode) {
+	case 1:
+		typeArgs = resultChildAt(errNode, 0)
+		if typeArgs == nil || typeArgs.Type(lang) != "type_arguments" {
+			return false
+		}
+		if typeArgs.startByte != errNode.startByte || typeArgs.endByte != errNode.endByte {
+			return false
+		}
+	case 2:
+		navSuffix := resultChildAt(errNode, 0)
+		typeArgs = resultChildAt(errNode, 1)
+		if navSuffix == nil || typeArgs == nil || navSuffix.Type(lang) != "navigation_suffix" || typeArgs.Type(lang) != "type_arguments" {
+			return false
+		}
+		if navSuffix.startByte != errNode.startByte || navSuffix.endByte != typeArgs.startByte || typeArgs.endByte != errNode.endByte {
+			return false
+		}
+		callBase = newParentNodeInArena(n.ownerArena, navigationSym, navigationNamed, cloneNodeSliceInArena(n.ownerArena, []*Node{base, navSuffix}), nil, 0)
+	default:
+		return false
+	}
+
+	arena := n.ownerArena
+	suffixChildren := make([]*Node, 0, resultChildCount(suffix)+1)
+	suffixChildren = append(suffixChildren, typeArgs)
+	for i := 0; i < resultChildCount(suffix); i++ {
+		if child := resultChildAt(suffix, i); child != nil {
+			suffixChildren = append(suffixChildren, child)
+		}
+	}
+	newSuffix := newParentNodeInArena(arena, callSuffixSym, callSuffixNamed, cloneNodeSliceInArena(arena, suffixChildren), nil, 0)
+	replaceNodeChildrenUnfielded(n, cloneNodeSliceInArena(arena, []*Node{callBase, newSuffix}))
+	return true
+}
+
+func kotlinRecomputeHasError(n *Node) bool {
+	if n == nil {
+		return false
+	}
+	hasError := n.symbol == errorSymbol || n.isMissing()
+	for i := 0; i < resultChildCount(n); i++ {
+		if kotlinRecomputeHasError(resultChildAt(n, i)) {
+			hasError = true
+		}
+	}
+	n.setHasError(hasError)
+	return hasError
 }
 
 func kotlinRetagParenthesizedAsValueArguments(paren *Node, source []byte, lang *Language, valueArgsSym Symbol, valueArgsNamed bool, valueArgSym Symbol, valueArgNamed bool) bool {

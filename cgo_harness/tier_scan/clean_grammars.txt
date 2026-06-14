@@ -67,6 +67,7 @@ jsdoc
 json
 json5
 just
+kotlin
 ledger
 llvm
 lua

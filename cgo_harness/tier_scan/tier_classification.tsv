@@ -109,7 +109,7 @@ julia	IV-recovery	31/40	Julia macro argument juxtaposition and single-row index 
 just	CLEAN	8/8	in ratchet; C-recovery gate plus just top-level line-break span normalization
 kconfig	IV-recovery?	13/30	ext=Kconfig; faithful C error-cost version competition (see spec)
 kdl	IV-recovery	12/40	pins at upstream HEAD; C at same pin parses corpus clean — runtime fidelity, not version (oak 2026-06-10)
-kotlin	IV-recovery	39/40	Kotlin generic call/type-argument and prefix comparison normalizers lifted current Docker D-tier real-corpus parity from 35/40 to 39/40 on 2026-06-13; no truncation or panics. Remaining current real-corpus failure is broad root recovery fragmentation in ReactorPlaysScrabble.kt.
+kotlin	CLEAN	40/40	Kotlin C-recovery election preserves ReactorPlaysScrabble.kt's class/member envelope; recovered generic call suffix and direct parenthesized type-argument normalizers clear the remaining local call shapes. D-tier C-oracle parity verified 2026-06-13 with no divergences, truncation, error trees, or panics.
 ledger	CLEAN	4/4	in ratchet; ledger date-suffix and year-directive recovery normalization
 less	IV-recovery?	10/40	faithful C error-cost version competition (see spec)
 linkerscript	IV-recovery	8/40	C-recovery gate lifts baseline 1/40 to 8/40 with a strict subset of divergers and no truncation/panic (Docker 2026-06-13); residuals are local ERROR namedness, root/section child-count, and empty-root span differences.

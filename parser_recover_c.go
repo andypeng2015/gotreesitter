@@ -250,6 +250,13 @@ func errorCostCompetitionLanguage(lang *Language) bool {
 		// the large GSXML.m witness from exhausting the per-parse memory budget,
 		// so the default gate has no truncation or panic signal.
 		return true
+	case "kotlin":
+		// Tier-IV recovery fan-out: ReactorPlaysScrabble.kt otherwise loses the
+		// class/member envelope after a nested generic call in a trailing lambda.
+		// C recovery keeps the source_file/class_declaration shape; the local
+		// ERROR(type_arguments)+call_suffix artifact is normalized in
+		// parser_result_kotlin.go.
+		return true
 	}
 	return false
 }

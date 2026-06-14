@@ -1,6 +1,6 @@
 {
- "generated": "2026-06-13T23:50:06Z",
- "commit": "2064c7fe",
+ "generated": "2026-06-14T00:18:50Z",
+ "commit": "71ab0bba",
  "version": "unreleased",
  "tier_rules": {
   "I": "parity-clean and <=1.5x C full-parse, cold <=5ms, blob <=150KB",
@@ -10,8 +10,8 @@
   "unranked": "parity-clean; perf measurement pending"
  },
  "histogram": {
-  "unranked": 17,
-  "IV": 90,
+  "unranked": 18,
+  "IV": 89,
   "II": 48,
   "I": 38,
   "III": 13
@@ -734,10 +734,9 @@
   },
   {
    "grammar": "kotlin",
-   "tier": "IV",
-   "iv_cause": "IV-recovery",
-   "parity": "39/40",
-   "notes": "Kotlin generic call/type-argument and prefix comparison normalizers lifted current Docker D-tier real-corpus parity from 35/40 to 39/40 on 2026-06-13; no truncation or panics. Remaining current real-corpus failure is broad root recovery fragmentation in ReactorPlaysScrabble.kt."
+   "tier": "unranked",
+   "parity": "clean",
+   "perf_source": null
   },
   {
    "grammar": "ledger",

@@ -196,6 +196,90 @@ func TestNormalizeKotlinGenericCallTypeArguments(t *testing.T) {
 	}
 }
 
+func TestNormalizeKotlinRecoveredGenericCallTypeArguments(t *testing.T) {
+	lang := kotlinGenericCallTestLanguage()
+	source := []byte(`b<Map.Entry<Int, LongWrapper>>(Iterable { map.entries.iterator() })`)
+	arena := newNodeArena(arenaClassFull)
+	base := newLeafNodeInArena(arena, 7, true, 0, 1, Point{}, Point{Column: 1})
+	lt := newLeafNodeInArena(arena, 16, false, 1, 2, Point{Column: 1}, Point{Column: 2})
+	typ := newLeafNodeInArena(arena, 8, true, 2, 28, Point{Column: 2}, Point{Column: 28})
+	gt := newLeafNodeInArena(arena, 17, false, 28, 29, Point{Column: 28}, Point{Column: 29})
+	typeArgs := newParentNodeInArena(arena, 9, true, []*Node{lt, typ, gt}, nil, 0)
+	errNode := newParentNodeInArena(arena, errorSymbol, true, []*Node{typeArgs}, nil, 0)
+	errNode.setExtra(true)
+	errNode.setHasError(true)
+	valueArgs := newLeafNodeInArena(arena, 12, true, 29, 65, Point{Column: 29}, Point{Column: 65})
+	suffix := newParentNodeInArena(arena, 4, true, []*Node{valueArgs}, nil, 0)
+	call := newParentNodeInArena(arena, 3, true, []*Node{base, errNode, suffix}, nil, 0)
+	call.setHasError(true)
+	root := newParentNodeInArena(arena, 1, true, []*Node{call}, nil, 0)
+	root.setHasError(true)
+
+	normalizeKotlinCompatibility(root, source, lang)
+
+	if root.HasError() {
+		t.Fatalf("root HasError = true, want false:\n%s", root.SExpr(lang))
+	}
+	if got, want := call.ChildCount(), 2; got != want {
+		t.Fatalf("call child count = %d, want %d:\n%s", got, want, root.SExpr(lang))
+	}
+	gotSuffix := call.Child(1)
+	if got, want := gotSuffix.Type(lang), "call_suffix"; got != want {
+		t.Fatalf("suffix type = %q, want %q:\n%s", got, want, root.SExpr(lang))
+	}
+	wantTypes := []string{"type_arguments", "value_arguments"}
+	for i, want := range wantTypes {
+		if got := gotSuffix.Child(i).Type(lang); got != want {
+			t.Fatalf("suffix child[%d] type = %q, want %q:\n%s", i, got, want, root.SExpr(lang))
+		}
+	}
+	if p := gotSuffix.Parent(); p != call {
+		t.Fatal("rewritten suffix parent not updated")
+	}
+}
+
+func TestNormalizeKotlinRecoveredNavigationGenericCallTypeArguments(t *testing.T) {
+	lang := kotlinGenericCallTestLanguage()
+	source := []byte(`Flux.fromIterable<Map.Entry<Int, LongWrapper>>(Iterable { map.entries.iterator() })`)
+	arena := newNodeArena(arenaClassFull)
+	base := newLeafNodeInArena(arena, 7, true, 0, 4, Point{}, Point{Column: 4})
+	dot := newLeafNodeInArena(arena, 20, false, 4, 5, Point{Column: 4}, Point{Column: 5})
+	name := newLeafNodeInArena(arena, 7, true, 5, 17, Point{Column: 5}, Point{Column: 17})
+	navSuffix := newParentNodeInArena(arena, 6, true, []*Node{dot, name}, nil, 0)
+	lt := newLeafNodeInArena(arena, 16, false, 17, 18, Point{Column: 17}, Point{Column: 18})
+	typ := newLeafNodeInArena(arena, 8, true, 18, 45, Point{Column: 18}, Point{Column: 45})
+	gt := newLeafNodeInArena(arena, 17, false, 45, 46, Point{Column: 45}, Point{Column: 46})
+	typeArgs := newParentNodeInArena(arena, 9, true, []*Node{lt, typ, gt}, nil, 0)
+	errNode := newParentNodeInArena(arena, errorSymbol, true, []*Node{navSuffix, typeArgs}, nil, 0)
+	errNode.setHasError(true)
+	valueArgs := newLeafNodeInArena(arena, 12, true, 46, 83, Point{Column: 46}, Point{Column: 83})
+	suffix := newParentNodeInArena(arena, 4, true, []*Node{valueArgs}, nil, 0)
+	call := newParentNodeInArena(arena, 3, true, []*Node{base, errNode, suffix}, nil, 0)
+	call.setHasError(true)
+	root := newParentNodeInArena(arena, 1, true, []*Node{call}, nil, 0)
+	root.setHasError(true)
+
+	normalizeKotlinCompatibility(root, source, lang)
+
+	if root.HasError() {
+		t.Fatalf("root HasError = true, want false:\n%s", root.SExpr(lang))
+	}
+	if got, want := call.ChildCount(), 2; got != want {
+		t.Fatalf("call child count = %d, want %d:\n%s", got, want, root.SExpr(lang))
+	}
+	nav := call.Child(0)
+	if got, want := nav.Type(lang), "navigation_expression"; got != want {
+		t.Fatalf("call child[0] = %q, want %q:\n%s", got, want, root.SExpr(lang))
+	}
+	gotSuffix := call.Child(1)
+	wantTypes := []string{"type_arguments", "value_arguments"}
+	for i, want := range wantTypes {
+		if got := gotSuffix.Child(i).Type(lang); got != want {
+			t.Fatalf("suffix child[%d] type = %q, want %q:\n%s", i, got, want, root.SExpr(lang))
+		}
+	}
+}
+
 func kotlinPrefixComparisonTestLanguage() *Language {
 	return &Language{
 		Name: "kotlin",

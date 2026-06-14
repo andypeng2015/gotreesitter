@@ -1735,6 +1735,9 @@ func TestErrorCostCompetitionLanguageSchemeDefault(t *testing.T) {
 	if !errorCostCompetitionLanguage(&Language{Name: "objc"}) {
 		t.Fatal("errorCostCompetitionLanguage(objc) = false, want true")
 	}
+	if !errorCostCompetitionLanguage(&Language{Name: "kotlin"}) {
+		t.Fatal("errorCostCompetitionLanguage(kotlin) = false, want true")
+	}
 
 	t.Setenv("GOT_C_RECOVERY", "0")
 	if errorCostCompetitionLanguage(&Language{Name: "scheme"}) {
@@ -1742,6 +1745,9 @@ func TestErrorCostCompetitionLanguageSchemeDefault(t *testing.T) {
 	}
 	if errorCostCompetitionLanguage(&Language{Name: "objc"}) {
 		t.Fatal("errorCostCompetitionLanguage(objc, GOT_C_RECOVERY=0) = true, want false")
+	}
+	if errorCostCompetitionLanguage(&Language{Name: "kotlin"}) {
+		t.Fatal("errorCostCompetitionLanguage(kotlin, GOT_C_RECOVERY=0) = true, want false")
 	}
 }
 

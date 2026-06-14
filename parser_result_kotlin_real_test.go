@@ -146,6 +146,92 @@ func TestKotlinGenericCallTypeArgumentsDirectLambdaCompatibilityRealParser(t *te
 	}
 }
 
+func TestKotlinGenericCallTypeArgumentsDirectValueArgumentsCompatibilityRealParser(t *testing.T) {
+	lang := grammars.KotlinLanguage()
+	parser := gotreesitter.NewParser(lang)
+	source := []byte(`Flux.from<Int>(toBeMaxed.apply(word))`)
+	tree, err := parser.Parse(source)
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+	if tree == nil || tree.RootNode() == nil {
+		t.Fatal("Parse returned nil tree")
+	}
+	defer tree.Release()
+
+	call := findNodeByText(tree.RootNode(), lang, source, "call_expression", string(source))
+	if call == nil {
+		t.Fatalf("call_expression not found:\n%s", tree.RootNode().SExpr(lang))
+	}
+	if got, want := call.ChildCount(), 2; got != want {
+		t.Fatalf("call child count = %d, want %d:\n%s", got, want, tree.RootNode().SExpr(lang))
+	}
+	suffix := call.Child(1)
+	wantTypes := []string{"type_arguments", "value_arguments"}
+	for i, want := range wantTypes {
+		if got := suffix.Child(i).Type(lang); got != want {
+			t.Fatalf("suffix child[%d] = %q, want %q:\n%s", i, got, want, tree.RootNode().SExpr(lang))
+		}
+	}
+}
+
+func TestKotlinNestedGenericCallTrailingLambdaRecoveryRealParser(t *testing.T) {
+	lang := grammars.KotlinLanguage()
+	parser := gotreesitter.NewParser(lang)
+	source := []byte(`package p
+
+class C {
+    fun f() {
+        val x = Function<String, Flux<Long>> { word ->
+            Flux.from(a.apply(word)
+                .flatMap<Map.Entry<Int, LongWrapper>> { map -> Flux.fromIterable<Map.Entry<Int, LongWrapper>>(Iterable { map.entries.iterator() }) }
+                .flatMap(blank)
+                .reduce { a, b -> sum(a, b) })
+        }
+    }
+}`)
+	tree, err := parser.Parse(source)
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+	if tree == nil || tree.RootNode() == nil {
+		t.Fatal("Parse returned nil tree")
+	}
+	defer tree.Release()
+
+	root := tree.RootNode()
+	if root.HasError() {
+		t.Fatalf("root HasError = true, want false:\n%s", root.SExpr(lang))
+	}
+	classDecl := findNodeByText(root, lang, source, "class_declaration", `class C {
+    fun f() {
+        val x = Function<String, Flux<Long>> { word ->
+            Flux.from(a.apply(word)
+                .flatMap<Map.Entry<Int, LongWrapper>> { map -> Flux.fromIterable<Map.Entry<Int, LongWrapper>>(Iterable { map.entries.iterator() }) }
+                .flatMap(blank)
+                .reduce { a, b -> sum(a, b) })
+        }
+    }
+}`)
+	if classDecl == nil {
+		t.Fatalf("class_declaration not found:\n%s", root.SExpr(lang))
+	}
+	innerCall := findNodeByText(root, lang, source, "call_expression", `Flux.fromIterable<Map.Entry<Int, LongWrapper>>(Iterable { map.entries.iterator() })`)
+	if innerCall == nil {
+		t.Fatalf("inner generic call not found:\n%s", root.SExpr(lang))
+	}
+	if got, want := innerCall.ChildCount(), 2; got != want {
+		t.Fatalf("inner call child count = %d, want %d:\n%s", got, want, root.SExpr(lang))
+	}
+	suffix := innerCall.Child(1)
+	wantTypes := []string{"type_arguments", "value_arguments"}
+	for i, want := range wantTypes {
+		if got := suffix.Child(i).Type(lang); got != want {
+			t.Fatalf("inner suffix child[%d] = %q, want %q:\n%s", i, got, want, root.SExpr(lang))
+		}
+	}
+}
+
 func TestKotlinPrefixIncrementComparisonCompatibilityRealParser(t *testing.T) {
 	lang := grammars.KotlinLanguage()
 	parser := gotreesitter.NewParser(lang)
