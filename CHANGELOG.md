@@ -7,7 +7,15 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
-- Nothing yet.
+### Fixed
+
+- C# files whose namespace body does not parse cleanly no longer collapse into
+  a single top-level `ERROR` node with zero recoverable declarations. Namespace
+  recovery now falls back to a best-effort `namespace_declaration` built from
+  the existing sub-parse, surfacing the type declarations (and the members that
+  parsed) instead of discarding the whole file. C# brace matching used during
+  recovery is now trivia-aware, so braces inside char literals, strings and
+  comments no longer truncate a recovered declaration's span (#115).
 
 ## [0.20.2] - 2026-06-06
 

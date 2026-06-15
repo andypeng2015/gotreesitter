@@ -696,7 +696,7 @@ func csharpRecoverNamespaceFromChildren(children []*Node, startIdx int, source [
 		return nil, startIdx, false
 	}
 	openBrace := int(nsStart) + openRel
-	closeBrace := findMatchingBraceByte(source, openBrace, len(source))
+	closeBrace := csharpFindMatchingBraceByte(source, openBrace, len(source))
 	if closeBrace < 0 {
 		return nil, startIdx, false
 	}
@@ -737,7 +737,13 @@ func csharpRecoverNamespaceNodeFromRange(source []byte, start, end uint32, p *Pa
 	if offsetRoot == nil {
 		return nil, false
 	}
-	return csharpExtractRecoveredTopLevelNode(offsetRoot, lang, arena, end, "namespace_declaration")
+	if node, ok := csharpExtractRecoveredTopLevelNode(offsetRoot, lang, arena, end, "namespace_declaration"); ok {
+		return node, true
+	}
+	// The namespace body did not parse cleanly. Reuse the same sub-parse to
+	// recover a best-effort namespace_declaration containing the declarations
+	// that did parse (issue #115).
+	return csharpBuildRecoveredNamespaceDeclarationFromErrorRoot(offsetRoot, source, start, end, p, lang, arena)
 }
 
 func csharpRecoverWrappedTopLevelDeclaration(n *Node, lang *Language, arena *nodeArena) (*Node, bool) {
@@ -875,7 +881,7 @@ func normalizeCSharpRecoveredTypeDeclarations(root *Node, source []byte, p *Pars
 			i = next
 			continue
 		}
-		if recovered, next, ok := csharpRecoverNonEmptyTopLevelTypeDeclarationFromChildren(root.children, i, source, p, lang, root.ownerArena); ok {
+		if recovered, next, ok := csharpRecoverNonEmptyTopLevelTypeDeclarationFromChildren(root.children, i, source, p, lang, root.ownerArena, false); ok {
 			recoveredChildren = append(recoveredChildren, recovered)
 			i = next
 			continue
@@ -891,7 +897,7 @@ func normalizeCSharpRecoveredTypeDeclarations(root *Node, source []byte, p *Pars
 			i++
 			continue
 		}
-		nonEmpty, ok := csharpRecoverNonEmptyTypeDeclarationFromError(child, source, p, lang, root.ownerArena)
+		nonEmpty, ok := csharpRecoverNonEmptyTypeDeclarationFromError(child, source, p, lang, root.ownerArena, false)
 		if ok {
 			recoveredChildren = append(recoveredChildren, nonEmpty)
 			i++
@@ -936,7 +942,8 @@ func csharpIsRecoveredTopLevelDeclaration(n *Node, lang *Language) bool {
 		return false
 	}
 	switch n.Type(lang) {
-	case "class_declaration", "struct_declaration", "record_declaration", "interface_declaration", "enum_declaration", "delegate_declaration", "namespace_declaration", "file_scoped_namespace_declaration", "using_directive", "extern_alias_directive", "global_statement", "comment":
+	case "class_declaration", "struct_declaration", "record_declaration", "interface_declaration", "enum_declaration", "delegate_declaration", "namespace_declaration", "file_scoped_namespace_declaration", "using_directive", "extern_alias_directive", "global_statement", "comment",
+		"preproc_region", "preproc_endregion", "preproc_if", "preproc_define", "preproc_undef", "preproc_pragma", "preproc_nullable":
 		return true
 	default:
 		return false
@@ -976,7 +983,7 @@ func csharpBuildRecoveredEmptyTypeDeclaration(errNode, initNode *Node, source []
 		return nil, false
 	}
 	openBrace := int(initNode.endByte) + openRel
-	closeBrace := findMatchingBraceByte(source, openBrace, int(errNode.endByte))
+	closeBrace := csharpFindMatchingBraceByte(source, openBrace, int(errNode.endByte))
 	if closeBrace < 0 || closeBrace <= openBrace || !bytesAreTrivia(source[openBrace+1:closeBrace]) {
 		return nil, false
 	}

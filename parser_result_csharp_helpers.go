@@ -710,6 +710,109 @@ func csharpBuildSimpleJoinQueryExpression(arena *nodeArena, source []byte, lang 
 	return queryExpr, true
 }
 
+// csharpFindMatchingBraceByte finds the byte offset of the '}' that closes the
+// '{' at openPos, scanning [openPos, limit) while skipping braces that appear
+// inside line/block comments, regular and verbatim strings, and char literals.
+// The plain findMatchingBraceByte miscounts braces embedded in C# char literals
+// (e.g. '{' / '}') and string content, which truncates declaration spans on
+// real-world files (issue #115). Returns the index of the matching '}', or -1.
+func csharpFindMatchingBraceByte(source []byte, openPos, limit int) int {
+	if openPos < 0 || openPos >= len(source) || source[openPos] != '{' {
+		return -1
+	}
+	if limit > len(source) {
+		limit = len(source)
+	}
+	depth := 0
+	inLineComment := false
+	inBlockComment := false
+	inString := false
+	inChar := false
+	verbatimString := false
+	escape := false
+	for i := openPos; i < limit; i++ {
+		b := source[i]
+		switch {
+		case inLineComment:
+			if b == '\n' {
+				inLineComment = false
+			}
+			continue
+		case inBlockComment:
+			if i > 0 && source[i-1] == '*' && b == '/' {
+				inBlockComment = false
+			}
+			continue
+		case inString:
+			if verbatimString {
+				if b == '"' {
+					if i+1 < limit && source[i+1] == '"' {
+						i++
+						continue
+					}
+					inString = false
+					verbatimString = false
+				}
+				continue
+			}
+			if escape {
+				escape = false
+				continue
+			}
+			if b == '\\' {
+				escape = true
+				continue
+			}
+			if b == '"' {
+				inString = false
+			}
+			continue
+		case inChar:
+			if escape {
+				escape = false
+				continue
+			}
+			if b == '\\' {
+				escape = true
+				continue
+			}
+			if b == '\'' {
+				inChar = false
+			}
+			continue
+		}
+		if b == '/' && i+1 < limit {
+			switch source[i+1] {
+			case '/':
+				inLineComment = true
+				i++
+				continue
+			case '*':
+				inBlockComment = true
+				i++
+				continue
+			}
+		}
+		switch b {
+		case '"':
+			inString = true
+			verbatimString = i > 0 && source[i-1] == '@'
+			escape = false
+		case '\'':
+			inChar = true
+			escape = false
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
 func csharpHasKeywordAt(source []byte, start uint32, kw string) bool {
 	if int(start)+len(kw) > len(source) {
 		return false

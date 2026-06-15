@@ -147,7 +147,7 @@ func csharpRecoverAttributedAutoPropertyFromRange(source []byte, start, end uint
 	if accessorStart >= end || source[accessorStart] != '{' {
 		return nil, false
 	}
-	accessorEnd := findMatchingBraceByte(source, int(accessorStart), int(end))
+	accessorEnd := csharpFindMatchingBraceByte(source, int(accessorStart), int(end))
 	if accessorEnd < 0 || uint32(accessorEnd+1) != end {
 		return nil, false
 	}
@@ -213,7 +213,7 @@ func csharpRecoverAttributedMethodDeclarationFromRange(source []byte, start, end
 	if blockStart >= end || source[blockStart] != '{' {
 		return nil, false
 	}
-	blockEnd := findMatchingBraceByte(source, int(blockStart), int(end))
+	blockEnd := csharpFindMatchingBraceByte(source, int(blockStart), int(end))
 	if blockEnd < 0 || uint32(blockEnd+1) != end {
 		return nil, false
 	}
