@@ -796,7 +796,12 @@ func csharpFindMatchingBraceByte(source []byte, openPos, limit int) int {
 		switch b {
 		case '"':
 			inString = true
-			verbatimString = i > 0 && source[i-1] == '@'
+			// Verbatim strings (@"...") and verbatim interpolated strings, in
+			// either order (@$"..." since C# 8, or $@"..."), terminate on a lone
+			// '"' with "" as the escaped quote rather than using backslash
+			// escapes. Detect '@' immediately before the quote, or '@$' before it.
+			verbatimString = (i > 0 && source[i-1] == '@') ||
+				(i > 1 && source[i-1] == '$' && source[i-2] == '@')
 			escape = false
 		case '\'':
 			inChar = true

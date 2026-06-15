@@ -424,7 +424,11 @@ func csharpTopLevelChunkSpans(source []byte) [][2]uint32 {
 		switch b {
 		case '"':
 			inString = true
-			verbatimString = i > 0 && source[i-1] == '@'
+			// Verbatim strings (@"...") and verbatim interpolated strings in
+			// either order (@$"... or $@"...) use "" as the escaped quote rather
+			// than backslash escapes.
+			verbatimString = (i > 0 && source[i-1] == '@') ||
+				(i > 1 && source[i-1] == '$' && source[i-2] == '@')
 			escape = false
 		case '\'':
 			inChar = true

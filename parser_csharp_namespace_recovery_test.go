@@ -98,6 +98,42 @@ func TestCSharpNamespaceWithCharLiteralBracesRecovers(t *testing.T) {
 	}
 }
 
+// TestCSharpNamespaceWithVerbatimStringBracesRecovers ensures a verbatim string
+// (@"...") containing braces and "" escapes does not throw off the trivia-aware
+// brace matcher during recovery: the braces inside the string must be ignored so
+// the namespace/class span is not truncated.
+func TestCSharpNamespaceWithVerbatimStringBracesRecovers(t *testing.T) {
+	lang := grammars.CSharpLanguage()
+
+	src := []byte(`namespace N
+{
+    public class C
+    {
+        string S = @"obj }} with ""q"" and { brace";
+        public int @@@ Broken {}
+        public int B() { return 0; }
+    }
+}`)
+
+	tree, err := gotreesitter.NewParser(lang).Parse(src)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	defer tree.Release()
+
+	root := tree.RootNode()
+	if got, want := root.EndByte(), uint32(len(src)); got != want {
+		t.Fatalf("root end = %d, want %d (span truncated by verbatim-string braces)", got, want)
+	}
+	classes, methods := countCSharpDecls(t, lang, root)
+	if classes < 1 {
+		t.Fatalf("recovered classes = %d, want >= 1 (root type %s)", classes, root.Type(lang))
+	}
+	if methods < 1 {
+		t.Fatalf("recovered methods = %d, want >= 1 (root type %s)", methods, root.Type(lang))
+	}
+}
+
 // TestCSharpCleanNamespaceUnaffected guards against the recovery path altering a
 // namespace that already parses cleanly.
 func TestCSharpCleanNamespaceUnaffected(t *testing.T) {
