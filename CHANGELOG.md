@@ -16,6 +16,12 @@ for tags and release notes while still in `0.x`.
   parsed) instead of discarding the whole file. C# brace matching used during
   recovery is now trivia-aware, so braces inside char literals, strings and
   comments no longer truncate a recovered declaration's span (#115).
+- Swift functions whose `if`/`while` condition contains a comparison operator
+  (`<` / `>` / `==`, etc.) no longer collapse into an `ERROR` tree with no
+  recoverable `function_declaration`. The body brace was being consumed as a
+  trailing closure of the condition's last operand; recovery now re-parses the
+  affected conditions with synthetic parentheses to remove the ambiguity and
+  maps the result back to byte-faithful original coordinates (#118).
 
 ## [0.20.2] - 2026-06-06
 
