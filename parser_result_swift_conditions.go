@@ -66,12 +66,13 @@ func normalizeSwiftRecoveredTrailingClosureConditions(root *Node, source []byte,
 	root.productionID = newRoot.productionID
 	root.fieldIDs = newRoot.fieldIDs
 	root.children = cloneNodeSliceIfArena(root.ownerArena, newRoot.children)
+	// populateParentNode derives the span from the children; reassert the
+	// source_file bounds afterwards so leading/trailing trivia is covered, then
+	// recompute points (root included) from the corrected byte offsets.
+	populateParentNode(root, root.children)
 	root.startByte = 0
 	root.endByte = uint32(len(source))
-	populateParentNode(root, root.children)
 	recomputeNodePointsFromBytes(root, source)
-	root.endByte = uint32(len(source))
-	root.endPoint = advancePointByBytes(Point{}, source)
 	if !swiftAnyChildHasError(root) {
 		root.setHasError(false)
 	}
@@ -174,11 +175,20 @@ func swiftFindConditionBodyBrace(source []byte, start uint32) (uint32, bool) {
 				continue
 			}
 			if source[i+1] == '*' {
+				// Swift block comments nest: /* outer /* inner */ outer */.
 				i += 2
-				for i+1 < n && !(source[i] == '*' && source[i+1] == '/') {
-					i++
+				depthC := 1
+				for i+1 < n && depthC > 0 {
+					if source[i] == '/' && source[i+1] == '*' {
+						depthC++
+						i += 2
+					} else if source[i] == '*' && source[i+1] == '/' {
+						depthC--
+						i += 2
+					} else {
+						i++
+					}
 				}
-				i += 2
 				continue
 			}
 		}
