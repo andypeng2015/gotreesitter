@@ -2750,6 +2750,11 @@ func extractTerminals(g *Grammar, st *symbolTable, stringLits []string, namedTok
 			if !ok {
 				continue
 			}
+			extras, ok := cSplitLineContinuationExtraPattern(g, e.Value, id)
+			if ok {
+				patterns = append(patterns, extras...)
+				continue
+			}
 			expanded, err := expandPatternRule(e.Value)
 			if err != nil {
 				return nil, fmt.Errorf("expand extra pattern: %w", err)
@@ -2763,6 +2768,35 @@ func extractTerminals(g *Grammar, st *symbolTable, stringLits []string, namedTok
 	}
 
 	return patterns, nil
+}
+
+func cSplitLineContinuationExtraPattern(g *Grammar, pattern string, symbolID int) ([]TerminalPattern, bool) {
+	if g == nil || (g.Name != "c" && g.Name != "cpp" && g.Name != "objc") || pattern != `\s|\\\r?\n` {
+		return nil, false
+	}
+	space, err := expandPatternRule(`\s`)
+	if err != nil {
+		return nil, false
+	}
+	lineContinuation, err := expandPatternRule(`\\\r?\n`)
+	if err != nil {
+		return nil, false
+	}
+	return []TerminalPattern{
+		// In tree-sitter C-family grammars, backslash-newline is layout even
+		// when preproc_arg is valid. Keep ordinary whitespace lowest priority,
+		// but let line continuations beat preproc_arg's prec(-1) fallback.
+		{
+			SymbolID: symbolID,
+			Rule:     lineContinuation,
+			Priority: 500,
+		},
+		{
+			SymbolID: symbolID,
+			Rule:     space,
+			Priority: 2000,
+		},
+	}, true
 }
 
 func isKeywordLikeInlinePattern(pattern string) bool {

@@ -3220,7 +3220,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				// completed valid top-level siblings), and resume there. This keeps
 				// subsequent valid top-level constructs nested under the real root
 				// instead of shredding the rest of the file into flat fragments.
-				switch p.tryResyncErrorRecovery(s, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors) {
+				switch p.tryResyncErrorRecovery(source, s, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors) {
 				case resyncRetry:
 					currentState = s.top().state
 					needToken = false
@@ -3468,7 +3468,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			}
 			disableBashReduceChain := p.language != nil && p.language.Name == "bash" && s.gss.head != nil
 			if act.Type == ParseActionReduce && !disableBashReduceChain {
-				if p.applyActionWithReduceChain(s, act, tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors) {
+				if p.applyActionWithReduceChain(source, s, act, tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors) {
 					forceAdvanceAfterReduce = true
 				}
 				drainPendingForkStacks()

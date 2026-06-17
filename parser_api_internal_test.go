@@ -2086,11 +2086,12 @@ func TestRecoverReduceChainCycle(t *testing.T) {
 	var gssScratch gssScratch
 
 	t.Run("pushes and extends error node", func(t *testing.T) {
+		source := []byte("     abcdef")
 		s := newGLRStack(lang.InitialState)
 		nodeCount := 0
 		trackChildErrors := false
 
-		ok := parser.recoverReduceChainCycle(&s, lang.InitialState, Token{
+		ok := parser.recoverReduceChainCycle(source, &s, lang.InitialState, Token{
 			Symbol:     3,
 			StartByte:  5,
 			EndByte:    8,
@@ -2115,7 +2116,7 @@ func TestRecoverReduceChainCycle(t *testing.T) {
 		}
 		depthAfterPush := s.depth()
 
-		ok = parser.recoverReduceChainCycle(&s, lang.InitialState, Token{
+		ok = parser.recoverReduceChainCycle(source, &s, lang.InitialState, Token{
 			Symbol:     3,
 			StartByte:  8,
 			EndByte:    11,
@@ -2141,6 +2142,7 @@ func TestRecoverReduceChainCycle(t *testing.T) {
 	})
 
 	t.Run("ignores eof and no-lookahead", func(t *testing.T) {
+		source := []byte("    ")
 		for _, tc := range []struct {
 			name string
 			tok  Token
@@ -2154,7 +2156,7 @@ func TestRecoverReduceChainCycle(t *testing.T) {
 				nodeCount := 7
 				beforeDepth := s.depth()
 
-				ok := parser.recoverReduceChainCycle(&s, lang.InitialState, tc.tok, &nodeCount, arena, &entryScratch, &gssScratch, nil)
+				ok := parser.recoverReduceChainCycle(source, &s, lang.InitialState, tc.tok, &nodeCount, arena, &entryScratch, &gssScratch, nil)
 				if ok {
 					t.Fatal("recoverReduceChainCycle returned true, want false")
 				}
@@ -2170,6 +2172,80 @@ func TestRecoverReduceChainCycle(t *testing.T) {
 			})
 		}
 	})
+
+	t.Run("rejects skipped comment gap before attaching token", func(t *testing.T) {
+		source := []byte("1/*c*/234")
+		s := newGLRStack(lang.InitialState)
+		s.byteOffset = 1
+		nodeCount := 7
+		beforeDepth := s.depth()
+
+		ok := parser.recoverReduceChainCycle(source, &s, lang.InitialState, Token{
+			Symbol:     3,
+			StartByte:  6,
+			EndByte:    9,
+			StartPoint: Point{Row: 0, Column: 6},
+			EndPoint:   Point{Row: 0, Column: 9},
+		}, &nodeCount, arena, &entryScratch, &gssScratch, nil)
+		if ok {
+			t.Fatal("recoverReduceChainCycle returned true, want false for non-padding gap")
+		}
+		if !s.dead {
+			t.Fatal("stack.dead = false, want true")
+		}
+		if got, want := nodeCount, 7; got != want {
+			t.Fatalf("nodeCount = %d, want %d", got, want)
+		}
+		if got, want := s.depth(), beforeDepth; got != want {
+			t.Fatalf("stack depth = %d, want %d", got, want)
+		}
+	})
+}
+
+func TestTryResyncErrorRecoveryRejectsAdvanceCommentGap(t *testing.T) {
+	lang := &Language{
+		Name:              "c",
+		SymbolCount:       4,
+		TokenCount:        3,
+		StateCount:        2,
+		InitialState:      0,
+		ProductionIDCount: 1,
+		SymbolNames:       []string{"EOF", "TOK", "item", "root"},
+		SymbolMetadata:    []SymbolMetadata{{Name: "EOF"}, {Name: "TOK", Visible: true, Named: true}, {Name: "item", Visible: true, Named: true}, {Name: "root", Visible: true, Named: true}},
+		ParseActions:      []ParseActionEntry{{}},
+		ParseTable:        [][]uint16{{0, 0, 0, 0}, {0, 0, 0, 0}},
+		LexModes:          []LexMode{{LexState: 0}, {LexState: 0}},
+		LexStates:         []LexState{{Default: -1, EOF: -1}},
+	}
+	parser := NewParser(lang)
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	source := []byte("x/*c*/y")
+	s := newGLRStack(lang.InitialState)
+	failed := newLeafNodeInArena(arena, 2, true, 0, 1, Point{}, Point{Column: 1})
+	failed.setHasError(true)
+	var entryScratch glrEntryScratch
+	var gssScratch gssScratch
+	parser.pushStackNode(&s, 1, failed, &entryScratch, &gssScratch)
+	nodeCount := 0
+
+	status := parser.tryResyncErrorRecovery(source, &s, Token{
+		Symbol:     1,
+		StartByte:  6,
+		EndByte:    7,
+		StartPoint: Point{Column: 6},
+		EndPoint:   Point{Column: 7},
+	}, &nodeCount, arena, &entryScratch, &gssScratch, nil)
+	if status != resyncNone {
+		t.Fatalf("tryResyncErrorRecovery status = %d, want resyncNone for non-padding gap", status)
+	}
+	if !s.dead {
+		t.Fatal("stack.dead = false, want true")
+	}
+	if got, want := nodeCount, 0; got != want {
+		t.Fatalf("nodeCount = %d, want %d", got, want)
+	}
 }
 
 func TestShouldNormalizeIncrementalReturnedTree(t *testing.T) {
