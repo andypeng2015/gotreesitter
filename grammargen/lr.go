@@ -4446,12 +4446,18 @@ func shouldKeepSameRHSExplicitNegativeReduces(lookaheadSym int, reduces []lrActi
 	seenScopedIdentifier := false
 	seenScopedTypeInExpression := false
 	seenNegativeScopedTypeInExpression := false
+	var firstRHS []int
 	for _, reduce := range reduces {
 		if reduce.kind != lrReduce || reduce.prodIdx < 0 || reduce.prodIdx >= len(ng.Productions) {
 			return false
 		}
 		prod := &ng.Productions[reduce.prodIdx]
-		if prod.LHS < 0 || prod.LHS >= len(ng.Symbols) || !isScopedIdentifierRHS(prod.RHS, ng) {
+		if prod.LHS < 0 || prod.LHS >= len(ng.Symbols) {
+			return false
+		}
+		if firstRHS == nil {
+			firstRHS = prod.RHS
+		} else if !equalSymbolSeq(firstRHS, prod.RHS) {
 			return false
 		}
 		switch ng.Symbols[prod.LHS].Name {
@@ -4473,13 +4479,12 @@ func shouldKeepSameRHSExplicitNegativeReduces(lookaheadSym int, reduces []lrActi
 	return seenScopedIdentifier && seenScopedTypeInExpression && seenNegativeScopedTypeInExpression
 }
 
-func isScopedIdentifierRHS(rhs []int, ng *NormalizedGrammar) bool {
-	if len(rhs) != 3 {
+func equalSymbolSeq(a, b []int) bool {
+	if len(a) != len(b) {
 		return false
 	}
-	want := []string{"identifier", "::", "identifier"}
-	for i, sym := range rhs {
-		if sym < 0 || sym >= len(ng.Symbols) || ng.Symbols[sym].Name != want[i] {
+	for i := range a {
+		if a[i] != b[i] {
 			return false
 		}
 	}
