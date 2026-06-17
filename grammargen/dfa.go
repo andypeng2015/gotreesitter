@@ -1237,40 +1237,6 @@ func pruneImmediateTransitions(dfa []dfaState, immediateSyms map[int]bool) {
 // terminalPatternSymSet returns the set of symbol IDs that have DFA terminal
 // patterns. Used to distinguish dual-role external tokens (which have both a
 // scanner entry and a DFA pattern) from pure-external tokens.
-// patternImmediateTokenSet returns symbol IDs of immediate tokens that are
-// PATTERN-based (catch-all regex patterns like [^@:\s\$]+). String-based
-// IMMTOKENs like ":", "=", "mount" are excluded — they're legitimate tokens
-// even after whitespace.
-func patternImmediateTokenSet(ng *NormalizedGrammar) map[int]bool {
-	m := make(map[int]bool)
-	for _, t := range ng.Terminals {
-		if !t.Immediate {
-			continue
-		}
-		// A terminal is pattern-based if its rule is a RulePattern or contains
-		// patterns (via RuleSeq/RuleChoice wrapping patterns).
-		if ruleContainsPattern(t.Rule) && !isStringOnlyRule(t.Rule) {
-			m[t.SymbolID] = true
-		}
-	}
-	return m
-}
-
-func ruleContainsPattern(r *Rule) bool {
-	if r == nil {
-		return false
-	}
-	if r.Kind == RulePattern {
-		return true
-	}
-	for _, c := range r.Children {
-		if ruleContainsPattern(c) {
-			return true
-		}
-	}
-	return false
-}
-
 func isStringOnlyRule(r *Rule) bool {
 	if r == nil {
 		return false

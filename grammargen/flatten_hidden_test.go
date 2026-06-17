@@ -156,6 +156,32 @@ func TestFlattenHiddenPassthroughPreservesAliasReferencedRule(t *testing.T) {
 	}
 }
 
+func TestFlattenGeneratedHiddenPassthroughPreservesAliasReferencedRule(t *testing.T) {
+	g := NewGrammar("test_flatten_generated_alias_preserve")
+	g.FlattenGeneratedRepeatAux = true
+	g.Define("document", Seq(Alias(Sym("list_repeat1"), "wrapped", true), Sym("member")))
+	g.Define("member", Seq(Sym("list_repeat1")))
+	g.Define("list_repeat1", Choice(Sym("item"), Seq(Sym("item"), Sym("item"))))
+	g.Define("item", Pat(`[a-z]+`))
+
+	flattened := flattenHiddenChoiceAlts(g, map[string]bool{"list_repeat1": true})
+
+	aux := flattened.Rules["list_repeat1"]
+	if !choiceHasSymbolAlt(aux, "item") {
+		t.Fatal("generated hidden aux pass-through item production should be retained for alias references")
+	}
+
+	document := flattened.Rules["document"]
+	if alias := document.Children[0]; alias.Kind != RuleAlias || alias.Children[0].Kind != RuleSymbol || alias.Children[0].Value != "list_repeat1" {
+		t.Fatalf("alias reference should remain a direct aux symbol, got %#v", document.Children[0])
+	}
+
+	member := flattened.Rules["member"]
+	if member.Kind != RuleSeq || len(member.Children) != 1 || !choiceHasSymbolAlt(member.Children[0], "item") {
+		t.Fatalf("ordinary generated hidden aux reference should inline pass-through item alternative, got %#v", member)
+	}
+}
+
 func TestFlattenHiddenTopLevelRepeat1Passthrough(t *testing.T) {
 	g := &Grammar{
 		Name: "test_flatten_hidden_repeat1",
@@ -330,4 +356,16 @@ func TestFlattenHiddenPassthroughTransitiveChoice(t *testing.T) {
 	if !hasNumber {
 		t.Fatal("document missing transitive passthrough reference to number")
 	}
+}
+
+func choiceHasSymbolAlt(r *Rule, name string) bool {
+	if r == nil || r.Kind != RuleChoice {
+		return false
+	}
+	for _, child := range r.Children {
+		if child.Kind == RuleSymbol && child.Value == name {
+			return true
+		}
+	}
+	return false
 }

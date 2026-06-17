@@ -3689,7 +3689,7 @@ func flattenHiddenChoiceAlts(g *Grammar, generatedHiddenRules map[string]bool) *
 	// 1. Identify hidden nonterminals with mixed pass-through and compound alts.
 	flattenMap := make(map[string]*flattenInfo)
 	preservePassthrough := stringSetFromSlice(g.PreserveHiddenChoicePassthrough)
-	aliasReferenced := hiddenSymbolsReferencedUnderAlias(g)
+	aliasReferenced := hiddenSymbolsReferencedUnderAlias(g, generatedHiddenRules)
 
 	for _, name := range g.RuleOrder {
 		isGeneratedHidden := generatedHiddenRules[name] && g.FlattenGeneratedRepeatAux
@@ -3927,17 +3927,20 @@ func flattenHiddenChoiceAlts(g *Grammar, generatedHiddenRules map[string]bool) *
 	return out
 }
 
-func hiddenSymbolsReferencedUnderAlias(g *Grammar) map[string]bool {
+func hiddenSymbolsReferencedUnderAlias(g *Grammar, generatedHiddenRules map[string]bool) map[string]bool {
 	out := make(map[string]bool)
 	if g == nil {
 		return out
+	}
+	isHidden := func(name string) bool {
+		return strings.HasPrefix(name, "_") || (g.FlattenGeneratedRepeatAux && generatedHiddenRules[name])
 	}
 	var walk func(r *Rule, insideAlias bool)
 	walk = func(r *Rule, insideAlias bool) {
 		if r == nil {
 			return
 		}
-		if r.Kind == RuleSymbol && insideAlias && strings.HasPrefix(r.Value, "_") {
+		if r.Kind == RuleSymbol && insideAlias && isHidden(r.Value) {
 			out[r.Value] = true
 		}
 		nextInsideAlias := insideAlias || r.Kind == RuleAlias
