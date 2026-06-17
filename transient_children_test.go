@@ -1,6 +1,9 @@
 package gotreesitter
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestTransientChildScratchMaterializesReachableNode(t *testing.T) {
 	arena := acquireNodeArena(arenaClassFull)
@@ -143,7 +146,7 @@ func TestTransientParentScratchMaterializesRecoveredNodeSlice(t *testing.T) {
 	parent := parentScratch.allocParent(arena, Symbol(3), true, children, 17, true)
 	nodes := []*Node{parent}
 
-	materializeTransientParentNodes(nodes, arena, &parentScratch, &childScratch)
+	materializeTransientParentNodes(nodes, arena, &parentScratch, &childScratch, nil)
 
 	got := nodes[0]
 	if got == nil {
@@ -166,6 +169,91 @@ func TestTransientParentScratchMaterializesRecoveredNodeSlice(t *testing.T) {
 	childScratch.reset()
 	if len(got.children) != 2 || got.children[0] != first || got.children[1] != second {
 		t.Fatal("recovered materialized parent was invalidated by scratch reset")
+	}
+}
+
+func TestTransientChildScratchMaterializeNodeUntilStopsWhenCancelled(t *testing.T) {
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	var scratch transientChildScratch
+	var cancelled uint32 = 1
+	parser := &Parser{cancellationFlag: &cancelled}
+	leaf := newLeafNodeInArena(arena, Symbol(1), true, 0, 1, Point{}, Point{Column: 1})
+	parent := newParentNodeInArenaNoLinksWithFieldSources(arena, Symbol(2), true, nil, nil, nil, 0, true)
+	children := scratch.alloc(1)
+	children[0] = leaf
+	parent.children = children
+
+	var stack []*Node
+	if scratch.materializeNodeUntil(parent, arena, &stack, parser) {
+		t.Fatal("materializeNodeUntil returned true, want false after cancellation")
+	}
+	if !scratch.owns(parent.children) {
+		t.Fatal("parent children were materialized despite cancellation")
+	}
+	if len(stack) != 0 {
+		t.Fatalf("scratch stack length = %d, want 0 after abort cleanup", len(stack))
+	}
+}
+
+func TestTransientParentScratchMaterializeEntriesUntilStopsWhenCancelled(t *testing.T) {
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	var childScratch transientChildScratch
+	var parentScratch transientParentScratch
+	var cancelled uint32 = 1
+	parser := &Parser{cancellationFlag: &cancelled}
+	leaf := newLeafNodeInArena(arena, Symbol(1), true, 0, 1, Point{}, Point{Column: 1})
+	children := childScratch.alloc(1)
+	children[0] = leaf
+	parent := parentScratch.allocParent(arena, Symbol(2), true, children, 13, true)
+	entries := []stackEntry{newStackEntryNode(parent.parseState, parent)}
+
+	if parentScratch.materializeEntriesUntil(entries, arena, &childScratch, parser) {
+		t.Fatal("materializeEntriesUntil returned true, want false after cancellation")
+	}
+	if stackEntryNode(entries[0]) != parent {
+		t.Fatal("entry node changed despite cancellation before traversal")
+	}
+	if !parentScratch.owns(parent) {
+		t.Fatal("parent was materialized despite cancellation")
+	}
+	if len(parentScratch.seen) != 0 {
+		t.Fatal("materialization scratch was not cleared after abort")
+	}
+}
+
+func TestTransientParentScratchMaterializeNodeSliceUntilStopsOnExpiredTimeout(t *testing.T) {
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	var childScratch transientChildScratch
+	var parentScratch transientParentScratch
+	parser := &Parser{}
+	parser.SetTimeoutMicros(100)
+	endBudget := parser.beginParseOperationBudget()
+	defer endBudget()
+	time.Sleep(2 * time.Millisecond)
+
+	leaf := newLeafNodeInArena(arena, Symbol(1), true, 0, 1, Point{}, Point{Column: 1})
+	children := childScratch.alloc(1)
+	children[0] = leaf
+	parent := parentScratch.allocParent(arena, Symbol(2), true, children, 17, true)
+	nodes := []*Node{parent}
+
+	if parentScratch.materializeNodeSliceUntil(nodes, arena, &childScratch, parser) {
+		t.Fatal("materializeNodeSliceUntil returned true, want false after timeout")
+	}
+	if nodes[0] != parent {
+		t.Fatal("node slice changed despite timeout before traversal")
+	}
+	if !parentScratch.owns(parent) {
+		t.Fatal("parent was materialized despite timeout")
+	}
+	if len(parentScratch.seen) != 0 {
+		t.Fatal("materialization scratch was not cleared after timeout")
 	}
 }
 

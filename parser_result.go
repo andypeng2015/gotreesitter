@@ -147,7 +147,12 @@ func (p *Parser) buildResultFromGLR(stacks []glrStack, source []byte, arena *nod
 		if materializationTiming != nil {
 			materializeStart = time.Now()
 		}
-		materializeTransientParentEntries(selected.entries, arena, transientParents, transientChildren)
+		if !materializeTransientParentEntries(selected.entries, arena, transientParents, transientChildren, p) {
+			if arena != nil {
+				arena.Release()
+			}
+			return parseErrorTree(source, p.language)
+		}
 		if materializationTiming != nil {
 			materializationTiming.transientParentMaterializeNanos += time.Since(materializeStart).Nanoseconds()
 		}
@@ -177,7 +182,12 @@ func (p *Parser) buildResultFromGLR(stacks []glrStack, source []byte, arena *nod
 	if materializationTiming != nil {
 		materializeStart = time.Now()
 	}
-	materializeTransientParentNodes(nodes, arena, transientParents, transientChildren)
+	if !materializeTransientParentNodes(nodes, arena, transientParents, transientChildren, p) {
+		if arena != nil {
+			arena.Release()
+		}
+		return parseErrorTree(source, p.language)
+	}
 	if materializationTiming != nil {
 		materializationTiming.transientParentMaterializeNanos += time.Since(materializeStart).Nanoseconds()
 	}
@@ -192,18 +202,18 @@ func (p *Parser) buildResultFromGLR(stacks []glrStack, source []byte, arena *nod
 	return tree
 }
 
-func materializeTransientParentEntries(entries []stackEntry, arena *nodeArena, transientParents *transientParentScratch, transientChildren *transientChildScratch) {
+func materializeTransientParentEntries(entries []stackEntry, arena *nodeArena, transientParents *transientParentScratch, transientChildren *transientChildScratch, p *Parser) bool {
 	if transientParents == nil {
-		return
+		return true
 	}
-	transientParents.materializeEntries(entries, arena, transientChildren)
+	return transientParents.materializeEntriesUntil(entries, arena, transientChildren, p)
 }
 
-func materializeTransientParentNodes(nodes []*Node, arena *nodeArena, transientParents *transientParentScratch, transientChildren *transientChildScratch) {
+func materializeTransientParentNodes(nodes []*Node, arena *nodeArena, transientParents *transientParentScratch, transientChildren *transientChildScratch, p *Parser) bool {
 	if transientParents == nil {
-		return
+		return true
 	}
-	transientParents.materializeNodeSlice(nodes, arena, transientChildren)
+	return transientParents.materializeNodeSliceUntil(nodes, arena, transientChildren, p)
 }
 
 func (p *Parser) buildNoTreeBenchmarkResult(source []byte, arena *nodeArena, rootEndByte uint32) *Tree {
