@@ -203,6 +203,77 @@ func TestBareStringChoiceStaysNonterminal(t *testing.T) {
 	t.Fatal("relational_operator symbol not found")
 }
 
+func TestHiddenBareStringSharingBareStringChoiceBecomesNonterminal(t *testing.T) {
+	g := NewGrammar("hidden_bare_string_choice_collision")
+	g.Define("source_file", Seq(Sym("_bang"), Sym("operator")))
+	g.Define("_bang", Str("!"))
+	g.Define("operator", Choice(
+		Str("!"),
+		Str("?"),
+	))
+
+	ng, err := Normalize(g)
+	if err != nil {
+		t.Fatalf("Normalize: %v", err)
+	}
+	for _, name := range []string{"_bang", "operator"} {
+		if got := symbolKind(t, ng, name); got != SymbolNonterminal {
+			t.Fatalf("%s kind = %v, want SymbolNonterminal", name, got)
+		}
+	}
+
+	lang, err := GenerateLanguage(g)
+	if err != nil {
+		t.Fatalf("GenerateLanguage: %v", err)
+	}
+	tree, err := gotreesitter.NewParser(lang).Parse([]byte("!!"))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	defer tree.Release()
+	root := tree.RootNode()
+	if root == nil {
+		t.Fatal("parse missing root node")
+	}
+	if root.HasError() {
+		t.Fatalf("parse has error: %s", root.SExpr(lang))
+	}
+}
+
+func TestPrecedenceWrappedBareStringChoiceStaysNonterminal(t *testing.T) {
+	g := NewGrammar("prec_wrapped_bare_string_choice_nonterminal")
+	g.Define("source_file", Sym("operator"))
+	g.Define("operator", Prec(1, Choice(
+		Str("!"),
+		Str("?"),
+	)))
+
+	ng, err := Normalize(g)
+	if err != nil {
+		t.Fatalf("Normalize: %v", err)
+	}
+	if got := symbolKind(t, ng, "operator"); got != SymbolNonterminal {
+		t.Fatalf("operator kind = %v, want SymbolNonterminal", got)
+	}
+}
+
+func TestTokenWrappedBareStringChoiceRemainsNamedToken(t *testing.T) {
+	g := NewGrammar("token_wrapped_bare_string_choice_named_token")
+	g.Define("source_file", Sym("operator_token"))
+	g.Define("operator_token", Token(Choice(
+		Str("!"),
+		Str("?"),
+	)))
+
+	ng, err := Normalize(g)
+	if err != nil {
+		t.Fatalf("Normalize: %v", err)
+	}
+	if got := symbolKind(t, ng, "operator_token"); got != SymbolNamedToken {
+		t.Fatalf("operator_token kind = %v, want SymbolNamedToken", got)
+	}
+}
+
 func TestAliasedInlinePatternWinsSameLengthNamedPatternTie(t *testing.T) {
 	g := NewGrammar("aliased_inline_pattern_precedence")
 	g.Define("source_file", Choice(
@@ -263,4 +334,15 @@ func TestUppercaseUnicodeEscapeIdentifierDoesNotCaptureDigits(t *testing.T) {
 	if got := tree.RootNode().SExpr(lang); got != "(source_file (number_literal))" {
 		t.Fatalf("SExpr = %s, want (source_file (number_literal))", got)
 	}
+}
+
+func symbolKind(t *testing.T, ng *NormalizedGrammar, name string) SymbolKind {
+	t.Helper()
+	for _, sym := range ng.Symbols {
+		if sym.Name == name {
+			return sym.Kind
+		}
+	}
+	t.Fatalf("%s symbol not found", name)
+	return SymbolTerminal
 }
