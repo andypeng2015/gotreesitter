@@ -81,6 +81,10 @@ func TestJavaScriptCorpusSnippetParity(t *testing.T) {
 			src:  "`one line`;\n`multi\\n  line`;\n`$${'$'}$$${'$'}$$$$`;\n",
 		},
 		{
+			name: "postfix_update_after_logical_or",
+			src:  "x = fn.guid || jQuery.guid++;\n",
+		},
+		{
 			name: "template_strings_corpus_block_exact",
 			src: "`one line`;\n" +
 				"`multi\n" +

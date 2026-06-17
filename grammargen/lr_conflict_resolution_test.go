@@ -652,6 +652,60 @@ func TestResolveShiftReduceHonorsExplicitZeroAssignmentAssociativity(t *testing.
 	}
 }
 
+func TestResolveShiftReduceUsesContributorSymbolVsNamedPrecedence(t *testing.T) {
+	ng := javascriptUpdateExpressionConflictGrammar(false)
+
+	got, err := resolveActionConflict(0, []lrAction{
+		{kind: lrShift, state: 9, lhsSym: 3, lhsSyms: []int{4}},
+		{kind: lrReduce, prodIdx: 0, lhsSym: 2},
+	}, ng)
+	if err != nil {
+		t.Fatalf("resolveActionConflict: %v", err)
+	}
+	if len(got) != 1 || got[0].kind != lrShift {
+		t.Fatalf("resolved actions = %+v, want update_expression contributor shift", got)
+	}
+}
+
+func TestResolveShiftReduceUsesContributorSymbolVsNamedPrecedenceInConflictGroup(t *testing.T) {
+	ng := javascriptUpdateExpressionConflictGrammar(true)
+
+	got, err := resolveActionConflict(0, []lrAction{
+		{kind: lrShift, state: 9, lhsSym: 3, lhsSyms: []int{-1, 4, 4}},
+		{kind: lrReduce, prodIdx: 0, lhsSym: 2},
+	}, ng)
+	if err != nil {
+		t.Fatalf("resolveActionConflict: %v", err)
+	}
+	if len(got) != 1 || got[0].kind != lrShift {
+		t.Fatalf("resolved actions = %+v, want update_expression contributor shift", got)
+	}
+}
+
+func javascriptUpdateExpressionConflictGrammar(withConflictGroup bool) *NormalizedGrammar {
+	ng := &NormalizedGrammar{
+		Symbols: []SymbolInfo{
+			{Name: "||", Kind: SymbolTerminal},
+			{Name: "identifier", Kind: SymbolNonterminal},
+			{Name: "binary_expression", Kind: SymbolNonterminal},
+			{Name: "unrelated_expression", Kind: SymbolNonterminal},
+			{Name: "update_expression", Kind: SymbolNonterminal},
+		},
+		Productions: []Production{
+			{LHS: 2, RHS: []int{1, 0, 1}, Prec: 5, Assoc: AssocLeft, HasExplicitPrec: true},
+		},
+		PrecedenceOrder: &precOrderTable{
+			symbolPositions:    map[string]int{"update_expression": 2},
+			symbolLevels:       map[string]int{"update_expression": 0},
+			namedPrecPositions: map[int]int{5: 1},
+		},
+	}
+	if withConflictGroup {
+		ng.Conflicts = [][]int{{2, 99}}
+	}
+	return ng
+}
+
 func TestResolveShiftReduceKeepsExpressionStructInitializerAmbiguity(t *testing.T) {
 	ng := &NormalizedGrammar{
 		Symbols: []SymbolInfo{

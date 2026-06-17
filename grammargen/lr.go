@@ -3166,9 +3166,8 @@ func resolveActionConflict(lookaheadSym int, actions []lrAction, ng *NormalizedG
 					}
 				}
 				// Case 2: shift LHS is SYMBOL (prec 0), reduce prec is named (> 0).
-				if shiftP == 0 && reduceP > 0 && shift.lhsSym < len(ng.Symbols) {
-					shiftLHSName := ng.Symbols[shift.lhsSym].Name
-					cmp := ng.PrecedenceOrder.resolveSymbolVsNamedPrec(shiftLHSName, reduceP)
+				if shiftP == 0 && reduceP > 0 {
+					cmp := resolveShiftLHSVsNamedPrec(shift, reduceP, ng)
 					if cmp > 0 {
 						return []lrAction{shift}, nil
 					}
@@ -3241,9 +3240,8 @@ func resolveActionConflict(lookaheadSym int, actions []lrAction, ng *NormalizedG
 			}
 		}
 		// Case 2: shift LHS is SYMBOL (prec 0), reduce prec is named STRING (> 0).
-		if ng.PrecedenceOrder != nil && shiftPrec == 0 && reducePrec > 0 && shift.lhsSym < len(ng.Symbols) {
-			shiftLHSName := ng.Symbols[shift.lhsSym].Name
-			cmp := ng.PrecedenceOrder.resolveSymbolVsNamedPrec(shiftLHSName, reducePrec)
+		if ng.PrecedenceOrder != nil && shiftPrec == 0 && reducePrec > 0 {
+			cmp := resolveShiftLHSVsNamedPrec(shift, reducePrec, ng)
 			if cmp > 0 {
 				return []lrAction{shift}, nil
 			}
@@ -3483,6 +3481,15 @@ func preferredArithmeticExpressionContinuation(lookaheadSym int, shifts, reduces
 	best := rrPickBest(expressionReduces, ng)[0]
 	bestProd := &ng.Productions[best.prodIdx]
 	shift := shifts[0]
+	if shift.prec == 0 && bestProd.Prec > 0 {
+		cmp := resolveShiftLHSVsNamedPrec(shift, bestProd.Prec, ng)
+		if cmp > 0 {
+			return shift, true
+		}
+		if cmp < 0 {
+			return best, true
+		}
+	}
 	if bestProd.Prec > shift.prec {
 		return best, true
 	}
@@ -3885,6 +3892,43 @@ func shiftLHSIncludesName(shift lrAction, ng *NormalizedGrammar, name string) bo
 		}
 	}
 	return false
+}
+
+func resolveShiftLHSVsNamedPrec(shift lrAction, namedPrec int, ng *NormalizedGrammar) int {
+	if ng == nil || ng.PrecedenceOrder == nil {
+		return 0
+	}
+	sawLower := false
+	seen := map[int]struct{}{}
+	check := func(lhs int) int {
+		if lhs < 0 || lhs >= len(ng.Symbols) {
+			return 0
+		}
+		if _, ok := seen[lhs]; ok {
+			return 0
+		}
+		seen[lhs] = struct{}{}
+		cmp := ng.PrecedenceOrder.resolveSymbolVsNamedPrec(ng.Symbols[lhs].Name, namedPrec)
+		if cmp > 0 {
+			return 1
+		}
+		if cmp < 0 {
+			sawLower = true
+		}
+		return 0
+	}
+	if check(shift.lhsSym) > 0 {
+		return 1
+	}
+	for _, lhs := range shift.lhsSyms {
+		if check(lhs) > 0 {
+			return 1
+		}
+	}
+	if sawLower {
+		return -1
+	}
+	return 0
 }
 
 func symbolNameMatches(sym int, ng *NormalizedGrammar, name string) bool {
