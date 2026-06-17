@@ -79,6 +79,7 @@ type Grammar struct {
 	PreserveKeywordIdentifierConflicts         bool          // keep keyword-as-identifier S/R ambiguity for grammars like Fortran
 	PreferExpressionOperatorIdentifierReduces  bool          // prefer expression/binary-operator reduces over operator_identifier shifts for Elixir-style operators
 	PreferParenthesizedCallDoBlockReduces      bool          // prefer completed parenthesized calls over same-line do_block shifts for Elixir-style calls
+	PreferRemoteCallOperatorReduces            bool          // prefer completed remote calls before Elixir-style binary operator shifts
 	PreferStabClauseLeftArrowReduces           bool          // prefer completed stab-clause left operands before Elixir-style -> shifts
 	PreferPreciseExternalLexStates             bool          // prefer LR(1)-precise external lex rows when merged rows lose scanner context
 	ExactPrefixStates                          int           // keep this many LR(1) states exact before merge compaction

@@ -22,6 +22,11 @@ func applyImportGrammarShapeHints(g *Grammar) {
 		// in that narrow conflict; otherwise `def f(x) when guard(x) do` lets
 		// the guard call consume the block.
 		g.PreferParenthesizedCallDoBlockReduces = true
+		// Remote calls without explicit arguments (`String.upcase`) must complete
+		// before a following binary operator such as `|>` can attach to the
+		// enclosing expression. Otherwise the operator shifts from the raw
+		// _remote_dot state and the RHS is no longer lexed in expression mode.
+		g.PreferRemoteCallOperatorReduces = true
 		// A completed stab-clause left operand followed by `->` must reduce
 		// before shifting the arrow into stab_clause. Otherwise `acc -> value`
 		// treats `->` as an operator identifier and never builds the clause.
@@ -31,6 +36,12 @@ func applyImportGrammarShapeHints(g *Grammar) {
 		// `#{...}`, merged external lex rows can expose both variants, making the
 		// normal lexer skip to the closing quote and truncate the quoted node.
 		g.PreferPreciseExternalLexStates = true
+		// The capture grammar uses a hidden pass-through from
+		// _capture_expression to _expression alongside parenthesized capture
+		// operands. C keeps that cc=1 reduce available in operator/dot conflicts;
+		// flattening it away can truncate quoted pipeline expressions before the
+		// following remote call/operator chain.
+		g.PreserveHiddenChoicePassthrough = []string{"_capture_expression"}
 	case "bash":
 		// Bash's external extglob token is intentionally broad. In merged LALR
 		// states, reduce-only lookaheads can otherwise ask the scanner for

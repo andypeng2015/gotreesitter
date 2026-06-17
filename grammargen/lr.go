@@ -3086,6 +3086,9 @@ func resolveActionConflict(lookaheadSym int, actions []lrAction, ng *NormalizedG
 		if preferred, ok := preferredParenthesizedCallDoBlockReduce(lookaheadSym, shifts, reduces, ng); ok {
 			return preferred, nil
 		}
+		if preferred, ok := preferredRemoteCallOperatorReduce(lookaheadSym, shifts, reduces, ng); ok {
+			return preferred, nil
+		}
 		if preferred, ok := preferredStabClauseLeftArrowReduce(lookaheadSym, shifts, reduces, ng); ok {
 			return preferred, nil
 		}
@@ -3643,6 +3646,42 @@ func isParenthesizedCallWithoutDoBlockReduce(action lrAction, ng *NormalizedGram
 		}
 	}
 	return hasParenthesizedArguments
+}
+
+func preferredRemoteCallOperatorReduce(lookaheadSym int, shifts, reduces []lrAction, ng *NormalizedGrammar) ([]lrAction, bool) {
+	if ng == nil || !ng.PreferRemoteCallOperatorReduces {
+		return nil, false
+	}
+	if lookaheadSym < 0 || lookaheadSym >= len(ng.Symbols) ||
+		!isElixirOperatorIdentifierConflictLookahead(ng.Symbols[lookaheadSym].Name) {
+		return nil, false
+	}
+	if len(shifts) == 0 {
+		return nil, false
+	}
+	preferred := make([]lrAction, 0, len(reduces))
+	for _, reduce := range reduces {
+		if isCompletedRemoteCallReduce(reduce, ng) {
+			preferred = append(preferred, reduce)
+		}
+	}
+	return preferred, len(preferred) > 0
+}
+
+func isCompletedRemoteCallReduce(action lrAction, ng *NormalizedGrammar) bool {
+	if action.kind != lrReduce || action.prodIdx < 0 || action.prodIdx >= len(ng.Productions) {
+		return false
+	}
+	prod := &ng.Productions[action.prodIdx]
+	if prod.LHS < 0 || prod.LHS >= len(ng.Symbols) {
+		return false
+	}
+	switch ng.Symbols[prod.LHS].Name {
+	case "_remote_call_without_parentheses", "_remote_call_with_parentheses":
+		return true
+	default:
+		return false
+	}
 }
 
 func preferredStabClauseLeftArrowReduce(lookaheadSym int, shifts, reduces []lrAction, ng *NormalizedGrammar) ([]lrAction, bool) {

@@ -18,6 +18,11 @@ func TestElixirImportedAddSubOperatorParity(t *testing.T) {
 	assertGeneratedAndReferenceDeepParity(t, genLang, refLang, "a + b + c\na - b - c\n")
 }
 
+func TestElixirImportedOperatorsHighlightParity(t *testing.T) {
+	genLang, refLang := loadImportedParityLanguages(t, "elixir")
+	assertGeneratedAndReferenceDeepParity(t, genLang, refLang, elixirOperatorsHighlightCorpusBlock)
+}
+
 func TestElixirImportedGuardedDefDoBlockParity(t *testing.T) {
 	genLang, refLang := loadImportedParityLanguages(t, "elixir")
 	assertGeneratedAndReferenceDeepParity(t, genLang, refLang, "defmodule M do\n  def func(x) when is_integer(x) do\n    priv(x) + priv(x)\n  end\nend\n")
@@ -125,6 +130,96 @@ const elixirOperatorLeftAssociativeCorpusBlock = "a ** b ** c\n\n" +
 	"a or b or c\n\n" +
 	"a <- b <- c\n" +
 	"a \\\\ b \\\\ c\n"
+
+const elixirOperatorsHighlightCorpusBlock = "a in b\n" +
+	"# <- variable\n" +
+	"# ^ keyword\n" +
+	"#    ^ variable\n" +
+	"\n" +
+	"a not in b\n" +
+	"# <- variable\n" +
+	"# ^ keyword\n" +
+	"#     ^ keyword\n" +
+	"#        ^ variable\n" +
+	"\n" +
+	"a not  in b\n" +
+	"# <- variable\n" +
+	"# ^ keyword\n" +
+	"#      ^ keyword\n" +
+	"#         ^ variable\n" +
+	"\n" +
+	"a ~>> b = bind(a, b)\n" +
+	"# <- variable\n" +
+	"#  ^ operator\n" +
+	"#     ^ variable\n" +
+	"#       ^ operator\n" +
+	"#         ^ function\n" +
+	"#             ^ punctuation.bracket\n" +
+	"#              ^ variable\n" +
+	"#               ^ punctuation.delimiter\n" +
+	"#                 ^ variable\n" +
+	"#                  ^ punctuation.bracket\n" +
+	"\n" +
+	"a ~> b\n" +
+	"# ^ operator\n" +
+	"\n" +
+	"a + b\n" +
+	"# ^ operator\n" +
+	"\n" +
+	"... == !x && y || z\n" +
+	"# <- variable\n" +
+	"#   ^ operator\n" +
+	"#      ^ operator\n" +
+	"#       ^ variable\n" +
+	"#         ^ operator\n" +
+	"#            ^ variable\n" +
+	"#              ^ operator\n" +
+	"#                 ^ variable\n" +
+	"\n" +
+	"x = 1 + 2.0 * 3\n" +
+	"# <- variable\n" +
+	"# ^ operator\n" +
+	"#   ^ number\n" +
+	"#     ^ operator\n" +
+	"#       ^ number\n" +
+	"#           ^ operator\n" +
+	"#             ^ number\n" +
+	"\n" +
+	"y = true and false\n" +
+	"# <- variable\n" +
+	"# ^ operator\n" +
+	"#   ^ constant\n" +
+	"#         ^ keyword\n" +
+	"#             ^ constant\n" +
+	"\n" +
+	"{ ^z, a } = {true, x}\n" +
+	"# <- punctuation.bracket\n" +
+	"# ^ operator\n" +
+	"#  ^ variable\n" +
+	"#   ^ punctuation.delimiter\n" +
+	"#     ^ variable\n" +
+	"#         ^ operator\n" +
+	"#           ^ punctuation.bracket\n" +
+	"#            ^ constant\n" +
+	"#                ^ punctuation.delimiter\n" +
+	"#                  ^ variable\n" +
+	"#                   ^ punctuation.bracket\n" +
+	"\n" +
+	"\"hello\" |> String.upcase |> String.downcase()\n" +
+	"# ^ string\n" +
+	"#       ^ operator\n" +
+	"#          ^ module\n" +
+	"#                ^ operator\n" +
+	"#                 ^ function\n" +
+	"#                        ^ operator\n" +
+	"#                           ^ module\n" +
+	"#                                 ^ operator\n" +
+	"#                                  ^ function\n" +
+	"\n" +
+	"range = ..\n" +
+	"# <- variable\n" +
+	"#     ^ operator\n" +
+	"#        ^ operator\n"
 
 const elixirDoEndStabClauseBodyCorpusBlock = "fun do\n" +
 	"  1 ->\n" +
