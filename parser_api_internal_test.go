@@ -1005,6 +1005,42 @@ func TestJavaRepetitionShiftConflictChoiceForDispatchSkipsFaithfulCondense(t *te
 	}
 }
 
+func TestJavaScriptRepetitionShiftConflictChoiceForDispatchLegacyCondense(t *testing.T) {
+	old := glrFaithfulCapOneMerge
+	glrFaithfulCapOneMerge = false
+	t.Cleanup(func() { glrFaithfulCapOneMerge = old })
+
+	lang := &Language{SymbolNames: []string{"end", "this", "program_repeat1"}}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 2, ChildCount: 2},
+		{Type: ParseActionShift, State: 1245, Repetition: true},
+	}
+
+	chosen, ok := javascriptRepetitionShiftConflictChoiceForDispatch(lang, Token{Symbol: 1}, 9, actions)
+	if !ok {
+		t.Fatal("javascriptRepetitionShiftConflictChoiceForDispatch = false, want true")
+	}
+	if chosen.Type != ParseActionShift || chosen.State != 1245 || !chosen.Repetition {
+		t.Fatalf("javascriptRepetitionShiftConflictChoiceForDispatch picked %+v, want program repeat shift", chosen)
+	}
+}
+
+func TestJavaScriptRepetitionShiftConflictChoiceForDispatchSkipsFaithfulCondense(t *testing.T) {
+	old := glrFaithfulCapOneMerge
+	glrFaithfulCapOneMerge = true
+	t.Cleanup(func() { glrFaithfulCapOneMerge = old })
+
+	lang := &Language{SymbolNames: []string{"end", "this", "program_repeat1"}}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 2, ChildCount: 2},
+		{Type: ParseActionShift, State: 1245, Repetition: true},
+	}
+
+	if _, ok := javascriptRepetitionShiftConflictChoiceForDispatch(lang, Token{Symbol: 1}, 9, actions); ok {
+		t.Fatal("javascriptRepetitionShiftConflictChoiceForDispatch = true, want false")
+	}
+}
+
 func TestShouldRetryNodeLimitParse(t *testing.T) {
 	tree := &Tree{
 		parseRuntime: ParseRuntime{

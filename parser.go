@@ -3275,7 +3275,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 							chosen, choice = next, true
 						}
 					case "javascript":
-						if next, ok := javascriptRepetitionShiftConflictChoice(p.language, tok, currentState, actions); ok {
+						if next, ok := javascriptRepetitionShiftConflictChoiceForDispatch(p.language, tok, currentState, actions); ok {
 							chosen, choice = next, true
 						}
 					case "python":
@@ -4615,6 +4615,13 @@ func javascriptRepetitionShiftConflictChoice(lang *Language, tok Token, state St
 		return ParseAction{}, false
 	}
 	return repetitionShiftConflictChoice(actions)
+}
+
+func javascriptRepetitionShiftConflictChoiceForDispatch(lang *Language, tok Token, state StateID, actions []ParseAction) (ParseAction, bool) {
+	if glrFaithfulCapOneMerge {
+		return ParseAction{}, false
+	}
+	return javascriptRepetitionShiftConflictChoice(lang, tok, state, actions)
 }
 
 // pythonRepetitionShiftConflictChoice resolves the module_repeat1 boundary
