@@ -202,12 +202,6 @@ func TestResolveShiftReducePrefersElixirExpressionOperatorIdentifierReduce(t *te
 			shift:  lrAction{kind: lrShift, state: 10, lhsSym: 3},
 			reduce: lrAction{kind: lrReduce, prodIdx: 1},
 		},
-		{
-			name:   "stab clause left before arrow",
-			sym:    "->",
-			shift:  lrAction{kind: lrShift, state: 10, lhsSym: 3, prec: 180, hasPrec: true},
-			reduce: lrAction{kind: lrReduce, prodIdx: 0},
-		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ng.Symbols[0].Name = tc.sym
@@ -222,6 +216,59 @@ func TestResolveShiftReducePrefersElixirExpressionOperatorIdentifierReduce(t *te
 				t.Fatalf("resolved actions = %+v, want reduce prodIdx=%d", got, tc.reduce.prodIdx)
 			}
 		})
+	}
+}
+
+func TestResolveShiftReduceElixirOperatorIdentifierDoesNotPreferGenericArrowReduce(t *testing.T) {
+	ng := &NormalizedGrammar{
+		Symbols: []SymbolInfo{
+			{Name: "->", Kind: SymbolTerminal, Visible: true, Named: false},
+			{Name: "identifier", Kind: SymbolNonterminal},
+			{Name: "_expression", Kind: SymbolNonterminal},
+			{Name: "operator_identifier", Kind: SymbolNonterminal},
+		},
+		Productions: []Production{
+			{LHS: 2, RHS: []int{1}},
+		},
+		PreferExpressionOperatorIdentifierReduces: true,
+	}
+
+	got, err := resolveActionConflict(0, []lrAction{
+		{kind: lrShift, state: 10, lhsSym: 3, prec: 180, hasPrec: true},
+		{kind: lrReduce, prodIdx: 0},
+	}, ng)
+	if err != nil {
+		t.Fatalf("resolveActionConflict: %v", err)
+	}
+	if len(got) != 1 || got[0].kind != lrShift {
+		t.Fatalf("resolved actions = %+v, want generic operator_identifier shift for ->", got)
+	}
+}
+
+func TestResolveShiftReduceElixirStabClauseArrowPreservesExpressionAmbiguity(t *testing.T) {
+	ng := &NormalizedGrammar{
+		Symbols: []SymbolInfo{
+			{Name: "->", Kind: SymbolTerminal, Visible: true, Named: false},
+			{Name: "identifier", Kind: SymbolNonterminal},
+			{Name: "_expression", Kind: SymbolNonterminal},
+			{Name: "operator_identifier", Kind: SymbolNonterminal},
+		},
+		Productions: []Production{
+			{LHS: 2, RHS: []int{1}},
+		},
+		PreferExpressionOperatorIdentifierReduces: true,
+		PreferStabClauseLeftArrowReduces:          true,
+	}
+
+	got, err := resolveActionConflict(0, []lrAction{
+		{kind: lrShift, state: 10, lhsSym: 3, prec: 180, hasPrec: true},
+		{kind: lrReduce, prodIdx: 0},
+	}, ng)
+	if err != nil {
+		t.Fatalf("resolveActionConflict: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("resolved actions = %+v, want arrow expression/operator ambiguity preserved", got)
 	}
 }
 

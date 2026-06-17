@@ -3089,6 +3089,9 @@ func resolveActionConflict(lookaheadSym int, actions []lrAction, ng *NormalizedG
 		if preferred, ok := preferredStabClauseLeftArrowReduce(lookaheadSym, shifts, reduces, ng); ok {
 			return preferred, nil
 		}
+		if preserved, ok := preservedStabClauseArrowExpressionAmbiguity(lookaheadSym, shifts, reduces, ng); ok {
+			return preserved, nil
+		}
 		if preferred, ok := preferredAtomToExpressionOperatorIdentifierReduce(lookaheadSym, shifts, reduces, ng); ok {
 			return preferred, nil
 		}
@@ -3668,6 +3671,34 @@ func preferredStabClauseLeftArrowReduce(lookaheadSym int, shifts, reduces []lrAc
 	return preferred, len(preferred) > 0
 }
 
+func preservedStabClauseArrowExpressionAmbiguity(lookaheadSym int, shifts, reduces []lrAction, ng *NormalizedGrammar) ([]lrAction, bool) {
+	if ng == nil || !ng.PreferStabClauseLeftArrowReduces {
+		return nil, false
+	}
+	if lookaheadSym < 0 || lookaheadSym >= len(ng.Symbols) || ng.Symbols[lookaheadSym].Name != "->" {
+		return nil, false
+	}
+	hasOperatorIdentifierShift := false
+	for _, shift := range shifts {
+		if shiftLHSIncludesName(shift, ng, "operator_identifier") {
+			hasOperatorIdentifierShift = true
+			break
+		}
+	}
+	if !hasOperatorIdentifierShift {
+		return nil, false
+	}
+	for _, reduce := range reduces {
+		if isAtomToExpressionOperatorConflictReduce(reduce, ng) {
+			preserved := make([]lrAction, 0, len(shifts)+len(reduces))
+			preserved = append(preserved, shifts...)
+			preserved = append(preserved, reduces...)
+			return preserved, true
+		}
+	}
+	return nil, false
+}
+
 func isStabClauseLeftReduce(action lrAction, ng *NormalizedGrammar) bool {
 	if action.kind != lrReduce || action.prodIdx < 0 || action.prodIdx >= len(ng.Productions) {
 		return false
@@ -3775,7 +3806,7 @@ func isAtomToExpressionOperatorConflictReduce(action lrAction, ng *NormalizedGra
 
 func isElixirOperatorIdentifierConflictLookahead(name string) bool {
 	switch name {
-	case "->", "<-", "\\\\", "when", "::", "|", "=>", "=", "||", "|||", "or",
+	case "<-", "\\\\", "when", "::", "|", "=>", "=", "||", "|||", "or",
 		"&&", "&&&", "and", "==", "!=", "=~", "===", "!==", "<", ">",
 		"<=", ">=", "|>", "<<<", ">>>", "<<~", "~>>", "<~", "~>",
 		"<~>", "<|>", "in", "not in", "^^^", "//", "++", "--", "+++",
