@@ -86,6 +86,34 @@ func TestResolveReduceReduceKeepsBashStatementBoundaryReduces(t *testing.T) {
 	}
 }
 
+func TestResolveShiftReduceKeepsRepeatHelperConflictAmbiguity(t *testing.T) {
+	ng := &NormalizedGrammar{
+		Symbols: []SymbolInfo{
+			{Name: "-", Kind: SymbolTerminal},
+			{Name: "class_character", Kind: SymbolNamedToken},
+			{Name: "class_range", Kind: SymbolNonterminal},
+			{Name: "character_class_repeat3", Kind: SymbolNonterminal},
+			{Name: "character_class", Kind: SymbolNonterminal},
+		},
+		Productions: []Production{
+			{LHS: 3, RHS: []int{1}},
+			{LHS: 4, RHS: []int{3}},
+		},
+		Conflicts: [][]int{{2, 4}},
+	}
+
+	got, err := resolveActionConflict(0, []lrAction{
+		{kind: lrReduce, prodIdx: 0},
+		{kind: lrShift, state: 10, lhsSym: 2, hasPrec: true, assoc: AssocRight},
+	}, ng)
+	if err != nil {
+		t.Fatalf("resolveActionConflict: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("resolved actions = %+v, want repeat reduce and class_range shift kept", got)
+	}
+}
+
 func TestResolveReduceReducePrefersBashPipelineContinuationReduce(t *testing.T) {
 	ng := &NormalizedGrammar{
 		Symbols: []SymbolInfo{

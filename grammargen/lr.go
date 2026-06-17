@@ -3055,7 +3055,8 @@ func resolveActionConflict(lookaheadSym int, actions []lrAction, ng *NormalizedG
 		reduce := reduces[0]
 		prod := &ng.Productions[reduce.prodIdx]
 
-		if isRepeatHelperReduce(reduce, ng) && !shift.repeat {
+		if isRepeatHelperReduce(reduce, ng) && !shift.repeat &&
+			!shiftReduceInConflictGroup(shifts, reduces, ng, cache) {
 			return []lrAction{reduce}, nil
 		}
 		if shouldPreferAssignmentExpressionShift(lookaheadSym, shifts, reduces, ng) {
