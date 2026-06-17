@@ -3210,6 +3210,10 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 						if next, ok := awkRepetitionShiftConflictChoice(p.language, currentState, actions); ok {
 							chosen, choice = next, true
 						}
+					case "scheme":
+						if next, ok := schemeRepetitionShiftConflictChoice(p.language, tok, currentState, actions); ok {
+							chosen, choice = next, true
+						}
 					case "dot":
 						if next, ok := dotRepetitionShiftConflictChoice(p.language, tok, currentState, actions); ok {
 							chosen, choice = next, true
@@ -4807,6 +4811,34 @@ func awkRepetitionShiftConflictChoice(lang *Language, state StateID, actions []P
 			return ParseAction{}, false
 		}
 	default:
+		return ParseAction{}, false
+	}
+	return repetitionShiftConflictChoice(actions)
+}
+
+// schemeRepetitionShiftConflictChoice collapses Scheme's block-comment body
+// repeat continuation. The Scheme table exposes block comments as
+// "#|" block_comment_repeat1 "|#"; inside a long comment, state 129 on
+// block_comment_token1 offers both "reduce block_comment_repeat1 (2 children)"
+// and "shift next block_comment_token1 as a repetition". C continues the
+// repeat deterministically; forking on every comment byte keeps hundreds of
+// equivalent versions alive and can hit the iteration budget before the named
+// block_comment reduces. Keep this scoped to that exact hidden-repeat shape.
+func schemeRepetitionShiftConflictChoice(lang *Language, tok Token, state StateID, actions []ParseAction) (ParseAction, bool) {
+	if lang == nil || state != 129 || !symbolHasName(lang, tok.Symbol, "block_comment_token1") {
+		return ParseAction{}, false
+	}
+	foundReduce := false
+	for _, act := range actions {
+		if act.Type != ParseActionReduce {
+			continue
+		}
+		if act.ChildCount != 2 || !symbolHasName(lang, act.Symbol, "block_comment_repeat1") {
+			return ParseAction{}, false
+		}
+		foundReduce = true
+	}
+	if !foundReduce {
 		return ParseAction{}, false
 	}
 	return repetitionShiftConflictChoice(actions)

@@ -634,6 +634,55 @@ func TestAwkRepetitionShiftConflictChoiceRejectsOtherRepeat(t *testing.T) {
 	}
 }
 
+func TestSchemeRepetitionShiftConflictChoiceAllowsBlockCommentRepeat(t *testing.T) {
+	lang := &Language{SymbolNames: []string{"end", "block_comment_token1", "block_comment_repeat1"}}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 2, ChildCount: 2},
+		{Type: ParseActionShift, State: 129, Repetition: true},
+	}
+
+	chosen, ok := schemeRepetitionShiftConflictChoice(lang, Token{Symbol: 1}, 129, actions)
+	if !ok {
+		t.Fatal("schemeRepetitionShiftConflictChoice = false, want true")
+	}
+	if chosen.Type != ParseActionShift || chosen.State != 129 || !chosen.Repetition {
+		t.Fatalf("schemeRepetitionShiftConflictChoice picked %+v, want repetition shift", chosen)
+	}
+}
+
+func TestSchemeRepetitionShiftConflictChoiceRejectsOtherShapes(t *testing.T) {
+	lang := &Language{SymbolNames: []string{"end", "block_comment_token1", "block_comment_repeat1", "other_repeat1"}}
+	baseActions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 2, ChildCount: 2},
+		{Type: ParseActionShift, State: 129, Repetition: true},
+	}
+
+	if _, ok := schemeRepetitionShiftConflictChoice(lang, Token{Symbol: 1}, 128, baseActions); ok {
+		t.Fatal("schemeRepetitionShiftConflictChoice accepted wrong state")
+	}
+	if _, ok := schemeRepetitionShiftConflictChoice(lang, Token{Symbol: 0}, 129, baseActions); ok {
+		t.Fatal("schemeRepetitionShiftConflictChoice accepted wrong lookahead")
+	}
+	if _, ok := schemeRepetitionShiftConflictChoice(lang, Token{Symbol: 1}, 129, []ParseAction{
+		{Type: ParseActionReduce, Symbol: 3, ChildCount: 2},
+		{Type: ParseActionShift, State: 129, Repetition: true},
+	}); ok {
+		t.Fatal("schemeRepetitionShiftConflictChoice accepted wrong reduce symbol")
+	}
+	if _, ok := schemeRepetitionShiftConflictChoice(lang, Token{Symbol: 1}, 129, []ParseAction{
+		{Type: ParseActionReduce, Symbol: 2, ChildCount: 1},
+		{Type: ParseActionShift, State: 129, Repetition: true},
+	}); ok {
+		t.Fatal("schemeRepetitionShiftConflictChoice accepted wrong reduce child count")
+	}
+	if _, ok := schemeRepetitionShiftConflictChoice(lang, Token{Symbol: 1}, 129, []ParseAction{
+		{Type: ParseActionReduce, Symbol: 2, ChildCount: 2},
+		{Type: ParseActionShift, State: 129, Repetition: false},
+	}); ok {
+		t.Fatal("schemeRepetitionShiftConflictChoice accepted non-repetition shift")
+	}
+}
+
 func TestRustRepetitionShiftConflictChoiceAllowsSourceFileRepeat(t *testing.T) {
 	lang := &Language{SymbolNames: []string{"end", "identifier", ";", "..", "source_file_repeat1", "_non_special_token_repeat1"}}
 	actions := []ParseAction{
