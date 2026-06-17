@@ -309,6 +309,34 @@ func TestExtendParentSpanSkipsInvisibleLineEnding(t *testing.T) {
 	}
 }
 
+func TestExtendParentSpanIncludesInvisiblePrefixAcrossWhitespace(t *testing.T) {
+	parent := NewParentNode(3, true, nil, nil, 0)
+	parent.startByte = 7
+	parent.endByte = 39
+	parent.startPoint = Point{Row: 0, Column: 7}
+	parent.endPoint = Point{Row: 0, Column: 39}
+
+	hiddenPrefix := NewLeafNode(4, false, 0, 6, Point{Row: 0, Column: 0}, Point{Row: 0, Column: 6})
+	visibleTail := NewLeafNode(2, true, 7, 39, Point{Row: 0, Column: 7}, Point{Row: 0, Column: 39})
+
+	entries := []stackEntry{
+		newStackEntryNode(0, hiddenPrefix),
+		newStackEntryNode(0, visibleTail),
+	}
+	meta := []SymbolMetadata{
+		{}, {}, {Visible: true}, {}, {Visible: false},
+	}
+	names := []string{"", "", "visible", "", "_hidden_prefix"}
+	extendParentSpanToWindowForTest(parent, entries, 0, len(entries), meta, names)
+
+	if got, want := parent.startByte, uint32(0); got != want {
+		t.Fatalf("parent.startByte = %d, want %d", got, want)
+	}
+	if got, want := parent.endByte, uint32(39); got != want {
+		t.Fatalf("parent.endByte = %d, want %d", got, want)
+	}
+}
+
 func TestShouldUseRawSpanForInvisibleReduction(t *testing.T) {
 	meta := []SymbolMetadata{
 		{},
