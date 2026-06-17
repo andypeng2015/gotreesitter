@@ -1549,6 +1549,7 @@ func TestParsePreMaterializationDiagEnabled(t *testing.T) {
 
 func TestEffectiveParseMergePerKeyCap(t *testing.T) {
 	t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "")
+	t.Setenv("GOT_FAITHFUL_CONDENSE", "")
 	ResetParseEnvConfigCacheForTests()
 	defer ResetParseEnvConfigCacheForTests()
 
@@ -1755,6 +1756,20 @@ func TestEffectiveParseMergePerKeyCap(t *testing.T) {
 	}
 }
 
+func TestEffectiveParseMergePerKeyCapElixirFaithfulCondense(t *testing.T) {
+	t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "")
+	t.Setenv("GOT_FAITHFUL_CONDENSE", "1")
+	ResetParseEnvConfigCacheForTests()
+	defer ResetParseEnvConfigCacheForTests()
+
+	if got := effectiveParseMergePerKeyCap(&Language{Name: "elixir"}, maxStacksPerMergeKey, false); got != 1 {
+		t.Fatalf("effectiveParseMergePerKeyCap(elixir, faithful default, full) = %d, want 1", got)
+	}
+	if got := effectiveParseMergePerKeyCap(&Language{Name: "elixir"}, maxStacksPerMergeKey, true); got != maxStacksPerMergeKey {
+		t.Fatalf("effectiveParseMergePerKeyCap(elixir, faithful default, incremental) = %d, want %d", got, maxStacksPerMergeKey)
+	}
+}
+
 func TestConfigureParseCapsTypedArrowDoesNotLowerLargeTypeScriptCap(t *testing.T) {
 	t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "")
 	ResetParseEnvConfigCacheForTests()
@@ -1777,6 +1792,7 @@ func TestConfigureParseCapsTypedArrowDoesNotLowerLargeTypeScriptCap(t *testing.T
 
 func TestEffectiveParseMergePerKeyCapJavaExplicitOverride(t *testing.T) {
 	t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "4")
+	t.Setenv("GOT_FAITHFUL_CONDENSE", "1")
 	ResetParseEnvConfigCacheForTests()
 	defer ResetParseEnvConfigCacheForTests()
 
@@ -1800,6 +1816,9 @@ func TestEffectiveParseMergePerKeyCapJavaExplicitOverride(t *testing.T) {
 	}
 	if got := effectiveParseMergePerKeyCap(&Language{Name: "scheme"}, 4, false); got != 4 {
 		t.Fatalf("effectiveParseMergePerKeyCap(scheme, explicit, full) = %d, want 4", got)
+	}
+	if got := effectiveParseMergePerKeyCap(&Language{Name: "elixir"}, 4, false); got != 4 {
+		t.Fatalf("effectiveParseMergePerKeyCap(elixir, faithful explicit, full) = %d, want 4", got)
 	}
 }
 

@@ -678,13 +678,18 @@ func effectiveParseMergePerKeyCap(lang *Language, mergePerKeyCap int, incrementa
 		}
 	case "elixir":
 		// Elixir's terminator/repetition conflicts can keep many same-key
-		// block/source alternatives alive. It cannot drop to 1: body
-		// continuation vs next stab_clause needs two same-key survivors, or
-		// `fun do ... 1 -> ...` keeps the body-continuation branch and shifts
-		// `->` as an operator_identifier. Keep explicit diagnostics overrides
-		// and incremental reparses on the wider default.
-		if !parseMaxMergePerKeyEnvConfigured() && mergePerKeyCap > 2 {
-			return 2
+		// block/source alternatives alive. Without faithful condense, body
+		// continuation vs next stab_clause still needs two same-key survivors.
+		// With faithful cap-one condense, tied same-key readings are preserved
+		// through multi-link GSS nodes, so the steady-state cap can tighten.
+		// Keep explicit diagnostic overrides and incremental reparses wider.
+		if !parseMaxMergePerKeyEnvConfigured() {
+			if glrFaithfulCapOneMerge && mergePerKeyCap > 1 {
+				return 1
+			}
+			if mergePerKeyCap > 2 {
+				return 2
+			}
 		}
 	case "typescript", "tsx":
 		// TypeScript-family sources in repository indexing workloads are
