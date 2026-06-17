@@ -3339,7 +3339,7 @@ func shouldPreferAssignmentExpressionShift(lookaheadSym int, shifts, reduces []l
 		if prod.LHS >= 0 && prod.LHS < len(ng.Symbols) && ng.Symbols[prod.LHS].Name == "pattern" {
 			return false
 		}
-		if prod.Prec != 0 {
+		if prod.Prec != 0 || prod.Assoc != AssocNone || prod.HasExplicitPrec {
 			return false
 		}
 	}

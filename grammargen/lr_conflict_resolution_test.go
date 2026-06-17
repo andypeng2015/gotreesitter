@@ -433,6 +433,35 @@ func TestResolveShiftReduceShiftsArithmeticAssignmentFromWrapper(t *testing.T) {
 	}
 }
 
+func TestResolveShiftReduceHonorsExplicitZeroAssignmentAssociativity(t *testing.T) {
+	ng := &NormalizedGrammar{
+		Symbols: []SymbolInfo{
+			{Name: "=", Kind: SymbolTerminal},
+			{Name: "_expression", Kind: SymbolNonterminal},
+			{Name: "assignment_expression", Kind: SymbolNonterminal},
+		},
+		Productions: []Production{
+			{
+				LHS:             2,
+				RHS:             []int{1, 0, 1},
+				Assoc:           AssocLeft,
+				HasExplicitPrec: true,
+			},
+		},
+	}
+
+	got, err := resolveActionConflict(0, []lrAction{
+		{kind: lrShift, state: 9, lhsSym: 2},
+		{kind: lrReduce, prodIdx: 0, lhsSym: 2},
+	}, ng)
+	if err != nil {
+		t.Fatalf("resolveActionConflict: %v", err)
+	}
+	if len(got) != 1 || got[0].kind != lrReduce || got[0].prodIdx != 0 {
+		t.Fatalf("resolved actions = %+v, want left-associative assignment reduce", got)
+	}
+}
+
 func TestPropagateEntryShiftMetadataThroughRepeatHelper(t *testing.T) {
 	ng := &NormalizedGrammar{
 		Symbols: []SymbolInfo{
