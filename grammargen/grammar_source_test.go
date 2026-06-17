@@ -27,6 +27,7 @@ func TestExtendGrammarCopiesImportMetadata(t *testing.T) {
 	base.FlattenGeneratedRepeatAux = true
 	base.ReuseRepeatAuxForParents = []string{"program", "statement_list"}
 	base.PreferExpressionOperatorIdentifierReduces = true
+	base.PreferParenthesizedCallDoBlockReduces = true
 	base.ChoiceLiftThreshold = 16
 	base.ExactPrefixStates = 2048
 	base.Test("identifier", "abc", "")
@@ -50,6 +51,9 @@ func TestExtendGrammarCopiesImportMetadata(t *testing.T) {
 	}
 	if !extended.PreferExpressionOperatorIdentifierReduces {
 		t.Fatalf("extension did not inherit operator-identifier reduce preference flag")
+	}
+	if !extended.PreferParenthesizedCallDoBlockReduces {
+		t.Fatalf("extension did not inherit parenthesized-call do-block reduce preference flag")
 	}
 	if !slices.Equal(extended.ReuseRepeatAuxForParents, []string{"program", "statement_list"}) {
 		t.Fatalf("ReuseRepeatAuxForParents = %v, want [program statement_list]", extended.ReuseRepeatAuxForParents)
@@ -105,6 +109,7 @@ func TestEmitGrammarGoIncludesImportMetadata(t *testing.T) {
 	g.FlattenGeneratedRepeatAux = true
 	g.ReuseRepeatAuxForParents = []string{"program"}
 	g.PreferExpressionOperatorIdentifierReduces = true
+	g.PreferParenthesizedCallDoBlockReduces = true
 	g.ChoiceLiftThreshold = 8
 	g.ExactPrefixStates = 2048
 	g.Test("valid identifier", "abc", "(program (identifier))")
@@ -125,6 +130,7 @@ func TestEmitGrammarGoIncludesImportMetadata(t *testing.T) {
 		"g.ReuseRepeatAuxForParents = []string{",
 		"\"program\"",
 		"g.PreferExpressionOperatorIdentifierReduces = true",
+		"g.PreferParenthesizedCallDoBlockReduces = true",
 		"g.ChoiceLiftThreshold = 8",
 		"g.ExactPrefixStates = 2048",
 		"g.Test(\"valid identifier\", \"abc\", \"(program (identifier))\")",

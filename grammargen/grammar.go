@@ -78,6 +78,7 @@ type Grammar struct {
 	ReuseRepeatAuxForParents                   []string      // parent rule names whose repeat helpers may be shared by canonical body
 	PreserveKeywordIdentifierConflicts         bool          // keep keyword-as-identifier S/R ambiguity for grammars like Fortran
 	PreferExpressionOperatorIdentifierReduces  bool          // prefer expression/binary-operator reduces over operator_identifier shifts for Elixir-style operators
+	PreferParenthesizedCallDoBlockReduces      bool          // prefer completed parenthesized calls over same-line do_block shifts for Elixir-style calls
 	ExactPrefixStates                          int           // keep this many LR(1) states exact before merge compaction
 	Precedences                                [][]PrecEntry // ordered precedence levels (each level: earlier = higher prec)
 	ChoiceLiftThreshold                        int           // if >0, lift inline CHOICE nodes with more alternatives than this into auxiliary nonterminals to prevent production explosion
@@ -333,6 +334,7 @@ func ExtendGrammar(name string, base *Grammar, customize func(g *Grammar)) *Gram
 		ReuseRepeatAuxForParents:           make([]string, len(base.ReuseRepeatAuxForParents)),
 		PreserveKeywordIdentifierConflicts: base.PreserveKeywordIdentifierConflicts,
 		PreferExpressionOperatorIdentifierReduces:  base.PreferExpressionOperatorIdentifierReduces,
+		PreferParenthesizedCallDoBlockReduces:      base.PreferParenthesizedCallDoBlockReduces,
 		ExactPrefixStates:                          base.ExactPrefixStates,
 		Precedences:                                clonePrecedenceLevels(base.Precedences),
 		ChoiceLiftThreshold:                        base.ChoiceLiftThreshold,

@@ -159,6 +159,10 @@ func EmitGrammarGo(g *Grammar, pkgName, funcName string) ([]byte, error) {
 		fmt.Fprintf(&buf, "\tg.PreferExpressionOperatorIdentifierReduces = true\n\n")
 	}
 
+	if g.PreferParenthesizedCallDoBlockReduces {
+		fmt.Fprintf(&buf, "\tg.PreferParenthesizedCallDoBlockReduces = true\n\n")
+	}
+
 	if g.ExactPrefixStates != 0 {
 		fmt.Fprintf(&buf, "\tg.ExactPrefixStates = %d\n\n", g.ExactPrefixStates)
 	}

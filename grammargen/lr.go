@@ -3083,6 +3083,9 @@ func resolveActionConflict(lookaheadSym int, actions []lrAction, ng *NormalizedG
 		if shouldPreserveKeywordIdentifierShiftReduce(lookaheadSym, reduces, ng) {
 			return actions, nil
 		}
+		if preferred, ok := preferredParenthesizedCallDoBlockReduce(lookaheadSym, shifts, reduces, ng); ok {
+			return preferred, nil
+		}
 		if preferred, ok := preferredAtomToExpressionOperatorIdentifierReduce(lookaheadSym, shifts, reduces, ng); ok {
 			return preferred, nil
 		}
@@ -3580,6 +3583,60 @@ func preferredAtomToExpressionOperatorIdentifierReduce(lookaheadSym int, shifts,
 		}
 	}
 	return preferred, len(preferred) > 0
+}
+
+func preferredParenthesizedCallDoBlockReduce(lookaheadSym int, shifts, reduces []lrAction, ng *NormalizedGrammar) ([]lrAction, bool) {
+	if ng == nil || !ng.PreferParenthesizedCallDoBlockReduces {
+		return nil, false
+	}
+	if lookaheadSym < 0 || lookaheadSym >= len(ng.Symbols) || ng.Symbols[lookaheadSym].Name != "do" {
+		return nil, false
+	}
+	hasDoBlockShift := false
+	for _, shift := range shifts {
+		if shiftLHSIncludesName(shift, ng, "do_block") {
+			hasDoBlockShift = true
+			break
+		}
+	}
+	if !hasDoBlockShift {
+		return nil, false
+	}
+	preferred := make([]lrAction, 0, len(reduces))
+	for _, reduce := range reduces {
+		if isParenthesizedCallWithoutDoBlockReduce(reduce, ng) {
+			preferred = append(preferred, reduce)
+		}
+	}
+	return preferred, len(preferred) > 0
+}
+
+func isParenthesizedCallWithoutDoBlockReduce(action lrAction, ng *NormalizedGrammar) bool {
+	if action.kind != lrReduce || action.prodIdx < 0 || action.prodIdx >= len(ng.Productions) {
+		return false
+	}
+	prod := &ng.Productions[action.prodIdx]
+	if prod.LHS < 0 || prod.LHS >= len(ng.Symbols) {
+		return false
+	}
+	switch ng.Symbols[prod.LHS].Name {
+	case "_local_call_with_parentheses", "_remote_call_with_parentheses", "_double_call":
+	default:
+		return false
+	}
+	hasParenthesizedArguments := false
+	for _, sym := range prod.RHS {
+		if sym < 0 || sym >= len(ng.Symbols) {
+			continue
+		}
+		switch ng.Symbols[sym].Name {
+		case "_call_arguments_with_parentheses", "_call_arguments_with_parentheses_immediate":
+			hasParenthesizedArguments = true
+		case "do_block", "_newline_before_do":
+			return false
+		}
+	}
+	return hasParenthesizedArguments
 }
 
 func operatorIdentifierShiftOutranksReduce(shifts []lrAction, reduce lrAction, ng *NormalizedGrammar) bool {

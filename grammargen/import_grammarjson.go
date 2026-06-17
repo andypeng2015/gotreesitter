@@ -17,6 +17,11 @@ func applyImportGrammarShapeHints(g *Grammar) {
 		// operator literal can also start operator_identifier; otherwise `a ** b`
 		// shifts `**` into operator_identifier and truncates before the RHS.
 		g.PreferExpressionOperatorIdentifierReduces = true
+		// Elixir's call rules use left precedence so a same-line `do` sticks to
+		// the outermost call. Preserve the completed parenthesized-call reduce
+		// in that narrow conflict; otherwise `def f(x) when guard(x) do` lets
+		// the guard call consume the block.
+		g.PreferParenthesizedCallDoBlockReduces = true
 	case "bash":
 		// Bash's external extglob token is intentionally broad. In merged LALR
 		// states, reduce-only lookaheads can otherwise ask the scanner for

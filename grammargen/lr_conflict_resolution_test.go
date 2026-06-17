@@ -277,6 +277,33 @@ func TestResolveShiftReduceElixirOperatorIdentifierReduceRequiresExpressionShape
 	}
 }
 
+func TestResolveShiftReducePrefersElixirParenthesizedCallBeforeDoBlock(t *testing.T) {
+	ng := &NormalizedGrammar{
+		Symbols: []SymbolInfo{
+			{Name: "do", Kind: SymbolTerminal, Visible: true, Named: false},
+			{Name: "identifier", Kind: SymbolNonterminal},
+			{Name: "_call_arguments_with_parentheses_immediate", Kind: SymbolNonterminal},
+			{Name: "do_block", Kind: SymbolNonterminal},
+			{Name: "_local_call_with_parentheses", Kind: SymbolNonterminal},
+		},
+		Productions: []Production{
+			{LHS: 4, RHS: []int{1, 2}},
+		},
+		PreferParenthesizedCallDoBlockReduces: true,
+	}
+
+	got, err := resolveActionConflict(0, []lrAction{
+		{kind: lrShift, state: 10, lhsSym: 3},
+		{kind: lrReduce, prodIdx: 0},
+	}, ng)
+	if err != nil {
+		t.Fatalf("resolveActionConflict: %v", err)
+	}
+	if len(got) != 1 || got[0].kind != lrReduce || got[0].prodIdx != 0 {
+		t.Fatalf("resolved actions = %+v, want parenthesized call reduce", got)
+	}
+}
+
 func TestResolveShiftReducePrefersSpecificKeywordContinuation(t *testing.T) {
 	tests := []struct {
 		name  string

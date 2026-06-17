@@ -18,6 +18,11 @@ func TestElixirImportedAddSubOperatorParity(t *testing.T) {
 	assertGeneratedAndReferenceDeepParity(t, genLang, refLang, "a + b + c\na - b - c\n")
 }
 
+func TestElixirImportedGuardedDefDoBlockParity(t *testing.T) {
+	genLang, refLang := loadImportedParityLanguages(t, "elixir")
+	assertGeneratedAndReferenceDeepParity(t, genLang, refLang, "defmodule M do\n  def func(x) when is_integer(x) do\n    priv(x) + priv(x)\n  end\nend\n")
+}
+
 func TestElixirImportedLRSplitCorpusSnippetParity(t *testing.T) {
 	genLang, refLang := loadImportedElixirLRSplitParityLanguages(t)
 	assertGeneratedAndReferenceDeepParity(t, genLang, refLang, elixirOperatorLeftAssociativeCorpusBlock)
