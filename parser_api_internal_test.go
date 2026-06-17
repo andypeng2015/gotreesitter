@@ -45,6 +45,36 @@ func TestRepetitionShiftConflictChoiceRejectsNonRepetitionShift(t *testing.T) {
 	}
 }
 
+func TestGoRepetitionShiftConflictChoiceLegacyCondense(t *testing.T) {
+	old := glrFaithfulCapOneMerge
+	glrFaithfulCapOneMerge = false
+	t.Cleanup(func() { glrFaithfulCapOneMerge = old })
+
+	chosen, ok := goRepetitionShiftConflictChoice(2, 3, Token{Symbol: 15}, []ParseAction{
+		{Type: ParseActionReduce, Symbol: 191, ChildCount: 2},
+		{Type: ParseActionShift, State: 1245, Repetition: true},
+	})
+	if !ok {
+		t.Fatal("goRepetitionShiftConflictChoice = false, want true")
+	}
+	if chosen.Type != ParseActionShift || chosen.State != 1245 || !chosen.Repetition {
+		t.Fatalf("goRepetitionShiftConflictChoice picked %+v, want repetition shift", chosen)
+	}
+}
+
+func TestGoRepetitionShiftConflictChoiceSkipsFaithfulCondense(t *testing.T) {
+	old := glrFaithfulCapOneMerge
+	glrFaithfulCapOneMerge = true
+	t.Cleanup(func() { glrFaithfulCapOneMerge = old })
+
+	if _, ok := goRepetitionShiftConflictChoice(2, 3, Token{Symbol: 15}, []ParseAction{
+		{Type: ParseActionReduce, Symbol: 191, ChildCount: 2},
+		{Type: ParseActionShift, State: 1245, Repetition: true},
+	}); ok {
+		t.Fatal("goRepetitionShiftConflictChoice = true, want false")
+	}
+}
+
 func TestCSharpRepetitionShiftConflictChoice(t *testing.T) {
 	lang := &Language{SymbolNames: []string{"end", "identifier", "this", "block_repeat1"}}
 	actions := []ParseAction{
