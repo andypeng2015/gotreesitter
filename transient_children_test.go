@@ -247,6 +247,44 @@ func TestTransientChildFinalizationAbortReturnsErrorTree(t *testing.T) {
 	}
 }
 
+func TestTransientChildReturnedTreeMaterializationUsesRawRoot(t *testing.T) {
+	lang := &Language{
+		Name:        "typescript",
+		SymbolNames: []string{"EOF", "program", "empty_statement", ";", "call_expression", "unary_expression", "binary_expression"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF", Visible: false, Named: false},
+			{Name: "program", Visible: true, Named: true},
+			{Name: "empty_statement", Visible: true, Named: true},
+			{Name: ";", Visible: true, Named: false},
+			{Name: "call_expression", Visible: true, Named: true},
+			{Name: "unary_expression", Visible: true, Named: true},
+			{Name: "binary_expression", Visible: true, Named: true},
+		},
+	}
+
+	arena := newNodeArena(arenaClassFull)
+	stmt := newLeafNodeInArena(arena, 2, true, 0, 1, Point{}, Point{Column: 1})
+	root := newParentNodeInArena(arena, 1, true, []*Node{stmt}, nil, 0)
+	tree := newTreeWithArenas(root, []byte(";"), lang, arena, nil)
+	tree.deferResultCompatibility()
+
+	parser := &Parser{}
+	scratch := &parserScratch{}
+	if got := parser.materializeTransientChildrenForReturnedTree(tree, arena, scratch); got != ParseStopNone {
+		t.Fatalf("materializeTransientChildrenForReturnedTree stop reason = %q, want %q", got, ParseStopNone)
+	}
+	if !tree.resultCompatibilityPending {
+		t.Fatal("resultCompatibilityPending = false after transient child materialization, want deferred")
+	}
+	if got := resultChildCount(stmt); got != 0 {
+		t.Fatalf("empty_statement child count after transient child materialization = %d, want deferred", got)
+	}
+	_ = tree.RootNode()
+	if got, want := resultChildCount(stmt), 1; got != want {
+		t.Fatalf("empty_statement child count after RootNode = %d, want %d", got, want)
+	}
+}
+
 func TestTransientParentScratchMaterializeEntriesUntilStopsWhenCancelled(t *testing.T) {
 	arena := acquireNodeArena(arenaClassFull)
 	defer arena.Release()

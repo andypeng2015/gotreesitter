@@ -2298,6 +2298,13 @@ func recordParseRuntimeRootStats(parseRuntime *ParseRuntime, tree *Tree, expecte
 	parseRuntime.FinalFieldSourceElements = finalStats.fieldSourceElements
 }
 
+func (p *Parser) materializeTransientChildrenForReturnedTree(tree *Tree, arena *nodeArena, scratch *parserScratch) ParseStopReason {
+	if scratch == nil {
+		return ParseStopNone
+	}
+	return scratch.transientChildren.materializeNodeUntil(rawRootOrNil(tree), arena, &scratch.nodeLinks, p)
+}
+
 func copyParseRuntimeToTiming(timing *incrementalParseTiming, parseRuntime ParseRuntime) {
 	if timing == nil {
 		return
@@ -2595,7 +2602,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				if materializationTimingRef != nil {
 					materializeStart = time.Now()
 				}
-				if reason := scratch.transientChildren.materializeNodeUntil(tree.RootNode(), arena, &scratch.nodeLinks, p); parseStopReasonIsTerminal(reason) {
+				if reason := p.materializeTransientChildrenForReturnedTree(tree, arena, scratch); parseStopReasonIsTerminal(reason) {
 					stopReason = reason
 					tree = parseErrorTree(source, p.language)
 					releaseArenaAfterStats = true
