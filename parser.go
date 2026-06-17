@@ -2373,6 +2373,49 @@ func copyParseRuntimeToTiming(timing *incrementalParseTiming, parseRuntime Parse
 	timing.normalizationNanos = parseRuntime.NormalizationNanos
 }
 
+func realShiftGapIsParserPadding(source []byte, s *glrStack, tok Token) bool {
+	if s == nil || tok.Missing || tok.NoLookahead || tok.StartByte <= s.byteOffset {
+		return true
+	}
+	if int(s.byteOffset) > len(source) || int(tok.StartByte) > len(source) {
+		return true
+	}
+	return bytesAreParserPadding(source, s.byteOffset, tok.StartByte)
+}
+
+func bytesAreParserPadding(source []byte, start, end uint32) bool {
+	if start > end || int(end) > len(source) {
+		return false
+	}
+	i := int(start)
+	if i == 0 && bytes.HasPrefix(source, utf8BOM) && int(end) >= len(utf8BOM) {
+		i = len(utf8BOM)
+	}
+	for ; i < int(end); i++ {
+		switch source[i] {
+		case ' ', '\t', '\n', '\r', '\f', '\v':
+			continue
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func (p *Parser) guardRealShiftGap(source []byte, s *glrStack, tok Token) bool {
+	if realShiftGapIsParserPadding(source, s, tok) {
+		return true
+	}
+	if p != nil && p.glrTrace && s != nil {
+		fmt.Printf("    KILL stale shift: stack_byte=%d tok=%d..%d gap=%q\n",
+			s.byteOffset, tok.StartByte, tok.EndByte, string(source[s.byteOffset:tok.StartByte]))
+	}
+	if s != nil {
+		s.dead = true
+	}
+	return false
+}
+
 // parseInternal is the core GLR parsing loop shared by Parse and
 // ParseWithTokenSource.
 //
@@ -2847,6 +2890,9 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				if actionTiming != nil {
 					actionKindStart = time.Now()
 				}
+				if !p.guardRealShiftGap(source, s, tok) {
+					continue
+				}
 				p.applyExtraShiftAction(s, currentState, actions[0], tok, arena, scratch)
 				nodeCount++
 				needToken = true
@@ -3232,6 +3278,9 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					chosen, choice = deterministicExternalConflictAction(actions), true
 				}
 				if choice {
+					if chosen.Type == ParseActionShift && !p.guardRealShiftGap(source, s, tok) {
+						continue
+					}
 					p.applyAction(s, chosen, tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
 					if actionTiming != nil {
 						ns := time.Since(conflictStart).Nanoseconds()
@@ -3259,6 +3308,9 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					preMaterializationFieldRejectOverflowCandidates += overflow
 				}
 				if s.depth() > maxForkCloneDepth {
+					if actions[0].Type == ParseActionShift && !p.guardRealShiftGap(source, s, tok) {
+						continue
+					}
 					p.applyAction(s, actions[0], tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
 					if actionTiming != nil {
 						ns := time.Since(conflictStart).Nanoseconds()
@@ -3275,7 +3327,9 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					fork := base.cloneWithScratch(&scratch.gss)
 					fork.branchOrder = nextBranchOrder
 					nextBranchOrder++
-					p.applyAction(&fork, actions[ai], tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
+					if actions[ai].Type != ParseActionShift || p.guardRealShiftGap(source, &fork, tok) {
+						p.applyAction(&fork, actions[ai], tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
+					}
 					if p.glrTrace {
 						fmt.Printf("[GLR] fork[%d] after action[%d]: st=%d dead=%v shift=%v dep=%d byte=%d\n",
 							len(stacks), ai, fork.top().state, fork.dead, fork.shifted, fork.depth(), fork.byteOffset)
@@ -3283,6 +3337,9 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					stacks = append(stacks, fork)
 				}
 				s = &stacks[si]
+				if actions[0].Type == ParseActionShift && !p.guardRealShiftGap(source, s, tok) {
+					continue
+				}
 				p.applyAction(s, actions[0], tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
 				if p.glrTrace {
 					fmt.Printf("[GLR] orig[%d] after action[0]: st=%d dead=%v shift=%v dep=%d byte=%d\n",
@@ -3313,6 +3370,9 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			} else {
 				switch act.Type {
 				case ParseActionShift:
+					if !p.guardRealShiftGap(source, s, tok) {
+						continue
+					}
 					p.applyShiftAction(s, act, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors)
 					if actionTiming != nil {
 						ns := time.Since(actionKindStart).Nanoseconds()

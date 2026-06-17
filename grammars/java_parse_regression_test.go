@@ -199,6 +199,39 @@ final class B extends A {
 	}
 }
 
+func TestJavaEightArgumentCallDoesNotShiftAcrossUnconsumedArgument(t *testing.T) {
+	lang := JavaLanguage()
+	parser := gotreesitter.NewParser(lang)
+
+	src := []byte(`class T {
+  void f() {
+    target.call(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8);
+  }
+}
+`)
+
+	tree, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	root := tree.RootNode()
+	if root == nil {
+		t.Fatal("parse returned nil root")
+	}
+	if root.HasError() {
+		t.Fatalf("expected Java source to parse without syntax errors, got: %s", root.SExpr(lang))
+	}
+
+	args := findFirstNamedDescendant(root, lang, "argument_list")
+	if args == nil {
+		t.Fatalf("missing argument_list: %s", root.SExpr(lang))
+	}
+	compactArgs := strings.Join(strings.Fields(args.Text(src)), "")
+	if got, want := compactArgs, "(arg1,arg2,arg3,arg4,arg5,arg6,arg7,arg8)"; got != want {
+		t.Fatalf("argument_list text = %q, want %q; tree=%s", got, want, root.SExpr(lang))
+	}
+}
+
 func TestJavaTopLevelAnnotationsKeepDeclarationBranchRegression(t *testing.T) {
 	cases := []struct {
 		name      string
