@@ -2279,10 +2279,6 @@ func recordParseRuntimeRootStats(parseRuntime *ParseRuntime, tree *Tree, expecte
 	if !collectFinalStats {
 		return
 	}
-	root = tree.RootNode()
-	if root == nil {
-		return
-	}
 	finalStats := collectFinalTreeMaterializationStats(root, lang)
 	parseRuntime.FinalNodes = finalStats.nodes
 	parseRuntime.FinalParentNodes = finalStats.parentNodes
@@ -2582,11 +2578,24 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			scratchStatsCaptured = true
 		}
 	}
+	errorTreeWithOwnedArena := func(reason ParseStopReason) *Tree {
+		tree := parseErrorTreeWithArena(source, p.language, arena)
+		tree.setParseStopReason(reason)
+		return tree
+	}
+	replaceWithOwnedErrorTree := func(tree *Tree, reason ParseStopReason) *Tree {
+		if tree != nil {
+			if tree.arena == arena {
+				tree.arena = nil
+			}
+			tree.Release()
+		}
+		return errorTreeWithOwnedArena(reason)
+	}
 	finalizeTree := func(tree *Tree, stopReason ParseStopReason) *Tree {
 		if phaseTiming && parserLoopNanos == 0 {
 			parserLoopNanos = time.Since(parseStart).Nanoseconds()
 		}
-		releaseArenaAfterStats := false
 		if !parseStopReasonIsTerminal(stopReason) {
 			if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
 				stopReason = reason
@@ -2595,8 +2604,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		if p.transientReduceChildren && tree != nil {
 			if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
 				stopReason = reason
-				tree = parseErrorTree(source, p.language)
-				releaseArenaAfterStats = true
+				tree = replaceWithOwnedErrorTree(tree, reason)
 			} else {
 				materializeStart := time.Time{}
 				if materializationTimingRef != nil {
@@ -2604,8 +2612,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				}
 				if reason := p.materializeTransientChildrenForReturnedTree(tree, arena, scratch); parseStopReasonIsTerminal(reason) {
 					stopReason = reason
-					tree = parseErrorTree(source, p.language)
-					releaseArenaAfterStats = true
+					tree = replaceWithOwnedErrorTree(tree, reason)
 				}
 				if materializationTimingRef != nil {
 					materializationTimingRef.transientChildMaterializationNanos += time.Since(materializeStart).Nanoseconds()
@@ -2615,9 +2622,6 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		scratch.audit.finishParse(stacks)
 		captureArenaStats()
 		captureScratchStats()
-		if releaseArenaAfterStats && arena != nil {
-			arena.Release()
-		}
 		parseRuntime.StopReason = parseStopReasonWithTokenSourceEOF(stopReason, tokenSourceEOFEarly)
 		recordParseRuntimeLoopStats(&parseRuntime, scratch, iterationsUsed, nodeCount, peakStackDepth, maxStacksSeen, singleStackIterations, multiStackIterations, singleStackTokens, multiStackTokens)
 		recordParseRuntimePhaseTiming(&parseRuntime, materializationTimingRef, parseStart, parserLoopNanos, tokenNextNanos, actionDispatchNanos, actionLookupNanos, glrMergeNanos, glrCullNanos)
@@ -2682,34 +2686,26 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		if phaseTiming && parserLoopNanos == 0 {
 			parserLoopNanos = time.Since(parseStart).Nanoseconds()
 		}
-		captureArenaStats()
-		arena.Release()
-		return finalizeTree(parseErrorTree(source, p.language), stopReason)
+		return finalizeTree(errorTreeWithOwnedArena(stopReason), stopReason)
 	}
 	finalizeRecoveredNodes := func(nodes []*Node) *Tree {
 		if phaseTiming && parserLoopNanos == 0 {
 			parserLoopNanos = time.Since(parseStart).Nanoseconds()
 		}
 		if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
-			captureArenaStats()
-			arena.Release()
-			return finalizeTree(parseErrorTree(source, p.language), reason)
+			return finalizeTree(errorTreeWithOwnedArena(reason), reason)
 		}
 		if reason := materializeTransientParentNodes(nodes, arena, scratch.reduce.transientParents, scratch.reduce.transientChildren, p); parseStopReasonIsTerminal(reason) {
-			captureArenaStats()
-			arena.Release()
-			return finalizeTree(parseErrorTree(source, p.language), reason)
+			return finalizeTree(errorTreeWithOwnedArena(reason), reason)
 		}
 		if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
-			captureArenaStats()
-			arena.Release()
-			return finalizeTree(parseErrorTree(source, p.language), reason)
+			return finalizeTree(errorTreeWithOwnedArena(reason), reason)
 		}
 		for _, n := range nodes {
 			stripResultTreeSelfCycles(n)
 		}
 		tree := p.buildResultFromNodes(nodes, source, arena, oldTree, &reuseState, &scratch.nodeLinks)
-		if root := tree.RootNode(); root != nil {
+		if root := rawRootOrNil(tree); root != nil {
 			normalizeSQLRecoveredMissingNull(root, arena, p.language)
 			for _, child := range root.children {
 				trimRecoveryWhitespaceTail(child, source)

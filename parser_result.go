@@ -104,7 +104,7 @@ func (p *Parser) currentMaterializationTiming() *parseMaterializationTiming {
 // alias-target symbol before falling back to branch order.
 func (p *Parser) buildResultFromGLR(stacks []glrStack, source []byte, arena *nodeArena, oldTree *Tree, reuseState *parseReuseState, linkScratch *[]*Node, transientParents *transientParentScratch, transientChildren *transientChildScratch, skipErrorRank bool, materializationTiming *parseMaterializationTiming) *Tree {
 	errorTreeWithStopReason := func(reason ParseStopReason) *Tree {
-		tree := parseErrorTree(source, p.language)
+		tree := parseErrorTreeWithArena(source, p.language, arena)
 		tree.setParseStopReason(reason)
 		return tree
 	}
@@ -112,8 +112,7 @@ func (p *Parser) buildResultFromGLR(stacks []glrStack, source []byte, arena *nod
 		return errorTreeWithStopReason(reason)
 	}
 	if len(stacks) == 0 {
-		arena.Release()
-		return parseErrorTree(source, p.language)
+		return parseErrorTreeWithArena(source, p.language, arena)
 	}
 	selectionStart := time.Time{}
 	if materializationTiming != nil {
@@ -762,19 +761,17 @@ func filterZeroWidthExtras(nodes []*Node, arena *nodeArena) []*Node {
 // buildResult constructs the final Tree from a stack of entries.
 func (p *Parser) buildResult(stack []stackEntry, source []byte, arena *nodeArena, oldTree *Tree, reuseState *parseReuseState, linkScratch *[]*Node) *Tree {
 	if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
-		if arena != nil {
-			arena.Release()
-		}
-		return parseErrorTree(source, p.language)
+		tree := parseErrorTreeWithArena(source, p.language, arena)
+		tree.setParseStopReason(reason)
+		return tree
 	}
 	var nodes []*Node
 	for i := range stack {
 		if i&255 == 0 {
 			if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
-				if arena != nil {
-					arena.Release()
-				}
-				return parseErrorTree(source, p.language)
+				tree := parseErrorTreeWithArena(source, p.language, arena)
+				tree.setParseStopReason(reason)
+				return tree
 			}
 		}
 		if node := materializeStackEntryPayloadWithParser(p, arena, &stack[i], compactFullLeafMaterializeForFinalTree, pendingParentMaterializeForFinalTree); node != nil {
@@ -786,22 +783,15 @@ func (p *Parser) buildResult(stack []stackEntry, source []byte, arena *nodeArena
 
 func (p *Parser) buildResultFromNodes(nodes []*Node, source []byte, arena *nodeArena, oldTree *Tree, reuseState *parseReuseState, linkScratch *[]*Node) *Tree {
 	if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
-		if arena != nil {
-			arena.Release()
-		}
-		return parseErrorTree(source, p.language)
+		tree := parseErrorTreeWithArena(source, p.language, arena)
+		tree.setParseStopReason(reason)
+		return tree
 	}
 	if len(nodes) == 0 {
-		arena.Release()
 		if isWhitespaceOnlySource(source) {
-			return NewTree(nil, source, p.language)
+			return newTreeWithArenas(nil, source, p.language, arena, nil)
 		}
-		return parseErrorTree(source, p.language)
-	}
-
-	if arena != nil && arena.used == 0 {
-		arena.Release()
-		arena = nil
+		return parseErrorTreeWithArena(source, p.language, arena)
 	}
 
 	builder := newResultRootBuild(p, source, arena, oldTree, reuseState, linkScratch)
