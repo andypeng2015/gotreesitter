@@ -1,6 +1,7 @@
 package grammargen
 
 import (
+	"os"
 	"testing"
 	"time"
 
@@ -69,6 +70,17 @@ func loadImportedElixirLRSplitParityLanguages(t *testing.T) (*gotreesitter.Langu
 	}
 	if grammarSpec.name == "" {
 		t.Fatal("elixir import parity grammar not found")
+	}
+	if grammarSpec.jsonPath != "" {
+		grammarSpec.jsonPath = fallbackParitySeedPath(grammarSpec.jsonPath)
+		if _, err := os.Stat(grammarSpec.jsonPath); err != nil {
+			t.Skipf("elixir grammar.json not available: %v", err)
+		}
+	} else if grammarSpec.path != "" {
+		grammarSpec.path = fallbackParitySeedPath(grammarSpec.path)
+		if _, err := os.Stat(grammarSpec.path); err != nil {
+			t.Skipf("elixir grammar.js not available: %v", err)
+		}
 	}
 
 	gram, err := importParityGrammarSource(grammarSpec)

@@ -178,6 +178,68 @@ func TestResolveShiftReducePrefersElixirExpressionOperatorIdentifierReduce(t *te
 	}
 }
 
+func TestResolveShiftReduceElixirOperatorIdentifierHonorsPrecedence(t *testing.T) {
+	ng := &NormalizedGrammar{
+		Symbols: []SymbolInfo{
+			{Name: "*", Kind: SymbolTerminal, Visible: true, Named: false},
+			{Name: "_expression", Kind: SymbolNonterminal},
+			{Name: "operator_identifier", Kind: SymbolNonterminal},
+			{Name: "binary_operator", Kind: SymbolNonterminal},
+		},
+		Productions: []Production{
+			{LHS: 3, RHS: []int{1, 0, 1}, Prec: 10, Assoc: AssocLeft, HasExplicitPrec: true},
+		},
+		PreferExpressionOperatorIdentifierReduces: true,
+	}
+
+	got, err := resolveActionConflict(0, []lrAction{
+		{kind: lrShift, state: 10, lhsSym: 2, prec: 20, hasPrec: true},
+		{kind: lrReduce, prodIdx: 0},
+	}, ng)
+	if err != nil {
+		t.Fatalf("resolveActionConflict higher shift precedence: %v", err)
+	}
+	if len(got) != 1 || got[0].kind != lrShift {
+		t.Fatalf("higher shift precedence actions = %+v, want operator_identifier shift", got)
+	}
+
+	got, err = resolveActionConflict(0, []lrAction{
+		{kind: lrShift, state: 11, lhsSym: 2, prec: 10, hasPrec: true},
+		{kind: lrReduce, prodIdx: 0},
+	}, ng)
+	if err != nil {
+		t.Fatalf("resolveActionConflict same precedence: %v", err)
+	}
+	if len(got) != 1 || got[0].kind != lrReduce || got[0].prodIdx != 0 {
+		t.Fatalf("same precedence actions = %+v, want left-associative reduce", got)
+	}
+}
+
+func TestResolveShiftReduceElixirOperatorIdentifierReduceRequiresExpressionShape(t *testing.T) {
+	ng := &NormalizedGrammar{
+		Symbols: []SymbolInfo{
+			{Name: "+", Kind: SymbolTerminal, Visible: true, Named: false},
+			{Name: "operator_identifier", Kind: SymbolNonterminal},
+			{Name: "unrelated", Kind: SymbolNonterminal},
+		},
+		Productions: []Production{
+			{LHS: 2, RHS: []int{0}},
+		},
+		PreferExpressionOperatorIdentifierReduces: true,
+	}
+
+	got, err := resolveActionConflict(0, []lrAction{
+		{kind: lrShift, state: 10, lhsSym: 1},
+		{kind: lrReduce, prodIdx: 0},
+	}, ng)
+	if err != nil {
+		t.Fatalf("resolveActionConflict: %v", err)
+	}
+	if len(got) != 1 || got[0].kind != lrShift {
+		t.Fatalf("resolved actions = %+v, want operator_identifier shift", got)
+	}
+}
+
 func TestResolveShiftReducePrefersSpecificKeywordContinuation(t *testing.T) {
 	tests := []struct {
 		name  string

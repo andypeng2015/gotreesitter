@@ -26,6 +26,7 @@ func TestExtendGrammarCopiesImportMetadata(t *testing.T) {
 	base.BinaryRepeatMode = true
 	base.FlattenGeneratedRepeatAux = true
 	base.ReuseRepeatAuxForParents = []string{"program", "statement_list"}
+	base.PreferExpressionOperatorIdentifierReduces = true
 	base.ChoiceLiftThreshold = 16
 	base.ExactPrefixStates = 2048
 	base.Test("identifier", "abc", "")
@@ -46,6 +47,9 @@ func TestExtendGrammarCopiesImportMetadata(t *testing.T) {
 	}
 	if !extended.FlattenGeneratedRepeatAux {
 		t.Fatalf("extension did not inherit generated repeat flattening flag")
+	}
+	if !extended.PreferExpressionOperatorIdentifierReduces {
+		t.Fatalf("extension did not inherit operator-identifier reduce preference flag")
 	}
 	if !slices.Equal(extended.ReuseRepeatAuxForParents, []string{"program", "statement_list"}) {
 		t.Fatalf("ReuseRepeatAuxForParents = %v, want [program statement_list]", extended.ReuseRepeatAuxForParents)
@@ -100,6 +104,7 @@ func TestEmitGrammarGoIncludesImportMetadata(t *testing.T) {
 	g.BinaryRepeatMode = true
 	g.FlattenGeneratedRepeatAux = true
 	g.ReuseRepeatAuxForParents = []string{"program"}
+	g.PreferExpressionOperatorIdentifierReduces = true
 	g.ChoiceLiftThreshold = 8
 	g.ExactPrefixStates = 2048
 	g.Test("valid identifier", "abc", "(program (identifier))")
@@ -119,6 +124,7 @@ func TestEmitGrammarGoIncludesImportMetadata(t *testing.T) {
 		"g.FlattenGeneratedRepeatAux = true",
 		"g.ReuseRepeatAuxForParents = []string{",
 		"\"program\"",
+		"g.PreferExpressionOperatorIdentifierReduces = true",
 		"g.ChoiceLiftThreshold = 8",
 		"g.ExactPrefixStates = 2048",
 		"g.Test(\"valid identifier\", \"abc\", \"(program (identifier))\")",

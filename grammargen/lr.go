@@ -3076,9 +3076,6 @@ func resolveActionConflict(lookaheadSym int, actions []lrAction, ng *NormalizedG
 		if shouldPreserveKeywordIdentifierShiftReduce(lookaheadSym, reduces, ng) {
 			return actions, nil
 		}
-		if preferred, ok := preferredExpressionOperatorIdentifierReduce(lookaheadSym, shifts, reduces, ng); ok {
-			return preferred, nil
-		}
 
 		// Tree-sitter keeps S/R as GLR when the reduce LHS and a shift LHS
 		// are both in the same declared conflict group.
@@ -3108,6 +3105,9 @@ func resolveActionConflict(lookaheadSym int, actions []lrAction, ng *NormalizedG
 						return []lrAction{shift}, nil
 					}
 				}
+			}
+			if preferred, ok := preferredExpressionOperatorIdentifierReduce(lookaheadSym, shifts, reduces, ng); ok {
+				return preferred, nil
 			}
 			return actions, nil
 		}
@@ -3185,6 +3185,9 @@ func resolveActionConflict(lookaheadSym int, actions []lrAction, ng *NormalizedG
 					return []lrAction{shift}, nil
 				}
 			}
+			if preferred, ok := preferredExpressionOperatorIdentifierReduce(lookaheadSym, shifts, reduces, ng); ok {
+				return preferred, nil
+			}
 			// No clear resolution — keep as GLR.
 			return actions, nil
 		}
@@ -3261,6 +3264,10 @@ func resolveActionConflict(lookaheadSym int, actions []lrAction, ng *NormalizedG
 			case AssocNone:
 				return nil, nil
 			}
+		}
+
+		if preferred, ok := preferredExpressionOperatorIdentifierReduce(lookaheadSym, shifts, reduces, ng); ok {
+			return preferred, nil
 		}
 
 		// Default: prefer shift.
@@ -3527,11 +3534,61 @@ func preferredExpressionOperatorIdentifierReduce(lookaheadSym int, shifts, reduc
 	}
 	preferred := make([]lrAction, 0, len(reduces))
 	for _, reduce := range reduces {
-		if isExpressionOperatorConflictReduce(reduce, ng) {
-			preferred = append(preferred, reduce)
+		if !isExpressionOperatorConflictReduce(reduce, ng) {
+			continue
 		}
+		if operatorIdentifierShiftOutranksReduce(shifts, reduce, ng) {
+			continue
+		}
+		preferred = append(preferred, reduce)
 	}
 	return preferred, len(preferred) > 0
+}
+
+func operatorIdentifierShiftOutranksReduce(shifts []lrAction, reduce lrAction, ng *NormalizedGrammar) bool {
+	if reduce.prodIdx < 0 || reduce.prodIdx >= len(ng.Productions) {
+		return false
+	}
+	prod := &ng.Productions[reduce.prodIdx]
+	reducePrec := prod.Prec
+	reduceLHSName := ""
+	if prod.LHS >= 0 && prod.LHS < len(ng.Symbols) {
+		reduceLHSName = ng.Symbols[prod.LHS].Name
+	}
+
+	for _, shift := range shifts {
+		shiftPrec := shift.prec
+		shiftLHSName := ""
+		if shift.lhsSym >= 0 && shift.lhsSym < len(ng.Symbols) {
+			shiftLHSName = ng.Symbols[shift.lhsSym].Name
+		}
+
+		if ng.PrecedenceOrder != nil {
+			if reducePrec == 0 && shiftPrec > 0 && reduceLHSName != "" {
+				if ng.PrecedenceOrder.resolveSymbolVsNamedPrec(reduceLHSName, shiftPrec) < 0 {
+					return true
+				}
+			}
+			if shiftPrec == 0 && reducePrec > 0 && shiftLHSName != "" {
+				if ng.PrecedenceOrder.resolveSymbolVsNamedPrec(shiftLHSName, reducePrec) > 0 {
+					return true
+				}
+			}
+			if shiftPrec == reducePrec && shiftLHSName != "" && reduceLHSName != "" && shiftLHSName != reduceLHSName {
+				if ng.PrecedenceOrder.resolveSymbolVsSymbol(shiftLHSName, reduceLHSName) > 0 {
+					return true
+				}
+			}
+		}
+
+		if (shiftPrec != 0 || reducePrec != 0) && shiftPrec > reducePrec {
+			return true
+		}
+		if shiftPrec == reducePrec && prod.Assoc == AssocRight {
+			return true
+		}
+	}
+	return false
 }
 
 func shiftLHSIncludesName(shift lrAction, ng *NormalizedGrammar, name string) bool {
