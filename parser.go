@@ -3267,7 +3267,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 							}
 						}
 					case "typescript":
-						if next, ok := typescriptRepetitionShiftConflictChoice(p.language, tok, currentState, actions); ok {
+						if next, ok := typescriptRepetitionShiftConflictChoiceForDispatch(p.language, tok, currentState, actions); ok {
 							chosen, choice = next, true
 						}
 					case "tsx":
@@ -4505,6 +4505,13 @@ func typescriptRepetitionShiftConflictChoice(lang *Language, tok Token, state St
 		return ParseAction{}, false
 	}
 	return repetitionShiftConflictChoice(actions)
+}
+
+func typescriptRepetitionShiftConflictChoiceForDispatch(lang *Language, tok Token, state StateID, actions []ParseAction) (ParseAction, bool) {
+	if glrFaithfulCapOneMerge {
+		return ParseAction{}, false
+	}
+	return typescriptRepetitionShiftConflictChoice(lang, tok, state, actions)
 }
 
 // kotlinObjectLiteralConflictChoice resolves issue #93: the bundled Kotlin

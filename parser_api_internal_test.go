@@ -197,6 +197,42 @@ func TestTypeScriptRepetitionShiftConflictChoiceRejectsOtherState(t *testing.T) 
 	}
 }
 
+func TestTypeScriptRepetitionShiftConflictChoiceForDispatchLegacyCondense(t *testing.T) {
+	old := glrFaithfulCapOneMerge
+	glrFaithfulCapOneMerge = false
+	t.Cleanup(func() { glrFaithfulCapOneMerge = old })
+
+	lang := &Language{SymbolNames: []string{"end", "function", "program_repeat1"}}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 2, ChildCount: 2},
+		{Type: ParseActionShift, State: 3693, Repetition: true},
+	}
+
+	chosen, ok := typescriptRepetitionShiftConflictChoiceForDispatch(lang, Token{Symbol: 1}, 9, actions)
+	if !ok {
+		t.Fatal("typescriptRepetitionShiftConflictChoiceForDispatch = false, want true")
+	}
+	if chosen.Type != ParseActionShift || chosen.State != 3693 || !chosen.Repetition {
+		t.Fatalf("typescriptRepetitionShiftConflictChoiceForDispatch picked %+v, want program repeat shift", chosen)
+	}
+}
+
+func TestTypeScriptRepetitionShiftConflictChoiceForDispatchSkipsFaithfulCondense(t *testing.T) {
+	old := glrFaithfulCapOneMerge
+	glrFaithfulCapOneMerge = true
+	t.Cleanup(func() { glrFaithfulCapOneMerge = old })
+
+	lang := &Language{SymbolNames: []string{"end", "function", "program_repeat1"}}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 2, ChildCount: 2},
+		{Type: ParseActionShift, State: 3693, Repetition: true},
+	}
+
+	if _, ok := typescriptRepetitionShiftConflictChoiceForDispatch(lang, Token{Symbol: 1}, 9, actions); ok {
+		t.Fatal("typescriptRepetitionShiftConflictChoiceForDispatch = true, want false")
+	}
+}
+
 func TestPythonRepetitionShiftConflictChoiceAllowsHotModuleRepeat(t *testing.T) {
 	lang := &Language{SymbolNames: []string{"end", "identifier", "def", "module_repeat1"}}
 	actions := []ParseAction{
