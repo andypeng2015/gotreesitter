@@ -946,7 +946,7 @@ func csharpRecoverTopLevelChunkNodesFromRange(source []byte, start, end uint32, 
 	}
 	if source[start] == '[' {
 		if attributeLists, declStart, ok := csharpBuildLeadingAttributeListsFromSource(source, start, end, p.language, arena); ok && declStart < end {
-			if recovered, ok := csharpRecoverAttributedTopLevelTypeDeclarationFromRange(source, declStart, end, attributeLists, p.language, arena); ok {
+			if recovered, ok := csharpRecoverAttributedTopLevelTypeDeclarationFromRange(source, declStart, end, attributeLists, p, p.language, arena); ok {
 				return []*Node{recovered}, true
 			}
 		}
@@ -1307,7 +1307,7 @@ func normalizeCSharpRecoveredTypeDeclarations(root *Node, source []byte, p *Pars
 			i++
 			continue
 		}
-		if recovered, next, ok := csharpRecoverAttributedTopLevelTypeDeclarationFromChildren(root.children, i, source, lang, root.ownerArena); ok {
+		if recovered, next, ok := csharpRecoverAttributedTopLevelTypeDeclarationFromChildren(root.children, i, source, p, lang, root.ownerArena); ok {
 			recoveredChildren = append(recoveredChildren, recovered)
 			i = next
 			continue
@@ -1322,7 +1322,7 @@ func normalizeCSharpRecoveredTypeDeclarations(root *Node, source []byte, p *Pars
 			i++
 			continue
 		}
-		attributed, ok := csharpRecoverAttributedTopLevelTypeDeclarationFromError(child, source, lang, root.ownerArena)
+		attributed, ok := csharpRecoverAttributedTopLevelTypeDeclarationFromError(child, source, p, lang, root.ownerArena)
 		if ok {
 			recoveredChildren = append(recoveredChildren, attributed)
 			i++

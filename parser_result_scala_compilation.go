@@ -2,16 +2,16 @@ package gotreesitter
 
 import "bytes"
 
-func normalizeScalaCompatibility(root *Node, source []byte, lang *Language) {
-	normalizeScalaObjectTemplateBodyFragments(root, source, lang)
-	normalizeScalaTemplateBodyObjectFragments(root, source, lang)
-	normalizeScalaTemplateBodyRecoveredMembers(root, source, lang)
-	normalizeScalaRecoveredObjectTemplateBodies(root, source, lang)
-	normalizeScalaSplitFunctionDefinitions(root, source, lang)
-	normalizeScalaTopLevelClassFragments(root, source, lang)
-	normalizeScalaCompilationUnitRoot(root, source, lang)
+func normalizeScalaCompatibility(root *Node, source []byte, parser *Parser, lang *Language) {
+	normalizeScalaObjectTemplateBodyFragments(root, source, parser, lang)
+	normalizeScalaTemplateBodyObjectFragments(root, source, parser, lang)
+	normalizeScalaTemplateBodyRecoveredMembers(root, source, parser, lang)
+	normalizeScalaRecoveredObjectTemplateBodies(root, source, parser, lang)
+	normalizeScalaSplitFunctionDefinitions(root, source, parser, lang)
+	normalizeScalaTopLevelClassFragments(root, source, parser, lang)
+	normalizeScalaCompilationUnitRoot(root, source, parser, lang)
 	normalizeScalaDefinitionFields(root, source, lang)
-	normalizeScalaTemplateBodyFunctionAnnotations(root, source, lang)
+	normalizeScalaTemplateBodyFunctionAnnotations(root, source, parser, lang)
 	normalizeScalaImportPathFields(root, lang)
 	normalizeScalaTemplateBodyFunctionEnds(root, source, lang)
 	normalizeScalaTrailingCommentOwnership(root, source, lang)
@@ -21,7 +21,7 @@ func normalizeScalaCompatibility(root *Node, source []byte, lang *Language) {
 	normalizeRootEOFNewlineSpan(root, source, lang)
 }
 
-func normalizeScalaCompilationUnitRoot(root *Node, source []byte, lang *Language) {
+func normalizeScalaCompilationUnitRoot(root *Node, source []byte, parser *Parser, lang *Language) {
 	if root == nil || lang == nil || lang.Name != "scala" || root.Type(lang) != "ERROR" {
 		return
 	}
@@ -29,7 +29,7 @@ func normalizeScalaCompilationUnitRoot(root *Node, source []byte, lang *Language
 	if !ok {
 		return
 	}
-	if children, ok := scalaRebuildCompilationUnitChildren(source, lang, root.ownerArena); ok {
+	if children, ok := scalaRebuildCompilationUnitChildren(source, parser, lang, root.ownerArena); ok {
 		retagResultRoot(root, sym, symbolIsNamed(lang, sym))
 		replaceNodeChildrenUnfielded(root, children)
 		refreshResultRootError(root)
@@ -43,7 +43,7 @@ func normalizeScalaCompilationUnitRoot(root *Node, source []byte, lang *Language
 	retagResultRootAndRefreshError(root, sym, symbolIsNamed(lang, sym))
 }
 
-func scalaRebuildCompilationUnitChildren(source []byte, lang *Language, arena *nodeArena) ([]*Node, bool) {
+func scalaRebuildCompilationUnitChildren(source []byte, parser *Parser, lang *Language, arena *nodeArena) ([]*Node, bool) {
 	if lang == nil || len(source) == 0 {
 		return nil, false
 	}
@@ -66,7 +66,7 @@ func scalaRebuildCompilationUnitChildren(source []byte, lang *Language, arena *n
 	}
 	children := make([]*Node, 0, len(spans))
 	for _, span := range spans {
-		node, ok := scalaRecoverCompilationUnitMemberNode(source, span, lang, arena)
+		node, ok := scalaRecoverCompilationUnitMemberNode(source, span, parser, lang, arena)
 		if !ok || node == nil {
 			switch span.kind {
 			case scalaTemplateMemberComment, scalaTemplateMemberBlockComment:
@@ -293,24 +293,24 @@ func scalaFindCompilationUnitMemberEnd(source []byte, start, limit int, kind sca
 	}
 }
 
-func scalaRecoverCompilationUnitMemberNode(source []byte, span scalaTemplateMemberSpan, lang *Language, arena *nodeArena) (*Node, bool) {
+func scalaRecoverCompilationUnitMemberNode(source []byte, span scalaTemplateMemberSpan, parser *Parser, lang *Language, arena *nodeArena) (*Node, bool) {
 	switch span.kind {
 	case scalaTemplateMemberPackage:
-		return scalaRecoverTopLevelNamedNodeFromRange(source, span.start, span.end, lang, arena, "package_clause")
+		return scalaRecoverTopLevelNamedNodeFromRange(source, span.start, span.end, parser, lang, arena, "package_clause")
 	case scalaTemplateMemberImport:
-		return scalaRecoverTopLevelNamedNodeFromRange(source, span.start, span.end, lang, arena, "import_declaration")
+		return scalaRecoverTopLevelNamedNodeFromRange(source, span.start, span.end, parser, lang, arena, "import_declaration")
 	case scalaTemplateMemberObject:
-		return scalaRecoverTopLevelObjectNodeFromRange(source, span.start, span.end, lang, arena)
+		return scalaRecoverTopLevelObjectNodeFromRange(source, span.start, span.end, parser, lang, arena)
 	case scalaTemplateMemberClass:
-		return scalaRecoverTopLevelClassNodeFromRange(source, span.start, span.end, lang, arena)
+		return scalaRecoverTopLevelClassNodeFromRange(source, span.start, span.end, parser, lang, arena)
 	case scalaTemplateMemberTrait:
-		return scalaRecoverTopLevelNamedNodeFromRange(source, span.start, span.end, lang, arena, "trait_definition")
+		return scalaRecoverTopLevelNamedNodeFromRange(source, span.start, span.end, parser, lang, arena, "trait_definition")
 	case scalaTemplateMemberEnum:
-		return scalaRecoverTopLevelNamedNodeFromRange(source, span.start, span.end, lang, arena, "enum_definition")
+		return scalaRecoverTopLevelNamedNodeFromRange(source, span.start, span.end, parser, lang, arena, "enum_definition")
 	case scalaTemplateMemberComment:
-		return scalaRecoverTopLevelNamedNodeFromRange(source, span.start, span.end, lang, arena, "comment")
+		return scalaRecoverTopLevelNamedNodeFromRange(source, span.start, span.end, parser, lang, arena, "comment")
 	case scalaTemplateMemberBlockComment:
-		return scalaRecoverTopLevelNamedNodeFromRange(source, span.start, span.end, lang, arena, "block_comment")
+		return scalaRecoverTopLevelNamedNodeFromRange(source, span.start, span.end, parser, lang, arena, "block_comment")
 	default:
 		return nil, false
 	}
@@ -534,7 +534,7 @@ func normalizeScalaDefinitionFields(root *Node, source []byte, lang *Language) {
 	})
 }
 
-func normalizeScalaTemplateBodyFunctionAnnotations(root *Node, source []byte, lang *Language) {
+func normalizeScalaTemplateBodyFunctionAnnotations(root *Node, source []byte, parser *Parser, lang *Language) {
 	if root == nil || lang == nil || lang.Name != "scala" || len(source) == 0 {
 		return
 	}
@@ -551,7 +551,7 @@ func normalizeScalaTemplateBodyFunctionAnnotations(root *Node, source []byte, la
 				if i > 0 && n.children[i-1] != nil {
 					gapStart = n.children[i-1].endByte
 				}
-				annotations := scalaRecoverLeadingAnnotations(source, gapStart, child.startByte, child.endByte, lang, child.ownerArena)
+				annotations := scalaRecoverLeadingAnnotations(source, gapStart, child.startByte, child.endByte, parser, lang, child.ownerArena)
 				if len(annotations) == 0 {
 					continue
 				}

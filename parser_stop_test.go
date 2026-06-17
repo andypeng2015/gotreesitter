@@ -113,6 +113,60 @@ func TestParserTimeoutDuringFinalizationSkipsGoCompatibility(t *testing.T) {
 	}
 }
 
+func TestParseWithTokenSourceFactoryTimeoutIncludesFactoryWork(t *testing.T) {
+	lang := buildArithmeticLanguage()
+	parser := NewParser(lang)
+	parser.SetTimeoutMicros(100)
+
+	tree, err := parser.ParseWithTokenSourceFactory([]byte("1"), func([]byte) (TokenSource, error) {
+		time.Sleep(2 * time.Millisecond)
+		return &slowArithmeticTokenSource{
+			tokens: []Token{
+				{Symbol: 1, StartByte: 0, EndByte: 1},
+				{Symbol: 0, StartByte: 1, EndByte: 1},
+			},
+		}, nil
+	})
+	if err != nil {
+		t.Fatalf("ParseWithTokenSourceFactory() error = %v", err)
+	}
+	defer tree.Release()
+	if got, want := tree.ParseStopReason(), ParseStopTimeout; got != want {
+		t.Fatalf("ParseStopReason() = %q, want %q", got, want)
+	}
+	if !tree.ParseStoppedEarly() {
+		t.Fatal("ParseStoppedEarly() = false, want true")
+	}
+}
+
+func TestParseIncrementalWithTokenSourceFactoryTimeoutIncludesFactoryWork(t *testing.T) {
+	lang := buildArithmeticLanguage()
+	parser := NewParser(lang)
+	oldTree := mustParse(t, parser, []byte("1"))
+	defer oldTree.Release()
+
+	parser.SetTimeoutMicros(100)
+	tree, err := parser.ParseIncrementalWithTokenSourceFactory([]byte("2"), oldTree, func([]byte) (TokenSource, error) {
+		time.Sleep(2 * time.Millisecond)
+		return &slowArithmeticTokenSource{
+			tokens: []Token{
+				{Symbol: 1, StartByte: 0, EndByte: 1},
+				{Symbol: 0, StartByte: 1, EndByte: 1},
+			},
+		}, nil
+	})
+	if err != nil {
+		t.Fatalf("ParseIncrementalWithTokenSourceFactory() error = %v", err)
+	}
+	defer tree.Release()
+	if got, want := tree.ParseStopReason(), ParseStopTimeout; got != want {
+		t.Fatalf("ParseStopReason() = %q, want %q", got, want)
+	}
+	if !tree.ParseStoppedEarly() {
+		t.Fatal("ParseStoppedEarly() = false, want true")
+	}
+}
+
 func TestNormalizeGoCompatibilityStopsWhenCancelled(t *testing.T) {
 	lang := buildGoDotLeafLanguage()
 	arena := newNodeArena(arenaClassFull)

@@ -227,7 +227,7 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 		normalizeRubyThenStarts(ctx.root, ctx.lang)
 		normalizeRubyTopLevelModuleBounds(ctx.root, ctx.source, ctx.lang)
 	case "scala":
-		normalizeScalaCompatibility(ctx.root, ctx.source, ctx.lang)
+		normalizeScalaCompatibility(ctx.root, ctx.source, ctx.parser, ctx.lang)
 	case "scheme":
 		normalizeSchemeCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "solidity":

@@ -855,7 +855,7 @@ func phpReparsedTopLevelSuffix(source []byte, start uint32, parser *Parser, lang
 	wrapped := make([]byte, 0, len(prefix)+len(source)-int(start))
 	wrapped = append(wrapped, prefix...)
 	wrapped = append(wrapped, source[start:]...)
-	tree, err := parseWithSnippetParser(lang, wrapped)
+	tree, err := parseWithSnippetParserInheriting(lang, wrapped, parser)
 	if err != nil || tree == nil || tree.RootNode() == nil {
 		return nil, false
 	}

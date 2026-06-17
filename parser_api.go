@@ -86,10 +86,10 @@ func normalizeReturnedTree(root *Node, source []byte, lang *Language) {
 		normalizeGoCompatibility(root, source, lang)
 		normalizeRootEOFNewlineSpan(root, source, lang)
 	case "scala":
-		normalizeScalaTemplateBodyObjectFragments(root, source, lang)
-		normalizeScalaRecoveredObjectTemplateBodies(root, source, lang)
+		normalizeScalaTemplateBodyObjectFragments(root, source, nil, lang)
+		normalizeScalaRecoveredObjectTemplateBodies(root, source, nil, lang)
 		normalizeScalaDefinitionFields(root, source, lang)
-		normalizeScalaTemplateBodyFunctionAnnotations(root, source, lang)
+		normalizeScalaTemplateBodyFunctionAnnotations(root, source, nil, lang)
 		normalizeScalaTemplateBodyFunctionEnds(root, source, lang)
 		normalizeScalaCaseClauseEnds(root, source, lang)
 		normalizeRootEOFNewlineSpan(root, source, lang)
@@ -287,15 +287,16 @@ func (p *Parser) normalizeReturnedTree(root *Node, source []byte) ParseStopReaso
 	if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
 		return reason
 	}
-	if p.language.Name == "go" {
-		normalizeGoCompatibilityWithParser(root, source, p.language, p)
-		if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
-			return reason
-		}
-		normalizeRootEOFNewlineSpan(root, source, p.language)
-		return p.parseStopReasonNow()
+	switch p.language.Name {
+	case "go":
+		normalizeGoReturnedTreeCompatibility(root, source, p, p.language)
+	case "scala":
+		normalizeScalaCompatibility(root, source, p, p.language)
+	case "html":
+		normalizeHTMLRecoveredNestedCustomTagRanges(root, source, p.language)
+	case "javascript":
+		normalizeJavaScriptProgramEnd(root, source, p.language)
 	}
-	normalizeReturnedTree(root, source, p.language)
 	return p.parseStopReasonNow()
 }
 
@@ -412,12 +413,22 @@ func (p *Parser) releaseCompatibilityBorrowedArenas() {
 // parseWithSnippetParser runs a recovery snippet parse. timeoutMicros is
 // optional so callers can inherit a parent parser timeout when needed.
 func parseWithSnippetParser(lang *Language, source []byte, timeoutMicros ...uint64) (*Tree, error) {
+	return parseWithSnippetParserInheriting(lang, source, nil, timeoutMicros...)
+}
+
+func parseWithSnippetParserInheriting(lang *Language, source []byte, parent *Parser, timeoutMicros ...uint64) (*Tree, error) {
 	parser := acquireSnippetParser(lang)
 	if parser == nil {
 		return nil, ErrNoLanguage
 	}
 	defer releaseSnippetParser(parser)
-	if len(timeoutMicros) > 0 && timeoutMicros[0] > 0 {
+	if parent != nil {
+		parser.timeoutMicros = parent.timeoutMicros
+		parser.cancellationFlag = parent.cancellationFlag
+		parser.parseStopBudgetActive = parent.parseStopBudgetActive
+		parser.parseStopDeadline = parent.parseStopDeadline
+	}
+	if !parser.parseStopBudgetActive && len(timeoutMicros) > 0 && timeoutMicros[0] > 0 {
 		parser.timeoutMicros = timeoutMicros[0]
 	}
 	return parser.Parse(source)
@@ -903,6 +914,11 @@ func (p *Parser) ParseWithTokenSourceFactory(source []byte, factory TokenSourceF
 	if factory == nil {
 		return nil, ErrNoTokenSourceFactory
 	}
+	if err := p.checkLanguageCompatible(); err != nil {
+		return nil, err
+	}
+	endBudget := p.beginParseOperationBudget()
+	defer endBudget()
 	ts, err := factory(source)
 	if err != nil {
 		return nil, err
@@ -1025,6 +1041,11 @@ func (p *Parser) ParseIncrementalWithTokenSourceFactory(source []byte, oldTree *
 	if factory == nil {
 		return nil, ErrNoTokenSourceFactory
 	}
+	if err := p.checkLanguageCompatible(); err != nil {
+		return nil, err
+	}
+	endBudget := p.beginParseOperationBudget()
+	defer endBudget()
 	ts, err := factory(source)
 	if err != nil {
 		return nil, err

@@ -2,7 +2,7 @@ package gotreesitter
 
 import "bytes"
 
-func normalizeScalaTopLevelClassFragments(root *Node, source []byte, lang *Language) {
+func normalizeScalaTopLevelClassFragments(root *Node, source []byte, parser *Parser, lang *Language) {
 	if root == nil || lang == nil || lang.Name != "scala" || root.Type(lang) != "ERROR" || len(root.children) == 0 || len(source) == 0 {
 		return
 	}
@@ -28,7 +28,7 @@ func normalizeScalaTopLevelClassFragments(root *Node, source []byte, lang *Langu
 		}
 	}
 	classStart := int(lastObjectEnd) + classStartRel + 1
-	classNode, ok := scalaRecoverTopLevelClassNode(source, uint32(classStart), lang, root.ownerArena)
+	classNode, ok := scalaRecoverTopLevelClassNode(source, uint32(classStart), parser, lang, root.ownerArena)
 	if !ok || classNode == nil {
 		return
 	}
@@ -159,7 +159,7 @@ func scalaTemplateBodyFragmentChildren(nodes []*Node, arena *nodeArena, lang *La
 	return out, true
 }
 
-func scalaRecoverTopLevelClassNode(source []byte, classStart uint32, lang *Language, arena *nodeArena) (*Node, bool) {
+func scalaRecoverTopLevelClassNode(source []byte, classStart uint32, parser *Parser, lang *Language, arena *nodeArena) (*Node, bool) {
 	if lang == nil || int(classStart) >= len(source) {
 		return nil, false
 	}
@@ -172,14 +172,14 @@ func scalaRecoverTopLevelClassNode(source []byte, classStart uint32, lang *Langu
 	if closeBrace < 0 || closeBrace <= openBrace {
 		return nil, false
 	}
-	return scalaRecoverTopLevelClassNodeFromRange(source, classStart, uint32(closeBrace+1), lang, arena)
+	return scalaRecoverTopLevelClassNodeFromRange(source, classStart, uint32(closeBrace+1), parser, lang, arena)
 }
 
-func scalaRecoverTopLevelClassNodeFromRange(source []byte, classStart, classEnd uint32, lang *Language, arena *nodeArena) (*Node, bool) {
+func scalaRecoverTopLevelClassNodeFromRange(source []byte, classStart, classEnd uint32, parser *Parser, lang *Language, arena *nodeArena) (*Node, bool) {
 	if lang == nil || int(classStart) >= len(source) || classEnd <= classStart || int(classEnd) > len(source) {
 		return nil, false
 	}
-	tree, err := parseWithSnippetParser(lang, source[classStart:classEnd])
+	tree, err := parseWithSnippetParserInheriting(lang, source[classStart:classEnd], parser)
 	if err != nil || tree == nil || tree.RootNode() == nil {
 		return nil, false
 	}
@@ -406,11 +406,11 @@ func extendScalaRecoveredNodeEnd(recovered *Node, classEnd uint32, source []byte
 	}
 }
 
-func scalaRecoverTopLevelObjectNodeFromRange(source []byte, objectStart, objectEnd uint32, lang *Language, arena *nodeArena) (*Node, bool) {
+func scalaRecoverTopLevelObjectNodeFromRange(source []byte, objectStart, objectEnd uint32, parser *Parser, lang *Language, arena *nodeArena) (*Node, bool) {
 	if lang == nil || int(objectStart) >= len(source) || objectEnd <= objectStart || int(objectEnd) > len(source) {
 		return nil, false
 	}
-	tree, err := parseWithSnippetParser(lang, source[objectStart:objectEnd])
+	tree, err := parseWithSnippetParserInheriting(lang, source[objectStart:objectEnd], parser)
 	if err != nil || tree == nil || tree.RootNode() == nil {
 		return nil, false
 	}
@@ -504,11 +504,11 @@ func scalaRecoverTopLevelObjectNodeFromRange(source []byte, objectStart, objectE
 	return recovered, true
 }
 
-func scalaRecoverTopLevelNamedNodeFromRange(source []byte, start, end uint32, lang *Language, arena *nodeArena, want string) (*Node, bool) {
+func scalaRecoverTopLevelNamedNodeFromRange(source []byte, start, end uint32, parser *Parser, lang *Language, arena *nodeArena, want string) (*Node, bool) {
 	if lang == nil || int(start) >= len(source) || end <= start || int(end) > len(source) {
 		return nil, false
 	}
-	tree, err := parseWithSnippetParser(lang, source[start:end])
+	tree, err := parseWithSnippetParserInheriting(lang, source[start:end], parser)
 	if err != nil || tree == nil || tree.RootNode() == nil {
 		return nil, false
 	}
@@ -534,11 +534,11 @@ func scalaRecoverTopLevelNamedNodeFromRange(source []byte, start, end uint32, la
 	return nil, false
 }
 
-func scalaRecoverTopLevelFunctionNodeFromRange(source []byte, fnStart, fnEnd uint32, lang *Language, arena *nodeArena) (*Node, bool) {
+func scalaRecoverTopLevelFunctionNodeFromRange(source []byte, fnStart, fnEnd uint32, parser *Parser, lang *Language, arena *nodeArena) (*Node, bool) {
 	if lang == nil || int(fnStart) >= len(source) || fnEnd <= fnStart || int(fnEnd) > len(source) {
 		return nil, false
 	}
-	tree, err := parseWithSnippetParser(lang, source[fnStart:fnEnd])
+	tree, err := parseWithSnippetParserInheriting(lang, source[fnStart:fnEnd], parser)
 	if err != nil || tree == nil || tree.RootNode() == nil {
 		return nil, false
 	}

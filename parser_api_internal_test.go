@@ -1274,6 +1274,46 @@ func TestParseWithSnippetParserParsesSource(t *testing.T) {
 	tree.Release()
 }
 
+func TestParseWithSnippetParserInheritsExpiredParentDeadline(t *testing.T) {
+	parent := NewParser(buildArithmeticLanguage())
+	parent.SetTimeoutMicros(100)
+	endBudget := parent.beginParseOperationBudget()
+	defer endBudget()
+	time.Sleep(2 * time.Millisecond)
+
+	tree, err := parseWithSnippetParserInheriting(buildArithmeticLanguage(), []byte("1+2"), parent)
+	if err != nil {
+		t.Fatalf("parseWithSnippetParserInheriting error: %v", err)
+	}
+	defer tree.Release()
+	if got, want := tree.ParseStopReason(), ParseStopTimeout; got != want {
+		t.Fatalf("ParseStopReason() = %q, want %q", got, want)
+	}
+	if !tree.ParseStoppedEarly() {
+		t.Fatal("ParseStoppedEarly() = false, want true")
+	}
+}
+
+func TestParseWithSnippetParserInheritsParentCancellation(t *testing.T) {
+	parent := NewParser(buildArithmeticLanguage())
+	var cancelled uint32 = 1
+	parent.SetCancellationFlag(&cancelled)
+	endBudget := parent.beginParseOperationBudget()
+	defer endBudget()
+
+	tree, err := parseWithSnippetParserInheriting(buildArithmeticLanguage(), []byte("1+2"), parent)
+	if err != nil {
+		t.Fatalf("parseWithSnippetParserInheriting error: %v", err)
+	}
+	defer tree.Release()
+	if got, want := tree.ParseStopReason(), ParseStopCancelled; got != want {
+		t.Fatalf("ParseStopReason() = %q, want %q", got, want)
+	}
+	if !tree.ParseStoppedEarly() {
+		t.Fatal("ParseStoppedEarly() = false, want true")
+	}
+}
+
 func TestParserParseClearsRecoveryParserAcrossTopLevelParses(t *testing.T) {
 	parser := NewParser(buildArithmeticLanguage())
 	parser.recoveryParser = NewParser(buildArithmeticLanguage())
