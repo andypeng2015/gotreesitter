@@ -252,7 +252,7 @@ func (l *Lexer) scan(startState uint32, startPos int, startRow, startCol uint32)
 			zeroWidthVisible := st.AcceptToken > 0 && scanPos == tokenStartPos && !l.allowsZeroWidthToken(st.AcceptToken)
 			if !(isImmediate && skippedWhitespace) && !zeroWidthVisible {
 				newPrio := st.AcceptPriority
-				if acceptPos < 0 || newPrio < acceptPriorityBest || (newPrio == acceptPriorityBest && scanPos > acceptPos) {
+				if acceptPos < 0 || scanPos > acceptPos || (scanPos == acceptPos && newPrio < acceptPriorityBest) {
 					acceptPos = scanPos
 					acceptRow = scanRow
 					acceptCol = scanCol

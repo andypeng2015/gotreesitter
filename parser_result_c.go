@@ -21,6 +21,9 @@ func normalizeCCompatibilityWithParser(root *Node, source []byte, p *Parser, lan
 		run("c_recovered_top_level_chunks", func() {
 			normalizeCRecoveredTopLevelChunks(root, source, p, lang)
 		})
+		run("c_top_level_item_wrappers", func() {
+			normalizeCTopLevelItemWrappers(root, lang)
+		})
 		run("cpp_malformed_class_function_definition", func() {
 			normalizeCppMalformedClassFunctionDefinitionRecovery(root, source, lang)
 		})
@@ -53,6 +56,7 @@ func normalizeCCompatibilityWithParser(root *Node, source []byte, p *Parser, lan
 	}
 	normalizeCTranslationUnitRoot(root, lang)
 	normalizeCRecoveredTopLevelChunks(root, source, p, lang)
+	normalizeCTopLevelItemWrappers(root, lang)
 	normalizeCppMalformedClassFunctionDefinitionRecovery(root, source, lang)
 	normalizeCPreprocessorDirectiveShapes(root, source, lang)
 	normalizeCFusedDeclVariadicWalk(root, source, lang)
@@ -61,6 +65,60 @@ func normalizeCCompatibilityWithParser(root *Node, source []byte, p *Parser, lan
 	normalizeCBareTypeIdentifierExpressionStatements(root, source, lang)
 	normalizeCPointerAssignmentPrecedence(root, lang)
 	normalizeCCollapsedKeywordChildren(root, source, lang)
+}
+
+func normalizeCTopLevelItemWrappers(root *Node, lang *Language) {
+	if root == nil || lang == nil || root.Type(lang) != "translation_unit" || len(root.children) == 0 {
+		return
+	}
+	if lang.Name != "c" && lang.Name != "cpp" {
+		return
+	}
+	out := make([]*Node, 0, len(root.children))
+	changed := false
+	for _, child := range root.children {
+		if child != nil && child.Type(lang) == "_top_level_item" && len(child.children) == 1 {
+			inner := child.children[0]
+			if cNodeIsDirectTopLevelItem(inner, lang) {
+				out = append(out, inner)
+				changed = true
+				continue
+			}
+		}
+		out = append(out, child)
+	}
+	if !changed {
+		return
+	}
+	out = cloneNodeSliceIfArena(root.ownerArena, out)
+	replaceNodeChildrenUnfielded(root, out)
+}
+
+func cNodeIsDirectTopLevelItem(n *Node, lang *Language) bool {
+	if n == nil || lang == nil {
+		return false
+	}
+	switch n.Type(lang) {
+	case "preproc_if",
+		"preproc_ifdef",
+		"preproc_include",
+		"preproc_def",
+		"preproc_function_def",
+		"preproc_call",
+		"declaration",
+		"function_definition",
+		"linkage_specification",
+		"type_definition",
+		"struct_specifier",
+		"union_specifier",
+		"enum_specifier",
+		"class_specifier",
+		"namespace_definition",
+		"template_declaration":
+		return true
+	default:
+		return false
+	}
 }
 
 // normalizeCFusedDeclVariadicWalk performs the work of four previously
