@@ -2461,6 +2461,7 @@ func (t *Tree) descendantForUTF16Range(startCodeUnit, endCodeUnit uint32, namedO
 	if t == nil || t.utf16Map == nil || t.root == nil || endCodeUnit < startCodeUnit {
 		return nil
 	}
+	t.ensureResultCompatibility()
 	startByte, ok := t.utf16Map.utf16UnitToByte(startCodeUnit)
 	if !ok {
 		return nil

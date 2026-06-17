@@ -1494,6 +1494,9 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte, captureExternalChe
 			nextIndex.reset()
 			nextFrontier = nextFrontier[:0]
 			for _, n := range frontier {
+				if !p.guardForestRealShiftGap(source, n, tok) {
+					continue
+				}
 				recoverState := n.state
 				if act, ok := p.recoverActionForState(n.state, tok.Symbol); ok && act.State != 0 {
 					recoverState = act.State

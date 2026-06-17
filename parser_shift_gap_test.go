@@ -1,6 +1,9 @@
 package gotreesitter
 
-import "testing"
+import (
+	"testing"
+	"unsafe"
+)
 
 func TestRealShiftGapRejectsNonTriviaSource(t *testing.T) {
 	source := []byte("call(arg1, arg8)")
@@ -60,6 +63,30 @@ func TestForestRealShiftGapRejectsNonTriviaSource(t *testing.T) {
 	parser := &Parser{glrTrace: false}
 	if parser.guardForestRealShiftGap(source, node, tok) {
 		t.Fatal("guardForestRealShiftGap = true, want false")
+	}
+}
+
+func TestForestRecoveryGapRejectsNonTriviaSource(t *testing.T) {
+	source := []byte("call(arg1, arg8)")
+	node := &gssForestNode{byteOffset: uint32(len("call(arg1"))}
+	tok := Token{
+		Symbol:    1,
+		StartByte: uint32(len(source) - 1),
+		EndByte:   uint32(len(source)),
+	}
+
+	nextIndex := newGSSForestIndex(0)
+	var nextFrontier []*gssForestNode
+	parser := &Parser{glrTrace: false}
+	if parser.guardForestRealShiftGap(source, node, tok) {
+		leaf := &Node{}
+		sh := coalesceForest(&nextIndex, &gssForestNodeSlab{}, node.state, tok.EndByte, node,
+			stackEntry{node: unsafe.Pointer(leaf), state: node.state, kind: stackEntryKindNode},
+			0, node.errorCost+int(tok.EndByte-tok.StartByte))
+		nextFrontier = append(nextFrontier, sh)
+	}
+	if len(nextFrontier) != 0 {
+		t.Fatalf("forest recovery accepted non-padding gap; next frontier len = %d", len(nextFrontier))
 	}
 }
 

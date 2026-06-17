@@ -313,6 +313,43 @@ func TestTransientParentScratchMaterializeEntriesUntilStopsWhenCancelled(t *test
 	}
 }
 
+func TestBuildResultFromGLRTerminalStopReturnsErrorTreeWithoutConsumingArena(t *testing.T) {
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	var childScratch transientChildScratch
+	var parentScratch transientParentScratch
+	var cancelled uint32 = 1
+	parser := &Parser{language: buildArithmeticLanguage(), cancellationFlag: &cancelled}
+	leaf := newLeafNodeInArena(arena, Symbol(1), true, 0, 1, Point{}, Point{Column: 1})
+	children := childScratch.alloc(1)
+	children[0] = leaf
+	parent := parentScratch.allocParent(arena, Symbol(2), true, children, 13, true)
+	stack := glrStack{entries: []stackEntry{newStackEntryNode(parent.parseState, parent)}}
+
+	tree := parser.buildResultFromGLR([]glrStack{stack}, []byte("1"), arena, nil, nil, nil, &parentScratch, &childScratch, false, nil)
+	if tree == nil {
+		t.Fatal("buildResultFromGLR returned nil")
+	}
+	defer tree.Release()
+	if got := arena.refs.Load(); got != 1 {
+		t.Fatalf("parse arena refs after terminal stop = %d, want 1", got)
+	}
+	if got, want := tree.ParseStopReason(), ParseStopCancelled; got != want {
+		t.Fatalf("ParseStopReason() = %q, want %q", got, want)
+	}
+	root := tree.RootNode()
+	if root == nil {
+		t.Fatal("RootNode() = nil")
+	}
+	if got := root.Type(parser.language); got != "ERROR" {
+		t.Fatalf("root type = %q, want ERROR", got)
+	}
+	if got := root.ChildCount(); got != 0 {
+		t.Fatalf("root child count = %d, want 0", got)
+	}
+}
+
 func TestTransientParentScratchMaterializeNodeSliceUntilStopsOnExpiredTimeout(t *testing.T) {
 	arena := acquireNodeArena(arenaClassFull)
 	defer arena.Release()

@@ -103,11 +103,13 @@ func (p *Parser) currentMaterializationTiming() *parseMaterializationTiming {
 // accepted stacks are otherwise tied, prefer the tree that retains an
 // alias-target symbol before falling back to branch order.
 func (p *Parser) buildResultFromGLR(stacks []glrStack, source []byte, arena *nodeArena, oldTree *Tree, reuseState *parseReuseState, linkScratch *[]*Node, transientParents *transientParentScratch, transientChildren *transientChildScratch, skipErrorRank bool, materializationTiming *parseMaterializationTiming) *Tree {
+	errorTreeWithStopReason := func(reason ParseStopReason) *Tree {
+		tree := parseErrorTree(source, p.language)
+		tree.setParseStopReason(reason)
+		return tree
+	}
 	if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
-		if arena != nil {
-			arena.Release()
-		}
-		return parseErrorTree(source, p.language)
+		return errorTreeWithStopReason(reason)
 	}
 	if len(stacks) == 0 {
 		arena.Release()
@@ -121,10 +123,7 @@ func (p *Parser) buildResultFromGLR(stacks []glrStack, source []byte, arena *nod
 	for i := 1; i < len(stacks); i++ {
 		if i&63 == 0 {
 			if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
-				if arena != nil {
-					arena.Release()
-				}
-				return parseErrorTree(source, p.language)
+				return errorTreeWithStopReason(reason)
 			}
 		}
 		if stackCompareForResultSelection(p, arena, &stacks[i], &stacks[best], skipErrorRank) > 0 {
@@ -137,10 +136,7 @@ func (p *Parser) buildResultFromGLR(stacks []glrStack, source []byte, arena *nod
 
 	selected := stacks[best]
 	if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
-		if arena != nil {
-			arena.Release()
-		}
-		return parseErrorTree(source, p.language)
+		return errorTreeWithStopReason(reason)
 	}
 	if len(selected.entries) > 0 {
 		materializeStart := time.Time{}
@@ -148,12 +144,7 @@ func (p *Parser) buildResultFromGLR(stacks []glrStack, source []byte, arena *nod
 			materializeStart = time.Now()
 		}
 		if reason := materializeTransientParentEntries(selected.entries, arena, transientParents, transientChildren, p); parseStopReasonIsTerminal(reason) {
-			if arena != nil {
-				arena.Release()
-			}
-			tree := parseErrorTree(source, p.language)
-			tree.setParseStopReason(reason)
-			return tree
+			return errorTreeWithStopReason(reason)
 		}
 		if materializationTiming != nil {
 			materializationTiming.transientParentMaterializeNanos += time.Since(materializeStart).Nanoseconds()
@@ -185,12 +176,7 @@ func (p *Parser) buildResultFromGLR(stacks []glrStack, source []byte, arena *nod
 		materializeStart = time.Now()
 	}
 	if reason := materializeTransientParentNodes(nodes, arena, transientParents, transientChildren, p); parseStopReasonIsTerminal(reason) {
-		if arena != nil {
-			arena.Release()
-		}
-		tree := parseErrorTree(source, p.language)
-		tree.setParseStopReason(reason)
-		return tree
+		return errorTreeWithStopReason(reason)
 	}
 	if materializationTiming != nil {
 		materializationTiming.transientParentMaterializeNanos += time.Since(materializeStart).Nanoseconds()
