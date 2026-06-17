@@ -147,11 +147,13 @@ func (p *Parser) buildResultFromGLR(stacks []glrStack, source []byte, arena *nod
 		if materializationTiming != nil {
 			materializeStart = time.Now()
 		}
-		if !materializeTransientParentEntries(selected.entries, arena, transientParents, transientChildren, p) {
+		if reason := materializeTransientParentEntries(selected.entries, arena, transientParents, transientChildren, p); parseStopReasonIsTerminal(reason) {
 			if arena != nil {
 				arena.Release()
 			}
-			return parseErrorTree(source, p.language)
+			tree := parseErrorTree(source, p.language)
+			tree.setParseStopReason(reason)
+			return tree
 		}
 		if materializationTiming != nil {
 			materializationTiming.transientParentMaterializeNanos += time.Since(materializeStart).Nanoseconds()
@@ -182,11 +184,13 @@ func (p *Parser) buildResultFromGLR(stacks []glrStack, source []byte, arena *nod
 	if materializationTiming != nil {
 		materializeStart = time.Now()
 	}
-	if !materializeTransientParentNodes(nodes, arena, transientParents, transientChildren, p) {
+	if reason := materializeTransientParentNodes(nodes, arena, transientParents, transientChildren, p); parseStopReasonIsTerminal(reason) {
 		if arena != nil {
 			arena.Release()
 		}
-		return parseErrorTree(source, p.language)
+		tree := parseErrorTree(source, p.language)
+		tree.setParseStopReason(reason)
+		return tree
 	}
 	if materializationTiming != nil {
 		materializationTiming.transientParentMaterializeNanos += time.Since(materializeStart).Nanoseconds()
@@ -202,16 +206,16 @@ func (p *Parser) buildResultFromGLR(stacks []glrStack, source []byte, arena *nod
 	return tree
 }
 
-func materializeTransientParentEntries(entries []stackEntry, arena *nodeArena, transientParents *transientParentScratch, transientChildren *transientChildScratch, p *Parser) bool {
+func materializeTransientParentEntries(entries []stackEntry, arena *nodeArena, transientParents *transientParentScratch, transientChildren *transientChildScratch, p *Parser) ParseStopReason {
 	if transientParents == nil {
-		return true
+		return ParseStopNone
 	}
 	return transientParents.materializeEntriesUntil(entries, arena, transientChildren, p)
 }
 
-func materializeTransientParentNodes(nodes []*Node, arena *nodeArena, transientParents *transientParentScratch, transientChildren *transientChildScratch, p *Parser) bool {
+func materializeTransientParentNodes(nodes []*Node, arena *nodeArena, transientParents *transientParentScratch, transientChildren *transientChildScratch, p *Parser) ParseStopReason {
 	if transientParents == nil {
-		return true
+		return ParseStopNone
 	}
 	return transientParents.materializeNodeSliceUntil(nodes, arena, transientChildren, p)
 }

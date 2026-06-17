@@ -1,9 +1,32 @@
 package gotreesitter
 
 import (
+	"sync/atomic"
 	"testing"
 	"time"
 )
+
+type cancelAtEOFArithmeticTokenSource struct {
+	cancel *uint32
+	idx    int
+}
+
+func (s *cancelAtEOFArithmeticTokenSource) Next() Token {
+	tokens := []Token{
+		{Symbol: 1, StartByte: 0, EndByte: 1, StartPoint: Point{}, EndPoint: Point{Column: 1}},
+		{Symbol: 2, StartByte: 1, EndByte: 2, StartPoint: Point{Column: 1}, EndPoint: Point{Column: 2}},
+		{Symbol: 1, StartByte: 2, EndByte: 3, StartPoint: Point{Column: 2}, EndPoint: Point{Column: 3}},
+	}
+	if s.idx < len(tokens) {
+		tok := tokens[s.idx]
+		s.idx++
+		return tok
+	}
+	if s.cancel != nil {
+		atomic.StoreUint32(s.cancel, 1)
+	}
+	return Token{Symbol: 0, StartByte: 3, EndByte: 3, StartPoint: Point{Column: 3}, EndPoint: Point{Column: 3}}
+}
 
 func TestTransientChildScratchMaterializesReachableNode(t *testing.T) {
 	arena := acquireNodeArena(arenaClassFull)
@@ -186,14 +209,41 @@ func TestTransientChildScratchMaterializeNodeUntilStopsWhenCancelled(t *testing.
 	parent.children = children
 
 	var stack []*Node
-	if scratch.materializeNodeUntil(parent, arena, &stack, parser) {
-		t.Fatal("materializeNodeUntil returned true, want false after cancellation")
+	if got, want := scratch.materializeNodeUntil(parent, arena, &stack, parser), ParseStopCancelled; got != want {
+		t.Fatalf("materializeNodeUntil stop reason = %q, want %q", got, want)
 	}
 	if !scratch.owns(parent.children) {
 		t.Fatal("parent children were materialized despite cancellation")
 	}
 	if len(stack) != 0 {
 		t.Fatalf("scratch stack length = %d, want 0 after abort cleanup", len(stack))
+	}
+}
+
+func TestTransientChildFinalizationAbortReturnsErrorTree(t *testing.T) {
+	t.Setenv("GOT_TRANSIENT_REDUCE_LANGS", "all")
+	lang := buildArithmeticLanguage()
+	parser := NewParser(lang)
+	var cancelled uint32
+	parser.SetCancellationFlag(&cancelled)
+
+	tree, err := parser.ParseWithTokenSource([]byte("1+2"), &cancelAtEOFArithmeticTokenSource{cancel: &cancelled})
+	if err != nil {
+		t.Fatalf("ParseWithTokenSource() error = %v", err)
+	}
+	defer tree.Release()
+	if got, want := tree.ParseStopReason(), ParseStopCancelled; got != want {
+		t.Fatalf("ParseStopReason() = %q, want %q", got, want)
+	}
+	root := tree.RootNode()
+	if root == nil {
+		t.Fatal("RootNode() = nil")
+	}
+	if got := root.Type(lang); got != "ERROR" {
+		t.Fatalf("root type = %q, want ERROR after transient child finalization abort", got)
+	}
+	if got := root.ChildCount(); got != 0 {
+		t.Fatalf("root child count = %d, want 0 for parse error tree", got)
 	}
 }
 
@@ -211,8 +261,8 @@ func TestTransientParentScratchMaterializeEntriesUntilStopsWhenCancelled(t *test
 	parent := parentScratch.allocParent(arena, Symbol(2), true, children, 13, true)
 	entries := []stackEntry{newStackEntryNode(parent.parseState, parent)}
 
-	if parentScratch.materializeEntriesUntil(entries, arena, &childScratch, parser) {
-		t.Fatal("materializeEntriesUntil returned true, want false after cancellation")
+	if got, want := parentScratch.materializeEntriesUntil(entries, arena, &childScratch, parser), ParseStopCancelled; got != want {
+		t.Fatalf("materializeEntriesUntil stop reason = %q, want %q", got, want)
 	}
 	if stackEntryNode(entries[0]) != parent {
 		t.Fatal("entry node changed despite cancellation before traversal")
@@ -243,8 +293,8 @@ func TestTransientParentScratchMaterializeNodeSliceUntilStopsOnExpiredTimeout(t 
 	parent := parentScratch.allocParent(arena, Symbol(2), true, children, 17, true)
 	nodes := []*Node{parent}
 
-	if parentScratch.materializeNodeSliceUntil(nodes, arena, &childScratch, parser) {
-		t.Fatal("materializeNodeSliceUntil returned true, want false after timeout")
+	if got, want := parentScratch.materializeNodeSliceUntil(nodes, arena, &childScratch, parser), ParseStopTimeout; got != want {
+		t.Fatalf("materializeNodeSliceUntil stop reason = %q, want %q", got, want)
 	}
 	if nodes[0] != parent {
 		t.Fatal("node slice changed despite timeout before traversal")

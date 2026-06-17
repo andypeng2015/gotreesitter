@@ -117,6 +117,9 @@ func (p *Parser) normalizeReturnedIncrementalTree(tree, oldTree *Tree, source []
 	if !shouldNormalizeIncrementalReturnedTree(tree, oldTree) {
 		return
 	}
+	if tree.resultCompatibilityPending {
+		return
+	}
 	if reason := p.normalizeReturnedTree(rawRootOrNil(tree), source); parseStopReasonIsTerminal(reason) {
 		tree.setParseStopReason(reason)
 	}
@@ -128,6 +131,9 @@ func shouldNormalizeReturnedTree(tree *Tree) bool {
 
 func (p *Parser) normalizeReturnedTreeForParse(tree *Tree, source []byte) {
 	if !shouldNormalizeReturnedTree(tree) {
+		return
+	}
+	if tree.resultCompatibilityPending {
 		return
 	}
 	if reason := p.normalizeReturnedTree(rawRootOrNil(tree), source); parseStopReasonIsTerminal(reason) {

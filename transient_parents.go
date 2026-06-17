@@ -108,29 +108,29 @@ func (s *transientParentScratch) materializeEntries(entries []stackEntry, arena 
 	s.materializeEntriesUntil(entries, arena, childScratch, nil)
 }
 
-func (s *transientParentScratch) materializeEntriesUntil(entries []stackEntry, arena *nodeArena, childScratch *transientChildScratch, p *Parser) bool {
+func (s *transientParentScratch) materializeEntriesUntil(entries []stackEntry, arena *nodeArena, childScratch *transientChildScratch, p *Parser) ParseStopReason {
 	if s == nil || len(entries) == 0 || arena == nil {
-		return true
+		return ParseStopNone
 	}
 	defer s.clearMaterializeScratch()
 	roots := make([]*Node, 0, len(entries))
 	for i := range entries {
 		if i&63 == 0 {
 			if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
-				return false
+				return reason
 			}
 		}
 		if node := stackEntryNode(entries[i]); node != nil {
 			roots = append(roots, node)
 		}
 	}
-	if !s.materializeNodesUntil(roots, arena, childScratch, p) {
-		return false
+	if reason := s.materializeNodesUntil(roots, arena, childScratch, p); parseStopReasonIsTerminal(reason) {
+		return reason
 	}
 	for i := range entries {
 		if i&63 == 0 {
 			if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
-				return false
+				return reason
 			}
 		}
 		node := stackEntryNode(entries[i])
@@ -145,25 +145,25 @@ func (s *transientParentScratch) materializeEntriesUntil(entries []stackEntry, a
 			setStackEntryNode(&entries[i], replacement)
 		}
 	}
-	return true
+	return ParseStopNone
 }
 
 func (s *transientParentScratch) materializeNodeSlice(nodes []*Node, arena *nodeArena, childScratch *transientChildScratch) {
 	s.materializeNodeSliceUntil(nodes, arena, childScratch, nil)
 }
 
-func (s *transientParentScratch) materializeNodeSliceUntil(nodes []*Node, arena *nodeArena, childScratch *transientChildScratch, p *Parser) bool {
+func (s *transientParentScratch) materializeNodeSliceUntil(nodes []*Node, arena *nodeArena, childScratch *transientChildScratch, p *Parser) ParseStopReason {
 	if s == nil || len(nodes) == 0 || arena == nil {
-		return true
+		return ParseStopNone
 	}
 	defer s.clearMaterializeScratch()
-	if !s.materializeNodesUntil(nodes, arena, childScratch, p) {
-		return false
+	if reason := s.materializeNodesUntil(nodes, arena, childScratch, p); parseStopReasonIsTerminal(reason) {
+		return reason
 	}
 	for i := range nodes {
 		if i&63 == 0 {
 			if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
-				return false
+				return reason
 			}
 		}
 		if replacement := s.transientReplacement(nodes[i]); replacement != nil {
@@ -174,16 +174,16 @@ func (s *transientParentScratch) materializeNodeSliceUntil(nodes []*Node, arena 
 			nodes[i] = replacement
 		}
 	}
-	return true
+	return ParseStopNone
 }
 
 func (s *transientParentScratch) materializeNodes(nodes []*Node, arena *nodeArena, childScratch *transientChildScratch) {
 	s.materializeNodesUntil(nodes, arena, childScratch, nil)
 }
 
-func (s *transientParentScratch) materializeNodesUntil(nodes []*Node, arena *nodeArena, childScratch *transientChildScratch, p *Parser) bool {
+func (s *transientParentScratch) materializeNodesUntil(nodes []*Node, arena *nodeArena, childScratch *transientChildScratch, p *Parser) ParseStopReason {
 	if s == nil || len(nodes) == 0 || arena == nil {
-		return true
+		return ParseStopNone
 	}
 	frames := s.frames[:0]
 	defer func() {
@@ -193,7 +193,7 @@ func (s *transientParentScratch) materializeNodesUntil(nodes []*Node, arena *nod
 	for i := range nodes {
 		if i&63 == 0 {
 			if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
-				return false
+				return reason
 			}
 		}
 		if nodes[i] != nil {
@@ -204,7 +204,7 @@ func (s *transientParentScratch) materializeNodesUntil(nodes []*Node, arena *nod
 	for len(frames) > 0 {
 		if visited&63 == 0 {
 			if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
-				return false
+				return reason
 			}
 		}
 		visited++
@@ -215,8 +215,8 @@ func (s *transientParentScratch) materializeNodesUntil(nodes []*Node, arena *nod
 			continue
 		}
 		if frame.visited {
-			if !s.materializeVisitedNodeUntil(n, arena, childScratch, p) {
-				return false
+			if reason := s.materializeVisitedNodeUntil(n, arena, childScratch, p); parseStopReasonIsTerminal(reason) {
+				return reason
 			}
 			continue
 		}
@@ -244,16 +244,16 @@ func (s *transientParentScratch) materializeNodesUntil(nodes []*Node, arena *nod
 			}
 		}
 	}
-	return true
+	return ParseStopNone
 }
 
 func (s *transientParentScratch) materializeVisitedNode(n *Node, arena *nodeArena, childScratch *transientChildScratch) {
 	s.materializeVisitedNodeUntil(n, arena, childScratch, nil)
 }
 
-func (s *transientParentScratch) materializeVisitedNodeUntil(n *Node, arena *nodeArena, childScratch *transientChildScratch, p *Parser) bool {
+func (s *transientParentScratch) materializeVisitedNodeUntil(n *Node, arena *nodeArena, childScratch *transientChildScratch, p *Parser) ParseStopReason {
 	if n == nil {
-		return true
+		return ParseStopNone
 	}
 	children := n.children
 	if len(children) > 0 {
@@ -267,7 +267,7 @@ func (s *transientParentScratch) materializeVisitedNodeUntil(n *Node, arena *nod
 		for i, child := range out {
 			if i&63 == 0 {
 				if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
-					return false
+					return reason
 				}
 			}
 			if replacement := s.transientReplacement(child); replacement != nil {
@@ -282,7 +282,7 @@ func (s *transientParentScratch) materializeVisitedNodeUntil(n *Node, arena *nod
 	}
 	if !s.owns(n) {
 		s.seen[n] = n
-		return true
+		return ParseStopNone
 	}
 
 	clone := arena.allocNodeFast()
@@ -304,7 +304,7 @@ func (s *transientParentScratch) materializeVisitedNodeUntil(n *Node, arena *nod
 	arena.recordParentNodeConstructed(len(clone.children), clone.fieldIDs, clone.fieldSources, len(clone.fieldSources) > 0, true, false)
 	s.nodesMaterialized++
 	n.parent = clone
-	return true
+	return ParseStopNone
 }
 
 func (s *transientParentScratch) transientReplacement(n *Node) *Node {

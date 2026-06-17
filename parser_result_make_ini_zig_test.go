@@ -337,6 +337,61 @@ func TestNormalizeIniDeferredAcceptanceRequiresAppliedContinuationRepair(t *test
 	}
 }
 
+func TestParserReturnedTreeNormalizationPreservesDeferredIniCompatibility(t *testing.T) {
+	lang := testIniMypyLanguage()
+	source := []byte("[mypy]\nfiles = Tools/check-c-api-docs/\npretty = True\n\n# We need `_colorize` import:\nmypy_path = $MYPY_CONFIG_FILE_DIR/../../Misc/mypy\n\n# Make sure Python can still be built\n# using Python 3.13 for `PYTHON_FOR_REGEN`...\npython_version = 3.13\n\n# ...And be strict:\nstrict = True\nextra_checks = True\nenable_error_code = \n    ignore-without-code,\n    redundant-expr,\n    truthy-bool,\n    possibly-undefined,\n")
+	arena := newNodeArena(arenaClassFull)
+	root := newParentNodeInArena(arena, testIniSymbol(lang, "document"), true, []*Node{
+		testIniLeaf(arena, lang, "section_name", source, 0, 7),
+		testIniLeaf(arena, lang, "setting", source, 7, 39),
+		testIniLeaf(arena, lang, "setting", source, 39, 54),
+		testIniLeaf(arena, lang, "_blank", source, 53, 54),
+		testIniLeaf(arena, lang, "comment", source, 54, 84),
+		testIniLeaf(arena, lang, "setting", source, 84, 135),
+		testIniLeaf(arena, lang, "_blank", source, 134, 135),
+		testIniLeaf(arena, lang, "comment", source, 135, 173),
+		testIniLeaf(arena, lang, "comment", source, 173, 219),
+		testIniLeaf(arena, lang, "setting", source, 219, 242),
+		testIniLeaf(arena, lang, "_blank", source, 241, 242),
+		testIniLeaf(arena, lang, "comment", source, 242, 262),
+		testIniLeaf(arena, lang, "setting", source, 262, 276),
+		testIniLeaf(arena, lang, "setting", source, 276, 296),
+		testIniLeaf(arena, lang, "setting", source, 296, 317),
+		testIniLeaf(arena, lang, "setting_name", source, 321, 341),
+	}, nil, 0)
+	root.endByte = 402
+	root.endPoint = advancePointByBytes(Point{}, source[:402])
+	tree := &Tree{
+		root:     root,
+		source:   source,
+		language: lang,
+		parseRuntime: ParseRuntime{
+			StopReason:  ParseStopNoStacksAlive,
+			RootEndByte: root.endByte,
+		},
+	}
+	tree.deferResultCompatibility()
+
+	parser := &Parser{language: lang}
+	parser.normalizeReturnedTreeForParse(tree, source)
+	if !tree.resultCompatibilityPending {
+		t.Fatal("resultCompatibilityPending = false after parser-return normalization, want deferred")
+	}
+	if got := tree.ParseStopReason(); got != ParseStopNoStacksAlive {
+		t.Fatalf("stop reason before RootNode = %q, want %q", got, ParseStopNoStacksAlive)
+	}
+
+	if root := tree.RootNode(); root == nil {
+		t.Fatal("RootNode() = nil")
+	}
+	if tree.resultCompatibilityPending {
+		t.Fatal("resultCompatibilityPending = true after RootNode")
+	}
+	if got := tree.ParseStopReason(); got != ParseStopAccepted {
+		t.Fatalf("stop reason after deferred compatibility = %q, want %q", got, ParseStopAccepted)
+	}
+}
+
 func TestNormalizeIniMypyContinuationGuardRequiresContinuationPattern(t *testing.T) {
 	lang := testIniMypyLanguage()
 	source := []byte("[mypy]\nenable_error_code = ignore-without-code\n")

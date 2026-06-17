@@ -71,9 +71,9 @@ func (s *transientChildScratch) materializeNode(root *Node, arena *nodeArena, sc
 	s.materializeNodeUntil(root, arena, scratch, nil)
 }
 
-func (s *transientChildScratch) materializeNodeUntil(root *Node, arena *nodeArena, scratch *[]*Node, p *Parser) bool {
+func (s *transientChildScratch) materializeNodeUntil(root *Node, arena *nodeArena, scratch *[]*Node, p *Parser) ParseStopReason {
 	if s == nil || root == nil || arena == nil {
-		return true
+		return ParseStopNone
 	}
 	var stack []*Node
 	if scratch != nil {
@@ -92,7 +92,7 @@ func (s *transientChildScratch) materializeNodeUntil(root *Node, arena *nodeAren
 	for len(stack) > 0 {
 		if visited&63 == 0 {
 			if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
-				return false
+				return reason
 			}
 		}
 		visited++
@@ -117,7 +117,7 @@ func (s *transientChildScratch) materializeNodeUntil(root *Node, arena *nodeAren
 			stack = append(stack, children[i])
 		}
 	}
-	return true
+	return ParseStopNone
 }
 
 func (s *transientChildScratch) reset() {

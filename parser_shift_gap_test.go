@@ -48,6 +48,21 @@ func TestRealShiftGapAllowsTriviaOnlySource(t *testing.T) {
 	}
 }
 
+func TestForestRealShiftGapRejectsNonTriviaSource(t *testing.T) {
+	source := []byte("call(arg1, arg8)")
+	node := &gssForestNode{byteOffset: uint32(len("call(arg1"))}
+	tok := Token{
+		Symbol:    1,
+		StartByte: uint32(len(source) - 1),
+		EndByte:   uint32(len(source)),
+	}
+
+	parser := &Parser{glrTrace: false}
+	if parser.guardForestRealShiftGap(source, node, tok) {
+		t.Fatal("guardForestRealShiftGap = true, want false")
+	}
+}
+
 func TestRealShiftGapAllowsLeadingBOMPadding(t *testing.T) {
 	for _, source := range [][]byte{
 		[]byte("\xef\xbb\xbfa"),

@@ -1368,6 +1368,9 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte, captureExternalChe
 						work = append(work, top)
 					})
 				case ParseActionShift:
+					if !p.guardForestRealShiftGap(source, node, tok) {
+						continue
+					}
 					leaf := newLeafNodeInArena(arena, tok.Symbol, named(tok.Symbol), tok.StartByte, tok.EndByte, tok.StartPoint, tok.EndPoint)
 					// An extra (comment/whitespace) shifts without advancing the
 					// parse state: it stays transparent to the grammar and is
@@ -1526,6 +1529,14 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte, captureExternalChe
 // frontier); exceeding it means a runaway chain, so the forest declines to
 // production rather than spin.
 const maxForestNoLookaheadSteps = 64
+
+func (p *Parser) guardForestRealShiftGap(source []byte, node *gssForestNode, tok Token) bool {
+	if node == nil {
+		return true
+	}
+	stack := glrStack{byteOffset: node.byteOffset}
+	return p.guardRealShiftGap(source, &stack, tok)
+}
 
 // reduceOverForest enumerates every length-childCount path of subtrees ending at
 // `node` and invokes visit once per path with the children in left-to-right
