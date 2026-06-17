@@ -361,6 +361,32 @@ func TestResolveShiftReducePrefersElixirParenthesizedCallBeforeDoBlock(t *testin
 	}
 }
 
+func TestResolveShiftReducePrefersElixirRemoteCallBeforeDoBlock(t *testing.T) {
+	ng := &NormalizedGrammar{
+		Symbols: []SymbolInfo{
+			{Name: "do", Kind: SymbolTerminal, Visible: true, Named: false},
+			{Name: "_remote_dot", Kind: SymbolNonterminal},
+			{Name: "do_block", Kind: SymbolNonterminal},
+			{Name: "_remote_call_without_parentheses", Kind: SymbolNonterminal},
+		},
+		Productions: []Production{
+			{LHS: 3, RHS: []int{1}},
+		},
+		PreferParenthesizedCallDoBlockReduces: true,
+	}
+
+	got, err := resolveActionConflict(0, []lrAction{
+		{kind: lrShift, state: 10, lhsSym: 2},
+		{kind: lrReduce, prodIdx: 0},
+	}, ng)
+	if err != nil {
+		t.Fatalf("resolveActionConflict: %v", err)
+	}
+	if len(got) != 1 || got[0].kind != lrReduce || got[0].prodIdx != 0 {
+		t.Fatalf("resolved actions = %+v, want remote-call reduce before do_block", got)
+	}
+}
+
 func TestResolveShiftReducePrefersElixirRemoteCallBeforeBinaryOperator(t *testing.T) {
 	ng := &NormalizedGrammar{
 		Symbols: []SymbolInfo{

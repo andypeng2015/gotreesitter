@@ -116,6 +116,11 @@ func TestElixirImportedRemoteCallOperatorRegressionParity(t *testing.T) {
 	}
 }
 
+func TestElixirImportedCaseRemoteDotDoBlockParity(t *testing.T) {
+	genLang, refLang := loadImportedParityLanguages(t, "elixir")
+	assertGeneratedAndReferenceDeepParity(t, genLang, refLang, "case __ENV__.line do\n  x when is_integer(x) -> x\n  x when x in 1..12 -> -x\nend\n")
+}
+
 func TestElixirImportedLRSplitCorpusSnippetParity(t *testing.T) {
 	genLang, refLang := loadImportedElixirLRSplitParityLanguages(t)
 	assertGeneratedAndReferenceDeepParity(t, genLang, refLang, elixirOperatorLeftAssociativeCorpusBlock)

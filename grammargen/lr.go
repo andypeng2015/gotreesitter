@@ -3083,7 +3083,7 @@ func resolveActionConflict(lookaheadSym int, actions []lrAction, ng *NormalizedG
 		if shouldPreserveKeywordIdentifierShiftReduce(lookaheadSym, reduces, ng) {
 			return actions, nil
 		}
-		if preferred, ok := preferredParenthesizedCallDoBlockReduce(lookaheadSym, shifts, reduces, ng); ok {
+		if preferred, ok := preferredCompletedCallDoBlockReduce(lookaheadSym, shifts, reduces, ng); ok {
 			return preferred, nil
 		}
 		if preferred, ok := preferredRemoteCallOperatorReduce(lookaheadSym, shifts, reduces, ng); ok {
@@ -3594,7 +3594,7 @@ func preferredAtomToExpressionOperatorIdentifierReduce(lookaheadSym int, shifts,
 	return preferred, len(preferred) > 0
 }
 
-func preferredParenthesizedCallDoBlockReduce(lookaheadSym int, shifts, reduces []lrAction, ng *NormalizedGrammar) ([]lrAction, bool) {
+func preferredCompletedCallDoBlockReduce(lookaheadSym int, shifts, reduces []lrAction, ng *NormalizedGrammar) ([]lrAction, bool) {
 	if ng == nil || !ng.PreferParenthesizedCallDoBlockReduces {
 		return nil, false
 	}
@@ -3613,14 +3613,14 @@ func preferredParenthesizedCallDoBlockReduce(lookaheadSym int, shifts, reduces [
 	}
 	preferred := make([]lrAction, 0, len(reduces))
 	for _, reduce := range reduces {
-		if isParenthesizedCallWithoutDoBlockReduce(reduce, ng) {
+		if isCompletedCallWithoutDoBlockReduce(reduce, ng) {
 			preferred = append(preferred, reduce)
 		}
 	}
 	return preferred, len(preferred) > 0
 }
 
-func isParenthesizedCallWithoutDoBlockReduce(action lrAction, ng *NormalizedGrammar) bool {
+func isCompletedCallWithoutDoBlockReduce(action lrAction, ng *NormalizedGrammar) bool {
 	if action.kind != lrReduce || action.prodIdx < 0 || action.prodIdx >= len(ng.Productions) {
 		return false
 	}
@@ -3628,9 +3628,13 @@ func isParenthesizedCallWithoutDoBlockReduce(action lrAction, ng *NormalizedGram
 	if prod.LHS < 0 || prod.LHS >= len(ng.Symbols) {
 		return false
 	}
-	switch ng.Symbols[prod.LHS].Name {
-	case "_local_call_with_parentheses", "_remote_call_with_parentheses", "_double_call":
+	lhsName := ng.Symbols[prod.LHS].Name
+	switch lhsName {
+	case "_local_call_with_parentheses", "_remote_call_with_parentheses", "_double_call", "_remote_call_without_parentheses":
 	default:
+		return false
+	}
+	if lhsName == "_remote_call_without_parentheses" && !productionContainsSymbolName(prod, ng, "_remote_dot") {
 		return false
 	}
 	hasParenthesizedArguments := false
@@ -3645,7 +3649,19 @@ func isParenthesizedCallWithoutDoBlockReduce(action lrAction, ng *NormalizedGram
 			return false
 		}
 	}
-	return hasParenthesizedArguments
+	return hasParenthesizedArguments || lhsName == "_remote_call_without_parentheses"
+}
+
+func productionContainsSymbolName(prod *Production, ng *NormalizedGrammar, name string) bool {
+	if prod == nil || ng == nil {
+		return false
+	}
+	for _, sym := range prod.RHS {
+		if symbolNameMatches(sym, ng, name) {
+			return true
+		}
+	}
+	return false
 }
 
 func preferredRemoteCallOperatorReduce(lookaheadSym int, shifts, reduces []lrAction, ng *NormalizedGrammar) ([]lrAction, bool) {
