@@ -682,6 +682,31 @@ func TestResolveShiftReduceKeepsExpressionStructInitializerAmbiguity(t *testing.
 	}
 }
 
+func TestResolveShiftReducePrefersCompletedClosureParameters(t *testing.T) {
+	ng := &NormalizedGrammar{
+		Symbols: []SymbolInfo{
+			{Name: "identifier", Kind: SymbolNamedToken},
+			{Name: "closure_parameters", Kind: SymbolNonterminal},
+			{Name: "generic_type", Kind: SymbolNonterminal},
+		},
+		Productions: []Production{
+			{LHS: 1, RHS: []int{0}, Prec: 0},
+			{LHS: 2, RHS: []int{0}, Prec: 1},
+		},
+	}
+
+	got, err := resolveActionConflict(0, []lrAction{
+		{kind: lrReduce, prodIdx: 0, lhsSym: 1},
+		{kind: lrShift, state: 10, lhsSym: 2, prec: 1, hasPrec: true},
+	}, ng)
+	if err != nil {
+		t.Fatalf("resolveActionConflict: %v", err)
+	}
+	if len(got) != 1 || got[0].kind != lrReduce || got[0].lhsSym != 1 {
+		t.Fatalf("resolved actions = %+v, want closure_parameters reduce", got)
+	}
+}
+
 func TestResolveShiftReduceStructInitializerAmbiguityRequiresExpressionReduce(t *testing.T) {
 	ng := &NormalizedGrammar{
 		Symbols: []SymbolInfo{

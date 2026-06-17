@@ -76,6 +76,32 @@ func TestRustStructExpressionParity(t *testing.T) {
 	assertGeneratedAndReferenceDeepParity(t, genLang, refLang, sample)
 }
 
+func TestRustClosureMethodCallParity(t *testing.T) {
+	jsonPath := rustGrammarJSONPathForTest(t)
+	source, err := os.ReadFile(jsonPath)
+	if err != nil {
+		t.Skipf("Rust grammar.json not available: %v", err)
+	}
+	gram, err := ImportGrammarJSON(source)
+	if err != nil {
+		t.Fatalf("import Rust grammar.json: %v", err)
+	}
+	genLang, err := generateWithTimeout(gram, 90*time.Second)
+	if err != nil {
+		t.Fatalf("generate Rust language: %v", err)
+	}
+	refLang := grammars.RustLanguage()
+	adaptExternalScanner(refLang, genLang)
+
+	cases := []string{
+		"fn f() { self.params.iter().any(|param| param.is_lifetime_param()); }\n",
+		"impl Generics { pub fn f(&self) -> bool { self.params.iter().any(|param| param.is_lifetime_param()) } }\n",
+	}
+	for _, sample := range cases {
+		assertGeneratedAndReferenceDeepParity(t, genLang, refLang, sample)
+	}
+}
+
 func TestRustPatternStatementParity(t *testing.T) {
 	jsonPath := rustGrammarJSONPathForTest(t)
 	source, err := os.ReadFile(jsonPath)

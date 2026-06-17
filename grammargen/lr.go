@@ -3101,6 +3101,9 @@ func resolveActionConflict(lookaheadSym int, actions []lrAction, ng *NormalizedG
 		if shouldKeepExpressionStructInitializerConflict(lookaheadSym, shifts, reduces, ng) {
 			return actions, nil
 		}
+		if preferred, ok := preferredClosureParametersReduce(shifts, reduces, ng); ok {
+			return preferred, nil
+		}
 
 		// Tree-sitter keeps S/R as GLR when the reduce LHS and a shift LHS
 		// are both in the same declared conflict group.
@@ -3310,6 +3313,22 @@ func resolveActionConflict(lookaheadSym int, actions []lrAction, ng *NormalizedG
 	}
 
 	return actions, nil
+}
+
+func preferredClosureParametersReduce(shifts, reduces []lrAction, ng *NormalizedGrammar) ([]lrAction, bool) {
+	if ng == nil || len(shifts) == 0 || len(reduces) == 0 {
+		return nil, false
+	}
+	var preferred []lrAction
+	for _, reduce := range reduces {
+		if symbolNameMatches(reduce.lhsSym, ng, "closure_parameters") {
+			preferred = append(preferred, reduce)
+		}
+	}
+	if len(preferred) == 0 {
+		return nil, false
+	}
+	return preferred, true
 }
 
 func shouldKeepExpressionStructInitializerConflict(lookaheadSym int, shifts, reduces []lrAction, ng *NormalizedGrammar) bool {
