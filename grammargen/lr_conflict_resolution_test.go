@@ -682,6 +682,41 @@ func TestResolveShiftReduceUsesContributorSymbolVsNamedPrecedenceInConflictGroup
 	}
 }
 
+func TestResolveShiftReduceUsesContributorSymbolVsSymbolPrecedence(t *testing.T) {
+	ng := &NormalizedGrammar{
+		Symbols: []SymbolInfo{
+			{Name: "[", Kind: SymbolTerminal},
+			{Name: "type_query", Kind: SymbolNonterminal},
+			{Name: "primary_expression", Kind: SymbolNonterminal},
+			{Name: "_type_query_subscript_expression", Kind: SymbolNonterminal},
+		},
+		Productions: []Production{
+			{LHS: 1, RHS: []int{}, Assoc: AssocRight, HasExplicitPrec: true},
+		},
+		PrecedenceOrder: &precOrderTable{
+			symbolPositions: map[string]int{
+				"type_query":                       2,
+				"_type_query_subscript_expression": 1,
+			},
+			symbolLevels: map[string]int{
+				"type_query":                       0,
+				"_type_query_subscript_expression": 0,
+			},
+		},
+	}
+
+	got, err := resolveActionConflict(0, []lrAction{
+		{kind: lrShift, state: 9, lhsSym: 2, lhsSyms: []int{3}},
+		{kind: lrReduce, prodIdx: 0, lhsSym: 1},
+	}, ng)
+	if err != nil {
+		t.Fatalf("resolveActionConflict: %v", err)
+	}
+	if len(got) != 1 || got[0].kind != lrReduce {
+		t.Fatalf("resolved actions = %+v, want type_query reduce", got)
+	}
+}
+
 func javascriptUpdateExpressionConflictGrammar(withConflictGroup bool) *NormalizedGrammar {
 	ng := &NormalizedGrammar{
 		Symbols: []SymbolInfo{

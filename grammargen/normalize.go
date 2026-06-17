@@ -394,7 +394,9 @@ func Normalize(g *Grammar) (*NormalizedGrammar, error) {
 		// predefined_type (the keyword) and TOKEN(CHOICE(...)) number (the
 		// numeric literal pattern). Tree-sitter C gives them different IDs;
 		// without this split, productions for predefined_type and literal_type
-		// become indistinguishable.
+		// become indistinguishable. String-only TOKEN collisions are classified
+		// as wrapper nonterminals instead, because the pure-Go DFA cannot
+		// context-select between duplicate literal terminals.
 		if named && kind == SymbolNamedToken {
 			if existingID, exists := st.lookup(name); exists &&
 				!st.symbols[existingID].Named && st.symbols[existingID].Kind == SymbolTerminal {
@@ -475,6 +477,8 @@ func Normalize(g *Grammar) (*NormalizedGrammar, error) {
 			continue
 		}
 		if value, ok := sharedHiddenStringTokenValue(name, rule, sharedStrings, anonymousStringSources); ok {
+			rule = Str(value)
+		} else if value, ok := sharedVisibleStringTokenValue(name, rule, anonymousStringSources); ok {
 			rule = Str(value)
 		}
 		// When a hidden rule's entire body is repeat1, tree-sitter converts
@@ -1207,8 +1211,10 @@ func classifyRules(g *Grammar) (tokens, nonterms []string) {
 			isBareString := stringValue != ""
 			isBareStringOnlyChoice := isBareStringOnlyChoiceRule(rule)
 			_, isSharedHiddenStringToken := sharedHiddenStringTokenValue(name, rule, sharedStrings, anonymousStringSources)
+			_, isSharedVisibleStringToken := sharedVisibleStringTokenValue(name, rule, anonymousStringSources)
 			if isBareStringOnlyChoice || isExplicitPrecedenceStringChoice(rule) ||
-				isSharedHiddenStringToken || (isVisible && isBareString) ||
+				isSharedHiddenStringToken || isSharedVisibleStringToken ||
+				(isVisible && isBareString) ||
 				(isBareString && sharedStrings[stringValue]) {
 				nonterms = append(nonterms, name)
 			} else {
@@ -1234,6 +1240,17 @@ func sharedHiddenStringTokenValue(name string, r *Rule, sharedStrings, anonymous
 		return "", false
 	}
 	if !anonymousStringSources[value] {
+		return "", false
+	}
+	return value, true
+}
+
+func sharedVisibleStringTokenValue(name string, r *Rule, anonymousStringSources map[string]bool) (string, bool) {
+	if name == "" || strings.HasPrefix(name, "_") || r == nil || !isStringOnlyToken(r) {
+		return "", false
+	}
+	value := extractTokenStringValue(r)
+	if value == "" || !anonymousStringSources[value] {
 		return "", false
 	}
 	return value, true

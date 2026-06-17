@@ -3189,18 +3189,13 @@ func resolveActionConflict(lookaheadSym int, actions []lrAction, ng *NormalizedG
 			// in the same precedence level have equal numeric prec,
 			// the ordering determines which binds tighter.
 			if shiftP == reduceP && ng.PrecedenceOrder != nil &&
-				prod.LHS >= 0 && prod.LHS < len(ng.Symbols) &&
-				shift.lhsSym >= 0 && shift.lhsSym < len(ng.Symbols) {
-				reduceLHSName := ng.Symbols[prod.LHS].Name
-				shiftLHSName := ng.Symbols[shift.lhsSym].Name
-				if reduceLHSName != shiftLHSName {
-					cmp := ng.PrecedenceOrder.resolveSymbolVsSymbol(shiftLHSName, reduceLHSName)
-					if cmp > 0 {
-						return []lrAction{shift}, nil
-					}
-					if cmp < 0 {
-						return []lrAction{reduce}, nil
-					}
+				prod.LHS >= 0 && prod.LHS < len(ng.Symbols) {
+				cmp := resolveShiftLHSVsReduceLHSPrecedence(shift, prod.LHS, ng)
+				if cmp > 0 {
+					return []lrAction{shift}, nil
+				}
+				if cmp < 0 {
+					return []lrAction{reduce}, nil
 				}
 			}
 			// Same precedence or both zero — check associativity.
@@ -3268,18 +3263,13 @@ func resolveActionConflict(lookaheadSym int, actions []lrAction, ng *NormalizedG
 			// For "() => T | U", union_type (higher pos) should bind
 			// tighter than function_type (lower pos), so shift wins.
 			if ng.PrecedenceOrder != nil &&
-				prod.LHS >= 0 && prod.LHS < len(ng.Symbols) &&
-				shift.lhsSym >= 0 && shift.lhsSym < len(ng.Symbols) {
-				reduceLHSName := ng.Symbols[prod.LHS].Name
-				shiftLHSName := ng.Symbols[shift.lhsSym].Name
-				if reduceLHSName != shiftLHSName {
-					cmp := ng.PrecedenceOrder.resolveSymbolVsSymbol(shiftLHSName, reduceLHSName)
-					if cmp > 0 {
-						return []lrAction{shift}, nil
-					}
-					if cmp < 0 {
-						return []lrAction{reduce}, nil
-					}
+				prod.LHS >= 0 && prod.LHS < len(ng.Symbols) {
+				cmp := resolveShiftLHSVsReduceLHSPrecedence(shift, prod.LHS, ng)
+				if cmp > 0 {
+					return []lrAction{shift}, nil
+				}
+				if cmp < 0 {
+					return []lrAction{reduce}, nil
 				}
 			}
 			switch prod.Assoc {
@@ -3849,10 +3839,6 @@ func operatorIdentifierShiftOutranksReduce(shifts []lrAction, reduce lrAction, n
 
 	for _, shift := range shifts {
 		shiftPrec := shift.prec
-		shiftLHSName := ""
-		if shift.lhsSym >= 0 && shift.lhsSym < len(ng.Symbols) {
-			shiftLHSName = ng.Symbols[shift.lhsSym].Name
-		}
 
 		if ng.PrecedenceOrder != nil {
 			if reducePrec == 0 && shiftPrec > 0 && reduceLHSName != "" {
@@ -3860,13 +3846,13 @@ func operatorIdentifierShiftOutranksReduce(shifts []lrAction, reduce lrAction, n
 					return true
 				}
 			}
-			if shiftPrec == 0 && reducePrec > 0 && shiftLHSName != "" {
-				if ng.PrecedenceOrder.resolveSymbolVsNamedPrec(shiftLHSName, reducePrec) > 0 {
+			if shiftPrec == 0 && reducePrec > 0 {
+				if resolveShiftLHSVsNamedPrec(shift, reducePrec, ng) > 0 {
 					return true
 				}
 			}
-			if shiftPrec == reducePrec && shiftLHSName != "" && reduceLHSName != "" && shiftLHSName != reduceLHSName {
-				if ng.PrecedenceOrder.resolveSymbolVsSymbol(shiftLHSName, reduceLHSName) > 0 {
+			if shiftPrec == reducePrec && reduceLHSName != "" {
+				if resolveShiftLHSVsReduceLHSPrecedence(shift, prod.LHS, ng) > 0 {
 					return true
 				}
 			}
@@ -3909,6 +3895,52 @@ func resolveShiftLHSVsNamedPrec(shift lrAction, namedPrec int, ng *NormalizedGra
 		}
 		seen[lhs] = struct{}{}
 		cmp := ng.PrecedenceOrder.resolveSymbolVsNamedPrec(ng.Symbols[lhs].Name, namedPrec)
+		if cmp > 0 {
+			return 1
+		}
+		if cmp < 0 {
+			sawLower = true
+		}
+		return 0
+	}
+	if check(shift.lhsSym) > 0 {
+		return 1
+	}
+	for _, lhs := range shift.lhsSyms {
+		if check(lhs) > 0 {
+			return 1
+		}
+	}
+	if sawLower {
+		return -1
+	}
+	return 0
+}
+
+func resolveShiftLHSVsReduceLHSPrecedence(shift lrAction, reduceLHS int, ng *NormalizedGrammar) int {
+	if ng == nil || ng.PrecedenceOrder == nil || reduceLHS < 0 || reduceLHS >= len(ng.Symbols) {
+		return 0
+	}
+	reduceName := ng.Symbols[reduceLHS].Name
+	if reduceName == "" {
+		return 0
+	}
+
+	sawLower := false
+	seen := map[int]struct{}{}
+	check := func(lhs int) int {
+		if lhs < 0 || lhs >= len(ng.Symbols) {
+			return 0
+		}
+		if _, ok := seen[lhs]; ok {
+			return 0
+		}
+		seen[lhs] = struct{}{}
+		shiftName := ng.Symbols[lhs].Name
+		if shiftName == "" || shiftName == reduceName {
+			return 0
+		}
+		cmp := ng.PrecedenceOrder.resolveSymbolVsSymbol(shiftName, reduceName)
 		if cmp > 0 {
 			return 1
 		}

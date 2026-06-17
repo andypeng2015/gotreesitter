@@ -99,6 +99,70 @@ func TestNormalizeSeparatesAnonymousStringAndPatternTerminals(t *testing.T) {
 	}
 }
 
+func TestNormalizeWrapsSharedStringOnlyNamedTokenWithAnonymousLiteral(t *testing.T) {
+	g := NewGrammar("string_token_collision")
+	g.Define("source_file", Choice(
+		Str("import"),
+		Sym("import"),
+	))
+	g.Define("import", Token(Str("import")))
+
+	ng, err := Normalize(g)
+	if err != nil {
+		t.Fatalf("normalize: %v", err)
+	}
+
+	anonID := -1
+	importID := -1
+	sourceID := -1
+	for id, sym := range ng.Symbols {
+		switch {
+		case sym.Name == "source_file":
+			sourceID = id
+		case sym.Name == "import" && sym.Kind == SymbolTerminal && !sym.Named:
+			anonID = id
+		case sym.Name == "import" && sym.Kind == SymbolNonterminal && sym.Named:
+			importID = id
+		case sym.Name == "import" && sym.Kind == SymbolNamedToken:
+			t.Fatalf("shared string-only token was registered as duplicate terminal: symbol %d", id)
+		}
+	}
+	if anonID < 0 {
+		t.Fatal("missing anonymous literal terminal for import")
+	}
+	if importID < 0 {
+		t.Fatal("missing import wrapper nonterminal")
+	}
+
+	hasImportWrapperProduction := false
+	for _, prod := range ng.Productions {
+		if prod.LHS == importID && len(prod.RHS) == 1 && prod.RHS[0] == anonID {
+			hasImportWrapperProduction = true
+			break
+		}
+	}
+	if !hasImportWrapperProduction {
+		t.Fatal("missing import wrapper production over anonymous literal")
+	}
+
+	hasAnonProduction := false
+	hasImportProduction := false
+	for _, prod := range ng.Productions {
+		if prod.LHS != sourceID || len(prod.RHS) != 1 {
+			continue
+		}
+		switch prod.RHS[0] {
+		case anonID:
+			hasAnonProduction = true
+		case importID:
+			hasImportProduction = true
+		}
+	}
+	if !hasAnonProduction || !hasImportProduction {
+		t.Fatalf("source_file productions missing literal/wrapper refs: anonymous=%v import=%v", hasAnonProduction, hasImportProduction)
+	}
+}
+
 func TestPriorityInlinePatternsPrecedeAliasedInlinePatterns(t *testing.T) {
 	g := NewGrammar("priority_inline_patterns")
 	g.PriorityInlinePatterns = []string{`[0-9]+`}
