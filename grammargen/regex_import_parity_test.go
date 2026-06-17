@@ -29,6 +29,7 @@ func TestRegexImportCharacterClassRangeParity(t *testing.T) {
 
 	for _, sample := range []string{
 		"[a-z]",
+		"(?<year>[0-9]{4})-(?<month>[0-9]{2})-(?<day>[0-9]{2})\n",
 	} {
 		t.Run(sample, func(t *testing.T) {
 			src := []byte(sample)

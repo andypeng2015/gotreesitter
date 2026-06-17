@@ -1138,6 +1138,12 @@ func (ctx *lrContext) transitionRow(state int) lrTransitionRow {
 
 func (ctx *lrContext) addTransition(state, sym, target int) {
 	ctx.ensureTransitionState(state)
+	for i := range ctx.transitions[state] {
+		if int(ctx.transitions[state][i].sym) == sym {
+			ctx.transitions[state][i].target = uint32(target)
+			return
+		}
+	}
 	ctx.transitions[state] = append(ctx.transitions[state], lrTransition{
 		sym:    uint32(sym),
 		target: uint32(target),
