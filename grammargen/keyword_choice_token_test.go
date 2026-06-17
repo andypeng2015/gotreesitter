@@ -281,6 +281,43 @@ func TestHiddenStringTokenSharingAnonymousLiteralBecomesNonterminal(t *testing.T
 	}
 }
 
+func TestHiddenStringTokenDuplicatesWithoutAnonymousLiteralRemainTokens(t *testing.T) {
+	g := NewGrammar("hidden_string_token_token_only_collision")
+	g.Define("source_file", Seq(Sym("_bang"), Sym("_also_bang")))
+	g.Define("_bang", Token(Str("!")))
+	g.Define("_also_bang", Token(Str("!")))
+
+	ng, err := Normalize(g)
+	if err != nil {
+		t.Fatalf("Normalize: %v", err)
+	}
+	for _, name := range []string{"_bang", "_also_bang"} {
+		if got := symbolKind(t, ng, name); got != SymbolNamedToken {
+			t.Fatalf("%s kind = %v, want SymbolNamedToken", name, got)
+		}
+	}
+
+	lang, err := GenerateLanguage(g)
+	if err != nil {
+		t.Fatalf("GenerateLanguage: %v", err)
+	}
+	tree, err := gotreesitter.NewParser(lang).Parse([]byte("!!"))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	defer tree.Release()
+	root := tree.RootNode()
+	if root == nil {
+		t.Fatal("parse missing root node")
+	}
+	if root.HasError() {
+		t.Fatalf("parse has error: %s", root.SExpr(lang))
+	}
+	if got := root.SExpr(lang); got != "(source_file)" {
+		t.Fatalf("SExpr = %s, want (source_file)", got)
+	}
+}
+
 func TestPrecedenceWrappedBareStringChoiceStaysNonterminal(t *testing.T) {
 	g := NewGrammar("prec_wrapped_bare_string_choice_nonterminal")
 	g.Define("source_file", Sym("operator"))
