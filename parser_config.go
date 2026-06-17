@@ -55,6 +55,7 @@ func ResetParseEnvConfigCacheForTests() {
 	parseReduceChainHints = false
 	parseTSLazyCompatOnce = sync.Once{}
 	parseTSLazyCompat = false
+	glrFaithfulCapOneMerge = os.Getenv("GOT_FAITHFUL_CONDENSE") == "1"
 }
 
 func parseNodeLimitScaleFactor() int {
@@ -105,6 +106,11 @@ func parseMaxMergePerKeyValue() int {
 func parseMaxMergePerKeyEnvConfigured() bool {
 	return strings.TrimSpace(os.Getenv("GOT_GLR_MAX_MERGE_PER_KEY")) != ""
 }
+
+// glrFaithfulCapOneMerge (GOT_FAITHFUL_CONDENSE=1) makes cap-one condense
+// preserve same-key tie readings through multi-link GSS nodes. It defaults off
+// while the faithful GLR path is validated.
+var glrFaithfulCapOneMerge = os.Getenv("GOT_FAITHFUL_CONDENSE") == "1"
 
 func parseTransientReduceChildrenEnabled() bool {
 	return parseTransientReduceEnabled("GOT_TRANSIENT_REDUCE_CHILDREN")

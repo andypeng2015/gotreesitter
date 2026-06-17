@@ -13,6 +13,31 @@ type gssNode struct {
 	prev  *gssNode
 	depth int
 	hash  uint64
+	// extraLinks holds links 1..k after a gated lossless condense merge. The
+	// inline (prev, entry) pair remains link 0.
+	extraLinks []gssMainLink
+}
+
+type gssMainLink struct {
+	prev  *gssNode
+	entry stackEntry
+}
+
+const maxMainLinkCount = maxStacksPerMergeKey
+
+func (n *gssNode) linkCount() int {
+	if n == nil {
+		return 0
+	}
+	return 1 + len(n.extraLinks)
+}
+
+func (n *gssNode) link(i int) (prev *gssNode, entry stackEntry) {
+	if i == 0 {
+		return n.prev, n.entry
+	}
+	l := n.extraLinks[i-1]
+	return l.prev, l.entry
 }
 
 // gssStack is a shared-prefix stack foundation for future GLR work.
@@ -307,6 +332,7 @@ func (s *gssScratch) allocNode(entry stackEntry, prev *gssNode, depth int) *gssN
 			n.prev = prev
 			n.depth = depth
 			n.hash = hash
+			n.extraLinks = nil
 			return n
 		}
 	}
@@ -357,6 +383,7 @@ func (s *gssScratch) allocNodeSlow(entry stackEntry, prev *gssNode, depth int, h
 		n.prev = prev
 		n.depth = depth
 		n.hash = hash
+		n.extraLinks = nil
 		if s.audit != nil {
 			s.audit.recordGSSAlloc(n)
 		}
@@ -422,6 +449,25 @@ func (s *glrStack) toGSS(scratch *gssScratch) gssStack {
 		return s.gss.clone()
 	}
 	return buildGSSStack(s.entries, scratch)
+}
+
+func gssSpanIsLinear(head *gssNode, childCount int) bool {
+	if childCount == 0 {
+		return true
+	}
+	nonExtraFound := 0
+	for n := head; n != nil; n = n.prev {
+		if len(n.extraLinks) > 0 {
+			return false
+		}
+		if stackEntryHasNode(n.entry) && !stackEntryNodeIsExtra(n.entry) {
+			nonExtraFound++
+			if nonExtraFound == childCount {
+				return true
+			}
+		}
+	}
+	return true
 }
 
 func gssNodeBytesForCap(n int) int64 {

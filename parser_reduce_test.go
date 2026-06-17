@@ -2,6 +2,119 @@ package gotreesitter
 
 import "testing"
 
+func TestFastVisibleReduceFromGSSDeclinesMultiLinkSpan(t *testing.T) {
+	old := glrFaithfulCapOneMerge
+	glrFaithfulCapOneMerge = true
+	t.Cleanup(func() { glrFaithfulCapOneMerge = old })
+
+	var scratch gssScratch
+	base := scratch.allocNode(stackEntry{state: 1}, nil, 1)
+	left := NewLeafNode(1, true, 0, 1, Point{}, Point{Column: 1})
+	right := NewLeafNode(2, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	leftNode := scratch.allocNode(newStackEntryNode(2, left), base, 2)
+	rightNode := scratch.allocNode(newStackEntryNode(3, right), leftNode, 3)
+	altRight := NewLeafNode(2, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	rightNode.extraLinks = append(rightNode.extraLinks, gssMainLink{
+		prev:  leftNode,
+		entry: newStackEntryNode(3, altRight),
+	})
+
+	parser := &Parser{language: &Language{
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "eof", Visible: true, Named: true},
+			{Name: "left", Visible: true, Named: true},
+			{Name: "right", Visible: true, Named: true},
+			{Name: "parent", Visible: true, Named: true},
+		},
+	}}
+	stack := &glrStack{gss: gssStack{head: rightNode}, byteOffset: 2}
+	act := ParseAction{Type: ParseActionReduce, Symbol: 3, ChildCount: 2}
+	var anyReduced bool
+	nodeCount := 0
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	if parser.tryFastVisibleReduceActionFromGSS(stack, act, Token{}, &anyReduced, &nodeCount, arena, nil, &scratch, nil, false, false) {
+		t.Fatal("tryFastVisibleReduceActionFromGSS = true, want false for multi-link span")
+	}
+	if anyReduced {
+		t.Fatal("anyReduced = true, want false")
+	}
+	if nodeCount != 0 {
+		t.Fatalf("nodeCount = %d, want 0", nodeCount)
+	}
+	if stack.gss.head != rightNode {
+		t.Fatal("stack mutated by declined fast reduce")
+	}
+}
+
+func TestNoTreeReduceFromGSSRejectsMultiLinkSpan(t *testing.T) {
+	old := glrFaithfulCapOneMerge
+	glrFaithfulCapOneMerge = true
+	t.Cleanup(func() { glrFaithfulCapOneMerge = old })
+
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	var scratch gssScratch
+	base := scratch.allocNode(stackEntry{state: 1}, nil, 1)
+	left := newNoTreeLeafNodeInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	right := newNoTreeLeafNodeInArena(arena, 2, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	leftNode := scratch.allocNode(newStackEntryNoTreeNode(2, left), base, 2)
+	rightNode := scratch.allocNode(newStackEntryNoTreeNode(3, right), leftNode, 3)
+	altRight := newNoTreeLeafNodeInArena(arena, 2, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	rightNode.extraLinks = append(rightNode.extraLinks, gssMainLink{
+		prev:  leftNode,
+		entry: newStackEntryNoTreeNode(3, altRight),
+	})
+
+	parser := &Parser{language: &Language{
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "eof", Visible: true, Named: true},
+			{Name: "left", Visible: true, Named: true},
+			{Name: "right", Visible: true, Named: true},
+			{Name: "parent", Visible: true, Named: true},
+		},
+	}}
+	stack := &glrStack{gss: gssStack{head: rightNode}, byteOffset: 2}
+	act := ParseAction{Type: ParseActionReduce, Symbol: 3, ChildCount: 2}
+	var anyReduced bool
+	nodeCount := 0
+
+	parser.applyNoTreeReduceActionFromGSS(stack, act, Token{}, &anyReduced, &nodeCount, arena, nil, &scratch, nil, nil, false)
+	if !stack.dead {
+		t.Fatal("stack.dead = false, want true for no-tree multi-link GSS reduce")
+	}
+	if anyReduced {
+		t.Fatal("anyReduced = true, want false")
+	}
+	if nodeCount != 0 {
+		t.Fatalf("nodeCount = %d, want 0", nodeCount)
+	}
+	if len(parser.pendingForkStacks) != 0 {
+		t.Fatalf("pending forks = %d, want 0", len(parser.pendingForkStacks))
+	}
+}
+
+func TestRejectUndrainedPendingForkStacksClearsAndKills(t *testing.T) {
+	old := glrFaithfulCapOneMerge
+	glrFaithfulCapOneMerge = true
+	t.Cleanup(func() { glrFaithfulCapOneMerge = old })
+
+	parser := &Parser{pendingForkStacks: []glrStack{newGLRStack(9)}}
+	stack := newGLRStack(1)
+
+	if !parser.rejectUndrainedPendingForkStacks(&stack) {
+		t.Fatal("rejectUndrainedPendingForkStacks = false, want true")
+	}
+	if len(parser.pendingForkStacks) != 0 {
+		t.Fatalf("pending forks = %d, want 0", len(parser.pendingForkStacks))
+	}
+	if !stack.dead {
+		t.Fatal("stack.dead = false, want true")
+	}
+}
+
 func TestBuildReduceChainHintsUsesLanguageMetadata(t *testing.T) {
 	t.Setenv("GOT_GLR_REDUCE_CHAIN_HINTS", "1")
 	ResetParseEnvConfigCacheForTests()

@@ -2171,6 +2171,9 @@ func stackCompareMergeSmallCapOne(a, b *glrStack) int {
 		}
 		return -1
 	}
+	if glrFaithfulCapOneMerge {
+		return 0
+	}
 	aDepth := a.depth()
 	bDepth := b.depth()
 	if aDepth != bDepth {
@@ -2196,6 +2199,88 @@ func stackErrorRank(s *glrStack) int {
 	return 0
 }
 
+func gssMainCanMerge(a, b *glrStack) bool {
+	if a.gss.head == nil || b.gss.head == nil {
+		return false
+	}
+	if a.dead || b.dead || a.accepted != b.accepted {
+		return false
+	}
+	if a.score != b.score || a.shifted != b.shifted {
+		return false
+	}
+	return stackErrorRank(a) == stackErrorRank(b)
+}
+
+func gssMainLinkExists(n *gssNode, prev *gssNode, entry stackEntry) bool {
+	for i := 0; i < n.linkCount(); i++ {
+		p, e := n.link(i)
+		if p == prev && e == entry {
+			return true
+		}
+	}
+	return false
+}
+
+func gssMainMerge(a, b *glrStack) bool {
+	ah, bh := a.gss.head, b.gss.head
+	if ah == nil || bh == nil {
+		return false
+	}
+	if ah == bh {
+		return true
+	}
+	needed := 0
+	for i := 0; i < bh.linkCount(); i++ {
+		prev, entry := bh.link(i)
+		if gssMainLinkExists(ah, prev, entry) {
+			continue
+		}
+		needed++
+	}
+	if ah.linkCount()+needed > maxMainLinkCount {
+		return false
+	}
+	for i := 0; i < bh.linkCount(); i++ {
+		prev, entry := bh.link(i)
+		if gssMainLinkExists(ah, prev, entry) {
+			continue
+		}
+		ah.extraLinks = append(ah.extraLinks, gssMainLink{prev: prev, entry: entry})
+	}
+	ah.hash = 0
+	return true
+}
+
+func tryGSSMainMergeResult(result []glrStack, idx int, stack *glrStack) (merged bool, attempted bool) {
+	if !glrFaithfulCapOneMerge || idx < 0 || idx >= len(result) || stack == nil {
+		return false, false
+	}
+	if !gssMainCanMerge(&result[idx], stack) {
+		return false, false
+	}
+	return gssMainMerge(&result[idx], stack), true
+}
+
+func preserveCapOneStackInSlot(result *[]glrStack, slot *glrMergeSlot, stack glrStack, hash uint64) bool {
+	if result == nil || slot == nil {
+		return false
+	}
+	idx := len(*result)
+	*result = append(*result, stack)
+	if slot.count >= len(slot.indices) {
+		return true
+	}
+	slot.indices[slot.count] = idx
+	slot.hashes[slot.count] = hash
+	slot.hashMask |= mergeHashBit(hash)
+	slot.count++
+	if slot.worstIndex < 0 || stackCompareMerge(&(*result)[idx], &(*result)[slot.worstIndex]) < 0 {
+		slot.worstIndex = idx
+	}
+	return true
+}
+
 func preferOverflowCandidate(candidate, incumbent *glrStack, candidateHash, incumbentHash uint64) bool {
 	cmp := stackCompareMerge(candidate, incumbent)
 	if cmp != 0 {
@@ -2218,6 +2303,8 @@ func mergeStacksSmallForLanguage(alive []glrStack, scratch *glrMergeScratch, lan
 		stack := alive[i]
 		key := mergeKeyForStack(stack)
 		duplicateIndex := -1
+		mergedByGSS := false
+		preserveByGSS := false
 		for j := range result {
 			if mergeKeyForStack(result[j]) != key {
 				continue
@@ -2233,14 +2320,26 @@ func mergeStacksSmallForLanguage(alive []glrStack, scratch *glrMergeScratch, lan
 					duplicateIndex = j
 					break
 				}
+				if glrFaithfulCapOneMerge && gssMainCanMerge(&result[j], &stack) {
+					if gssMainMerge(&result[j], &stack) {
+						duplicateIndex = j
+						mergedByGSS = true
+						break
+					}
+					preserveByGSS = true
+					break
+				}
 			}
 			if stackEquivalentForMergeState(scratch, lang, key.state, result[j], stack) {
 				duplicateIndex = j
 				break
 			}
 		}
-		if duplicateIndex < 0 {
+		if duplicateIndex < 0 || preserveByGSS {
 			result = append(result, stack)
+			continue
+		}
+		if mergedByGSS {
 			continue
 		}
 		if stackCompareMerge(&stack, &result[duplicateIndex]) >= 0 {
@@ -2261,6 +2360,7 @@ func mergeStacksSmallDeferExact(alive []glrStack, scratch *glrMergeScratch, lang
 		stack := alive[i]
 		key := mergeKeyForStack(stack)
 		duplicateIndex := -1
+		mergedByGSS := false
 		sameKeyCount := 0
 		for j := range result {
 			if resultKeys[j] != key {
@@ -2278,6 +2378,13 @@ func mergeStacksSmallDeferExact(alive []glrStack, scratch *glrMergeScratch, lang
 					duplicateIndex = j
 					break
 				}
+				if merged, attempted := tryGSSMainMergeResult(result, j, &stack); attempted {
+					if merged {
+						duplicateIndex = j
+						mergedByGSS = true
+					}
+					break
+				}
 			}
 			if sameKeyCount < perKeyCap {
 				continue
@@ -2290,6 +2397,9 @@ func mergeStacksSmallDeferExact(alive []glrStack, scratch *glrMergeScratch, lang
 		if duplicateIndex < 0 {
 			resultKeys[len(result)] = key
 			result = append(result, stack)
+			continue
+		}
+		if mergedByGSS {
 			continue
 		}
 		if stackCompareMerge(&stack, &result[duplicateIndex]) >= 0 {
@@ -2403,7 +2513,7 @@ func mergeStacksWithScratch(stacks []glrStack, scratch *glrMergeScratch) []glrSt
 
 		if perKeyCap == 1 && slot.count == 1 {
 			idx := slot.indices[0]
-			cmp := stackCompareMerge(&stack, &result[idx])
+			cmp := stackCompareMergeSmallCapOne(&stack, &result[idx])
 			if cmp > 0 {
 				result[idx] = stack
 				slot.hashes[0] = hash
@@ -2415,6 +2525,12 @@ func mergeStacksWithScratch(stacks []glrStack, scratch *glrMergeScratch) []glrSt
 				continue
 			}
 			if cmp < 0 {
+				continue
+			}
+			if merged, attempted := tryGSSMainMergeResult(result, idx, &stack); attempted {
+				if !merged {
+					_ = preserveCapOneStackInSlot(&result, slot, stack, hash)
+				}
 				continue
 			}
 		}
@@ -2442,6 +2558,12 @@ func mergeStacksWithScratch(stacks []glrStack, scratch *glrMergeScratch) []glrSt
 			// Equal-ranked duplicates should not preserve the first-inserted
 			// branch by accident. Let later survivors replace ties so
 			// post-reduce reprocessing can keep the branch that stayed viable.
+			if merged, attempted := tryGSSMainMergeResult(result, duplicateIndex, &stack); attempted {
+				if !merged {
+					_ = preserveCapOneStackInSlot(&result, slot, stack, hash)
+				}
+				continue
+			}
 			if stackCompareMerge(&stack, &result[duplicateIndex]) >= 0 {
 				result[duplicateIndex] = stack
 				for j := 0; j < slot.count; j++ {
@@ -2471,6 +2593,24 @@ func mergeStacksWithScratch(stacks []glrStack, scratch *glrMergeScratch) []glrSt
 		}
 		if perfCountersEnabled {
 			perfRecordMergePerKeyOverflow()
+		}
+		if perKeyCap == 1 && glrFaithfulCapOneMerge {
+			merged := false
+			attempted := false
+			for j := 0; j < slot.count; j++ {
+				idx := slot.indices[j]
+				m, a := tryGSSMainMergeResult(result, idx, &stack)
+				if a {
+					attempted = true
+					if m {
+						merged = true
+						break
+					}
+				}
+			}
+			if merged || (attempted && preserveCapOneStackInSlot(&result, slot, stack, hash)) {
+				continue
+			}
 		}
 
 		// Per-key alternative budget reached: replace the weakest
@@ -2540,7 +2680,7 @@ func mergeStacksWithScratchDeferExact(alive []glrStack, scratch *glrMergeScratch
 
 		if perKeyCap == 1 && slot.count == 1 {
 			idx := slot.indices[0]
-			cmp := stackCompareMerge(&stack, &result[idx])
+			cmp := stackCompareMergeSmallCapOne(&stack, &result[idx])
 			if cmp > 0 {
 				result[idx] = stack
 				slot.hashes[0] = hash
@@ -2552,6 +2692,12 @@ func mergeStacksWithScratchDeferExact(alive []glrStack, scratch *glrMergeScratch
 				continue
 			}
 			if cmp < 0 {
+				continue
+			}
+			if merged, attempted := tryGSSMainMergeResult(result, idx, &stack); attempted {
+				if !merged {
+					_ = preserveCapOneStackInSlot(&result, slot, stack, hash)
+				}
 				continue
 			}
 		}
@@ -2576,6 +2722,12 @@ func mergeStacksWithScratchDeferExact(alive []glrStack, scratch *glrMergeScratch
 			perfRecordStackEquivalentHashMissSkip()
 		}
 		if duplicateIndex >= 0 {
+			if merged, attempted := tryGSSMainMergeResult(result, duplicateIndex, &stack); attempted {
+				if !merged {
+					_ = preserveCapOneStackInSlot(&result, slot, stack, hash)
+				}
+				continue
+			}
 			if stackCompareMerge(&stack, &result[duplicateIndex]) >= 0 {
 				result[duplicateIndex] = stack
 				for j := 0; j < slot.count; j++ {
@@ -2605,6 +2757,24 @@ func mergeStacksWithScratchDeferExact(alive []glrStack, scratch *glrMergeScratch
 		}
 		if perfCountersEnabled {
 			perfRecordMergePerKeyOverflow()
+		}
+		if perKeyCap == 1 && glrFaithfulCapOneMerge {
+			merged := false
+			attempted := false
+			for j := 0; j < slot.count; j++ {
+				idx := slot.indices[j]
+				m, a := tryGSSMainMergeResult(result, idx, &stack)
+				if a {
+					attempted = true
+					if m {
+						merged = true
+						break
+					}
+				}
+			}
+			if merged || (attempted && preserveCapOneStackInSlot(&result, slot, stack, hash)) {
+				continue
+			}
 		}
 
 		if slot.worstIndex >= 0 {

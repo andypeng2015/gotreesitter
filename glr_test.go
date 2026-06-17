@@ -2784,6 +2784,392 @@ func TestMergeStacksSmallPathCapOnePrunesStrongRankMismatch(t *testing.T) {
 	}
 }
 
+func TestMergeStacksSmallFaithfulGSSUnionPreservesExtraLinks(t *testing.T) {
+	old := glrFaithfulCapOneMerge
+	glrFaithfulCapOneMerge = true
+	t.Cleanup(func() { glrFaithfulCapOneMerge = old })
+
+	var gssScratch gssScratch
+	buildStack := func(sym Symbol) glrStack {
+		node := NewLeafNode(sym, true, 0, 5, Point{}, Point{Column: 5})
+		entries := []stackEntry{{state: 1}, newStackEntryNode(7, node)}
+		return glrStack{
+			gss:        buildGSSStack(entries, &gssScratch),
+			byteOffset: stackByteOffset(entries),
+		}
+	}
+
+	var scratch glrMergeScratch
+	scratch.perKeyCap = 1
+	scratch.beginEquivEpoch()
+
+	result := mergeStacksWithScratch([]glrStack{buildStack(11), buildStack(12)}, &scratch)
+	if len(result) != 1 {
+		t.Fatalf("merged stack count = %d, want 1", len(result))
+	}
+	if got := result[0].gss.head.linkCount(); got != 2 {
+		t.Fatalf("merged link count = %d, want 2", got)
+	}
+	_, extra := result[0].gss.head.link(1)
+	if got := stackEntryNodeSymbol(extra); got != 12 {
+		t.Fatalf("extra link symbol = %d, want 12", got)
+	}
+}
+
+func TestMergeStacksFaithfulGSSRankMismatchDoesNotUnionAndKeepsBetter(t *testing.T) {
+	old := glrFaithfulCapOneMerge
+	glrFaithfulCapOneMerge = true
+	t.Cleanup(func() { glrFaithfulCapOneMerge = old })
+
+	buildStack := func(gssScratch *gssScratch, sym Symbol) glrStack {
+		node := NewLeafNode(sym, true, 0, 5, Point{}, Point{Column: 5})
+		entries := []stackEntry{{state: 1}, newStackEntryNode(7, node)}
+		return glrStack{
+			gss:        buildGSSStack(entries, gssScratch),
+			byteOffset: stackByteOffset(entries),
+		}
+	}
+
+	t.Run("score", func(t *testing.T) {
+		var gssScratch gssScratch
+		low := buildStack(&gssScratch, 11)
+		high := buildStack(&gssScratch, 12)
+		low.score = 1
+		high.score = 2
+
+		var scratch glrMergeScratch
+		scratch.perKeyCap = 1
+		scratch.beginEquivEpoch()
+
+		result := mergeStacksWithScratch([]glrStack{low, high}, &scratch)
+		if len(result) != 1 {
+			t.Fatalf("merged stack count = %d, want 1", len(result))
+		}
+		if got := result[0].score; got != 2 {
+			t.Fatalf("survivor score = %d, want 2", got)
+		}
+		if got := stackEntryNodeSymbol(result[0].top()); got != 12 {
+			t.Fatalf("survivor symbol = %d, want 12", got)
+		}
+		if got := result[0].gss.head.linkCount(); got != 1 {
+			t.Fatalf("survivor link count = %d, want 1; score mismatch must not union", got)
+		}
+	})
+
+	t.Run("shifted", func(t *testing.T) {
+		var gssScratch gssScratch
+		shifted := buildStack(&gssScratch, 21)
+		unshifted := buildStack(&gssScratch, 22)
+		shifted.shifted = true
+
+		var scratch glrMergeScratch
+		scratch.perKeyCap = 1
+		scratch.beginEquivEpoch()
+
+		result := mergeStacksWithScratch([]glrStack{shifted, unshifted}, &scratch)
+		if len(result) != 1 {
+			t.Fatalf("merged stack count = %d, want 1", len(result))
+		}
+		if result[0].shifted {
+			t.Fatal("survivor shifted = true, want unshifted candidate")
+		}
+		if got := stackEntryNodeSymbol(result[0].top()); got != 22 {
+			t.Fatalf("survivor symbol = %d, want 22", got)
+		}
+		if got := result[0].gss.head.linkCount(); got != 1 {
+			t.Fatalf("survivor link count = %d, want 1; shifted mismatch must not union", got)
+		}
+	})
+}
+
+func TestMergeStacksGeneralFaithfulGSSUnionPreservesMoreThanFourStacks(t *testing.T) {
+	old := glrFaithfulCapOneMerge
+	glrFaithfulCapOneMerge = true
+	t.Cleanup(func() { glrFaithfulCapOneMerge = old })
+
+	var gssScratch gssScratch
+	buildStack := func(sym Symbol) glrStack {
+		node := NewLeafNode(sym, true, 0, 5, Point{}, Point{Column: 5})
+		entries := []stackEntry{{state: 1}, newStackEntryNode(7, node)}
+		return glrStack{
+			gss:        buildGSSStack(entries, &gssScratch),
+			byteOffset: stackByteOffset(entries),
+		}
+	}
+
+	var scratch glrMergeScratch
+	scratch.perKeyCap = 1
+	scratch.beginEquivEpoch()
+
+	result := mergeStacksWithScratch([]glrStack{
+		buildStack(11),
+		buildStack(12),
+		buildStack(13),
+		buildStack(14),
+		buildStack(15),
+	}, &scratch)
+	if len(result) != 1 {
+		t.Fatalf("merged stack count = %d, want 1", len(result))
+	}
+	if got := result[0].gss.head.linkCount(); got != 5 {
+		t.Fatalf("merged link count = %d, want 5", got)
+	}
+}
+
+func TestMergeStacksDeferExactFaithfulGSSUnionPreservesMoreThanFourStacks(t *testing.T) {
+	old := glrFaithfulCapOneMerge
+	glrFaithfulCapOneMerge = true
+	t.Cleanup(func() { glrFaithfulCapOneMerge = old })
+
+	var gssScratch gssScratch
+	buildStack := func(sym Symbol) glrStack {
+		node := NewLeafNode(sym, true, 0, 5, Point{}, Point{Column: 5})
+		entries := []stackEntry{{state: 1}, newStackEntryNode(7, node)}
+		return glrStack{
+			gss:        buildGSSStack(entries, &gssScratch),
+			byteOffset: stackByteOffset(entries),
+		}
+	}
+
+	var scratch glrMergeScratch
+	scratch.perKeyCap = 1
+	scratch.deferExactDedupe = true
+	scratch.beginEquivEpoch()
+
+	result := mergeStacksWithScratch([]glrStack{
+		buildStack(21),
+		buildStack(22),
+		buildStack(23),
+		buildStack(24),
+		buildStack(25),
+	}, &scratch)
+	if len(result) != 1 {
+		t.Fatalf("merged stack count = %d, want 1", len(result))
+	}
+	if got := result[0].gss.head.linkCount(); got != 5 {
+		t.Fatalf("merged link count = %d, want 5", got)
+	}
+}
+
+func TestGSSMainMergeCapFailurePreservesCandidateStack(t *testing.T) {
+	old := glrFaithfulCapOneMerge
+	glrFaithfulCapOneMerge = true
+	t.Cleanup(func() { glrFaithfulCapOneMerge = old })
+
+	var gssScratch gssScratch
+	buildStack := func(sym Symbol) glrStack {
+		node := NewLeafNode(sym, true, 0, 5, Point{}, Point{Column: 5})
+		entries := []stackEntry{{state: 1}, newStackEntryNode(7, node)}
+		return glrStack{
+			gss:        buildGSSStack(entries, &gssScratch),
+			byteOffset: stackByteOffset(entries),
+		}
+	}
+	incumbent := buildStack(20)
+	for i := 1; i < maxMainLinkCount; i++ {
+		extraNode := NewLeafNode(Symbol(20+i), true, 0, 5, Point{}, Point{Column: 5})
+		incumbent.gss.head.extraLinks = append(incumbent.gss.head.extraLinks, gssMainLink{
+			prev:  incumbent.gss.head.prev,
+			entry: newStackEntryNode(7, extraNode),
+		})
+	}
+	if got := incumbent.gss.head.linkCount(); got != maxMainLinkCount {
+		t.Fatalf("setup link count = %d, want %d", got, maxMainLinkCount)
+	}
+
+	var scratch glrMergeScratch
+	scratch.perKeyCap = 1
+	scratch.beginEquivEpoch()
+
+	result := mergeStacksWithScratch([]glrStack{incumbent, buildStack(99)}, &scratch)
+	if len(result) != 2 {
+		t.Fatalf("stack count after capped merge = %d, want 2", len(result))
+	}
+}
+
+func TestMergeStacksGeneralFaithfulGSSCapFailurePreservesCandidateInSlot(t *testing.T) {
+	old := glrFaithfulCapOneMerge
+	glrFaithfulCapOneMerge = true
+	t.Cleanup(func() { glrFaithfulCapOneMerge = old })
+
+	var gssScratch gssScratch
+	buildStack := func(state StateID, sym Symbol, start uint32) glrStack {
+		node := NewLeafNode(sym, true, start, start+5, Point{Column: start}, Point{Column: start + 5})
+		entries := []stackEntry{{state: 1}, newStackEntryNode(state, node)}
+		return glrStack{
+			gss:        buildGSSStack(entries, &gssScratch),
+			byteOffset: stackByteOffset(entries),
+		}
+	}
+	incumbent := buildStack(7, 30, 0)
+	for i := 1; i < maxMainLinkCount; i++ {
+		extraNode := NewLeafNode(Symbol(30+i), true, 0, 5, Point{}, Point{Column: 5})
+		incumbent.gss.head.extraLinks = append(incumbent.gss.head.extraLinks, gssMainLink{
+			prev:  incumbent.gss.head.prev,
+			entry: newStackEntryNode(StateID(7+i), extraNode),
+		})
+	}
+	candidate := buildStack(7, 99, 0)
+	fillers := []glrStack{
+		buildStack(8, 41, 10),
+		buildStack(9, 42, 20),
+		buildStack(10, 43, 30),
+	}
+
+	var scratch glrMergeScratch
+	scratch.perKeyCap = 1
+	scratch.beginEquivEpoch()
+
+	result := mergeStacksWithScratch(append([]glrStack{incumbent, candidate}, fillers...), &scratch)
+	sameKeyCount := 0
+	foundCandidate := false
+	for i := range result {
+		if result[i].top().state == 7 && result[i].byteOffset == 5 {
+			sameKeyCount++
+			if stackEntryNodeSymbol(result[i].top()) == 99 {
+				foundCandidate = true
+			}
+		}
+	}
+	if sameKeyCount != 2 {
+		t.Fatalf("same-key survivor count = %d, want 2", sameKeyCount)
+	}
+	if !foundCandidate {
+		t.Fatal("candidate stack was not preserved after capped GSS merge failure")
+	}
+	slotCount := 0
+	if len(scratch.slots) > 0 {
+		slotCount = scratch.slots[0].count
+	}
+	if slotCount < 2 {
+		t.Fatalf("slot count = %d, want preserveCapOneStackInSlot to record candidate", slotCount)
+	}
+}
+
+func TestMergeStacksDeferExactFaithfulGSSCapFailurePreservesCandidateInSlot(t *testing.T) {
+	old := glrFaithfulCapOneMerge
+	glrFaithfulCapOneMerge = true
+	t.Cleanup(func() { glrFaithfulCapOneMerge = old })
+
+	var gssScratch gssScratch
+	buildStack := func(state StateID, sym Symbol, start uint32) glrStack {
+		node := NewLeafNode(sym, true, start, start+5, Point{Column: start}, Point{Column: start + 5})
+		entries := []stackEntry{{state: 1}, newStackEntryNode(state, node)}
+		return glrStack{
+			gss:        buildGSSStack(entries, &gssScratch),
+			byteOffset: stackByteOffset(entries),
+		}
+	}
+	incumbent := buildStack(7, 50, 0)
+	for i := 1; i < maxMainLinkCount; i++ {
+		extraNode := NewLeafNode(Symbol(50+i), true, 0, 5, Point{}, Point{Column: 5})
+		incumbent.gss.head.extraLinks = append(incumbent.gss.head.extraLinks, gssMainLink{
+			prev:  incumbent.gss.head.prev,
+			entry: newStackEntryNode(StateID(7+i), extraNode),
+		})
+	}
+	candidate := buildStack(7, 109, 0)
+	fillers := []glrStack{
+		buildStack(8, 61, 10),
+		buildStack(9, 62, 20),
+		buildStack(10, 63, 30),
+	}
+
+	var scratch glrMergeScratch
+	scratch.perKeyCap = 1
+	scratch.deferExactDedupe = true
+	scratch.beginEquivEpoch()
+
+	result := mergeStacksWithScratch(append([]glrStack{incumbent, candidate}, fillers...), &scratch)
+	sameKeyCount := 0
+	foundCandidate := false
+	for i := range result {
+		if result[i].top().state == 7 && result[i].byteOffset == 5 {
+			sameKeyCount++
+			if stackEntryNodeSymbol(result[i].top()) == 109 {
+				foundCandidate = true
+			}
+		}
+	}
+	if sameKeyCount != 2 {
+		t.Fatalf("same-key survivor count = %d, want 2", sameKeyCount)
+	}
+	if !foundCandidate {
+		t.Fatal("candidate stack was not preserved after capped deferred-exact GSS merge failure")
+	}
+	slotCount := 0
+	if len(scratch.slots) > 0 {
+		slotCount = scratch.slots[0].count
+	}
+	if slotCount < 2 {
+		t.Fatalf("slot count = %d, want preserveCapOneStackInSlot to record candidate", slotCount)
+	}
+}
+
+func TestMergeStacksSmallFaithfulGSSSameInlineCapFailurePreservesCandidateStack(t *testing.T) {
+	old := glrFaithfulCapOneMerge
+	glrFaithfulCapOneMerge = true
+	t.Cleanup(func() { glrFaithfulCapOneMerge = old })
+
+	var scratchGSS gssScratch
+	prev := scratchGSS.allocNode(stackEntry{state: 1}, nil, 1)
+	sharedTop := NewLeafNode(30, true, 0, 5, Point{}, Point{Column: 5})
+	topEntry := newStackEntryNode(7, sharedTop)
+	incumbentHead := scratchGSS.allocNode(topEntry, prev, 2)
+	candidateHead := scratchGSS.allocNode(topEntry, prev, 2)
+	for i := 1; i < maxMainLinkCount; i++ {
+		extraNode := NewLeafNode(Symbol(30+i), true, 0, 5, Point{}, Point{Column: 5})
+		incumbentHead.extraLinks = append(incumbentHead.extraLinks, gssMainLink{
+			prev:  prev,
+			entry: newStackEntryNode(StateID(7+i), extraNode),
+		})
+	}
+	candidateExtra := NewLeafNode(99, true, 0, 5, Point{}, Point{Column: 5})
+	candidateHead.extraLinks = append(candidateHead.extraLinks, gssMainLink{
+		prev:  prev,
+		entry: newStackEntryNode(99, candidateExtra),
+	})
+
+	incumbent := glrStack{gss: gssStack{head: incumbentHead}, byteOffset: 5}
+	candidate := glrStack{gss: gssStack{head: candidateHead}, byteOffset: 5}
+
+	var scratch glrMergeScratch
+	scratch.perKeyCap = 1
+	scratch.beginEquivEpoch()
+
+	result := mergeStacksWithScratch([]glrStack{incumbent, candidate}, &scratch)
+	if len(result) != 2 {
+		t.Fatalf("stack count after same-inline capped merge = %d, want 2", len(result))
+	}
+	if got := result[0].gss.head.linkCount(); got != maxMainLinkCount {
+		t.Fatalf("incumbent link count = %d, want %d", got, maxMainLinkCount)
+	}
+	if got := result[1].gss.head.linkCount(); got != 2 {
+		t.Fatalf("candidate link count = %d, want 2", got)
+	}
+}
+
+func TestGSSMainLinkExistsUsesFullStackEntryIdentity(t *testing.T) {
+	var scratch gssScratch
+	prev := scratch.allocNode(stackEntry{state: 1}, nil, 1)
+	node := NewLeafNode(10, true, 0, 1, Point{}, Point{Column: 1})
+	aHead := scratch.allocNode(newStackEntryNode(2, node), prev, 2)
+	bHead := scratch.allocNode(newStackEntryNode(3, node), prev, 2)
+	a := glrStack{gss: gssStack{head: aHead}, byteOffset: 1}
+	b := glrStack{gss: gssStack{head: bHead}, byteOffset: 1}
+
+	if !gssMainMerge(&a, &b) {
+		t.Fatal("gssMainMerge returned false")
+	}
+	if got := a.gss.head.linkCount(); got != 2 {
+		t.Fatalf("link count = %d, want 2", got)
+	}
+	_, extra := a.gss.head.link(1)
+	if extra.state != 3 {
+		t.Fatalf("extra entry state = %d, want 3", extra.state)
+	}
+}
+
 func TestStackComparePtrPrefersEarlierBranchOrderOnExactTie(t *testing.T) {
 	a := newGLRStack(StateID(5))
 	b := newGLRStack(StateID(5))

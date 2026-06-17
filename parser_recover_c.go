@@ -864,6 +864,9 @@ func (p *Parser) cDoAllPotentialReductions(start glrStack, lookaheadSym Symbol, 
 			fork.cRec = versions[v].cRec.clone()
 			var dummy bool
 			p.applyAction(&fork, act, tok, &dummy, nodeCount, arena, entryScratch, gssScratch, nil, false, trackChildErrors)
+			if p.rejectUndrainedPendingForkStacks(&fork) {
+				continue
+			}
 			if fork.dead {
 				continue
 			}
@@ -973,6 +976,9 @@ func (p *Parser) cHandleError(stacks *[]glrStack, si int, tok Token, nodeCount *
 				}
 				var dummy bool
 				p.applyAction(&cand, shiftAct, missingTok, &dummy, nodeCount, arena, entryScratch, gssScratch, nil, false, trackChildErrors)
+				if p.rejectUndrainedPendingForkStacks(&cand) {
+					continue
+				}
 				cand.shifted = false
 				if cand.dead {
 					continue
