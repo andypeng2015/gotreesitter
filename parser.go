@@ -781,7 +781,8 @@ func (p *Parser) tryRelexCurrentStateDFA(tok Token, parserState StateID, ts Toke
 	if int(parserState) >= len(p.language.LexModes) {
 		return Token{}, false
 	}
-	if dts.language.ExternalScanner != nil && p.language.LexModes[parserState].ExternalLexState != 0 &&
+	if dts.language.ExternalScanner != nil && dts.externalSymbolIndex(tok.Symbol) >= 0 &&
+		p.language.LexModes[parserState].ExternalLexState != 0 &&
 		!p.canRelexExternalTokenWithCurrentStateDFA(tok) {
 		return Token{}, false
 	}
