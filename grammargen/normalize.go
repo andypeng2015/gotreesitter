@@ -1167,7 +1167,8 @@ func collectAliasedPatterns(g *Grammar) map[string]aliasInfo {
 // and nonterminals. A rule is a "named token" if its definition is:
 //   - wrapped in token() or token.immediate()
 //   - a pattern
-//   - a string literal ONLY when no other rule shares the same string value
+//   - a bare string literal ONLY when no other rule shares the same string
+//     value
 //     (if multiple named rules define the same STRING, or the STRING is used
 //     inline in nonterminal rules, the named rule becomes a nonterminal
 //     wrapping the shared anonymous terminal — matching tree-sitter C behavior).
@@ -1176,6 +1177,11 @@ func collectAliasedPatterns(g *Grammar) map[string]aliasInfo {
 // their precedence participates in LR conflict resolution only if the rule is
 // reduced as a nonterminal. Collapsing them into a named DFA token bypasses
 // that conflict and drops the visible wrapper node.
+//
+// Bare string-only choices are nonterminals, not named tokens. The C generator
+// keeps rules like Dart's relational_operator = "<" | ">" | "<=" | ">=" as a
+// wrapper over the anonymous string tokens, while token(choice(...)) remains a
+// named token.
 func classifyRules(g *Grammar) (tokens, nonterms []string) {
 	// Count how many distinct sources each STRING value has.
 	// Sources: named bare-STRING rules + inline STRING usage in nonterminal rules.
@@ -1191,9 +1197,11 @@ func classifyRules(g *Grammar) (tokens, nonterms []string) {
 			// system produces the anonymous terminal which has no parse table action,
 			// because actions are on the named token symbol that the DFA never emits.
 			isVisible := !strings.HasPrefix(name, "_")
-			isBareString := terminalStringValue(rule) != ""
-			if (isVisible && isBareString) || (isBareString && sharedStrings[terminalStringValue(rule)]) ||
-				isExplicitPrecedenceStringChoice(rule) {
+			stringValue := terminalStringValue(rule)
+			isBareString := stringValue != ""
+			isBareStringOnlyChoice := isBareStringOnlyChoiceRule(rule)
+			if isBareStringOnlyChoice || isExplicitPrecedenceStringChoice(rule) ||
+				(isVisible && isBareString) || (isBareString && sharedStrings[stringValue]) {
 				nonterms = append(nonterms, name)
 			} else {
 				tokens = append(tokens, name)
@@ -1203,6 +1211,58 @@ func classifyRules(g *Grammar) (tokens, nonterms []string) {
 		}
 	}
 	return
+}
+
+func isBareStringOnlyChoiceRule(r *Rule) bool {
+	if r == nil {
+		return false
+	}
+	switch r.Kind {
+	case RuleChoice:
+		if len(r.Children) == 0 {
+			return false
+		}
+		for _, child := range r.Children {
+			if !isBareStringOnlyRule(child) {
+				return false
+			}
+		}
+		return true
+	case RulePrec, RulePrecLeft, RulePrecRight, RulePrecDynamic:
+		if len(r.Children) == 0 {
+			return false
+		}
+		return isBareStringOnlyChoiceRule(r.Children[0])
+	default:
+		return false
+	}
+}
+
+func isBareStringOnlyRule(r *Rule) bool {
+	if r == nil {
+		return false
+	}
+	switch r.Kind {
+	case RuleString:
+		return true
+	case RuleChoice, RuleSeq:
+		if len(r.Children) == 0 {
+			return false
+		}
+		for _, child := range r.Children {
+			if !isBareStringOnlyRule(child) {
+				return false
+			}
+		}
+		return true
+	case RulePrec, RulePrecLeft, RulePrecRight, RulePrecDynamic:
+		if len(r.Children) == 0 {
+			return false
+		}
+		return isBareStringOnlyRule(r.Children[0])
+	default:
+		return false
+	}
 }
 
 // computeSharedStrings identifies STRING values that are used by multiple

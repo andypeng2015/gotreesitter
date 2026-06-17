@@ -176,6 +176,33 @@ func TestExplicitPrecStringChoiceBecomesNonterminal(t *testing.T) {
 	}
 }
 
+func TestBareStringChoiceStaysNonterminal(t *testing.T) {
+	g := NewGrammar("bare_string_choice_nonterminal")
+	g.Define("source_file", Seq(Sym("identifier"), Sym("relational_operator"), Sym("identifier")))
+	g.Define("identifier", Pat(`[a-z]+`))
+	g.Define("relational_operator", Choice(
+		Str("<"),
+		Str(">"),
+		Str("<="),
+		Str(">="),
+	))
+
+	ng, err := Normalize(g)
+	if err != nil {
+		t.Fatalf("Normalize: %v", err)
+	}
+	for _, sym := range ng.Symbols {
+		if sym.Name != "relational_operator" {
+			continue
+		}
+		if sym.Kind != SymbolNonterminal {
+			t.Fatalf("relational_operator kind = %v, want SymbolNonterminal", sym.Kind)
+		}
+		return
+	}
+	t.Fatal("relational_operator symbol not found")
+}
+
 func TestAliasedInlinePatternWinsSameLengthNamedPatternTie(t *testing.T) {
 	g := NewGrammar("aliased_inline_pattern_precedence")
 	g.Define("source_file", Choice(
