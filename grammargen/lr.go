@@ -3086,6 +3086,9 @@ func resolveActionConflict(lookaheadSym int, actions []lrAction, ng *NormalizedG
 		if preferred, ok := preferredParenthesizedCallDoBlockReduce(lookaheadSym, shifts, reduces, ng); ok {
 			return preferred, nil
 		}
+		if preferred, ok := preferredStabClauseLeftArrowReduce(lookaheadSym, shifts, reduces, ng); ok {
+			return preferred, nil
+		}
 		if preferred, ok := preferredAtomToExpressionOperatorIdentifierReduce(lookaheadSym, shifts, reduces, ng); ok {
 			return preferred, nil
 		}
@@ -3639,6 +3642,40 @@ func isParenthesizedCallWithoutDoBlockReduce(action lrAction, ng *NormalizedGram
 	return hasParenthesizedArguments
 }
 
+func preferredStabClauseLeftArrowReduce(lookaheadSym int, shifts, reduces []lrAction, ng *NormalizedGrammar) ([]lrAction, bool) {
+	if ng == nil || !ng.PreferStabClauseLeftArrowReduces {
+		return nil, false
+	}
+	if lookaheadSym < 0 || lookaheadSym >= len(ng.Symbols) || ng.Symbols[lookaheadSym].Name != "->" {
+		return nil, false
+	}
+	hasStabClauseShift := false
+	for _, shift := range shifts {
+		if shiftLHSIncludesName(shift, ng, "stab_clause") {
+			hasStabClauseShift = true
+			break
+		}
+	}
+	if !hasStabClauseShift {
+		return nil, false
+	}
+	preferred := make([]lrAction, 0, len(reduces))
+	for _, reduce := range reduces {
+		if isStabClauseLeftReduce(reduce, ng) {
+			preferred = append(preferred, reduce)
+		}
+	}
+	return preferred, len(preferred) > 0
+}
+
+func isStabClauseLeftReduce(action lrAction, ng *NormalizedGrammar) bool {
+	if action.kind != lrReduce || action.prodIdx < 0 || action.prodIdx >= len(ng.Productions) {
+		return false
+	}
+	prod := &ng.Productions[action.prodIdx]
+	return symbolNameMatches(prod.LHS, ng, "_stab_clause_left")
+}
+
 func operatorIdentifierShiftOutranksReduce(shifts []lrAction, reduce lrAction, ng *NormalizedGrammar) bool {
 	if reduce.prodIdx < 0 || reduce.prodIdx >= len(ng.Productions) {
 		return false
@@ -3738,7 +3775,7 @@ func isAtomToExpressionOperatorConflictReduce(action lrAction, ng *NormalizedGra
 
 func isElixirOperatorIdentifierConflictLookahead(name string) bool {
 	switch name {
-	case "<-", "\\\\", "when", "::", "|", "=>", "=", "||", "|||", "or",
+	case "->", "<-", "\\\\", "when", "::", "|", "=>", "=", "||", "|||", "or",
 		"&&", "&&&", "and", "==", "!=", "=~", "===", "!==", "<", ">",
 		"<=", ">=", "|>", "<<<", ">>>", "<<~", "~>>", "<~", "~>",
 		"<~>", "<|>", "in", "not in", "^^^", "//", "++", "--", "+++",

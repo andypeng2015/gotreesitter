@@ -79,6 +79,7 @@ type Grammar struct {
 	PreserveKeywordIdentifierConflicts         bool          // keep keyword-as-identifier S/R ambiguity for grammars like Fortran
 	PreferExpressionOperatorIdentifierReduces  bool          // prefer expression/binary-operator reduces over operator_identifier shifts for Elixir-style operators
 	PreferParenthesizedCallDoBlockReduces      bool          // prefer completed parenthesized calls over same-line do_block shifts for Elixir-style calls
+	PreferStabClauseLeftArrowReduces           bool          // prefer completed stab-clause left operands before Elixir-style -> shifts
 	ExactPrefixStates                          int           // keep this many LR(1) states exact before merge compaction
 	Precedences                                [][]PrecEntry // ordered precedence levels (each level: earlier = higher prec)
 	ChoiceLiftThreshold                        int           // if >0, lift inline CHOICE nodes with more alternatives than this into auxiliary nonterminals to prevent production explosion
@@ -335,6 +336,7 @@ func ExtendGrammar(name string, base *Grammar, customize func(g *Grammar)) *Gram
 		PreserveKeywordIdentifierConflicts: base.PreserveKeywordIdentifierConflicts,
 		PreferExpressionOperatorIdentifierReduces:  base.PreferExpressionOperatorIdentifierReduces,
 		PreferParenthesizedCallDoBlockReduces:      base.PreferParenthesizedCallDoBlockReduces,
+		PreferStabClauseLeftArrowReduces:           base.PreferStabClauseLeftArrowReduces,
 		ExactPrefixStates:                          base.ExactPrefixStates,
 		Precedences:                                clonePrecedenceLevels(base.Precedences),
 		ChoiceLiftThreshold:                        base.ChoiceLiftThreshold,

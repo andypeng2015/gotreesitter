@@ -186,21 +186,31 @@ func TestResolveShiftReducePrefersElixirExpressionOperatorIdentifierReduce(t *te
 
 	for _, tc := range []struct {
 		name   string
+		sym    string
 		shift  lrAction
 		reduce lrAction
 	}{
 		{
 			name:   "atom to expression ignores operator identifier precedence",
+			sym:    "**",
 			shift:  lrAction{kind: lrShift, state: 10, lhsSym: 3, prec: 180, hasPrec: true},
 			reduce: lrAction{kind: lrReduce, prodIdx: 0},
 		},
 		{
 			name:   "completed binary operator",
+			sym:    "**",
 			shift:  lrAction{kind: lrShift, state: 10, lhsSym: 3},
 			reduce: lrAction{kind: lrReduce, prodIdx: 1},
 		},
+		{
+			name:   "stab clause left before arrow",
+			sym:    "->",
+			shift:  lrAction{kind: lrShift, state: 10, lhsSym: 3, prec: 180, hasPrec: true},
+			reduce: lrAction{kind: lrReduce, prodIdx: 0},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			ng.Symbols[0].Name = tc.sym
 			got, err := resolveActionConflict(0, []lrAction{
 				tc.shift,
 				tc.reduce,
@@ -301,6 +311,32 @@ func TestResolveShiftReducePrefersElixirParenthesizedCallBeforeDoBlock(t *testin
 	}
 	if len(got) != 1 || got[0].kind != lrReduce || got[0].prodIdx != 0 {
 		t.Fatalf("resolved actions = %+v, want parenthesized call reduce", got)
+	}
+}
+
+func TestResolveShiftReducePrefersElixirStabClauseLeftBeforeArrow(t *testing.T) {
+	ng := &NormalizedGrammar{
+		Symbols: []SymbolInfo{
+			{Name: "->", Kind: SymbolTerminal, Visible: true, Named: false},
+			{Name: "_stab_clause_arguments_without_parentheses", Kind: SymbolNonterminal},
+			{Name: "_stab_clause_left", Kind: SymbolNonterminal},
+			{Name: "stab_clause", Kind: SymbolNonterminal},
+		},
+		Productions: []Production{
+			{LHS: 2, RHS: []int{1}},
+		},
+		PreferStabClauseLeftArrowReduces: true,
+	}
+
+	got, err := resolveActionConflict(0, []lrAction{
+		{kind: lrShift, state: 10, lhsSym: 3},
+		{kind: lrReduce, prodIdx: 0},
+	}, ng)
+	if err != nil {
+		t.Fatalf("resolveActionConflict: %v", err)
+	}
+	if len(got) != 1 || got[0].kind != lrReduce || got[0].prodIdx != 0 {
+		t.Fatalf("resolved actions = %+v, want stab-clause-left reduce", got)
 	}
 }
 

@@ -22,6 +22,10 @@ func applyImportGrammarShapeHints(g *Grammar) {
 		// in that narrow conflict; otherwise `def f(x) when guard(x) do` lets
 		// the guard call consume the block.
 		g.PreferParenthesizedCallDoBlockReduces = true
+		// A completed stab-clause left operand followed by `->` must reduce
+		// before shifting the arrow into stab_clause. Otherwise `acc -> value`
+		// treats `->` as an operator identifier and never builds the clause.
+		g.PreferStabClauseLeftArrowReduces = true
 	case "bash":
 		// Bash's external extglob token is intentionally broad. In merged LALR
 		// states, reduce-only lookaheads can otherwise ask the scanner for
