@@ -1770,6 +1770,20 @@ func TestEffectiveParseMergePerKeyCapElixirFaithfulCondense(t *testing.T) {
 	}
 }
 
+func TestEffectiveParseMergePerKeyCapGoFaithfulCondense(t *testing.T) {
+	t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "")
+	t.Setenv("GOT_FAITHFUL_CONDENSE", "1")
+	ResetParseEnvConfigCacheForTests()
+	defer ResetParseEnvConfigCacheForTests()
+
+	if got := effectiveParseMergePerKeyCap(&Language{Name: "go"}, maxStacksPerMergeKey, false); got != 1 {
+		t.Fatalf("effectiveParseMergePerKeyCap(go, faithful default, full) = %d, want 1", got)
+	}
+	if got := effectiveParseMergePerKeyCap(&Language{Name: "go"}, maxStacksPerMergeKey, true); got != maxStacksPerMergeKey {
+		t.Fatalf("effectiveParseMergePerKeyCap(go, faithful default, incremental) = %d, want %d", got, maxStacksPerMergeKey)
+	}
+}
+
 func TestConfigureParseCapsTypedArrowDoesNotLowerLargeTypeScriptCap(t *testing.T) {
 	t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "")
 	ResetParseEnvConfigCacheForTests()
@@ -1819,6 +1833,9 @@ func TestEffectiveParseMergePerKeyCapJavaExplicitOverride(t *testing.T) {
 	}
 	if got := effectiveParseMergePerKeyCap(&Language{Name: "elixir"}, 4, false); got != 4 {
 		t.Fatalf("effectiveParseMergePerKeyCap(elixir, faithful explicit, full) = %d, want 4", got)
+	}
+	if got := effectiveParseMergePerKeyCap(&Language{Name: "go"}, 4, false); got != 4 {
+		t.Fatalf("effectiveParseMergePerKeyCap(go, faithful explicit, full) = %d, want 4", got)
 	}
 }
 

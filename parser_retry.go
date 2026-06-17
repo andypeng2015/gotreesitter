@@ -483,10 +483,19 @@ func effectiveParseMergePerKeyCap(lang *Language, mergePerKeyCap int, incrementa
 		}
 	case "go":
 		// Go's full-tree path is false-equivalence heavy around expression/type
-		// ambiguity. Three same-key survivors preserve the current parse,
-		// highlight, and query gates, while cap=2 prunes a required branch.
-		if !parseMaxMergePerKeyEnvConfigured() && mergePerKeyCap > 3 {
-			return 3
+		// ambiguity. Without faithful condense, three same-key survivors
+		// preserve the current parse, highlight, and query gates, while cap=2
+		// prunes a required branch. With faithful cap-one condense, tied
+		// same-key readings are preserved through multi-link GSS nodes, so the
+		// steady-state full-parse cap can tighten. Explicit diagnostic
+		// overrides and incremental reparses stay wide.
+		if !parseMaxMergePerKeyEnvConfigured() {
+			if glrFaithfulCapOneMerge && mergePerKeyCap > 1 {
+				return 1
+			}
+			if mergePerKeyCap > 3 {
+				return 3
+			}
 		}
 	case "c":
 		// C's declaration/expression recovery can keep many redundant
