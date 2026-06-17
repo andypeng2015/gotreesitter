@@ -903,8 +903,11 @@ func (d *dfaTokenSource) scanDFATokenForState(state StateID, lexState uint32) (T
 			d.lexer.col = savedCol
 		}
 	}
-	tok = d.promoteKeyword(tok)
-	tok = d.promoteActiveLiteralForCurrentState(tok)
+	var keywordDemoted bool
+	tok, keywordDemoted = d.promoteKeyword(tok)
+	if !keywordDemoted {
+		tok = d.promoteActiveLiteralForCurrentState(tok, savedPos, savedRow, savedCol)
+	}
 	tok = d.demoteSwiftMemberKeyword(tok)
 	tok, endPos, endRow, endCol := d.normalizeDFAToken(tok, d.lexer.pos, d.lexer.row, d.lexer.col)
 
@@ -913,6 +916,49 @@ func (d *dfaTokenSource) scanDFATokenForState(state StateID, lexState uint32) (T
 	d.lexer.col = savedCol
 	d.state = savedState
 
+	return tok, endPos, endRow, endCol
+}
+
+func (d *dfaTokenSource) scanRawPreferredTokenForState(state StateID) (Token, int, uint32, uint32) {
+	if d == nil || d.lexer == nil {
+		return Token{}, 0, 0, 0
+	}
+	lexModes := d.lexModeStartRows()
+	if int(state) >= len(lexModes) {
+		return Token{}, d.lexer.pos, d.lexer.row, d.lexer.col
+	}
+	mode := lexModes[state]
+	if mode.afterWhitespaceLexState == 0 {
+		return d.scanRawDFATokenForLexState(mode.lexState)
+	}
+	if !d.isAtWhitespacePosition() && !d.isAfterWhitespacePosition() {
+		return d.scanRawDFATokenForLexState(mode.lexState)
+	}
+
+	baseTok, baseEndPos, baseEndRow, baseEndCol := d.scanRawDFATokenForLexState(mode.lexState)
+	afterTok, afterEndPos, afterEndRow, afterEndCol := d.scanRawDFATokenForLexState(mode.afterWhitespaceLexState)
+	if d.shouldPreferBaseLexStateToken(baseTok, afterTok) {
+		return baseTok, baseEndPos, baseEndRow, baseEndCol
+	}
+	return afterTok, afterEndPos, afterEndRow, afterEndCol
+}
+
+func (d *dfaTokenSource) scanRawDFATokenForLexState(lexState uint32) (Token, int, uint32, uint32) {
+	if d == nil || d.lexer == nil {
+		return Token{}, 0, 0, 0
+	}
+	savedPos := d.lexer.pos
+	savedRow := d.lexer.row
+	savedCol := d.lexer.col
+
+	tok := d.nextTokenForLexState(lexState)
+	endPos := d.lexer.pos
+	endRow := d.lexer.row
+	endCol := d.lexer.col
+
+	d.lexer.pos = savedPos
+	d.lexer.row = savedRow
+	d.lexer.col = savedCol
 	return tok, endPos, endRow, endCol
 }
 
@@ -3021,24 +3067,24 @@ func (d *dfaTokenSource) syntheticJSXText(sym Symbol) (Token, bool) {
 	}, true
 }
 
-func (d *dfaTokenSource) promoteKeyword(tok Token) Token {
+func (d *dfaTokenSource) promoteKeyword(tok Token) (Token, bool) {
 	if d.language == nil {
-		return tok
+		return tok, false
 	}
 	if tok.Symbol == 0 {
-		return tok
+		return tok, false
 	}
 	if len(d.language.KeywordLexStates) == 0 {
-		return tok
+		return tok, false
 	}
 	if d.language.KeywordCaptureToken == 0 {
-		return tok
+		return tok, false
 	}
 	if tok.Symbol != d.language.KeywordCaptureToken {
-		return tok
+		return tok, false
 	}
 	if tok.EndByte <= tok.StartByte {
-		return tok
+		return tok, false
 	}
 	if len(d.hasKeywordState) > 0 {
 		anyHasKeyword := false
@@ -3056,20 +3102,20 @@ func (d *dfaTokenSource) promoteKeyword(tok Token) Token {
 			}
 		}
 		if !anyHasKeyword {
-			return tok
+			return tok, false
 		}
 	}
 
 	start := int(tok.StartByte)
 	end := int(tok.EndByte)
 	if start < 0 || end < start || end > len(d.lexer.source) {
-		return tok
+		return tok, false
 	}
 	keywordSource := d.lexer.source[start:end]
 	if !d.language.keywordLexCouldMatch(d.lexer.source, start, end) {
 		upper, ok := d.sqlUppercaseKeywordSource(keywordSource)
 		if !ok || !d.language.keywordLexCouldMatch(upper, 0, len(upper)) {
-			return tok
+			return tok, false
 		}
 		keywordSource = upper
 	}
@@ -3081,11 +3127,11 @@ func (d *dfaTokenSource) promoteKeyword(tok Token) Token {
 		}
 	}
 	if !ok {
-		return tok
+		return tok, false
 	}
 	if d.language.Name == "rust" && int(kwTok.Symbol) < len(d.language.SymbolNames) && d.language.SymbolNames[kwTok.Symbol] == "default" {
 		if end < len(d.lexer.source) && d.lexer.source[end] == ':' {
-			return tok
+			return tok, true
 		}
 	}
 
@@ -3105,7 +3151,7 @@ func (d *dfaTokenSource) promoteKeyword(tok Token) Token {
 						break
 					}
 					if d.language.ReservedWords[i] == kwTok.Symbol {
-						return tok // reserved — don't promote
+						return tok, true // reserved - don't promote
 					}
 				}
 			}
@@ -3141,25 +3187,25 @@ func (d *dfaTokenSource) promoteKeyword(tok Token) Token {
 		if !kwHasAction {
 			if altSym, ok := d.activeLiteralKeywordSymbol(tok); ok {
 				tok.Symbol = altSym
-				return tok
+				return tok, false
 			}
 		}
 		if !kwHasAction && idHasAction {
-			return tok // no active stack needs the keyword
+			return tok, true // no active stack needs the keyword
 		}
 		if d.shouldPreferJavaScriptTypeScriptContextualIdentifier(tok, kwTok, kwHasAction, idHasAction) {
-			return tok
+			return tok, true
 		}
 		if d.shouldPreferSwiftMemberIdentifier(tok, kwTok) {
-			return tok
+			return tok, true
 		}
 	}
 
 	tok.Symbol = kwTok.Symbol
-	return tok
+	return tok, false
 }
 
-func (d *dfaTokenSource) promoteActiveLiteralForCurrentState(tok Token) Token {
+func (d *dfaTokenSource) promoteActiveLiteralForCurrentState(tok Token, scanStartPos int, scanStartRow, scanStartCol uint32) Token {
 	if d == nil || d.language == nil || d.lexer == nil || d.lookupActionIndex == nil || tok.Symbol == 0 {
 		return tok
 	}
@@ -3186,13 +3232,75 @@ func (d *dfaTokenSource) promoteActiveLiteralForCurrentState(tok Token) Token {
 		if symMeta, ok := d.symbolMetadata(sym); ok && symMeta.Named {
 			continue
 		}
-		if d.lookupActionIndex(d.state, sym) == 0 {
+		if !d.activeStateCanPromoteLiteral(tok, sym, scanStartPos, scanStartRow, scanStartCol) {
 			continue
 		}
 		tok.Symbol = sym
 		return tok
 	}
 	return tok
+}
+
+func (d *dfaTokenSource) activeStateCanPromoteLiteral(tok Token, sym Symbol, scanStartPos int, scanStartRow, scanStartCol uint32) bool {
+	if d == nil || d.lookupActionIndex == nil {
+		return false
+	}
+	if d.stateCanPromoteLiteral(d.state, tok, sym, scanStartPos, scanStartRow, scanStartCol) {
+		return true
+	}
+	for i, state := range d.glrStates {
+		if state == d.state || d.priorGLRState(i, state) {
+			continue
+		}
+		if d.stateCanPromoteLiteral(state, tok, sym, scanStartPos, scanStartRow, scanStartCol) {
+			return true
+		}
+	}
+	return false
+}
+
+func (d *dfaTokenSource) stateCanPromoteLiteral(state StateID, tok Token, sym Symbol, scanStartPos int, scanStartRow, scanStartCol uint32) bool {
+	if d == nil || d.lookupActionIndex == nil || sym == 0 {
+		return false
+	}
+	if d.lookupActionIndex(state, sym) == 0 {
+		return false
+	}
+	if d.isImmediateSymbol(sym) && int(tok.StartByte) > scanStartPos {
+		return false
+	}
+	return d.stateLexModeProducesSameSpan(state, tok, scanStartPos, scanStartRow, scanStartCol)
+}
+
+func (d *dfaTokenSource) stateLexModeProducesSameSpan(state StateID, tok Token, scanStartPos int, scanStartRow, scanStartCol uint32) bool {
+	if d == nil || d.lexer == nil {
+		return false
+	}
+	savedPos := d.lexer.pos
+	savedRow := d.lexer.row
+	savedCol := d.lexer.col
+	d.lexer.pos = scanStartPos
+	d.lexer.row = scanStartRow
+	d.lexer.col = scanStartCol
+	rawTok, rawEndPos, _, _ := d.scanRawPreferredTokenForState(state)
+	d.lexer.pos = savedPos
+	d.lexer.row = savedRow
+	d.lexer.col = savedCol
+	if rawTok.Symbol == 0 || rawTok.Symbol == errorSymbol {
+		return false
+	}
+	if rawTok.StartByte != tok.StartByte || rawTok.EndByte != tok.EndByte {
+		return false
+	}
+	return rawEndPos == int(tok.EndByte)
+}
+
+func (d *dfaTokenSource) isImmediateSymbol(sym Symbol) bool {
+	if d == nil || d.language == nil || len(d.language.ImmediateTokens) == 0 {
+		return false
+	}
+	idx := int(sym)
+	return idx >= 0 && idx < len(d.language.ImmediateTokens) && d.language.ImmediateTokens[idx]
 }
 
 func isIdentifierLikeLiteralText(text string) bool {
