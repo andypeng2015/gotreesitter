@@ -466,11 +466,15 @@ func Normalize(g *Grammar) (*NormalizedGrammar, error) {
 	processedRules := make(map[string]*Rule)
 	auxRules := make(map[string]*Rule)
 	auxOrigins := make(map[string]map[string]bool) // aux rule name → originating grammar rule names
+	sharedStrings := computeSharedStrings(g)
 
 	for _, name := range nonterminals {
 		rule := g.Rules[name]
 		if rule == nil {
 			continue
+		}
+		if value, ok := sharedHiddenStringTokenValue(name, rule, sharedStrings); ok {
+			rule = Str(value)
 		}
 		// When a hidden rule's entire body is repeat1, tree-sitter converts
 		// the rule itself into the repetition binary tree instead of
@@ -1200,8 +1204,10 @@ func classifyRules(g *Grammar) (tokens, nonterms []string) {
 			stringValue := terminalStringValue(rule)
 			isBareString := stringValue != ""
 			isBareStringOnlyChoice := isBareStringOnlyChoiceRule(rule)
+			_, isSharedHiddenStringToken := sharedHiddenStringTokenValue(name, rule, sharedStrings)
 			if isBareStringOnlyChoice || isExplicitPrecedenceStringChoice(rule) ||
-				(isVisible && isBareString) || (isBareString && sharedStrings[stringValue]) {
+				isSharedHiddenStringToken || (isVisible && isBareString) ||
+				(isBareString && sharedStrings[stringValue]) {
 				nonterms = append(nonterms, name)
 			} else {
 				tokens = append(tokens, name)
@@ -1211,6 +1217,21 @@ func classifyRules(g *Grammar) (tokens, nonterms []string) {
 		}
 	}
 	return
+}
+
+func sharedHiddenStringTokenValue(name string, r *Rule, sharedStrings map[string]bool) (string, bool) {
+	if name == "" || !strings.HasPrefix(name, "_") || r == nil || !isStringOnlyToken(r) {
+		return "", false
+	}
+	expanded, immediate, prec, err := expandTokenRule(r)
+	if err != nil || immediate || prec != 0 || !isStringOnlyRule(expanded) {
+		return "", false
+	}
+	value := extractTokenStringValue(r)
+	if value == "" || !sharedStrings[value] {
+		return "", false
+	}
+	return value, true
 }
 
 func isBareStringOnlyChoiceRule(r *Rule) bool {
@@ -1276,6 +1297,11 @@ func computeSharedStrings(g *Grammar) map[string]bool {
 		rule := g.Rules[name]
 		if sv := terminalStringValue(rule); sv != "" {
 			namedUses[sv]++
+		} else if isStringOnlyToken(rule) {
+			sv := extractTokenStringValue(rule)
+			if sv != "" {
+				namedUses[sv]++
+			}
 		}
 	}
 

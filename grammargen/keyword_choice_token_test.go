@@ -240,6 +240,47 @@ func TestHiddenBareStringSharingBareStringChoiceBecomesNonterminal(t *testing.T)
 	}
 }
 
+func TestHiddenStringTokenSharingAnonymousLiteralBecomesNonterminal(t *testing.T) {
+	g := NewGrammar("hidden_string_token_literal_collision")
+	g.Define("source_file", Seq(Sym("_semi"), Str(";")))
+	g.Define("_semi", Token(Str(";")))
+
+	ng, err := Normalize(g)
+	if err != nil {
+		t.Fatalf("Normalize: %v", err)
+	}
+	if got := symbolKind(t, ng, "_semi"); got != SymbolNonterminal {
+		t.Fatalf("_semi kind = %v, want SymbolNonterminal", got)
+	}
+
+	semicolonTerminals := 0
+	for _, term := range ng.Terminals {
+		if ng.Symbols[term.SymbolID].Name == ";" {
+			semicolonTerminals++
+		}
+	}
+	if semicolonTerminals != 1 {
+		t.Fatalf("semicolon terminal count = %d, want 1", semicolonTerminals)
+	}
+
+	lang, err := GenerateLanguage(g)
+	if err != nil {
+		t.Fatalf("GenerateLanguage: %v", err)
+	}
+	tree, err := gotreesitter.NewParser(lang).Parse([]byte(";;"))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	defer tree.Release()
+	root := tree.RootNode()
+	if root == nil {
+		t.Fatal("parse missing root node")
+	}
+	if root.HasError() {
+		t.Fatalf("parse has error: %s", root.SExpr(lang))
+	}
+}
+
 func TestPrecedenceWrappedBareStringChoiceStaysNonterminal(t *testing.T) {
 	g := NewGrammar("prec_wrapped_bare_string_choice_nonterminal")
 	g.Define("source_file", Sym("operator"))
