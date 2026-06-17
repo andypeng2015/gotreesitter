@@ -244,9 +244,6 @@ func stackCompareForResultSelection(p *Parser, arena *nodeArena, a, b *glrStack,
 	if cmp := compareAcceptedStackAliasPreference(p, arena, *a, *b); cmp != 0 {
 		return cmp
 	}
-	if cmp := compareElixirStabClauseResultPreference(p, arena, *a, *b); cmp != 0 {
-		return cmp
-	}
 	if a.score != b.score {
 		if a.score > b.score {
 			return 1
@@ -325,74 +322,6 @@ func stackEntryResultErrorRank(entry stackEntry, arena *nodeArena, rank *int) {
 		if *rank == 2 {
 			return
 		}
-	}
-}
-
-type elixirStabClauseResultFeatures struct {
-	hasStabClause    bool
-	hasSplitStabLeft bool
-}
-
-func compareElixirStabClauseResultPreference(p *Parser, arena *nodeArena, a, b glrStack) int {
-	if p == nil || p.language == nil || p.language.Name != "elixir" || a.byteOffset != b.byteOffset {
-		return 0
-	}
-	// Elixir do-block branches can reach EOF with one tree preserving a
-	// completed stab_clause and another keeping the same arrow expression split
-	// as _stab_clause_left plus body fragments. Prefer the completed clause
-	// before generic depth tie-breaks choose the continuation branch.
-	stabSym, ok := symbolByName(p.language, "stab_clause")
-	if !ok {
-		return 0
-	}
-	stabLeftSym, ok := symbolByName(p.language, "_stab_clause_left")
-	if !ok {
-		return 0
-	}
-	aFeatures := elixirStackStabClauseResultFeatures(a, arena, stabSym, stabLeftSym)
-	bFeatures := elixirStackStabClauseResultFeatures(b, arena, stabSym, stabLeftSym)
-	if aFeatures.hasStabClause == bFeatures.hasStabClause {
-		return 0
-	}
-	if !aFeatures.hasSplitStabLeft && !bFeatures.hasSplitStabLeft {
-		return 0
-	}
-	if aFeatures.hasStabClause {
-		return 1
-	}
-	return -1
-}
-
-func elixirStackStabClauseResultFeatures(s glrStack, arena *nodeArena, stabSym, stabLeftSym Symbol) elixirStabClauseResultFeatures {
-	var features elixirStabClauseResultFeatures
-	if len(s.entries) > 0 {
-		for i := range s.entries {
-			elixirStackEntryStabClauseResultFeatures(s.entries[i], arena, stabSym, stabLeftSym, &features, 0)
-		}
-		return features
-	}
-	for n := s.gss.head; n != nil; n = n.prev {
-		elixirStackEntryStabClauseResultFeatures(n.entry, arena, stabSym, stabLeftSym, &features, 0)
-	}
-	return features
-}
-
-func elixirStackEntryStabClauseResultFeatures(entry stackEntry, arena *nodeArena, stabSym, stabLeftSym Symbol, features *elixirStabClauseResultFeatures, depth int) {
-	if features == nil || depth > 16 || !stackEntryMaterializesForResult(entry) {
-		return
-	}
-	switch stackEntryNodeSymbol(entry) {
-	case stabSym:
-		features.hasStabClause = true
-	case stabLeftSym:
-		features.hasSplitStabLeft = true
-	}
-	for i := 0; i < stackEntryNodeChildCount(entry); i++ {
-		child, ok := stackEntryAliasChild(entry, arena, i)
-		if !ok {
-			continue
-		}
-		elixirStackEntryStabClauseResultFeatures(child, arena, stabSym, stabLeftSym, features, depth+1)
 	}
 }
 

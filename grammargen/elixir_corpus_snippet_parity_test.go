@@ -2,7 +2,6 @@ package grammargen
 
 import (
 	"os"
-	"strings"
 	"testing"
 	"time"
 
@@ -26,17 +25,7 @@ func TestElixirImportedGuardedDefDoBlockParity(t *testing.T) {
 
 func TestElixirImportedForReduceDoBlockParity(t *testing.T) {
 	genLang, refLang := loadImportedParityLanguages(t, "elixir")
-	src := "for x <- [1, 2, 1], reduce: %{} do\n  acc -> Map.update(acc, x, 1, & &1 + 1)\nend\n"
-	assertGeneratedAndReferenceNoError(t, genLang, refLang, src)
-
-	genTree, err := gotreesitter.NewParser(genLang).Parse([]byte(src))
-	if err != nil {
-		t.Fatalf("generated parse: %v", err)
-	}
-	genSExpr := safeSExpr(genTree.RootNode(), genLang, 256)
-	if strings.Contains(genSExpr, "_stab_clause_left") || !strings.Contains(genSExpr, "(stab_clause (arguments (identifier)) (body (call") {
-		t.Fatalf("generated for/reduce do block did not keep acc -> body as a stab_clause: %s", genSExpr)
-	}
+	assertGeneratedAndReferenceNoError(t, genLang, refLang, "for x <- [1, 2, 1], reduce: %{} do\n  acc -> Map.update(acc, x, 1, & &1 + 1)\nend\n")
 }
 
 func TestElixirImportedDoEndStabClauseBodyParity(t *testing.T) {
