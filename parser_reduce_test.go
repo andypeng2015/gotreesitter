@@ -2,6 +2,33 @@ package gotreesitter
 
 import "testing"
 
+func buildTwoWindowFullGSSReduceCase(t *testing.T, scratch *gssScratch, arena *nodeArena) (*Parser, glrStack, ParseAction) {
+	t.Helper()
+
+	base := scratch.allocNode(stackEntry{state: 1}, nil, 1)
+	left := newLeafNodeInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	right := newLeafNodeInArena(arena, 2, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	leftNode := scratch.allocNode(newStackEntryNode(2, left), base, 2)
+	rightNode := scratch.allocNode(newStackEntryNode(3, right), leftNode, 3)
+	altRight := newLeafNodeInArena(arena, 2, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	rightNode.extraLinks = append(rightNode.extraLinks, gssMainLink{
+		prev:  leftNode,
+		entry: newStackEntryNode(3, altRight),
+	})
+
+	parser := &Parser{language: &Language{
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "eof", Visible: true, Named: true},
+			{Name: "left", Visible: true, Named: true},
+			{Name: "right", Visible: true, Named: true},
+			{Name: "parent", Visible: true, Named: true},
+		},
+	}}
+	stack := glrStack{gss: gssStack{head: rightNode}, byteOffset: 2}
+	act := ParseAction{Type: ParseActionReduce, Symbol: 3, ChildCount: 2, DynamicPrecedence: 4}
+	return parser, stack, act
+}
+
 func TestFastVisibleReduceFromGSSDeclinesMultiLinkSpan(t *testing.T) {
 	old := glrFaithfulCapOneMerge
 	glrFaithfulCapOneMerge = true
@@ -45,6 +72,72 @@ func TestFastVisibleReduceFromGSSDeclinesMultiLinkSpan(t *testing.T) {
 	}
 	if stack.gss.head != rightNode {
 		t.Fatal("stack mutated by declined fast reduce")
+	}
+}
+
+func TestFaithfulForkReduceFromGSSCapOneAppliesPrimaryOnly(t *testing.T) {
+	old := glrFaithfulCapOneMerge
+	glrFaithfulCapOneMerge = true
+	t.Cleanup(func() { glrFaithfulCapOneMerge = old })
+
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	var scratch gssScratch
+	scratch.reduceForkCap = 1
+	parser, stack, act := buildTwoWindowFullGSSReduceCase(t, &scratch, arena)
+	var anyReduced bool
+	nodeCount := 0
+
+	parser.applyReduceActionFromGSS(&stack, act, Token{}, &anyReduced, &nodeCount, arena, nil, &scratch, nil, nil, false, false)
+	if stack.dead {
+		t.Fatal("stack.dead = true, want false")
+	}
+	if !anyReduced {
+		t.Fatal("anyReduced = false, want true")
+	}
+	if nodeCount != 1 {
+		t.Fatalf("nodeCount = %d, want 1", nodeCount)
+	}
+	if len(parser.pendingForkStacks) != 0 {
+		t.Fatalf("pending forks = %d, want 0", len(parser.pendingForkStacks))
+	}
+	top := stackEntryNode(stack.top())
+	if top == nil || top.symbol != act.Symbol {
+		t.Fatalf("top node symbol = %v, want %d", top, act.Symbol)
+	}
+}
+
+func TestFaithfulForkReduceFromGSSCapTwoEmitsOnePendingFork(t *testing.T) {
+	old := glrFaithfulCapOneMerge
+	glrFaithfulCapOneMerge = true
+	t.Cleanup(func() { glrFaithfulCapOneMerge = old })
+
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	var scratch gssScratch
+	scratch.reduceForkCap = 2
+	parser, stack, act := buildTwoWindowFullGSSReduceCase(t, &scratch, arena)
+	var anyReduced bool
+	nodeCount := 0
+
+	parser.applyReduceActionFromGSS(&stack, act, Token{}, &anyReduced, &nodeCount, arena, nil, &scratch, nil, nil, false, false)
+	if stack.dead {
+		t.Fatal("stack.dead = true, want false")
+	}
+	if !anyReduced {
+		t.Fatal("anyReduced = false, want true")
+	}
+	if nodeCount != 2 {
+		t.Fatalf("nodeCount = %d, want 2", nodeCount)
+	}
+	if len(parser.pendingForkStacks) != 1 {
+		t.Fatalf("pending forks = %d, want 1", len(parser.pendingForkStacks))
+	}
+	pendingTop := stackEntryNode(parser.pendingForkStacks[0].top())
+	if pendingTop == nil || pendingTop.symbol != act.Symbol {
+		t.Fatalf("pending top node symbol = %v, want %d", pendingTop, act.Symbol)
 	}
 }
 

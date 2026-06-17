@@ -2776,6 +2776,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	maxStacks := caps.maxStacks
 	retryPass := caps.retryPass
 	mergePerKeyCap := caps.mergePerKeyCap
+	scratch.gss.reduceForkCap = mergePerKeyCap
 	maxStackCullTrigger := caps.maxStackCullTrigger
 	maxIter := caps.maxIter
 	maxDepth := caps.maxDepth
