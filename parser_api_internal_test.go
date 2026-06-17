@@ -969,6 +969,42 @@ func TestJavaRepetitionShiftConflictChoiceRejectsArrayInitializerTrailingComma(t
 	}
 }
 
+func TestJavaRepetitionShiftConflictChoiceForDispatchLegacyCondense(t *testing.T) {
+	old := glrFaithfulCapOneMerge
+	glrFaithfulCapOneMerge = false
+	t.Cleanup(func() { glrFaithfulCapOneMerge = old })
+
+	lang := &Language{SymbolNames: []string{"end", "escape_sequence", "_string_literal_repeat1"}}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 2, ChildCount: 1},
+		{Type: ParseActionShift, State: 983, Repetition: true},
+	}
+
+	chosen, ok := javaRepetitionShiftConflictChoiceForDispatch(lang, nil, Token{Symbol: 1}, 983, actions)
+	if !ok {
+		t.Fatal("javaRepetitionShiftConflictChoiceForDispatch = false, want true")
+	}
+	if chosen.Type != ParseActionShift || chosen.State != 983 || !chosen.Repetition {
+		t.Fatalf("javaRepetitionShiftConflictChoiceForDispatch picked %+v, want string repeat shift", chosen)
+	}
+}
+
+func TestJavaRepetitionShiftConflictChoiceForDispatchSkipsFaithfulCondense(t *testing.T) {
+	old := glrFaithfulCapOneMerge
+	glrFaithfulCapOneMerge = true
+	t.Cleanup(func() { glrFaithfulCapOneMerge = old })
+
+	lang := &Language{SymbolNames: []string{"end", "escape_sequence", "_string_literal_repeat1"}}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 2, ChildCount: 1},
+		{Type: ParseActionShift, State: 983, Repetition: true},
+	}
+
+	if _, ok := javaRepetitionShiftConflictChoiceForDispatch(lang, nil, Token{Symbol: 1}, 983, actions); ok {
+		t.Fatal("javaRepetitionShiftConflictChoiceForDispatch = true, want false")
+	}
+}
+
 func TestShouldRetryNodeLimitParse(t *testing.T) {
 	tree := &Tree{
 		parseRuntime: ParseRuntime{

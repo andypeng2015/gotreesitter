@@ -3245,7 +3245,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					case "java":
 						if next, ok := p.javaSwitchArrowConflictChoice(s, tok, actions); ok {
 							chosen, choice = next, true
-						} else if next, ok := javaRepetitionShiftConflictChoice(p.language, source, tok, currentState, actions); ok {
+						} else if next, ok := javaRepetitionShiftConflictChoiceForDispatch(p.language, source, tok, currentState, actions); ok {
 							chosen, choice = next, true
 						}
 					case "c_sharp":
@@ -4472,6 +4472,13 @@ func javaRepetitionShiftConflictChoice(lang *Language, source []byte, tok Token,
 		return ParseAction{}, false
 	}
 	return repetitionShiftConflictChoice(actions)
+}
+
+func javaRepetitionShiftConflictChoiceForDispatch(lang *Language, source []byte, tok Token, state StateID, actions []ParseAction) (ParseAction, bool) {
+	if glrFaithfulCapOneMerge {
+		return ParseAction{}, false
+	}
+	return javaRepetitionShiftConflictChoice(lang, source, tok, state, actions)
 }
 
 func typescriptRepetitionShiftConflictChoice(lang *Language, tok Token, state StateID, actions []ParseAction) (ParseAction, bool) {
