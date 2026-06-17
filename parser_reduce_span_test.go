@@ -101,6 +101,31 @@ func TestExtendParentSpanSkipsDiscontiguousPhantom(t *testing.T) {
 	}
 }
 
+func TestExtendParentSpanSkipsNonWhitelistedInvisibleGap(t *testing.T) {
+	parent := NewParentNode(3, true, nil, nil, 0)
+	parent.startByte = 10
+	parent.endByte = 20
+	parent.startPoint = Point{Row: 1, Column: 10}
+	parent.endPoint = Point{Row: 1, Column: 20}
+
+	core := NewLeafNode(2, true, 10, 20, Point{Row: 1, Column: 10}, Point{Row: 1, Column: 20})
+	invisibleTail := NewLeafNode(4, false, 22, 25, Point{Row: 1, Column: 22}, Point{Row: 1, Column: 25})
+
+	entries := []stackEntry{
+		newStackEntryNode(0, core),
+		newStackEntryNode(0, invisibleTail),
+	}
+	meta := []SymbolMetadata{
+		{}, {}, {Visible: true}, {}, {Visible: false},
+	}
+	names := []string{"", "", "visible", "", "_ordinary_hidden_tail"}
+	extendParentSpanToWindowForTest(parent, entries, 0, len(entries), meta, names)
+
+	if got, want := parent.endByte, uint32(20); got != want {
+		t.Fatalf("parent.endByte = %d, want %d", got, want)
+	}
+}
+
 func TestExtendParentSpanCoversInvisibleWithChildren(t *testing.T) {
 	// An invisible node WITH children whose span exceeds its children's span
 	// (due to nested invisible leaf extension) should still extend the parent.

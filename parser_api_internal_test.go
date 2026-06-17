@@ -1902,6 +1902,102 @@ func TestNoteRepeatedReduceChainSignatureResetsOnChange(t *testing.T) {
 	}
 }
 
+func TestRecoverReduceChainCycle(t *testing.T) {
+	lang := buildArithmeticLanguage()
+	parser := NewParser(lang)
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	var entryScratch glrEntryScratch
+	var gssScratch gssScratch
+
+	t.Run("pushes and extends error node", func(t *testing.T) {
+		s := newGLRStack(lang.InitialState)
+		nodeCount := 0
+		trackChildErrors := false
+
+		ok := parser.recoverReduceChainCycle(&s, lang.InitialState, Token{
+			Symbol:     3,
+			StartByte:  5,
+			EndByte:    8,
+			StartPoint: Point{Row: 0, Column: 5},
+			EndPoint:   Point{Row: 0, Column: 8},
+		}, &nodeCount, arena, &entryScratch, &gssScratch, &trackChildErrors)
+		if !ok {
+			t.Fatal("recoverReduceChainCycle returned false, want true")
+		}
+		if got, want := nodeCount, 1; got != want {
+			t.Fatalf("nodeCount after push = %d, want %d", got, want)
+		}
+		if got, want := s.byteOffset, uint32(8); got != want {
+			t.Fatalf("stack byteOffset after push = %d, want %d", got, want)
+		}
+		top := stackEntryNode(s.top())
+		if top == nil || top.symbol != errorSymbol || !top.hasError() {
+			t.Fatalf("top node after push = %+v, want ERROR node", top)
+		}
+		if !trackChildErrors {
+			t.Fatal("trackChildErrors = false, want true")
+		}
+		depthAfterPush := s.depth()
+
+		ok = parser.recoverReduceChainCycle(&s, lang.InitialState, Token{
+			Symbol:     3,
+			StartByte:  8,
+			EndByte:    11,
+			StartPoint: Point{Row: 0, Column: 8},
+			EndPoint:   Point{Row: 0, Column: 11},
+		}, &nodeCount, arena, &entryScratch, &gssScratch, &trackChildErrors)
+		if !ok {
+			t.Fatal("recoverReduceChainCycle extend returned false, want true")
+		}
+		if got, want := nodeCount, 1; got != want {
+			t.Fatalf("nodeCount after extend = %d, want %d", got, want)
+		}
+		if got, want := s.depth(), depthAfterPush; got != want {
+			t.Fatalf("stack depth after extend = %d, want %d", got, want)
+		}
+		if got, want := s.byteOffset, uint32(11); got != want {
+			t.Fatalf("stack byteOffset after extend = %d, want %d", got, want)
+		}
+		top = stackEntryNode(s.top())
+		if top == nil || top.symbol != errorSymbol || top.endByte != 11 {
+			t.Fatalf("top node after extend = %+v, want ERROR through byte 11", top)
+		}
+	})
+
+	t.Run("ignores eof and no-lookahead", func(t *testing.T) {
+		for _, tc := range []struct {
+			name string
+			tok  Token
+		}{
+			{name: "eof", tok: Token{Symbol: 0, StartByte: 5, EndByte: 5}},
+			{name: "no-lookahead", tok: Token{Symbol: 3, StartByte: 5, EndByte: 8, NoLookahead: true}},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				s := newGLRStack(lang.InitialState)
+				s.byteOffset = 4
+				nodeCount := 7
+				beforeDepth := s.depth()
+
+				ok := parser.recoverReduceChainCycle(&s, lang.InitialState, tc.tok, &nodeCount, arena, &entryScratch, &gssScratch, nil)
+				if ok {
+					t.Fatal("recoverReduceChainCycle returned true, want false")
+				}
+				if got, want := nodeCount, 7; got != want {
+					t.Fatalf("nodeCount = %d, want %d", got, want)
+				}
+				if got, want := s.depth(), beforeDepth; got != want {
+					t.Fatalf("stack depth = %d, want %d", got, want)
+				}
+				if got, want := s.byteOffset, uint32(4); got != want {
+					t.Fatalf("stack byteOffset = %d, want %d", got, want)
+				}
+			})
+		}
+	})
+}
+
 func TestShouldNormalizeIncrementalReturnedTree(t *testing.T) {
 	root := &Node{symbol: 1}
 	oldTree := &Tree{root: root}
