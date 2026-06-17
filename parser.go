@@ -2579,17 +2579,23 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		if phaseTiming && parserLoopNanos == 0 {
 			parserLoopNanos = time.Since(parseStart).Nanoseconds()
 		}
-		if reason := p.activeParseStopReason(); parseStopReasonIsActive(reason) && (stopReason == ParseStopAccepted || stopReason == ParseStopNone) {
-			stopReason = reason
+		if !parseStopReasonIsTerminal(stopReason) {
+			if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
+				stopReason = reason
+			}
 		}
 		if p.transientReduceChildren && tree != nil {
-			materializeStart := time.Time{}
-			if materializationTimingRef != nil {
-				materializeStart = time.Now()
-			}
-			scratch.transientChildren.materializeNode(tree.RootNode(), arena, &scratch.nodeLinks)
-			if materializationTimingRef != nil {
-				materializationTimingRef.transientChildMaterializationNanos += time.Since(materializeStart).Nanoseconds()
+			if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
+				stopReason = reason
+			} else {
+				materializeStart := time.Time{}
+				if materializationTimingRef != nil {
+					materializeStart = time.Now()
+				}
+				scratch.transientChildren.materializeNode(tree.RootNode(), arena, &scratch.nodeLinks)
+				if materializationTimingRef != nil {
+					materializationTimingRef.transientChildMaterializationNanos += time.Since(materializeStart).Nanoseconds()
+				}
 			}
 		}
 		scratch.audit.finishParse(stacks)
@@ -2714,10 +2720,11 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	}
 
 	for iter := 0; iter < maxIter; iter++ {
-		if p.parseBudgetDepth > 0 {
-			if reason := p.activeParseStopReason(); parseStopReasonIsActive(reason) {
-				return finalize(stacks, reason)
-			}
+		if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
+			// Timeout/cancellation are checked inside the parse loop so
+			// long-running parses can terminate predictably under
+			// caller-configured limits.
+			return finalize(stacks, reason)
 		}
 		iterationsUsed = iter + 1
 		if perfCountersEnabled {

@@ -104,6 +104,9 @@ func shouldNormalizeIncrementalReturnedTree(tree, oldTree *Tree) bool {
 	if tree == nil {
 		return false
 	}
+	if tree.ParseStoppedEarly() {
+		return false
+	}
 	if oldTree == nil {
 		return true
 	}
@@ -115,6 +118,10 @@ func normalizeReturnedIncrementalTree(tree, oldTree *Tree, source []byte, lang *
 		return
 	}
 	normalizeReturnedTree(rawRootOrNil(tree), source, lang)
+}
+
+func shouldNormalizeReturnedTree(tree *Tree) bool {
+	return tree != nil && !tree.ParseStoppedEarly()
 }
 
 const forestIncrementalReuseUnsupportedReason = "old tree was built by GSS forest fast path"

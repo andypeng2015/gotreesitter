@@ -10,7 +10,7 @@ func normalizeGoReturnedTreeCompatibility(root *Node, source []byte, p *Parser, 
 	if reason := p.activeParseStopReason(); parseStopReasonIsActive(reason) {
 		return reason
 	}
-	if reason := normalizeGoCompatibilityWithStop(root, source, lang, p.activeParseStopCheck()); parseStopReasonIsActive(reason) {
+	if reason := normalizeGoCompatibilityWithParser(root, source, lang, p); parseStopReasonIsActive(reason) {
 		return reason
 	}
 	if reason := p.activeParseStopReason(); parseStopReasonIsActive(reason) {

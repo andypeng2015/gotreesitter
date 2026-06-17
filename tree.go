@@ -1598,8 +1598,12 @@ func populateParentNodeNoLinks(n *Node, children []*Node, trackChildErrors bool)
 }
 
 func wireParentLinksWithScratch(root *Node, scratch *[]*Node) {
+	wireParentLinksWithScratchUntil(root, scratch, nil)
+}
+
+func wireParentLinksWithScratchUntil(root *Node, scratch *[]*Node, p *Parser) bool {
 	if root == nil {
-		return
+		return true
 	}
 	setNodeRootLink(root)
 
@@ -1612,6 +1616,12 @@ func wireParentLinksWithScratch(root *Node, scratch *[]*Node) {
 	}
 	stack = append(stack, root)
 	for len(stack) > 0 {
+		if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
+			if scratch != nil {
+				*scratch = stack[:0]
+			}
+			return false
+		}
 		n := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
 		childCount := nodeChildCountNoMaterialize(n)
@@ -1627,6 +1637,7 @@ func wireParentLinksWithScratch(root *Node, scratch *[]*Node) {
 	if scratch != nil {
 		*scratch = stack[:0]
 	}
+	return true
 }
 
 type finalTreeMaterializationStats struct {

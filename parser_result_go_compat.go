@@ -34,6 +34,14 @@ func normalizeGoCompatibilityWithStop(root *Node, source []byte, lang *Language,
 	return normalizeGoCompatibilityInRangesWithStop(root, source, lang, nil, stopCheck)
 }
 
+func normalizeGoCompatibilityWithParser(root *Node, source []byte, lang *Language, p *Parser) ParseStopReason {
+	return normalizeGoCompatibilityInRangesWithParser(root, source, lang, nil, p)
+}
+
+func normalizeGoCompatibilityInRangesWithParser(root *Node, source []byte, lang *Language, incrementalRanges []Range, p *Parser) ParseStopReason {
+	return normalizeGoCompatibilityInRangesWithStop(root, source, lang, incrementalRanges, p.activeParseStopCheck())
+}
+
 func normalizeGoCompatibilityInRangesWithStop(root *Node, source []byte, lang *Language, incrementalRanges []Range, stopCheck parseStopCheck) ParseStopReason {
 	if root == nil || lang == nil || lang.Name != "go" || len(source) == 0 {
 		return ParseStopNone
@@ -82,6 +90,10 @@ func goSourceMayNeedTrailingBoundaryCompatibility(source []byte) bool {
 
 func normalizeGoDotLeafChildren(root *Node, source []byte, lang *Language) {
 	_ = normalizeGoDotLeafChildrenWithStop(root, source, lang, nil)
+}
+
+func normalizeGoDotLeafChildrenWithParser(root *Node, source []byte, lang *Language, p *Parser) ParseStopReason {
+	return normalizeGoDotLeafChildrenWithStop(root, source, lang, &parseStopPoller{check: p.activeParseStopCheck()})
 }
 
 func normalizeGoDotLeafChildrenWithStop(root *Node, source []byte, lang *Language, poller *parseStopPoller) ParseStopReason {
@@ -228,49 +240,63 @@ func normalizeGoCompatibilitySubtree(n *Node, source []byte, syms goCompatibilit
 }
 
 func normalizeGoCompatibilitySubtreeWithStop(n *Node, source []byte, syms goCompatibilitySymbols, flags goCompatibilitySourceFlags, incrementalRanges []Range, poller *parseStopPoller) ParseStopReason {
-	if reason := poller.poll(); parseStopReasonIsActive(reason) {
-		return reason
+	type frame struct {
+		node *Node
+		exit bool
 	}
-	if n == nil || !goNodeOverlapsAnyRange(n, incrementalRanges) {
+	if n == nil {
 		return ParseStopNone
 	}
-	childCount := resultChildCount(n)
-	if childCount > 0 {
-		normalizeGoSemicolonContainer(n, source, syms)
-		if flags.siblingBoundary {
-			normalizeGoAdjacentSiblingBoundaries(n, source, syms)
+	stack := []frame{{node: n}}
+	for len(stack) > 0 {
+		if reason := poller.poll(); parseStopReasonIsActive(reason) {
+			return reason
 		}
-	}
-	if n.ownerArena == nil || n.childIndex > finalChildSidecarIndexBase {
-		for _, child := range n.children {
-			if reason := normalizeGoCompatibilitySubtreeWithStop(child, source, syms, flags, incrementalRanges, poller); parseStopReasonIsActive(reason) {
-				return reason
+		top := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		n := top.node
+		if n == nil {
+			continue
+		}
+		if top.exit {
+			if flags.trailingBoundary {
+				normalizeGoStatementListTrailingExtras(n, source, syms)
+			}
+			continue
+		}
+		if !goNodeOverlapsAnyRange(n, incrementalRanges) {
+			continue
+		}
+		childCount := resultChildCount(n)
+		if childCount > 0 {
+			normalizeGoSemicolonContainer(n, source, syms)
+			if flags.siblingBoundary {
+				normalizeGoAdjacentSiblingBoundaries(n, source, syms)
 			}
 		}
-	} else {
+		stack = append(stack, frame{node: n, exit: true})
+		if n.ownerArena == nil || n.childIndex > finalChildSidecarIndexBase {
+			for i := len(n.children) - 1; i >= 0; i-- {
+				stack = append(stack, frame{node: n.children[i]})
+			}
+			continue
+		}
 		view := resultMutableChildrenForMutation(n)
 		if view.hasFinalChildRefs() {
-			for i := 0; i < view.Len(); i++ {
+			for i := view.Len() - 1; i >= 0; i-- {
 				entry, ok := view.Entry(i)
 				if !ok || stackEntryNodeChildCount(entry) == 0 {
 					continue
 				}
-				if reason := normalizeGoCompatibilitySubtreeWithStop(resultChildAt(n, i), source, syms, flags, incrementalRanges, poller); parseStopReasonIsActive(reason) {
-					return reason
-				}
+				stack = append(stack, frame{node: resultChildAt(n, i)})
 			}
 		} else {
-			for i := 0; i < childCount; i++ {
-				if reason := normalizeGoCompatibilitySubtreeWithStop(resultChildAt(n, i), source, syms, flags, incrementalRanges, poller); parseStopReasonIsActive(reason) {
-					return reason
-				}
+			for i := childCount - 1; i >= 0; i-- {
+				stack = append(stack, frame{node: resultChildAt(n, i)})
 			}
 		}
 	}
-	if flags.trailingBoundary {
-		normalizeGoStatementListTrailingExtras(n, source, syms)
-	}
-	return ParseStopNone
+	return poller.pollNow()
 }
 
 func goNodeOverlapsAnyRange(n *Node, ranges []Range) bool {
