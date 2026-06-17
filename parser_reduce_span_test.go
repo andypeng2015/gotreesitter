@@ -212,7 +212,7 @@ func TestExtendParentSpanAllowsMultilineStringEndGap(t *testing.T) {
 	parent.endPoint = Point{Row: 74, Column: 51}
 
 	core := NewLeafNode(2, true, 2409, 2747, Point{Row: 68, Column: 28}, Point{Row: 74, Column: 51})
-	stringEnd := NewLeafNode(4, false, 2759, 2759, Point{Row: 75, Column: 11}, Point{Row: 75, Column: 11})
+	stringEnd := NewLeafNode(4, false, 2756, 2759, Point{Row: 75, Column: 8}, Point{Row: 75, Column: 11})
 
 	entries := []stackEntry{
 		newStackEntryNode(0, core),
