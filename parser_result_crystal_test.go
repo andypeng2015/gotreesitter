@@ -114,3 +114,38 @@ func TestNormalizeResultCompatibilityDispatchesCrystal(t *testing.T) {
 		t.Fatalf("open.StartByte = %d, want %d", got, want)
 	}
 }
+
+func TestParserNormalizeReturnedTreeDispatchesCrystalCompatibility(t *testing.T) {
+	lang := &Language{
+		Name:        "crystal",
+		SymbolNames: []string{"EOF", "source_file", "hash", "{", "}"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF"},
+			{Name: "source_file", Visible: true, Named: true},
+			{Name: "hash", Visible: true, Named: true},
+			{Name: "{", Visible: true, Named: false},
+			{Name: "}", Visible: true, Named: false},
+		},
+	}
+	source := []byte("x = {}")
+	arena := newNodeArena(arenaClassFull)
+	open := newLeafNodeInArena(arena, 3, false, 4, 5, Point{Column: 4}, Point{Column: 5})
+	close := newLeafNodeInArena(arena, 4, false, 5, 6, Point{Column: 5}, Point{Column: 6})
+	hash := newParentNodeInArena(arena, 2, true, []*Node{open, close}, nil, 0)
+	hash.startByte = 4
+	hash.startPoint = Point{Column: 4}
+	hash.endByte = 6
+	hash.endPoint = Point{Column: 6}
+	root := newParentNodeInArena(arena, 1, true, []*Node{hash}, nil, 0)
+	parser := &Parser{language: lang}
+
+	if reason := parser.normalizeReturnedTree(root, source); reason != ParseStopNone {
+		t.Fatalf("normalizeReturnedTree stop reason = %q, want %q", reason, ParseStopNone)
+	}
+	if got, want := hash.StartByte(), uint32(5); got != want {
+		t.Fatalf("hash.StartByte = %d, want %d", got, want)
+	}
+	if got, want := open.StartByte(), uint32(5); got != want {
+		t.Fatalf("open.StartByte = %d, want %d", got, want)
+	}
+}

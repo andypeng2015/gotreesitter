@@ -287,16 +287,7 @@ func (p *Parser) normalizeReturnedTree(root *Node, source []byte) ParseStopReaso
 	if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
 		return reason
 	}
-	switch p.language.Name {
-	case "go":
-		normalizeGoReturnedTreeCompatibility(root, source, p, p.language)
-	case "scala":
-		normalizeScalaCompatibility(root, source, p, p.language)
-	case "html":
-		normalizeHTMLRecoveredNestedCustomTagRanges(root, source, p.language)
-	case "javascript":
-		normalizeJavaScriptProgramEnd(root, source, p.language)
-	}
+	normalizeResultCompatibility(root, source, p)
 	return p.parseStopReasonNow()
 }
 
