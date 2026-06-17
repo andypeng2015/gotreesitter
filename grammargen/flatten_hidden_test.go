@@ -105,6 +105,57 @@ func TestFlattenHiddenPassthrough(t *testing.T) {
 	}
 }
 
+func TestFlattenHiddenPassthroughPreservesAliasReferencedRule(t *testing.T) {
+	g := &Grammar{
+		Name: "test_flatten_alias_preserve",
+		Rules: map[string]*Rule{
+			"document": Seq(Alias(Sym("_value"), "wrapped", true), Sym("member")),
+			"member":   Seq(Sym("_value")),
+			"_value":   Choice(Sym("item"), Seq(Str("("), Sym("item"), Str(")"))),
+			"item":     Pat(`[a-z]+`),
+		},
+		RuleOrder: []string{"document", "member", "_value", "item"},
+	}
+
+	ng, err := Normalize(g)
+	if err != nil {
+		t.Fatalf("normalize: %v", err)
+	}
+
+	symNameToID := make(map[string]int)
+	for i, info := range ng.Symbols {
+		symNameToID[info.Name] = i
+	}
+
+	valueID := symNameToID["_value"]
+	itemID := symNameToID["item"]
+	memberID := symNameToID["member"]
+
+	hasValueItem := false
+	hasMemberItem := false
+	for _, p := range ng.Productions {
+		switch p.LHS {
+		case valueID:
+			if len(p.RHS) == 1 && p.RHS[0] == itemID {
+				hasValueItem = true
+			}
+		case memberID:
+			for _, sym := range p.RHS {
+				if sym == itemID {
+					hasMemberItem = true
+				}
+			}
+		}
+	}
+
+	if !hasValueItem {
+		t.Fatal("_value pass-through item production should be retained for alias references")
+	}
+	if !hasMemberItem {
+		t.Fatal("non-alias _value references should still receive inlined pass-through alternatives")
+	}
+}
+
 func TestFlattenHiddenTopLevelRepeat1Passthrough(t *testing.T) {
 	g := &Grammar{
 		Name: "test_flatten_hidden_repeat1",

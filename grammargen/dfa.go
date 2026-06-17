@@ -1311,7 +1311,6 @@ func computeLexModes(
 	keywordSymbols map[int]bool,
 	terminalPatternSyms map[int]bool, // symbols that have DFA terminal patterns
 	followTokens func(state int) []int, // additional tokens from reduce-follow expansion (may be nil)
-	patternImmediateTokens map[int]bool, // immediate tokens that are PATTERN-based (catch-all)
 	suppressAfterWhitespaceSyms map[int]bool,
 ) ([]lexModeSpec, []int, []afterWSModeEntry) {
 	extraSet := make(map[int]bool)
@@ -1454,10 +1453,11 @@ func computeLexModes(
 			if hasNonImmString {
 				awsSyms := make(map[int]bool)
 				for sym := range validSyms {
-					// Only exclude pattern-based immediate tokens (catch-alls).
-					// String-based IMMTOKENs like ":", "=", "}" are kept
-					// because they're legitimate after whitespace.
-					if !patternImmediateTokens[sym] {
+					// token.immediate terminals are only valid at the current
+					// lexer position. After consuming layout, drop both
+					// pattern- and string-based immediate symbols so spaced
+					// constructs can fall back to their non-immediate forms.
+					if !immediateTokens[sym] {
 						awsSyms[sym] = true
 					}
 				}

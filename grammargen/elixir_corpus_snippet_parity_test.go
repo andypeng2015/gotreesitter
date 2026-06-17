@@ -23,6 +23,48 @@ func TestElixirImportedGuardedDefDoBlockParity(t *testing.T) {
 	assertGeneratedAndReferenceDeepParity(t, genLang, refLang, "defmodule M do\n  def func(x) when is_integer(x) do\n    priv(x) + priv(x)\n  end\nend\n")
 }
 
+func TestElixirImportedBareCallListArgumentParity(t *testing.T) {
+	genLang, refLang := loadImportedParityLanguages(t, "elixir")
+	for _, tc := range []struct {
+		name string
+		src  string
+	}{
+		{
+			name: "bare_call_list_argument",
+			src:  "defexception [:message]\n",
+		},
+		{
+			name: "bare_call_list_argument_in_do_block",
+			src:  "defmodule M do\n  defexception [:message]\nend\n",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertGeneratedAndReferenceDeepParity(t, genLang, refLang, tc.src)
+		})
+	}
+}
+
+func TestElixirImportedBareCallKeywordArgumentParity(t *testing.T) {
+	genLang, refLang := loadImportedParityLanguages(t, "elixir")
+	for _, tc := range []struct {
+		name string
+		src  string
+	}{
+		{
+			name: "bare_call_keyword_argument",
+			src:  "defstruct items: []\n",
+		},
+		{
+			name: "bare_call_keyword_argument_in_do_block",
+			src:  "defmodule M do\n  defstruct items: []\nend\n",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertGeneratedAndReferenceDeepParity(t, genLang, refLang, tc.src)
+		})
+	}
+}
+
 func TestElixirImportedForReduceDoBlockParity(t *testing.T) {
 	genLang, refLang := loadImportedParityLanguages(t, "elixir")
 	assertGeneratedAndReferenceNoError(t, genLang, refLang, "for x <- [1, 2, 1], reduce: %{} do\n  acc -> Map.update(acc, x, 1, & &1 + 1)\nend\n")
