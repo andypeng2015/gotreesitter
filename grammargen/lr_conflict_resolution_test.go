@@ -158,14 +158,23 @@ func TestResolveShiftReducePrefersElixirExpressionOperatorIdentifierReduce(t *te
 
 	for _, tc := range []struct {
 		name   string
+		shift  lrAction
 		reduce lrAction
 	}{
-		{name: "atom to expression", reduce: lrAction{kind: lrReduce, prodIdx: 0}},
-		{name: "completed binary operator", reduce: lrAction{kind: lrReduce, prodIdx: 1}},
+		{
+			name:   "atom to expression ignores operator identifier precedence",
+			shift:  lrAction{kind: lrShift, state: 10, lhsSym: 3, prec: 180, hasPrec: true},
+			reduce: lrAction{kind: lrReduce, prodIdx: 0},
+		},
+		{
+			name:   "completed binary operator",
+			shift:  lrAction{kind: lrShift, state: 10, lhsSym: 3},
+			reduce: lrAction{kind: lrReduce, prodIdx: 1},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := resolveActionConflict(0, []lrAction{
-				{kind: lrShift, state: 10, lhsSym: 3},
+				tc.shift,
 				tc.reduce,
 			}, ng)
 			if err != nil {

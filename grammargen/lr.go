@@ -3076,6 +3076,9 @@ func resolveActionConflict(lookaheadSym int, actions []lrAction, ng *NormalizedG
 		if shouldPreserveKeywordIdentifierShiftReduce(lookaheadSym, reduces, ng) {
 			return actions, nil
 		}
+		if preferred, ok := preferredAtomToExpressionOperatorIdentifierReduce(lookaheadSym, shifts, reduces, ng); ok {
+			return preferred, nil
+		}
 
 		// Tree-sitter keeps S/R as GLR when the reduce LHS and a shift LHS
 		// are both in the same declared conflict group.
@@ -3545,11 +3548,41 @@ func preferredExpressionOperatorIdentifierReduce(lookaheadSym int, shifts, reduc
 	return preferred, len(preferred) > 0
 }
 
+func preferredAtomToExpressionOperatorIdentifierReduce(lookaheadSym int, shifts, reduces []lrAction, ng *NormalizedGrammar) ([]lrAction, bool) {
+	if ng == nil || !ng.PreferExpressionOperatorIdentifierReduces {
+		return nil, false
+	}
+	if lookaheadSym < 0 || lookaheadSym >= len(ng.Symbols) ||
+		!isElixirOperatorIdentifierConflictLookahead(ng.Symbols[lookaheadSym].Name) {
+		return nil, false
+	}
+	hasOperatorIdentifierShift := false
+	for _, shift := range shifts {
+		if shiftLHSIncludesName(shift, ng, "operator_identifier") {
+			hasOperatorIdentifierShift = true
+			break
+		}
+	}
+	if !hasOperatorIdentifierShift {
+		return nil, false
+	}
+	preferred := make([]lrAction, 0, len(reduces))
+	for _, reduce := range reduces {
+		if isAtomToExpressionOperatorConflictReduce(reduce, ng) {
+			preferred = append(preferred, reduce)
+		}
+	}
+	return preferred, len(preferred) > 0
+}
+
 func operatorIdentifierShiftOutranksReduce(shifts []lrAction, reduce lrAction, ng *NormalizedGrammar) bool {
 	if reduce.prodIdx < 0 || reduce.prodIdx >= len(ng.Productions) {
 		return false
 	}
 	prod := &ng.Productions[reduce.prodIdx]
+	if isAtomToExpressionOperatorConflictReduce(reduce, ng) {
+		return false
+	}
 	reducePrec := prod.Prec
 	reduceLHSName := ""
 	if prod.LHS >= 0 && prod.LHS < len(ng.Symbols) {
@@ -3615,6 +3648,14 @@ func isExpressionOperatorConflictReduce(action lrAction, ng *NormalizedGrammar) 
 	if symbolNameMatches(prod.LHS, ng, "binary_operator") {
 		return true
 	}
+	return isAtomToExpressionOperatorConflictReduce(action, ng)
+}
+
+func isAtomToExpressionOperatorConflictReduce(action lrAction, ng *NormalizedGrammar) bool {
+	if action.kind != lrReduce || action.prodIdx < 0 || action.prodIdx >= len(ng.Productions) {
+		return false
+	}
+	prod := &ng.Productions[action.prodIdx]
 	if !symbolNameMatches(prod.LHS, ng, "_expression") || len(prod.RHS) != 1 {
 		return false
 	}
