@@ -113,6 +113,7 @@ type NormalizedGrammar struct {
 	PrecedenceOrder *precOrderTable
 
 	PreserveKeywordIdentifierConflicts         bool
+	PreferExpressionOperatorIdentifierReduces  bool
 	SuppressEquivalentExternalReduceLookaheads bool
 	ExternalReduceFollowLookaheads             map[string]bool
 
@@ -675,6 +676,7 @@ func Normalize(g *Grammar) (*NormalizedGrammar, error) {
 	effectivePrecedences := applyAliasRenamesToPrecedences(g.Precedences, aliasRenames)
 	ng.PrecedenceOrder = buildPrecOrderTable(effectivePrecedences, buildNamedPrecMapFromLevels(effectivePrecedences))
 	ng.PreserveKeywordIdentifierConflicts = g.PreserveKeywordIdentifierConflicts
+	ng.PreferExpressionOperatorIdentifierReduces = g.PreferExpressionOperatorIdentifierReduces
 	ng.SuppressEquivalentExternalReduceLookaheads = g.SuppressEquivalentExternalReduceLookaheads
 	ng.ExternalReduceFollowLookaheads = stringSetFromSlice(g.ExternalReduceFollowLookaheads)
 
@@ -3897,6 +3899,7 @@ func flattenHiddenChoiceAlts(g *Grammar, generatedHiddenRules map[string]bool) *
 	out.BinaryRepeatMode = g.BinaryRepeatMode
 	out.EnableLRSplitting = g.EnableLRSplitting
 	out.PreserveKeywordIdentifierConflicts = g.PreserveKeywordIdentifierConflicts
+	out.PreferExpressionOperatorIdentifierReduces = g.PreferExpressionOperatorIdentifierReduces
 	out.ExactPrefixStates = g.ExactPrefixStates
 	out.ChoiceLiftThreshold = g.ChoiceLiftThreshold
 	out.SuppressEquivalentExternalReduceLookaheads = g.SuppressEquivalentExternalReduceLookaheads
@@ -4299,6 +4302,7 @@ func expandInlineRules(g *Grammar) *Grammar {
 	out.ReuseRepeatAuxForParents = append(out.ReuseRepeatAuxForParents, g.ReuseRepeatAuxForParents...)
 	out.EnableLRSplitting = g.EnableLRSplitting
 	out.PreserveKeywordIdentifierConflicts = g.PreserveKeywordIdentifierConflicts
+	out.PreferExpressionOperatorIdentifierReduces = g.PreferExpressionOperatorIdentifierReduces
 	out.ExactPrefixStates = g.ExactPrefixStates
 	out.ChoiceLiftThreshold = g.ChoiceLiftThreshold
 	out.SuppressEquivalentExternalReduceLookaheads = g.SuppressEquivalentExternalReduceLookaheads

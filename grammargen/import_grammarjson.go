@@ -11,6 +11,12 @@ func applyImportGrammarShapeHints(g *Grammar) {
 		return
 	}
 	switch g.Name {
+	case "elixir":
+		// Elixir operators are also callable operator identifiers. In expression
+		// position, tree-sitter keeps the atom-to-expression reduce live when an
+		// operator literal can also start operator_identifier; otherwise `a ** b`
+		// shifts `**` into operator_identifier and truncates before the RHS.
+		g.PreferExpressionOperatorIdentifierReduces = true
 	case "bash":
 		// Bash's external extglob token is intentionally broad. In merged LALR
 		// states, reduce-only lookaheads can otherwise ask the scanner for

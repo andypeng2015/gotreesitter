@@ -140,6 +140,44 @@ func TestResolveShiftReduceCanPreserveKeywordIdentifierCallAmbiguity(t *testing.
 	}
 }
 
+func TestResolveShiftReducePrefersElixirExpressionOperatorIdentifierReduce(t *testing.T) {
+	ng := &NormalizedGrammar{
+		Symbols: []SymbolInfo{
+			{Name: "**", Kind: SymbolTerminal, Visible: true, Named: false},
+			{Name: "identifier", Kind: SymbolNonterminal},
+			{Name: "_expression", Kind: SymbolNonterminal},
+			{Name: "operator_identifier", Kind: SymbolNonterminal},
+			{Name: "binary_operator", Kind: SymbolNonterminal},
+		},
+		Productions: []Production{
+			{LHS: 2, RHS: []int{1}},
+			{LHS: 4, RHS: []int{2, 0, 2}},
+		},
+		PreferExpressionOperatorIdentifierReduces: true,
+	}
+
+	for _, tc := range []struct {
+		name   string
+		reduce lrAction
+	}{
+		{name: "atom to expression", reduce: lrAction{kind: lrReduce, prodIdx: 0}},
+		{name: "completed binary operator", reduce: lrAction{kind: lrReduce, prodIdx: 1}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := resolveActionConflict(0, []lrAction{
+				{kind: lrShift, state: 10, lhsSym: 3},
+				tc.reduce,
+			}, ng)
+			if err != nil {
+				t.Fatalf("resolveActionConflict: %v", err)
+			}
+			if len(got) != 1 || got[0].kind != lrReduce || got[0].prodIdx != tc.reduce.prodIdx {
+				t.Fatalf("resolved actions = %+v, want reduce prodIdx=%d", got, tc.reduce.prodIdx)
+			}
+		})
+	}
+}
+
 func TestResolveShiftReducePrefersSpecificKeywordContinuation(t *testing.T) {
 	tests := []struct {
 		name  string

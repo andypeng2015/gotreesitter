@@ -3076,6 +3076,9 @@ func resolveActionConflict(lookaheadSym int, actions []lrAction, ng *NormalizedG
 		if shouldPreserveKeywordIdentifierShiftReduce(lookaheadSym, reduces, ng) {
 			return actions, nil
 		}
+		if preferred, ok := preferredExpressionOperatorIdentifierReduce(lookaheadSym, shifts, reduces, ng); ok {
+			return preferred, nil
+		}
 
 		// Tree-sitter keeps S/R as GLR when the reduce LHS and a shift LHS
 		// are both in the same declared conflict group.
@@ -3502,6 +3505,86 @@ func shouldPreserveKeywordIdentifierShiftReduce(lookaheadSym int, reduces []lrAc
 		}
 	}
 	return false
+}
+
+func preferredExpressionOperatorIdentifierReduce(lookaheadSym int, shifts, reduces []lrAction, ng *NormalizedGrammar) ([]lrAction, bool) {
+	if ng == nil || !ng.PreferExpressionOperatorIdentifierReduces {
+		return nil, false
+	}
+	if lookaheadSym < 0 || lookaheadSym >= len(ng.Symbols) ||
+		!isElixirOperatorIdentifierConflictLookahead(ng.Symbols[lookaheadSym].Name) {
+		return nil, false
+	}
+	hasOperatorIdentifierShift := false
+	for _, shift := range shifts {
+		if shiftLHSIncludesName(shift, ng, "operator_identifier") {
+			hasOperatorIdentifierShift = true
+			break
+		}
+	}
+	if !hasOperatorIdentifierShift {
+		return nil, false
+	}
+	preferred := make([]lrAction, 0, len(reduces))
+	for _, reduce := range reduces {
+		if isExpressionOperatorConflictReduce(reduce, ng) {
+			preferred = append(preferred, reduce)
+		}
+	}
+	return preferred, len(preferred) > 0
+}
+
+func shiftLHSIncludesName(shift lrAction, ng *NormalizedGrammar, name string) bool {
+	if symbolNameMatches(shift.lhsSym, ng, name) {
+		return true
+	}
+	for _, lhs := range shift.lhsSyms {
+		if symbolNameMatches(lhs, ng, name) {
+			return true
+		}
+	}
+	return false
+}
+
+func symbolNameMatches(sym int, ng *NormalizedGrammar, name string) bool {
+	return ng != nil && sym >= 0 && sym < len(ng.Symbols) && ng.Symbols[sym].Name == name
+}
+
+func isExpressionOperatorConflictReduce(action lrAction, ng *NormalizedGrammar) bool {
+	if action.kind != lrReduce || action.prodIdx < 0 || action.prodIdx >= len(ng.Productions) {
+		return false
+	}
+	prod := &ng.Productions[action.prodIdx]
+	if symbolNameMatches(prod.LHS, ng, "binary_operator") {
+		return true
+	}
+	if !symbolNameMatches(prod.LHS, ng, "_expression") || len(prod.RHS) != 1 {
+		return false
+	}
+	rhs := prod.RHS[0]
+	if rhs < 0 || rhs >= len(ng.Symbols) {
+		return false
+	}
+	switch ng.Symbols[rhs].Name {
+	case "identifier", "alias", "integer", "float", "char", "boolean", "nil",
+		"_atom", "string", "charlist", "sigil", "list", "tuple", "bitstring", "map":
+		return true
+	default:
+		return false
+	}
+}
+
+func isElixirOperatorIdentifierConflictLookahead(name string) bool {
+	switch name {
+	case "<-", "\\\\", "when", "::", "|", "=>", "=", "||", "|||", "or",
+		"&&", "&&&", "and", "==", "!=", "=~", "===", "!==", "<", ">",
+		"<=", ">=", "|>", "<<<", ">>>", "<<~", "~>>", "<~", "~>",
+		"<~>", "<|>", "in", "not in", "^^^", "//", "++", "--", "+++",
+		"---", "<>", "..", "+", "-", "*", "/", "**":
+		return true
+	default:
+		return false
+	}
 }
 
 func preferredKeywordContinuationShift(lookaheadSym int, shifts, reduces []lrAction, ng *NormalizedGrammar) (lrAction, bool) {
