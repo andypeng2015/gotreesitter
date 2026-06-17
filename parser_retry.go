@@ -976,6 +976,9 @@ func (p *Parser) retryFullParse(source []byte, initialMaxStacks int, tree *Tree,
 	// wall-clock deadline shared across retry attempts.
 	retryStart := time.Now()
 	retryDeadlineExceeded := func() bool {
+		if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
+			return true
+		}
 		if p == nil || p.timeoutMicros == 0 {
 			return false
 		}

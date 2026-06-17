@@ -113,15 +113,26 @@ func shouldNormalizeIncrementalReturnedTree(tree, oldTree *Tree) bool {
 	return rawRootOrNil(tree) != rawRootOrNil(oldTree)
 }
 
-func normalizeReturnedIncrementalTree(tree, oldTree *Tree, source []byte, lang *Language) {
+func (p *Parser) normalizeReturnedIncrementalTree(tree, oldTree *Tree, source []byte) {
 	if !shouldNormalizeIncrementalReturnedTree(tree, oldTree) {
 		return
 	}
-	normalizeReturnedTree(rawRootOrNil(tree), source, lang)
+	if reason := p.normalizeReturnedTree(rawRootOrNil(tree), source); parseStopReasonIsTerminal(reason) {
+		tree.setParseStopReason(reason)
+	}
 }
 
 func shouldNormalizeReturnedTree(tree *Tree) bool {
 	return tree != nil && !tree.ParseStoppedEarly()
+}
+
+func (p *Parser) normalizeReturnedTreeForParse(tree *Tree, source []byte) {
+	if !shouldNormalizeReturnedTree(tree) {
+		return
+	}
+	if reason := p.normalizeReturnedTree(rawRootOrNil(tree), source); parseStopReasonIsTerminal(reason) {
+		tree.setParseStopReason(reason)
+	}
 }
 
 const forestIncrementalReuseUnsupportedReason = "old tree was built by GSS forest fast path"
@@ -269,29 +280,23 @@ func profileFreshParseFallback(start time.Time, tree *Tree, reason string) Incre
 	return profile
 }
 
-func (p *Parser) normalizeReturnedTree(root *Node, source []byte) {
-	if p != nil && p.noResultCompatibilityBenchmarkOnly {
-		return
+func (p *Parser) normalizeReturnedTree(root *Node, source []byte) ParseStopReason {
+	if p == nil || p.language == nil || root == nil || p.noResultCompatibilityBenchmarkOnly {
+		return ParseStopNone
 	}
-	if reason := p.activeParseStopReason(); parseStopReasonIsActive(reason) {
-		return
+	if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
+		return reason
+	}
+	if p.language.Name == "go" {
+		normalizeGoCompatibilityWithParser(root, source, p.language, p)
+		if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
+			return reason
+		}
+		normalizeRootEOFNewlineSpan(root, source, p.language)
+		return p.parseStopReasonNow()
 	}
 	normalizeReturnedTree(root, source, p.language)
-}
-
-func (p *Parser) normalizeReturnedParseTree(tree *Tree, source []byte) {
-	if tree == nil || tree.ParseStoppedEarly() {
-		return
-	}
-	p.normalizeReturnedTree(rawRootOrNil(tree), source)
-	p.applyActiveStopReasonToTree(tree)
-}
-
-func (p *Parser) normalizeReturnedIncrementalTree(tree, oldTree *Tree, source []byte) {
-	if !shouldNormalizeIncrementalReturnedTree(tree, oldTree) {
-		return
-	}
-	p.normalizeReturnedParseTree(tree, source)
+	return p.parseStopReasonNow()
 }
 
 func (p *Parser) dfaReparseFactory() TokenSourceFactory {
@@ -437,8 +442,8 @@ func (p *Parser) parseWithTokenSource(source []byte, ts TokenSource, reparseFact
 	if ts == nil {
 		return nil, ErrNoTokenSource
 	}
-	endParseBudget := p.enterParseBudget()
-	defer endParseBudget()
+	endBudget := p.beginParseOperationBudget()
+	defer endBudget()
 	p.releaseCompatibilityBorrowedArenas()
 	p.clearRecoveryParser()
 	defer p.clearRecoveryParser()
@@ -458,7 +463,7 @@ func (p *Parser) parseWithTokenSource(source []byte, ts TokenSource, reparseFact
 			tree = p.retryFullParseWithTokenSource(source, ts, initialMaxStacks, deterministicExternalConflicts, tree)
 		}
 	}
-	p.normalizeReturnedParseTree(tree, source)
+	p.normalizeReturnedTreeForParse(tree, source)
 	return tree, nil
 }
 
@@ -469,6 +474,8 @@ func (p *Parser) parseIncrementalWithTokenSource(source []byte, oldTree *Tree, t
 	if ts == nil {
 		return nil, ErrNoTokenSource
 	}
+	endBudget := p.beginParseOperationBudget()
+	defer endBudget()
 	releaseTS := manageTokenSourceLifetime(ts)
 	defer releaseTS()
 	if canReuseUnchangedTree(source, oldTree, p.language) {
@@ -731,6 +738,8 @@ func (p *Parser) Parse(source []byte) (*Tree, error) {
 	if err := p.checkDFALexer(); err != nil {
 		return nil, err
 	}
+	endBudget := p.beginParseOperationBudget()
+	defer endBudget()
 	// GSS-forest fast path for languages whose production GLR parse blows up on
 	// deep stack-equivalence (e.g. bash). Returns nil to fall back to the
 	// production parser on any failure, error, or truncation. Off unless
@@ -764,7 +773,7 @@ func (p *Parser) Parse(source []byte) (*Tree, error) {
 				tree = p.retryFullParseWithDFA(source, initialMaxStacks, deterministicExternalConflicts, tree)
 			}
 		}
-		p.normalizeReturnedParseTree(tree, source)
+		p.normalizeReturnedTreeForParse(tree, source)
 	}
 	return tree, nil
 }
@@ -914,6 +923,8 @@ func (p *Parser) ParseIncremental(source []byte, oldTree *Tree) (*Tree, error) {
 	if err := p.checkLanguageCompatible(); err != nil {
 		return nil, err
 	}
+	endBudget := p.beginParseOperationBudget()
+	defer endBudget()
 	if canReuseUnchangedTree(source, oldTree, p.language) {
 		return oldTree, nil
 	}
@@ -1043,6 +1054,8 @@ func (p *Parser) ParseIncrementalProfiled(source []byte, oldTree *Tree) (*Tree, 
 	if err := p.checkLanguageCompatible(); err != nil {
 		return nil, IncrementalParseProfile{}, err
 	}
+	endBudget := p.beginParseOperationBudget()
+	defer endBudget()
 	if canReuseUnchangedTree(source, oldTree, p.language) {
 		return oldTree, IncrementalParseProfile{}, nil
 	}
@@ -1084,6 +1097,8 @@ func (p *Parser) ParseIncrementalWithTokenSourceProfiled(source []byte, oldTree 
 	if err := p.checkLanguageCompatible(); err != nil {
 		return nil, IncrementalParseProfile{}, err
 	}
+	endBudget := p.beginParseOperationBudget()
+	defer endBudget()
 	releaseTS := manageTokenSourceLifetime(ts)
 	defer releaseTS()
 	if canReuseUnchangedTree(source, oldTree, p.language) {

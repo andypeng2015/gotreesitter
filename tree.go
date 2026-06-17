@@ -3101,6 +3101,15 @@ func (t *Tree) setParseRuntime(rt ParseRuntime) {
 	t.parseRuntime = rt
 }
 
+func (t *Tree) setParseStopReason(reason ParseStopReason) {
+	if t == nil || reason == "" {
+		return
+	}
+	rt := t.ParseRuntime()
+	rt.StopReason = reason
+	t.setParseRuntime(rt)
+}
+
 func (t *Tree) setArenaBreakdown(breakdown *ArenaBreakdown) {
 	if t == nil {
 		return

@@ -147,3 +147,29 @@ func TestNormalizeGoCompatibilityAddsDotChildWhenRunning(t *testing.T) {
 		t.Fatalf("dot child = %v, want anonymous . child", child)
 	}
 }
+
+func TestReturnedTreeNormalizationMarksAcceptedTreeStoppedOnTimeout(t *testing.T) {
+	lang := buildGoDotLeafLanguage()
+	arena := newNodeArena(arenaClassFull)
+	root := newLeafNodeInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	tree := newTreeWithArenas(root, []byte("."), lang, arena, nil)
+	tree.setParseRuntime(ParseRuntime{StopReason: ParseStopAccepted})
+	defer tree.Release()
+
+	parser := NewParser(lang)
+	parser.SetTimeoutMicros(100)
+	endBudget := parser.beginParseOperationBudget()
+	defer endBudget()
+	time.Sleep(2 * time.Millisecond)
+	parser.normalizeReturnedTreeForParse(tree, tree.Source())
+
+	if got, want := tree.ParseStopReason(), ParseStopTimeout; got != want {
+		t.Fatalf("ParseStopReason() = %q, want %q", got, want)
+	}
+	if !tree.ParseStoppedEarly() {
+		t.Fatal("ParseStoppedEarly() = false, want true")
+	}
+	if got := root.ChildCount(); got != 0 {
+		t.Fatalf("root.ChildCount() = %d, want 0 after returned-tree timeout", got)
+	}
+}
