@@ -30,7 +30,7 @@ func TestElixirImportedForReduceDoBlockParity(t *testing.T) {
 
 func TestElixirImportedDoEndStabClauseBodyParity(t *testing.T) {
 	genLang, refLang := loadImportedParityLanguages(t, "elixir")
-	assertGeneratedAndReferenceNoError(t, genLang, refLang, elixirDoEndStabClauseBodyCorpusBlock)
+	assertGeneratedAndReferenceDeepParity(t, genLang, refLang, elixirDoEndStabClauseBodyCorpusBlock)
 }
 
 func TestElixirImportedQuotedInterpolationNoError(t *testing.T) {
