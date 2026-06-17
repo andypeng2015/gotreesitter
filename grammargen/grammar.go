@@ -338,6 +338,7 @@ func ExtendGrammar(name string, base *Grammar, customize func(g *Grammar)) *Gram
 		PreserveKeywordIdentifierConflicts: base.PreserveKeywordIdentifierConflicts,
 		PreferExpressionOperatorIdentifierReduces:  base.PreferExpressionOperatorIdentifierReduces,
 		PreferParenthesizedCallDoBlockReduces:      base.PreferParenthesizedCallDoBlockReduces,
+		PreferRemoteCallOperatorReduces:            base.PreferRemoteCallOperatorReduces,
 		PreferStabClauseLeftArrowReduces:           base.PreferStabClauseLeftArrowReduces,
 		PreferPreciseExternalLexStates:             base.PreferPreciseExternalLexStates,
 		ExactPrefixStates:                          base.ExactPrefixStates,

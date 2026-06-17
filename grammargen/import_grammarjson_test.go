@@ -20,6 +20,9 @@ func TestApplyImportGrammarShapeHintsElixirPreciseExternalLexStates(t *testing.T
 	if !g.PreferPreciseExternalLexStates {
 		t.Fatalf("elixir import should prefer precise external lex states")
 	}
+	if !g.PreferRemoteCallOperatorReduces {
+		t.Fatalf("elixir import should prefer remote-call operator reduces")
+	}
 }
 
 func TestApplyImportGrammarPostShapeHintsPerlHeredocContent(t *testing.T) {

@@ -163,6 +163,10 @@ func EmitGrammarGo(g *Grammar, pkgName, funcName string) ([]byte, error) {
 		fmt.Fprintf(&buf, "\tg.PreferParenthesizedCallDoBlockReduces = true\n\n")
 	}
 
+	if g.PreferRemoteCallOperatorReduces {
+		fmt.Fprintf(&buf, "\tg.PreferRemoteCallOperatorReduces = true\n\n")
+	}
+
 	if g.PreferStabClauseLeftArrowReduces {
 		fmt.Fprintf(&buf, "\tg.PreferStabClauseLeftArrowReduces = true\n\n")
 	}

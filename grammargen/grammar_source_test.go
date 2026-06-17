@@ -28,6 +28,7 @@ func TestExtendGrammarCopiesImportMetadata(t *testing.T) {
 	base.ReuseRepeatAuxForParents = []string{"program", "statement_list"}
 	base.PreferExpressionOperatorIdentifierReduces = true
 	base.PreferParenthesizedCallDoBlockReduces = true
+	base.PreferRemoteCallOperatorReduces = true
 	base.PreferStabClauseLeftArrowReduces = true
 	base.PreferPreciseExternalLexStates = true
 	base.ChoiceLiftThreshold = 16
@@ -56,6 +57,9 @@ func TestExtendGrammarCopiesImportMetadata(t *testing.T) {
 	}
 	if !extended.PreferParenthesizedCallDoBlockReduces {
 		t.Fatalf("extension did not inherit parenthesized-call do-block reduce preference flag")
+	}
+	if !extended.PreferRemoteCallOperatorReduces {
+		t.Fatalf("extension did not inherit remote-call operator reduce preference flag")
 	}
 	if !extended.PreferStabClauseLeftArrowReduces {
 		t.Fatalf("extension did not inherit stab-clause-left arrow reduce preference flag")
@@ -118,6 +122,7 @@ func TestEmitGrammarGoIncludesImportMetadata(t *testing.T) {
 	g.ReuseRepeatAuxForParents = []string{"program"}
 	g.PreferExpressionOperatorIdentifierReduces = true
 	g.PreferParenthesizedCallDoBlockReduces = true
+	g.PreferRemoteCallOperatorReduces = true
 	g.PreferStabClauseLeftArrowReduces = true
 	g.PreferPreciseExternalLexStates = true
 	g.ChoiceLiftThreshold = 8
@@ -141,6 +146,7 @@ func TestEmitGrammarGoIncludesImportMetadata(t *testing.T) {
 		"\"program\"",
 		"g.PreferExpressionOperatorIdentifierReduces = true",
 		"g.PreferParenthesizedCallDoBlockReduces = true",
+		"g.PreferRemoteCallOperatorReduces = true",
 		"g.PreferStabClauseLeftArrowReduces = true",
 		"g.PreferPreciseExternalLexStates = true",
 		"g.ChoiceLiftThreshold = 8",
