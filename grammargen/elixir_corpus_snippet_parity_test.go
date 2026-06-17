@@ -72,7 +72,7 @@ func TestElixirImportedBareCallKeywordArgumentParity(t *testing.T) {
 
 func TestElixirImportedForReduceDoBlockParity(t *testing.T) {
 	genLang, refLang := loadImportedParityLanguages(t, "elixir")
-	assertGeneratedAndReferenceNoError(t, genLang, refLang, "for x <- [1, 2, 1], reduce: %{} do\n  acc -> Map.update(acc, x, 1, & &1 + 1)\nend\n")
+	assertGeneratedAndReferenceDeepParity(t, genLang, refLang, "for x <- [1, 2, 1], reduce: %{} do\n  acc -> Map.update(acc, x, 1, & &1 + 1)\nend\n")
 }
 
 func TestElixirImportedDoEndStabClauseBodyParity(t *testing.T) {

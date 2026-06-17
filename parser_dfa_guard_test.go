@@ -830,6 +830,61 @@ func TestNextGLRUnionDFATokenPrefersLongerVisibleTokenOverShorterMorePopularPref
 	}
 }
 
+func TestNextGLRUnionDFATokenPrefersStateLiteralOverIdentifierCapture(t *testing.T) {
+	lang := &Language{
+		SymbolNames: []string{"end", "end", "identifier"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "end", Visible: false, Named: false},
+			{Name: "end", Visible: true, Named: false},
+			{Name: "identifier", Visible: true, Named: true},
+		},
+		SymbolCount:     3,
+		TokenCount:      3,
+		StateCount:      3,
+		LargeStateCount: 3,
+		InitialState:    1,
+		LexStates: []LexState{
+			{Default: -1, EOF: -1},
+			{Default: -1, EOF: -1, Transitions: []LexTransition{{Lo: 'e', Hi: 'e', NextState: 3}}},
+			{Default: -1, EOF: -1, Transitions: []LexTransition{{Lo: 'e', Hi: 'e', NextState: 3}}},
+			{Default: -1, EOF: -1, Transitions: []LexTransition{{Lo: 'n', Hi: 'n', NextState: 4}}},
+			{Default: -1, EOF: -1, Transitions: []LexTransition{{Lo: 'd', Hi: 'd', NextState: 5}}},
+			{AcceptToken: 2, Default: -1, EOF: -1},
+		},
+		LexModes: []LexMode{
+			{LexState: 0},
+			{LexState: 1},
+			{LexState: 2},
+		},
+		ParseTable: [][]uint16{
+			{0, 0, 0},
+			{0, 1, 2},
+			{0, 0, 2},
+		},
+		ParseActions: []ParseActionEntry{
+			{Actions: nil},
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 1}}},
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 2}}},
+		},
+	}
+	parser := NewParser(lang)
+	d := &dfaTokenSource{
+		lexer:             NewLexer(lang.LexStates, []byte("end")),
+		language:          lang,
+		state:             1,
+		glrStates:         []StateID{1, 2},
+		lookupActionIndex: parser.lookupActionIndex,
+	}
+
+	tok, ok := d.nextGLRUnionDFAToken()
+	if !ok {
+		t.Fatal("nextGLRUnionDFAToken returned ok=false, want true")
+	}
+	if got, want := tok.Symbol, Symbol(1); got != want {
+		t.Fatalf("token symbol = %d (%q), want %d (%q)", got, lang.SymbolNames[got], want, lang.SymbolNames[want])
+	}
+}
+
 func TestNextGLRUnionDFATokenHandlesNoLookaheadLexState(t *testing.T) {
 	lang := &Language{
 		SymbolNames: []string{"end", "identifier"},

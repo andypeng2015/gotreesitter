@@ -780,15 +780,16 @@ func (d *dfaTokenSource) nextGLRUnionDFAToken() (Token, bool) {
 		if candTok.StartByte == bestTok.StartByte {
 			splitPreference = d.compareAngleTokenPreference(candTok, bestTok)
 		}
+		specificPreference := d.compareSpecificTokenPreference(candTok, candEndPos, bestTok, bestEndPos)
 		better := !bestFound ||
 			candTok.StartByte < bestTok.StartByte ||
 			(candTok.StartByte == bestTok.StartByte && splitPreference > 0) ||
 			(candTok.StartByte == bestTok.StartByte && splitPreference == 0 && candEndPos > bestEndPos) ||
 			(candTok.StartByte == bestTok.StartByte && splitPreference == 0 && candEndPos == bestEndPos && candTok.EndByte > bestTok.EndByte) ||
-			(candTok.StartByte == bestTok.StartByte && splitPreference == 0 && candEndPos == bestEndPos && candTok.EndByte == bestTok.EndByte && d.preferSpecificTokenOnExactMatch(candTok, candEndPos, bestTok, bestEndPos)) ||
-			(candTok.StartByte == bestTok.StartByte && splitPreference == 0 && candEndPos == bestEndPos && candTok.EndByte == bestTok.EndByte && originActionCount > bestOriginActions) ||
-			(candTok.StartByte == bestTok.StartByte && splitPreference == 0 && candEndPos == bestEndPos && candTok.EndByte == bestTok.EndByte && score > bestScore) ||
-			(candTok.StartByte == bestTok.StartByte && splitPreference == 0 && candEndPos == bestEndPos && candTok.EndByte == bestTok.EndByte && score == bestScore && candVisible && !bestVisible)
+			(candTok.StartByte == bestTok.StartByte && splitPreference == 0 && candEndPos == bestEndPos && candTok.EndByte == bestTok.EndByte && specificPreference > 0) ||
+			(candTok.StartByte == bestTok.StartByte && splitPreference == 0 && candEndPos == bestEndPos && candTok.EndByte == bestTok.EndByte && specificPreference == 0 && originActionCount > bestOriginActions) ||
+			(candTok.StartByte == bestTok.StartByte && splitPreference == 0 && candEndPos == bestEndPos && candTok.EndByte == bestTok.EndByte && specificPreference == 0 && score > bestScore) ||
+			(candTok.StartByte == bestTok.StartByte && splitPreference == 0 && candEndPos == bestEndPos && candTok.EndByte == bestTok.EndByte && specificPreference == 0 && score == bestScore && candVisible && !bestVisible)
 		if better {
 			bestFound = true
 			bestScore = score
@@ -903,9 +904,8 @@ func (d *dfaTokenSource) scanDFATokenForState(state StateID, lexState uint32) (T
 		}
 	}
 	tok = d.promoteKeyword(tok)
-	if d.isSwift {
-		tok = d.demoteSwiftMemberKeyword(tok)
-	}
+	tok = d.promoteActiveLiteralForCurrentState(tok)
+	tok = d.demoteSwiftMemberKeyword(tok)
 	tok, endPos, endRow, endCol := d.normalizeDFAToken(tok, d.lexer.pos, d.lexer.row, d.lexer.col)
 
 	d.lexer.pos = savedPos
@@ -1701,6 +1701,16 @@ func (d *dfaTokenSource) preferSpecificTokenOnExactMatch(candTok Token, candEndP
 		return candMeta.Visible
 	}
 	return candMeta.Visible && !candMeta.Named && bestMeta.Visible && bestMeta.Named
+}
+
+func (d *dfaTokenSource) compareSpecificTokenPreference(candTok Token, candEndPos int, bestTok Token, bestEndPos int) int {
+	if d.preferSpecificTokenOnExactMatch(candTok, candEndPos, bestTok, bestEndPos) {
+		return 1
+	}
+	if d.preferSpecificTokenOnExactMatch(bestTok, bestEndPos, candTok, candEndPos) {
+		return -1
+	}
+	return 0
 }
 
 func (d *dfaTokenSource) compareAngleTokenPreference(candTok, bestTok Token) int {
@@ -3147,6 +3157,57 @@ func (d *dfaTokenSource) promoteKeyword(tok Token) Token {
 
 	tok.Symbol = kwTok.Symbol
 	return tok
+}
+
+func (d *dfaTokenSource) promoteActiveLiteralForCurrentState(tok Token) Token {
+	if d == nil || d.language == nil || d.lexer == nil || d.lookupActionIndex == nil || tok.Symbol == 0 {
+		return tok
+	}
+	meta, ok := d.symbolMetadata(tok.Symbol)
+	if ok && !meta.Named {
+		return tok
+	}
+	text := tok.Text
+	if text == "" {
+		start := int(tok.StartByte)
+		end := int(tok.EndByte)
+		if start < 0 || end <= start || end > len(d.lexer.source) {
+			return tok
+		}
+		text = bytesToStringNoCopy(d.lexer.source[start:end])
+	}
+	if text == "" || !isIdentifierLikeLiteralText(text) || d.symbolName(tok.Symbol) == text {
+		return tok
+	}
+	for _, sym := range d.language.TokenSymbolsByName(text) {
+		if sym == 0 || sym == tok.Symbol || d.symbolName(sym) != text {
+			continue
+		}
+		if symMeta, ok := d.symbolMetadata(sym); ok && symMeta.Named {
+			continue
+		}
+		if d.lookupActionIndex(d.state, sym) == 0 {
+			continue
+		}
+		tok.Symbol = sym
+		return tok
+	}
+	return tok
+}
+
+func isIdentifierLikeLiteralText(text string) bool {
+	for i, r := range text {
+		if i == 0 {
+			if r != '_' && !unicode.IsLetter(r) {
+				return false
+			}
+			continue
+		}
+		if r != '_' && !unicode.IsLetter(r) && !unicode.IsDigit(r) {
+			return false
+		}
+	}
+	return text != ""
 }
 
 func (d *dfaTokenSource) shouldPreferSwiftMemberIdentifier(tok, kwTok Token) bool {
