@@ -678,12 +678,13 @@ func effectiveParseMergePerKeyCap(lang *Language, mergePerKeyCap int, incrementa
 		}
 	case "elixir":
 		// Elixir's terminator/repetition conflicts can keep many same-key
-		// block/source alternatives alive. The focused real-corpus gate stays
-		// parse/highlight clean with one full-parse survivor, cutting merge
-		// equivalence churn while leaving explicit diagnostics overrides and
-		// incremental reparses on the wider default.
-		if !parseMaxMergePerKeyEnvConfigured() && mergePerKeyCap > 1 {
-			return 1
+		// block/source alternatives alive. It cannot drop to 1: body
+		// continuation vs next stab_clause needs two same-key survivors, or
+		// `fun do ... 1 -> ...` keeps the body-continuation branch and shifts
+		// `->` as an operator_identifier. Keep explicit diagnostics overrides
+		// and incremental reparses on the wider default.
+		if !parseMaxMergePerKeyEnvConfigured() && mergePerKeyCap > 2 {
+			return 2
 		}
 	case "typescript", "tsx":
 		// TypeScript-family sources in repository indexing workloads are

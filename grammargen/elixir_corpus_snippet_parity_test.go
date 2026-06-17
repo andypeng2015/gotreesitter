@@ -28,6 +28,11 @@ func TestElixirImportedForReduceDoBlockParity(t *testing.T) {
 	assertGeneratedAndReferenceNoError(t, genLang, refLang, "for x <- [1, 2, 1], reduce: %{} do\n  acc -> Map.update(acc, x, 1, & &1 + 1)\nend\n")
 }
 
+func TestElixirImportedDoEndStabClauseBodyParity(t *testing.T) {
+	genLang, refLang := loadImportedParityLanguages(t, "elixir")
+	assertGeneratedAndReferenceNoError(t, genLang, refLang, elixirDoEndStabClauseBodyCorpusBlock)
+}
+
 func TestElixirImportedLRSplitCorpusSnippetParity(t *testing.T) {
 	genLang, refLang := loadImportedElixirLRSplitParityLanguages(t)
 	assertGeneratedAndReferenceDeepParity(t, genLang, refLang, elixirOperatorLeftAssociativeCorpusBlock)
@@ -67,6 +72,34 @@ const elixirOperatorLeftAssociativeCorpusBlock = "a ** b ** c\n\n" +
 	"a or b or c\n\n" +
 	"a <- b <- c\n" +
 	"a \\\\ b \\\\ c\n"
+
+const elixirDoEndStabClauseBodyCorpusBlock = "fun do\n" +
+	"  1 ->\n" +
+	"    1\n" +
+	"    x\n\n" +
+	"  1 ->\n" +
+	"    1\n" +
+	"end\n\n" +
+	"fun do\n" +
+	"  1 ->\n" +
+	"    1\n" +
+	"    Mod.fun\n\n" +
+	"  1 ->\n" +
+	"    1\n" +
+	"end\n\n" +
+	"fun do\n" +
+	"  1 ->\n" +
+	"    1\n" +
+	"    mod.fun\n\n" +
+	"  1 ->\n" +
+	"    1\n" +
+	"end\n\n" +
+	"fun do\n" +
+	"  1 ->\n" +
+	"    1\n\n" +
+	"  x 1 ->\n" +
+	"    1\n" +
+	"end\n"
 
 func assertGeneratedAndReferenceNoError(t *testing.T, genLang, refLang *gotreesitter.Language, src string) {
 	t.Helper()
