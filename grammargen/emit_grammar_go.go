@@ -203,6 +203,14 @@ func EmitGrammarGo(g *Grammar, pkgName, funcName string) ([]byte, error) {
 		fmt.Fprintf(&buf, "\t}\n\n")
 	}
 
+	if len(g.PreserveHiddenChoicePassthrough) > 0 {
+		fmt.Fprintf(&buf, "\tg.PreserveHiddenChoicePassthrough = []string{\n")
+		for _, name := range g.PreserveHiddenChoicePassthrough {
+			fmt.Fprintf(&buf, "\t\t%s,\n", goString(name))
+		}
+		fmt.Fprintf(&buf, "\t}\n\n")
+	}
+
 	if len(g.Tests) > 0 {
 		for _, tc := range g.Tests {
 			if tc.ExpectError {

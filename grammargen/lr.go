@@ -3656,7 +3656,14 @@ func preferredRemoteCallOperatorReduce(lookaheadSym int, shifts, reduces []lrAct
 		!isElixirOperatorIdentifierConflictLookahead(ng.Symbols[lookaheadSym].Name) {
 		return nil, false
 	}
-	if len(shifts) == 0 {
+	hasBinaryOperatorShift := false
+	for _, shift := range shifts {
+		if shiftLHSIncludesName(shift, ng, "binary_operator") {
+			hasBinaryOperatorShift = true
+			break
+		}
+	}
+	if !hasBinaryOperatorShift {
 		return nil, false
 	}
 	preferred := make([]lrAction, 0, len(reduces))

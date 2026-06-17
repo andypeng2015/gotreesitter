@@ -91,6 +91,31 @@ func TestElixirImportedQuotedInterpolationDeepParity(t *testing.T) {
 	})
 }
 
+func TestElixirImportedRemoteCallOperatorRegressionParity(t *testing.T) {
+	genLang, refLang := loadImportedParityLanguages(t, "elixir")
+	for _, tc := range []struct {
+		name string
+		src  string
+	}{
+		{
+			name: "pipe_remote_call_without_parentheses",
+			src:  "\"hello\" |> String.upcase |> String.downcase()\n",
+		},
+		{
+			name: "remote_call_negative_unary_argument",
+			src:  "Mod.fun -1\n",
+		},
+		{
+			name: "remote_call_positive_unary_argument",
+			src:  "Mod.fun +1\n",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertGeneratedAndReferenceDeepParity(t, genLang, refLang, tc.src)
+		})
+	}
+}
+
 func TestElixirImportedLRSplitCorpusSnippetParity(t *testing.T) {
 	genLang, refLang := loadImportedElixirLRSplitParityLanguages(t)
 	assertGeneratedAndReferenceDeepParity(t, genLang, refLang, elixirOperatorLeftAssociativeCorpusBlock)

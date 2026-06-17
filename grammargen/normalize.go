@@ -4363,6 +4363,13 @@ func expandInlineRules(g *Grammar) *Grammar {
 	out.SuppressEquivalentExternalReduceLookaheads = g.SuppressEquivalentExternalReduceLookaheads
 	out.ExternalReduceFollowLookaheads = append(out.ExternalReduceFollowLookaheads, g.ExternalReduceFollowLookaheads...)
 	out.PriorityInlinePatterns = append(out.PriorityInlinePatterns, g.PriorityInlinePatterns...)
+	for _, name := range g.PreserveHiddenChoicePassthrough {
+		if renamed, ok := hiddenRenames[name]; ok {
+			out.PreserveHiddenChoicePassthrough = append(out.PreserveHiddenChoicePassthrough, renamed)
+			continue
+		}
+		out.PreserveHiddenChoicePassthrough = append(out.PreserveHiddenChoicePassthrough, name)
+	}
 	// Don't propagate Inline — they've been expanded.
 
 	return out

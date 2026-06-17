@@ -361,6 +361,60 @@ func TestResolveShiftReducePrefersElixirParenthesizedCallBeforeDoBlock(t *testin
 	}
 }
 
+func TestResolveShiftReducePrefersElixirRemoteCallBeforeBinaryOperator(t *testing.T) {
+	ng := &NormalizedGrammar{
+		Symbols: []SymbolInfo{
+			{Name: "|>", Kind: SymbolTerminal, Visible: true, Named: false},
+			{Name: "alias", Kind: SymbolNonterminal},
+			{Name: "identifier", Kind: SymbolNonterminal},
+			{Name: "_remote_call_without_parentheses", Kind: SymbolNonterminal},
+			{Name: "binary_operator", Kind: SymbolNonterminal},
+		},
+		Productions: []Production{
+			{LHS: 3, RHS: []int{1, 2}},
+		},
+		PreferRemoteCallOperatorReduces: true,
+	}
+
+	got, err := resolveActionConflict(0, []lrAction{
+		{kind: lrShift, state: 10, lhsSym: 4},
+		{kind: lrReduce, prodIdx: 0},
+	}, ng)
+	if err != nil {
+		t.Fatalf("resolveActionConflict: %v", err)
+	}
+	if len(got) != 1 || got[0].kind != lrReduce || got[0].prodIdx != 0 {
+		t.Fatalf("resolved actions = %+v, want remote-call reduce before binary operator", got)
+	}
+}
+
+func TestResolveShiftReduceElixirRemoteCallReduceRequiresBinaryOperatorShift(t *testing.T) {
+	ng := &NormalizedGrammar{
+		Symbols: []SymbolInfo{
+			{Name: "-", Kind: SymbolTerminal, Visible: true, Named: false},
+			{Name: "alias", Kind: SymbolNonterminal},
+			{Name: "identifier", Kind: SymbolNonterminal},
+			{Name: "_remote_call_without_parentheses", Kind: SymbolNonterminal},
+			{Name: "unary_operator", Kind: SymbolNonterminal},
+		},
+		Productions: []Production{
+			{LHS: 3, RHS: []int{1, 2}},
+		},
+		PreferRemoteCallOperatorReduces: true,
+	}
+
+	got, err := resolveActionConflict(0, []lrAction{
+		{kind: lrShift, state: 10, lhsSym: 4},
+		{kind: lrReduce, prodIdx: 0},
+	}, ng)
+	if err != nil {
+		t.Fatalf("resolveActionConflict: %v", err)
+	}
+	if len(got) != 1 || got[0].kind != lrShift {
+		t.Fatalf("resolved actions = %+v, want ordinary shift without binary-operator continuation", got)
+	}
+}
+
 func TestResolveShiftReducePrefersElixirStabClauseLeftBeforeArrow(t *testing.T) {
 	ng := &NormalizedGrammar{
 		Symbols: []SymbolInfo{

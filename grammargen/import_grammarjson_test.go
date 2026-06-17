@@ -1,6 +1,9 @@
 package grammargen
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 func TestApplyImportGrammarShapeHintsPowerShellBinaryRepeat(t *testing.T) {
 	for _, name := range []string{"d", "objc", "perl", "powershell"} {
@@ -22,6 +25,9 @@ func TestApplyImportGrammarShapeHintsElixirPreciseExternalLexStates(t *testing.T
 	}
 	if !g.PreferRemoteCallOperatorReduces {
 		t.Fatalf("elixir import should prefer remote-call operator reduces")
+	}
+	if !slices.Equal(g.PreserveHiddenChoicePassthrough, []string{"_capture_expression"}) {
+		t.Fatalf("elixir preserved hidden passthrough = %v, want [_capture_expression]", g.PreserveHiddenChoicePassthrough)
 	}
 }
 
