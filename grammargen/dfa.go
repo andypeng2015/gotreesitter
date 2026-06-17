@@ -1312,6 +1312,7 @@ func computeLexModes(
 	terminalPatternSyms map[int]bool, // symbols that have DFA terminal patterns
 	followTokens func(state int) []int, // additional tokens from reduce-follow expansion (may be nil)
 	patternImmediateTokens map[int]bool, // immediate tokens that are PATTERN-based (catch-all)
+	suppressAfterWhitespaceSyms map[int]bool,
 ) ([]lexModeSpec, []int, []afterWSModeEntry) {
 	extraSet := make(map[int]bool)
 	hasTerminalExtras := false
@@ -1442,7 +1443,7 @@ func computeLexModes(
 		// that overlap (same first character), create an after-whitespace variant
 		// that excludes immediate tokens. This lets STRING keywords win after
 		// whitespace where immediate continuation tokens would otherwise dominate.
-		if hasImmediate && !isExtraChainState {
+		if hasImmediate && !isExtraChainState && !containsAnySymbol(validSyms, suppressAfterWhitespaceSyms) {
 			hasNonImmString := false
 			for sym := range validSyms {
 				if !immediateTokens[sym] && sym > 0 && sym < tokenCount {
@@ -1479,6 +1480,18 @@ func computeLexModes(
 	}
 
 	return modes, stateToMode, afterWSModeMap
+}
+
+func containsAnySymbol(syms, needles map[int]bool) bool {
+	if len(syms) == 0 || len(needles) == 0 {
+		return false
+	}
+	for sym := range needles {
+		if syms[sym] {
+			return true
+		}
+	}
+	return false
 }
 
 // afterWSModeEntry maps a parser state to its after-whitespace lex mode index.

@@ -98,6 +98,22 @@ func useForcedBroadLexFallback() bool {
 	return os.Getenv("GTS_GRAMMARGEN_FORCE_BROAD_LEX") == "1"
 }
 
+func suppressAfterWhitespaceSymbols(g *Grammar, ng *NormalizedGrammar) map[int]bool {
+	if g == nil || g.Name != "elixir" || ng == nil {
+		return nil
+	}
+	out := make(map[int]bool)
+	for i, sym := range ng.Symbols {
+		if sym.Name == "#{" {
+			out[i] = true
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 // ConflictKind describes the type of LR conflict.
 type ConflictKind int
 
@@ -644,6 +660,7 @@ func generateWithReportCtx(bgCtx context.Context, g *Grammar, opts reportBuildOp
 			termPatSyms,
 			buildFollowTokensFunc(tables, tokenCount),
 			patternImmediateTokenSet(ng),
+			suppressAfterWhitespaceSymbols(g, ng),
 		)
 	}
 
@@ -665,18 +682,11 @@ func generateWithReportCtx(bgCtx context.Context, g *Grammar, opts reportBuildOp
 		keywordLexStates = kls
 	}
 
-	lang, err := assemble(ng, tables, lexStates, stateToMode, lexModeOffsets)
+	lang, err := assemble(ng, tables, lexStates, stateToMode, lexModeOffsets, afterWSModes)
 	if err != nil {
 		return nil, fmt.Errorf("assemble: %w", err)
 	}
 	lang.Name = g.Name
-
-	// Set after-whitespace lex states for states that need IMMTOKEN exclusion.
-	for _, entry := range afterWSModes {
-		if entry.stateIdx < len(lang.LexModes) && entry.modeIdx < len(lexModeOffsets) {
-			lang.LexModes[entry.stateIdx].SetAfterWhitespaceLexStateIndex(uint32(lexModeOffsets[entry.modeIdx]))
-		}
-	}
 
 	if len(keywordLexStates) > 0 {
 		lang.KeywordLexStates = keywordLexStates

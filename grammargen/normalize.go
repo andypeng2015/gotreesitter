@@ -2400,10 +2400,14 @@ func extractTerminals(g *Grammar, st *symbolTable, stringLits []string, namedTok
 		if keywordSet != nil && keywordSet[id] {
 			continue
 		}
+		priority := -st.stringTokenPrecs[s] * 1000
+		if g.Name == "elixir" && s == "#{" {
+			priority -= 1000
+		}
 		patterns = append(patterns, TerminalPattern{
 			SymbolID: id,
 			Rule:     Str(s),
-			Priority: -st.stringTokenPrecs[s] * 1000,
+			Priority: priority,
 		})
 	}
 

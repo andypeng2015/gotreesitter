@@ -56,6 +56,7 @@ func assemble(
 	lexStates []gotreesitter.LexState,
 	lexModeMapping []int,
 	lexModeOffsets []int,
+	afterWSModes []afterWSModeEntry,
 ) (*gotreesitter.Language, error) {
 	tokenCount := ng.TokenCount()
 	symbolCount := len(ng.Symbols)
@@ -105,6 +106,11 @@ func assemble(
 			offset = lexModeOffsets[modeIdx]
 		}
 		lang.LexModes[i].SetLexStateIndex(uint32(offset))
+	}
+	for _, entry := range afterWSModes {
+		if entry.stateIdx < len(lang.LexModes) && entry.modeIdx < len(lexModeOffsets) {
+			lang.LexModes[entry.stateIdx].SetAfterWhitespaceLexStateIndex(uint32(lexModeOffsets[entry.modeIdx]))
+		}
 	}
 
 	// Compact production IDs: assign ProductionID=0 to all productions without

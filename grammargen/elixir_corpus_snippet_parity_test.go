@@ -33,6 +33,11 @@ func TestElixirImportedDoEndStabClauseBodyParity(t *testing.T) {
 	assertGeneratedAndReferenceNoError(t, genLang, refLang, elixirDoEndStabClauseBodyCorpusBlock)
 }
 
+func TestElixirImportedQuotedInterpolationNoError(t *testing.T) {
+	genLang, refLang := loadImportedParityLanguages(t, "elixir")
+	assertGeneratedAndReferenceNoError(t, genLang, refLang, ":\"with #{1 + 1} interpol\"\n\"with #{1 + 1} interpol\"\n")
+}
+
 func TestElixirImportedLRSplitCorpusSnippetParity(t *testing.T) {
 	genLang, refLang := loadImportedElixirLRSplitParityLanguages(t)
 	assertGeneratedAndReferenceDeepParity(t, genLang, refLang, elixirOperatorLeftAssociativeCorpusBlock)
