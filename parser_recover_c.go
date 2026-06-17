@@ -935,7 +935,7 @@ func (p *Parser) cTerminalNextState(state StateID, sym Symbol) (StateID, ParseAc
 // and whether any new version still needs to act on the current token (the
 // missing-token versions and strategy-1 recoveries) — the caller must force a
 // re-dispatch pass for the same token.
-func (p *Parser) cHandleError(stacks *[]glrStack, si int, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) (cRecoverOutcome, bool) {
+func (p *Parser) cHandleError(stacks *[]glrStack, si int, source []byte, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) (cRecoverOutcome, bool) {
 	s := &(*stacks)[si]
 	s.cPaused = false
 
@@ -1029,7 +1029,7 @@ func (p *Parser) cHandleError(stacks *[]glrStack, si int, tok Token, nodeCount *
 		if v.dead || v.cRec == nil || v.cRec.group != group {
 			continue
 		}
-		res, forked := p.cRecover(stacks, v, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
+		res, forked := p.cRecover(stacks, v, source, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
 		v = &(*stacks)[i]
 		if forked {
 			needsRedispatch = true
@@ -1061,7 +1061,7 @@ func (p *Parser) cHandleError(stacks *[]glrStack, si int, tok Token, nodeCount *
 // forked=true: the fork must act on the current token), absorb the token into
 // the open error region (cRecConsumed), accept at EOF (cRecConsumed), or halt
 // the member (cRecHalted).
-func (p *Parser) cRecover(stacks *[]glrStack, v *glrStack, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) (cRecoverOutcome, bool) {
+func (p *Parser) cRecover(stacks *[]glrStack, v *glrStack, source []byte, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) (cRecoverOutcome, bool) {
 	rec := v.cRec
 	if rec == nil {
 		return cRecFallthrough, false
@@ -1124,6 +1124,9 @@ func (p *Parser) cRecover(stacks *[]glrStack, v *glrStack, tok Token, nodeCount 
 	}
 
 	// Wrap the lookahead into the open error region (strategy 2).
+	if !p.guardRealTokenAttachmentGap(source, v, tok, "c-recover") {
+		return cRecHalted, forked
+	}
 	p.cAbsorbTokenIntoError(v, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
 	v.shifted = true
 	return cRecConsumed, forked
@@ -1597,7 +1600,7 @@ func (p *Parser) cAbsorbTokenIntoError(v *glrStack, tok Token, nodeCount *int, a
 // error, and non-terminal extras (e.g. requirements' linebreak) enter their
 // sub-parse via a real shift in the state-0 row. Everything else goes through
 // ts_parser__recover.
-func (p *Parser) cRecoverDispatchInError(stacks *[]glrStack, si int, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) (cRecoverOutcome, bool) {
+func (p *Parser) cRecoverDispatchInError(stacks *[]glrStack, si int, source []byte, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) (cRecoverOutcome, bool) {
 	s := &(*stacks)[si]
 	if s.top().state != cErrorState {
 		// Mid non-terminal-extra parse: the version temporarily left
@@ -1606,7 +1609,7 @@ func (p *Parser) cRecoverDispatchInError(stacks *[]glrStack, si int, tok Token, 
 	}
 	if tok.Symbol != 0 {
 		if p.isGraphQLRecoveryTripleQuote(tok.Symbol) {
-			return p.cRecover(stacks, s, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
+			return p.cRecover(stacks, s, source, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
 		}
 		if idx := p.lookupActionIndex(cErrorState, tok.Symbol); idx != 0 && int(idx) < len(p.language.ParseActions) {
 			if actions := p.language.ParseActions[idx].Actions; len(actions) > 0 &&
@@ -1621,7 +1624,7 @@ func (p *Parser) cRecoverDispatchInError(stacks *[]glrStack, si int, tok Token, 
 			return cRecConsumed, false
 		}
 	}
-	return p.cRecover(stacks, s, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
+	return p.cRecover(stacks, s, source, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
 }
 
 func (p *Parser) isGraphQLRecoveryTripleQuote(sym Symbol) bool {
@@ -1643,7 +1646,7 @@ func (p *Parser) isGraphQLRecoveryTripleQuote(sym Symbol) bool {
 // Returns the condensed slice and whether new versions need to re-dispatch
 // the current token (strategy-1 forks / missing-token versions created by a
 // resumed handle_error).
-func (p *Parser) cCondenseAndResume(stacks []glrStack, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) ([]glrStack, bool) {
+func (p *Parser) cCondenseAndResume(stacks []glrStack, source []byte, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) ([]glrStack, bool) {
 	relevant := false
 	for i := range stacks {
 		if stacks[i].cPaused || stacks[i].cRec != nil {
@@ -1711,7 +1714,7 @@ func (p *Parser) cCondenseAndResume(stacks []glrStack, tok Token, nodeCount *int
 			if p.glrTrace {
 				fmt.Printf("      -> C-RESUME stack=%d state=%d byte=%d\n", i, stacks[i].top().state, stacks[i].byteOffset)
 			}
-			outcome, redispatch := p.cHandleError(&stacks, i, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
+			outcome, redispatch := p.cHandleError(&stacks, i, source, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
 			if redispatch {
 				needsRedispatch = true
 			}
