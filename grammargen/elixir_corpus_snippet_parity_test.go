@@ -33,9 +33,15 @@ func TestElixirImportedDoEndStabClauseBodyParity(t *testing.T) {
 	assertGeneratedAndReferenceDeepParity(t, genLang, refLang, elixirDoEndStabClauseBodyCorpusBlock)
 }
 
-func TestElixirImportedQuotedInterpolationNoError(t *testing.T) {
-	genLang, refLang := loadImportedParityLanguages(t, "elixir")
-	assertGeneratedAndReferenceNoError(t, genLang, refLang, ":\"with #{1 + 1} interpol\"\n\"with #{1 + 1} interpol\"\n")
+func TestElixirImportedQuotedInterpolationDeepParity(t *testing.T) {
+	assertImportedDeepParityCases(t, "elixir", []struct {
+		name string
+		src  string
+	}{
+		{"quoted_atom", ":\"with #{1 + 1} interpol\"\n"},
+		{"string", "\"with #{1 + 1} interpol\"\n"},
+		{"quoted_keyword", "[\"with #{1 + 1} interpol\": 1]\n"},
+	})
 }
 
 func TestElixirImportedLRSplitCorpusSnippetParity(t *testing.T) {

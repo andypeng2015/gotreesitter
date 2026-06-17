@@ -14,6 +14,14 @@ func TestApplyImportGrammarShapeHintsPowerShellBinaryRepeat(t *testing.T) {
 	}
 }
 
+func TestApplyImportGrammarShapeHintsElixirPreciseExternalLexStates(t *testing.T) {
+	g := NewGrammar("elixir")
+	applyImportGrammarShapeHints(g)
+	if !g.PreferPreciseExternalLexStates {
+		t.Fatalf("elixir import should prefer precise external lex states")
+	}
+}
+
 func TestApplyImportGrammarPostShapeHintsPerlHeredocContent(t *testing.T) {
 	g := NewGrammar("perl")
 	g.Define("heredoc_content", Seq(

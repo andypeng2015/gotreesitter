@@ -519,7 +519,7 @@ func buildLRTablesInternal(bgCtx context.Context, ng *NormalizedGrammar, trackPr
 	// through the more precise core-based builder so we can preserve a canonical
 	// LR(1) prefix before any compaction starts.
 	usePreciseExternalBuilder := len(ng.ExternalSymbols) > 0
-	if len(ng.ExternalSymbols) >= 24 {
+	if len(ng.ExternalSymbols) >= 24 && !ng.PreferPreciseExternalLexStates {
 		usePreciseExternalBuilder = false
 	}
 	// Very large grammars (>5000 productions) are intractable for the LR(1)

@@ -29,6 +29,7 @@ func TestExtendGrammarCopiesImportMetadata(t *testing.T) {
 	base.PreferExpressionOperatorIdentifierReduces = true
 	base.PreferParenthesizedCallDoBlockReduces = true
 	base.PreferStabClauseLeftArrowReduces = true
+	base.PreferPreciseExternalLexStates = true
 	base.ChoiceLiftThreshold = 16
 	base.ExactPrefixStates = 2048
 	base.Test("identifier", "abc", "")
@@ -58,6 +59,9 @@ func TestExtendGrammarCopiesImportMetadata(t *testing.T) {
 	}
 	if !extended.PreferStabClauseLeftArrowReduces {
 		t.Fatalf("extension did not inherit stab-clause-left arrow reduce preference flag")
+	}
+	if !extended.PreferPreciseExternalLexStates {
+		t.Fatalf("extension did not inherit precise external lex-state preference flag")
 	}
 	if !slices.Equal(extended.ReuseRepeatAuxForParents, []string{"program", "statement_list"}) {
 		t.Fatalf("ReuseRepeatAuxForParents = %v, want [program statement_list]", extended.ReuseRepeatAuxForParents)
@@ -115,6 +119,7 @@ func TestEmitGrammarGoIncludesImportMetadata(t *testing.T) {
 	g.PreferExpressionOperatorIdentifierReduces = true
 	g.PreferParenthesizedCallDoBlockReduces = true
 	g.PreferStabClauseLeftArrowReduces = true
+	g.PreferPreciseExternalLexStates = true
 	g.ChoiceLiftThreshold = 8
 	g.ExactPrefixStates = 2048
 	g.Test("valid identifier", "abc", "(program (identifier))")
@@ -137,6 +142,7 @@ func TestEmitGrammarGoIncludesImportMetadata(t *testing.T) {
 		"g.PreferExpressionOperatorIdentifierReduces = true",
 		"g.PreferParenthesizedCallDoBlockReduces = true",
 		"g.PreferStabClauseLeftArrowReduces = true",
+		"g.PreferPreciseExternalLexStates = true",
 		"g.ChoiceLiftThreshold = 8",
 		"g.ExactPrefixStates = 2048",
 		"g.Test(\"valid identifier\", \"abc\", \"(program (identifier))\")",

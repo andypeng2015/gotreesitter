@@ -26,6 +26,11 @@ func applyImportGrammarShapeHints(g *Grammar) {
 		// before shifting the arrow into stab_clause. Otherwise `acc -> value`
 		// treats `->` as an operator identifier and never builds the clause.
 		g.PreferStabClauseLeftArrowReduces = true
+		// Elixir's quoted-content scanner intentionally declines when both the
+		// interpolating single- and double-quote content tokens are valid. After
+		// `#{...}`, merged external lex rows can expose both variants, making the
+		// normal lexer skip to the closing quote and truncate the quoted node.
+		g.PreferPreciseExternalLexStates = true
 	case "bash":
 		// Bash's external extglob token is intentionally broad. In merged LALR
 		// states, reduce-only lookaheads can otherwise ask the scanner for

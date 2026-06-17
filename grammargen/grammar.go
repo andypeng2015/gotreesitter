@@ -80,6 +80,7 @@ type Grammar struct {
 	PreferExpressionOperatorIdentifierReduces  bool          // prefer expression/binary-operator reduces over operator_identifier shifts for Elixir-style operators
 	PreferParenthesizedCallDoBlockReduces      bool          // prefer completed parenthesized calls over same-line do_block shifts for Elixir-style calls
 	PreferStabClauseLeftArrowReduces           bool          // prefer completed stab-clause left operands before Elixir-style -> shifts
+	PreferPreciseExternalLexStates             bool          // prefer LR(1)-precise external lex rows when merged rows lose scanner context
 	ExactPrefixStates                          int           // keep this many LR(1) states exact before merge compaction
 	Precedences                                [][]PrecEntry // ordered precedence levels (each level: earlier = higher prec)
 	ChoiceLiftThreshold                        int           // if >0, lift inline CHOICE nodes with more alternatives than this into auxiliary nonterminals to prevent production explosion
@@ -337,6 +338,7 @@ func ExtendGrammar(name string, base *Grammar, customize func(g *Grammar)) *Gram
 		PreferExpressionOperatorIdentifierReduces:  base.PreferExpressionOperatorIdentifierReduces,
 		PreferParenthesizedCallDoBlockReduces:      base.PreferParenthesizedCallDoBlockReduces,
 		PreferStabClauseLeftArrowReduces:           base.PreferStabClauseLeftArrowReduces,
+		PreferPreciseExternalLexStates:             base.PreferPreciseExternalLexStates,
 		ExactPrefixStates:                          base.ExactPrefixStates,
 		Precedences:                                clonePrecedenceLevels(base.Precedences),
 		ChoiceLiftThreshold:                        base.ChoiceLiftThreshold,
