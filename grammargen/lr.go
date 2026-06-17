@@ -3098,6 +3098,9 @@ func resolveActionConflict(lookaheadSym int, actions []lrAction, ng *NormalizedG
 		if preferred, ok := preferredAtomToExpressionOperatorIdentifierReduce(lookaheadSym, shifts, reduces, ng); ok {
 			return preferred, nil
 		}
+		if shouldKeepExpressionStructInitializerConflict(lookaheadSym, shifts, reduces, ng) {
+			return actions, nil
+		}
 
 		// Tree-sitter keeps S/R as GLR when the reduce LHS and a shift LHS
 		// are both in the same declared conflict group.
@@ -3307,6 +3310,41 @@ func resolveActionConflict(lookaheadSym int, actions []lrAction, ng *NormalizedG
 	}
 
 	return actions, nil
+}
+
+func shouldKeepExpressionStructInitializerConflict(lookaheadSym int, shifts, reduces []lrAction, ng *NormalizedGrammar) bool {
+	if ng == nil || lookaheadSym < 0 || lookaheadSym >= len(ng.Symbols) || ng.Symbols[lookaheadSym].Name != "{" {
+		return false
+	}
+	hasFieldInitializerShift := false
+	for _, shift := range shifts {
+		if shift.kind != lrShift || shift.lhsSym < 0 || shift.lhsSym >= len(ng.Symbols) {
+			continue
+		}
+		if ng.Symbols[shift.lhsSym].Name == "field_initializer_list" {
+			hasFieldInitializerShift = true
+			break
+		}
+	}
+	if !hasFieldInitializerShift {
+		return false
+	}
+	for _, reduce := range reduces {
+		if reduce.kind != lrReduce || reduce.prodIdx < 0 || reduce.prodIdx >= len(ng.Productions) {
+			continue
+		}
+		prod := &ng.Productions[reduce.prodIdx]
+		if prod.Prec != 0 || prod.LHS < 0 || prod.LHS >= len(ng.Symbols) {
+			continue
+		}
+		// In C tree-sitter this Rust table conflict is kept as GLR: after an
+		// identifier, "{" can either start a struct initializer's field list or
+		// a later block. The predecessor context decides which branch survives.
+		if ng.Symbols[prod.LHS].Name == "_expression_except_range" {
+			return true
+		}
+	}
+	return false
 }
 
 func isAssignmentOperatorLookahead(name string) bool {
@@ -4015,6 +4053,9 @@ func resolveReduceReduceLegacy(lookaheadSym int, reduces []lrAction, ng *Normali
 	if allInDeclaredConflict(reduces, ng, cache) {
 		return reduces, nil
 	}
+	if shouldKeepSameRHSExplicitNegativeReduces(lookaheadSym, reduces, ng) {
+		return reduces, nil
+	}
 	if shouldKeepTypeValueTokenReduces(lookaheadSym, reduces, ng) {
 		if resolvedByPrec := rrPrecResolve(reduces, ng); resolvedByPrec != nil {
 			return resolvedByPrec, nil
@@ -4393,6 +4434,56 @@ func shouldKeepDistinctRepeatReduces(reduces []lrAction, ng *NormalizedGrammar) 
 	}
 	// Must produce at least two distinct repeat helpers.
 	return len(lhsSet) >= 2
+}
+
+func shouldKeepSameRHSExplicitNegativeReduces(lookaheadSym int, reduces []lrAction, ng *NormalizedGrammar) bool {
+	if len(reduces) != 2 || ng == nil {
+		return false
+	}
+	if lookaheadSym < 0 || lookaheadSym >= len(ng.Symbols) || ng.Symbols[lookaheadSym].Name != "{" {
+		return false
+	}
+	seenScopedIdentifier := false
+	seenScopedTypeInExpression := false
+	seenNegativeScopedTypeInExpression := false
+	for _, reduce := range reduces {
+		if reduce.kind != lrReduce || reduce.prodIdx < 0 || reduce.prodIdx >= len(ng.Productions) {
+			return false
+		}
+		prod := &ng.Productions[reduce.prodIdx]
+		if prod.LHS < 0 || prod.LHS >= len(ng.Symbols) || !isScopedIdentifierRHS(prod.RHS, ng) {
+			return false
+		}
+		switch ng.Symbols[prod.LHS].Name {
+		case "scoped_identifier":
+			seenScopedIdentifier = true
+		case "scoped_type_identifier_in_expression_position":
+			seenScopedTypeInExpression = true
+			if prod.HasExplicitPrec && prod.Prec < 0 {
+				seenNegativeScopedTypeInExpression = true
+			}
+		default:
+			return false
+		}
+	}
+	// C tree-sitter preserves both same-RHS wrapper reductions here so the
+	// following "{" can still be parsed as a Rust struct expression. Choosing
+	// only the numerically higher scoped_identifier reduce loses that branch
+	// before parent context can disambiguate it.
+	return seenScopedIdentifier && seenScopedTypeInExpression && seenNegativeScopedTypeInExpression
+}
+
+func isScopedIdentifierRHS(rhs []int, ng *NormalizedGrammar) bool {
+	if len(rhs) != 3 {
+		return false
+	}
+	want := []string{"identifier", "::", "identifier"}
+	for i, sym := range rhs {
+		if sym < 0 || sym >= len(ng.Symbols) || ng.Symbols[sym].Name != want[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // shiftReduceInConflictGroup checks whether any (reduce LHS, shift LHS) pair

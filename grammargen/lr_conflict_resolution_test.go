@@ -652,6 +652,130 @@ func TestResolveShiftReduceHonorsExplicitZeroAssignmentAssociativity(t *testing.
 	}
 }
 
+func TestResolveShiftReduceKeepsExpressionStructInitializerAmbiguity(t *testing.T) {
+	ng := &NormalizedGrammar{
+		Symbols: []SymbolInfo{
+			{Name: "{", Kind: SymbolTerminal},
+			{Name: "identifier", Kind: SymbolNonterminal},
+			{Name: "_expression_except_range", Kind: SymbolNonterminal},
+			{Name: "field_initializer_list", Kind: SymbolNonterminal},
+		},
+		Productions: []Production{
+			{
+				LHS:             2,
+				RHS:             []int{1},
+				Assoc:           AssocLeft,
+				HasExplicitPrec: true,
+			},
+		},
+	}
+
+	got, err := resolveActionConflict(0, []lrAction{
+		{kind: lrShift, state: 9, lhsSym: 3},
+		{kind: lrReduce, prodIdx: 0, lhsSym: 2},
+	}, ng)
+	if err != nil {
+		t.Fatalf("resolveActionConflict: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("resolved actions = %+v, want expression reduce and field initializer shift kept", got)
+	}
+}
+
+func TestResolveShiftReduceStructInitializerAmbiguityRequiresExpressionReduce(t *testing.T) {
+	ng := &NormalizedGrammar{
+		Symbols: []SymbolInfo{
+			{Name: "{", Kind: SymbolTerminal},
+			{Name: "identifier", Kind: SymbolNonterminal},
+			{Name: "call_expression", Kind: SymbolNonterminal},
+			{Name: "field_initializer_list", Kind: SymbolNonterminal},
+		},
+		Productions: []Production{
+			{
+				LHS:             2,
+				RHS:             []int{1},
+				Assoc:           AssocLeft,
+				HasExplicitPrec: true,
+			},
+		},
+	}
+
+	got, err := resolveActionConflict(0, []lrAction{
+		{kind: lrShift, state: 9, lhsSym: 3},
+		{kind: lrReduce, prodIdx: 0, lhsSym: 2},
+	}, ng)
+	if err != nil {
+		t.Fatalf("resolveActionConflict: %v", err)
+	}
+	if len(got) != 1 || got[0].kind != lrReduce {
+		t.Fatalf("resolved actions = %+v, want normal explicit-left reduce", got)
+	}
+}
+
+func TestResolveReduceReduceKeepsSameRHSExplicitNegativeAmbiguity(t *testing.T) {
+	ng := &NormalizedGrammar{
+		Symbols: []SymbolInfo{
+			{Name: "{", Kind: SymbolTerminal},
+			{Name: "identifier", Kind: SymbolNonterminal},
+			{Name: "::", Kind: SymbolTerminal},
+			{Name: "scoped_identifier", Kind: SymbolNonterminal},
+			{Name: "scoped_type_identifier_in_expression_position", Kind: SymbolNonterminal},
+		},
+		Productions: []Production{
+			{LHS: 3, RHS: []int{1, 2, 1}},
+			{
+				LHS:             4,
+				RHS:             []int{1, 2, 1},
+				Prec:            -2,
+				HasExplicitPrec: true,
+			},
+		},
+	}
+
+	got, err := resolveActionConflict(0, []lrAction{
+		{kind: lrReduce, prodIdx: 0, lhsSym: 3},
+		{kind: lrReduce, prodIdx: 1, lhsSym: 4},
+	}, ng)
+	if err != nil {
+		t.Fatalf("resolveActionConflict: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("resolved actions = %+v, want both same-RHS wrapper reductions kept", got)
+	}
+}
+
+func TestResolveReduceReduceSameRHSExplicitNegativeRequiresScopedWrappers(t *testing.T) {
+	ng := &NormalizedGrammar{
+		Symbols: []SymbolInfo{
+			{Name: "{", Kind: SymbolTerminal},
+			{Name: "identifier", Kind: SymbolNonterminal},
+			{Name: "::", Kind: SymbolTerminal},
+			{Name: "wrapper_a", Kind: SymbolNonterminal},
+			{Name: "wrapper_b", Kind: SymbolNonterminal},
+		},
+		Productions: []Production{
+			{LHS: 3, RHS: []int{1, 2, 1}},
+			{
+				LHS:             4,
+				RHS:             []int{1, 2, 1},
+				Prec:            -2,
+				HasExplicitPrec: true,
+			},
+		},
+	}
+
+	got, err := resolveActionConflict(0, []lrAction{
+		{kind: lrReduce, prodIdx: 0, lhsSym: 3},
+		{kind: lrReduce, prodIdx: 1, lhsSym: 4},
+	}, ng)
+	if err != nil {
+		t.Fatalf("resolveActionConflict: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("resolved actions = %+v, want normal reduce/reduce precedence resolution", got)
+	}
+}
+
 func TestPropagateEntryShiftMetadataThroughRepeatHelper(t *testing.T) {
 	ng := &NormalizedGrammar{
 		Symbols: []SymbolInfo{
