@@ -953,12 +953,21 @@ func fullParseRetryMergePerKeyOverride(tree *Tree, sourceLen int, initialMaxStac
 		initialMaxStacks = maxGLRStacks
 	}
 	if rt.MaxStacksSeen < initialMaxStacks {
+		if fullParseNoStacksAliveCleanEOFNeedsMergeRetry(tree, rt) {
+			return fullParseRetryMaxMergePerKey
+		}
 		return 0
 	}
 	if tree.language != nil && tree.language.Name == "java" {
 		return javaFullParseRetryMaxMergePerKey
 	}
 	return fullParseRetryMaxMergePerKey
+}
+
+func fullParseNoStacksAliveCleanEOFNeedsMergeRetry(tree *Tree, rt ParseRuntime) bool {
+	return rt.StopReason == ParseStopNoStacksAlive &&
+		!rt.TokenSourceEOFEarly &&
+		!retryTreeHasError(tree)
 }
 
 func shouldRunInitialFullParseMergeRetry(tree *Tree) bool {
