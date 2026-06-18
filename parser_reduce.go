@@ -2184,13 +2184,13 @@ func (p *Parser) postReduceForkMergeHasFinalizationRisk(s *glrStack, tok Token) 
 	if p == nil || p.language == nil || s == nil || s.dead || s.depth() == 0 {
 		return true
 	}
+	if tok.NoLookahead {
+		return true
+	}
+	actionIdx := p.lookupActionIndex(s.top().state, 0)
 	if tok.Symbol != 0 {
 		return true
 	}
-	// Finalization materializes only the selected stack's inline GSS chain. GSS
-	// extra links are result-visible only after a later reduce spans them, so
-	// post-reduce packing is allowed only when EOF is known to force that reduce.
-	actionIdx := p.lookupActionIndex(s.top().state, 0)
 	if actionIdx == 0 {
 		return true
 	}
@@ -2202,7 +2202,10 @@ func (p *Parser) postReduceForkMergeHasFinalizationRisk(s *glrStack, tok Token) 
 		return true
 	}
 	act := actions[0]
-	return act.Type != ParseActionReduce || act.ChildCount == 0
+	if act.Type == ParseActionReduce {
+		return act.ChildCount == 0
+	}
+	return act.Type != ParseActionAccept
 }
 
 func (p *Parser) tryFastVisibleReduceActionFromGSS(s *glrStack, act ParseAction, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, deferParentLinks bool, trackChildErrors bool) bool {

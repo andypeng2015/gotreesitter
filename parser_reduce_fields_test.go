@@ -1122,6 +1122,79 @@ func TestBuildResultFromGLRWithGSSOnlyStack(t *testing.T) {
 	tree.Release()
 }
 
+func TestBuildResultFromGLRExpandsPackedGSSAlternateForFinalChoice(t *testing.T) {
+	lang := &Language{
+		Name:        "packed-result",
+		SymbolNames: []string{"EOF", "root"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF"},
+			{Name: "root", Visible: true, Named: true},
+		},
+	}
+	parser := &Parser{language: lang, hasRootSymbol: true, rootSymbol: 1}
+	source := []byte("x")
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	inlineErr := newLeafNodeInArena(arena, errorSymbol, true, 0, 1, Point{}, Point{Column: 1})
+	good := newLeafNodeInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+
+	var scratch gssScratch
+	base := scratch.allocNode(stackEntry{state: 1}, nil, 1)
+	head := scratch.allocNode(newStackEntryNode(2, inlineErr), base, 2)
+	head.extraLinks = append(head.extraLinks, gssMainLink{
+		prev:  base,
+		entry: newStackEntryNode(2, good),
+	})
+	stack := glrStack{accepted: true, gss: gssStack{head: head}, byteOffset: 1}
+
+	tree := parser.buildResultFromGLR([]glrStack{stack}, source, arena, nil, nil, nil, nil, nil, false, nil)
+	if tree == nil || tree.RootNode() == nil {
+		t.Fatal("buildResultFromGLR returned nil tree/root")
+	}
+	if tree.RootNode() != good {
+		t.Fatalf("root = %p (%s), want packed alternate %p", tree.RootNode(), tree.RootNode().Type(lang), good)
+	}
+	tree.Release()
+}
+
+func TestBuildResultFromGLRExpandsNestedPackedGSSAlternate(t *testing.T) {
+	lang := &Language{
+		Name:        "packed-result",
+		SymbolNames: []string{"EOF", "root"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF"},
+			{Name: "root", Visible: true, Named: true},
+		},
+	}
+	parser := &Parser{language: lang, hasRootSymbol: true, rootSymbol: 1}
+	source := []byte("x")
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	inlineErr := newLeafNodeInArena(arena, errorSymbol, true, 0, 1, Point{}, Point{Column: 1})
+	good := newLeafNodeInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+
+	var scratch gssScratch
+	base := scratch.allocNode(stackEntry{state: 1}, nil, 1)
+	packedBelowHead := scratch.allocNode(newStackEntryNode(2, inlineErr), base, 2)
+	packedBelowHead.extraLinks = append(packedBelowHead.extraLinks, gssMainLink{
+		prev:  base,
+		entry: newStackEntryNode(2, good),
+	})
+	commonHead := scratch.allocNode(stackEntry{state: 3}, packedBelowHead, 3)
+	stack := glrStack{accepted: true, gss: gssStack{head: commonHead}, byteOffset: 1}
+
+	tree := parser.buildResultFromGLR([]glrStack{stack}, source, arena, nil, nil, nil, nil, nil, false, nil)
+	if tree == nil || tree.RootNode() == nil {
+		t.Fatal("buildResultFromGLR returned nil tree/root")
+	}
+	if tree.RootNode() != good {
+		t.Fatalf("root = %p (%s), want nested packed alternate %p", tree.RootNode(), tree.RootNode().Type(lang), good)
+	}
+	tree.Release()
+}
+
 func TestBuildResultFromNodesUsesErrorRootForMultipleFragments(t *testing.T) {
 	lang := &Language{
 		SymbolNames:    []string{"number", "expression"},

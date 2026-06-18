@@ -161,7 +161,7 @@ func TestFaithfulForkReduceFromGSSLinkedWindowsCoalescesPostReduceHead(t *testin
 	}
 }
 
-func TestFaithfulForkReduceImmediateAcceptKeepsPendingFork(t *testing.T) {
+func TestFaithfulForkReduceImmediateAcceptPacksFinalizerVisibleFork(t *testing.T) {
 	old := glrFaithfulCapOneMerge
 	glrFaithfulCapOneMerge = true
 	t.Cleanup(func() { glrFaithfulCapOneMerge = old })
@@ -188,25 +188,19 @@ func TestFaithfulForkReduceImmediateAcceptKeepsPendingFork(t *testing.T) {
 	if nodeCount != 2 {
 		t.Fatalf("nodeCount = %d, want 2", nodeCount)
 	}
-	if got := stack.gss.head.linkCount(); got != 1 {
-		t.Fatalf("primary post-reduce head linkCount = %d, want 1", got)
+	if got := stack.gss.head.linkCount(); got != 2 {
+		t.Fatalf("primary post-reduce head linkCount = %d, want 2", got)
 	}
-	if len(parser.pendingForkStacks) != 1 {
-		t.Fatalf("pending forks = %d, want 1", len(parser.pendingForkStacks))
-	}
-	if got := parser.pendingForkStacks[0].gss.head.linkCount(); got != 1 {
-		t.Fatalf("pending post-reduce head linkCount = %d, want 1", got)
-	}
-	if stack.top().state != parser.pendingForkStacks[0].top().state {
-		t.Fatalf("primary top state = %d, pending top state = %d, want same accept-capable state", stack.top().state, parser.pendingForkStacks[0].top().state)
+	if len(parser.pendingForkStacks) != 0 {
+		t.Fatalf("pending forks = %d, want 0", len(parser.pendingForkStacks))
 	}
 	if perfCountersEnabled {
 		perf := PerfCountersSnapshot()
 		if perf.ReduceForkCalls != 1 || perf.ReduceForkWindows != 2 || perf.ReduceForkMaxWindows != 2 {
 			t.Fatalf("reduce fork counters = calls:%d windows:%d max:%d, want 1/2/2", perf.ReduceForkCalls, perf.ReduceForkWindows, perf.ReduceForkMaxWindows)
 		}
-		if perf.PostReduceMergeFinalizationRiskSkips != 1 || perf.PostReduceMergeAttempts != 0 || perf.PendingForkStackAppends != 1 || perf.PendingForkStacksMaxLen != 1 {
-			t.Fatalf("finalization-risk counters = skips:%d attempts:%d appends:%d max_pending:%d, want 1/0/1/1", perf.PostReduceMergeFinalizationRiskSkips, perf.PostReduceMergeAttempts, perf.PendingForkStackAppends, perf.PendingForkStacksMaxLen)
+		if perf.PostReduceMergeFinalizationRiskSkips != 0 || perf.PostReduceMergeAttempts != 1 || perf.PostReduceMergePrimarySuccesses != 1 || perf.PendingForkStackAppends != 0 {
+			t.Fatalf("accept merge counters = skips:%d attempts:%d primary:%d appends:%d, want 0/1/1/0", perf.PostReduceMergeFinalizationRiskSkips, perf.PostReduceMergeAttempts, perf.PostReduceMergePrimarySuccesses, perf.PendingForkStackAppends)
 		}
 	}
 }
@@ -323,8 +317,18 @@ func TestPostReduceForkMergeFinalizationRiskPredicate(t *testing.T) {
 			t.Fatal("risk = false, want true")
 		}
 	})
-	t.Run("non EOF lookahead", func(t *testing.T) {
-		parser := &Parser{language: &Language{}}
+	t.Run("real current-lookahead single childful reduce is risky", func(t *testing.T) {
+		parser := &Parser{language: &Language{SymbolMetadata: []SymbolMetadata{{Name: "eof"}}}}
+		setSyntheticEOFAction(t, parser, 2, []ParseAction{{Type: ParseActionReduce, Symbol: 3, ChildCount: 1}})
+		parser.language.ParseTable[2][1] = parser.language.ParseTable[2][0]
+		if !parser.postReduceForkMergeHasFinalizationRisk(stack, Token{Symbol: 1}) {
+			t.Fatal("risk = false, want true")
+		}
+	})
+	t.Run("non EOF shift lookahead", func(t *testing.T) {
+		parser := &Parser{language: &Language{SymbolMetadata: []SymbolMetadata{{Name: "eof"}}}}
+		setSyntheticEOFAction(t, parser, 2, []ParseAction{{Type: ParseActionShift, State: 3}})
+		parser.language.ParseTable[2][1] = parser.language.ParseTable[2][0]
 		if !parser.postReduceForkMergeHasFinalizationRisk(stack, Token{Symbol: 1}) {
 			t.Fatal("risk = false, want true")
 		}
@@ -364,10 +368,17 @@ func TestPostReduceForkMergeFinalizationRiskPredicate(t *testing.T) {
 			t.Fatal("risk = true, want false")
 		}
 	})
-	t.Run("single childful EOF reduce with no-lookahead is risky", func(t *testing.T) {
+	t.Run("EOF accept", func(t *testing.T) {
+		parser := &Parser{language: &Language{SymbolMetadata: []SymbolMetadata{{Name: "eof"}}}}
+		setSyntheticEOFAction(t, parser, 2, []ParseAction{{Type: ParseActionAccept}})
+		if parser.postReduceForkMergeHasFinalizationRisk(stack, eof) {
+			t.Fatal("risk = true, want false")
+		}
+	})
+	t.Run("no-lookahead is risky", func(t *testing.T) {
 		parser := &Parser{language: &Language{SymbolMetadata: []SymbolMetadata{{Name: "eof"}}}}
 		setSyntheticEOFAction(t, parser, 2, []ParseAction{{Type: ParseActionReduce, Symbol: 3, ChildCount: 1}})
-		if !parser.postReduceForkMergeHasFinalizationRisk(stack, Token{Symbol: 1, NoLookahead: true}) {
+		if !parser.postReduceForkMergeHasFinalizationRisk(stack, Token{Symbol: 0, NoLookahead: true}) {
 			t.Fatal("risk = false, want true")
 		}
 	})
@@ -384,6 +395,13 @@ func TestPostReduceForkMergeFinalizationRiskPredicate(t *testing.T) {
 			{Type: ParseActionReduce, Symbol: 3, ChildCount: 1},
 			{Type: ParseActionAccept},
 		})
+		if !parser.postReduceForkMergeHasFinalizationRisk(stack, eof) {
+			t.Fatal("risk = false, want true")
+		}
+	})
+	t.Run("single EOF shift", func(t *testing.T) {
+		parser := &Parser{language: &Language{SymbolMetadata: []SymbolMetadata{{Name: "eof"}}}}
+		setSyntheticEOFAction(t, parser, 2, []ParseAction{{Type: ParseActionShift, State: 3}})
 		if !parser.postReduceForkMergeHasFinalizationRisk(stack, eof) {
 			t.Fatal("risk = false, want true")
 		}

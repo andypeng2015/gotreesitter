@@ -114,6 +114,7 @@ func (p *Parser) buildResultFromGLR(stacks []glrStack, source []byte, arena *nod
 	if len(stacks) == 0 {
 		return parseErrorTreeWithArena(source, p.language, arena)
 	}
+	stacks = expandPackedGSSResultPaths(stacks)
 	selectionStart := time.Time{}
 	if materializationTiming != nil {
 		selectionStart = time.Now()
@@ -189,6 +190,75 @@ func (p *Parser) buildResultFromGLR(stacks []glrStack, source []byte, arena *nod
 		materializationTiming.resultTreeBuildNanos += time.Since(buildStart).Nanoseconds()
 	}
 	return tree
+}
+
+func expandPackedGSSResultPaths(stacks []glrStack) []glrStack {
+	var expanded []glrStack
+	for i := range stacks {
+		s := stacks[i]
+		if len(s.entries) > 0 || s.gss.head == nil || !gssInlineChainHasPackedLinks(s.gss.head) {
+			if expanded != nil {
+				expanded = append(expanded, s)
+			}
+			continue
+		}
+		if expanded == nil {
+			expanded = make([]glrStack, 0, len(stacks)+1)
+			expanded = append(expanded, stacks[:i]...)
+		}
+		expanded = appendExpandedGSSResultPaths(expanded, s, maxStacksPerMergeKey)
+	}
+	if expanded == nil {
+		return stacks
+	}
+	return expanded
+}
+
+func gssInlineChainHasPackedLinks(n *gssNode) bool {
+	for ; n != nil; n = n.prev {
+		if n.linkCount() > 1 {
+			return true
+		}
+	}
+	return false
+}
+
+func appendExpandedGSSResultPaths(dst []glrStack, source glrStack, capPerStack int) []glrStack {
+	if capPerStack <= 0 {
+		capPerStack = 1
+	}
+	startLen := len(dst)
+	revPath := make([]stackEntry, 0, source.depth())
+	var dfs func(*gssNode)
+	dfs = func(n *gssNode) {
+		if n == nil {
+			if capPerStack == 0 {
+				return
+			}
+			pathLen := len(revPath)
+			entries := make([]stackEntry, pathLen)
+			for i := 0; i < pathLen; i++ {
+				entries[i] = revPath[pathLen-1-i]
+			}
+			candidate := source
+			candidate.gss = gssStack{}
+			candidate.entries = entries
+			dst = append(dst, candidate)
+			capPerStack--
+			return
+		}
+		for i, count := 0, n.linkCount(); i < count && capPerStack > 0; i++ {
+			prev, entry := n.link(i)
+			revPath = append(revPath, entry)
+			dfs(prev)
+			revPath = revPath[:len(revPath)-1]
+		}
+	}
+	dfs(source.gss.head)
+	if len(dst) > startLen {
+		return dst
+	}
+	return append(dst, source)
 }
 
 func materializeTransientParentEntries(entries []stackEntry, arena *nodeArena, transientParents *transientParentScratch, transientChildren *transientChildScratch, p *Parser) ParseStopReason {
