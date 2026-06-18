@@ -430,6 +430,41 @@ func TestDartPrivateConstructorDeclarationBuildsConstructorSignature(t *testing.
 	}
 }
 
+func TestDartEnhancedEnumUnnamedConstructorBuildsConstructorSignature(t *testing.T) {
+	src := []byte("enum LogPriority { warning; LogPriority(this.priority, this.prefix); final int priority; final String prefix; }\n")
+	parser := ts.NewParser(DartLanguage())
+	tree, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	root := tree.RootNode()
+	if root == nil {
+		t.Fatal("missing root node")
+	}
+	if tree.ParseStopReason() != ts.ParseStopAccepted {
+		t.Fatalf("stop=%s runtime=%s", tree.ParseStopReason(), tree.ParseRuntime().Summary())
+	}
+	if root.HasError() {
+		t.Fatalf("expected enhanced enum constructor to parse cleanly, got %s", root.SExpr(DartLanguage()))
+	}
+	enumDecl := root.NamedChild(0)
+	if enumDecl == nil || enumDecl.Type(DartLanguage()) != "enum_declaration" {
+		t.Fatalf("first named child = %v, want enum_declaration; tree=%s", enumDecl, root.SExpr(DartLanguage()))
+	}
+	body := enumDecl.ChildByFieldName("body", DartLanguage())
+	if body == nil || body.NamedChildCount() < 2 {
+		t.Fatalf("enum body missing constructor declaration; tree=%s", root.SExpr(DartLanguage()))
+	}
+	decl := body.NamedChild(1)
+	if decl == nil || decl.Type(DartLanguage()) != "declaration" {
+		t.Fatalf("enum constructor declaration = %v, want declaration; tree=%s", decl, root.SExpr(DartLanguage()))
+	}
+	sig := decl.NamedChild(0)
+	if sig == nil || sig.Type(DartLanguage()) != "constructor_signature" {
+		t.Fatalf("signature = %v, want constructor_signature; tree=%s", sig, root.SExpr(DartLanguage()))
+	}
+}
+
 func TestDartNullableTypeAndNullLiteralRestoreAnonymousChildren(t *testing.T) {
 	lang := DartLanguage()
 	if sym, ok := lang.SymbolByName("?"); !ok {

@@ -546,7 +546,7 @@ func normalizeDartConstructorSignatureKinds(root *Node, source []byte, lang *Lan
 	parametersID, _ := lang.FieldByName("parameters")
 	constructorNamed := symbolIsNamed(lang, constructorSym)
 	walkResultTree(root, func(n *Node) {
-		if n.Type(lang) == "class_definition" {
+		if dartConstructorOwnerType(n.Type(lang)) {
 			className := n.ChildByFieldName("name", lang)
 			body := n.ChildByFieldName("body", lang)
 			if className != nil && body != nil {
@@ -579,6 +579,15 @@ func normalizeDartConstructorSignatureKinds(root *Node, source []byte, lang *Lan
 			}
 		}
 	})
+}
+
+func dartConstructorOwnerType(typ string) bool {
+	switch typ {
+	case "class_definition", "enum_declaration":
+		return true
+	default:
+		return false
+	}
 }
 
 func dartConstructorCandidateSignature(member *Node, lang *Language) *Node {
