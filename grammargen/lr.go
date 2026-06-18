@@ -3088,7 +3088,10 @@ func resolveActionConflict(lookaheadSym int, actions []lrAction, ng *NormalizedG
 
 	// Shift/reduce conflict.
 	if len(shifts) > 0 && len(reduces) > 0 {
-		if repeated, ok := repetitionShiftActions(lookaheadSym, shifts, reduces, ng); ok {
+		if repeated, ok := repetitionShiftActions(lookaheadSym, shifts, reduces, ng, cache); ok {
+			return repeated, nil
+		}
+		if repeated, ok := loweredRepeatMixedContinuationActions(lookaheadSym, shifts, reduces, ng, cache); ok {
 			return repeated, nil
 		}
 
@@ -3239,6 +3242,9 @@ func resolveActionConflict(lookaheadSym int, actions []lrAction, ng *NormalizedG
 					if preferred, ok := preferredSameLHSContinuationShift(shifts, reduces, ng, cache); ok {
 						return []lrAction{preferred}, nil
 					}
+					if preferred, ok := preferredLoweredRepeatContinuationShift(lookaheadSym, shifts, reduces, ng, cache); ok {
+						return []lrAction{preferred}, nil
+					}
 				}
 				switch prod.Assoc {
 				case AssocLeft:
@@ -3315,6 +3321,9 @@ func resolveActionConflict(lookaheadSym int, actions []lrAction, ng *NormalizedG
 			switch prod.Assoc {
 			case AssocLeft:
 				if preferred, ok := preferredSameLHSContinuationShift(shifts, reduces, ng, cache); ok {
+					return []lrAction{preferred}, nil
+				}
+				if preferred, ok := preferredLoweredRepeatContinuationShift(lookaheadSym, shifts, reduces, ng, cache); ok {
 					return []lrAction{preferred}, nil
 				}
 				return []lrAction{reduce}, nil
@@ -3396,6 +3405,181 @@ func leftAssocReduceContinuesWithShift(reduce, shift lrAction, ng *NormalizedGra
 		}
 	}
 	return false
+}
+
+func preferredLoweredRepeatContinuationShift(lookaheadSym int, shifts, reduces []lrAction, ng *NormalizedGrammar, cache *conflictResolutionCache) (lrAction, bool) {
+	if ng == nil || cache == nil || len(shifts) != 1 || len(reduces) != 1 ||
+		lookaheadSym < 0 || lookaheadSym >= len(ng.Symbols) {
+		return lrAction{}, false
+	}
+	shift := shifts[0]
+	reduce := reduces[0]
+	if shift.kind != lrShift || reduce.kind != lrReduce ||
+		reduce.prodIdx < 0 || reduce.prodIdx >= len(ng.Productions) {
+		return lrAction{}, false
+	}
+	prod := &ng.Productions[reduce.prodIdx]
+	if prod.Assoc != AssocLeft || prod.LHS < 0 || prod.LHS >= len(cache.prodsByLHS) || len(prod.RHS) < 2 {
+		return lrAction{}, false
+	}
+	lookaheadTargets := map[int]bool{lookaheadSym: true}
+	shiftTargets := shiftContinuationTargets(shift, len(ng.Symbols))
+	if len(shiftTargets) == 0 {
+		return lrAction{}, false
+	}
+	for split := 1; split < len(prod.RHS); split++ {
+		prefix := prod.RHS[:split]
+		unit := prod.RHS[split:]
+		if !rhsCanBeginWithAny(unit, lookaheadTargets, cache, ng) ||
+			!rhsCanBeginWithAny(unit, shiftTargets, cache, ng) {
+			continue
+		}
+		if loweredRepeatSiblingContinuesUnit(prod.LHS, prefix, unit, ng, cache) {
+			return shift, true
+		}
+	}
+	return lrAction{}, false
+}
+
+// loweredRepeatSiblingContinuesUnit recognizes grammar.js repeat lowering of a
+// left-associative production A -> P U into a sibling A -> P R where repeat
+// helper R starts with the same continuation unit U. In that shape, shifting U
+// continues A rather than starting an unrelated operator expression.
+func loweredRepeatSiblingContinuesUnit(lhs int, prefix, unit []int, ng *NormalizedGrammar, cache *conflictResolutionCache) bool {
+	for _, prodIdx := range cache.prodsByLHS[lhs] {
+		if prodIdx < 0 || prodIdx >= len(ng.Productions) {
+			continue
+		}
+		candidate := &ng.Productions[prodIdx]
+		if candidate.LHS != lhs || len(candidate.RHS) != len(prefix)+1 {
+			continue
+		}
+		if !rhsHasPrefix(candidate.RHS, prefix) {
+			continue
+		}
+		repeatSym := candidate.RHS[len(prefix)]
+		if repeatSym < 0 || repeatSym >= len(ng.Symbols) ||
+			ng.Symbols[repeatSym].Kind != SymbolNonterminal ||
+			!strings.Contains(ng.Symbols[repeatSym].Name, "repeat") {
+			continue
+		}
+		if repeatHelperCanBeginUnit(repeatSym, unit, ng, cache) {
+			return true
+		}
+	}
+	return false
+}
+
+func repeatHelperCanBeginUnit(repeatSym int, unit []int, ng *NormalizedGrammar, cache *conflictResolutionCache) bool {
+	if repeatSym < 0 || repeatSym >= len(cache.prodsByLHS) || len(unit) == 0 {
+		return false
+	}
+	for _, prodIdx := range cache.prodsByLHS[repeatSym] {
+		if prodIdx < 0 || prodIdx >= len(ng.Productions) {
+			continue
+		}
+		rhs := ng.Productions[prodIdx].RHS
+		if rhsHasPrefix(rhs, unit) {
+			return true
+		}
+		if len(rhs) > 0 && rhs[0] == repeatSym && rhsHasPrefix(rhs[1:], unit) {
+			return true
+		}
+	}
+	return false
+}
+
+// loweredRepeatMixedContinuationActions handles the same lowered-repeat shape
+// when a conflict row contains both the visible parent reduce and the repeat
+// helper tail reduce. Keeping the helper reduce plus a repeat-marked shift
+// matches tree-sitter's repeat continuation behavior while dropping the parent
+// reduce that would prematurely materialize the visible node.
+func loweredRepeatMixedContinuationActions(lookaheadSym int, shifts, reduces []lrAction, ng *NormalizedGrammar, cache *conflictResolutionCache) ([]lrAction, bool) {
+	if ng == nil || cache == nil || len(shifts) != 1 || len(reduces) != 2 ||
+		lookaheadSym < 0 || lookaheadSym >= len(ng.Symbols) {
+		return nil, false
+	}
+	shift := shifts[0]
+	if shift.kind != lrShift {
+		return nil, false
+	}
+	var parentReduce, repeatReduce lrAction
+	var haveParentReduce, haveRepeatReduce bool
+	for _, reduce := range reduces {
+		if reduce.kind != lrReduce || reduce.prodIdx < 0 || reduce.prodIdx >= len(ng.Productions) {
+			return nil, false
+		}
+		if isRepeatHelperReduce(reduce, ng) {
+			if haveRepeatReduce {
+				return nil, false
+			}
+			repeatReduce = reduce
+			haveRepeatReduce = true
+		} else {
+			if haveParentReduce {
+				return nil, false
+			}
+			parentReduce = reduce
+			haveParentReduce = true
+		}
+	}
+	if !haveParentReduce || !haveRepeatReduce {
+		return nil, false
+	}
+	parent := &ng.Productions[parentReduce.prodIdx]
+	repeat := &ng.Productions[repeatReduce.prodIdx]
+	if parent.Assoc != AssocLeft || parent.LHS < 0 || parent.LHS >= len(cache.prodsByLHS) ||
+		repeat.LHS < 0 || repeat.LHS >= len(ng.Symbols) || len(parent.RHS) < 2 {
+		return nil, false
+	}
+	lookaheadTargets := map[int]bool{lookaheadSym: true}
+	shiftTargets := shiftContinuationTargets(shift, len(ng.Symbols))
+	if len(shiftTargets) == 0 {
+		return nil, false
+	}
+	for split := 1; split < len(parent.RHS); split++ {
+		prefix := parent.RHS[:split]
+		unit := parent.RHS[split:]
+		if !rhsCanBeginWithAny(unit, lookaheadTargets, cache, ng) ||
+			!rhsCanBeginWithAny(unit, shiftTargets, cache, ng) ||
+			!loweredRepeatSiblingMatches(parent.LHS, prefix, repeat.LHS, ng, cache) ||
+			!repeatReduceContinuesUnit(repeat, unit) {
+			continue
+		}
+		shift.repeat = true
+		return []lrAction{repeatReduce, shift}, true
+	}
+	return nil, false
+}
+
+func loweredRepeatSiblingMatches(lhs int, prefix []int, repeatSym int, ng *NormalizedGrammar, cache *conflictResolutionCache) bool {
+	if lhs < 0 || lhs >= len(cache.prodsByLHS) ||
+		repeatSym < 0 || repeatSym >= len(ng.Symbols) ||
+		ng.Symbols[repeatSym].Kind != SymbolNonterminal ||
+		!strings.Contains(ng.Symbols[repeatSym].Name, "repeat") {
+		return false
+	}
+	for _, prodIdx := range cache.prodsByLHS[lhs] {
+		if prodIdx < 0 || prodIdx >= len(ng.Productions) {
+			continue
+		}
+		candidate := &ng.Productions[prodIdx]
+		if candidate.LHS == lhs && len(candidate.RHS) == len(prefix)+1 &&
+			rhsHasPrefix(candidate.RHS, prefix) && candidate.RHS[len(prefix)] == repeatSym {
+			return true
+		}
+	}
+	return false
+}
+
+func repeatReduceContinuesUnit(repeat *Production, unit []int) bool {
+	if repeat == nil || len(unit) == 0 {
+		return false
+	}
+	if rhsHasPrefix(repeat.RHS, unit) {
+		return true
+	}
+	return len(repeat.RHS) > 0 && repeat.RHS[0] == repeat.LHS && rhsHasPrefix(repeat.RHS[1:], unit)
 }
 
 func shiftContinuationTargets(shift lrAction, symbolCount int) map[int]bool {
@@ -4258,7 +4442,7 @@ func isVisibleKeywordIdentifierReduce(action lrAction, ng *NormalizedGrammar) bo
 	return sym.Kind == SymbolTerminal && sym.Visible && !sym.Named
 }
 
-func repetitionShiftActions(lookaheadSym int, shifts, reduces []lrAction, ng *NormalizedGrammar) ([]lrAction, bool) {
+func repetitionShiftActions(lookaheadSym int, shifts, reduces []lrAction, ng *NormalizedGrammar, cache *conflictResolutionCache) ([]lrAction, bool) {
 	if len(shifts) != 1 || len(reduces) == 0 {
 		return nil, false
 	}
@@ -4268,7 +4452,8 @@ func repetitionShiftActions(lookaheadSym int, shifts, reduces []lrAction, ng *No
 		}
 	}
 	shift := shifts[0]
-	if !shift.repeat && lookaheadSym != shift.lhsSym {
+	if !shift.repeat && lookaheadSym != shift.lhsSym &&
+		!recursiveRepeatShiftCanContinueLookahead(lookaheadSym, shift, reduces, ng, cache) {
 		return nil, false
 	}
 	kept := make([]lrAction, 0, len(reduces)+1)
@@ -4276,6 +4461,40 @@ func repetitionShiftActions(lookaheadSym int, shifts, reduces []lrAction, ng *No
 	shift.repeat = true
 	kept = append(kept, shift)
 	return kept, true
+}
+
+func recursiveRepeatShiftCanContinueLookahead(lookaheadSym int, shift lrAction, reduces []lrAction, ng *NormalizedGrammar, cache *conflictResolutionCache) bool {
+	if ng == nil || cache == nil || lookaheadSym < 0 || lookaheadSym >= len(ng.Symbols) {
+		return false
+	}
+	shiftTargets := shiftContinuationTargets(shift, len(ng.Symbols))
+	if len(shiftTargets) == 0 {
+		return false
+	}
+	lookaheadTargets := map[int]bool{lookaheadSym: true}
+	for _, reduce := range reduces {
+		if reduce.kind != lrReduce || reduce.prodIdx < 0 || reduce.prodIdx >= len(ng.Productions) {
+			return false
+		}
+		prod := &ng.Productions[reduce.prodIdx]
+		if prod.LHS < 0 || prod.LHS >= len(ng.Symbols) {
+			return false
+		}
+		for i, sym := range prod.RHS {
+			if sym != prod.LHS {
+				continue
+			}
+			tail := prod.RHS[i+1:]
+			if len(tail) == 0 {
+				continue
+			}
+			if rhsCanBeginWithAny(tail, lookaheadTargets, cache, ng) &&
+				rhsCanBeginWithAny(tail, shiftTargets, cache, ng) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func isRecursiveRepeatReduce(action lrAction, ng *NormalizedGrammar) bool {

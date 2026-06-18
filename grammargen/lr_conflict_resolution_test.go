@@ -745,6 +745,83 @@ func TestResolveShiftReducePrefersSameLHSContinuationShift(t *testing.T) {
 	}
 }
 
+func TestResolveShiftReducePrefersLoweredRepeatContinuationShift(t *testing.T) {
+	ng := loweredRepeatContinuationGrammar()
+
+	got, err := resolveActionConflict(0, []lrAction{
+		{kind: lrShift, state: 9, lhsSym: 2},
+		{kind: lrReduce, prodIdx: 0, lhsSym: 3},
+	}, ng)
+	if err != nil {
+		t.Fatalf("resolveActionConflict: %v", err)
+	}
+	if len(got) != 1 || got[0].kind != lrShift || got[0].state != 9 {
+		t.Fatalf("resolved actions = %+v, want lowered-repeat continuation shift", got)
+	}
+}
+
+func TestResolveActionConflictKeepsRecursiveRepeatShiftByLookaheadFirstSet(t *testing.T) {
+	ng := loweredRepeatContinuationGrammar()
+
+	got, err := resolveActionConflict(0, []lrAction{
+		{kind: lrShift, state: 9, lhsSym: 2},
+		{kind: lrReduce, prodIdx: 3, lhsSym: 4},
+	}, ng)
+	if err != nil {
+		t.Fatalf("resolveActionConflict: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("resolved actions = %+v, want recursive repeat reduce plus shift", got)
+	}
+	if got[0].kind != lrReduce || got[0].prodIdx != 3 {
+		t.Fatalf("first action = %+v, want recursive repeat reduce", got[0])
+	}
+	if got[1].kind != lrShift || !got[1].repeat || got[1].state != 9 {
+		t.Fatalf("second action = %+v, want repeat shift", got[1])
+	}
+}
+
+func TestResolveShiftReduceKeepsLoweredRepeatMixedContinuation(t *testing.T) {
+	ng := loweredRepeatContinuationGrammar()
+
+	got, err := resolveActionConflict(0, []lrAction{
+		{kind: lrShift, state: 9, lhsSym: 2},
+		{kind: lrReduce, prodIdx: 0, lhsSym: 3},
+		{kind: lrReduce, prodIdx: 4, lhsSym: 4},
+	}, ng)
+	if err != nil {
+		t.Fatalf("resolveActionConflict: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("resolved actions = %+v, want repeat-helper reduce plus shift", got)
+	}
+	if got[0].kind != lrReduce || got[0].prodIdx != 4 {
+		t.Fatalf("first action = %+v, want repeat-helper tail reduce", got[0])
+	}
+	if got[1].kind != lrShift || !got[1].repeat || got[1].state != 9 {
+		t.Fatalf("second action = %+v, want repeat shift", got[1])
+	}
+}
+
+func loweredRepeatContinuationGrammar() *NormalizedGrammar {
+	return &NormalizedGrammar{
+		Symbols: []SymbolInfo{
+			{Name: "op", Kind: SymbolTerminal},
+			{Name: "prefix", Kind: SymbolNonterminal},
+			{Name: "unit", Kind: SymbolNonterminal},
+			{Name: "section", Kind: SymbolNonterminal},
+			{Name: "section_repeat1", Kind: SymbolNonterminal},
+		},
+		Productions: []Production{
+			{LHS: 3, RHS: []int{1, 2}, Assoc: AssocLeft, HasExplicitPrec: true},
+			{LHS: 3, RHS: []int{1, 4}, Assoc: AssocLeft, HasExplicitPrec: true},
+			{LHS: 2, RHS: []int{0}},
+			{LHS: 4, RHS: []int{4, 2}},
+			{LHS: 4, RHS: []int{2, 2}},
+		},
+	}
+}
+
 func TestResolveShiftReduceUsesContributorSymbolVsNamedPrecedence(t *testing.T) {
 	ng := javascriptUpdateExpressionConflictGrammar(false)
 
