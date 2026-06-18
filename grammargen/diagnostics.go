@@ -686,6 +686,7 @@ func generateWithReportCtx(bgCtx context.Context, g *Grammar, opts reportBuildOp
 		return nil, fmt.Errorf("assemble: %w", err)
 	}
 	lang.Name = g.Name
+	repairGeneratedCompatibilitySymbols(lang)
 
 	if len(keywordLexStates) > 0 {
 		lang.KeywordLexStates = keywordLexStates

@@ -107,3 +107,39 @@ func decodeLanguageBlob(data []byte) (*gotreesitter.Language, error) {
 	}
 	return &lang, nil
 }
+
+func repairGeneratedCompatibilitySymbols(lang *gotreesitter.Language) {
+	if lang == nil {
+		return
+	}
+	switch lang.Name {
+	case "dart":
+		repairGeneratedCollapsedLeafTokenSymbol(lang, "nullable_type", "?")
+		repairGeneratedCollapsedLeafTokenSymbol(lang, "null_literal", "null")
+	}
+}
+
+func repairGeneratedCollapsedLeafTokenSymbol(lang *gotreesitter.Language, parentName, childName string) {
+	if !generatedLanguageHasSymbolName(lang, parentName) || generatedLanguageHasSymbolName(lang, childName) {
+		return
+	}
+	for len(lang.SymbolMetadata) < len(lang.SymbolNames) {
+		lang.SymbolMetadata = append(lang.SymbolMetadata, gotreesitter.SymbolMetadata{})
+	}
+	lang.SymbolNames = append(lang.SymbolNames, childName)
+	lang.SymbolMetadata = append(lang.SymbolMetadata, gotreesitter.SymbolMetadata{
+		Name:    childName,
+		Visible: true,
+		Named:   false,
+	})
+	lang.SymbolCount = uint32(len(lang.SymbolNames))
+}
+
+func generatedLanguageHasSymbolName(lang *gotreesitter.Language, name string) bool {
+	for _, symbolName := range lang.SymbolNames {
+		if symbolName == name {
+			return true
+		}
+	}
+	return false
+}
