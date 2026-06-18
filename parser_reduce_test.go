@@ -29,6 +29,45 @@ func buildTwoWindowFullGSSReduceCase(t *testing.T, scratch *gssScratch, arena *n
 	return parser, stack, act
 }
 
+func setSyntheticEOFAction(t *testing.T, parser *Parser, state StateID, actions []ParseAction) {
+	t.Helper()
+	if parser == nil || parser.language == nil {
+		t.Fatal("parser/language must be initialized")
+	}
+	if parser.language.SymbolCount == 0 {
+		parser.language.SymbolCount = 4
+	}
+	if parser.language.TokenCount == 0 {
+		parser.language.TokenCount = 3
+	}
+	if parser.language.StateCount <= uint32(state) {
+		parser.language.StateCount = uint32(state) + 1
+	}
+	for len(parser.language.ParseTable) <= int(state) {
+		parser.language.ParseTable = append(parser.language.ParseTable, make([]uint16, parser.language.SymbolCount))
+	}
+	for i := range parser.language.ParseTable {
+		if len(parser.language.ParseTable[i]) < int(parser.language.SymbolCount) {
+			row := make([]uint16, parser.language.SymbolCount)
+			copy(row, parser.language.ParseTable[i])
+			parser.language.ParseTable[i] = row
+		}
+	}
+	if len(parser.language.ParseActions) == 0 {
+		parser.language.ParseActions = append(parser.language.ParseActions, ParseActionEntry{})
+	}
+	parser.language.ParseActions = append(parser.language.ParseActions, ParseActionEntry{Actions: actions})
+	parser.language.ParseTable[state][0] = uint16(len(parser.language.ParseActions) - 1)
+	parser.denseLimit = len(parser.language.ParseTable)
+}
+
+func setSyntheticPostReducePackingSafeEOF(t *testing.T, parser *Parser, states ...StateID) {
+	t.Helper()
+	for _, state := range states {
+		setSyntheticEOFAction(t, parser, state, []ParseAction{{Type: ParseActionReduce, Symbol: 3, ChildCount: 1}})
+	}
+}
+
 func TestFastVisibleReduceFromGSSDeclinesMultiLinkSpan(t *testing.T) {
 	old := glrFaithfulCapOneMerge
 	glrFaithfulCapOneMerge = true
@@ -79,12 +118,16 @@ func TestFaithfulForkReduceFromGSSLinkedWindowsCoalescesPostReduceHead(t *testin
 	old := glrFaithfulCapOneMerge
 	glrFaithfulCapOneMerge = true
 	t.Cleanup(func() { glrFaithfulCapOneMerge = old })
+	if perfCountersEnabled {
+		ResetPerfCounters()
+	}
 
 	arena := acquireNodeArena(arenaClassFull)
 	defer arena.Release()
 
 	var scratch gssScratch
 	parser, stack, act := buildTwoWindowFullGSSReduceCase(t, &scratch, arena)
+	setSyntheticPostReducePackingSafeEOF(t, parser, 1)
 	var anyReduced bool
 	nodeCount := 0
 
@@ -107,32 +150,31 @@ func TestFaithfulForkReduceFromGSSLinkedWindowsCoalescesPostReduceHead(t *testin
 	if got := stack.gss.head.linkCount(); got != 2 {
 		t.Fatalf("post-reduce head linkCount = %d, want 2", got)
 	}
+	if perfCountersEnabled {
+		perf := PerfCountersSnapshot()
+		if perf.ReduceForkCalls != 1 || perf.ReduceForkWindows != 2 || perf.ReduceForkMaxWindows != 2 {
+			t.Fatalf("reduce fork counters = calls:%d windows:%d max:%d, want 1/2/2", perf.ReduceForkCalls, perf.ReduceForkWindows, perf.ReduceForkMaxWindows)
+		}
+		if perf.PostReduceMergeAttempts != 1 || perf.PostReduceMergePrimarySuccesses != 1 || perf.PendingForkStackAppends != 0 {
+			t.Fatalf("post-reduce merge counters = attempts:%d primary:%d appends:%d, want 1/1/0", perf.PostReduceMergeAttempts, perf.PostReduceMergePrimarySuccesses, perf.PendingForkStackAppends)
+		}
+	}
 }
 
 func TestFaithfulForkReduceImmediateAcceptKeepsPendingFork(t *testing.T) {
 	old := glrFaithfulCapOneMerge
 	glrFaithfulCapOneMerge = true
 	t.Cleanup(func() { glrFaithfulCapOneMerge = old })
+	if perfCountersEnabled {
+		ResetPerfCounters()
+	}
 
 	arena := acquireNodeArena(arenaClassFull)
 	defer arena.Release()
 
 	var scratch gssScratch
 	parser, stack, act := buildTwoWindowFullGSSReduceCase(t, &scratch, arena)
-	parser.language.StateCount = 4
-	parser.language.SymbolCount = 4
-	parser.language.TokenCount = 3
-	parser.language.ParseActions = []ParseActionEntry{
-		{},
-		{Actions: []ParseAction{{Type: ParseActionAccept}}},
-	}
-	parser.language.ParseTable = [][]uint16{
-		{0, 0, 0, 0},
-		{1, 0, 0, 0},
-		{0, 0, 0, 0},
-		{0, 0, 0, 0},
-	}
-	parser.denseLimit = len(parser.language.ParseTable)
+	setSyntheticEOFAction(t, parser, 1, []ParseAction{{Type: ParseActionAccept}})
 	var anyReduced bool
 	nodeCount := 0
 
@@ -158,6 +200,15 @@ func TestFaithfulForkReduceImmediateAcceptKeepsPendingFork(t *testing.T) {
 	if stack.top().state != parser.pendingForkStacks[0].top().state {
 		t.Fatalf("primary top state = %d, pending top state = %d, want same accept-capable state", stack.top().state, parser.pendingForkStacks[0].top().state)
 	}
+	if perfCountersEnabled {
+		perf := PerfCountersSnapshot()
+		if perf.ReduceForkCalls != 1 || perf.ReduceForkWindows != 2 || perf.ReduceForkMaxWindows != 2 {
+			t.Fatalf("reduce fork counters = calls:%d windows:%d max:%d, want 1/2/2", perf.ReduceForkCalls, perf.ReduceForkWindows, perf.ReduceForkMaxWindows)
+		}
+		if perf.PostReduceMergeFinalizationRiskSkips != 1 || perf.PostReduceMergeAttempts != 0 || perf.PendingForkStackAppends != 1 || perf.PendingForkStacksMaxLen != 1 {
+			t.Fatalf("finalization-risk counters = skips:%d attempts:%d appends:%d max_pending:%d, want 1/0/1/1", perf.PostReduceMergeFinalizationRiskSkips, perf.PostReduceMergeAttempts, perf.PendingForkStackAppends, perf.PendingForkStacksMaxLen)
+		}
+	}
 }
 
 func TestFaithfulForkReduceFromPackedGSSHeadEnumeratesReducedParents(t *testing.T) {
@@ -170,6 +221,7 @@ func TestFaithfulForkReduceFromPackedGSSHeadEnumeratesReducedParents(t *testing.
 
 	var scratch gssScratch
 	parser, stack, act := buildTwoWindowFullGSSReduceCase(t, &scratch, arena)
+	setSyntheticPostReducePackingSafeEOF(t, parser, 1)
 	var anyReduced bool
 	nodeCount := 0
 
@@ -193,6 +245,9 @@ func TestFaithfulForkReduceTargetMismatchFallsBackToPendingFork(t *testing.T) {
 	old := glrFaithfulCapOneMerge
 	glrFaithfulCapOneMerge = true
 	t.Cleanup(func() { glrFaithfulCapOneMerge = old })
+	if perfCountersEnabled {
+		ResetPerfCounters()
+	}
 
 	arena := acquireNodeArena(arenaClassFull)
 	defer arena.Release()
@@ -221,6 +276,7 @@ func TestFaithfulForkReduceTargetMismatchFallsBackToPendingFork(t *testing.T) {
 			{Name: "parent", Visible: true, Named: true},
 		},
 	}}
+	setSyntheticPostReducePackingSafeEOF(t, parser, 9)
 	stack := glrStack{gss: gssStack{head: rightNode}, byteOffset: 2}
 	act := ParseAction{Type: ParseActionReduce, Symbol: 3, ChildCount: 2}
 	var anyReduced bool
@@ -235,6 +291,164 @@ func TestFaithfulForkReduceTargetMismatchFallsBackToPendingFork(t *testing.T) {
 	}
 	if got := stack.gss.head.linkCount(); got != 1 {
 		t.Fatalf("primary post-reduce head linkCount = %d, want 1", got)
+	}
+	if perfCountersEnabled {
+		perf := PerfCountersSnapshot()
+		if perf.ReduceForkCalls != 1 || perf.ReduceForkWindows != 2 || perf.ReduceForkMaxWindows != 2 {
+			t.Fatalf("reduce fork counters = calls:%d windows:%d max:%d, want 1/2/2", perf.ReduceForkCalls, perf.ReduceForkWindows, perf.ReduceForkMaxWindows)
+		}
+		if perf.PostReduceMergeAttempts != 1 || perf.PostReduceMergePrimarySuccesses != 0 || perf.PendingForkStackAppends != 1 || perf.PendingForkStacksMaxLen != 1 {
+			t.Fatalf("target-mismatch counters = attempts:%d primary:%d appends:%d max_pending:%d, want 1/0/1/1", perf.PostReduceMergeAttempts, perf.PostReduceMergePrimarySuccesses, perf.PendingForkStackAppends, perf.PendingForkStacksMaxLen)
+		}
+	}
+}
+
+func TestPostReduceForkMergeFinalizationRiskPredicate(t *testing.T) {
+	var scratch gssScratch
+	base := scratch.allocNode(stackEntry{state: 1}, nil, 1)
+	stack := &glrStack{gss: gssStack{head: scratch.allocNode(stackEntry{state: 2}, base, 2)}, byteOffset: 1}
+	eof := Token{Symbol: 0}
+
+	t.Run("nil parser", func(t *testing.T) {
+		var parser *Parser
+		if !parser.postReduceForkMergeHasFinalizationRisk(stack, eof) {
+			t.Fatal("risk = false, want true")
+		}
+	})
+	t.Run("dead stack", func(t *testing.T) {
+		parser := &Parser{language: &Language{}}
+		dead := *stack
+		dead.dead = true
+		if !parser.postReduceForkMergeHasFinalizationRisk(&dead, eof) {
+			t.Fatal("risk = false, want true")
+		}
+	})
+	t.Run("non EOF lookahead", func(t *testing.T) {
+		parser := &Parser{language: &Language{}}
+		if !parser.postReduceForkMergeHasFinalizationRisk(stack, Token{Symbol: 1}) {
+			t.Fatal("risk = false, want true")
+		}
+	})
+	t.Run("missing EOF action", func(t *testing.T) {
+		parser := &Parser{language: &Language{
+			StateCount:     3,
+			SymbolCount:    4,
+			TokenCount:     3,
+			ParseActions:   []ParseActionEntry{{}},
+			ParseTable:     [][]uint16{{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+			SymbolMetadata: []SymbolMetadata{{Name: "eof"}},
+		}}
+		parser.denseLimit = len(parser.language.ParseTable)
+		if !parser.postReduceForkMergeHasFinalizationRisk(stack, eof) {
+			t.Fatal("risk = false, want true")
+		}
+	})
+	t.Run("out of range EOF action", func(t *testing.T) {
+		parser := &Parser{language: &Language{
+			StateCount:     3,
+			SymbolCount:    4,
+			TokenCount:     3,
+			ParseActions:   []ParseActionEntry{{}},
+			ParseTable:     [][]uint16{{0, 0, 0, 0}, {0, 0, 0, 0}, {5, 0, 0, 0}},
+			SymbolMetadata: []SymbolMetadata{{Name: "eof"}},
+		}}
+		parser.denseLimit = len(parser.language.ParseTable)
+		if !parser.postReduceForkMergeHasFinalizationRisk(stack, eof) {
+			t.Fatal("risk = false, want true")
+		}
+	})
+	t.Run("single childful EOF reduce", func(t *testing.T) {
+		parser := &Parser{language: &Language{SymbolMetadata: []SymbolMetadata{{Name: "eof"}}}}
+		setSyntheticEOFAction(t, parser, 2, []ParseAction{{Type: ParseActionReduce, Symbol: 3, ChildCount: 1}})
+		if parser.postReduceForkMergeHasFinalizationRisk(stack, eof) {
+			t.Fatal("risk = true, want false")
+		}
+	})
+	t.Run("single childful EOF reduce with no-lookahead is risky", func(t *testing.T) {
+		parser := &Parser{language: &Language{SymbolMetadata: []SymbolMetadata{{Name: "eof"}}}}
+		setSyntheticEOFAction(t, parser, 2, []ParseAction{{Type: ParseActionReduce, Symbol: 3, ChildCount: 1}})
+		if !parser.postReduceForkMergeHasFinalizationRisk(stack, Token{Symbol: 1, NoLookahead: true}) {
+			t.Fatal("risk = false, want true")
+		}
+	})
+	t.Run("zero child EOF reduce", func(t *testing.T) {
+		parser := &Parser{language: &Language{SymbolMetadata: []SymbolMetadata{{Name: "eof"}}}}
+		setSyntheticEOFAction(t, parser, 2, []ParseAction{{Type: ParseActionReduce, Symbol: 3, ChildCount: 0}})
+		if !parser.postReduceForkMergeHasFinalizationRisk(stack, eof) {
+			t.Fatal("risk = false, want true")
+		}
+	})
+	t.Run("mixed EOF actions", func(t *testing.T) {
+		parser := &Parser{language: &Language{SymbolMetadata: []SymbolMetadata{{Name: "eof"}}}}
+		setSyntheticEOFAction(t, parser, 2, []ParseAction{
+			{Type: ParseActionReduce, Symbol: 3, ChildCount: 1},
+			{Type: ParseActionAccept},
+		})
+		if !parser.postReduceForkMergeHasFinalizationRisk(stack, eof) {
+			t.Fatal("risk = false, want true")
+		}
+	})
+}
+
+func TestFaithfulForkReduceEOFNoActionKeepsPendingFork(t *testing.T) {
+	old := glrFaithfulCapOneMerge
+	glrFaithfulCapOneMerge = true
+	t.Cleanup(func() { glrFaithfulCapOneMerge = old })
+
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	var scratch gssScratch
+	parser, stack, act := buildTwoWindowFullGSSReduceCase(t, &scratch, arena)
+	parser.language.StateCount = 4
+	parser.language.SymbolCount = 4
+	parser.language.TokenCount = 3
+	parser.language.ParseActions = []ParseActionEntry{{}}
+	parser.language.ParseTable = [][]uint16{
+		{0, 0, 0, 0},
+		{0, 0, 0, 0},
+		{0, 0, 0, 0},
+		{0, 0, 0, 0},
+	}
+	parser.denseLimit = len(parser.language.ParseTable)
+	var anyReduced bool
+	nodeCount := 0
+
+	parser.applyReduceActionFromGSS(&stack, act, Token{Symbol: 0}, &anyReduced, &nodeCount, arena, nil, &scratch, nil, nil, false, false)
+	if stack.dead {
+		t.Fatal("stack.dead = true, want false")
+	}
+	if got := stack.gss.head.linkCount(); got != 1 {
+		t.Fatalf("primary post-reduce head linkCount = %d, want 1", got)
+	}
+	if len(parser.pendingForkStacks) != 1 {
+		t.Fatalf("pending forks = %d, want 1", len(parser.pendingForkStacks))
+	}
+}
+
+func TestFaithfulForkReduceEOFZeroChildReduceKeepsPendingFork(t *testing.T) {
+	old := glrFaithfulCapOneMerge
+	glrFaithfulCapOneMerge = true
+	t.Cleanup(func() { glrFaithfulCapOneMerge = old })
+
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	var scratch gssScratch
+	parser, stack, act := buildTwoWindowFullGSSReduceCase(t, &scratch, arena)
+	setSyntheticEOFAction(t, parser, 1, []ParseAction{{Type: ParseActionReduce, Symbol: 3, ChildCount: 0}})
+	var anyReduced bool
+	nodeCount := 0
+
+	parser.applyReduceActionFromGSS(&stack, act, Token{Symbol: 0}, &anyReduced, &nodeCount, arena, nil, &scratch, nil, nil, false, false)
+	if stack.dead {
+		t.Fatal("stack.dead = true, want false")
+	}
+	if got := stack.gss.head.linkCount(); got != 1 {
+		t.Fatalf("primary post-reduce head linkCount = %d, want 1", got)
+	}
+	if len(parser.pendingForkStacks) != 1 {
+		t.Fatalf("pending forks = %d, want 1", len(parser.pendingForkStacks))
 	}
 }
 

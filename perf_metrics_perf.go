@@ -11,103 +11,113 @@ const (
 )
 
 type perfCountersData struct {
-	mergeCalls                      atomic.Uint64
-	mergeDeadPruned                 atomic.Uint64
-	mergePerKeyOverflow             atomic.Uint64
-	mergeReplacements               atomic.Uint64
-	stackEquivalentCalls            atomic.Uint64
-	stackEquivalentTrue             atomic.Uint64
-	stackEqHashMissSkips            atomic.Uint64
-	stackCompareCalls               atomic.Uint64
-	conflictRR                      atomic.Uint64
-	conflictRS                      atomic.Uint64
-	conflictOther                   atomic.Uint64
-	forkCount                       atomic.Uint64
-	firstConflictToken              atomic.Uint64
-	maxConcurrentStacks             atomic.Uint64
-	lexBytes                        atomic.Uint64
-	lexTokens                       atomic.Uint64
-	reuseNodesVisited               atomic.Uint64
-	reuseNodesPushed                atomic.Uint64
-	reuseNodesPopped                atomic.Uint64
-	reuseCandidatesChecked          atomic.Uint64
-	reuseSuccesses                  atomic.Uint64
-	reuseLeafSuccesses              atomic.Uint64
-	reuseNonLeafChecks              atomic.Uint64
-	reuseNonLeafSuccesses           atomic.Uint64
-	reuseNonLeafBytes               atomic.Uint64
-	reuseNonLeafNoGoto              atomic.Uint64
-	reuseNonLeafNoGotoTerm          atomic.Uint64
-	reuseNonLeafNoGotoNt            atomic.Uint64
-	reuseNonLeafStateMiss           atomic.Uint64
-	reuseNonLeafStateZero           atomic.Uint64
-	mergeHashZero                   atomic.Uint64
-	globalCapCulls                  atomic.Uint64
-	globalCapCullDropped            atomic.Uint64
-	reduceChainSteps                atomic.Uint64
-	reduceChainMaxLen               atomic.Uint64
-	reduceChainBreakMulti           atomic.Uint64
-	reduceChainBreakShift           atomic.Uint64
-	reduceChainBreakAccept          atomic.Uint64
-	reduceChainHintCandidates       atomic.Uint64
-	reduceChainHintTaken            atomic.Uint64
-	reduceChainHintSteps            atomic.Uint64
-	reduceChainHintTerminalOK       atomic.Uint64
-	reduceChainHintTerminalMismatch atomic.Uint64
-	reduceChainHintLimit            atomic.Uint64
-	reduceChainHintDead             atomic.Uint64
-	reduceChainHintUnexpected       atomic.Uint64
-	parentChildPointers             atomic.Uint64
-	reduceChildrenFastGSS           atomic.Uint64
-	reduceChildrenAllVis            atomic.Uint64
-	reduceChildrenNoAlias           atomic.Uint64
-	reduceChildrenScratch           atomic.Uint64
-	reduceScratchNoAlias            atomic.Uint64
-	reduceScratchGeneral            atomic.Uint64
-	forestReduceCalls               atomic.Uint64
-	forestReduceZero                atomic.Uint64
-	forestReduceLinearNoExtras      atomic.Uint64
-	forestReduceDFS                 atomic.Uint64
-	forestReduceDFSLinks            atomic.Uint64
-	forestReduceDFSMultiLinkSteps   atomic.Uint64
-	forestReduceDFSExtraLinks       atomic.Uint64
-	forestReduceDFSVisits           atomic.Uint64
-	forestReduceDFSPathEntries      atomic.Uint64
-	forestReduceGotoHits            atomic.Uint64
-	forestReduceGotoMisses          atomic.Uint64
-	forestReduceMaxPathLen          atomic.Uint64
-	forestReduceMaxChildCount       atomic.Uint64
-	forestCoalesceCalls             atomic.Uint64
-	forestCoalesceNewNodes          atomic.Uint64
-	forestCoalesceLinkAppends       atomic.Uint64
-	forestCoalesceDedupHits         atomic.Uint64
-	forestCoalesceDedupReplacements atomic.Uint64
-	forestCoalescePreCapDrops       atomic.Uint64
-	forestCoalesceCapDrops          atomic.Uint64
-	forestCoalesceCapReplacements   atomic.Uint64
-	extraNodes                      atomic.Uint64
-	errorNodes                      atomic.Uint64
-	mergeStacksInHist               [perfMergeHistBins]atomic.Uint64
-	mergeAliveHist                  [perfMergeHistBins]atomic.Uint64
-	mergeOutHist                    [perfMergeHistBins]atomic.Uint64
-	forkActionsHist                 [perfForkHistBins]atomic.Uint64
-	cloneTreeCalls                  atomic.Uint64
-	cloneTreePublicNodes            atomic.Uint64
-	cloneTreeFinalRefs              atomic.Uint64
-	cloneTreeCompactCopies          atomic.Uint64
-	cloneTreeChildRefs              atomic.Uint64
-	cloneOffsetCalls                atomic.Uint64
-	cloneOffsetPublicNodes          atomic.Uint64
-	cloneOffsetCopies               atomic.Uint64
-	cloneOffsetShifted              atomic.Uint64
-	nodeEditCalls                   atomic.Uint64
-	nodeEditNoopCalls               atomic.Uint64
-	nodeEditCompactRefs             atomic.Uint64
-	nodeEditShifted                 atomic.Uint64
-	nodeEditMarked                  atomic.Uint64
-	denseMutationCalls              atomic.Uint64
-	denseMutationDrains             atomic.Uint64
-	mutationChildRefCOW             atomic.Uint64
+	mergeCalls                           atomic.Uint64
+	mergeDeadPruned                      atomic.Uint64
+	mergePerKeyOverflow                  atomic.Uint64
+	mergeReplacements                    atomic.Uint64
+	stackEquivalentCalls                 atomic.Uint64
+	stackEquivalentTrue                  atomic.Uint64
+	stackEqHashMissSkips                 atomic.Uint64
+	stackCompareCalls                    atomic.Uint64
+	conflictRR                           atomic.Uint64
+	conflictRS                           atomic.Uint64
+	conflictOther                        atomic.Uint64
+	forkCount                            atomic.Uint64
+	firstConflictToken                   atomic.Uint64
+	maxConcurrentStacks                  atomic.Uint64
+	lexBytes                             atomic.Uint64
+	lexTokens                            atomic.Uint64
+	reuseNodesVisited                    atomic.Uint64
+	reuseNodesPushed                     atomic.Uint64
+	reuseNodesPopped                     atomic.Uint64
+	reuseCandidatesChecked               atomic.Uint64
+	reuseSuccesses                       atomic.Uint64
+	reuseLeafSuccesses                   atomic.Uint64
+	reuseNonLeafChecks                   atomic.Uint64
+	reuseNonLeafSuccesses                atomic.Uint64
+	reuseNonLeafBytes                    atomic.Uint64
+	reuseNonLeafNoGoto                   atomic.Uint64
+	reuseNonLeafNoGotoTerm               atomic.Uint64
+	reuseNonLeafNoGotoNt                 atomic.Uint64
+	reuseNonLeafStateMiss                atomic.Uint64
+	reuseNonLeafStateZero                atomic.Uint64
+	mergeHashZero                        atomic.Uint64
+	globalCapCulls                       atomic.Uint64
+	globalCapCullDropped                 atomic.Uint64
+	reduceChainSteps                     atomic.Uint64
+	reduceChainMaxLen                    atomic.Uint64
+	reduceChainBreakMulti                atomic.Uint64
+	reduceChainBreakShift                atomic.Uint64
+	reduceChainBreakAccept               atomic.Uint64
+	reduceChainHintCandidates            atomic.Uint64
+	reduceChainHintTaken                 atomic.Uint64
+	reduceChainHintSteps                 atomic.Uint64
+	reduceChainHintTerminalOK            atomic.Uint64
+	reduceChainHintTerminalMismatch      atomic.Uint64
+	reduceChainHintLimit                 atomic.Uint64
+	reduceChainHintDead                  atomic.Uint64
+	reduceChainHintUnexpected            atomic.Uint64
+	parentChildPointers                  atomic.Uint64
+	reduceChildrenFastGSS                atomic.Uint64
+	reduceChildrenAllVis                 atomic.Uint64
+	reduceChildrenNoAlias                atomic.Uint64
+	reduceChildrenScratch                atomic.Uint64
+	reduceScratchNoAlias                 atomic.Uint64
+	reduceScratchGeneral                 atomic.Uint64
+	reduceForkCalls                      atomic.Uint64
+	reduceForkWindows                    atomic.Uint64
+	reduceForkMaxWindows                 atomic.Uint64
+	postReduceMergeAttempts              atomic.Uint64
+	postReduceMergePrimarySuccesses      atomic.Uint64
+	postReduceMergePendingSuccesses      atomic.Uint64
+	postReduceMergeDisabledSkips         atomic.Uint64
+	postReduceMergeFinalizationRiskSkips atomic.Uint64
+	pendingForkStackAppends              atomic.Uint64
+	pendingForkStacksMaxLen              atomic.Uint64
+	forestReduceCalls                    atomic.Uint64
+	forestReduceZero                     atomic.Uint64
+	forestReduceLinearNoExtras           atomic.Uint64
+	forestReduceDFS                      atomic.Uint64
+	forestReduceDFSLinks                 atomic.Uint64
+	forestReduceDFSMultiLinkSteps        atomic.Uint64
+	forestReduceDFSExtraLinks            atomic.Uint64
+	forestReduceDFSVisits                atomic.Uint64
+	forestReduceDFSPathEntries           atomic.Uint64
+	forestReduceGotoHits                 atomic.Uint64
+	forestReduceGotoMisses               atomic.Uint64
+	forestReduceMaxPathLen               atomic.Uint64
+	forestReduceMaxChildCount            atomic.Uint64
+	forestCoalesceCalls                  atomic.Uint64
+	forestCoalesceNewNodes               atomic.Uint64
+	forestCoalesceLinkAppends            atomic.Uint64
+	forestCoalesceDedupHits              atomic.Uint64
+	forestCoalesceDedupReplacements      atomic.Uint64
+	forestCoalescePreCapDrops            atomic.Uint64
+	forestCoalesceCapDrops               atomic.Uint64
+	forestCoalesceCapReplacements        atomic.Uint64
+	extraNodes                           atomic.Uint64
+	errorNodes                           atomic.Uint64
+	mergeStacksInHist                    [perfMergeHistBins]atomic.Uint64
+	mergeAliveHist                       [perfMergeHistBins]atomic.Uint64
+	mergeOutHist                         [perfMergeHistBins]atomic.Uint64
+	forkActionsHist                      [perfForkHistBins]atomic.Uint64
+	cloneTreeCalls                       atomic.Uint64
+	cloneTreePublicNodes                 atomic.Uint64
+	cloneTreeFinalRefs                   atomic.Uint64
+	cloneTreeCompactCopies               atomic.Uint64
+	cloneTreeChildRefs                   atomic.Uint64
+	cloneOffsetCalls                     atomic.Uint64
+	cloneOffsetPublicNodes               atomic.Uint64
+	cloneOffsetCopies                    atomic.Uint64
+	cloneOffsetShifted                   atomic.Uint64
+	nodeEditCalls                        atomic.Uint64
+	nodeEditNoopCalls                    atomic.Uint64
+	nodeEditCompactRefs                  atomic.Uint64
+	nodeEditShifted                      atomic.Uint64
+	nodeEditMarked                       atomic.Uint64
+	denseMutationCalls                   atomic.Uint64
+	denseMutationDrains                  atomic.Uint64
+	mutationChildRefCOW                  atomic.Uint64
 }
 
 var perfCounters perfCountersData
@@ -158,6 +168,16 @@ func ResetPerfCounters() {
 	perfCounters.reduceChildrenScratch.Store(0)
 	perfCounters.reduceScratchNoAlias.Store(0)
 	perfCounters.reduceScratchGeneral.Store(0)
+	perfCounters.reduceForkCalls.Store(0)
+	perfCounters.reduceForkWindows.Store(0)
+	perfCounters.reduceForkMaxWindows.Store(0)
+	perfCounters.postReduceMergeAttempts.Store(0)
+	perfCounters.postReduceMergePrimarySuccesses.Store(0)
+	perfCounters.postReduceMergePendingSuccesses.Store(0)
+	perfCounters.postReduceMergeDisabledSkips.Store(0)
+	perfCounters.postReduceMergeFinalizationRiskSkips.Store(0)
+	perfCounters.pendingForkStackAppends.Store(0)
+	perfCounters.pendingForkStacksMaxLen.Store(0)
 	perfCounters.forestReduceCalls.Store(0)
 	perfCounters.forestReduceZero.Store(0)
 	perfCounters.forestReduceLinearNoExtras.Store(0)
@@ -281,6 +301,16 @@ func PerfCountersSnapshot() PerfCounters {
 	out.ReduceChildrenScratch = perfCounters.reduceChildrenScratch.Load()
 	out.ReduceScratchNoAlias = perfCounters.reduceScratchNoAlias.Load()
 	out.ReduceScratchGeneral = perfCounters.reduceScratchGeneral.Load()
+	out.ReduceForkCalls = perfCounters.reduceForkCalls.Load()
+	out.ReduceForkWindows = perfCounters.reduceForkWindows.Load()
+	out.ReduceForkMaxWindows = perfCounters.reduceForkMaxWindows.Load()
+	out.PostReduceMergeAttempts = perfCounters.postReduceMergeAttempts.Load()
+	out.PostReduceMergePrimarySuccesses = perfCounters.postReduceMergePrimarySuccesses.Load()
+	out.PostReduceMergePendingSuccesses = perfCounters.postReduceMergePendingSuccesses.Load()
+	out.PostReduceMergeDisabledSkips = perfCounters.postReduceMergeDisabledSkips.Load()
+	out.PostReduceMergeFinalizationRiskSkips = perfCounters.postReduceMergeFinalizationRiskSkips.Load()
+	out.PendingForkStackAppends = perfCounters.pendingForkStackAppends.Load()
+	out.PendingForkStacksMaxLen = perfCounters.pendingForkStacksMaxLen.Load()
 	out.ForestReduceCalls = perfCounters.forestReduceCalls.Load()
 	out.ForestReduceZero = perfCounters.forestReduceZero.Load()
 	out.ForestReduceLinearNoExtras = perfCounters.forestReduceLinearNoExtras.Load()
@@ -588,6 +618,41 @@ func perfRecordReduceScratchNoAlias(count int) {
 func perfRecordReduceScratchGeneral(count int) {
 	if count > 0 {
 		perfCounters.reduceScratchGeneral.Add(uint64(count))
+	}
+}
+
+func perfRecordReduceForkCall(windowCount int) {
+	perfCounters.reduceForkCalls.Add(1)
+	if windowCount > 0 {
+		perfCounters.reduceForkWindows.Add(uint64(windowCount))
+		perfMaxUint64(&perfCounters.reduceForkMaxWindows, uint64(windowCount))
+	}
+}
+
+func perfRecordPostReduceMergeAttempt() {
+	perfCounters.postReduceMergeAttempts.Add(1)
+}
+
+func perfRecordPostReduceMergePrimarySuccess() {
+	perfCounters.postReduceMergePrimarySuccesses.Add(1)
+}
+
+func perfRecordPostReduceMergePendingSuccess() {
+	perfCounters.postReduceMergePendingSuccesses.Add(1)
+}
+
+func perfRecordPostReduceMergeDisabledSkip() {
+	perfCounters.postReduceMergeDisabledSkips.Add(1)
+}
+
+func perfRecordPostReduceMergeFinalizationRiskSkip() {
+	perfCounters.postReduceMergeFinalizationRiskSkips.Add(1)
+}
+
+func perfRecordPendingForkStackAppend(length int) {
+	perfCounters.pendingForkStackAppends.Add(1)
+	if length > 0 {
+		perfMaxUint64(&perfCounters.pendingForkStacksMaxLen, uint64(length))
 	}
 }
 

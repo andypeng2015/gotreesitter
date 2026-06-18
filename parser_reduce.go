@@ -2180,26 +2180,29 @@ func tryMergePostReduceFork(target, fork *glrStack) bool {
 	return gssMainMerge(target, fork)
 }
 
-func (p *Parser) postReduceForkMergeCouldHideImmediateAccept(s *glrStack) bool {
+func (p *Parser) postReduceForkMergeHasFinalizationRisk(s *glrStack, tok Token) bool {
 	if p == nil || p.language == nil || s == nil || s.dead || s.depth() == 0 {
 		return true
 	}
-	// Finalization materializes only the selected stack's inline GSS chain. If
-	// this post-reduce state can accept EOF immediately, keep secondary forks as
-	// pending stacks so their result-relevant heads remain selectable.
+	if tok.Symbol != 0 {
+		return true
+	}
+	// Finalization materializes only the selected stack's inline GSS chain. GSS
+	// extra links are result-visible only after a later reduce spans them, so
+	// post-reduce packing is allowed only when EOF is known to force that reduce.
 	actionIdx := p.lookupActionIndex(s.top().state, 0)
 	if actionIdx == 0 {
-		return false
+		return true
 	}
 	if int(actionIdx) >= len(p.language.ParseActions) {
 		return true
 	}
-	for _, act := range p.language.ParseActions[actionIdx].Actions {
-		if act.Type == ParseActionAccept {
-			return true
-		}
+	actions := p.language.ParseActions[actionIdx].Actions
+	if len(actions) != 1 {
+		return true
 	}
-	return false
+	act := actions[0]
+	return act.Type != ParseActionReduce || act.ChildCount == 0
 }
 
 func (p *Parser) tryFastVisibleReduceActionFromGSS(s *glrStack, act ParseAction, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, deferParentLinks bool, trackChildErrors bool) bool {
@@ -2583,6 +2586,9 @@ func (p *Parser) applyReduceActionFromGSS(s *glrStack, act ParseAction, tok Toke
 
 func (p *Parser) applyReduceActionForked(s *glrStack, act ParseAction, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, _ []stackEntry, deferParentLinks bool, trackChildErrors bool) {
 	forks := reduceWindowsFromGSS(s, int(act.ChildCount), maxStacksPerMergeKey)
+	if perfCountersEnabled {
+		perfRecordReduceForkCall(len(forks))
+	}
 	if len(forks) == 0 {
 		s.dead = true
 		releaseReduceWindowEntries(tmpEntries, nil)
@@ -2665,13 +2671,25 @@ func (p *Parser) applyReduceActionForked(s *glrStack, act ParseAction, tok Token
 		applyForkToStack(&clone, forks[i])
 		clone.score = base.score + int(act.DynamicPrecedence)
 		if !p.disablePostReduceForkMerge {
-			if !p.postReduceForkMergeCouldHideImmediateAccept(&clone) {
+			if !p.postReduceForkMergeHasFinalizationRisk(&clone, tok) {
+				if perfCountersEnabled {
+					perfRecordPostReduceMergeAttempt()
+				}
 				if tryMergePostReduceFork(s, &clone) {
+					if perfCountersEnabled {
+						perfRecordPostReduceMergePrimarySuccess()
+					}
 					continue
 				}
 				merged := false
 				for j := range p.pendingForkStacks {
+					if perfCountersEnabled {
+						perfRecordPostReduceMergeAttempt()
+					}
 					if tryMergePostReduceFork(&p.pendingForkStacks[j], &clone) {
+						if perfCountersEnabled {
+							perfRecordPostReduceMergePendingSuccess()
+						}
 						merged = true
 						break
 					}
@@ -2679,9 +2697,16 @@ func (p *Parser) applyReduceActionForked(s *glrStack, act ParseAction, tok Token
 				if merged {
 					continue
 				}
+			} else if perfCountersEnabled {
+				perfRecordPostReduceMergeFinalizationRiskSkip()
 			}
+		} else if perfCountersEnabled {
+			perfRecordPostReduceMergeDisabledSkip()
 		}
 		p.pendingForkStacks = append(p.pendingForkStacks, clone)
+		if perfCountersEnabled {
+			perfRecordPendingForkStackAppend(len(p.pendingForkStacks))
+		}
 	}
 	releaseReduceWindowEntries(tmpEntries, nil)
 }
