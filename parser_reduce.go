@@ -2159,20 +2159,6 @@ func reduceWindowsFromGSS(s *glrStack, childCount int, maxForks int) []reduceFor
 	return forks
 }
 
-func reduceForkCapFromScratch(gssScratch *gssScratch) int {
-	forkCap := maxStacksPerMergeKey
-	if gssScratch != nil && gssScratch.reduceForkCap > 0 {
-		forkCap = gssScratch.reduceForkCap
-	}
-	if forkCap < 1 {
-		return 1
-	}
-	if forkCap > maxStacksPerMergeKey {
-		return maxStacksPerMergeKey
-	}
-	return forkCap
-}
-
 func markReduceApplied(s *glrStack, act ParseAction, anyReduced *bool) {
 	s.score += int(act.DynamicPrecedence)
 	*anyReduced = true
@@ -2558,7 +2544,7 @@ func (p *Parser) applyReduceActionFromGSS(s *glrStack, act ParseAction, tok Toke
 }
 
 func (p *Parser) applyReduceActionForked(s *glrStack, act ParseAction, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, _ []stackEntry, deferParentLinks bool, trackChildErrors bool) {
-	forks := reduceWindowsFromGSS(s, int(act.ChildCount), reduceForkCapFromScratch(gssScratch))
+	forks := reduceWindowsFromGSS(s, int(act.ChildCount), maxStacksPerMergeKey)
 	if len(forks) == 0 {
 		s.dead = true
 		releaseReduceWindowEntries(tmpEntries, nil)

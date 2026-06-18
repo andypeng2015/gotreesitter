@@ -75,7 +75,7 @@ func TestFastVisibleReduceFromGSSDeclinesMultiLinkSpan(t *testing.T) {
 	}
 }
 
-func TestFaithfulForkReduceFromGSSCapOneAppliesPrimaryOnly(t *testing.T) {
+func TestFaithfulForkReduceFromGSSLinkedWindowsEmitPendingFork(t *testing.T) {
 	old := glrFaithfulCapOneMerge
 	glrFaithfulCapOneMerge = true
 	t.Cleanup(func() { glrFaithfulCapOneMerge = old })
@@ -84,40 +84,6 @@ func TestFaithfulForkReduceFromGSSCapOneAppliesPrimaryOnly(t *testing.T) {
 	defer arena.Release()
 
 	var scratch gssScratch
-	scratch.reduceForkCap = 1
-	parser, stack, act := buildTwoWindowFullGSSReduceCase(t, &scratch, arena)
-	var anyReduced bool
-	nodeCount := 0
-
-	parser.applyReduceActionFromGSS(&stack, act, Token{}, &anyReduced, &nodeCount, arena, nil, &scratch, nil, nil, false, false)
-	if stack.dead {
-		t.Fatal("stack.dead = true, want false")
-	}
-	if !anyReduced {
-		t.Fatal("anyReduced = false, want true")
-	}
-	if nodeCount != 1 {
-		t.Fatalf("nodeCount = %d, want 1", nodeCount)
-	}
-	if len(parser.pendingForkStacks) != 0 {
-		t.Fatalf("pending forks = %d, want 0", len(parser.pendingForkStacks))
-	}
-	top := stackEntryNode(stack.top())
-	if top == nil || top.symbol != act.Symbol {
-		t.Fatalf("top node symbol = %v, want %d", top, act.Symbol)
-	}
-}
-
-func TestFaithfulForkReduceFromGSSCapTwoEmitsOnePendingFork(t *testing.T) {
-	old := glrFaithfulCapOneMerge
-	glrFaithfulCapOneMerge = true
-	t.Cleanup(func() { glrFaithfulCapOneMerge = old })
-
-	arena := acquireNodeArena(arenaClassFull)
-	defer arena.Release()
-
-	var scratch gssScratch
-	scratch.reduceForkCap = 2
 	parser, stack, act := buildTwoWindowFullGSSReduceCase(t, &scratch, arena)
 	var anyReduced bool
 	nodeCount := 0
