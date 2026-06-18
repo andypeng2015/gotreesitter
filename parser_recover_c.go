@@ -836,6 +836,12 @@ func (p *Parser) cCollectPotentialReductions(state StateID, lookaheadSym Symbol,
 // that dead-end keep their pre-reduction shape (C leaves them in place).
 // With lookaheadSym != 0 dead-end versions are dropped (C removes them).
 func (p *Parser) cDoAllPotentialReductions(start glrStack, lookaheadSym Symbol, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) ([]glrStack, bool) {
+	oldDisablePostReduceForkMerge := p.disablePostReduceForkMerge
+	p.disablePostReduceForkMerge = true
+	defer func() {
+		p.disablePostReduceForkMerge = oldDisablePostReduceForkMerge
+	}()
+
 	versions := []glrStack{start}
 	canShift := false
 	var reduces []ParseAction

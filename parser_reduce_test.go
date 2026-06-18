@@ -75,7 +75,7 @@ func TestFastVisibleReduceFromGSSDeclinesMultiLinkSpan(t *testing.T) {
 	}
 }
 
-func TestFaithfulForkReduceFromGSSLinkedWindowsEmitPendingFork(t *testing.T) {
+func TestFaithfulForkReduceFromGSSLinkedWindowsCoalescesPostReduceHead(t *testing.T) {
 	old := glrFaithfulCapOneMerge
 	glrFaithfulCapOneMerge = true
 	t.Cleanup(func() { glrFaithfulCapOneMerge = old })
@@ -98,12 +98,111 @@ func TestFaithfulForkReduceFromGSSLinkedWindowsEmitPendingFork(t *testing.T) {
 	if nodeCount != 2 {
 		t.Fatalf("nodeCount = %d, want 2", nodeCount)
 	}
+	if len(parser.pendingForkStacks) != 0 {
+		t.Fatalf("pending forks = %d, want 0", len(parser.pendingForkStacks))
+	}
+	if stack.gss.head == nil {
+		t.Fatal("post-reduce GSS head is nil")
+	}
+	if got := stack.gss.head.linkCount(); got != 2 {
+		t.Fatalf("post-reduce head linkCount = %d, want 2", got)
+	}
+}
+
+func TestFaithfulForkReduceFromPackedGSSHeadEnumeratesReducedParents(t *testing.T) {
+	old := glrFaithfulCapOneMerge
+	glrFaithfulCapOneMerge = true
+	t.Cleanup(func() { glrFaithfulCapOneMerge = old })
+
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	var scratch gssScratch
+	parser, stack, act := buildTwoWindowFullGSSReduceCase(t, &scratch, arena)
+	var anyReduced bool
+	nodeCount := 0
+
+	parser.applyReduceActionFromGSS(&stack, act, Token{}, &anyReduced, &nodeCount, arena, nil, &scratch, nil, nil, false, false)
+	forks := reduceWindowsFromGSS(&stack, 1, maxStacksPerMergeKey)
+	if len(forks) != 2 {
+		t.Fatalf("reduced-parent windows = %d, want 2", len(forks))
+	}
+	for i, fork := range forks {
+		if len(fork.window) != 1 {
+			t.Fatalf("fork %d window length = %d, want 1", i, len(fork.window))
+		}
+		parent := stackEntryNode(fork.window[0])
+		if parent == nil || parent.symbol != act.Symbol {
+			t.Fatalf("fork %d parent symbol = %v, want %d", i, parent, act.Symbol)
+		}
+	}
+}
+
+func TestFaithfulForkReduceTargetMismatchFallsBackToPendingFork(t *testing.T) {
+	old := glrFaithfulCapOneMerge
+	glrFaithfulCapOneMerge = true
+	t.Cleanup(func() { glrFaithfulCapOneMerge = old })
+
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	var scratch gssScratch
+	base := scratch.allocNode(stackEntry{state: 1}, nil, 1)
+	left := newLeafNodeInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	right := newLeafNodeInArena(arena, 2, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	leftNode := scratch.allocNode(newStackEntryNode(2, left), base, 2)
+	rightNode := scratch.allocNode(newStackEntryNode(3, right), leftNode, 3)
+
+	altBase := scratch.allocNode(stackEntry{state: 9}, nil, 1)
+	altLeft := newLeafNodeInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	altLeftNode := scratch.allocNode(newStackEntryNode(8, altLeft), altBase, 2)
+	altRight := newLeafNodeInArena(arena, 2, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	rightNode.extraLinks = append(rightNode.extraLinks, gssMainLink{
+		prev:  altLeftNode,
+		entry: newStackEntryNode(7, altRight),
+	})
+
+	parser := &Parser{language: &Language{
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "eof", Visible: true, Named: true},
+			{Name: "left", Visible: true, Named: true},
+			{Name: "right", Visible: true, Named: true},
+			{Name: "parent", Visible: true, Named: true},
+		},
+	}}
+	stack := glrStack{gss: gssStack{head: rightNode}, byteOffset: 2}
+	act := ParseAction{Type: ParseActionReduce, Symbol: 3, ChildCount: 2}
+	var anyReduced bool
+	nodeCount := 0
+
+	parser.applyReduceActionFromGSS(&stack, act, Token{}, &anyReduced, &nodeCount, arena, nil, &scratch, nil, nil, false, false)
 	if len(parser.pendingForkStacks) != 1 {
 		t.Fatalf("pending forks = %d, want 1", len(parser.pendingForkStacks))
 	}
-	pendingTop := stackEntryNode(parser.pendingForkStacks[0].top())
-	if pendingTop == nil || pendingTop.symbol != act.Symbol {
-		t.Fatalf("pending top node symbol = %v, want %d", pendingTop, act.Symbol)
+	if stack.top().state == parser.pendingForkStacks[0].top().state {
+		t.Fatalf("primary and pending top states both = %d, want mismatch fallback", stack.top().state)
+	}
+	if got := stack.gss.head.linkCount(); got != 1 {
+		t.Fatalf("primary post-reduce head linkCount = %d, want 1", got)
+	}
+}
+
+func TestTryMergePostReduceForkDeclinesAcceptedStacks(t *testing.T) {
+	var scratch gssScratch
+	base := scratch.allocNode(stackEntry{state: 1}, nil, 1)
+	left := glrStack{
+		gss:        gssStack{head: scratch.allocNode(stackEntry{state: 2}, base, 2)},
+		byteOffset: 3,
+		accepted:   true,
+	}
+	right := glrStack{
+		gss:        gssStack{head: scratch.allocNode(stackEntry{state: 2}, base, 2)},
+		byteOffset: 3,
+		accepted:   true,
+	}
+
+	if tryMergePostReduceFork(&left, &right) {
+		t.Fatal("tryMergePostReduceFork = true, want false for accepted stacks")
 	}
 }
 

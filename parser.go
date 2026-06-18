@@ -146,7 +146,8 @@ type Parser struct {
 	// pendingForkStacks buffers extra stacks produced by gated multi-link GSS
 	// reductions. The dispatch loop drains them into stacks for same-token
 	// re-dispatch.
-	pendingForkStacks []glrStack
+	pendingForkStacks          []glrStack
+	disablePostReduceForkMerge bool
 }
 
 var snippetParserPools sync.Map

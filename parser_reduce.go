@@ -2164,6 +2164,22 @@ func markReduceApplied(s *glrStack, act ParseAction, anyReduced *bool) {
 	*anyReduced = true
 }
 
+func tryMergePostReduceFork(target, fork *glrStack) bool {
+	if target == nil || fork == nil || target.accepted || fork.accepted {
+		return false
+	}
+	if target.entries != nil || fork.entries != nil || target.gss.head == nil || fork.gss.head == nil {
+		return false
+	}
+	if target.top().state != fork.top().state || target.byteOffset != fork.byteOffset {
+		return false
+	}
+	if !gssMainCanMerge(target, fork) {
+		return false
+	}
+	return gssMainMerge(target, fork)
+}
+
 func (p *Parser) tryFastVisibleReduceActionFromGSS(s *glrStack, act ParseAction, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, deferParentLinks bool, trackChildErrors bool) bool {
 	if p == nil || s == nil || s.gss.head == nil || p.language == nil {
 		return false
@@ -2626,6 +2642,21 @@ func (p *Parser) applyReduceActionForked(s *glrStack, act ParseAction, tok Token
 		clone := base.cloneWithScratch(gssScratch)
 		applyForkToStack(&clone, forks[i])
 		clone.score = base.score + int(act.DynamicPrecedence)
+		if !p.disablePostReduceForkMerge {
+			if tryMergePostReduceFork(s, &clone) {
+				continue
+			}
+			merged := false
+			for j := range p.pendingForkStacks {
+				if tryMergePostReduceFork(&p.pendingForkStacks[j], &clone) {
+					merged = true
+					break
+				}
+			}
+			if merged {
+				continue
+			}
+		}
 		p.pendingForkStacks = append(p.pendingForkStacks, clone)
 	}
 	releaseReduceWindowEntries(tmpEntries, nil)
