@@ -2180,6 +2180,28 @@ func tryMergePostReduceFork(target, fork *glrStack) bool {
 	return gssMainMerge(target, fork)
 }
 
+func (p *Parser) postReduceForkMergeCouldHideImmediateAccept(s *glrStack) bool {
+	if p == nil || p.language == nil || s == nil || s.dead || s.depth() == 0 {
+		return true
+	}
+	// Finalization materializes only the selected stack's inline GSS chain. If
+	// this post-reduce state can accept EOF immediately, keep secondary forks as
+	// pending stacks so their result-relevant heads remain selectable.
+	actionIdx := p.lookupActionIndex(s.top().state, 0)
+	if actionIdx == 0 {
+		return false
+	}
+	if int(actionIdx) >= len(p.language.ParseActions) {
+		return true
+	}
+	for _, act := range p.language.ParseActions[actionIdx].Actions {
+		if act.Type == ParseActionAccept {
+			return true
+		}
+	}
+	return false
+}
+
 func (p *Parser) tryFastVisibleReduceActionFromGSS(s *glrStack, act ParseAction, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, deferParentLinks bool, trackChildErrors bool) bool {
 	if p == nil || s == nil || s.gss.head == nil || p.language == nil {
 		return false
@@ -2643,18 +2665,20 @@ func (p *Parser) applyReduceActionForked(s *glrStack, act ParseAction, tok Token
 		applyForkToStack(&clone, forks[i])
 		clone.score = base.score + int(act.DynamicPrecedence)
 		if !p.disablePostReduceForkMerge {
-			if tryMergePostReduceFork(s, &clone) {
-				continue
-			}
-			merged := false
-			for j := range p.pendingForkStacks {
-				if tryMergePostReduceFork(&p.pendingForkStacks[j], &clone) {
-					merged = true
-					break
+			if !p.postReduceForkMergeCouldHideImmediateAccept(&clone) {
+				if tryMergePostReduceFork(s, &clone) {
+					continue
 				}
-			}
-			if merged {
-				continue
+				merged := false
+				for j := range p.pendingForkStacks {
+					if tryMergePostReduceFork(&p.pendingForkStacks[j], &clone) {
+						merged = true
+						break
+					}
+				}
+				if merged {
+					continue
+				}
 			}
 		}
 		p.pendingForkStacks = append(p.pendingForkStacks, clone)

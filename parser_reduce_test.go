@@ -109,6 +109,57 @@ func TestFaithfulForkReduceFromGSSLinkedWindowsCoalescesPostReduceHead(t *testin
 	}
 }
 
+func TestFaithfulForkReduceImmediateAcceptKeepsPendingFork(t *testing.T) {
+	old := glrFaithfulCapOneMerge
+	glrFaithfulCapOneMerge = true
+	t.Cleanup(func() { glrFaithfulCapOneMerge = old })
+
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	var scratch gssScratch
+	parser, stack, act := buildTwoWindowFullGSSReduceCase(t, &scratch, arena)
+	parser.language.StateCount = 4
+	parser.language.SymbolCount = 4
+	parser.language.TokenCount = 3
+	parser.language.ParseActions = []ParseActionEntry{
+		{},
+		{Actions: []ParseAction{{Type: ParseActionAccept}}},
+	}
+	parser.language.ParseTable = [][]uint16{
+		{0, 0, 0, 0},
+		{1, 0, 0, 0},
+		{0, 0, 0, 0},
+		{0, 0, 0, 0},
+	}
+	parser.denseLimit = len(parser.language.ParseTable)
+	var anyReduced bool
+	nodeCount := 0
+
+	parser.applyReduceActionFromGSS(&stack, act, Token{}, &anyReduced, &nodeCount, arena, nil, &scratch, nil, nil, false, false)
+	if stack.dead {
+		t.Fatal("stack.dead = true, want false")
+	}
+	if !anyReduced {
+		t.Fatal("anyReduced = false, want true")
+	}
+	if nodeCount != 2 {
+		t.Fatalf("nodeCount = %d, want 2", nodeCount)
+	}
+	if got := stack.gss.head.linkCount(); got != 1 {
+		t.Fatalf("primary post-reduce head linkCount = %d, want 1", got)
+	}
+	if len(parser.pendingForkStacks) != 1 {
+		t.Fatalf("pending forks = %d, want 1", len(parser.pendingForkStacks))
+	}
+	if got := parser.pendingForkStacks[0].gss.head.linkCount(); got != 1 {
+		t.Fatalf("pending post-reduce head linkCount = %d, want 1", got)
+	}
+	if stack.top().state != parser.pendingForkStacks[0].top().state {
+		t.Fatalf("primary top state = %d, pending top state = %d, want same accept-capable state", stack.top().state, parser.pendingForkStacks[0].top().state)
+	}
+}
+
 func TestFaithfulForkReduceFromPackedGSSHeadEnumeratesReducedParents(t *testing.T) {
 	old := glrFaithfulCapOneMerge
 	glrFaithfulCapOneMerge = true
