@@ -914,6 +914,8 @@ type lrContext struct {
 type conflictResolutionCache struct {
 	groups         [][]int
 	groupsBySymbol [][]int
+	prodsByLHS     [][]int
+	nullable       []bool
 	rhsParents     [][]int
 	auxParents     [][]int
 	auxComputed    []bool
@@ -921,7 +923,7 @@ type conflictResolutionCache struct {
 }
 
 func getConflictResolutionCache(ng *NormalizedGrammar) *conflictResolutionCache {
-	if len(ng.Conflicts) == 0 {
+	if ng == nil {
 		return nil
 	}
 	if ng.conflictCache != nil {
@@ -931,6 +933,8 @@ func getConflictResolutionCache(ng *NormalizedGrammar) *conflictResolutionCache 
 	cache := &conflictResolutionCache{
 		groups:         make([][]int, len(ng.Conflicts)),
 		groupsBySymbol: make([][]int, len(ng.Symbols)),
+		prodsByLHS:     make([][]int, len(ng.Symbols)),
+		nullable:       make([]bool, len(ng.Symbols)),
 		rhsParents:     make([][]int, len(ng.Symbols)),
 		auxParents:     make([][]int, len(ng.Symbols)),
 		auxComputed:    make([]bool, len(ng.Symbols)),
@@ -945,16 +949,47 @@ func getConflictResolutionCache(ng *NormalizedGrammar) *conflictResolutionCache 
 			}
 		}
 	}
-	for _, prod := range ng.Productions {
+	for prodIdx, prod := range ng.Productions {
+		if prod.LHS >= 0 && prod.LHS < len(cache.prodsByLHS) {
+			cache.prodsByLHS[prod.LHS] = append(cache.prodsByLHS[prod.LHS], prodIdx)
+		}
 		for _, sym := range prod.RHS {
 			if sym >= 0 && sym < len(cache.rhsParents) {
 				cache.rhsParents[sym] = append(cache.rhsParents[sym], prod.LHS)
 			}
 		}
 	}
+	computeNullableSymbolsForConflictCache(ng, cache)
 
 	ng.conflictCache = cache
 	return cache
+}
+
+func computeNullableSymbolsForConflictCache(ng *NormalizedGrammar, cache *conflictResolutionCache) {
+	if ng == nil || cache == nil {
+		return
+	}
+	changed := true
+	for changed {
+		changed = false
+		for i := range ng.Productions {
+			prod := &ng.Productions[i]
+			if prod.LHS < 0 || prod.LHS >= len(cache.nullable) || cache.nullable[prod.LHS] {
+				continue
+			}
+			allNullable := true
+			for _, sym := range prod.RHS {
+				if sym < 0 || sym >= len(cache.nullable) || !cache.nullable[sym] {
+					allNullable = false
+					break
+				}
+			}
+			if allNullable {
+				cache.nullable[prod.LHS] = true
+				changed = true
+			}
+		}
+	}
 }
 
 func (ctx *lrContext) nextClosureQueueGen() uint32 {
@@ -3200,6 +3235,11 @@ func resolveActionConflict(lookaheadSym int, actions []lrAction, ng *NormalizedG
 			}
 			// Same precedence or both zero — check associativity.
 			if shiftP == reduceP && prod.Assoc != AssocNone {
+				if prod.Assoc == AssocLeft {
+					if preferred, ok := preferredSameLHSContinuationShift(shifts, reduces, ng, cache); ok {
+						return []lrAction{preferred}, nil
+					}
+				}
 				switch prod.Assoc {
 				case AssocLeft:
 					return []lrAction{reduce}, nil
@@ -3274,6 +3314,9 @@ func resolveActionConflict(lookaheadSym int, actions []lrAction, ng *NormalizedG
 			}
 			switch prod.Assoc {
 			case AssocLeft:
+				if preferred, ok := preferredSameLHSContinuationShift(shifts, reduces, ng, cache); ok {
+					return []lrAction{preferred}, nil
+				}
 				return []lrAction{reduce}, nil
 			case AssocRight:
 				return []lrAction{shift}, nil
@@ -3301,6 +3344,133 @@ func resolveActionConflict(lookaheadSym int, actions []lrAction, ng *NormalizedG
 	}
 
 	return actions, nil
+}
+
+func preferredSameLHSContinuationShift(shifts, reduces []lrAction, ng *NormalizedGrammar, cache *conflictResolutionCache) (lrAction, bool) {
+	if ng == nil || cache == nil || len(shifts) == 0 || len(reduces) != 1 {
+		return lrAction{}, false
+	}
+	var matched []lrAction
+	for _, shift := range shifts {
+		if shift.kind != lrShift {
+			continue
+		}
+		if leftAssocReduceContinuesWithShift(reduces[0], shift, ng, cache) {
+			matched = append(matched, shift)
+		}
+	}
+	if len(matched) != 1 {
+		return lrAction{}, false
+	}
+	return matched[0], true
+}
+
+func leftAssocReduceContinuesWithShift(reduce, shift lrAction, ng *NormalizedGrammar, cache *conflictResolutionCache) bool {
+	if reduce.kind != lrReduce || reduce.prodIdx < 0 || reduce.prodIdx >= len(ng.Productions) {
+		return false
+	}
+	prod := &ng.Productions[reduce.prodIdx]
+	if prod.Assoc != AssocLeft || prod.LHS < 0 || prod.LHS >= len(ng.Symbols) {
+		return false
+	}
+	targets := shiftContinuationTargets(shift, len(ng.Symbols))
+	if len(targets) == 0 {
+		return false
+	}
+	if prod.LHS >= len(cache.prodsByLHS) {
+		return false
+	}
+	for _, prodIdx := range cache.prodsByLHS[prod.LHS] {
+		if prodIdx < 0 || prodIdx >= len(ng.Productions) {
+			continue
+		}
+		candidate := &ng.Productions[prodIdx]
+		if candidate.LHS != prod.LHS || len(candidate.RHS) <= len(prod.RHS) {
+			continue
+		}
+		if !rhsHasPrefix(candidate.RHS, prod.RHS) {
+			continue
+		}
+		if rhsCanBeginWithAny(candidate.RHS[len(prod.RHS):], targets, cache, ng) {
+			return true
+		}
+	}
+	return false
+}
+
+func shiftContinuationTargets(shift lrAction, symbolCount int) map[int]bool {
+	targets := make(map[int]bool)
+	if shift.lhsSym >= 0 && shift.lhsSym < symbolCount {
+		targets[shift.lhsSym] = true
+	}
+	for _, lhs := range shift.lhsSyms {
+		if lhs >= 0 && lhs < symbolCount {
+			targets[lhs] = true
+		}
+	}
+	return targets
+}
+
+func rhsHasPrefix(rhs, prefix []int) bool {
+	if len(rhs) < len(prefix) {
+		return false
+	}
+	for i, sym := range prefix {
+		if rhs[i] != sym {
+			return false
+		}
+	}
+	return true
+}
+
+func rhsCanBeginWithAny(rhs []int, targets map[int]bool, cache *conflictResolutionCache, ng *NormalizedGrammar) bool {
+	if cache == nil {
+		return false
+	}
+	visiting := make([]bool, len(ng.Symbols))
+	return rhsCanBeginWithAnyVisited(rhs, targets, cache, visiting, ng)
+}
+
+func rhsCanBeginWithAnyVisited(rhs []int, targets map[int]bool, cache *conflictResolutionCache, visiting []bool, ng *NormalizedGrammar) bool {
+	for _, sym := range rhs {
+		if symbolCanBeginWithAny(sym, targets, cache, visiting, ng) {
+			return true
+		}
+		if sym < 0 || sym >= len(cache.nullable) || !cache.nullable[sym] {
+			return false
+		}
+	}
+	return false
+}
+
+func symbolCanBeginWithAny(sym int, targets map[int]bool, cache *conflictResolutionCache, visiting []bool, ng *NormalizedGrammar) bool {
+	if sym < 0 || sym >= len(ng.Symbols) {
+		return false
+	}
+	if targets[sym] {
+		return true
+	}
+	if ng.Symbols[sym].Kind != SymbolNonterminal {
+		return false
+	}
+	if visiting[sym] {
+		return false
+	}
+	visiting[sym] = true
+	defer func() { visiting[sym] = false }()
+	if sym >= len(cache.prodsByLHS) {
+		return false
+	}
+	for _, prodIdx := range cache.prodsByLHS[sym] {
+		if prodIdx < 0 || prodIdx >= len(ng.Productions) {
+			continue
+		}
+		prod := &ng.Productions[prodIdx]
+		if rhsCanBeginWithAnyVisited(prod.RHS, targets, cache, visiting, ng) {
+			return true
+		}
+	}
+	return false
 }
 
 func preferredClosureParametersReduce(shifts, reduces []lrAction, ng *NormalizedGrammar) ([]lrAction, bool) {
@@ -4591,7 +4761,7 @@ func equalSymbolSeq(a, b []int) bool {
 // conflict resolution: keep S/R as GLR only when the symbols producing the
 // shift and reduce are in the same declared conflict group.
 func shiftReduceInConflictGroup(shifts, reduces []lrAction, ng *NormalizedGrammar, cache *conflictResolutionCache) bool {
-	if cache == nil {
+	if cache == nil || len(cache.groups) == 0 {
 		return false
 	}
 
@@ -4727,7 +4897,7 @@ func resolveAuxToParentsRec(sym int, ng *NormalizedGrammar, visited map[int]bool
 // Only the first reduce is checked to avoid creating excessive GLR forks
 // from S/R/R conflicts where secondary reduces happen to have conflict-group LHS.
 func reduceLHSInAnyConflictGroup(reduces []lrAction, ng *NormalizedGrammar, cache *conflictResolutionCache) bool {
-	if cache == nil || len(reduces) == 0 {
+	if cache == nil || len(cache.groups) == 0 || len(reduces) == 0 {
 		return false
 	}
 	lhs := ng.Productions[reduces[0].prodIdx].LHS

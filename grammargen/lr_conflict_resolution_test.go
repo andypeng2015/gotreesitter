@@ -652,6 +652,99 @@ func TestResolveShiftReduceHonorsExplicitZeroAssignmentAssociativity(t *testing.
 	}
 }
 
+func TestResolveShiftReducePrefersSameLHSContinuationShift(t *testing.T) {
+	ng := &NormalizedGrammar{
+		Symbols: []SymbolInfo{
+			{Name: "(", Kind: SymbolTerminal},
+			{Name: "prefix", Kind: SymbolTerminal},
+			{Name: "selector", Kind: SymbolNonterminal},
+			{Name: "section", Kind: SymbolNonterminal},
+			{Name: "repeat_args", Kind: SymbolNonterminal},
+			{Name: "argument_part", Kind: SymbolNonterminal},
+			{Name: "arguments", Kind: SymbolNonterminal},
+			{Name: "unrelated", Kind: SymbolNonterminal},
+		},
+		Productions: []Production{
+			{LHS: 3, RHS: []int{1, 2}, Assoc: AssocLeft, HasExplicitPrec: true},
+			{LHS: 3, RHS: []int{1, 2, 4}, Assoc: AssocLeft, HasExplicitPrec: true},
+			{LHS: 4, RHS: []int{5}},
+			{LHS: 5, RHS: []int{6}},
+			{LHS: 7, RHS: []int{6}},
+		},
+	}
+	if cache := getConflictResolutionCache(ng); cache == nil {
+		t.Fatal("conflict cache is nil for grammar without declared conflicts")
+	} else if len(cache.groups) != 0 || len(cache.prodsByLHS[3]) != 2 {
+		t.Fatalf("conflict cache = groups:%d sectionProds:%v, want no groups and two section productions", len(cache.groups), cache.prodsByLHS[3])
+	}
+
+	got, err := resolveActionConflict(0, []lrAction{
+		{kind: lrShift, state: 9, lhsSym: 6},
+		{kind: lrReduce, prodIdx: 0, lhsSym: 3},
+	}, ng)
+	if err != nil {
+		t.Fatalf("resolveActionConflict: %v", err)
+	}
+	if len(got) != 1 || got[0].kind != lrShift || got[0].state != 9 {
+		t.Fatalf("resolved actions = %+v, want continuation shift", got)
+	}
+
+	got, err = resolveActionConflict(0, []lrAction{
+		{kind: lrShift, state: 9, lhsSym: 7},
+		{kind: lrReduce, prodIdx: 0, lhsSym: 3},
+	}, ng)
+	if err != nil {
+		t.Fatalf("resolveActionConflict unrelated: %v", err)
+	}
+	if len(got) != 1 || got[0].kind != lrReduce || got[0].prodIdx != 0 {
+		t.Fatalf("unrelated actions = %+v, want normal left-associative reduce", got)
+	}
+
+	cache := getConflictResolutionCache(ng)
+	if preferred, ok := preferredSameLHSContinuationShift(
+		[]lrAction{{kind: lrShift, state: 9, lhsSym: 6}},
+		[]lrAction{{kind: lrReduce, prodIdx: 0, lhsSym: 3}, {kind: lrReduce, prodIdx: 2, lhsSym: 4}},
+		ng,
+		cache,
+	); ok {
+		t.Fatalf("multi-reduce continuation helper = %+v, want no preference", preferred)
+	}
+	if preferred, ok := preferredSameLHSContinuationShift(
+		[]lrAction{{kind: lrShift, state: 9, lhsSym: 6}, {kind: lrShift, state: 10, lhsSym: 6}},
+		[]lrAction{{kind: lrReduce, prodIdx: 0, lhsSym: 3}},
+		ng,
+		cache,
+	); ok {
+		t.Fatalf("two-shift continuation helper = %+v, want no preference", preferred)
+	}
+
+	ng.Conflicts = [][]int{{3, 6}}
+	ng.conflictCache = nil
+	got, err = resolveActionConflict(0, []lrAction{
+		{kind: lrShift, state: 9, lhsSym: 6},
+		{kind: lrReduce, prodIdx: 0, lhsSym: 3},
+	}, ng)
+	if err != nil {
+		t.Fatalf("resolveActionConflict pairwise declared conflict: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("pairwise declared conflict actions = %+v, want GLR preserved", got)
+	}
+
+	ng.Conflicts = [][]int{{3, 7}}
+	ng.conflictCache = nil
+	got, err = resolveActionConflict(0, []lrAction{
+		{kind: lrShift, state: 9, lhsSym: 6},
+		{kind: lrReduce, prodIdx: 0, lhsSym: 3},
+	}, ng)
+	if err != nil {
+		t.Fatalf("resolveActionConflict reduce-LHS declared conflict: %v", err)
+	}
+	if len(got) != 1 || got[0].kind != lrShift || got[0].state != 9 {
+		t.Fatalf("reduce-LHS conflict actions = %+v, want continuation shift after non-pairwise conflict handling", got)
+	}
+}
+
 func TestResolveShiftReduceUsesContributorSymbolVsNamedPrecedence(t *testing.T) {
 	ng := javascriptUpdateExpressionConflictGrammar(false)
 
