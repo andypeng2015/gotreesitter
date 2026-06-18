@@ -125,6 +125,7 @@ type Parser struct {
 	noTreeCheckpointBenchmarkOnly       bool
 	compactNoTreeShiftLeaves            bool
 	compactFullShiftLeaves              bool
+	eagerDefaultReduces                 []eagerDefaultReduceAction
 	pendingFullParents                  bool
 	finalChildRefs                      bool
 	skipInvisibleFullLeafCheckpoints    bool
@@ -415,6 +416,7 @@ func NewParser(lang *Language) *Parser {
 		p.externalValidMaskByState = buildExternalValidMaskByState(p.externalValidByState, len(lang.ExternalSymbols))
 		p.hasExtraChainActions = languageHasExtraChainActions(lang)
 		p.classifiedActions = buildClassifiedParseActions(lang)
+		p.eagerDefaultReduces = buildEagerDefaultReduceActions(p)
 		p.reduceChainHints = buildReduceChainHints(lang)
 		p.reduceChainHintByState = buildReduceChainHintIndex(p.reduceChainHints)
 		p.reduceAliasSeq = buildReduceAliasSequences(lang)
@@ -3575,6 +3577,47 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			}
 		}
 
+		postDispatchDefaultReduced := false
+		if anyReduced && !tok.NoLookahead && parseEagerDefaultReduceEnabled() && p.isExternalToken(tok.Symbol) {
+			if relexer, canRelex := ts.(tokenSourceRelexer); canRelex && relexer.CanRelexFromTokenStart(tok) {
+				postDispatchDefaultReduced = p.applyEagerDefaultReduces("post-dispatch", stacks, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
+				if postDispatchDefaultReduced {
+					drainPendingForkStacks()
+					if !p.updateCurrentRelexParserStateTokenSource(ts, stacks, scratch) {
+						postDispatchDefaultReduced = false
+					} else {
+						nextTok, ok := relexer.RelexFromTokenStart(tok)
+						if !ok {
+							postDispatchDefaultReduced = false
+							if parseEagerDefaultReduceDebugEnabled() {
+								fmt.Printf("  EAGER-DEFAULT-RELEX-FAILED old=%d[%d-%d]\n",
+									tok.Symbol, tok.StartByte, tok.EndByte)
+							}
+							if p.logger != nil {
+								p.logf(ParserLogLex, "relex failed sym=%d start=%d end=%d", tok.Symbol, tok.StartByte, tok.EndByte)
+							}
+						} else {
+							if parseEagerDefaultReduceDebugEnabled() {
+								fmt.Printf("  EAGER-DEFAULT-RELEX old=%d[%d-%d] new=%d[%d-%d]\n",
+									tok.Symbol, tok.StartByte, tok.EndByte, nextTok.Symbol, nextTok.StartByte, nextTok.EndByte)
+							}
+							tok = nextTok
+							p.updateCurrentExternalTokenCheckpoint(ts, tok)
+							lastTokenEndByte = tok.EndByte
+							lastTokenSymbol = tok.Symbol
+							lastTokenWasEOF = tok.Symbol == 0 && tok.StartByte == tok.EndByte && !tok.NoLookahead
+							if lastTokenWasEOF && tok.EndByte < expectedEOFByte {
+								tokenSourceEOFEarly = true
+							}
+							if p.logger != nil {
+								p.logf(ParserLogLex, "relex token sym=%d start=%d end=%d", tok.Symbol, tok.StartByte, tok.EndByte)
+							}
+						}
+					}
+				}
+			}
+		}
+
 		// After processing all stacks: determine whether to advance the
 		// token. If any stack reduced, reuse the same token (the reducing
 		// stacks have new top states and need to re-check the action for
@@ -3582,6 +3625,10 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		if anyReduced {
 			needToken = tok.NoLookahead || forceAdvanceAfterReduce
 			if tok.NoLookahead {
+				lastReduceDepth = -1
+				consecutiveReduces = 0
+			} else if postDispatchDefaultReduced {
+				needToken = false
 				lastReduceDepth = -1
 				consecutiveReduces = 0
 			} else if len(stacks) > 0 && !stacks[0].dead {
@@ -4243,6 +4290,73 @@ func (p *Parser) updateParserStateTokenSource(ts TokenSource, stacks []glrStack,
 	}
 	scratch.glrStates = glrBuf
 	stateful.SetGLRStates(glrBuf)
+}
+
+func (p *Parser) updateCurrentRelexParserStateTokenSource(ts TokenSource, stacks []glrStack, scratch *parserScratch) bool {
+	stateful, ok := ts.(parserStateTokenSource)
+	if !ok || len(stacks) == 0 {
+		return false
+	}
+
+	primaryIdx := -1
+	excludeAbsorbing := false
+	if p.errorCostCompetitionEnabled() {
+		for si := range stacks {
+			if !currentRelexStateStackEligible(&stacks[si]) {
+				continue
+			}
+			if stacks[si].cRec != nil && stacks[si].top().state == cErrorState {
+				continue
+			}
+			primaryIdx = si
+			excludeAbsorbing = true
+			break
+		}
+	}
+	if primaryIdx == -1 {
+		for si := range stacks {
+			if currentRelexStateStackEligible(&stacks[si]) {
+				primaryIdx = si
+				break
+			}
+		}
+	}
+	if primaryIdx == -1 {
+		clearGLRStateTokenSource(stateful, scratch)
+		return false
+	}
+
+	primary := stacks[primaryIdx].top().state
+	stateful.SetParserState(primary)
+	if p.usesPrimaryExternalScannerStateForGLR() {
+		clearGLRStateTokenSource(stateful, scratch)
+		return true
+	}
+
+	glrBuf := scratch.glrStates[:0]
+	if cap(glrBuf) < len(stacks) {
+		glrBuf = make([]StateID, 0, len(stacks))
+	}
+	for si := range stacks {
+		if !currentRelexStateStackEligible(&stacks[si]) {
+			continue
+		}
+		if excludeAbsorbing && stacks[si].cRec != nil && stacks[si].top().state == cErrorState {
+			continue
+		}
+		glrBuf = append(glrBuf, stacks[si].top().state)
+	}
+	scratch.glrStates = glrBuf
+	if len(glrBuf) <= 1 {
+		clearGLRStateTokenSource(stateful, scratch)
+		return true
+	}
+	stateful.SetGLRStates(glrBuf)
+	return true
+}
+
+func currentRelexStateStackEligible(s *glrStack) bool {
+	return s != nil && !s.dead && !s.shifted && s.depth() > 0
 }
 
 func (p *Parser) usesPrimaryExternalScannerStateForGLR() bool {

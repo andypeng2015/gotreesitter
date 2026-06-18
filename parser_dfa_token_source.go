@@ -1918,6 +1918,129 @@ func (d *dfaTokenSource) SkipToByteWithPoint(offset uint32, pt Point) Token {
 	return d.Next()
 }
 
+func (d *dfaTokenSource) CanRelexFromTokenStart(tok Token) bool {
+	if d == nil || d.lexer == nil {
+		return false
+	}
+	target := int(tok.StartByte)
+	if target < 0 || target > len(d.lexer.source) {
+		return false
+	}
+	if d.hasExternalScanner {
+		if d.usesExternalCheckpoints {
+			if !d.lastExternalTokenValid ||
+				d.lastExternalTokenStartByte != tok.StartByte ||
+				d.lastExternalTokenEndByte != tok.EndByte {
+				return false
+			}
+		} else if len(d.captureExternalScannerStateInto(&d.externalCompare)) != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+type dfaRelexSnapshot struct {
+	lexerPos int
+	lexerRow uint32
+	lexerCol uint32
+
+	externalPayload []byte
+
+	lastExternalTokenStartByte uint32
+	lastExternalTokenEndByte   uint32
+	lastExternalTokenValid     bool
+	externalTokenStart         []byte
+	externalTokenEnd           []byte
+
+	extZeroPos   int
+	extZeroState StateID
+	extZeroTried []bool
+
+	zeroWidthPos   int
+	zeroWidthCount int
+}
+
+func (d *dfaTokenSource) snapshotRelexState() dfaRelexSnapshot {
+	s := dfaRelexSnapshot{
+		lexerPos:                   d.lexer.pos,
+		lexerRow:                   d.lexer.row,
+		lexerCol:                   d.lexer.col,
+		lastExternalTokenStartByte: d.lastExternalTokenStartByte,
+		lastExternalTokenEndByte:   d.lastExternalTokenEndByte,
+		lastExternalTokenValid:     d.lastExternalTokenValid,
+		externalTokenStart:         append([]byte(nil), d.externalTokenStart...),
+		externalTokenEnd:           append([]byte(nil), d.externalTokenEnd...),
+		extZeroPos:                 d.extZeroPos,
+		extZeroState:               d.extZeroState,
+		extZeroTried:               append([]bool(nil), d.extZeroTried...),
+		zeroWidthPos:               d.zeroWidthPos,
+		zeroWidthCount:             d.zeroWidthCount,
+	}
+	if d.hasExternalScanner && d.language != nil && d.language.ExternalScanner != nil {
+		buf := make([]byte, externalScannerSerializationBufferSize)
+		if n := d.language.ExternalScanner.Serialize(d.externalPayload, buf); n > 0 {
+			s.externalPayload = buf[:n]
+		}
+	}
+	return s
+}
+
+func (s dfaRelexSnapshot) restore(d *dfaTokenSource) {
+	d.lexer.pos = s.lexerPos
+	d.lexer.row = s.lexerRow
+	d.lexer.col = s.lexerCol
+	if d.hasExternalScanner && d.language != nil && d.language.ExternalScanner != nil {
+		d.language.ExternalScanner.Deserialize(d.externalPayload, s.externalPayload)
+	}
+	d.lastExternalTokenStartByte = s.lastExternalTokenStartByte
+	d.lastExternalTokenEndByte = s.lastExternalTokenEndByte
+	d.lastExternalTokenValid = s.lastExternalTokenValid
+	d.externalTokenStart = append(d.externalTokenStart[:0], s.externalTokenStart...)
+	d.externalTokenEnd = append(d.externalTokenEnd[:0], s.externalTokenEnd...)
+	d.extZeroPos = s.extZeroPos
+	d.extZeroState = s.extZeroState
+	d.extZeroTried = append(d.extZeroTried[:0], s.extZeroTried...)
+	d.zeroWidthPos = s.zeroWidthPos
+	d.zeroWidthCount = s.zeroWidthCount
+}
+
+func (d *dfaTokenSource) RelexFromTokenStart(tok Token) (Token, bool) {
+	if !d.CanRelexFromTokenStart(tok) {
+		return Token{}, false
+	}
+	snapshot := d.snapshotRelexState()
+	target := int(tok.StartByte)
+	d.lexer.pos = target
+	d.lexer.row = tok.StartPoint.Row
+	d.lexer.col = tok.StartPoint.Column
+	if d.hasExternalScanner && d.usesExternalCheckpoints {
+		d.restoreExternalScannerState(d.externalTokenStart)
+	}
+	d.lastExternalTokenValid = false
+	d.lastExternalTokenStartByte = 0
+	d.lastExternalTokenEndByte = 0
+	if len(d.externalTokenEnd) > 0 {
+		d.externalTokenEnd = d.externalTokenEnd[:0]
+	}
+	d.extZeroPos = -1
+	d.extZeroState = 0
+	if len(d.extZeroTried) > 0 {
+		d.extZeroTried = d.extZeroTried[:0]
+	}
+	d.zeroWidthPos = -1
+	d.zeroWidthCount = 0
+	if DebugDFA.Load() {
+		fmt.Printf("  RELEX from %d state=%d\n", tok.StartByte, d.state)
+	}
+	next := d.Next()
+	if next.StartByte != tok.StartByte || next.StartPoint != tok.StartPoint {
+		snapshot.restore(d)
+		return Token{}, false
+	}
+	return next, true
+}
+
 func (d *dfaTokenSource) nextExternalToken() (Token, bool) {
 	if d.language == nil || d.lookupActionIndex == nil {
 		return Token{}, false

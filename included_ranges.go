@@ -126,6 +126,32 @@ func (s *includedRangeTokenSource) SkipToByteWithPoint(offset uint32, pt Point) 
 	return s.SkipToByte(offset)
 }
 
+func (s *includedRangeTokenSource) RelexFromTokenStart(tok Token) (Token, bool) {
+	relexer, ok := s.base.(tokenSourceRelexer)
+	if !ok {
+		return Token{}, false
+	}
+	idx := s.idx
+	if !s.tokenInCurrentRange(tok) {
+		s.idx = idx
+		return Token{}, false
+	}
+	next, ok := relexer.RelexFromTokenStart(tok)
+	if !ok {
+		return Token{}, false
+	}
+	if next.StartByte != tok.StartByte || next.StartPoint != tok.StartPoint || !s.tokenInCurrentRange(next) {
+		s.idx = idx
+		return Token{}, false
+	}
+	return next, true
+}
+
+func (s *includedRangeTokenSource) CanRelexFromTokenStart(tok Token) bool {
+	relexer, ok := s.base.(tokenSourceRelexer)
+	return ok && relexer.CanRelexFromTokenStart(tok)
+}
+
 func (s *includedRangeTokenSource) filterToken(tok Token, hasToken bool) Token {
 	for {
 		if !hasToken {
@@ -160,6 +186,14 @@ func (s *includedRangeTokenSource) filterToken(tok Token, hasToken bool) Token {
 		}
 		return tok
 	}
+}
+
+func (s *includedRangeTokenSource) tokenInCurrentRange(tok Token) bool {
+	if tok.Symbol == 0 || s.idx >= len(s.ranges) {
+		return false
+	}
+	r := s.ranges[s.idx]
+	return tok.StartByte < r.EndByte && tok.EndByte > r.StartByte
 }
 
 func (s *includedRangeTokenSource) advanceToMatchingRange(tok Token) bool {

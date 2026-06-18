@@ -706,6 +706,13 @@ type PointSkippableTokenSource interface {
 	SkipToByteWithPoint(offset uint32, pt Point) Token
 }
 
+// tokenSourceRelexer is an internal parser-loop extension for token sources
+// that can re-read a token from its original start after parser state changes.
+type tokenSourceRelexer interface {
+	CanRelexFromTokenStart(tok Token) bool
+	RelexFromTokenStart(tok Token) (Token, bool)
+}
+
 // IncrementalReuseTokenSource is an opt-in marker for custom token sources
 // that are safe for incremental subtree reuse. Implementations must provide
 // stable token boundaries across edits and support deterministic SkipToByte*
