@@ -7,6 +7,8 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+## [0.20.3] - 2026-06-23
+
 ### Fixed
 
 - C# files whose namespace body does not parse cleanly no longer collapse into
@@ -22,6 +24,22 @@ for tags and release notes while still in `0.x`.
   trailing closure of the condition's last operand; recovery now re-parses the
   affected conditions with synthetic parentheses to remove the ambiguity and
   maps the result back to byte-faithful original coordinates (#118).
+- Go: `normalizeGoDotLeafChildren` now walks dotted-selector chains with an
+  iterative DFS instead of recursion, removing a stack-depth risk on very long
+  selector chains.
+
+### Changed
+
+- Removed dead unexported code (#117).
+
+### Testing
+
+- Banked a (skipped) regression guard,
+  `TestJavaScriptBlockThenAssignmentParsesClean`, for the JavaScript
+  block-then-simple-assignment GLR collapse (`{a}b=c`, #111). The root cause is
+  the JSX-attribute-continuation ASI heuristic in the JS scanner; the fix is
+  still pending (targeted for the C-oracle-verified parity line). Remove the
+  `t.Skip` to validate once fixed.
 
 ## [0.20.2] - 2026-06-06
 
