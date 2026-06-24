@@ -597,11 +597,6 @@ make_clone_block() {
   local lock_name="${LOCK_NAMES[$grammar]:-$grammar}"
   local url="${REPO_URLS[$grammar]:-}"
 
-  if [[ -z "$url" ]]; then
-    echo "# Unknown grammar: $grammar — no clone URL"
-    return
-  fi
-
   cat <<CLONE_EOF
 lock_file="/workspace/grammars/languages.lock"
 lock_url=\$(awk -v target="$lock_name" '\$1 == target && \$1 !~ /^#/ { print \$2; exit }' "\$lock_file")
@@ -618,8 +613,10 @@ if [[ -n "\$lock_url" && -n "\$lock_commit" ]]; then
     git -C "/tmp/grammar_parity/$repo_name" fetch --depth=1 origin "\$lock_commit" >/dev/null 2>&1 || true
     git -C "/tmp/grammar_parity/$repo_name" checkout --detach "\$lock_commit" >/dev/null 2>&1 || echo "WARN: checkout failed for $grammar @ \$lock_commit"
   fi
-elif [[ ! -d "/tmp/grammar_parity/$repo_name" ]]; then
+elif [[ -n "$url" && ! -d "/tmp/grammar_parity/$repo_name" ]]; then
   git clone --depth=1 "$url" "/tmp/grammar_parity/$repo_name" || echo "WARN: clone failed for $grammar"
+else
+  echo "WARN: no clone URL for $grammar"
 fi
 CLONE_EOF
 }

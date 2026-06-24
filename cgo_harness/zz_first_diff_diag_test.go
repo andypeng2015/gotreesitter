@@ -35,7 +35,12 @@ type fddSignature struct {
 	CRootEnd       uint32
 	CRootChildren  int
 	CRootHasError  bool
+	GoErrorCount   int
+	CErrorCount    int
+	GoMissingCount int
+	CMissingCount  int
 	GoStopReason   string
+	GoRuntime      string
 	GoType         string
 	GoStart        uint32
 	GoEnd          uint32
@@ -46,6 +51,42 @@ type fddSignature struct {
 	CChildren      int
 	GoText         string
 	CText          string
+}
+
+func fddCountGoIntegrity(n *gts.Node, lang *gts.Language) (errors, missing int) {
+	if n == nil {
+		return 0, 0
+	}
+	if n.Type(lang) == "ERROR" {
+		errors++
+	}
+	if n.IsMissing() {
+		missing++
+	}
+	for i := 0; i < n.ChildCount(); i++ {
+		childErrors, childMissing := fddCountGoIntegrity(n.Child(i), lang)
+		errors += childErrors
+		missing += childMissing
+	}
+	return errors, missing
+}
+
+func fddCountCIntegrity(n *sitter.Node) (errors, missing int) {
+	if n == nil {
+		return 0, 0
+	}
+	if n.Kind() == "ERROR" {
+		errors++
+	}
+	if n.IsMissing() {
+		missing++
+	}
+	for i := 0; i < int(n.ChildCount()); i++ {
+		childErrors, childMissing := fddCountCIntegrity(n.Child(uint(i)))
+		errors += childErrors
+		missing += childMissing
+	}
+	return errors, missing
 }
 
 func fddTxt(src []byte, s, e uint32) string {
@@ -149,7 +190,7 @@ func fddFirst(g *gts.Node, lang *gts.Language, c *sitter.Node, path string) *fdd
 	return nil
 }
 
-func fddBuildSignature(file string, goRoot *gts.Node, lang *gts.Language, cRoot *sitter.Node, src []byte, stopReason string) *fddSignature {
+func fddBuildSignature(file string, goRoot *gts.Node, lang *gts.Language, cRoot *sitter.Node, src []byte, stopReason, goRuntime string) *fddSignature {
 	sig := fddFirst(goRoot, lang, cRoot, "root")
 	if sig == nil {
 		return nil
@@ -165,7 +206,10 @@ func fddBuildSignature(file string, goRoot *gts.Node, lang *gts.Language, cRoot 
 	sig.CRootEnd = uint32(cRoot.EndByte())
 	sig.CRootChildren = int(cRoot.ChildCount())
 	sig.CRootHasError = cRoot.HasError()
+	sig.GoErrorCount, sig.GoMissingCount = fddCountGoIntegrity(goRoot, lang)
+	sig.CErrorCount, sig.CMissingCount = fddCountCIntegrity(cRoot)
 	sig.GoStopReason = stopReason
+	sig.GoRuntime = goRuntime
 	sig.GoText = fddExcerpt(src, sig.GoStart, sig.GoEnd)
 	sig.CText = fddExcerpt(src, sig.CStart, sig.CEnd)
 	return sig
@@ -176,7 +220,7 @@ func fddQuote(s string) string {
 }
 
 func fddPrintSignature(lang string, sig *fddSignature) {
-	fmt.Printf("DIVERGE-SIG lang=%s file=%s base=%s goRoot=%s goRootSpan=%d:%d goRootCC=%d goRootErr=%v cRoot=%s cRootSpan=%d:%d cRootCC=%d cRootErr=%v goStop=%s path=%s diff=%s goType=%s cType=%s goSpan=%d:%d cSpan=%d:%d goCC=%d cCC=%d goText=%s cText=%s\n",
+	fmt.Printf("DIVERGE-SIG lang=%s file=%s base=%s goRoot=%s goRootSpan=%d:%d goRootCC=%d goRootErr=%v cRoot=%s cRootSpan=%d:%d cRootCC=%d cRootErr=%v goStop=%s goRuntime=%s path=%s diff=%s goType=%s cType=%s goSpan=%d:%d cSpan=%d:%d goCC=%d cCC=%d goText=%s cText=%s\n",
 		fddQuote(lang),
 		fddQuote(sig.File),
 		fddQuote(filepath.Base(sig.File)),
@@ -191,6 +235,7 @@ func fddPrintSignature(lang string, sig *fddSignature) {
 		sig.CRootChildren,
 		sig.CRootHasError,
 		fddQuote(sig.GoStopReason),
+		fddQuote(sig.GoRuntime),
 		fddQuote(sig.Path),
 		fddQuote(sig.DiffKind),
 		fddQuote(sig.GoType),
@@ -203,6 +248,45 @@ func fddPrintSignature(lang string, sig *fddSignature) {
 		sig.CChildren,
 		fddQuote(sig.GoText),
 		fddQuote(sig.CText),
+	)
+}
+
+func fddPrintProgress(lang string, sig *fddSignature, fileIndex, fileTotal, bytes int, elapsedMS int64) {
+	fmt.Printf("MEASURE-PROGRESS lang=%s file=%d/%d base=%s path=%s bytes=%d phase=comparison_diag result=diverge diff=%s firstDiffPath=%s goType=%s cType=%s goSpan=%d:%d cSpan=%d:%d goCC=%d cCC=%d goRoot=%s goRootSpan=%d:%d goRootCC=%d goRootErr=%v cRoot=%s cRootSpan=%d:%d cRootCC=%d cRootErr=%v goErrors=%d cErrors=%d goMissing=%d cMissing=%d goStop=%s runtime=%s goRuntime=%s elapsed_ms=%d\n",
+		fddQuote(lang),
+		fileIndex,
+		fileTotal,
+		fddQuote(filepath.Base(sig.File)),
+		fddQuote(sig.File),
+		bytes,
+		fddQuote(sig.DiffKind),
+		fddQuote(sig.Path),
+		fddQuote(sig.GoType),
+		fddQuote(sig.CType),
+		sig.GoStart,
+		sig.GoEnd,
+		sig.CStart,
+		sig.CEnd,
+		sig.GoChildren,
+		sig.CChildren,
+		fddQuote(sig.GoRootType),
+		sig.GoRootStart,
+		sig.GoRootEnd,
+		sig.GoRootChildren,
+		sig.GoRootHasError,
+		fddQuote(sig.CRootKind),
+		sig.CRootStart,
+		sig.CRootEnd,
+		sig.CRootChildren,
+		sig.CRootHasError,
+		sig.GoErrorCount,
+		sig.CErrorCount,
+		sig.GoMissingCount,
+		sig.CMissingCount,
+		fddQuote(sig.GoStopReason),
+		fddQuote(sig.GoRuntime),
+		fddQuote(sig.GoRuntime),
+		elapsedMS,
 	)
 }
 
@@ -220,9 +304,152 @@ func fddDumpBoth(g *gts.Node, lang *gts.Language, c *sitter.Node, src []byte, pa
 	}
 }
 
+func fddGoSymbolMetadata(lang *gts.Language, sym gts.Symbol) (gts.SymbolMetadata, bool) {
+	if lang == nil {
+		return gts.SymbolMetadata{}, false
+	}
+	idx := int(sym)
+	if idx < 0 || idx >= len(lang.SymbolMetadata) {
+		return gts.SymbolMetadata{}, false
+	}
+	return lang.SymbolMetadata[idx], true
+}
+
+func fddHiddenFlattenStructuralApprox(lang *gts.Language, sym gts.Symbol) bool {
+	meta, ok := fddGoSymbolMetadata(lang, sym)
+	if !ok {
+		return true
+	}
+	return meta.Visible
+}
+
+func fddSymbolAuditNode(t *testing.T, label string, n *gts.Node, lang *gts.Language, src []byte) {
+	if n == nil {
+		t.Logf("      SYMBOL-AUDIT go.%s <nil>", label)
+		return
+	}
+	sym := n.Symbol()
+	meta, ok := fddGoSymbolMetadata(lang, sym)
+	metaName := ""
+	metaVisible := false
+	metaNamed := false
+	metaSupertype := false
+	metaGeneratedRepeatAux := false
+	if ok {
+		metaName = meta.Name
+		metaVisible = meta.Visible
+		metaNamed = meta.Named
+		metaSupertype = meta.Supertype
+		metaGeneratedRepeatAux = meta.GeneratedRepeatAux
+	}
+	t.Logf("      SYMBOL-AUDIT go.%s sym=%d type=%q metaOK=%v metaName=%q nodeNamed=%v metaNamed=%v visible=%v supertype=%v extra=%v generatedRepeatAux=%v flattenStructuralApprox=%v childCount=%d span=%d:%d hasError=%v text=%s",
+		label,
+		sym,
+		n.Type(lang),
+		ok,
+		metaName,
+		n.IsNamed(),
+		metaNamed,
+		metaVisible,
+		metaSupertype,
+		n.IsExtra(),
+		metaGeneratedRepeatAux,
+		fddHiddenFlattenStructuralApprox(lang, sym),
+		n.ChildCount(),
+		n.StartByte(),
+		n.EndByte(),
+		n.HasError(),
+		fddTxt(src, n.StartByte(), n.EndByte()),
+	)
+}
+
+func fddDumpSymbolAudit(g *gts.Node, lang *gts.Language, c *sitter.Node, src []byte, path string, t *testing.T) {
+	t.Logf("    SYMBOL-AUDIT path=%s note=%q", path, "flattenStructuralApprox mirrors symbolStructuralForHiddenFlattening only for preservedHidden=nil; parser-internal preservedHidden overrides are not exported to cgo_harness")
+	fddSymbolAuditNode(t, "diff", g, lang, src)
+	for i := 0; g != nil && i < g.ChildCount(); i++ {
+		fddSymbolAuditNode(t, fmt.Sprintf("child[%d]", i), g.Child(i), lang, src)
+	}
+	for i := 0; c != nil && i < int(c.ChildCount()); i++ {
+		ch := c.Child(uint(i))
+		t.Logf("      SYMBOL-AUDIT c.child[%d] kind=%q named=%v extra=%v childCount=%d span=%d:%d hasError=%v text=%s",
+			i,
+			ch.Kind(),
+			ch.IsNamed(),
+			ch.IsExtra(),
+			int(ch.ChildCount()),
+			ch.StartByte(),
+			ch.EndByte(),
+			ch.HasError(),
+			fddTxt(src, uint32(ch.StartByte()), uint32(ch.EndByte())),
+		)
+	}
+	fddDumpMismatchedChildSymbolAudit(g, lang, c, src, t)
+}
+
+func fddDumpMismatchedChildSymbolAudit(g *gts.Node, lang *gts.Language, c *sitter.Node, src []byte, t *testing.T) {
+	if g == nil || c == nil {
+		return
+	}
+	limit := g.ChildCount()
+	if cc := int(c.ChildCount()); cc < limit {
+		limit = cc
+	}
+	detailed := 0
+	for i := 0; i < limit; i++ {
+		gChild := g.Child(i)
+		cChild := c.Child(uint(i))
+		if fddDiffKind(gChild, lang, cChild) == "" {
+			continue
+		}
+		sameStart := gChild.StartByte() == uint32(cChild.StartByte())
+		if detailed >= 6 && !sameStart {
+			continue
+		}
+		detailed++
+		t.Logf("      SYMBOL-AUDIT detail child[%d] sameStart=%v", i, sameStart)
+		for j := 0; j < gChild.ChildCount(); j++ {
+			if !fddAuditChildIndexIncluded(j, gChild.ChildCount()) {
+				if j == 16 {
+					t.Logf("      SYMBOL-AUDIT go.child[%d].children.truncated total=%d", i, gChild.ChildCount())
+				}
+				continue
+			}
+			fddSymbolAuditNode(t, fmt.Sprintf("child[%d].child[%d]", i, j), gChild.Child(j), lang, src)
+		}
+		for j := 0; j < int(cChild.ChildCount()); j++ {
+			if !fddAuditChildIndexIncluded(j, int(cChild.ChildCount())) {
+				if j == 16 {
+					t.Logf("      SYMBOL-AUDIT c.child[%d].children.truncated total=%d", i, int(cChild.ChildCount()))
+				}
+				continue
+			}
+			ch := cChild.Child(uint(j))
+			t.Logf("      SYMBOL-AUDIT c.child[%d].child[%d] kind=%q named=%v extra=%v childCount=%d span=%d:%d hasError=%v text=%s",
+				i,
+				j,
+				ch.Kind(),
+				ch.IsNamed(),
+				ch.IsExtra(),
+				int(ch.ChildCount()),
+				ch.StartByte(),
+				ch.EndByte(),
+				ch.HasError(),
+				fddTxt(src, uint32(ch.StartByte()), uint32(ch.EndByte())),
+			)
+		}
+	}
+}
+
+func fddAuditChildIndexIncluded(idx, total int) bool {
+	return total <= 24 || idx < 16 || idx >= total-4
+}
+
 func fddWalk(g *gts.Node, lang *gts.Language, c *sitter.Node, src []byte, path string, t *testing.T) bool {
 	if fddDiffKind(g, lang, c) != "" {
 		fddDumpBoth(g, lang, c, src, path, t)
+		if os.Getenv("REPRO_SYMBOL_AUDIT") == "1" {
+			fddDumpSymbolAudit(g, lang, c, src, path, t)
+		}
 		return true
 	}
 	for i := 0; i < g.ChildCount(); i++ {
@@ -279,7 +506,7 @@ func TestFirstDiffDiag(t *testing.T) {
 	}
 	defer ct.Close()
 	t.Logf("=== %s (%d bytes) ===", file, len(src))
-	t.Logf("  go stopReason=%v rootHasError=%v cRootHasError=%v", tr.ParseStopReason(), tr.RootNode().HasError(), ct.RootNode().HasError())
+	t.Logf("  go stopReason=%v runtime=%s rootHasError=%v cRootHasError=%v", tr.ParseStopReason(), tr.ParseRuntime().Summary(), tr.RootNode().HasError(), ct.RootNode().HasError())
 	if !fddWalk(tr.RootNode(), goLang, ct.RootNode(), src, "root", t) {
 		t.Logf("  (no structural divergence)")
 	}

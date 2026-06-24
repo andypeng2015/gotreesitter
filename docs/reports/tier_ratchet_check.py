@@ -3,13 +3,17 @@
 
 Current state is read from the canonical published artifacts, NOT a perf rerun:
 
-  * parity  — ``cgo_harness/tier_scan/clean_grammars.txt`` (the hard gate; a
-    grammar IS eligible for tiers I/II/III iff it is listed there, i.e. it
-    parses byte-identical to the C oracle on its full measured corpus).
+  * current — ``cgo_harness/tier_scan/tier_classification.tsv``. A grammar is
+    currently eligible for tiers I/II/III iff its row is ``CLEAN``. An assessed
+    ``IV-*`` row is current non-clean scan truth, even when the grammar is still
+    listed in the historical clean ratchet.
+  * floor   — ``cgo_harness/tier_scan/clean_grammars.txt`` is the parity-clean
+    ratchet/floor. It can make a current ``IV-*`` row a regression, but it does
+    not make that row contradictory.
   * tier    — ``docs/reports/tiers.json`` (the published per-release tier
-    table). The current tier of grammar ``g`` is tiers.json's tier for ``g``
-    (``IV`` if absent). The parity gate is re-asserted defensively here: any
-    grammar not in clean_grammars.txt is forced to ``IV`` regardless of what
+    table). The current performance tier of a CLEAN grammar is tiers.json's
+    tier for ``g`` (``unranked`` if absent or not ranked). The current tier of
+    any assessed ``IV-*`` grammar is forced to ``IV`` regardless of what
     tiers.json says — parity-vs-C is the hard gate, full stop.
 
 The committed floor lives in ``tier_floors.json`` (one ``{"tier": ...}`` entry
@@ -41,69 +45,88 @@ def clean_set():
         return {ln.strip() for ln in f if ln.strip()}
 
 
-def classification_tiers():
-    """Classification TSV tier by grammar, used to reject contradictory sources."""
+def classification_rows():
+    """Classification TSV tier by grammar plus duplicate row diagnostics."""
     rows = {}
+    duplicates = set()
     with open(CLASS_TSV) as f:
         for i, ln in enumerate(f):
             parts = ln.rstrip("\n").split("\t")
             if i == 0 and parts and parts[0] == "grammar":
                 continue
             if len(parts) >= 2 and parts[0]:
+                if parts[0] in rows:
+                    duplicates.add(parts[0])
                 rows[parts[0]] = parts[1]
-    return rows
+    return rows, sorted(duplicates)
 
 
-def check_clean_classification_consistency(clean, classification):
-    clean_with_non_clean_row = sorted(
-        (g, classification[g]) for g in clean
-        if g in classification and classification[g] != "CLEAN"
+def check_classification_hygiene(classification, clean, duplicates):
+    invalid = sorted(
+        (g, t) for g, t in classification.items()
+        if t != "CLEAN" and (not t.startswith("IV-") or t.startswith("IV-unassessed"))
     )
-    clean_rows_absent_from_ratchet = sorted(
+    clean_without_ratchet = sorted(
         g for g, t in classification.items() if t == "CLEAN" and g not in clean
     )
-    if not clean_with_non_clean_row and not clean_rows_absent_from_ratchet:
+    if not duplicates and not invalid and not clean_without_ratchet:
         return
 
     print("TIER DATA HYGIENE VIOLATION:")
-    if clean_with_non_clean_row:
-        print("  clean_grammars.txt entries with non-CLEAN classification rows:")
-        for g, t in clean_with_non_clean_row:
-            print(f"    {g}: {t}")
-    if clean_rows_absent_from_ratchet:
+    if duplicates:
+        print("  duplicate tier_classification.tsv rows:")
+        for g in duplicates:
+            print(f"    {g}")
+    if invalid:
+        print("  tier_classification.tsv rows must be CLEAN or an assessed IV-* cause:")
+        for g, t in invalid:
+            print(f"    {g}: {t or 'missing'}")
+    if clean_without_ratchet:
         print("  tier_classification.tsv CLEAN rows absent from clean_grammars.txt:")
-        for g in clean_rows_absent_from_ratchet:
+        for g in clean_without_ratchet:
             print(f"    {g}")
     sys.exit(1)
 
 
-def current_tiers():
+def raise_clean_floor(floor, clean):
+    """Apply the parity-clean ratchet as an effective minimum floor."""
+    for g in clean:
+        if RANK.get(floor.get(g, "IV"), 0) < RANK["unranked"]:
+            floor[g] = "unranked"
+
+
+def current_tiers(classification):
     """Current published tier per grammar: tiers.json tier, IV if absent.
 
     PARITY IS A HARD GATE (2026-06-08): a grammar whose tree diverges from the C
     oracle is POISONED — untrustworthy regardless of speed — and is tier IV,
-    full stop. Only parity-clean grammars (those in clean_grammars.txt) are
-    ranked I/II/III. We therefore clamp any non-clean grammar to IV even if
+    full stop. Only grammars classified CLEAN in tier_classification.tsv are
+    ranked I/II/III. We therefore clamp any current IV-* grammar to IV even if
     tiers.json happens to list it higher.
     """
-    clean = clean_set()
     tiers = json.load(open(TIERS))
-    out = {}
+    published = {x["grammar"]: x.get("tier", "IV") for x in tiers["grammars"]}
+    out = {g: "IV" for g, t in classification.items() if t.startswith("IV-")}
+    for g, t in classification.items():
+        if t != "CLEAN":
+            continue
+        current = published.get(g, "unranked")
+        out[g] = current if current in RANK and current != "IV" else "unranked"
     for x in tiers["grammars"]:
         n = x["grammar"]
-        t = x.get("tier", "IV")
-        if n not in clean:
-            t = "IV"
-        out[n] = t if t in RANK else "IV"
+        if n not in out:
+            out[n] = "IV"
     return out
 
 
 def main():
     bump = "--bump" in sys.argv
     clean = clean_set()
-    check_clean_classification_consistency(clean, classification_tiers())
+    classification, duplicates = classification_rows()
+    check_classification_hygiene(classification, clean, duplicates)
     floor = {k: v["tier"] for k, v in json.load(open(FLOOR)).items()}
-    cur = current_tiers()
+    raise_clean_floor(floor, clean)
+    cur = current_tiers(classification)
     regressions, lifts = [], []
     for n, ft in floor.items():
         ct = cur.get(n, "IV")
@@ -121,6 +144,10 @@ def main():
             sys.exit(1)
     if bump:
         full = json.load(open(FLOOR))
+        for g in clean:
+            row = full.setdefault(g, {"tier": "IV"})
+            if RANK.get(row.get("tier", "IV"), 0) < RANK["unranked"]:
+                row["tier"] = "unranked"
         for n, ct in cur.items():
             if n in full and RANK[ct] > RANK[full[n]["tier"]]:
                 full[n]["tier"] = ct

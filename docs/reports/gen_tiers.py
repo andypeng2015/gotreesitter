@@ -10,14 +10,17 @@ parity vs the C oracle is the HARD GATE, performance is the sub-rank.
   IV   NOT parity-clean         (any divergence/truncation/unmeasured parity)
 
 Sources of truth:
-  - parity:    cgo_harness/tier_scan/clean_grammars.txt  (the byte-parity ratchet)
-  - IV causes: cgo_harness/tier_scan/tier_classification.tsv
+  - current:   cgo_harness/tier_scan/tier_classification.tsv
+               (CLEAN, or an assessed IV-* cause from the latest scan)
+  - universe:  cgo_harness/tier_scan/exts.tsv
+               (all grammars that must publish a row)
+  - ratchet:   cgo_harness/tier_scan/clean_grammars.txt
+               (historical clean floor; does not override current IV truth)
   - perf:      harness_out/perf_picture/{merged_bench_report,cold_cost}.json when
                present, else tier_floors.json floor tiers I/II/III as evidence.
                NOTE: floor tier IV is NOT perf evidence — historical floors
                derived parity from bench-report readiness, which wrongly
-               classed parity-clean-but-slow grammars as IV. clean_grammars.txt
-               overrides.
+               classed parity-clean-but-slow grammars as IV.
 
 A parity-clean grammar with no perf evidence is published as "unranked
 (parity-clean, perf pending)" — it never silently inflates or deflates a tier.
@@ -36,6 +39,7 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(ROOT, "..", ".."))
 CLEAN = os.path.join(REPO, "cgo_harness/tier_scan/clean_grammars.txt")
 CLASS_TSV = os.path.join(REPO, "cgo_harness/tier_scan/tier_classification.tsv")
+EXTS_TSV = os.path.join(REPO, "cgo_harness/tier_scan/exts.tsv")
 FLOOR = os.path.join(ROOT, "tier_floors.json")
 MERGED = os.path.join(REPO, "harness_out/perf_picture/merged_bench_report.json")
 COLD = os.path.join(REPO, "harness_out/perf_picture/cold_cost.json")
@@ -58,20 +62,60 @@ def load_clean():
         return {ln.strip() for ln in f if ln.strip()}
 
 
+def load_exts():
+    with open(EXTS_TSV) as f:
+        return {ln.split("\t", 1)[0].strip() for ln in f if ln.strip()}
+
+
 def load_classification():
     rows = {}
+    duplicates = set()
     with open(CLASS_TSV) as f:
         for i, ln in enumerate(f):
             parts = ln.rstrip("\n").split("\t")
             if i == 0 and parts and parts[0] == "grammar":
                 continue
             if len(parts) >= 2 and parts[0]:
+                if parts[0] in rows:
+                    duplicates.add(parts[0])
                 rows[parts[0]] = {
                     "tier": parts[1],
                     "parity": parts[2] if len(parts) > 2 else "",
                     "notes": parts[3] if len(parts) > 3 else "",
                 }
-    return rows
+    return rows, sorted(duplicates)
+
+
+def check_classification_hygiene(classification, ratchet_clean, duplicates):
+    invalid = sorted(
+        (g, row.get("tier", "")) for g, row in classification.items()
+        if row.get("tier") != "CLEAN"
+        and (not row.get("tier", "").startswith("IV-")
+             or row.get("tier", "").startswith("IV-unassessed"))
+    )
+    clean_without_ratchet = sorted(
+        g for g, row in classification.items()
+        if row.get("tier") == "CLEAN" and g not in ratchet_clean
+    )
+    if not duplicates and not invalid and not clean_without_ratchet:
+        return
+
+    print("TIER DATA HYGIENE VIOLATION:", file=sys.stderr)
+    if duplicates:
+        print("  duplicate tier_classification.tsv rows:", file=sys.stderr)
+        for g in duplicates:
+            print(f"    {g}", file=sys.stderr)
+    if invalid:
+        print("  tier_classification.tsv rows must be CLEAN or an assessed IV-* cause:",
+              file=sys.stderr)
+        for g, t in invalid:
+            print(f"    {g}: {t or 'missing'}", file=sys.stderr)
+    if clean_without_ratchet:
+        print("  tier_classification.tsv CLEAN rows absent from clean_grammars.txt:",
+              file=sys.stderr)
+        for g in clean_without_ratchet:
+            print(f"    {g}", file=sys.stderr)
+    sys.exit(1)
 
 
 def load_perf_evidence():
@@ -109,22 +153,25 @@ def head_sha():
 
 
 def build(version):
-    clean = load_clean()
-    classification = load_classification()
+    ratchet_clean = load_clean()
+    classification, duplicates = load_classification()
+    check_classification_hygiene(classification, ratchet_clean, duplicates)
+    grammar_universe = load_exts()
     perf = load_perf_evidence()
-    universe = sorted(set(classification) | clean | set(perf))
+    universe = sorted(grammar_universe | set(classification) | ratchet_clean | set(perf))
 
     rows = []
     for g in universe:
         cls = classification.get(g, {})
-        if g in clean:
+        cls_tier = cls.get("tier", "IV-unassessed")
+        if cls_tier == "CLEAN":
             pt = perf.get(g)
             tier = pt[0] if pt else "unranked"
             rows.append({"grammar": g, "tier": tier, "parity": "clean",
                          "perf_source": pt[1] if pt else None})
         else:
-            cause = cls.get("tier", "IV-unassessed")
-            if not cause.startswith("IV"):
+            cause = cls_tier
+            if not cause.startswith("IV") or cause.startswith("IV-unassessed"):
                 cause = "IV-unassessed"
             rows.append({"grammar": g, "tier": "IV", "iv_cause": cause,
                          "parity": cls.get("parity", "unmeasured"),

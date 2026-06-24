@@ -90,6 +90,7 @@ python
 ql
 r
 racket
+regex
 requirements
 ron
 ruby
