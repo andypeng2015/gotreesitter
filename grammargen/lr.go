@@ -183,16 +183,63 @@ func sameSortedLR0CoreEntries(a, b []lr0CoreEntry) bool {
 
 // lrAction is a parse table action.
 type lrAction struct {
-	kind    lrActionKind
-	state   int   // shift target / goto target
-	prodIdx int   // reduce production index
-	prec    int   // for shift: precedence of the item's production
-	hasPrec bool  // production had an explicit compile-time precedence wrapper
-	assoc   Assoc // for shift: associativity of the item's production
-	lhsSym  int   // LHS nonterminal of the production (for conflict detection)
-	lhsSyms []int // additional LHS symbols (when shifts from multiple rules merge)
-	isExtra bool  // true if this action comes from a nonterminal extra production
-	repeat  bool  // true if this shift continues a recursive repeat wrapper
+	kind          lrActionKind
+	state         int   // shift target / goto target
+	prodIdx       int   // reduce production index
+	prec          int   // for shift: precedence of the item's production
+	hasPrec       bool  // production had an explicit compile-time precedence wrapper
+	assoc         Assoc // for shift: associativity of the item's production
+	lhsSym        int   // LHS nonterminal of the production (for conflict detection)
+	lhsSyms       []int // additional LHS symbols (when shifts from multiple rules merge)
+	isExtra       bool  // true if this action comes from a nonterminal extra production
+	repeat        bool  // true if this shift continues a recursive repeat wrapper
+	repeatLHS     int   // generated repeat-helper LHS continued by this shift, or 0 when unknown
+	repeatLHSSyms []int // additional generated repeat-helper LHS symbols for merged shifts
+}
+
+func (a *lrAction) addRepeatLHS(lhs int) {
+	if lhs <= 0 {
+		return
+	}
+	a.repeat = true
+	if a.repeatLHS == 0 {
+		a.repeatLHS = lhs
+		return
+	}
+	if a.repeatLHS == lhs {
+		return
+	}
+	for _, existing := range a.repeatLHSSyms {
+		if existing == lhs {
+			return
+		}
+	}
+	a.repeatLHSSyms = append(a.repeatLHSSyms, lhs)
+}
+
+func (a *lrAction) addRepeatLHSFrom(other lrAction) {
+	a.addRepeatLHS(other.repeatLHS)
+	for _, lhs := range other.repeatLHSSyms {
+		a.addRepeatLHS(lhs)
+	}
+	if other.repeat && a.repeatLHS == 0 && len(a.repeatLHSSyms) == 0 {
+		a.repeat = true
+	}
+}
+
+func (a lrAction) hasRepeatLHS(lhs int) bool {
+	if lhs <= 0 {
+		return false
+	}
+	if a.repeatLHS == lhs {
+		return true
+	}
+	for _, existing := range a.repeatLHSSyms {
+		if existing == lhs {
+			return true
+		}
+	}
+	return false
 }
 
 type lrActionKind int
@@ -261,7 +308,6 @@ func buildLRTablesInternal(bgCtx context.Context, ng *NormalizedGrammar, trackPr
 		}
 		ctx.boundaryLookaheads = newBitset(tokenCount)
 		ctx.boundaryLookaheads.add(0) // EOF
-		ctx.definitionBoundaryTagBySym = make([]uint32, len(ng.Symbols))
 		ctx.templateDefinitionCarrierLHS = make([]bool, len(ng.Symbols))
 		for _, sym := range ng.ExternalSymbols {
 			if sym >= 0 && sym < tokenCount {
@@ -285,42 +331,6 @@ func buildLRTablesInternal(bgCtx context.Context, ng *NormalizedGrammar, trackPr
 		}
 		if hasAutomaticSemicolon && closeBraceSym >= 0 {
 			ctx.boundaryLookaheads.add(closeBraceSym)
-		}
-		// Preserve large-grammar declaration boundaries that otherwise disappear
-		// under early core merging. Only activate for Scala-like grammars that
-		// have annotation syntax (@) and trait/object keywords — applying these
-		// boundary keywords universally causes state explosion in other grammars.
-		hasAnnotationSyntax := false
-		for sym := 0; sym < tokenCount; sym++ {
-			if ng.Symbols[sym].Name == "@" {
-				hasAnnotationSyntax = true
-				break
-			}
-		}
-		hasTraitKeyword := false
-		for sym := 0; sym < tokenCount; sym++ {
-			if ng.Symbols[sym].Name == "trait" {
-				hasTraitKeyword = true
-				break
-			}
-		}
-		if hasAnnotationSyntax && hasTraitKeyword {
-			definitionBoundary := map[string]bool{
-				"@": true, "class": true, "trait": true, "object": true,
-				"enum": true, "given": true, "def": true, "val": true,
-				"var": true, "type": true, "extension": true, "case": true,
-				"opaque": true, "import": true, "package": true,
-			}
-			nextTemplateTag := uint32(2)
-			for sym := 0; sym < tokenCount; sym++ {
-				if definitionBoundary[ng.Symbols[sym].Name] {
-					ctx.boundaryLookaheads.add(sym)
-					if nextTemplateTag < 0xff {
-						ctx.definitionBoundaryTagBySym[sym] = nextTemplateTag << templateContextTagShift
-						nextTemplateTag++
-					}
-				}
-			}
 		}
 		ctx.annotationAtSym = -1
 		ctx.annotationDefSym = -1
@@ -468,7 +478,7 @@ func buildLRTablesInternal(bgCtx context.Context, ng *NormalizedGrammar, trackPr
 			if templateDefinitionCarrierNames[sym.Name] {
 				ctx.templateDefinitionCarrierLHS[i] = true
 			}
-			if strings.Contains(sym.Name, "repeat") {
+			if sym.GeneratedRepeatAux {
 				ctx.repeatWrapperLHS[i] = true
 			}
 			if conditionalTypeCarrierNames[sym.Name] {
@@ -607,7 +617,8 @@ func buildLRTablesInternal(bgCtx context.Context, ng *NormalizedGrammar, trackPr
 						shiftPrec = 0
 						shiftAssoc = AssocNone
 					}
-					tables.addAction(stateIdx, nextSym, lrAction{
+					repeatLHSs := ctx.repetitionShiftHelperLHSSyms(stateIdx, nextSym, targetState)
+					action := lrAction{
 						kind:    lrShift,
 						state:   targetState,
 						prec:    shiftPrec,
@@ -615,8 +626,11 @@ func buildLRTablesInternal(bgCtx context.Context, ng *NormalizedGrammar, trackPr
 						assoc:   shiftAssoc,
 						lhsSym:  prod.LHS,
 						isExtra: prod.IsExtra,
-						repeat:  ctx.isRepetitionShift(stateIdx, nextSym, targetState),
-					})
+					}
+					for _, lhs := range repeatLHSs {
+						action.addRepeatLHS(lhs)
+					}
+					tables.addAction(stateIdx, nextSym, action)
 				} else {
 					// Nonterminal → goto
 					tables.GotoTable[stateIdx][nextSym] = targetState
@@ -673,19 +687,22 @@ func propagateEntryShiftMetadata(tables *LRTables, itemSets []lrItemSet, ctx *lr
 
 			ctx.firstSets[nextSym].forEach(func(la int) {
 				acts := tables.ActionTable[stateIdx][la]
+				leading := leadingNonterminalsFrom(nextSym, tokenCount, ng, ctx, leadingCache, ce.dot > 0)
 				for _, act := range acts {
-					if act.kind != lrShift || !shiftMatchesEntrySymbol(act, nextSym, leadingNonterminalsFrom(nextSym, tokenCount, ng, ctx, leadingCache)) {
+					if act.kind != lrShift || !shiftMatchesEntrySymbol(act, nextSym, leading) {
 						continue
 					}
 					tables.addAction(stateIdx, la, lrAction{
-						kind:    lrShift,
-						state:   act.state,
-						prec:    prod.Prec,
-						hasPrec: prod.HasExplicitPrec,
-						assoc:   prod.Assoc,
-						lhsSym:  prod.LHS,
-						isExtra: prod.IsExtra,
-						repeat:  act.repeat,
+						kind:          lrShift,
+						state:         act.state,
+						prec:          prod.Prec,
+						hasPrec:       prod.HasExplicitPrec,
+						assoc:         prod.Assoc,
+						lhsSym:        prod.LHS,
+						isExtra:       prod.IsExtra,
+						repeat:        act.repeat,
+						repeatLHS:     act.repeatLHS,
+						repeatLHSSyms: append([]int(nil), act.repeatLHSSyms...),
 					})
 				}
 			})
@@ -712,14 +729,23 @@ func shiftLHSMatchesEntry(lhs, sym int, leading map[int]bool) bool {
 	return leading != nil && leading[lhs]
 }
 
-func leadingNonterminalsFrom(sym, tokenCount int, ng *NormalizedGrammar, ctx *lrContext, cache map[int]map[int]bool) map[int]bool {
+// leadingNonterminalsFrom returns nonterminals whose leading terminal shifts can
+// stand in for sym during entry-shift metadata propagation. Metadata can cross
+// generated repeat helpers and pure unary transparent wrappers. After a prefix,
+// it can also cross a pure one-symbol choice wrapper or a visible suffix wrapper
+// whose first symbol is the shifted nonterminal, so suffix alternatives keep the
+// enclosing production's precedence without opening arbitrary continuations.
+// Multi-symbol leading-edge propagation remains limited to generated repeat
+// helpers; hidden ordinary wrappers with required suffixes are not transparent.
+func leadingNonterminalsFrom(sym, tokenCount int, ng *NormalizedGrammar, ctx *lrContext, cache map[int]map[int]bool, includeContinuations bool) map[int]bool {
 	if sym < tokenCount || sym < 0 || sym >= len(ng.Symbols) {
 		return nil
 	}
-	if !allowsTransitiveEntryShiftMetadata(ng.Symbols[sym].Name) {
-		return nil
+	cacheKey := sym
+	if includeContinuations {
+		cacheKey = -sym - 1
 	}
-	if cached, ok := cache[sym]; ok {
+	if cached, ok := cache[cacheKey]; ok {
 		return cached
 	}
 	seen := make(map[int]bool)
@@ -729,25 +755,98 @@ func leadingNonterminalsFrom(sym, tokenCount int, ng *NormalizedGrammar, ctx *lr
 			return
 		}
 		seen[cur] = true
+		if !entryShiftMetadataTransparentWrapper(cur, ng) {
+			if includeContinuations && entryShiftMetadataPostPrefixChoiceWrapper(cur, tokenCount, ng, ctx) {
+				for _, prodIdx := range ctx.prodsByLHS[cur] {
+					prod := &ng.Productions[prodIdx]
+					walk(prod.RHS[0])
+				}
+			} else if includeContinuations && entryShiftMetadataPostPrefixVisibleLeadingWrapper(cur, tokenCount, ng, ctx) {
+				for _, prodIdx := range ctx.prodsByLHS[cur] {
+					prod := &ng.Productions[prodIdx]
+					walk(prod.RHS[0])
+				}
+			}
+			return
+		}
 		for _, prodIdx := range ctx.prodsByLHS[cur] {
 			prod := &ng.Productions[prodIdx]
-			for _, rhs := range prod.RHS {
+			if includeContinuations && ng.Symbols[cur].GeneratedRepeatAux {
+				walkLeadingEdge(prod.RHS, tokenCount, ctx, walk)
+			} else if len(prod.RHS) == 1 {
+				rhs := prod.RHS[0]
 				if rhs >= tokenCount {
 					walk(rhs)
-				}
-				if rhs < 0 || rhs >= len(ctx.nullables) || !ctx.nullables[rhs] {
-					break
 				}
 			}
 		}
 	}
 	walk(sym)
-	cache[sym] = seen
+	cache[cacheKey] = seen
 	return seen
 }
 
-func allowsTransitiveEntryShiftMetadata(name string) bool {
-	return strings.Contains(name, "repeat")
+func entryShiftMetadataTransparentWrapper(sym int, ng *NormalizedGrammar) bool {
+	if ng == nil || sym < 0 || sym >= len(ng.Symbols) {
+		return false
+	}
+	info := ng.Symbols[sym]
+	return info.GeneratedRepeatAux || info.Supertype || (!info.Visible && !info.Named)
+}
+
+func entryShiftMetadataPostPrefixChoiceWrapper(sym, tokenCount int, ng *NormalizedGrammar, ctx *lrContext) bool {
+	if ng == nil || ctx == nil || sym < tokenCount || sym < 0 || sym >= len(ng.Symbols) {
+		return false
+	}
+	prods := ctx.prodsByLHS[sym]
+	if len(prods) == 0 {
+		return false
+	}
+	for _, prodIdx := range prods {
+		if prodIdx < 0 || prodIdx >= len(ng.Productions) {
+			return false
+		}
+		prod := &ng.Productions[prodIdx]
+		if len(prod.RHS) != 1 || prod.RHS[0] < tokenCount {
+			return false
+		}
+	}
+	return true
+}
+
+func entryShiftMetadataPostPrefixVisibleLeadingWrapper(sym, tokenCount int, ng *NormalizedGrammar, ctx *lrContext) bool {
+	if ng == nil || ctx == nil || sym < tokenCount || sym < 0 || sym >= len(ng.Symbols) {
+		return false
+	}
+	info := ng.Symbols[sym]
+	if !info.Visible && !info.Named && !info.Supertype {
+		return false
+	}
+	prods := ctx.prodsByLHS[sym]
+	if len(prods) == 0 {
+		return false
+	}
+	for _, prodIdx := range prods {
+		if prodIdx < 0 || prodIdx >= len(ng.Productions) {
+			return false
+		}
+		prod := &ng.Productions[prodIdx]
+		if len(prod.RHS) == 0 || prod.RHS[0] < tokenCount {
+			return false
+		}
+	}
+	return true
+}
+
+func walkLeadingEdge(rhs []int, tokenCount int, ctx *lrContext, walk func(int)) {
+	for _, sym := range rhs {
+		if sym >= tokenCount {
+			walk(sym)
+		}
+		if sym < 0 || sym >= len(ctx.nullables) || !ctx.nullables[sym] {
+			return
+		}
+	}
 }
 
 func (t *LRTables) addAction(state, sym int, action lrAction) {
@@ -763,9 +862,7 @@ func (t *LRTables) addAction(state, sym int, action lrAction) {
 				if a.isExtra && !action.isExtra {
 					existing[i].isExtra = false
 				}
-				if action.repeat {
-					existing[i].repeat = true
-				}
+				existing[i].addRepeatLHSFrom(action)
 				if action.prec > a.prec {
 					existing[i].prec = action.prec
 					existing[i].assoc = action.assoc
@@ -853,7 +950,6 @@ type lrContext struct {
 	bracedTemplateBodySym           int
 	bracedTemplateBody1Sym          int
 	bracedTemplateBody2Sym          int
-	definitionBoundaryTagBySym      []uint32
 	annotationArgCarrierLHS         []bool
 	templateDefinitionCarrierLHS    []bool
 	repeatWrapperLHS                []bool
@@ -896,7 +992,8 @@ type lrContext struct {
 	lookaheadWordPool  [][]uint64
 	maxLookaheadPool   int
 
-	repeatWrapperStateSymCache map[uint64]int
+	repeatWrapperStateSymCache     map[uint64]int
+	repeatWrapperStateSymSymsCache map[uint64][]int
 
 	// preciseStateBudgetExceeded marks that the precise external-grammar LR(1)
 	// builder crossed its configured state budget and should be retried via the
@@ -920,6 +1017,27 @@ type conflictResolutionCache struct {
 	auxParents     [][]int
 	auxComputed    []bool
 	auxVisiting    []bool
+
+	firstSets                    [][]uint64
+	repeatStartLookaheadSets     [][]uint64
+	repeatStartLookaheadComputed bool
+
+	shiftReduceConflictGroupMemo map[string]bool
+	reduceLHSConflictGroupMemo   map[int]bool
+	structuralStats              conflictResolutionStats
+}
+
+func (cache *conflictResolutionCache) resetStructuralStats() {
+	if cache != nil {
+		cache.structuralStats = conflictResolutionStats{}
+	}
+}
+
+func (cache *conflictResolutionCache) snapshotStructuralStats() conflictResolutionStats {
+	if cache == nil {
+		return conflictResolutionStats{}
+	}
+	return cache.structuralStats
 }
 
 func getConflictResolutionCache(ng *NormalizedGrammar) *conflictResolutionCache {
@@ -1072,6 +1190,7 @@ func (ctx *lrContext) releaseScratch() {
 	ctx.lr0RepeatSourceEpoch = 0
 	ctx.lookaheadWordPool = nil
 	ctx.repeatWrapperStateSymCache = nil
+	ctx.repeatWrapperStateSymSymsCache = nil
 	ctx.lalrNTTransitions = nil
 }
 
@@ -1270,7 +1389,7 @@ func (ctx *lrContext) ensureRepeatWrapperLHS() {
 	}
 	ctx.repeatWrapperLHS = make([]bool, len(ctx.ng.Symbols))
 	for i, sym := range ctx.ng.Symbols {
-		if strings.Contains(sym.Name, "repeat") {
+		if sym.GeneratedRepeatAux {
 			ctx.repeatWrapperLHS[i] = true
 		}
 	}
@@ -1334,6 +1453,8 @@ func (b *extraChainBuilder) mergeSyntheticTerminalShift(stateIdx, sym int, actio
 			continue
 		}
 		if act.state == action.state {
+			acts[i].addRepeatLHSFrom(action)
+			b.tables.ActionTable[stateIdx][sym] = acts
 			return
 		}
 		if act.state >= b.syntheticStart && action.state >= b.syntheticStart {
@@ -1345,6 +1466,7 @@ func (b *extraChainBuilder) mergeSyntheticTerminalShift(stateIdx, sym int, actio
 	}
 	if mergeIdx >= 0 {
 		acts[mergeIdx].state = mergedTarget
+		acts[mergeIdx].addRepeatLHSFrom(action)
 		b.tables.ActionTable[stateIdx][sym] = acts
 		return
 	}
@@ -1458,7 +1580,8 @@ func (b *extraChainBuilder) addProdContinuation(stateIdx, prodIdx, pos int, foll
 	nextSym := prod.RHS[pos]
 	if nextSym < b.tokenCount {
 		targetState := b.buildProdChain(prodIdx, pos+1, follow)
-		b.mergeSyntheticTerminalShift(stateIdx, nextSym, lrAction{
+		repeatLHSs := b.ctx.repetitionShiftHelperLHSSyms(stateIdx, nextSym, targetState)
+		action := lrAction{
 			kind:    lrShift,
 			state:   targetState,
 			prec:    prod.Prec,
@@ -1466,8 +1589,11 @@ func (b *extraChainBuilder) addProdContinuation(stateIdx, prodIdx, pos int, foll
 			assoc:   prod.Assoc,
 			lhsSym:  prod.LHS,
 			isExtra: false,
-			repeat:  b.ctx.isRepetitionShift(stateIdx, nextSym, targetState),
-		})
+		}
+		for _, lhs := range repeatLHSs {
+			action.addRepeatLHS(lhs)
+		}
+		b.mergeSyntheticTerminalShift(stateIdx, nextSym, action)
 		return
 	}
 
@@ -1509,7 +1635,8 @@ func (b *extraChainBuilder) addNonterminalEntries(stateIdx, sym int, follow bits
 		firstSym := prod.RHS[0]
 		if firstSym < b.tokenCount {
 			targetState := b.buildProdChain(prodIdx, 1, follow)
-			b.mergeSyntheticTerminalShift(stateIdx, firstSym, lrAction{
+			repeatLHSs := b.ctx.repetitionShiftHelperLHSSyms(stateIdx, firstSym, targetState)
+			action := lrAction{
 				kind:    lrShift,
 				state:   targetState,
 				prec:    prod.Prec,
@@ -1517,8 +1644,11 @@ func (b *extraChainBuilder) addNonterminalEntries(stateIdx, sym int, follow bits
 				assoc:   prod.Assoc,
 				lhsSym:  prod.LHS,
 				isExtra: false,
-				repeat:  b.ctx.isRepetitionShift(stateIdx, firstSym, targetState),
-			})
+			}
+			for _, lhs := range repeatLHSs {
+				action.addRepeatLHS(lhs)
+			}
+			b.mergeSyntheticTerminalShift(stateIdx, firstSym, action)
 			continue
 		}
 
@@ -1653,7 +1783,9 @@ func addNonterminalExtraChains(tables *LRTables, ng *NormalizedGrammar, ctx *lrC
 	}
 
 	var terminalExtras []int
+	extraSymbolSet := make(map[int]struct{}, len(ng.ExtraSymbols))
 	for _, e := range ng.ExtraSymbols {
+		extraSymbolSet[e] = struct{}{}
 		if e > 0 && e < tokenCount {
 			terminalExtras = append(terminalExtras, e)
 		}
@@ -1680,6 +1812,24 @@ func addNonterminalExtraChains(tables *LRTables, ng *NormalizedGrammar, ctx *lrC
 				}
 			}
 			extraStartsByFirstSym[firstSym] = append(extraStartsByFirstSym[firstSym], prodIdx)
+		}
+	}
+	internalExtraStructuralStarts := make(map[int]struct{})
+	for _, prodIdx := range extraProds {
+		prod := &ng.Productions[prodIdx]
+		if len(prod.RHS) == 0 {
+			continue
+		}
+		_, rootExtraProduction := extraSymbolSet[prod.LHS]
+		start := 0
+		if rootExtraProduction {
+			start = 1
+		}
+		for pos := start; pos < len(prod.RHS); pos++ {
+			sym := prod.RHS[pos]
+			if sym > 0 && sym < tokenCount {
+				internalExtraStructuralStarts[sym] = struct{}{}
+			}
 		}
 	}
 	startMatchers := buildTerminalStartMatchers(ng.Terminals)
@@ -1725,10 +1875,6 @@ func addNonterminalExtraChains(tables *LRTables, ng *NormalizedGrammar, ctx *lrC
 		}
 		return len(tables.GotoTable[state]) > 0
 	}
-	extraSymbolSet := make(map[int]struct{}, len(ng.ExtraSymbols))
-	for _, sym := range ng.ExtraSymbols {
-		extraSymbolSet[sym] = struct{}{}
-	}
 	stateOnlyReducesCompletedExtra := func(state int) bool {
 		if stateHasContinuation(state) {
 			return false
@@ -1757,6 +1903,14 @@ func addNonterminalExtraChains(tables *LRTables, ng *NormalizedGrammar, ctx *lrC
 	syntheticStateMayInjectExtraStart := func(state, firstSym int) bool {
 		if state < mainStateCount {
 			return true
+		}
+		if _, ok := internalExtraStructuralStarts[firstSym]; ok {
+			// A token that is structural syntax inside an extra chain must not
+			// be reinterpreted as a sibling extra while that chain is active.
+			// This lets block-comment bodies own tokens such as line-comment
+			// openers without disabling normal nested extras with distinct
+			// starters.
+			return false
 		}
 		if _, ok := externalSymbolSet[firstSym]; ok {
 			// External-scanner extras are context sensitive. Recursively
@@ -2363,16 +2517,29 @@ func (ctx *lrContext) isCompletedRepeatWrapperForSymbol(set *lrItemSet, sym int)
 }
 
 func (ctx *lrContext) completedRepeatWrapperLHS(set *lrItemSet, sym int) int {
-	return ctx.completedRepeatWrapperLHSAcrossTransitions(set, sym, false)
+	lhs := ctx.completedRepeatWrapperLHSSymsAcrossTransitions(set, sym, false)
+	if len(lhs) == 0 {
+		return -1
+	}
+	return lhs[0]
 }
 
 func (ctx *lrContext) completedRepeatWrapperLHSAcrossTransitions(set *lrItemSet, sym int, allowTerminal bool) int {
+	lhs := ctx.completedRepeatWrapperLHSSymsAcrossTransitions(set, sym, allowTerminal)
+	if len(lhs) == 0 {
+		return -1
+	}
+	return lhs[0]
+}
+
+func (ctx *lrContext) completedRepeatWrapperLHSSymsAcrossTransitions(set *lrItemSet, sym int, allowTerminal bool) []int {
 	ctx.ensureRepeatWrapperLHS()
 	if sym < ctx.tokenCount {
 		if !allowTerminal {
-			return -1
+			return nil
 		}
 	}
+	var lhsSyms []int
 	for _, ce := range set.cores {
 		prod := ctx.ng.Productions[int(ce.prodIdx)]
 		if int(ce.dot) != len(prod.RHS) || len(prod.RHS) != 1 || prod.RHS[0] != sym {
@@ -2382,10 +2549,19 @@ func (ctx *lrContext) completedRepeatWrapperLHSAcrossTransitions(set *lrItemSet,
 			continue
 		}
 		if ctx.repeatWrapperLHS[prod.LHS] {
-			return prod.LHS
+			found := false
+			for _, lhs := range lhsSyms {
+				if lhs == prod.LHS {
+					found = true
+					break
+				}
+			}
+			if !found {
+				lhsSyms = append(lhsSyms, prod.LHS)
+			}
 		}
 	}
-	return -1
+	return lhsSyms
 }
 
 func (ctx *lrContext) completedRepeatWrapperStateLHS(state, sym int) int {
@@ -2404,15 +2580,46 @@ func (ctx *lrContext) completedRepeatWrapperStateLHS(state, sym int) int {
 	return lhs
 }
 
+func (ctx *lrContext) completedRepeatWrapperStateLHSSyms(state, sym int) []int {
+	if ctx == nil || state < 0 || state >= len(ctx.itemSets) {
+		return nil
+	}
+	if ctx.repeatWrapperStateSymSymsCache == nil {
+		ctx.repeatWrapperStateSymSymsCache = make(map[uint64][]int)
+	}
+	key := packCoreItemKey(state, sym)
+	if cached, ok := ctx.repeatWrapperStateSymSymsCache[key]; ok {
+		return cached
+	}
+	lhsSyms := ctx.completedRepeatWrapperLHSSymsAcrossTransitions(&ctx.itemSets[state], sym, true)
+	ctx.repeatWrapperStateSymSymsCache[key] = lhsSyms
+	return lhsSyms
+}
+
 func (ctx *lrContext) isRepetitionShift(sourceState, sym, targetState int) bool {
+	return ctx.repetitionShiftHelperLHS(sourceState, sym, targetState) > 0
+}
+
+func (ctx *lrContext) repetitionShiftHelperLHS(sourceState, sym, targetState int) int {
+	lhsSyms := ctx.repetitionShiftHelperLHSSyms(sourceState, sym, targetState)
+	if len(lhsSyms) == 0 {
+		return 0
+	}
+	return lhsSyms[0]
+}
+
+func (ctx *lrContext) repetitionShiftHelperLHSSyms(sourceState, sym, targetState int) []int {
 	if ctx == nil || sourceState < 0 || targetState < 0 || sourceState >= len(ctx.itemSets) || targetState >= len(ctx.itemSets) {
-		return false
+		return nil
 	}
-	lhs := ctx.completedRepeatWrapperStateLHS(targetState, sym)
-	if lhs < 0 {
-		return false
+	targetLHSs := ctx.completedRepeatWrapperStateLHSSyms(targetState, sym)
+	var lhsSyms []int
+	for _, lhs := range targetLHSs {
+		if ctx.stateHasRecursiveRepeatSource(&ctx.itemSets[sourceState], lhs) {
+			lhsSyms = append(lhsSyms, lhs)
+		}
 	}
-	return ctx.stateHasRecursiveRepeatSource(&ctx.itemSets[sourceState], lhs)
+	return lhsSyms
 }
 
 func (ctx *lrContext) stateHasRecursiveRepeatSource(set *lrItemSet, lhs int) bool {
@@ -2532,11 +2739,6 @@ func (ctx *lrContext) templateContextTagForTransition(sourceState, sym int, clos
 			return srcTag
 		}
 		return templateContextPendingTag
-	}
-	if sym >= 0 && sym < len(ctx.definitionBoundaryTagBySym) {
-		if tag := ctx.definitionBoundaryTagBySym[sym]; tag != 0 && (sourceCarrier || srcTag != 0 || targetCarrier) {
-			return tag
-		}
 	}
 	if srcTag != 0 && targetCarrier {
 		return srcTag
@@ -3011,7 +3213,44 @@ func (ctx *lrContext) mergeInto(
 
 // resolveConflicts resolves shift/reduce and reduce/reduce conflicts
 // using precedence and associativity.
-func resolveConflicts(tables *LRTables, ng *NormalizedGrammar) error {
+func resolveConflicts(ctx context.Context, tables *LRTables, ng *NormalizedGrammar) (conflictResolutionStats, error) {
+	return resolveConflictsWithTrace(ctx, tables, ng, phaseTrace{})
+}
+
+func resolveConflictsWithTrace(ctx context.Context, tables *LRTables, ng *NormalizedGrammar, trace phaseTrace) (conflictResolutionStats, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	var stats conflictResolutionStats
+
+	endAugment := trace.start("resolve_conflicts_augment", nil)
+	augmentStats, err := augmentAdjacentRepeatElementReduceLookaheadsWithTrace(ctx, tables, ng, trace)
+	stats.add(augmentStats)
+	if err != nil {
+		endAugment(stats.augmentTraceFields())
+		return stats, err
+	}
+	endAugment(augmentStats.augmentTraceFields())
+
+	cache := getConflictResolutionCache(ng)
+	if cache != nil {
+		cache.resetStructuralStats()
+	}
+	endActions := trace.start("resolve_conflicts_actions", nil)
+	actionFields := func() map[string]any {
+		current := stats
+		current.add(cache.snapshotStructuralStats())
+		return current.actionTraceFields()
+	}
+	finishActions := func() {
+		stats.add(cache.snapshotStructuralStats())
+		endActions(stats.actionTraceFields())
+	}
+	if err := checkConflictResolutionContext(ctx, "before action resolution"); err != nil {
+		finishActions()
+		return stats, err
+	}
+
 	states := make([]int, 0, len(tables.ActionTable))
 	for state := range tables.ActionTable {
 		states = append(states, state)
@@ -3022,6 +3261,11 @@ func resolveConflicts(tables *LRTables, ng *NormalizedGrammar) error {
 	// deterministic resolution regardless of map iteration order.
 	sort.Ints(states)
 	for _, state := range states {
+		if err := checkConflictResolutionContext(ctx, "scanning states"); err != nil {
+			finishActions()
+			return stats, err
+		}
+		stats.StatesScanned++
 		actions := tables.ActionTable[state]
 		syms := make([]int, 0, len(actions))
 		for sym := range actions {
@@ -3029,19 +3273,281 @@ func resolveConflicts(tables *LRTables, ng *NormalizedGrammar) error {
 		}
 		sort.Ints(syms)
 		for _, sym := range syms {
+			stats.ActionEntriesScanned++
+			if stats.ActionEntriesScanned&1023 == 0 {
+				if trace.enabled {
+					trace.log("resolve_conflicts_actions", "progress", 0, actionFields())
+				}
+				if err := checkConflictResolutionContext(ctx, "scanning action entries"); err != nil {
+					finishActions()
+					return stats, err
+				}
+			}
 			acts := actions[sym]
 			if len(acts) <= 1 {
 				continue
 			}
+			stats.ConflictsResolved++
+			if len(acts) > stats.MaxActionsPerConflict {
+				stats.MaxActionsPerConflict = len(acts)
+			}
 
 			resolved, err := resolveActionConflict(sym, acts, ng)
 			if err != nil {
-				return fmt.Errorf("state %d, symbol %d: %w", state, sym, err)
+				finishActions()
+				return stats, fmt.Errorf("state %d, symbol %d: %w", state, sym, err)
 			}
 			tables.ActionTable[state][sym] = resolved
 		}
 	}
+	if err := checkConflictResolutionContext(ctx, "after action resolution"); err != nil {
+		finishActions()
+		return stats, err
+	}
+	finishActions()
+	return stats, nil
+}
+
+func augmentAdjacentRepeatElementReduceLookaheads(ctx context.Context, tables *LRTables, ng *NormalizedGrammar) (conflictResolutionStats, error) {
+	return augmentAdjacentRepeatElementReduceLookaheadsWithTrace(ctx, tables, ng, phaseTrace{})
+}
+
+func augmentAdjacentRepeatElementReduceLookaheadsWithTrace(ctx context.Context, tables *LRTables, ng *NormalizedGrammar, trace phaseTrace) (conflictResolutionStats, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	var stats conflictResolutionStats
+	const augmentProgressInterval = 65536
+	augmentFields := func(state, stateCandidates, stateTerminalEntries int) map[string]any {
+		fields := stats.augmentTraceFields()
+		fields["current_state"] = state
+		fields["current_state_candidates"] = stateCandidates
+		fields["current_state_terminal_entries"] = stateTerminalEntries
+		return fields
+	}
+	if err := checkConflictResolutionContext(ctx, "before repeat lookahead augmentation"); err != nil {
+		return stats, err
+	}
+	if tables == nil || ng == nil {
+		return stats, nil
+	}
+	cache := getConflictResolutionCache(ng)
+	if cache == nil {
+		return stats, nil
+	}
+	type reduceCandidate struct {
+		action lrAction
+		lhs    int
+	}
+	type repeatLookaheadKey struct {
+		lhs       int
+		lookahead int
+	}
+	repeatStartMemo := make(map[repeatLookaheadKey]bool)
+	repeatStartCanLookahead := func(lhs, sym int) (bool, error) {
+		key := repeatLookaheadKey{lhs: lhs, lookahead: sym}
+		if cached, ok := repeatStartMemo[key]; ok {
+			stats.AugmentRepeatStartCacheHits++
+			return cached, nil
+		}
+		stats.AugmentRepeatStartCacheMisses++
+		if err := checkConflictResolutionContext(ctx, "before repeat lookahead cache miss"); err != nil {
+			return false, err
+		}
+		canStart := repeatElementCanStartAdjacentRepeatOnLookaheadCtx(ctx, lhs, sym, ng, cache)
+		repeatStartMemo[key] = canStart
+		if err := checkConflictResolutionContext(ctx, "after repeat lookahead cache miss"); err != nil {
+			return false, err
+		}
+		return canStart, nil
+	}
+	for state, actions := range tables.ActionTable {
+		if err := checkConflictResolutionContext(ctx, "augmenting repeat lookaheads"); err != nil {
+			return stats, err
+		}
+		stats.AugmentStatesScanned++
+		if trace.enabled && stats.AugmentStatesScanned&511 == 0 {
+			trace.log("resolve_conflicts_augment", "progress", 0, augmentFields(state, 0, 0))
+		}
+		hasShiftTarget := false
+		stateTerminalEntries := 0
+		for sym, acts := range actions {
+			stats.AugmentActionEntriesScanned++
+			if trace.enabled && stats.AugmentActionEntriesScanned%augmentProgressInterval == 0 {
+				trace.log("resolve_conflicts_augment", "progress", 0, augmentFields(state, 0, stateTerminalEntries))
+			}
+			if stats.AugmentActionEntriesScanned&1023 == 0 {
+				if err := checkConflictResolutionContext(ctx, "scanning repeat lookahead shift targets"); err != nil {
+					return stats, err
+				}
+			}
+			if !isLRConflictTerminalSymbol(sym, ng) {
+				continue
+			}
+			stateTerminalEntries++
+			if lrActionListHasShift(acts) {
+				hasShiftTarget = true
+			}
+		}
+		if stateTerminalEntries > stats.AugmentMaxTerminalEntriesState {
+			stats.AugmentMaxTerminalEntriesState = stateTerminalEntries
+		}
+		if !hasShiftTarget {
+			stats.AugmentStatesWithoutShiftTarget++
+			continue
+		}
+		var candidates []reduceCandidate
+		seen := make(map[int]bool)
+		for sym, acts := range actions {
+			stats.AugmentActionEntriesScanned++
+			if trace.enabled && stats.AugmentActionEntriesScanned%augmentProgressInterval == 0 {
+				trace.log("resolve_conflicts_augment", "progress", 0, augmentFields(state, len(candidates), stateTerminalEntries))
+			}
+			if stats.AugmentActionEntriesScanned&1023 == 0 {
+				if err := checkConflictResolutionContext(ctx, "scanning repeat lookahead candidate actions"); err != nil {
+					return stats, err
+				}
+			}
+			if !isLRConflictTerminalSymbol(sym, ng) {
+				continue
+			}
+			for _, act := range acts {
+				lhs, ok := neutralAdjacentRepeatElementReduceLHS(act, ng, cache)
+				if !ok || seen[act.prodIdx] {
+					continue
+				}
+				canStart, err := repeatStartCanLookahead(lhs, sym)
+				if err != nil {
+					return stats, err
+				}
+				if !canStart {
+					continue
+				}
+				seen[act.prodIdx] = true
+				candidates = append(candidates, reduceCandidate{action: act, lhs: lhs})
+				stats.AugmentCandidates++
+			}
+		}
+		if len(candidates) > stats.AugmentMaxCandidatesPerState {
+			stats.AugmentMaxCandidatesPerState = len(candidates)
+		}
+		if len(candidates) == 0 {
+			continue
+		}
+		for sym, acts := range actions {
+			stats.AugmentActionEntriesScanned++
+			if trace.enabled && stats.AugmentActionEntriesScanned%augmentProgressInterval == 0 {
+				trace.log("resolve_conflicts_augment", "progress", 0, augmentFields(state, len(candidates), stateTerminalEntries))
+			}
+			if stats.AugmentActionEntriesScanned&1023 == 0 {
+				if err := checkConflictResolutionContext(ctx, "augmenting repeat lookahead action entries"); err != nil {
+					return stats, err
+				}
+			}
+			if !isLRConflictTerminalSymbol(sym, ng) || len(acts) == 0 {
+				continue
+			}
+			if lrActionListHasShift(acts) {
+				stats.AugmentSecondPassShiftEntries++
+			} else if lrActionListReduceOnly(acts) {
+				stats.AugmentSecondPassReduceOnly++
+				continue
+			} else {
+				continue
+			}
+			for _, candidate := range candidates {
+				stats.AugmentCandidateChecks++
+				if trace.enabled && stats.AugmentCandidateChecks%augmentProgressInterval == 0 {
+					trace.log("resolve_conflicts_augment", "progress", 0, augmentFields(state, len(candidates), stateTerminalEntries))
+				}
+				if stats.AugmentCandidateChecks&1023 == 0 {
+					if err := checkConflictResolutionContext(ctx, "checking repeat lookahead candidates"); err != nil {
+						return stats, err
+					}
+				}
+				if lrActionListHasReduce(acts, candidate.action.prodIdx) {
+					continue
+				}
+				canStart, err := repeatStartCanLookahead(candidate.lhs, sym)
+				if err != nil {
+					return stats, err
+				}
+				if !canStart {
+					continue
+				}
+				tables.addAction(state, sym, candidate.action)
+				stats.AugmentLookaheadsAdded++
+				acts = tables.ActionTable[state][sym]
+			}
+		}
+		if trace.enabled && len(candidates) > 0 && stats.AugmentStatesScanned&511 == 0 {
+			trace.log("resolve_conflicts_augment", "progress", 0, augmentFields(state, len(candidates), stateTerminalEntries))
+		}
+	}
+	if err := checkConflictResolutionContext(ctx, "after repeat lookahead augmentation"); err != nil {
+		return stats, err
+	}
+	return stats, nil
+}
+
+func checkConflictResolutionContext(ctx context.Context, phase string) error {
+	if ctx == nil {
+		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("conflict resolution %s: %w", phase, err)
+	}
 	return nil
+}
+
+func isLRConflictTerminalSymbol(sym int, ng *NormalizedGrammar) bool {
+	return ng != nil &&
+		sym >= 0 &&
+		sym < len(ng.Symbols) &&
+		ng.Symbols[sym].Kind != SymbolNonterminal
+}
+
+func neutralAdjacentRepeatElementReduceLHS(action lrAction, ng *NormalizedGrammar, cache *conflictResolutionCache) (int, bool) {
+	if action.kind != lrReduce || action.prodIdx < 0 || action.prodIdx >= len(ng.Productions) ||
+		isRepeatHelperReduce(action, ng, cache) {
+		return 0, false
+	}
+	prod := &ng.Productions[action.prodIdx]
+	if prod.LHS < 0 || prod.LHS >= len(ng.Symbols) {
+		return 0, false
+	}
+	return prod.LHS, true
+}
+
+func lrActionListHasReduce(actions []lrAction, prodIdx int) bool {
+	for _, action := range actions {
+		if action.kind == lrReduce && action.prodIdx == prodIdx {
+			return true
+		}
+	}
+	return false
+}
+
+func lrActionListHasShift(actions []lrAction) bool {
+	for _, action := range actions {
+		if action.kind == lrShift {
+			return true
+		}
+	}
+	return false
+}
+
+func lrActionListReduceOnly(actions []lrAction) bool {
+	hasReduce := false
+	for _, action := range actions {
+		switch action.kind {
+		case lrShift:
+			return false
+		case lrReduce:
+			hasReduce = true
+		}
+	}
+	return hasReduce
 }
 
 // resolveActionConflict resolves a conflict between multiple actions.
@@ -3094,17 +3600,43 @@ func resolveActionConflict(lookaheadSym int, actions []lrAction, ng *NormalizedG
 		if repeated, ok := loweredRepeatMixedContinuationActions(lookaheadSym, shifts, reduces, ng, cache); ok {
 			return repeated, nil
 		}
+		if repeated, ok := loweredRepeatHelperContinuationActions(lookaheadSym, shifts, reduces, ng, cache); ok {
+			return repeated, nil
+		}
+		if repeated, ok := visibleLoweredRepeatBodyContinuationActions(lookaheadSym, actions, shifts, reduces, ng, cache); ok {
+			return repeated, nil
+		}
 
 		shift := shifts[0]
 		reduce := reduces[0]
 		prod := &ng.Productions[reduce.prodIdx]
 
-		if isRepeatHelperReduce(reduce, ng) && !shift.repeat &&
+		if isRepeatHelperReduce(reduce, ng, cache) &&
+			!repeatHelperReduceContinuesWithShift(lookaheadSym, reduce, shift, ng, cache) &&
+			!shiftHasHigherPrecedenceThanReduceHelper(shift, prod) &&
 			!shiftReduceInConflictGroup(shifts, reduces, ng, cache) {
 			return []lrAction{reduce}, nil
 		}
+		if shouldKeepRepeatHelperReduceWithUnrelatedShift(lookaheadSym, shifts, reduces, ng, cache) {
+			return actions, nil
+		}
+		if repeated, ok := repeatElementReduceActions(lookaheadSym, actions, shifts, reduces, ng, cache); ok {
+			return repeated, nil
+		}
+		if shouldPreserveDerivedKeywordIdentifierShiftReduce(lookaheadSym, reduces, ng) {
+			return actions, nil
+		}
+		if preferred, ok := preferredVisibleSiblingAlternativeContinuationShift(lookaheadSym, shifts, reduces, ng, cache); ok {
+			return []lrAction{preferred}, nil
+		}
 		if shouldPreferAssignmentExpressionShift(lookaheadSym, shifts, reduces, ng) {
 			return []lrAction{shift}, nil
+		}
+		if preferred, ok := preferredRightAssocFinalOperandContinuationShift(lookaheadSym, shifts, reduces, ng, cache); ok {
+			return []lrAction{preferred}, nil
+		}
+		if preferred, ok := preferredRightAssocSameLHSOptionalContinuationShift(lookaheadSym, shifts, reduces, ng, cache); ok {
+			return []lrAction{preferred}, nil
 		}
 		if preferred, ok := preferredArithmeticExpressionContinuation(lookaheadSym, shifts, reduces, ng); ok {
 			return []lrAction{preferred}, nil
@@ -3153,7 +3685,7 @@ func resolveActionConflict(lookaheadSym int, actions []lrAction, ng *NormalizedG
 			// would be kept as GLR, causing wrong associativity at runtime.
 			// Inter-symbol conflicts (different LHS) stay as GLR — those
 			// represent genuine ambiguities declared by the grammar author.
-			sameLHS := shift.lhsSym == prod.LHS
+			sameLHS := shiftActionMatchesReduceLHSFamily(shift, prod.LHS, ng, cache)
 			if sameLHS {
 				shiftP := shift.prec
 				reduceP := prod.Prec
@@ -3177,6 +3709,7 @@ func resolveActionConflict(lookaheadSym int, actions []lrAction, ng *NormalizedG
 			}
 			return actions, nil
 		}
+
 		// Fallback: if the reduce LHS is in ANY conflict group, keep GLR —
 		// UNLESS explicit precedence clearly resolves the conflict.
 		// Tree-sitter C resolves S/R conflicts via precedence even when
@@ -3215,6 +3748,9 @@ func resolveActionConflict(lookaheadSym int, actions []lrAction, ng *NormalizedG
 				}
 			}
 			// Check if precedence can resolve this definitively.
+			if preferred, ok := preferredLoweredRepeatContinuationShift(lookaheadSym, shifts, reduces, ng, cache); ok {
+				return []lrAction{preferred}, nil
+			}
 			if (shiftP != 0 || reduceP != 0) && shiftP != reduceP {
 				// Clear precedence difference — resolve deterministically.
 				if reduceP > shiftP {
@@ -3293,6 +3829,9 @@ func resolveActionConflict(lookaheadSym int, actions []lrAction, ng *NormalizedG
 		// Apply precedence/associativity resolution when either side has a
 		// non-zero precedence OR the production declares explicit associativity.
 		if reducePrec != 0 || shiftPrec != 0 || prod.Assoc != AssocNone {
+			if preferred, ok := preferredLoweredRepeatContinuationShift(lookaheadSym, shifts, reduces, ng, cache); ok {
+				return []lrAction{preferred}, nil
+			}
 			if reducePrec > shiftPrec {
 				return []lrAction{reduce}, nil
 			}
@@ -3355,6 +3894,31 @@ func resolveActionConflict(lookaheadSym int, actions []lrAction, ng *NormalizedG
 	return actions, nil
 }
 
+func shiftActionMatchesReduceLHSFamily(shift lrAction, reduceLHS int, ng *NormalizedGrammar, cache *conflictResolutionCache) bool {
+	if reduceLHS < 0 || ng == nil || reduceLHS >= len(ng.Symbols) {
+		return false
+	}
+	if shift.lhsSym == reduceLHS {
+		return true
+	}
+	for _, lhs := range shift.lhsSyms {
+		if lhs == reduceLHS {
+			return true
+		}
+	}
+	if cache == nil {
+		return false
+	}
+	for lhs := range shiftContinuationTargets(shift, len(ng.Symbols)) {
+		for _, parent := range resolveAuxToParents(lhs, ng, cache) {
+			if parent == reduceLHS {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func preferredSameLHSContinuationShift(shifts, reduces []lrAction, ng *NormalizedGrammar, cache *conflictResolutionCache) (lrAction, bool) {
 	if ng == nil || cache == nil || len(shifts) == 0 || len(reduces) != 1 {
 		return lrAction{}, false
@@ -3374,6 +3938,598 @@ func preferredSameLHSContinuationShift(shifts, reduces []lrAction, ng *Normalize
 	return matched[0], true
 }
 
+func preferredVisibleSiblingAlternativeContinuationShift(lookaheadSym int, shifts, reduces []lrAction, ng *NormalizedGrammar, cache *conflictResolutionCache) (lrAction, bool) {
+	if ng == nil || cache == nil || len(shifts) != 1 || len(reduces) == 0 ||
+		lookaheadSym < 0 || lookaheadSym >= len(ng.Symbols) {
+		return lrAction{}, false
+	}
+	if !symbolIsParenthesisOpener(lookaheadSym, ng) {
+		return lrAction{}, false
+	}
+	shift := shifts[0]
+	if shift.kind != lrShift {
+		return lrAction{}, false
+	}
+	shiftTargets := shiftContinuationTargets(shift, len(ng.Symbols))
+	if len(shiftTargets) == 0 {
+		return lrAction{}, false
+	}
+	lookaheadTargets := map[int]bool{lookaheadSym: true}
+	for _, reduce := range reduces {
+		if reduce.kind != lrReduce || reduce.prodIdx < 0 || reduce.prodIdx >= len(ng.Productions) {
+			continue
+		}
+		reduceProd := &ng.Productions[reduce.prodIdx]
+		if len(reduceProd.RHS) == 0 || reduceProd.LHS < 0 || reduceProd.LHS >= len(cache.prodsByLHS) {
+			continue
+		}
+		for candidateLHS := 0; candidateLHS < len(cache.prodsByLHS); candidateLHS++ {
+			if candidateLHS == reduceProd.LHS ||
+				candidateLHS < 0 || candidateLHS >= len(ng.Symbols) ||
+				ng.Symbols[candidateLHS].Kind != SymbolNonterminal ||
+				(!ng.Symbols[candidateLHS].Visible && !ng.Symbols[candidateLHS].Named) ||
+				!symbolHasUnaryPath(reduceProd.LHS, candidateLHS, ng, cache) {
+				continue
+			}
+			for _, prodIdx := range cache.prodsByLHS[candidateLHS] {
+				if prodIdx < 0 || prodIdx >= len(ng.Productions) {
+					continue
+				}
+				candidate := &ng.Productions[prodIdx]
+				if candidate.LHS != candidateLHS {
+					continue
+				}
+				suffix, ok := siblingAlternativeContinuationSuffix(candidate.RHS, reduceProd.RHS, ng, cache)
+				if !ok {
+					continue
+				}
+				if rhsCanBeginWithAny(suffix, lookaheadTargets, cache, ng) &&
+					rhsCanStartWithAnySymbol(suffix, shiftTargets, cache) {
+					return shift, true
+				}
+			}
+		}
+	}
+	return lrAction{}, false
+}
+
+func siblingAlternativeContinuationSuffix(candidateRHS, reduceRHS []int, ng *NormalizedGrammar, cache *conflictResolutionCache) ([]int, bool) {
+	if len(candidateRHS) <= len(reduceRHS) || len(reduceRHS) == 0 {
+		return nil, false
+	}
+	if rhsHasPrefix(candidateRHS, reduceRHS) {
+		return candidateRHS[len(reduceRHS):], true
+	}
+	if len(reduceRHS) == 1 && symbolHasUnaryPath(candidateRHS[0], reduceRHS[0], ng, cache) {
+		return candidateRHS[1:], true
+	}
+	return nil, false
+}
+
+func symbolIsParenthesisOpener(sym int, ng *NormalizedGrammar) bool {
+	if sym < 0 || ng == nil || sym >= len(ng.Symbols) {
+		return false
+	}
+	return ng.Symbols[sym].Name == "("
+}
+
+func symbolHasUnaryPath(from, to int, ng *NormalizedGrammar, cache *conflictResolutionCache) bool {
+	if from == to {
+		return true
+	}
+	if ng == nil || cache == nil || from < 0 || from >= len(cache.prodsByLHS) || to < 0 || to >= len(ng.Symbols) {
+		return false
+	}
+	seen := make(map[int]bool)
+	var walk func(int) bool
+	walk = func(sym int) bool {
+		if sym == to {
+			return true
+		}
+		if sym < 0 || sym >= len(cache.prodsByLHS) || seen[sym] {
+			return false
+		}
+		seen[sym] = true
+		for _, prodIdx := range cache.prodsByLHS[sym] {
+			if prodIdx < 0 || prodIdx >= len(ng.Productions) {
+				continue
+			}
+			prod := &ng.Productions[prodIdx]
+			if prod.LHS == sym && len(prod.RHS) == 1 && prod.RHS[0] >= 0 && walk(prod.RHS[0]) {
+				return true
+			}
+		}
+		return false
+	}
+	return walk(from)
+}
+
+func rhsCanStartWithAnySymbol(rhs []int, targets map[int]bool, cache *conflictResolutionCache) bool {
+	if len(rhs) == 0 || len(targets) == 0 || cache == nil {
+		return false
+	}
+	for _, sym := range rhs {
+		if targets[sym] {
+			return true
+		}
+		if sym < 0 || sym >= len(cache.nullable) || !cache.nullable[sym] {
+			return false
+		}
+	}
+	return false
+}
+
+func preferredRightAssocFinalOperandContinuationShift(lookaheadSym int, shifts, reduces []lrAction, ng *NormalizedGrammar, cache *conflictResolutionCache) (lrAction, bool) {
+	if ng == nil || cache == nil || len(shifts) != 1 || len(reduces) != 1 ||
+		lookaheadSym < 0 || lookaheadSym >= len(ng.Symbols) {
+		return lrAction{}, false
+	}
+	shift := shifts[0]
+	reduce := reduces[0]
+	if shift.kind != lrShift || reduce.kind != lrReduce ||
+		reduce.prodIdx < 0 || reduce.prodIdx >= len(ng.Productions) {
+		return lrAction{}, false
+	}
+	reduceProd := &ng.Productions[reduce.prodIdx]
+	if reduceProd.Assoc != AssocRight || len(reduceProd.RHS) == 0 {
+		return lrAction{}, false
+	}
+	targets := shiftContinuationTargets(shift, len(ng.Symbols))
+	if len(targets) == 0 {
+		return lrAction{}, false
+	}
+	lookaheadTargets := map[int]bool{lookaheadSym: true}
+	for target := range targets {
+		if target < 0 || target >= len(cache.prodsByLHS) {
+			continue
+		}
+		for _, prodIdx := range cache.prodsByLHS[target] {
+			if prodIdx < 0 || prodIdx >= len(ng.Productions) {
+				continue
+			}
+			candidate := &ng.Productions[prodIdx]
+			if candidate.LHS != target || len(candidate.RHS) < 2 || !candidate.HasExplicitPrec {
+				continue
+			}
+			finalOperand := reduceProd.RHS[len(reduceProd.RHS)-1]
+			if candidate.RHS[0] != finalOperand {
+				continue
+			}
+			tail := candidate.RHS[1:]
+			if len(tail) == 1 && singleTailSymbolIsPostfixLikeContinuation(tail[0], lookaheadTargets, finalOperand, cache, ng) {
+				return shift, true
+			}
+		}
+	}
+	return lrAction{}, false
+}
+
+func preferredRightAssocSameLHSOptionalContinuationShift(lookaheadSym int, shifts, reduces []lrAction, ng *NormalizedGrammar, cache *conflictResolutionCache) (lrAction, bool) {
+	if ng == nil || cache == nil || len(shifts) != 1 || len(reduces) != 1 ||
+		lookaheadSym < 0 || lookaheadSym >= len(ng.Symbols) {
+		return lrAction{}, false
+	}
+	shift := shifts[0]
+	reduce := reduces[0]
+	if shift.kind != lrShift || reduce.kind != lrReduce ||
+		reduce.prodIdx < 0 || reduce.prodIdx >= len(ng.Productions) {
+		return lrAction{}, false
+	}
+	reduceProd := &ng.Productions[reduce.prodIdx]
+	if len(reduceProd.RHS) == 0 || reduceProd.LHS < 0 || reduceProd.LHS >= len(cache.prodsByLHS) {
+		return lrAction{}, false
+	}
+	lookaheadTargets := map[int]bool{lookaheadSym: true}
+	finalOperand := reduceProd.RHS[len(reduceProd.RHS)-1]
+	for _, prodIdx := range cache.prodsByLHS[reduceProd.LHS] {
+		if prodIdx < 0 || prodIdx >= len(ng.Productions) || prodIdx == reduce.prodIdx {
+			continue
+		}
+		candidate := &ng.Productions[prodIdx]
+		if candidate.LHS != reduceProd.LHS || !candidate.HasExplicitPrec ||
+			candidate.Assoc != AssocRight ||
+			len(candidate.RHS) <= len(reduceProd.RHS) ||
+			!rhsHasPrefix(candidate.RHS, reduceProd.RHS) {
+			continue
+		}
+		suffix := candidate.RHS[len(reduceProd.RHS):]
+		if rhsIsSafeRightAssocPostfixContinuation(suffix, lookaheadTargets, finalOperand, cache, ng) {
+			return shift, true
+		}
+	}
+	return lrAction{}, false
+}
+
+func rhsIsSafeRightAssocPostfixContinuation(rhs []int, lookaheadTargets map[int]bool, finalOperand int, cache *conflictResolutionCache, ng *NormalizedGrammar) bool {
+	if len(rhs) == 0 {
+		return false
+	}
+	visiting := make([]bool, len(ng.Symbols))
+	matched, safe := rhsIsPostfixLikeContinuation(rhs, lookaheadTargets, finalOperand, cache, ng, visiting)
+	return matched && safe
+}
+
+func singleTailSymbolIsPostfixLikeContinuation(sym int, lookaheadTargets map[int]bool, finalOperand int, cache *conflictResolutionCache, ng *NormalizedGrammar) bool {
+	if sym < 0 || ng == nil || sym >= len(ng.Symbols) {
+		return false
+	}
+	if ng.Symbols[sym].Kind != SymbolNonterminal {
+		return lookaheadTargets[sym]
+	}
+	visiting := make([]bool, len(ng.Symbols))
+	matched, safe := symbolHasPostfixLikeContinuation(sym, lookaheadTargets, finalOperand, cache, ng, visiting)
+	return matched && safe
+}
+
+func symbolHasPostfixLikeContinuation(sym int, lookaheadTargets map[int]bool, finalOperand int, cache *conflictResolutionCache, ng *NormalizedGrammar, visiting []bool) (bool, bool) {
+	if cache == nil || sym < 0 || sym >= len(ng.Symbols) || sym >= len(cache.prodsByLHS) {
+		return false, true
+	}
+	if ng.Symbols[sym].Kind != SymbolNonterminal {
+		return lookaheadTargets[sym], true
+	}
+	if visiting[sym] {
+		return false, true
+	}
+	visiting[sym] = true
+	defer func() { visiting[sym] = false }()
+
+	matched := false
+	for _, prodIdx := range cache.prodsByLHS[sym] {
+		if prodIdx < 0 || prodIdx >= len(ng.Productions) {
+			continue
+		}
+		prodMatched, prodSafe := rhsIsPostfixLikeContinuation(ng.Productions[prodIdx].RHS, lookaheadTargets, finalOperand, cache, ng, visiting)
+		if !prodMatched {
+			continue
+		}
+		if !prodSafe {
+			return true, false
+		}
+		matched = true
+	}
+	return matched, true
+}
+
+func rhsIsPostfixLikeContinuation(rhs []int, lookaheadTargets map[int]bool, finalOperand int, cache *conflictResolutionCache, ng *NormalizedGrammar, visiting []bool) (bool, bool) {
+	if len(rhs) == 0 {
+		return false, true
+	}
+	first := rhs[0]
+	if first < 0 || ng == nil || first >= len(ng.Symbols) {
+		return false, true
+	}
+	if lookaheadTargets[first] {
+		if symbolIsPostfixOpener(first, ng) {
+			return true, true
+		}
+		finalOperandTargets := map[int]bool{finalOperand: true}
+		return true, !rhsCanBeginWithAny(rhs[1:], finalOperandTargets, cache, ng)
+	}
+	if ng.Symbols[first].Kind != SymbolNonterminal {
+		return false, true
+	}
+	if len(rhs) != 1 {
+		return false, true
+	}
+	return symbolHasPostfixLikeContinuation(first, lookaheadTargets, finalOperand, cache, ng, visiting)
+}
+
+func symbolIsPostfixOpener(sym int, ng *NormalizedGrammar) bool {
+	if sym < 0 || ng == nil || sym >= len(ng.Symbols) {
+		return false
+	}
+	switch ng.Symbols[sym].Name {
+	case "(", "[", "{":
+		return true
+	default:
+		return false
+	}
+}
+
+func shiftHasHigherPrecedenceThanReduceHelper(shift lrAction, reduceProd *Production) bool {
+	if reduceProd == nil {
+		return false
+	}
+	return shift.prec > reduceProd.Prec
+}
+
+func shouldKeepRepeatHelperReduceWithUnrelatedShift(lookaheadSym int, shifts, reduces []lrAction, ng *NormalizedGrammar, cache *conflictResolutionCache) bool {
+	if ng == nil || cache == nil || len(shifts) != 1 || len(reduces) != 1 ||
+		lookaheadSym < 0 || lookaheadSym >= len(ng.Symbols) {
+		return false
+	}
+	shift := shifts[0]
+	reduce := reduces[0]
+	if shift.kind != lrShift || reduce.kind != lrReduce ||
+		reduce.prodIdx < 0 || reduce.prodIdx >= len(ng.Productions) ||
+		!isRepeatHelperReduce(reduce, ng, cache) {
+		return false
+	}
+	if shift.repeat {
+		return false
+	}
+	prod := &ng.Productions[reduce.prodIdx]
+	if repeatHelperReduceContinuesWithShift(lookaheadSym, reduce, shift, ng, cache) {
+		return false
+	}
+	if repeatHelperReduceSharesShiftFamily(prod.LHS, shift, ng, cache) {
+		return false
+	}
+	return true
+}
+
+func repeatElementReduceActions(lookaheadSym int, actions, shifts, reduces []lrAction, ng *NormalizedGrammar, cache *conflictResolutionCache) ([]lrAction, bool) {
+	if ng == nil || cache == nil || len(shifts) != 1 || len(reduces) != 1 ||
+		lookaheadSym < 0 || lookaheadSym >= len(ng.Symbols) {
+		return nil, false
+	}
+	shift := shifts[0]
+	reduce := reduces[0]
+	if shift.kind != lrShift || reduce.kind != lrReduce ||
+		reduce.prodIdx < 0 || reduce.prodIdx >= len(ng.Productions) ||
+		isRepeatHelperReduce(reduce, ng, cache) {
+		return nil, false
+	}
+	prod := &ng.Productions[reduce.prodIdx]
+	if prod.LHS < 0 || prod.LHS >= len(ng.Symbols) {
+		return nil, false
+	}
+	if !repeatElementCanStartAdjacentRepeatOnLookahead(prod.LHS, lookaheadSym, ng, cache) {
+		return nil, false
+	}
+	if repeatElementShiftSharesFamily(prod.LHS, shift, ng, cache) {
+		if repeatElementReduceVetoedByHigherPrecedenceContinuation(lookaheadSym, shift, reduce, ng, cache) &&
+			!shiftReduceInConflictGroup(shifts, reduces, ng, cache) {
+			return nil, false
+		}
+		return actions, true
+	}
+	return []lrAction{reduce}, true
+}
+
+func repeatElementReduceVetoedByHigherPrecedenceContinuation(lookaheadSym int, shift, reduce lrAction, ng *NormalizedGrammar, cache *conflictResolutionCache) bool {
+	if ng == nil || cache == nil ||
+		lookaheadSym < 0 || lookaheadSym >= len(ng.Symbols) ||
+		reduce.kind != lrReduce || reduce.prodIdx < 0 || reduce.prodIdx >= len(ng.Productions) {
+		return false
+	}
+	reduceProd := &ng.Productions[reduce.prodIdx]
+	targets := shiftContinuationTargets(shift, len(ng.Symbols))
+	if len(targets) == 0 {
+		return false
+	}
+	lookaheadTargets := map[int]bool{lookaheadSym: true}
+	for lhs := range targets {
+		if lhs < 0 || lhs >= len(cache.prodsByLHS) {
+			continue
+		}
+		for _, prodIdx := range cache.prodsByLHS[lhs] {
+			if prodIdx < 0 || prodIdx >= len(ng.Productions) {
+				continue
+			}
+			candidate := &ng.Productions[prodIdx]
+			if !candidate.HasExplicitPrec || candidate.Prec <= reduceProd.Prec ||
+				len(candidate.RHS) <= len(reduceProd.RHS) ||
+				!rhsHasPrefix(candidate.RHS, reduceProd.RHS) {
+				continue
+			}
+			if rhsCanBeginWithAny(candidate.RHS[len(reduceProd.RHS):], lookaheadTargets, cache, ng) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func repeatElementCanStartAdjacentRepeatOnLookahead(elemLHS, lookaheadSym int, ng *NormalizedGrammar, cache *conflictResolutionCache) bool {
+	return repeatElementCanStartAdjacentRepeatOnLookaheadCtx(context.Background(), elemLHS, lookaheadSym, ng, cache)
+}
+
+func repeatElementCanStartAdjacentRepeatOnLookaheadCtx(ctx context.Context, elemLHS, lookaheadSym int, ng *NormalizedGrammar, cache *conflictResolutionCache) bool {
+	if ng == nil || cache == nil ||
+		elemLHS < 0 || elemLHS >= len(cache.rhsParents) ||
+		lookaheadSym < 0 || lookaheadSym >= len(ng.Symbols) {
+		return false
+	}
+	if err := cache.ensureRepeatStartLookaheadSets(ctx, ng); err != nil {
+		return false
+	}
+	if elemLHS >= len(cache.repeatStartLookaheadSets) {
+		return false
+	}
+	return bitsetHas(cache.repeatStartLookaheadSets[elemLHS], lookaheadSym)
+}
+
+func repeatElementShiftSharesFamily(elemLHS int, shift lrAction, ng *NormalizedGrammar, cache *conflictResolutionCache) bool {
+	targets := shiftContinuationTargets(shift, len(ng.Symbols))
+	if len(targets) == 0 {
+		return false
+	}
+	if targets[elemLHS] {
+		return true
+	}
+	return rhsCanBeginWithAny([]int{elemLHS}, targets, cache, ng)
+}
+
+func rhsCanStartWithSymbol(rhs []int, target int, cache *conflictResolutionCache) bool {
+	for _, sym := range rhs {
+		if sym == target {
+			return true
+		}
+		if sym < 0 || sym >= len(cache.nullable) || !cache.nullable[sym] {
+			return false
+		}
+	}
+	return false
+}
+
+func (cache *conflictResolutionCache) ensureRepeatStartLookaheadSets(ctx context.Context, ng *NormalizedGrammar) error {
+	if cache == nil || ng == nil {
+		return nil
+	}
+	if cache.repeatStartLookaheadComputed {
+		return nil
+	}
+	firstSets, err := cache.ensureFirstSets(ctx, ng)
+	if err != nil {
+		return err
+	}
+	wordCount := bitsetWordCount(len(ng.Symbols))
+	repeatStart := make([][]uint64, len(ng.Symbols))
+	for elemLHS := range ng.Symbols {
+		if elemLHS&255 == 0 {
+			if err := checkConflictResolutionContext(ctx, "precomputing repeat start lookaheads"); err != nil {
+				return err
+			}
+		}
+		for _, repeatSym := range cache.rhsParents[elemLHS] {
+			if repeatSym < 0 || repeatSym >= len(cache.prodsByLHS) ||
+				!isStructurallyGeneratedRepeatHelper(repeatSym, ng, cache) {
+				continue
+			}
+			for _, prodIdx := range cache.prodsByLHS[repeatSym] {
+				if prodIdx < 0 || prodIdx >= len(ng.Productions) {
+					continue
+				}
+				rhs := ng.Productions[prodIdx].RHS
+				if len(rhs) > 0 && rhs[0] == repeatSym {
+					rhs = rhs[1:]
+				}
+				if !rhsCanStartWithSymbol(rhs, elemLHS, cache) {
+					continue
+				}
+				if repeatStart[elemLHS] == nil {
+					repeatStart[elemLHS] = make([]uint64, wordCount)
+				}
+				cache.orRHSFirstSet(repeatStart[elemLHS], rhs, firstSets)
+			}
+		}
+	}
+	cache.repeatStartLookaheadSets = repeatStart
+	cache.repeatStartLookaheadComputed = true
+	return nil
+}
+
+func (cache *conflictResolutionCache) ensureFirstSets(ctx context.Context, ng *NormalizedGrammar) ([][]uint64, error) {
+	if cache == nil || ng == nil {
+		return nil, nil
+	}
+	if cache.firstSets != nil {
+		return cache.firstSets, nil
+	}
+	wordCount := bitsetWordCount(len(ng.Symbols))
+	firstSets := make([][]uint64, len(ng.Symbols))
+	for sym := range firstSets {
+		firstSets[sym] = make([]uint64, wordCount)
+		bitsetSet(firstSets[sym], sym)
+	}
+	changed := true
+	for changed {
+		if err := checkConflictResolutionContext(ctx, "precomputing conflict FIRST sets"); err != nil {
+			return nil, err
+		}
+		changed = false
+		for prodIdx := range ng.Productions {
+			if prodIdx&1023 == 0 {
+				if err := checkConflictResolutionContext(ctx, "precomputing conflict FIRST sets"); err != nil {
+					return nil, err
+				}
+			}
+			prod := &ng.Productions[prodIdx]
+			if prod.LHS < 0 || prod.LHS >= len(firstSets) {
+				continue
+			}
+			if cache.orRHSFirstSet(firstSets[prod.LHS], prod.RHS, firstSets) {
+				changed = true
+			}
+		}
+	}
+	cache.firstSets = firstSets
+	return firstSets, nil
+}
+
+func (cache *conflictResolutionCache) orRHSFirstSet(dst []uint64, rhs []int, firstSets [][]uint64) bool {
+	changed := false
+	for _, sym := range rhs {
+		if sym < 0 || sym >= len(firstSets) {
+			return changed
+		}
+		if bitsetOr(dst, firstSets[sym]) {
+			changed = true
+		}
+		if sym >= len(cache.nullable) || !cache.nullable[sym] {
+			return changed
+		}
+	}
+	return changed
+}
+
+func bitsetWordCount(bits int) int {
+	if bits <= 0 {
+		return 0
+	}
+	return (bits + 63) >> 6
+}
+
+func bitsetSet(words []uint64, bit int) {
+	if bit < 0 {
+		return
+	}
+	word := bit >> 6
+	if word < 0 || word >= len(words) {
+		return
+	}
+	words[word] |= uint64(1) << uint(bit&63)
+}
+
+func bitsetHas(words []uint64, bit int) bool {
+	if bit < 0 {
+		return false
+	}
+	word := bit >> 6
+	if word < 0 || word >= len(words) {
+		return false
+	}
+	return words[word]&(uint64(1)<<uint(bit&63)) != 0
+}
+
+func bitsetOr(dst, src []uint64) bool {
+	changed := false
+	for i := range dst {
+		before := dst[i]
+		dst[i] |= src[i]
+		if dst[i] != before {
+			changed = true
+		}
+	}
+	return changed
+}
+
+func repeatHelperReduceSharesShiftFamily(reduceLHS int, shift lrAction, ng *NormalizedGrammar, cache *conflictResolutionCache) bool {
+	if reduceLHS < 0 || reduceLHS >= len(ng.Symbols) {
+		return false
+	}
+	if shift.hasRepeatLHS(reduceLHS) {
+		return true
+	}
+	reduceFamily := make(map[int]bool)
+	for _, sym := range resolveAuxToParents(reduceLHS, ng, cache) {
+		reduceFamily[sym] = true
+	}
+	for sym := range shiftContinuationTargets(shift, len(ng.Symbols)) {
+		if sym == reduceLHS || reduceFamily[sym] {
+			return true
+		}
+		for _, parent := range resolveAuxToParents(sym, ng, cache) {
+			if reduceFamily[parent] {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func leftAssocReduceContinuesWithShift(reduce, shift lrAction, ng *NormalizedGrammar, cache *conflictResolutionCache) bool {
 	if reduce.kind != lrReduce || reduce.prodIdx < 0 || reduce.prodIdx >= len(ng.Productions) {
 		return false
@@ -3386,7 +4542,7 @@ func leftAssocReduceContinuesWithShift(reduce, shift lrAction, ng *NormalizedGra
 	if len(targets) == 0 {
 		return false
 	}
-	if prod.LHS >= len(cache.prodsByLHS) {
+	if cache == nil || prod.LHS >= len(cache.prodsByLHS) {
 		return false
 	}
 	for _, prodIdx := range cache.prodsByLHS[prod.LHS] {
@@ -3430,11 +4586,12 @@ func preferredLoweredRepeatContinuationShift(lookaheadSym int, shifts, reduces [
 	for split := 1; split < len(prod.RHS); split++ {
 		prefix := prod.RHS[:split]
 		unit := prod.RHS[split:]
-		if !rhsCanBeginWithAny(unit, lookaheadTargets, cache, ng) ||
-			!rhsCanBeginWithAny(unit, shiftTargets, cache, ng) {
-			continue
+		unitBeginsShift := rhsCanBeginWithAny(unit, lookaheadTargets, cache, ng) &&
+			rhsCanBeginWithAny(unit, shiftTargets, cache, ng)
+		if unitBeginsShift && loweredRepeatSiblingContinuesUnit(prod.LHS, prefix, unit, ng, cache) {
+			return shift, true
 		}
-		if loweredRepeatSiblingContinuesUnit(prod.LHS, prefix, unit, ng, cache) {
+		if loweredRepeatSiblingContinuesPartialUnit(prod.LHS, prefix, unit, lookaheadTargets, shiftTargets, ng, cache) {
 			return shift, true
 		}
 	}
@@ -3459,8 +4616,7 @@ func loweredRepeatSiblingContinuesUnit(lhs int, prefix, unit []int, ng *Normaliz
 		}
 		repeatSym := candidate.RHS[len(prefix)]
 		if repeatSym < 0 || repeatSym >= len(ng.Symbols) ||
-			ng.Symbols[repeatSym].Kind != SymbolNonterminal ||
-			!strings.Contains(ng.Symbols[repeatSym].Name, "repeat") {
+			ng.Symbols[repeatSym].Kind != SymbolNonterminal {
 			continue
 		}
 		if repeatHelperCanBeginUnit(repeatSym, unit, ng, cache) {
@@ -3470,8 +4626,62 @@ func loweredRepeatSiblingContinuesUnit(lhs int, prefix, unit []int, ng *Normaliz
 	return false
 }
 
+// loweredRepeatSiblingContinuesPartialUnit recognizes the state reached after a
+// prefix of a lowered repeat unit has already been consumed. For a source shape
+// like A -> P repeat(seq(Op, U)), normalization can leave a conflict while
+// reducing A -> P Op U with lookahead in FIRST(U). Shifting continues the
+// partially consumed repeat unit; reducing A would prematurely close the parent.
+func loweredRepeatSiblingContinuesPartialUnit(lhs int, consumedPrefix, unit []int, lookaheadTargets, shiftTargets map[int]bool, ng *NormalizedGrammar, cache *conflictResolutionCache) bool {
+	if len(consumedPrefix) < 2 || len(unit) == 0 {
+		return false
+	}
+	for baseLen := 1; baseLen < len(consumedPrefix); baseLen++ {
+		basePrefix := consumedPrefix[:baseLen]
+		repeatPrefix := consumedPrefix[baseLen:]
+		if loweredRepeatSiblingContinuesPrefixedUnit(lhs, basePrefix, repeatPrefix, unit, lookaheadTargets, shiftTargets, ng, cache) {
+			return true
+		}
+	}
+	return false
+}
+
+func loweredRepeatSiblingContinuesPrefixedUnit(lhs int, basePrefix, repeatPrefix, unit []int, lookaheadTargets, shiftTargets map[int]bool, ng *NormalizedGrammar, cache *conflictResolutionCache) bool {
+	for _, prodIdx := range cache.prodsByLHS[lhs] {
+		if prodIdx < 0 || prodIdx >= len(ng.Productions) {
+			continue
+		}
+		candidate := &ng.Productions[prodIdx]
+		if candidate.LHS != lhs || len(candidate.RHS) != len(basePrefix)+1 {
+			continue
+		}
+		if !rhsHasPrefix(candidate.RHS, basePrefix) {
+			continue
+		}
+		repeatSym := candidate.RHS[len(basePrefix)]
+		if repeatSym < 0 || repeatSym >= len(ng.Symbols) ||
+			ng.Symbols[repeatSym].Kind != SymbolNonterminal {
+			continue
+		}
+		seq := make([]int, 0, len(repeatPrefix)+len(unit))
+		seq = append(seq, repeatPrefix...)
+		seq = append(seq, unit...)
+		if repeatHelperCanBeginSequence(repeatSym, seq, ng, cache) &&
+			rhsCanContinueWithAny(unit, lookaheadTargets, shiftTargets, cache, ng) {
+			return true
+		}
+	}
+	return false
+}
+
 func repeatHelperCanBeginUnit(repeatSym int, unit []int, ng *NormalizedGrammar, cache *conflictResolutionCache) bool {
-	if repeatSym < 0 || repeatSym >= len(cache.prodsByLHS) || len(unit) == 0 {
+	return repeatHelperCanBeginSequence(repeatSym, unit, ng, cache)
+}
+
+func repeatHelperCanBeginSequence(repeatSym int, seq []int, ng *NormalizedGrammar, cache *conflictResolutionCache) bool {
+	if repeatSym < 0 || repeatSym >= len(cache.prodsByLHS) || len(seq) == 0 {
+		return false
+	}
+	if !isStructurallyGeneratedRepeatHelper(repeatSym, ng, cache) {
 		return false
 	}
 	for _, prodIdx := range cache.prodsByLHS[repeatSym] {
@@ -3479,10 +4689,77 @@ func repeatHelperCanBeginUnit(repeatSym int, unit []int, ng *NormalizedGrammar, 
 			continue
 		}
 		rhs := ng.Productions[prodIdx].RHS
-		if rhsHasPrefix(rhs, unit) {
+		if rhsHasPrefix(rhs, seq) {
 			return true
 		}
-		if len(rhs) > 0 && rhs[0] == repeatSym && rhsHasPrefix(rhs[1:], unit) {
+		if len(rhs) > 0 && rhs[0] == repeatSym && rhsHasPrefix(rhs[1:], seq) {
+			return true
+		}
+	}
+	return false
+}
+
+func isStructurallyGeneratedRepeatHelper(sym int, ng *NormalizedGrammar, cache *conflictResolutionCache) bool {
+	if ng == nil || cache == nil ||
+		sym < 0 || sym >= len(ng.Symbols) ||
+		sym >= len(cache.prodsByLHS) ||
+		ng.Symbols[sym].Kind != SymbolNonterminal {
+		return false
+	}
+	if ng.Symbols[sym].Visible || ng.Symbols[sym].Named {
+		return false
+	}
+	if !ng.Symbols[sym].GeneratedRepeatAux {
+		return false
+	}
+
+	var baseRHS [][]int
+	var recursiveTails [][]int
+	hasBinaryRecursive := false
+	for _, prodIdx := range cache.prodsByLHS[sym] {
+		if prodIdx < 0 || prodIdx >= len(ng.Productions) {
+			continue
+		}
+		rhs := ng.Productions[prodIdx].RHS
+		if len(rhs) == 0 {
+			return false
+		}
+		if rhs[0] == sym {
+			if len(rhs) < 2 {
+				return false
+			}
+			if len(rhs) == 2 && rhs[1] == sym {
+				hasBinaryRecursive = true
+				continue
+			}
+			recursiveTails = append(recursiveTails, rhs[1:])
+			continue
+		}
+		baseRHS = append(baseRHS, rhs)
+	}
+	if len(baseRHS) == 0 {
+		return false
+	}
+	if hasBinaryRecursive {
+		return true
+	}
+	if len(recursiveTails) == 0 {
+		return false
+	}
+	for _, tail := range recursiveTails {
+		if !repeatHelperHasBasePrefix(baseRHS, tail) {
+			return false
+		}
+	}
+	return true
+}
+
+func repeatHelperHasBasePrefix(baseRHS [][]int, prefix []int) bool {
+	if len(prefix) == 0 {
+		return false
+	}
+	for _, rhs := range baseRHS {
+		if rhsHasPrefix(rhs, prefix) {
 			return true
 		}
 	}
@@ -3509,7 +4786,7 @@ func loweredRepeatMixedContinuationActions(lookaheadSym int, shifts, reduces []l
 		if reduce.kind != lrReduce || reduce.prodIdx < 0 || reduce.prodIdx >= len(ng.Productions) {
 			return nil, false
 		}
-		if isRepeatHelperReduce(reduce, ng) {
+		if isRepeatHelperReduce(reduce, ng, cache) {
 			if haveRepeatReduce {
 				return nil, false
 			}
@@ -3546,17 +4823,250 @@ func loweredRepeatMixedContinuationActions(lookaheadSym int, shifts, reduces []l
 			!repeatReduceContinuesUnit(repeat, unit) {
 			continue
 		}
-		shift.repeat = true
+		shift.addRepeatLHS(repeat.LHS)
+		if resolved, ok := resolveLoweredRepeatHelperShiftReduce(repeatReduce, shift, parent); ok {
+			return resolved, true
+		}
 		return []lrAction{repeatReduce, shift}, true
 	}
 	return nil, false
+}
+
+func loweredRepeatHelperContinuationActions(lookaheadSym int, shifts, reduces []lrAction, ng *NormalizedGrammar, cache *conflictResolutionCache) ([]lrAction, bool) {
+	if ng == nil || cache == nil || len(shifts) != 1 || len(reduces) != 1 ||
+		lookaheadSym < 0 || lookaheadSym >= len(ng.Symbols) {
+		return nil, false
+	}
+	shift := shifts[0]
+	reduce := reduces[0]
+	if shift.kind != lrShift {
+		return nil, false
+	}
+	if !shift.repeat {
+		if parent, ok := loweredRepeatHelperVisibleParentProduction(reduce, ng, cache); ok &&
+			repeatHelperReduceContinuesWithFamilyShift(lookaheadSym, reduce, shift, ng, cache) {
+			if resolved, resolvedOK := resolveLoweredRepeatHelperShiftReduce(reduce, shift, parent); resolvedOK {
+				return resolved, true
+			}
+		}
+		return nil, false
+	}
+	if !repeatHelperReduceContinuesWithShift(lookaheadSym, reduce, shift, ng, cache) {
+		return nil, false
+	}
+	if parent, ok := loweredRepeatHelperVisibleParentProduction(reduce, ng, cache); ok {
+		if resolved, resolvedOK := resolveLoweredRepeatHelperShiftReduce(reduce, shift, parent); resolvedOK {
+			return resolved, true
+		}
+	}
+	return []lrAction{reduce, shift}, true
+}
+
+func repeatHelperReduceContinuesWithFamilyShift(lookaheadSym int, reduce, shift lrAction, ng *NormalizedGrammar, cache *conflictResolutionCache) bool {
+	if reduce.kind != lrReduce || reduce.prodIdx < 0 || reduce.prodIdx >= len(ng.Productions) ||
+		lookaheadSym < 0 || lookaheadSym >= len(ng.Symbols) {
+		return false
+	}
+	prod := &ng.Productions[reduce.prodIdx]
+	if prod.LHS < 0 || prod.LHS >= len(cache.prodsByLHS) ||
+		!isStructurallyGeneratedRepeatHelper(prod.LHS, ng, cache) ||
+		!repeatHelperReduceSharesShiftFamily(prod.LHS, shift, ng, cache) {
+		return false
+	}
+	lookaheadTargets := map[int]bool{lookaheadSym: true}
+	shiftTargets := shiftContinuationTargets(shift, len(ng.Symbols))
+	return repeatHelperCanContinueWithAny(prod.LHS, lookaheadTargets, shiftTargets, ng, cache)
+}
+
+func resolveLoweredRepeatHelperShiftReduce(reduce, shift lrAction, parent *Production) ([]lrAction, bool) {
+	if parent == nil {
+		return nil, false
+	}
+	if shift.prec == 0 && parent.Prec == 0 {
+		return nil, false
+	}
+	if shift.prec > parent.Prec {
+		return []lrAction{shift}, true
+	}
+	if shift.prec < parent.Prec {
+		return []lrAction{reduce}, true
+	}
+	switch parent.Assoc {
+	case AssocLeft:
+		return []lrAction{reduce}, true
+	case AssocRight:
+		return []lrAction{shift}, true
+	default:
+		if shift.hasPrec || parent.HasExplicitPrec || shift.prec != 0 || parent.Prec != 0 {
+			return nil, false
+		}
+		return nil, false
+	}
+}
+
+func loweredRepeatHelperVisibleParentProduction(reduce lrAction, ng *NormalizedGrammar, cache *conflictResolutionCache) (*Production, bool) {
+	if reduce.kind != lrReduce || reduce.prodIdx < 0 || reduce.prodIdx >= len(ng.Productions) {
+		return nil, false
+	}
+	repeat := &ng.Productions[reduce.prodIdx]
+	if repeat.LHS < 0 || repeat.LHS >= len(cache.rhsParents) ||
+		!isStructurallyGeneratedRepeatHelper(repeat.LHS, ng, cache) {
+		return nil, false
+	}
+	var best *Production
+	for _, parentLHS := range cache.rhsParents[repeat.LHS] {
+		if parentLHS < 0 || parentLHS >= len(cache.prodsByLHS) ||
+			parentLHS == repeat.LHS ||
+			parentLHS >= len(ng.Symbols) ||
+			!ng.Symbols[parentLHS].Visible {
+			continue
+		}
+		for _, prodIdx := range cache.prodsByLHS[parentLHS] {
+			if prodIdx < 0 || prodIdx >= len(ng.Productions) {
+				continue
+			}
+			parent := &ng.Productions[prodIdx]
+			if parent.LHS != parentLHS || !rhsContainsSymbol(parent.RHS, repeat.LHS) {
+				continue
+			}
+			if best == nil ||
+				parent.Prec > best.Prec ||
+				(parent.Prec == best.Prec && best.Assoc == AssocNone && parent.Assoc != AssocNone) {
+				best = parent
+			}
+		}
+	}
+	if best == nil {
+		return nil, false
+	}
+	return best, true
+}
+
+func visibleLoweredRepeatBodyContinuationActions(lookaheadSym int, actions, shifts, reduces []lrAction, ng *NormalizedGrammar, cache *conflictResolutionCache) ([]lrAction, bool) {
+	if ng == nil || cache == nil || len(shifts) != 1 || len(reduces) != 1 ||
+		lookaheadSym < 0 || lookaheadSym >= len(ng.Symbols) {
+		return nil, false
+	}
+	shift := shifts[0]
+	reduce := reduces[0]
+	if shift.kind != lrShift || reduce.kind != lrReduce ||
+		reduce.prodIdx < 0 || reduce.prodIdx >= len(ng.Productions) {
+		return nil, false
+	}
+	prod := &ng.Productions[reduce.prodIdx]
+	if prod.LHS < 0 || prod.LHS >= len(ng.Symbols) ||
+		!ng.Symbols[prod.LHS].Visible ||
+		len(prod.RHS) < 2 {
+		return nil, false
+	}
+	lookaheadTargets := map[int]bool{lookaheadSym: true}
+	shiftTargets := shiftContinuationTargets(shift, len(ng.Symbols))
+	if len(shiftTargets) == 0 {
+		return nil, false
+	}
+	prefix := prod.RHS[:len(prod.RHS)-1]
+	tailSym := prod.RHS[len(prod.RHS)-1]
+	if isStructurallyGeneratedRepeatHelper(tailSym, ng, cache) {
+		if repeatHelperCanContinueWithAny(tailSym, lookaheadTargets, shiftTargets, ng, cache) {
+			if repeatElementCanStartAdjacentRepeatOnLookahead(prod.LHS, lookaheadSym, ng, cache) {
+				return actions, true
+			}
+			if prod.HasExplicitPrec || prod.Assoc != AssocNone || shift.hasPrec || shift.prec != 0 {
+				return []lrAction{shift}, true
+			}
+			return actions, true
+		}
+		return nil, false
+	}
+	unit := prod.RHS[len(prod.RHS)-1:]
+	if !rhsCanBeginWithAny(unit, lookaheadTargets, cache, ng) ||
+		!rhsCanBeginWithAny(unit, shiftTargets, cache, ng) {
+		return nil, false
+	}
+	for _, prodIdx := range cache.prodsByLHS[prod.LHS] {
+		if prodIdx < 0 || prodIdx >= len(ng.Productions) || prodIdx == reduce.prodIdx {
+			continue
+		}
+		candidate := &ng.Productions[prodIdx]
+		if candidate.LHS != prod.LHS || len(candidate.RHS) != len(prefix)+1 ||
+			!rhsHasPrefix(candidate.RHS, prefix) {
+			continue
+		}
+		repeatSym := candidate.RHS[len(prefix)]
+		if isStructurallyGeneratedRepeatHelper(repeatSym, ng, cache) &&
+			repeatHelperCanBeginSequence(repeatSym, unit, ng, cache) {
+			return actions, true
+		}
+	}
+	return nil, false
+}
+
+func repeatHelperReduceContinuesWithShift(lookaheadSym int, reduce, shift lrAction, ng *NormalizedGrammar, cache *conflictResolutionCache) bool {
+	if cache != nil {
+		cache.structuralStats.RepeatHelperReduceShiftCalls++
+	}
+	if reduce.kind != lrReduce || reduce.prodIdx < 0 || reduce.prodIdx >= len(ng.Productions) {
+		return false
+	}
+	prod := &ng.Productions[reduce.prodIdx]
+	if prod.LHS < 0 || prod.LHS >= len(cache.prodsByLHS) ||
+		len(prod.RHS) == 0 ||
+		!shift.hasRepeatLHS(prod.LHS) ||
+		!isStructurallyGeneratedRepeatHelper(prod.LHS, ng, cache) {
+		return false
+	}
+	lookaheadTargets := map[int]bool{lookaheadSym: true}
+	shiftTargets := shiftContinuationTargets(shift, len(ng.Symbols))
+	if len(shiftTargets) == 0 {
+		return false
+	}
+	for _, prodIdx := range cache.prodsByLHS[prod.LHS] {
+		if prodIdx < 0 || prodIdx >= len(ng.Productions) {
+			continue
+		}
+		recursive := &ng.Productions[prodIdx]
+		if recursive.LHS != prod.LHS || len(recursive.RHS) < 2 || recursive.RHS[0] != prod.LHS {
+			continue
+		}
+		tail := recursive.RHS[1:]
+		if rhsCanBeginWithAny(tail, lookaheadTargets, cache, ng) &&
+			rhsCanBeginWithAny(tail, shiftTargets, cache, ng) {
+			return true
+		}
+	}
+	return false
+}
+
+func repeatHelperCanContinueWithAny(repeatSym int, lookaheadTargets, shiftTargets map[int]bool, ng *NormalizedGrammar, cache *conflictResolutionCache) bool {
+	if cache != nil {
+		cache.structuralStats.RepeatHelperContinueCalls++
+	}
+	if repeatSym < 0 || repeatSym >= len(cache.prodsByLHS) ||
+		!isStructurallyGeneratedRepeatHelper(repeatSym, ng, cache) {
+		return false
+	}
+	for _, prodIdx := range cache.prodsByLHS[repeatSym] {
+		if prodIdx < 0 || prodIdx >= len(ng.Productions) {
+			continue
+		}
+		recursive := &ng.Productions[prodIdx]
+		if recursive.LHS != repeatSym || len(recursive.RHS) < 2 || recursive.RHS[0] != repeatSym {
+			continue
+		}
+		tail := recursive.RHS[1:]
+		if rhsCanBeginWithAny(tail, lookaheadTargets, cache, ng) &&
+			rhsCanBeginWithAny(tail, shiftTargets, cache, ng) {
+			return true
+		}
+	}
+	return false
 }
 
 func loweredRepeatSiblingMatches(lhs int, prefix []int, repeatSym int, ng *NormalizedGrammar, cache *conflictResolutionCache) bool {
 	if lhs < 0 || lhs >= len(cache.prodsByLHS) ||
 		repeatSym < 0 || repeatSym >= len(ng.Symbols) ||
 		ng.Symbols[repeatSym].Kind != SymbolNonterminal ||
-		!strings.Contains(ng.Symbols[repeatSym].Name, "repeat") {
+		!isStructurallyGeneratedRepeatHelper(repeatSym, ng, cache) {
 		return false
 	}
 	for _, prodIdx := range cache.prodsByLHS[lhs] {
@@ -3607,27 +5117,79 @@ func rhsHasPrefix(rhs, prefix []int) bool {
 	return true
 }
 
-func rhsCanBeginWithAny(rhs []int, targets map[int]bool, cache *conflictResolutionCache, ng *NormalizedGrammar) bool {
-	if cache == nil {
+func rhsCanContinueWithAny(rhs []int, lookaheadTargets, shiftTargets map[int]bool, cache *conflictResolutionCache, ng *NormalizedGrammar) bool {
+	if cache != nil {
+		cache.structuralStats.RHSContinueCalls++
+	}
+	if len(rhs) == 0 || cache == nil || ng == nil {
 		return false
 	}
 	visiting := make([]bool, len(ng.Symbols))
-	return rhsCanBeginWithAnyVisited(rhs, targets, cache, visiting, ng)
-}
-
-func rhsCanBeginWithAnyVisited(rhs []int, targets map[int]bool, cache *conflictResolutionCache, visiting []bool, ng *NormalizedGrammar) bool {
-	for _, sym := range rhs {
-		if symbolCanBeginWithAny(sym, targets, cache, visiting, ng) {
+	for i := len(rhs) - 1; i >= 0; i-- {
+		if symbolCanContinueWithAny(rhs[i], lookaheadTargets, shiftTargets, cache, visiting, ng) {
 			return true
 		}
-		if sym < 0 || sym >= len(cache.nullable) || !cache.nullable[sym] {
+		if rhs[i] < 0 || rhs[i] >= len(cache.nullable) || !cache.nullable[rhs[i]] {
 			return false
 		}
 	}
 	return false
 }
 
-func symbolCanBeginWithAny(sym int, targets map[int]bool, cache *conflictResolutionCache, visiting []bool, ng *NormalizedGrammar) bool {
+func symbolCanContinueWithAny(sym int, lookaheadTargets, shiftTargets map[int]bool, cache *conflictResolutionCache, visiting []bool, ng *NormalizedGrammar) bool {
+	if sym < 0 || sym >= len(ng.Symbols) || len(shiftTargets) == 0 {
+		return false
+	}
+	for target := range shiftTargets {
+		if target < 0 || target >= len(ng.Symbols) || ng.Symbols[target].Kind != SymbolNonterminal {
+			continue
+		}
+		if nonterminalCanContinueSymbol(target, sym, lookaheadTargets, cache, visiting, ng) {
+			return true
+		}
+	}
+	return false
+}
+
+func nonterminalCanContinueSymbol(target, sym int, lookaheadTargets map[int]bool, cache *conflictResolutionCache, visiting []bool, ng *NormalizedGrammar) bool {
+	if target < 0 || target >= len(cache.prodsByLHS) || visiting[target] {
+		return false
+	}
+	visiting[target] = true
+	defer func() { visiting[target] = false }()
+
+	symTargets := map[int]bool{sym: true}
+	for _, prodIdx := range cache.prodsByLHS[target] {
+		if prodIdx < 0 || prodIdx >= len(ng.Productions) {
+			continue
+		}
+		rhs := ng.Productions[prodIdx].RHS
+		for split := 1; split < len(rhs); split++ {
+			if rhsCanEndWithAny(rhs[:split], symTargets, cache, visiting, ng) &&
+				rhsCanBeginWithAny(rhs[split:], lookaheadTargets, cache, ng) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func rhsCanEndWithAny(rhs []int, targets map[int]bool, cache *conflictResolutionCache, visiting []bool, ng *NormalizedGrammar) bool {
+	if cache != nil {
+		cache.structuralStats.RHSEndCalls++
+	}
+	for i := len(rhs) - 1; i >= 0; i-- {
+		if symbolCanEndWithAny(rhs[i], targets, cache, visiting, ng) {
+			return true
+		}
+		if rhs[i] < 0 || rhs[i] >= len(cache.nullable) || !cache.nullable[rhs[i]] {
+			return false
+		}
+	}
+	return false
+}
+
+func symbolCanEndWithAny(sym int, targets map[int]bool, cache *conflictResolutionCache, visiting []bool, ng *NormalizedGrammar) bool {
 	if sym < 0 || sym >= len(ng.Symbols) {
 		return false
 	}
@@ -3649,8 +5211,57 @@ func symbolCanBeginWithAny(sym int, targets map[int]bool, cache *conflictResolut
 		if prodIdx < 0 || prodIdx >= len(ng.Productions) {
 			continue
 		}
-		prod := &ng.Productions[prodIdx]
-		if rhsCanBeginWithAnyVisited(prod.RHS, targets, cache, visiting, ng) {
+		if rhsCanEndWithAny(ng.Productions[prodIdx].RHS, targets, cache, visiting, ng) {
+			return true
+		}
+	}
+	return false
+}
+
+func rhsCanBeginWithAny(rhs []int, targets map[int]bool, cache *conflictResolutionCache, ng *NormalizedGrammar) bool {
+	if cache != nil {
+		cache.structuralStats.RHSBeginCalls++
+	}
+	if cache == nil || ng == nil {
+		return false
+	}
+	if result, ok := rhsCanBeginWithAnyFirstSets(rhs, targets, cache, ng); ok {
+		cache.structuralStats.RHSBeginHits++
+		return result
+	}
+	cache.structuralStats.RHSBeginMisses++
+	return false
+}
+
+func rhsCanBeginWithAnyFirstSets(rhs []int, targets map[int]bool, cache *conflictResolutionCache, ng *NormalizedGrammar) (bool, bool) {
+	if len(rhs) == 0 || len(targets) == 0 {
+		return false, true
+	}
+	firstSets := cache.firstSets
+	if firstSets == nil {
+		var err error
+		firstSets, err = cache.ensureFirstSets(context.Background(), ng)
+		if err != nil || firstSets == nil {
+			return false, false
+		}
+	}
+	for _, sym := range rhs {
+		if sym < 0 || sym >= len(firstSets) {
+			return false, true
+		}
+		if firstSetIntersectsTargets(firstSets[sym], targets) {
+			return true, true
+		}
+		if sym >= len(cache.nullable) || !cache.nullable[sym] {
+			return false, true
+		}
+	}
+	return false, true
+}
+
+func firstSetIntersectsTargets(firstSet []uint64, targets map[int]bool) bool {
+	for target, ok := range targets {
+		if ok && bitsetHas(firstSet, target) {
 			return true
 		}
 	}
@@ -3942,6 +5553,12 @@ func shouldPreserveKeywordIdentifierShiftReduce(lookaheadSym int, reduces []lrAc
 		}
 	}
 	return false
+}
+
+func shouldPreserveDerivedKeywordIdentifierShiftReduce(lookaheadSym int, reduces []lrAction, ng *NormalizedGrammar) bool {
+	return ng != nil &&
+		ng.DerivedKeywordIdentifierConflicts &&
+		shouldPreserveKeywordIdentifierShiftReduce(lookaheadSym, reduces, ng)
 }
 
 func preferredExpressionOperatorIdentifierReduce(lookaheadSym int, shifts, reduces []lrAction, ng *NormalizedGrammar) ([]lrAction, bool) {
@@ -4367,7 +5984,7 @@ func isElixirOperatorIdentifierConflictLookahead(name string) bool {
 }
 
 func preferredKeywordContinuationShift(lookaheadSym int, shifts, reduces []lrAction, ng *NormalizedGrammar) (lrAction, bool) {
-	if ng == nil || !ng.PreserveKeywordIdentifierConflicts {
+	if ng == nil || !ng.PreserveKeywordIdentifierConflicts || ng.DerivedKeywordIdentifierConflicts {
 		return lrAction{}, false
 	}
 	if !keywordIdentifierConflictLookahead(lookaheadSym, ng) {
@@ -4428,18 +6045,7 @@ func isVisibleKeywordIdentifierReduce(action lrAction, ng *NormalizedGrammar) bo
 		return false
 	}
 	prod := &ng.Productions[action.prodIdx]
-	if prod.LHS < 0 || prod.LHS >= len(ng.Symbols) || ng.Symbols[prod.LHS].Name != "identifier" {
-		return false
-	}
-	if len(prod.RHS) != 1 {
-		return false
-	}
-	rhs := prod.RHS[0]
-	if rhs < 0 || rhs >= len(ng.Symbols) {
-		return false
-	}
-	sym := ng.Symbols[rhs]
-	return sym.Kind == SymbolTerminal && sym.Visible && !sym.Named
+	return productionIsDirectKeywordToWord(prod, ng) || productionHasKeywordAliasToWord(prod, ng)
 }
 
 func repetitionShiftActions(lookaheadSym int, shifts, reduces []lrAction, ng *NormalizedGrammar, cache *conflictResolutionCache) ([]lrAction, bool) {
@@ -4447,20 +6053,71 @@ func repetitionShiftActions(lookaheadSym int, shifts, reduces []lrAction, ng *No
 		return nil, false
 	}
 	for _, r := range reduces {
-		if !isRecursiveRepeatReduce(r, ng) {
+		if !isRecursiveRepeatReduce(r, ng, cache) {
 			return nil, false
 		}
 	}
+	repeatLHS, sameRepeatLHS := commonReduceLHS(reduces, ng)
 	shift := shifts[0]
-	if !shift.repeat && lookaheadSym != shift.lhsSym &&
+	shiftMatchesReduces := shift.repeat && recursiveRepeatShiftMatchesReduces(shift, reduces, ng)
+	if !shiftMatchesReduces && lookaheadSym != shift.lhsSym &&
 		!recursiveRepeatShiftCanContinueLookahead(lookaheadSym, shift, reduces, ng, cache) {
 		return nil, false
 	}
 	kept := make([]lrAction, 0, len(reduces)+1)
 	kept = append(kept, reduces...)
 	shift.repeat = true
+	if sameRepeatLHS {
+		shift.addRepeatLHS(repeatLHS)
+	}
+	if sameRepeatLHS && len(reduces) == 1 {
+		if parent, ok := loweredRepeatHelperVisibleParentProduction(reduces[0], ng, cache); ok {
+			if resolved, resolvedOK := resolveLoweredRepeatHelperShiftReduce(reduces[0], shift, parent); resolvedOK {
+				return resolved, true
+			}
+		}
+	}
 	kept = append(kept, shift)
 	return kept, true
+}
+
+func commonReduceLHS(reduces []lrAction, ng *NormalizedGrammar) (int, bool) {
+	if ng == nil || len(reduces) == 0 {
+		return 0, false
+	}
+	common := -1
+	for _, reduce := range reduces {
+		if reduce.kind != lrReduce || reduce.prodIdx < 0 || reduce.prodIdx >= len(ng.Productions) {
+			return 0, false
+		}
+		lhs := ng.Productions[reduce.prodIdx].LHS
+		if common < 0 {
+			common = lhs
+			continue
+		}
+		if lhs != common {
+			return 0, false
+		}
+	}
+	if common <= 0 {
+		return 0, false
+	}
+	return common, true
+}
+
+func recursiveRepeatShiftMatchesReduces(shift lrAction, reduces []lrAction, ng *NormalizedGrammar) bool {
+	if ng == nil {
+		return false
+	}
+	for _, reduce := range reduces {
+		if reduce.kind != lrReduce || reduce.prodIdx < 0 || reduce.prodIdx >= len(ng.Productions) {
+			return false
+		}
+		if !shift.hasRepeatLHS(ng.Productions[reduce.prodIdx].LHS) {
+			return false
+		}
+	}
+	return true
 }
 
 func recursiveRepeatShiftCanContinueLookahead(lookaheadSym int, shift lrAction, reduces []lrAction, ng *NormalizedGrammar, cache *conflictResolutionCache) bool {
@@ -4497,7 +6154,7 @@ func recursiveRepeatShiftCanContinueLookahead(lookaheadSym int, shift lrAction, 
 	return false
 }
 
-func isRecursiveRepeatReduce(action lrAction, ng *NormalizedGrammar) bool {
+func isRecursiveRepeatReduce(action lrAction, ng *NormalizedGrammar, cache *conflictResolutionCache) bool {
 	if action.kind != lrReduce || action.prodIdx < 0 || action.prodIdx >= len(ng.Productions) {
 		return false
 	}
@@ -4505,7 +6162,10 @@ func isRecursiveRepeatReduce(action lrAction, ng *NormalizedGrammar) bool {
 	if prod.LHS < 0 || prod.LHS >= len(ng.Symbols) {
 		return false
 	}
-	if !strings.Contains(ng.Symbols[prod.LHS].Name, "repeat") {
+	if cache == nil || prod.LHS >= len(cache.prodsByLHS) {
+		return false
+	}
+	if !isStructurallyGeneratedRepeatHelper(prod.LHS, ng, cache) {
 		return false
 	}
 	for _, sym := range prod.RHS {
@@ -4516,7 +6176,7 @@ func isRecursiveRepeatReduce(action lrAction, ng *NormalizedGrammar) bool {
 	return false
 }
 
-func isRepeatHelperReduce(action lrAction, ng *NormalizedGrammar) bool {
+func isRepeatHelperReduce(action lrAction, ng *NormalizedGrammar, cache *conflictResolutionCache) bool {
 	if action.kind != lrReduce || action.prodIdx < 0 || action.prodIdx >= len(ng.Productions) {
 		return false
 	}
@@ -4524,7 +6184,7 @@ func isRepeatHelperReduce(action lrAction, ng *NormalizedGrammar) bool {
 	if prod.LHS < 0 || prod.LHS >= len(ng.Symbols) {
 		return false
 	}
-	return strings.Contains(ng.Symbols[prod.LHS].Name, "repeat")
+	return isStructurallyGeneratedRepeatHelper(prod.LHS, ng, cache)
 }
 
 func resolveReduceReduceLegacy(lookaheadSym int, reduces []lrAction, ng *NormalizedGrammar, cache *conflictResolutionCache) ([]lrAction, error) {
@@ -4533,6 +6193,28 @@ func resolveReduceReduceLegacy(lookaheadSym int, reduces []lrAction, ng *Normali
 	}
 	if preferred, ok := preferredBashStatementReduce(lookaheadSym, reduces, ng); ok {
 		return []lrAction{preferred}, nil
+	}
+	if repeatReduces, ok := generatedRepeatContinuationReduceSubset(reduces, ng, cache); ok {
+		return repeatReduces, nil
+	}
+	if filtered, ok := filterRedundantHiddenUnaryWrapperReduces(reduces, ng, cache); ok {
+		reduces = orderReduceConflictByChildCount(filtered, ng)
+		if allInDeclaredConflict(reduces, ng, cache) {
+			return reduces, nil
+		}
+		if resolvedByPrec := rrPrecResolve(reduces, ng); resolvedByPrec != nil {
+			return resolvedByPrec, nil
+		}
+		return reduces, nil
+	}
+	if declared, ok := keepDeclaredSameRHSNeutralUnarySubset(reduces, ng, cache); ok {
+		return declared, nil
+	}
+	if declared, ok := keepDeclaredEqualRankVisibleSubset(reduces, ng, cache); ok {
+		return declared, nil
+	}
+	if resolved, ok := resolveTwoReduceHiddenUnaryPassthrough(reduces, ng, cache); ok {
+		return resolved, nil
 	}
 	if allInDeclaredConflict(reduces, ng, cache) {
 		return reduces, nil
@@ -4572,6 +6254,310 @@ func resolveReduceReduceLegacy(lookaheadSym int, reduces []lrAction, ng *Normali
 	}
 
 	return rrPickBest(reduces, ng), nil
+}
+
+func generatedRepeatContinuationReduceSubset(reduces []lrAction, ng *NormalizedGrammar, cache *conflictResolutionCache) ([]lrAction, bool) {
+	if len(reduces) < 2 || ng == nil || cache == nil {
+		return nil, false
+	}
+	var repeatReduces []lrAction
+	repeatLHS := make(map[int]bool)
+	hasNonRepeat := false
+	repeatRHS := make(map[string]bool)
+	for _, reduce := range reduces {
+		if reduce.kind != lrReduce || reduce.prodIdx < 0 || reduce.prodIdx >= len(ng.Productions) {
+			return nil, false
+		}
+		prod := &ng.Productions[reduce.prodIdx]
+		if isGeneratedRepeatReduceProd(prod, ng, cache) {
+			repeatReduces = append(repeatReduces, reduce)
+			repeatLHS[prod.LHS] = true
+			repeatRHS[symbolSeqKey(prod.RHS)] = true
+			continue
+		}
+		hasNonRepeat = true
+	}
+	if len(repeatReduces) == 0 {
+		return nil, false
+	}
+	if len(repeatLHS) >= 2 {
+		unbounded := make([]lrAction, 0, len(repeatReduces))
+		for _, reduce := range repeatReduces {
+			prod := &ng.Productions[reduce.prodIdx]
+			if !generatedRepeatHasRequiredSuffixParent(prod.LHS, ng, cache) {
+				unbounded = append(unbounded, reduce)
+			}
+		}
+		if len(unbounded) > 0 && len(unbounded) < len(repeatReduces) {
+			return unbounded, true
+		}
+	}
+	if !hasNonRepeat {
+		return nil, false
+	}
+	if len(repeatLHS) >= 2 {
+		return repeatReduces, true
+	}
+	for _, reduce := range reduces {
+		prod := &ng.Productions[reduce.prodIdx]
+		if isGeneratedRepeatReduceProd(prod, ng, cache) {
+			continue
+		}
+		if repeatRHS[symbolSeqKey(prod.RHS)] {
+			return repeatReduces, true
+		}
+	}
+	return nil, false
+}
+
+func generatedRepeatHasRequiredSuffixParent(repeatLHS int, ng *NormalizedGrammar, cache *conflictResolutionCache) bool {
+	if repeatLHS < 0 || repeatLHS >= len(cache.rhsParents) {
+		return false
+	}
+	for _, parentLHS := range cache.rhsParents[repeatLHS] {
+		if parentLHS == repeatLHS || parentLHS < 0 || parentLHS >= len(cache.prodsByLHS) {
+			continue
+		}
+		for _, prodIdx := range cache.prodsByLHS[parentLHS] {
+			if prodIdx < 0 || prodIdx >= len(ng.Productions) {
+				continue
+			}
+			rhs := ng.Productions[prodIdx].RHS
+			for i, sym := range rhs {
+				if sym == repeatLHS && i+1 < len(rhs) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func isGeneratedRepeatReduceProd(prod *Production, ng *NormalizedGrammar, cache *conflictResolutionCache) bool {
+	if prod == nil || len(prod.RHS) == 0 || prod.LHS < 0 || prod.LHS >= len(ng.Symbols) {
+		return false
+	}
+	return isStructurallyGeneratedRepeatHelper(prod.LHS, ng, cache)
+}
+
+func symbolSeqKey(seq []int) string {
+	var b strings.Builder
+	for i, sym := range seq {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString(strconv.Itoa(sym))
+	}
+	return b.String()
+}
+
+func keepDeclaredEqualRankVisibleSubset(reduces []lrAction, ng *NormalizedGrammar, cache *conflictResolutionCache) ([]lrAction, bool) {
+	if len(reduces) < 3 || ng == nil || cache == nil {
+		return nil, false
+	}
+	for _, reduce := range reduces {
+		if reduce.kind != lrReduce || reduce.prodIdx < 0 || reduce.prodIdx >= len(ng.Productions) {
+			return nil, false
+		}
+	}
+
+	best := reduces[0]
+	kept := []lrAction{best}
+	for _, reduce := range reduces[1:] {
+		switch cmp := compareReduceConflictRank(reduce, best, ng); {
+		case cmp > 0:
+			best = reduce
+			kept = kept[:0]
+			kept = append(kept, reduce)
+		case cmp == 0:
+			kept = append(kept, reduce)
+		}
+	}
+	if len(kept) < 2 || len(kept) == len(reduces) {
+		return nil, false
+	}
+	if !hasDistinctVisibleReduceFamilies(kept, ng) {
+		return nil, false
+	}
+	if !allInDeclaredConflict(kept, ng, cache) {
+		return nil, false
+	}
+	return kept, true
+}
+
+func hasDistinctVisibleReduceFamilies(reduces []lrAction, ng *NormalizedGrammar) bool {
+	seen := make(map[int]bool, len(reduces))
+	for _, reduce := range reduces {
+		if reduce.prodIdx < 0 || reduce.prodIdx >= len(ng.Productions) {
+			return false
+		}
+		lhs := ng.Productions[reduce.prodIdx].LHS
+		if lhs < 0 || lhs >= len(ng.Symbols) {
+			return false
+		}
+		info := ng.Symbols[lhs]
+		if info.Kind != SymbolNonterminal || (!info.Visible && !info.Named) {
+			return false
+		}
+		seen[lhs] = true
+	}
+	return len(seen) >= 2
+}
+
+func compareReduceConflictRank(a, b lrAction, ng *NormalizedGrammar) int {
+	aProd := &ng.Productions[a.prodIdx]
+	bProd := &ng.Productions[b.prodIdx]
+	if ng.PrecedenceOrder != nil {
+		aLHSName := reduceLHSName(aProd, ng)
+		bLHSName := reduceLHSName(bProd, ng)
+
+		if aProd.Prec == 0 && bProd.Prec > 0 && aLHSName != "" {
+			cmp := ng.PrecedenceOrder.resolveSymbolVsNamedPrec(aLHSName, bProd.Prec)
+			if cmp != 0 {
+				return cmp
+			}
+		}
+		if bProd.Prec == 0 && aProd.Prec > 0 && bLHSName != "" {
+			cmp := ng.PrecedenceOrder.resolveSymbolVsNamedPrec(bLHSName, aProd.Prec)
+			if cmp != 0 {
+				return -cmp
+			}
+		}
+		if aProd.Prec == 0 && bProd.Prec == 0 && aLHSName != "" && bLHSName != "" && aLHSName != bLHSName {
+			if cmp := ng.PrecedenceOrder.resolveSymbolVsSymbol(aLHSName, bLHSName); cmp != 0 {
+				return cmp
+			}
+		}
+	}
+	if aProd.Prec != bProd.Prec {
+		if aProd.Prec > bProd.Prec {
+			return 1
+		}
+		return -1
+	}
+	if aProd.DynPrec != bProd.DynPrec {
+		if aProd.DynPrec > bProd.DynPrec {
+			return 1
+		}
+		return -1
+	}
+	aExplicit := aProd.HasExplicitPrec || aProd.Assoc != AssocNone
+	bExplicit := bProd.HasExplicitPrec || bProd.Assoc != AssocNone
+	if aExplicit != bExplicit {
+		if aExplicit {
+			return 1
+		}
+		return -1
+	}
+	return 0
+}
+
+func reduceLHSName(prod *Production, ng *NormalizedGrammar) string {
+	if prod == nil || ng == nil || prod.LHS < 0 || prod.LHS >= len(ng.Symbols) {
+		return ""
+	}
+	return ng.Symbols[prod.LHS].Name
+}
+
+func keepDeclaredSameRHSNeutralUnarySubset(reduces []lrAction, ng *NormalizedGrammar, cache *conflictResolutionCache) ([]lrAction, bool) {
+	if len(reduces) < 3 || ng == nil || cache == nil {
+		return nil, false
+	}
+	unaries := make([]hiddenUnaryPassthrough, 0, len(reduces))
+	childByLHS := make(map[int]int, len(reduces))
+	declared := make([]lrAction, 0, len(reduces))
+	prec := 0
+	dynPrec := 0
+	for i, reduce := range reduces {
+		u, ok := unaryReduce(reduce, ng)
+		if !ok {
+			return nil, false
+		}
+		prod := &ng.Productions[reduce.prodIdx]
+		if i == 0 {
+			prec = prod.Prec
+			dynPrec = prod.DynPrec
+		} else if prod.Prec != prec || prod.DynPrec != dynPrec {
+			return nil, false
+		}
+		unaries = append(unaries, u)
+		childByLHS[u.lhs] = u.child
+		if reduceHasDeclaredConflictPartner(i, reduces, ng, cache) {
+			declared = append(declared, reduce)
+		}
+	}
+	child := -1
+	for _, u := range unaries {
+		leaf := neutralUnaryConflictLeaf(u.child, childByLHS, ng, cache)
+		if child == -1 {
+			child = leaf
+		} else if child != leaf {
+			return nil, false
+		}
+	}
+	visible := visibleNeutralUnaryReduces(unaries, ng)
+	if len(declared) < 2 {
+		if len(visible) < 2 {
+			return nil, false
+		}
+		return visible, true
+	}
+	if len(declared) == len(reduces) {
+		return reduces, true
+	}
+	if !allInDeclaredConflict(declared, ng, cache) {
+		if !hasDistinctVisibleReduceFamilies(declared, ng) {
+			if len(visible) < 2 {
+				return nil, false
+			}
+			return visible, true
+		}
+	}
+	return declared, true
+}
+
+func visibleNeutralUnaryReduces(unaries []hiddenUnaryPassthrough, ng *NormalizedGrammar) []lrAction {
+	visible := make([]lrAction, 0, len(unaries))
+	seen := make(map[int]bool, len(unaries))
+	for _, u := range unaries {
+		if u.lhs < 0 || u.lhs >= len(ng.Symbols) {
+			continue
+		}
+		info := ng.Symbols[u.lhs]
+		if info.Kind != SymbolNonterminal || (!info.Visible && !info.Named) || seen[u.lhs] {
+			continue
+		}
+		seen[u.lhs] = true
+		visible = append(visible, u.action)
+	}
+	return visible
+}
+
+func neutralUnaryConflictLeaf(sym int, childByLHS map[int]int, ng *NormalizedGrammar, cache *conflictResolutionCache) int {
+	seen := make(map[int]bool, len(childByLHS))
+	for {
+		if seen[sym] {
+			return sym
+		}
+		seen[sym] = true
+		if child, ok := childByLHS[sym]; ok {
+			sym = child
+			continue
+		}
+		if ng == nil || cache == nil || sym < 0 || sym >= len(cache.prodsByLHS) {
+			return sym
+		}
+		prods := cache.prodsByLHS[sym]
+		if len(prods) != 1 {
+			return sym
+		}
+		prod := &ng.Productions[prods[0]]
+		if len(prod.RHS) != 1 ||
+			prod.Prec != 0 || prod.DynPrec != 0 || prod.Assoc != AssocNone || prod.HasExplicitPrec {
+			return sym
+		}
+		sym = prod.RHS[0]
+	}
 }
 
 func keepBashStatementBoundaryReduces(lookaheadSym int, reduces []lrAction, ng *NormalizedGrammar) ([]lrAction, bool) {
@@ -4843,12 +6829,258 @@ func shouldKeepRepeatedAnnotationReduces(lookaheadSym int, reduces []lrAction, n
 		if lhs < 0 || lhs >= len(ng.Symbols) {
 			return false
 		}
-		lhsName := ng.Symbols[lhs].Name
-		if !strings.Contains(lhsName, "repeat") {
+		if !ng.Symbols[lhs].GeneratedRepeatAux {
 			return false
 		}
 	}
 	return true
+}
+
+type hiddenUnaryWrapperReduce struct {
+	index int
+	lhs   int
+	child int
+}
+
+func filterRedundantHiddenUnaryWrapperReduces(reduces []lrAction, ng *NormalizedGrammar, cache *conflictResolutionCache) ([]lrAction, bool) {
+	if len(reduces) < 3 || ng == nil {
+		return reduces, false
+	}
+
+	reduceLHS := make(map[int]bool, len(reduces))
+	for _, r := range reduces {
+		if r.kind != lrReduce || r.prodIdx < 0 || r.prodIdx >= len(ng.Productions) {
+			return reduces, false
+		}
+		prod := &ng.Productions[r.prodIdx]
+		reduceLHS[prod.LHS] = true
+	}
+
+	type dropCandidate struct {
+		index int
+	}
+	var candidates []dropCandidate
+	for i, r := range reduces {
+		wrapper, ok := hiddenUnaryWrapperReduceAt(i, r, ng)
+		if !ok || !neutralHiddenUnaryWrapperReduce(r, ng) {
+			continue
+		}
+		enclosingCount := countEnclosingReducesForWrapper(reduces, wrapper, ng)
+		if enclosingCount == 0 || (!reduceLHS[wrapper.child] && enclosingCount < 2) {
+			continue
+		}
+		candidates = append(candidates, dropCandidate{index: i})
+	}
+	if len(candidates) == 0 {
+		return reduces, false
+	}
+
+	drop := make(map[int]bool)
+	hasUnprotectedCandidate := false
+	for _, candidate := range candidates {
+		if !reduceHasDeclaredConflictPartner(candidate.index, reduces, ng, cache) {
+			hasUnprotectedCandidate = true
+			break
+		}
+	}
+	for _, candidate := range candidates {
+		if hasUnprotectedCandidate && reduceHasDeclaredConflictPartner(candidate.index, reduces, ng, cache) {
+			continue
+		}
+		drop[candidate.index] = true
+	}
+	if len(drop) == 0 {
+		return reduces, false
+	}
+
+	filtered := make([]lrAction, 0, len(reduces)-len(drop))
+	for i, r := range reduces {
+		if !drop[i] {
+			filtered = append(filtered, r)
+		}
+	}
+	if len(filtered) < 2 {
+		return reduces, false
+	}
+	return filtered, true
+}
+
+func reduceHasDeclaredConflictPartner(index int, reduces []lrAction, ng *NormalizedGrammar, cache *conflictResolutionCache) bool {
+	if index < 0 || index >= len(reduces) || cache == nil {
+		return false
+	}
+	for i, r := range reduces {
+		if i == index {
+			continue
+		}
+		if allInDeclaredConflict([]lrAction{reduces[index], r}, ng, cache) {
+			return true
+		}
+	}
+	return false
+}
+
+func hiddenUnaryWrapperReduceAt(index int, action lrAction, ng *NormalizedGrammar) (hiddenUnaryWrapperReduce, bool) {
+	if action.kind != lrReduce || action.prodIdx < 0 || action.prodIdx >= len(ng.Productions) {
+		return hiddenUnaryWrapperReduce{}, false
+	}
+	prod := &ng.Productions[action.prodIdx]
+	if len(prod.RHS) != 1 ||
+		prod.LHS < 0 || prod.LHS >= len(ng.Symbols) ||
+		prod.RHS[0] < 0 || prod.RHS[0] >= len(ng.Symbols) {
+		return hiddenUnaryWrapperReduce{}, false
+	}
+	if !isHiddenUnaryWrapperSymbol(ng.Symbols[prod.LHS]) {
+		return hiddenUnaryWrapperReduce{}, false
+	}
+	return hiddenUnaryWrapperReduce{index: index, lhs: prod.LHS, child: prod.RHS[0]}, true
+}
+
+func isHiddenUnaryWrapperSymbol(info SymbolInfo) bool {
+	return info.Kind == SymbolNonterminal &&
+		!info.Visible &&
+		!info.Named &&
+		!info.GeneratedRepeatAux
+}
+
+func neutralHiddenUnaryWrapperReduce(action lrAction, ng *NormalizedGrammar) bool {
+	if action.kind != lrReduce || action.prodIdx < 0 || action.prodIdx >= len(ng.Productions) {
+		return false
+	}
+	prod := &ng.Productions[action.prodIdx]
+	return prod.Prec == 0 && prod.DynPrec == 0
+}
+
+func resolveTwoReduceHiddenUnaryPassthrough(reduces []lrAction, ng *NormalizedGrammar, cache *conflictResolutionCache) ([]lrAction, bool) {
+	if len(reduces) != 2 || ng == nil {
+		return nil, false
+	}
+	first, second := reduces[0], reduces[1]
+	wrapper, enclosing, ok := hiddenUnaryPassthroughPair(first, second, ng)
+	if !ok {
+		wrapper, enclosing, ok = hiddenUnaryPassthroughPair(second, first, ng)
+	}
+	if !ok {
+		return nil, false
+	}
+	if actualPairInDeclaredConflict(wrapper.lhs, enclosing.lhs, cache) {
+		return reduces, true
+	}
+	if resolvedByPrec := rrPrecResolve(reduces, ng); resolvedByPrec != nil {
+		return resolvedByPrec, true
+	}
+	return []lrAction{enclosing.action}, true
+}
+
+type hiddenUnaryPassthrough struct {
+	action lrAction
+	lhs    int
+	child  int
+}
+
+func hiddenUnaryPassthroughPair(wrapperAction, enclosingAction lrAction, ng *NormalizedGrammar) (hiddenUnaryPassthrough, hiddenUnaryPassthrough, bool) {
+	wrapper, ok := strictNeutralHiddenUnaryPassthrough(wrapperAction, ng)
+	if !ok {
+		return hiddenUnaryPassthrough{}, hiddenUnaryPassthrough{}, false
+	}
+	enclosing, ok := unaryReduce(enclosingAction, ng)
+	if !ok || enclosing.child != wrapper.lhs {
+		return hiddenUnaryPassthrough{}, hiddenUnaryPassthrough{}, false
+	}
+	return wrapper, enclosing, true
+}
+
+func strictNeutralHiddenUnaryPassthrough(action lrAction, ng *NormalizedGrammar) (hiddenUnaryPassthrough, bool) {
+	wrapper, ok := unaryReduce(action, ng)
+	if !ok {
+		return hiddenUnaryPassthrough{}, false
+	}
+	if !isHiddenUnaryWrapperSymbol(ng.Symbols[wrapper.lhs]) {
+		return hiddenUnaryPassthrough{}, false
+	}
+	prod := &ng.Productions[action.prodIdx]
+	if prod.Prec != 0 || prod.DynPrec != 0 || prod.Assoc != AssocNone || prod.HasExplicitPrec {
+		return hiddenUnaryPassthrough{}, false
+	}
+	return wrapper, true
+}
+
+func unaryReduce(action lrAction, ng *NormalizedGrammar) (hiddenUnaryPassthrough, bool) {
+	if action.kind != lrReduce || action.prodIdx < 0 || action.prodIdx >= len(ng.Productions) {
+		return hiddenUnaryPassthrough{}, false
+	}
+	prod := &ng.Productions[action.prodIdx]
+	if len(prod.RHS) != 1 ||
+		prod.LHS < 0 || prod.LHS >= len(ng.Symbols) ||
+		prod.RHS[0] < 0 || prod.RHS[0] >= len(ng.Symbols) ||
+		ng.Symbols[prod.LHS].Kind != SymbolNonterminal {
+		return hiddenUnaryPassthrough{}, false
+	}
+	return hiddenUnaryPassthrough{action: action, lhs: prod.LHS, child: prod.RHS[0]}, true
+}
+
+func actualPairInDeclaredConflict(a, b int, cache *conflictResolutionCache) bool {
+	if cache == nil || a == b {
+		return false
+	}
+	for _, group := range cache.groups {
+		hasA := false
+		hasB := false
+		for _, sym := range group {
+			hasA = hasA || sym == a
+			hasB = hasB || sym == b
+		}
+		if hasA && hasB {
+			return true
+		}
+	}
+	return false
+}
+
+func countEnclosingReducesForWrapper(reduces []lrAction, wrapper hiddenUnaryWrapperReduce, ng *NormalizedGrammar) int {
+	count := 0
+	for i, r := range reduces {
+		if i == wrapper.index || r.kind != lrReduce || r.prodIdx < 0 || r.prodIdx >= len(ng.Productions) {
+			continue
+		}
+		prod := &ng.Productions[r.prodIdx]
+		if prod.LHS == wrapper.lhs || prod.LHS == wrapper.child {
+			continue
+		}
+		if rhsContainsSymbol(prod.RHS, wrapper.lhs) || rhsContainsSymbol(prod.RHS, wrapper.child) {
+			count++
+		}
+	}
+	return count
+}
+
+func rhsContainsSymbol(rhs []int, sym int) bool {
+	for _, rhsSym := range rhs {
+		if rhsSym == sym {
+			return true
+		}
+	}
+	return false
+}
+
+func orderReduceConflictByChildCount(reduces []lrAction, ng *NormalizedGrammar) []lrAction {
+	if len(reduces) < 2 || ng == nil {
+		return reduces
+	}
+	ordered := append([]lrAction(nil), reduces...)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		iLen := reduceChildCount(ordered[i], ng)
+		jLen := reduceChildCount(ordered[j], ng)
+		return iLen >= 0 && jLen >= 0 && iLen < jLen
+	})
+	return ordered
+}
+
+func reduceChildCount(action lrAction, ng *NormalizedGrammar) int {
+	if action.kind != lrReduce || action.prodIdx < 0 || action.prodIdx >= len(ng.Productions) {
+		return -1
+	}
+	return len(ng.Productions[action.prodIdx].RHS)
 }
 
 func shouldKeepNestedWrapperReduces(reduces []lrAction, ng *NormalizedGrammar) bool {
@@ -4857,14 +7089,12 @@ func shouldKeepNestedWrapperReduces(reduces []lrAction, ng *NormalizedGrammar) b
 	}
 
 	wrappedSyms := make(map[int]bool)
+	wrapperSyms := make(map[int]bool)
 	hasEnclosingReduce := false
-	for _, r := range reduces {
-		prod := &ng.Productions[r.prodIdx]
-		if len(prod.RHS) == 1 &&
-			prod.LHS >= 0 &&
-			prod.LHS < len(ng.Symbols) &&
-			strings.HasPrefix(ng.Symbols[prod.LHS].Name, "_") {
-			wrappedSyms[prod.RHS[0]] = true
+	for i, r := range reduces {
+		if wrapper, ok := hiddenUnaryWrapperReduceAt(i, r, ng); ok {
+			wrappedSyms[wrapper.child] = true
+			wrapperSyms[wrapper.lhs] = true
 			continue
 		}
 		hasEnclosingReduce = true
@@ -4873,16 +7103,13 @@ func shouldKeepNestedWrapperReduces(reduces []lrAction, ng *NormalizedGrammar) b
 		return false
 	}
 
-	for _, r := range reduces {
-		prod := &ng.Productions[r.prodIdx]
-		if len(prod.RHS) == 1 &&
-			prod.LHS >= 0 &&
-			prod.LHS < len(ng.Symbols) &&
-			strings.HasPrefix(ng.Symbols[prod.LHS].Name, "_") {
+	for i, r := range reduces {
+		if _, ok := hiddenUnaryWrapperReduceAt(i, r, ng); ok {
 			continue
 		}
+		prod := &ng.Productions[r.prodIdx]
 		for _, sym := range prod.RHS {
-			if wrappedSyms[sym] {
+			if wrappedSyms[sym] || wrapperSyms[sym] {
 				return true
 			}
 		}
@@ -4891,28 +7118,35 @@ func shouldKeepNestedWrapperReduces(reduces []lrAction, ng *NormalizedGrammar) b
 }
 
 // shouldKeepDistinctRepeatReduces returns true when all competing reduces
-// produce distinct repeat helper symbols (names containing "repeat") with the
-// same precedence. These helpers serve different parent contexts — e.g. one
-// parent requires a trailing ";" and the other doesn't — so picking one
-// deterministically kills the other parse path. GLR preserves both paths
-// until the parent production disambiguates.
+// produce distinct generated repeat helper symbols with the same precedence.
+// These helpers serve different parent contexts — e.g. one parent requires a
+// trailing ";" and the other doesn't — so picking one deterministically kills
+// the other parse path. GLR preserves both paths until the parent production
+// disambiguates.
 func shouldKeepDistinctRepeatReduces(reduces []lrAction, ng *NormalizedGrammar) bool {
-	if len(reduces) < 2 {
+	if len(reduces) < 2 || ng == nil {
 		return false
 	}
-	// All must be repeat helpers and share the same (prec, dynPrec).
+	if reduces[0].kind != lrReduce || reduces[0].prodIdx < 0 || reduces[0].prodIdx >= len(ng.Productions) {
+		return false
+	}
+	cache := getConflictResolutionCache(ng)
+	if cache == nil {
+		return false
+	}
+	// All must be generated repeat helpers and share the same (prec, dynPrec).
 	firstProd := &ng.Productions[reduces[0].prodIdx]
 	lhsSet := make(map[int]bool, len(reduces))
 	for _, r := range reduces {
+		if r.kind != lrReduce || r.prodIdx < 0 || r.prodIdx >= len(ng.Productions) {
+			return false
+		}
 		prod := &ng.Productions[r.prodIdx]
 		if prod.Prec != firstProd.Prec || prod.DynPrec != firstProd.DynPrec {
 			return false // precedence differs — let rrPickBest resolve
 		}
-		if prod.LHS < 0 || prod.LHS >= len(ng.Symbols) {
+		if !isStructurallyGeneratedRepeatHelper(prod.LHS, ng, cache) {
 			return false
-		}
-		if !strings.Contains(ng.Symbols[prod.LHS].Name, "repeat") {
-			return false // not a repeat helper
 		}
 		lhsSet[prod.LHS] = true
 	}
@@ -4980,37 +7214,108 @@ func equalSymbolSeq(a, b []int) bool {
 // conflict resolution: keep S/R as GLR only when the symbols producing the
 // shift and reduce are in the same declared conflict group.
 func shiftReduceInConflictGroup(shifts, reduces []lrAction, ng *NormalizedGrammar, cache *conflictResolutionCache) bool {
+	if cache != nil {
+		cache.structuralStats.ConflictGroupShiftReduceCalls++
+	}
 	if cache == nil || len(cache.groups) == 0 {
 		return false
 	}
 
-	// Collect all shift LHS symbols, resolving auxiliary symbols to parents.
-	shiftLHSSet := make(map[int]bool)
+	shiftParents := resolvedShiftParentSet(shifts, ng, cache)
+	reduceParents := resolvedReduceParentSet(reduces, ng, cache)
+	key := conflictGroupPairKey(shiftParents, reduceParents)
+	if cache.shiftReduceConflictGroupMemo != nil {
+		if cached, ok := cache.shiftReduceConflictGroupMemo[key]; ok {
+			cache.structuralStats.ConflictGroupShiftReduceHits++
+			return cached
+		}
+	}
+	cache.structuralStats.ConflictGroupShiftReduceMisses++
+
+	result := conflictGroupSetsIntersect(shiftParents, reduceParents, cache)
+	if cache.shiftReduceConflictGroupMemo == nil {
+		cache.shiftReduceConflictGroupMemo = make(map[string]bool)
+	}
+	cache.shiftReduceConflictGroupMemo[key] = result
+	return result
+}
+
+func resolvedShiftParentSet(shifts []lrAction, ng *NormalizedGrammar, cache *conflictResolutionCache) []int {
+	seen := make(map[int]bool)
 	for _, s := range shifts {
 		if s.lhsSym != 0 {
 			for _, parent := range resolveAuxToParents(s.lhsSym, ng, cache) {
-				shiftLHSSet[parent] = true
+				seen[parent] = true
 			}
 		}
 		for _, lhs := range s.lhsSyms {
 			for _, parent := range resolveAuxToParents(lhs, ng, cache) {
-				shiftLHSSet[parent] = true
+				seen[parent] = true
 			}
 		}
 	}
+	return sortedSymbolSet(seen)
+}
 
-	// For each reduce, resolve LHS to parents, then check conflict groups.
+func resolvedReduceParentSet(reduces []lrAction, ng *NormalizedGrammar, cache *conflictResolutionCache) []int {
+	seen := make(map[int]bool)
 	for _, r := range reduces {
+		if r.prodIdx < 0 || r.prodIdx >= len(ng.Productions) {
+			continue
+		}
 		reduceLHS := ng.Productions[r.prodIdx].LHS
 		for _, parent := range resolveAuxToParents(reduceLHS, ng, cache) {
-			if parent < 0 || parent >= len(cache.groupsBySymbol) {
-				continue
-			}
-			for _, groupIdx := range cache.groupsBySymbol[parent] {
-				for _, sym := range cache.groups[groupIdx] {
-					if shiftLHSSet[sym] {
-						return true
-					}
+			seen[parent] = true
+		}
+	}
+	return sortedSymbolSet(seen)
+}
+
+func sortedSymbolSet(seen map[int]bool) []int {
+	if len(seen) == 0 {
+		return nil
+	}
+	symbols := make([]int, 0, len(seen))
+	for sym := range seen {
+		symbols = append(symbols, sym)
+	}
+	sort.Ints(symbols)
+	return symbols
+}
+
+func conflictGroupPairKey(shiftParents, reduceParents []int) string {
+	var b strings.Builder
+	appendSymbolSetKey(&b, shiftParents)
+	b.WriteByte('|')
+	appendSymbolSetKey(&b, reduceParents)
+	return b.String()
+}
+
+func appendSymbolSetKey(b *strings.Builder, symbols []int) {
+	for i, sym := range symbols {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString(strconv.Itoa(sym))
+	}
+}
+
+func conflictGroupSetsIntersect(shiftParents, reduceParents []int, cache *conflictResolutionCache) bool {
+	if len(shiftParents) == 0 || len(reduceParents) == 0 {
+		return false
+	}
+	shiftSet := make(map[int]bool, len(shiftParents))
+	for _, parent := range shiftParents {
+		shiftSet[parent] = true
+	}
+	for _, parent := range reduceParents {
+		if parent < 0 || parent >= len(cache.groupsBySymbol) {
+			continue
+		}
+		for _, groupIdx := range cache.groupsBySymbol[parent] {
+			for _, sym := range cache.groups[groupIdx] {
+				if shiftSet[sym] {
+					return true
 				}
 			}
 		}
@@ -5019,14 +7324,14 @@ func shiftReduceInConflictGroup(shifts, reduces []lrAction, ng *NormalizedGramma
 }
 
 // resolveAuxToParents maps a symbol to its "parent" symbols for conflict
-// group matching. Auxiliary symbols (repeat helpers, inline expansions)
+// group matching. Auxiliary symbols (generated repeat helpers, inline tokens)
 // are traced back to the grammar symbols that reference them. Non-auxiliary
 // symbols return themselves.
 func resolveAuxToParents(sym int, ng *NormalizedGrammar, cache *conflictResolutionCache) []int {
 	if sym < 0 || sym >= len(ng.Symbols) {
 		return []int{sym}
 	}
-	if !isConflictAuxSymbolName(ng.Symbols[sym].Name) {
+	if !isConflictAuxSymbol(sym, ng) {
 		return []int{sym}
 	}
 	if cache != nil {
@@ -5041,8 +7346,12 @@ func resolveAuxToParents(sym int, ng *NormalizedGrammar, cache *conflictResoluti
 	return parents
 }
 
-func isConflictAuxSymbolName(name string) bool {
-	return strings.Contains(name, "_repeat") || strings.Contains(name, "_token")
+func isConflictAuxSymbol(sym int, ng *NormalizedGrammar) bool {
+	if ng == nil || sym < 0 || sym >= len(ng.Symbols) {
+		return false
+	}
+	info := ng.Symbols[sym]
+	return info.GeneratedRepeatAux || strings.Contains(info.Name, "_token")
 }
 
 func (cache *conflictResolutionCache) resolveAuxToParents(sym int, ng *NormalizedGrammar) []int {
@@ -5064,7 +7373,7 @@ func (cache *conflictResolutionCache) resolveAuxToParents(sym int, ng *Normalize
 		}
 	}()
 
-	if !isConflictAuxSymbolName(ng.Symbols[sym].Name) {
+	if !isConflictAuxSymbol(sym, ng) {
 		cache.auxParents[sym] = []int{sym}
 		return cache.auxParents[sym]
 	}
@@ -5089,8 +7398,7 @@ func resolveAuxToParentsRec(sym int, ng *NormalizedGrammar, visited map[int]bool
 		return
 	}
 	visited[sym] = true
-	isAux := sym >= 0 && sym < len(ng.Symbols) &&
-		isConflictAuxSymbolName(ng.Symbols[sym].Name)
+	isAux := isConflictAuxSymbol(sym, ng)
 	if !isAux {
 		*parents = append(*parents, sym)
 		return
@@ -5116,16 +7424,32 @@ func resolveAuxToParentsRec(sym int, ng *NormalizedGrammar, visited map[int]bool
 // Only the first reduce is checked to avoid creating excessive GLR forks
 // from S/R/R conflicts where secondary reduces happen to have conflict-group LHS.
 func reduceLHSInAnyConflictGroup(reduces []lrAction, ng *NormalizedGrammar, cache *conflictResolutionCache) bool {
+	if cache != nil {
+		cache.structuralStats.ConflictGroupReduceLHSCalls++
+	}
 	if cache == nil || len(cache.groups) == 0 || len(reduces) == 0 {
 		return false
 	}
 	lhs := ng.Productions[reduces[0].prodIdx].LHS
-	for _, parent := range resolveAuxToParents(lhs, ng, cache) {
-		if parent >= 0 && parent < len(cache.groupsBySymbol) && len(cache.groupsBySymbol[parent]) > 0 {
-			return true
+	if cache.reduceLHSConflictGroupMemo != nil {
+		if cached, ok := cache.reduceLHSConflictGroupMemo[lhs]; ok {
+			cache.structuralStats.ConflictGroupReduceLHSHits++
+			return cached
 		}
 	}
-	return false
+	cache.structuralStats.ConflictGroupReduceLHSMisses++
+	result := false
+	for _, parent := range resolveAuxToParents(lhs, ng, cache) {
+		if parent >= 0 && parent < len(cache.groupsBySymbol) && len(cache.groupsBySymbol[parent]) > 0 {
+			result = true
+			break
+		}
+	}
+	if cache.reduceLHSConflictGroupMemo == nil {
+		cache.reduceLHSConflictGroupMemo = make(map[int]bool)
+	}
+	cache.reduceLHSConflictGroupMemo[lhs] = result
+	return result
 }
 
 func allInDeclaredConflict(reduces []lrAction, ng *NormalizedGrammar, cache *conflictResolutionCache) bool {

@@ -114,7 +114,6 @@ func TestExplicitPrecStringChoiceBecomesNonterminal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Normalize: %v", err)
 	}
-
 	initClassSym := -1
 	for i, sym := range ng.Symbols {
 		if sym.Name == "init_class" {
@@ -173,6 +172,269 @@ func TestExplicitPrecStringChoiceBecomesNonterminal(t *testing.T) {
 	}
 	if got := root.SExpr(lang); got != "(source_file (initializer (init_class) (identifier)))" {
 		t.Fatalf("SExpr = %s, want init_class wrapper", got)
+	}
+}
+
+func TestPlainVisibleStringRuleBecomesNamedLeafToken(t *testing.T) {
+	g := NewGrammar("plain_visible_string_rule_named_leaf_token")
+	g.Define("source_file", Sym("null_literal"))
+	g.Define("null_literal", Str("null"))
+
+	ng, err := Normalize(g)
+	if err != nil {
+		t.Fatalf("Normalize: %v", err)
+	}
+	if got := symbolKind(t, ng, "null_literal"); got != SymbolNamedToken {
+		t.Fatalf("null_literal kind = %v, want SymbolNamedToken", got)
+	}
+	for _, sym := range ng.Symbols {
+		if sym.Name == "null" && sym.Kind == SymbolTerminal {
+			t.Fatalf("plain named string rule also registered anonymous %q terminal", sym.Name)
+		}
+	}
+
+	lang, err := GenerateLanguage(g)
+	if err != nil {
+		t.Fatalf("GenerateLanguage: %v", err)
+	}
+	tree, err := gotreesitter.NewParser(lang).Parse([]byte("null"))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	defer tree.Release()
+	root := tree.RootNode()
+	if root == nil || root.ChildCount() != 1 {
+		t.Fatalf("root = %v, child count = %d", root, root.ChildCount())
+	}
+	lit := root.Child(0)
+	if got := lit.Type(lang); got != "null_literal" {
+		t.Fatalf("child type = %q, want null_literal; tree=%s", got, root.SExpr(lang))
+	}
+	if !lit.IsNamed() {
+		t.Fatalf("null_literal IsNamed = false")
+	}
+	if got := lit.ChildCount(); got != 0 {
+		t.Fatalf("null_literal child count = %d, want 0; tree=%s", got, root.SExpr(lang))
+	}
+}
+
+func TestPlainVisibleIdentifierStringRuleWithWordRemainsNonterminal(t *testing.T) {
+	g := NewGrammar("plain_visible_identifier_string_rule_with_word_nonterminal")
+	g.Define("source_file", Sym("call"))
+	g.Define("call", Seq(Sym("identifier"), Str("("), Str(")")))
+	g.Define("match", Str("match"))
+	g.Define("identifier", Pat(`[a-z]+`))
+	g.SetWord("identifier")
+
+	ng, err := Normalize(g)
+	if err != nil {
+		t.Fatalf("Normalize: %v", err)
+	}
+	foundNonterminal := false
+	for _, sym := range ng.Symbols {
+		if sym.Name != "match" {
+			continue
+		}
+		if sym.Kind == SymbolNamedToken {
+			t.Fatalf("match was promoted to SymbolNamedToken")
+		}
+		if sym.Kind == SymbolNonterminal {
+			foundNonterminal = true
+		}
+	}
+	if !foundNonterminal {
+		t.Fatalf("match nonterminal not found")
+	}
+
+	lang, err := GenerateLanguage(g)
+	if err != nil {
+		t.Fatalf("GenerateLanguage: %v", err)
+	}
+	tree, err := gotreesitter.NewParser(lang).Parse([]byte("match()"))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	defer tree.Release()
+	root := tree.RootNode()
+	if root.HasError() {
+		t.Fatalf("parse has error: %s", root.SExpr(lang))
+	}
+	if got, want := root.SExpr(lang), "(source_file (call (identifier)))"; got != want {
+		t.Fatalf("SExpr = %s, want %s", got, want)
+	}
+}
+
+func TestPlainVisiblePunctuationStringRuleBecomesNamedLeafToken(t *testing.T) {
+	g := NewGrammar("plain_visible_punctuation_string_rule_named_leaf_token")
+	g.Define("source_file", Sym("optional_chain"))
+	g.Define("optional_chain", Str("?."))
+
+	ng, err := Normalize(g)
+	if err != nil {
+		t.Fatalf("Normalize: %v", err)
+	}
+	if got := symbolKind(t, ng, "optional_chain"); got != SymbolNamedToken {
+		t.Fatalf("optional_chain kind = %v, want SymbolNamedToken", got)
+	}
+	for _, sym := range ng.Symbols {
+		if sym.Name == "?." && sym.Kind == SymbolTerminal {
+			t.Fatalf("plain named punctuation string rule also registered anonymous %q terminal", sym.Name)
+		}
+	}
+
+	lang, err := GenerateLanguage(g)
+	if err != nil {
+		t.Fatalf("GenerateLanguage: %v", err)
+	}
+	tree, err := gotreesitter.NewParser(lang).Parse([]byte("?."))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	defer tree.Release()
+	root := tree.RootNode()
+	if root == nil || root.ChildCount() != 1 {
+		t.Fatalf("root = %v, child count = %d", root, root.ChildCount())
+	}
+	lit := root.Child(0)
+	if got := lit.Type(lang); got != "optional_chain" {
+		t.Fatalf("child type = %q, want optional_chain; tree=%s", got, root.SExpr(lang))
+	}
+	if !lit.IsNamed() {
+		t.Fatalf("optional_chain IsNamed = false")
+	}
+	if got := lit.ChildCount(); got != 0 {
+		t.Fatalf("optional_chain child count = %d, want 0; tree=%s", got, root.SExpr(lang))
+	}
+}
+
+func TestPlainVisibleEscapedStringRulesBecomeNamedLeafTokens(t *testing.T) {
+	g := NewGrammar("plain_visible_escaped_string_rules_named_leaf_tokens")
+	g.Define("source_file", Seq(Sym("boundary_assertion"), Sym("non_boundary_assertion")))
+	g.Define("boundary_assertion", Str("\\b"))
+	g.Define("non_boundary_assertion", Str("\\B"))
+
+	ng, err := Normalize(g)
+	if err != nil {
+		t.Fatalf("Normalize: %v", err)
+	}
+	for _, name := range []string{"boundary_assertion", "non_boundary_assertion"} {
+		if got := symbolKind(t, ng, name); got != SymbolNamedToken {
+			t.Fatalf("%s kind = %v, want SymbolNamedToken", name, got)
+		}
+		sym := symbolID(t, ng, name)
+		if sym >= ng.TokenCount() {
+			t.Fatalf("%s symbol = %d outside token range %d", name, sym, ng.TokenCount())
+		}
+	}
+
+	lang, err := GenerateLanguage(g)
+	if err != nil {
+		t.Fatalf("GenerateLanguage: %v", err)
+	}
+	tree, err := gotreesitter.NewParser(lang).Parse([]byte("\\b\\B"))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	defer tree.Release()
+	root := tree.RootNode()
+	if root == nil || root.ChildCount() != 2 {
+		t.Fatalf("root = %v, child count = %d; tree=%s", root, root.ChildCount(), root.SExpr(lang))
+	}
+	for i, name := range []string{"boundary_assertion", "non_boundary_assertion"} {
+		node := root.Child(i)
+		if got := node.Type(lang); got != name {
+			t.Fatalf("child %d type = %q, want %s; tree=%s", i, got, name, root.SExpr(lang))
+		}
+		if !node.IsNamed() {
+			t.Fatalf("%s IsNamed = false", name)
+		}
+		if got := node.ChildCount(); got != 0 {
+			t.Fatalf("%s child count = %d, want 0; tree=%s", name, got, root.SExpr(lang))
+		}
+	}
+}
+
+func TestPlainVisiblePatternRuleBecomesNamedLeafToken(t *testing.T) {
+	g := NewGrammar("plain_visible_pattern_rule_named_leaf_token")
+	g.Define("source_file", Sym("any_character"))
+	g.Define("any_character", Pat(`.`))
+
+	ng, err := Normalize(g)
+	if err != nil {
+		t.Fatalf("Normalize: %v", err)
+	}
+	if got := symbolKind(t, ng, "any_character"); got != SymbolNamedToken {
+		t.Fatalf("any_character kind = %v, want SymbolNamedToken", got)
+	}
+	anyCharacterSym := symbolID(t, ng, "any_character")
+	if anyCharacterSym >= ng.TokenCount() {
+		t.Fatalf("any_character symbol = %d outside token range %d", anyCharacterSym, ng.TokenCount())
+	}
+
+	lang, err := GenerateLanguage(g)
+	if err != nil {
+		t.Fatalf("GenerateLanguage: %v", err)
+	}
+	tree, err := gotreesitter.NewParser(lang).Parse([]byte("."))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	defer tree.Release()
+	root := tree.RootNode()
+	if root == nil || root.ChildCount() != 1 {
+		t.Fatalf("root = %v, child count = %d", root, root.ChildCount())
+	}
+	node := root.Child(0)
+	if got := node.Type(lang); got != "any_character" {
+		t.Fatalf("child type = %q, want any_character; tree=%s", got, root.SExpr(lang))
+	}
+	if !node.IsNamed() {
+		t.Fatal("any_character IsNamed = false")
+	}
+	if got := node.ChildCount(); got != 0 {
+		t.Fatalf("any_character child count = %d, want 0; tree=%s", got, root.SExpr(lang))
+	}
+}
+
+func TestPlainVisiblePunctuationStringRuleWithAnonymousSourceStaysWrapper(t *testing.T) {
+	g := NewGrammar("plain_visible_punctuation_string_rule_anonymous_collision")
+	g.Define("source_file", Seq(Sym("optional_chain"), Str("?.")))
+	g.Define("optional_chain", Str("?."))
+
+	ng, err := Normalize(g)
+	if err != nil {
+		t.Fatalf("Normalize: %v", err)
+	}
+	if got := symbolKind(t, ng, "optional_chain"); got != SymbolNonterminal {
+		t.Fatalf("optional_chain kind = %v, want SymbolNonterminal", got)
+	}
+
+	lang, err := GenerateLanguage(g)
+	if err != nil {
+		t.Fatalf("GenerateLanguage: %v", err)
+	}
+	tree, err := gotreesitter.NewParser(lang).Parse([]byte("?.?."))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	defer tree.Release()
+	root := tree.RootNode()
+	if root == nil {
+		t.Fatal("parse missing root node")
+	}
+	if root.HasError() {
+		t.Fatalf("parse has error: %s", root.SExpr(lang))
+	}
+	wrapper := root.Child(0)
+	if got := wrapper.Type(lang); got != "optional_chain" {
+		t.Fatalf("first child type = %q, want optional_chain; tree=%s", got, root.SExpr(lang))
+	}
+	if got := wrapper.ChildCount(); got != 1 {
+		t.Fatalf("optional_chain child count = %d, want wrapper child; tree=%s", got, root.SExpr(lang))
+	}
+	child := wrapper.Child(0)
+	if got := child.Type(lang); got != "?." || child.IsNamed() {
+		t.Fatalf("wrapped child = (%q named=%v), want anonymous ?.; tree=%s", got, child.IsNamed(), root.SExpr(lang))
 	}
 }
 
@@ -335,6 +597,227 @@ func TestPrecedenceWrappedBareStringChoiceStaysNonterminal(t *testing.T) {
 	}
 }
 
+func TestPrecRightStringChoiceSymbolStaysVisibleWrapper(t *testing.T) {
+	g := NewGrammar("prec_right_string_choice_symbol_wrapper")
+	g.Define("source_file", Sym("init_class"))
+	g.Define("init_class", PrecRight(0, Choice(
+		Str("="),
+		Str("+="),
+		Str("-="),
+	)))
+
+	ng, err := Normalize(g)
+	if err != nil {
+		t.Fatalf("Normalize: %v", err)
+	}
+
+	initClassID := -1
+	equalsID := -1
+	for id, sym := range ng.Symbols {
+		switch {
+		case sym.Name == "init_class":
+			initClassID = id
+			if sym.Kind != SymbolNonterminal || !sym.Visible || !sym.Named {
+				t.Fatalf("init_class symbol = %+v, want visible named nonterminal", sym)
+			}
+		case sym.Name == "=" && sym.Kind == SymbolTerminal && !sym.Named:
+			equalsID = id
+		}
+	}
+	if initClassID < 0 {
+		t.Fatal("missing init_class symbol")
+	}
+	if equalsID < 0 {
+		t.Fatal("missing anonymous = terminal")
+	}
+	for _, term := range ng.Terminals {
+		if term.SymbolID == initClassID {
+			t.Fatalf("init_class was emitted as a terminal pattern")
+		}
+	}
+
+	hasEqualsProduction := false
+	for _, prod := range ng.Productions {
+		if prod.LHS == initClassID && len(prod.RHS) == 1 && prod.RHS[0] == equalsID {
+			hasEqualsProduction = true
+			break
+		}
+	}
+	if !hasEqualsProduction {
+		t.Fatal("missing init_class -> \"=\" wrapper production")
+	}
+
+	lang, err := GenerateLanguage(g)
+	if err != nil {
+		t.Fatalf("GenerateLanguage: %v", err)
+	}
+	tree, err := gotreesitter.NewParser(lang).Parse([]byte("="))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	defer tree.Release()
+
+	root := tree.RootNode()
+	if root == nil || root.ChildCount() != 1 {
+		t.Fatalf("root = %v, child count = %d", root, root.ChildCount())
+	}
+	wrapper := root.Child(0)
+	if got := wrapper.Type(lang); got != "init_class" {
+		t.Fatalf("child type = %q, want init_class; tree=%s", got, root.SExpr(lang))
+	}
+	if got := wrapper.ChildCount(); got != 1 {
+		t.Fatalf("init_class child count = %d, want anonymous operator child; tree=%s", got, root.SExpr(lang))
+	}
+	child := wrapper.Child(0)
+	if got := child.Type(lang); got != "=" || child.IsNamed() {
+		t.Fatalf("wrapped child = (%q named=%v), want anonymous =; tree=%s", got, child.IsNamed(), root.SExpr(lang))
+	}
+}
+
+func TestPrecedenceWrappedPlainStringRuleStaysWrapper(t *testing.T) {
+	g := NewGrammar("prec_wrapped_plain_string_rule_wrapper")
+	g.Define("source_file", Sym("null_literal"))
+	g.Define("null_literal", Prec(1, Str("null")))
+
+	ng, err := Normalize(g)
+	if err != nil {
+		t.Fatalf("Normalize: %v", err)
+	}
+	if got := symbolKind(t, ng, "null_literal"); got != SymbolNonterminal {
+		t.Fatalf("null_literal kind = %v, want SymbolNonterminal", got)
+	}
+
+	lang, err := GenerateLanguage(g)
+	if err != nil {
+		t.Fatalf("GenerateLanguage: %v", err)
+	}
+	tree, err := gotreesitter.NewParser(lang).Parse([]byte("null"))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	defer tree.Release()
+	root := tree.RootNode()
+	if root == nil || root.ChildCount() != 1 {
+		t.Fatalf("root = %v, child count = %d", root, root.ChildCount())
+	}
+	lit := root.Child(0)
+	if got := lit.Type(lang); got != "null_literal" {
+		t.Fatalf("child type = %q, want null_literal; tree=%s", got, root.SExpr(lang))
+	}
+	if got := lit.ChildCount(); got != 1 {
+		t.Fatalf("null_literal child count = %d, want wrapper child; tree=%s", got, root.SExpr(lang))
+	}
+	child := lit.Child(0)
+	if got := child.Type(lang); got != "null" || child.IsNamed() {
+		t.Fatalf("wrapped child = (%q named=%v), want anonymous null; tree=%s", got, child.IsNamed(), root.SExpr(lang))
+	}
+}
+
+func TestDynamicPrecedenceStringRuleStaysVisibleWrapper(t *testing.T) {
+	g := NewGrammar("dynamic_prec_string_rule_wrapper")
+	g.Define("source_file", Sym("implicit_type"))
+	g.Define("implicit_type", PrecDynamic(1, Str("var")))
+
+	ng, err := Normalize(g)
+	if err != nil {
+		t.Fatalf("Normalize: %v", err)
+	}
+	if got := symbolKind(t, ng, "implicit_type"); got != SymbolNonterminal {
+		t.Fatalf("implicit_type kind = %v, want SymbolNonterminal", got)
+	}
+	implicitTypeSym := symbolID(t, ng, "implicit_type")
+	if implicitTypeSym < ng.TokenCount() {
+		t.Fatalf("implicit_type symbol = %d inside token range %d", implicitTypeSym, ng.TokenCount())
+	}
+
+	lang, err := GenerateLanguage(g)
+	if err != nil {
+		t.Fatalf("GenerateLanguage: %v", err)
+	}
+	tree, err := gotreesitter.NewParser(lang).Parse([]byte("var"))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	defer tree.Release()
+	root := tree.RootNode()
+	if root == nil || root.ChildCount() != 1 {
+		t.Fatalf("root = %v, child count = %d", root, root.ChildCount())
+	}
+	wrapper := root.Child(0)
+	if got := wrapper.Type(lang); got != "implicit_type" {
+		t.Fatalf("child type = %q, want implicit_type; tree=%s", got, root.SExpr(lang))
+	}
+	if got := wrapper.ChildCount(); got != 1 {
+		t.Fatalf("implicit_type child count = %d, want wrapper child; tree=%s", got, root.SExpr(lang))
+	}
+	child := wrapper.Child(0)
+	if got := child.Type(lang); got != "var" || child.IsNamed() {
+		t.Fatalf("wrapped child = (%q named=%v), want anonymous var; tree=%s", got, child.IsNamed(), root.SExpr(lang))
+	}
+}
+
+func TestChoiceWrapperWithNonterminalAlternativeStaysVisibleWrapper(t *testing.T) {
+	g := NewGrammar("choice_wrapper_with_nonterminal_alternative")
+	g.Define("source_file", Sym("last_field"))
+	g.Define("last_field", Choice(
+		Sym("field_decl"),
+		Str(".."),
+	))
+	g.Define("field_decl", Seq(Sym("identifier"), Str("="), Sym("identifier")))
+	g.Define("identifier", Pat(`[a-z]+`))
+
+	ng, err := Normalize(g)
+	if err != nil {
+		t.Fatalf("Normalize: %v", err)
+	}
+	if got := symbolKind(t, ng, "last_field"); got != SymbolNonterminal {
+		t.Fatalf("last_field kind = %v, want SymbolNonterminal", got)
+	}
+	lastFieldSym := symbolID(t, ng, "last_field")
+	if lastFieldSym < ng.TokenCount() {
+		t.Fatalf("last_field symbol = %d inside token range %d", lastFieldSym, ng.TokenCount())
+	}
+
+	lang, err := GenerateLanguage(g)
+	if err != nil {
+		t.Fatalf("GenerateLanguage: %v", err)
+	}
+	tree, err := gotreesitter.NewParser(lang).Parse([]byte(".."))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	defer tree.Release()
+	root := tree.RootNode()
+	if root == nil || root.ChildCount() != 1 {
+		t.Fatalf("root = %v, child count = %d", root, root.ChildCount())
+	}
+	wrapper := root.Child(0)
+	if got := wrapper.Type(lang); got != "last_field" {
+		t.Fatalf("child type = %q, want last_field; tree=%s", got, root.SExpr(lang))
+	}
+	if got := wrapper.ChildCount(); got != 1 {
+		t.Fatalf("last_field child count = %d, want wrapper child; tree=%s", got, root.SExpr(lang))
+	}
+	child := wrapper.Child(0)
+	if got := child.Type(lang); got != ".." || child.IsNamed() {
+		t.Fatalf("wrapped child = (%q named=%v), want anonymous ..; tree=%s", got, child.IsNamed(), root.SExpr(lang))
+	}
+}
+
+func TestCapitalizedPlainStringRuleStaysWrapper(t *testing.T) {
+	g := NewGrammar("capitalized_plain_string_rule_wrapper")
+	g.Define("source_file", Sym("true"))
+	g.Define("true", Str("True"))
+
+	ng, err := Normalize(g)
+	if err != nil {
+		t.Fatalf("Normalize: %v", err)
+	}
+	if got := symbolKind(t, ng, "true"); got != SymbolNonterminal {
+		t.Fatalf("true kind = %v, want SymbolNonterminal", got)
+	}
+}
+
 func TestTokenWrappedBareStringChoiceRemainsNamedToken(t *testing.T) {
 	g := NewGrammar("token_wrapped_bare_string_choice_named_token")
 	g.Define("source_file", Sym("operator_token"))
@@ -423,4 +906,15 @@ func symbolKind(t *testing.T, ng *NormalizedGrammar, name string) SymbolKind {
 	}
 	t.Fatalf("%s symbol not found", name)
 	return SymbolTerminal
+}
+
+func symbolID(t *testing.T, ng *NormalizedGrammar, name string) int {
+	t.Helper()
+	for i, sym := range ng.Symbols {
+		if sym.Name == name {
+			return i
+		}
+	}
+	t.Fatalf("%s symbol not found", name)
+	return -1
 }
