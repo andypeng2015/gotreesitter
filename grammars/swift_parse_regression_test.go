@@ -223,6 +223,82 @@ func TestSwiftComparisonConditionTreeIsFaithful(t *testing.T) {
 	}
 }
 
+// issue #123: a `for…in` loop whose iterable is a range (`0..<n`, `0...n`) or a
+// call expression (`stride(from:to:by:)`) used to make the loop body brace be
+// consumed as a trailing closure, silently collapsing the enclosing function to
+// _modifierless_function_declaration_no_body (with no ERROR node) and spilling
+// the body statements out as siblings.
+func TestSwiftForRangeIterableRecoversFunction(t *testing.T) {
+	lang := SwiftLanguage()
+	cases := []struct {
+		name string
+		src  string
+	}{
+		{"half-open-range", "func f(n: Int) -> Int {\n  var t = 0\n  for i in 0..<n { t += i }\n  return t\n}"},
+		{"closed-range", "func f(n: Int) -> Int {\n  var t = 0\n  for i in 0...n { t += i }\n  return t\n}"},
+		{"spaced-range", "func f(n: Int) -> Int {\n  var t = 0\n  for i in 0 ..< n { t += i }\n  return t\n}"},
+		{"stride-call", "func f(n: Int) -> Int {\n  var t = 0\n  for i in stride(from: 0, to: n, by: 1) { t += i }\n  return t\n}"},
+		{"class-method", "class C {\n  func f(n: Int) -> Int {\n    var t = 0\n    for i in 0..<n { t += i }\n    return t\n  }\n}"},
+		{"struct-method", "struct S {\n  func f(n: Int) {\n    for i in 0...n { print(i) }\n  }\n}"},
+		{"destructuring", "func f() { for (a, b) in zip(xs, ys) { print(a, b) } }"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			src := []byte(tc.src)
+			parser := gotreesitter.NewParser(lang)
+			tree, err := parser.Parse(src)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			defer tree.Release()
+			root := tree.RootNode()
+			if root.HasError() {
+				t.Fatalf("recovered tree still reports error: %s", root.SExpr(lang))
+			}
+			if got, want := root.EndByte(), uint32(len(src)); got != want {
+				t.Fatalf("root end = %d, want %d (span not byte-faithful): %s", got, want, root.SExpr(lang))
+			}
+			if got := countSwiftNodeType(lang, root, "function_declaration"); got < 1 {
+				t.Fatalf("function_declaration count = %d, want >= 1: %s", got, root.SExpr(lang))
+			}
+			if got := countSwiftNodeType(lang, root, "for_statement"); got < 1 {
+				t.Fatalf("for_statement count = %d, want >= 1: %s", got, root.SExpr(lang))
+			}
+			if got := countSwiftNodeType(lang, root, "_modifierless_function_declaration_no_body"); got != 0 {
+				t.Fatalf("function collapsed to _modifierless_function_declaration_no_body: %s", root.SExpr(lang))
+			}
+			// The synthetic parenthesis used during recovery must be unwrapped, not
+			// left as a tuple_expression iterable.
+			if countSwiftNodeType(lang, root, "tuple_expression") != 0 {
+				t.Fatalf("synthetic parenthesis leaked as tuple_expression: %s", root.SExpr(lang))
+			}
+		})
+	}
+}
+
+// TestSwiftForBareIdentifierUnaffected guards against the recovery pass disturbing
+// a for…in over a bare identifier, which already parses correctly.
+func TestSwiftForBareIdentifierUnaffected(t *testing.T) {
+	lang := SwiftLanguage()
+	src := []byte("func f(xs: [Int]) -> Int {\n  var t = 0\n  for x in xs { t += x }\n  return t\n}")
+	parser := gotreesitter.NewParser(lang)
+	tree, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	defer tree.Release()
+	root := tree.RootNode()
+	if root.HasError() {
+		t.Fatalf("clean for…in source reported error: %s", root.SExpr(lang))
+	}
+	if countSwiftNodeType(lang, root, "for_statement") != 1 {
+		t.Fatalf("expected exactly one for_statement: %s", root.SExpr(lang))
+	}
+	if countSwiftNodeType(lang, root, "tuple_expression") != 0 {
+		t.Fatalf("recovery pass wrapped a clean iterable in tuple_expression: %s", root.SExpr(lang))
+	}
+}
+
 // TestSwiftNormalTrailingClosureUnaffected guards against the recovery pass
 // disturbing a legitimate trailing closure (which must stay a lambda_literal).
 func TestSwiftNormalTrailingClosureUnaffected(t *testing.T) {
