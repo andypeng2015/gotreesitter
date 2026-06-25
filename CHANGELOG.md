@@ -7,6 +7,19 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+## [0.20.4] - 2026-06-24
+
+### Added
+
+- `taproot/walk`: a grammar-free core of the `taproot` harness. It loads a
+  tree-sitter `Language` from a pre-generated blob (`LanguageFromBlob`) and
+  navigates the CST (`Walker`, `ParseFromBlob`, `ParseWithLanguage`) depending
+  only on the gotreesitter runtime — not `grammargen` or the `grammars`
+  registry. DSLs that embed a generated grammar blob can now parse/highlight
+  without linking the ~200-grammar registry (~22 MB). The grammargen-backed
+  build-from-DSL fallbacks remain in `taproot`, which re-exports `walk.Walker`
+  so existing `taproot.Walker`/`Parse` callers are unaffected.
+
 ## [0.20.3] - 2026-06-23
 
 ### Fixed
