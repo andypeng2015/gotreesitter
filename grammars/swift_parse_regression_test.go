@@ -241,6 +241,10 @@ func TestSwiftForRangeIterableRecoversFunction(t *testing.T) {
 		{"class-method", "class C {\n  func f(n: Int) -> Int {\n    var t = 0\n    for i in 0..<n { t += i }\n    return t\n  }\n}"},
 		{"struct-method", "struct S {\n  func f(n: Int) {\n    for i in 0...n { print(i) }\n  }\n}"},
 		{"destructuring", "func f() { for (a, b) in zip(xs, ys) { print(a, b) } }"},
+		// The loop variable is a backtick-escaped keyword, not the `in` separator.
+		{"backtick-var", "func f(n: Int) { for `in` in 0..<n { print(`in`) } }"},
+		// A Unicode loop variable must not be split at the `in` substring boundary.
+		{"unicode-var", "func f(n: Int) { for π in 0..<n { print(π) } }"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

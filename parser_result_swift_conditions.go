@@ -221,11 +221,14 @@ func swiftFindForInKeywordEnd(source []byte, start uint32) (uint32, bool) {
 			}
 		}
 		// The loop separator is the first word-boundaried `in` at depth zero.
+		// Skip a backtick-escaped identifier `` `in` ``, which is a loop variable
+		// name and not the keyword.
 		if depth == 0 && b == 'i' && i+1 < n && source[i+1] == 'n' {
+			backticked := i > 0 && source[i-1] == '`' && i+2 < n && source[i+2] == '`'
 			beforeOK := i == 0 || !isSwiftWordByte(source[i-1])
 			after := i + 2
 			afterOK := after >= n || !isSwiftWordByte(source[after])
-			if beforeOK && afterOK {
+			if !backticked && beforeOK && afterOK {
 				return after, true
 			}
 		}
@@ -234,8 +237,12 @@ func swiftFindForInKeywordEnd(source []byte, start uint32) (uint32, bool) {
 	return 0, false
 }
 
+// isSwiftWordByte reports whether b can be part of a Swift identifier. Any UTF-8
+// continuation/lead byte (>= 0x80) counts, since Swift identifiers admit Unicode
+// characters (e.g. Greek letters, emoji) — so `inπ`/`πin` is not mistaken for a
+// bare `in` keyword.
 func isSwiftWordByte(b byte) bool {
-	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b == '_'
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b == '_' || b >= 0x80
 }
 
 // swiftConditionParenPositions returns the byte offsets at which to insert the
