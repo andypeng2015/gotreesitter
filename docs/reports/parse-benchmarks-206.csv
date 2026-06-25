@@ -1,0 +1,207 @@
+grammar,tier,parse_status,blob_bytes,cold_decode_ms,warm_ns_op,throughput_mb_s,allocs_op,bytes_op,full_x_vs_c,edit_x_vs_c,forest_fast_path,external_scanner,corpus,notes
+ada,IV,timing-only,45321,1.79,818709,1.94,39,4152,3.48,0.04,False,False,real-world,parity-blocked (timing-only via allow-mismatch)
+agda,IV,timing-only,223354,7.66,0,0,0,0,1.06,,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+angular,IV,timing-only,19531,0.61,116314,3.97,235,5520,1.46,0.07,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+apex,IV,timing-only,144357,13.74,0,0,0,0,2.14,,False,False,real-world,parity-blocked (timing-only via allow-mismatch)
+arduino,IV,timing-only,277414,18.53,159906,24.69,88,8976,0.81,6.53,True,True,real-world,GSS-forest fast path (default-on); external scanner; parity-blocked (timing-only via allow-mismatch)
+asm,IV,timing-only,5515,0.48,165201,3.52,93,7416,2.21,0.08,False,False,real-world,parity-blocked (timing-only via allow-mismatch)
+astro,IV,timing-only,4627,0.16,42136,9.11,123,3216,1.07,0.31,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+authzed,IV,timing-only,28275,3.77,780886160.0,0.15,5772,143192232,1.84,0.87,True,False,real-world,GSS-forest fast path (default-on); parity-blocked (timing-only via allow-mismatch)
+awk,I,parity-clean,62664,2.26,86894.0,6.49,44,8552,0.93,5.53,True,True,real-world,GSS-forest fast path (default-on); external scanner
+bash,II,parity-clean,152830,4.71,1801954,6.19,1347,65872,0.5,1.14,True,True,real-world,GSS-forest fast path (default-on); external scanner
+bass,IV,timing-only,2992,0.14,267238,1.53,41,4160,3.61,0.12,False,False,real-world,parity-blocked (timing-only via allow-mismatch)
+beancount,IV,timing-only,46994,4.82,1568454,11.97,108,21186,1.87,25.35,True,True,real-world,GSS-forest fast path (default-on); external scanner; parity-blocked (timing-only via allow-mismatch)
+bibtex,IV,timing-only,3172,0.13,21983,9.37,100,9952,0.95,1.65,True,False,real-world,GSS-forest fast path (default-on); parity-blocked (timing-only via allow-mismatch)
+bicep,IV,timing-only,18556,0.7,34912,11.09,40,2651,1.1,0.98,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+bitbake,IV,timing-only,88437,13.23,2732688,1.9,431,42148,3.06,1.33,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+blade,IV,timing-only,197399,6.7,3234,0,9,760,1.54,,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+brightscript,I,parity-clean,34910,1.0,32133,12.57,32,2320,0.82,0.48,False,False,real-world,
+c,I,parity-clean,65929,3.37,20813462,10.94,7305,1228285,0.95,0.04,False,False,real-world,
+c_sharp,II,parity-clean,290957,11.89,3977110.0,12.11,561,112794,0.98,13.59,True,True,real-world,GSS-forest fast path (default-on); external scanner
+caddy,IV,timing-only,15823,0.98,766512.0,3.84,153,14240,1.91,0.17,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+cairo,IV,timing-only,41814,1.28,75771,5.22,30,2864,2.4,0.33,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+capnp,IV,timing-only,13365,0.47,317274,12.61,74,8640,3.02,2.24,False,False,real-world,parity-blocked (timing-only via allow-mismatch)
+chatito,IV,timing-only,4213,0.15,19150.0,3.34,7,728,2.51,0.28,False,False,real-world,parity-blocked (timing-only via allow-mismatch)
+circom,IV,timing-only,9450,0.33,518096,1.98,38,4128,4.36,0.22,False,False,real-world,parity-blocked (timing-only via allow-mismatch)
+clojure,I,parity-clean,16020,0.5,74483,6.14,21,2184,0.93,0.33,False,False,real-world,
+cmake,IV,timing-only,12685,0.38,5780441,0.51,79,33291,4.75,0.27,True,True,real-world,GSS-forest fast path (default-on); external scanner; parity-blocked (timing-only via allow-mismatch)
+cobol,IV,timing-only,628622,25.96,0,0,0,0,1.46,,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+comment,IV,timing-only,1918,0.09,0,0,0,0,29.93,,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+commonlisp,IV,timing-only,88619,2.67,936180,0.44,37,4072,1.66,0.36,False,False,real-world,parity-blocked (timing-only via allow-mismatch)
+cooklang,IV,timing-only,10572,0.52,0,0,0,0,166.16,,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+corn,IV,timing-only,3728,0.12,1638516.0,0.89,215,25484,4.66,0.36,False,False,real-world,parity-blocked (timing-only via allow-mismatch)
+cpon,IV,timing-only,3721,0.13,467214,2.18,29,3400,3.68,0.13,False,False,real-world,parity-blocked (timing-only via allow-mismatch)
+cpp,III,parity-clean,415697,22.22,85811,4.66,72,12200,0.97,0.19,False,True,real-world,external scanner
+crystal,IV,timing-only,267871,8.05,776979,0.5,281,24409,1.56,,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+css,I,parity-clean,14325,0.53,6987744,9.93,1443,312281,0.95,0.26,True,True,real-world,GSS-forest fast path (default-on); external scanner
+csv,IV,timing-only,1870,0.09,69614,2.9,60,7072,1.09,3.59,True,False,real-world,GSS-forest fast path (default-on); parity-blocked (timing-only via allow-mismatch)
+cuda,II,parity-clean,311954,18.73,93545,54.54,36,2456,0.9,0.42,False,True,real-world,external scanner
+cue,IV,timing-only,32659,2.41,0,0,0,0,1.03,,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+cylc,IV,timing-only,21765,1.45,513463,0.76,33,3464,5.02,0.49,False,False,real-world,parity-blocked (timing-only via allow-mismatch)
+d,IV,timing-only,236660,9.88,349368.0,6.62,66,6432,1.6,7.06,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+dart,IV,timing-only,91927,3.86,32136,16.15,51,2912,1.27,1.8,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+desktop,IV,timing-only,2698,0.11,332315604,0.07,93,271994898,56.83,0.01,False,False,real-world,parity-blocked (timing-only via allow-mismatch)
+devicetree,IV,timing-only,20562,0.6,53350,7.2,33,2384,1.61,0.36,False,False,real-world,parity-blocked (timing-only via allow-mismatch)
+dhall,I,parity-clean,27496,0.91,31429,12.31,25,2232,0.94,0.32,False,True,real-world,external scanner
+diff,IV,timing-only,4688,0.19,978640288.0,0.04,536,981485344,365.22,0.08,False,False,real-world,parity-blocked (timing-only via allow-mismatch)
+disassembly,I,parity-clean,2975,0.12,1573803,8.4,253,17410,0.96,1.05,False,True,real-world,external scanner
+djot,IV,timing-only,49114,1.51,4330898,0.19,187,13170,3.52,9.08,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+dockerfile,IV,timing-only,11895,0.38,12754271,1.23,154,16814,17.68,31.35,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+dot,IV,timing-only,9098,0.26,196608,1.95,36,4032,2.6,0.4,False,False,real-world,parity-blocked (timing-only via allow-mismatch)
+doxygen,IV,timing-only,9254,0.39,17517,21.92,21,2184,1.06,0.91,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+dtd,IV,timing-only,8127,0.32,949520943,0.03,561,587192,691.73,0.05,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+earthfile,IV,timing-only,66738,2.36,249649,1.57,43,4208,2.48,0.07,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+ebnf,IV,timing-only,1855,0.07,1666888.0,1.86,13,1384,14.49,0.04,False,False,real-world,parity-blocked (timing-only via allow-mismatch)
+editorconfig,IV,timing-only,2866,0.12,204576.0,0.89,13,1368,7.32,0.33,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+eds,IV,timing-only,1519,0.07,62049219,0.46,57,6424,19.72,7.42,False,False,real-world,parity-blocked (timing-only via allow-mismatch)
+eex,IV,timing-only,2105,0.09,212911,0.96,13,1384,9.39,0.4,False,False,real-world,parity-blocked (timing-only via allow-mismatch)
+elisp,IV,timing-only,5325,0.31,7926,13.88,7,728,1.4,0.66,False,False,real-world,parity-blocked (timing-only via allow-mismatch)
+elixir,II,parity-clean,213418,12.13,92302,4.71,34,2432,0.65,1.08,False,True,real-world,external scanner
+elm,IV,timing-only,53627,2.13,1525486.0,1.12,32,2882,4.04,1.04,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+elsa,IV,timing-only,2384,0.1,87722,4.98,21,2184,1.13,,False,False,real-world,parity-blocked (timing-only via allow-mismatch)
+embedded_template,IV,timing-only,2183,0.09,93659138.0,1.14,4680,519785,15.04,0.54,False,False,real-world,parity-blocked (timing-only via allow-mismatch)
+enforce,IV,timing-only,21928,0.65,70425,5.45,31,2872,1.46,0.07,False,False,real-world,parity-blocked (timing-only via allow-mismatch)
+erlang,I,parity-clean,35021,1.15,11499768.0,6.79,237,81207,0.92,0.01,True,True,real-world,GSS-forest fast path (default-on); external scanner
+facility,IV,timing-only,5458,0.22,1243474,1.07,13,1384,17.97,0.06,False,False,real-world,parity-blocked (timing-only via allow-mismatch)
+faust,IV,timing-only,20641,0.83,32367,6.12,90,9640,0.74,2.15,True,False,real-world,GSS-forest fast path (default-on); parity-blocked (timing-only via allow-mismatch)
+fennel,IV,timing-only,33045,1.21,233271,2.05,32,3408,1.96,5.41,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+fidl,IV,timing-only,9361,0.33,46409,9.03,21,2184,1.06,0.51,False,False,real-world,parity-blocked (timing-only via allow-mismatch)
+firrtl,IV,timing-only,12755,0.4,80873,6.19,42,2448,1.27,0.46,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+fish,IV,timing-only,12372,0.41,21346.0,6.0,80,15712,1.04,1.23,True,True,real-world,GSS-forest fast path (default-on); external scanner; parity-blocked (timing-only via allow-mismatch)
+foam,IV,timing-only,9453,0.29,108881,18.86,48,4248,1.52,2.74,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+forth,IV,timing-only,8016,0.38,174816,1.45,13,1384,7.44,0.11,False,False,real-world,parity-blocked (timing-only via allow-mismatch)
+fortran,IV,timing-only,299230,13.21,55024,8.27,29,5432,1.01,,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+fsharp,IV,timing-only,471559,23.41,756687,0.51,44,3144,5.03,0.05,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+gdscript,I,parity-clean,35075,1.02,78647,5.01,31,2384,0.99,2.07,False,True,real-world,external scanner
+git_config,IV,timing-only,3239,0.13,195995,2.02,13,1384,7.26,0.39,False,False,real-world,parity-blocked (timing-only via allow-mismatch)
+git_rebase,IV,timing-only,1888,0.08,445106.0,2.58,118,12696,3.54,0.29,False,False,real-world,parity-blocked (timing-only via allow-mismatch)
+gitattributes,II,parity-clean,5426,0.21,16337044,0.1,37,4084,1.82,0.08,True,False,real-world,GSS-forest fast path (default-on)
+gitcommit,IV,timing-only,69567,4.59,26920,14.26,22,2696,1.3,2.24,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+gitignore,IV,timing-only,3493,0.13,130794,1.13,30,3776,1.78,2.02,True,False,real-world,GSS-forest fast path (default-on); parity-blocked (timing-only via allow-mismatch)
+gleam,I,parity-clean,48867,1.34,85969,4.7,27,3280,0.94,4.05,False,True,real-world,external scanner
+glsl,IV,timing-only,87355,3.7,134200,2.88,63,4992,1.04,0.23,False,False,real-world,parity-blocked (timing-only via allow-mismatch)
+gn,IV,timing-only,5531,0.17,76833,5.21,40,3112,2.02,0.31,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+go,IV,timing-only,371127,13.71,53249136.0,3.88,110,35377,1.7,0.02,False,False,real-world,parity-blocked (timing-only via allow-mismatch)
+godot_resource,IV,timing-only,3170,0.12,111298,4.2,22,2696,2.23,0.39,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+gomod,IV,timing-only,5296,0.17,278999467,1.3,2684,286925,10.95,1.06,False,False,real-world,parity-blocked (timing-only via allow-mismatch)
+graphql,IV,timing-only,10543,0.37,76261790,4.84,49,2470,4.65,4.42,False,False,real-world,parity-blocked (timing-only via allow-mismatch)
+groovy,I,parity-clean,84345,2.7,41844,2.92,12,1336,0.98,0.1,False,False,real-world,
+hack,IV,timing-only,136288,4.79,19682,6.71,20,1568,1.81,,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+hare,IV,timing-only,16101,0.5,0,0,0,0,4.23,,False,False,real-world,parity-blocked (timing-only via allow-mismatch)
+haskell,II,parity-clean,290831,10.38,62435,6.15,60,4208,0.69,0.45,False,True,real-world,external scanner
+haxe,IV,timing-only,74714,2.01,115699,3.32,85,4000,1.53,1.14,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+hcl,IV,timing-only,20132,1.29,206371,1.86,40,4056,1.43,0.22,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+heex,IV,timing-only,5037,0.18,244161,3.26,103,11104,3.23,0.23,False,False,real-world,parity-blocked (timing-only via allow-mismatch)
+hlsl,II,parity-clean,303661,18.64,38264,10.06,43,2616,0.9,0.38,False,True,real-world,external scanner
+html,IV,timing-only,3375,0.14,126838,4.84,264,5424,1.63,0.32,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+http,IV,timing-only,23874,1.17,14457654.0,0.14,94,9928,20.23,0.05,False,False,real-world,parity-blocked (timing-only via allow-mismatch)
+hurl,IV,timing-only,24585,0.88,5769812,0.07,39,4108,41.75,0.17,False,False,real-world,parity-blocked (timing-only via allow-mismatch)
+hyprlang,IV,timing-only,6387,0.25,672056.0,3.01,23,2448,10.34,0.23,False,False,real-world,parity-blocked (timing-only via allow-mismatch)
+ini,IV,timing-only,1870,0.08,296470.0,4.88,47,5392,3.78,0.15,False,False,real-world,parity-blocked (timing-only via allow-mismatch)
+janet,IV,timing-only,3578,0.15,275472,1.6,38,4112,6.27,0.39,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+java,I,parity-clean,46587,2.14,43394.0,14.36,12,1352,0.95,0.85,False,False,real-world,
+javascript,IV,timing-only,40559,1.4,76418138.0,5.7,852,44024036,1.22,0.13,True,True,real-world,GSS-forest fast path (default-on); external scanner; parity-blocked (timing-only via allow-mismatch)
+jinja2,I,parity-clean,3348,0.12,8380.0,15.27,17,864,0.41,0.41,False,False,real-world,
+jq,IV,timing-only,7656,0.35,585722.0,2.06,132,13760,3.72,0.26,False,False,real-world,parity-blocked (timing-only via allow-mismatch)
+jsdoc,IV,timing-only,5339,0.31,46311,8.4,21,2184,2.18,3.33,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+json,IV,timing-only,2078,0.12,7167537,9.93,7557,494842,1.79,4.39,False,False,real-world,parity-blocked (timing-only via allow-mismatch)
+json5,II,parity-clean,8050,1.11,3466930.0,0.55,17,1473,1.66,0.09,False,False,real-world,
+jsonnet,I,parity-clean,9844,0.33,50778,8.09,31,2352,0.92,5.9,False,True,real-world,external scanner
+julia,II,parity-clean,241680,14.49,34729,11.29,29,2280,0.77,1.87,False,True,real-world,external scanner
+just,IV,timing-only,9804,0.31,407094.0,6.26,53,4320,4.56,0.17,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+kconfig,IV,timing-only,10272,0.35,143096,2.75,34,4024,2.94,2.02,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+kdl,IV,timing-only,16262,0.61,90324991,0.01,1021,50052,118.77,142.12,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+kotlin,IV,timing-only,337236,20.98,87659,4.62,128,17960,0.77,,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+ledger,IV,timing-only,44719,8.41,149690188.0,0.01,13,1417,2.62,0.05,False,False,real-world,parity-blocked (timing-only via allow-mismatch)
+less,IV,timing-only,13736,0.55,692844.0,0.18,25,2152,27.29,83.66,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+linkerscript,I,parity-clean,15027,0.42,48270,14.9,59,3104,0.46,0.03,False,False,real-world,
+liquid,IV,timing-only,22168,0.65,5100830,1.81,134,14411,9.59,50.43,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+llvm,I,parity-clean,85946,4.27,32554,11.83,35,2424,0.95,1.11,False,False,real-world,
+lua,I,parity-clean,10175,0.31,67581,7.09,25,3016,0.61,0.09,False,False,real-world,
+luau,I,parity-clean,16685,0.47,51125,7.77,29,2288,0.75,0.69,False,True,real-world,external scanner
+make,IV,timing-only,24674,0.75,232695068.0,0.23,470,48216,0.89,3.06,True,False,real-world,GSS-forest fast path (default-on); parity-blocked (timing-only via allow-mismatch)
+markdown,IV,timing-only,36259,1.38,934579,0.73,28,3824,6.22,9.59,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+markdown_inline,IV,timing-only,41164,1.66,926564,0.41,27,3732,9.68,15.13,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+matlab,IV,timing-only,51937,1.77,154762,2.52,156,7192,1.2,7.23,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+mermaid,I,parity-clean,27594,0.96,35972.0,3.58,8,1240,0.9,0.5,False,False,real-world,
+meson,IV,timing-only,21510,0.62,408297,0.94,50,7912,4.23,0.07,False,False,real-world,parity-blocked (timing-only via allow-mismatch)
+mojo,I,parity-clean,50953,2.6,32053,59.15,81,5790,0.24,0.18,False,True,real-world,external scanner
+move,I,parity-clean,11719,0.41,39704,9.75,28,2264,0.37,0.49,False,False,real-world,
+nginx,IV,timing-only,44620,11.96,4121893,0.14,14,1378,32.78,0.16,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+nickel,I,parity-clean,24496,0.74,68085,5.64,39,2504,0.61,0.31,False,True,real-world,external scanner
+nim,III,parity-clean,661120,21.14,18291,3.5,18,1360,0.62,0.66,False,True,real-world,external scanner
+ninja,IV,timing-only,6960,0.23,2239089,0.64,59,5449,12.55,0.21,False,False,real-world,parity-blocked (timing-only via allow-mismatch)
+nix,I,parity-clean,11775,0.39,63299,6.13,108,22328,0.73,2.3,True,True,real-world,GSS-forest fast path (default-on); external scanner
+norg,IV,timing-only,227484,8.58,0,0,0,0,8.8,,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+nushell,IV,timing-only,203658,12.54,454709,0.87,53,5232,3.25,6.33,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+objc,II,parity-clean,268385,14.14,142843,3.31,47,4432,0.72,0.24,False,False,real-world,
+ocaml,II,parity-clean,254641,12.89,55771,6.99,31,2392,0.58,0.72,False,True,real-world,external scanner
+odin,IV,timing-only,181298,6.05,61502,6.31,33,2904,1.65,2.16,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+org,IV,timing-only,104664,3.99,2800301,0.18,53,4418,1.67,2.04,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+pascal,I,parity-clean,75680,2.26,90199,4.26,62,4280,0.87,0.33,False,False,real-world,
+pem,IV,timing-only,1664,0.1,17164.0,11.54,12,1336,2.63,0.2,False,False,real-world,parity-blocked (timing-only via allow-mismatch)
+perl,IV,timing-only,205599,16.22,250167,1.56,46,3936,1.86,0.29,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+php,IV,timing-only,95451,3.04,1024476.0,6.44,219,23512,1.06,0.01,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+pkl,I,parity-clean,30872,0.86,73624,5.23,21,2184,0.91,0.38,False,True,real-world,external scanner
+powershell,I,parity-clean,68088,3.07,13672.0,11.14,14,1456,0.89,0.43,False,True,real-world,external scanner
+prisma,I,parity-clean,7017,0.21,51858,14.33,82,9296,0.78,0.59,True,False,real-world,GSS-forest fast path (default-on)
+prolog,I,parity-clean,6655,0.23,21346,3.51,19,976,0.83,0.06,False,False,real-world,
+promql,IV,timing-only,5839,0.19,0,0,0,0,6.28,,False,False,real-world,parity-blocked (timing-only via allow-mismatch)
+properties,IV,timing-only,3161,0.11,4328942,0.28,28,2754,26.33,56.13,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+proto,I,parity-clean,9475,0.33,44170,8.97,32,2504,0.93,0.46,False,False,real-world,
+pug,IV,timing-only,29807,1.01,0,0,0,0,0.91,,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+puppet,I,parity-clean,15214,0.48,53378,7.36,21,2184,0.98,0.11,False,False,real-world,
+purescript,II,parity-clean,245328,19.77,151268,6.64,34,3432,0.94,1.68,False,True,real-world,external scanner
+python,IV,timing-only,60172,2.19,20579312.0,2.58,166,10454,1.69,0.17,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+ql,IV,timing-only,32178,1.27,106152,3.62,27,2840,1.66,0.57,False,False,real-world,parity-blocked (timing-only via allow-mismatch)
+r,IV,timing-only,47869,2.11,143928,4.03,27,2280,1.06,2.0,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+racket,IV,timing-only,12660,0.55,23590,5.43,62,6946,1.08,0.61,True,True,real-world,GSS-forest fast path (default-on); external scanner; parity-blocked (timing-only via allow-mismatch)
+regex,IV,timing-only,4875,0.17,355658,0.21,15,1432,9.46,0.08,False,False,real-world,parity-blocked (timing-only via allow-mismatch)
+rego,IV,timing-only,18564,0.55,81394.0,6.5,63,6552,1.06,0.25,False,False,real-world,parity-blocked (timing-only via allow-mismatch)
+requirements,IV,timing-only,7788,0.24,231965,3.89,27,2840,4.14,0.08,False,False,real-world,parity-blocked (timing-only via allow-mismatch)
+rescript,I,parity-clean,82203,2.49,40103,3.19,20,1520,0.64,0.29,False,True,real-world,external scanner
+robot,I,parity-clean,12826,0.44,42864,9.12,21,2184,0.85,0.65,False,False,real-world,
+ron,IV,timing-only,9957,0.89,711910,1.11,41,4248,7.25,0.31,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+rst,IV,timing-only,7999,0.25,0,0,0,0,138.86,,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+ruby,II,parity-clean,148405,5.93,35738,10.74,55,3808,0.65,0.69,False,True,real-world,external scanner
+rust,IV,timing-only,113341,4.8,29034509,2.5,702,1159698,2.42,0.02,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+scala,IV,timing-only,472647,12.85,0,0,0,0,1.69,,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+scheme,IV,timing-only,10258,0.6,731732,1.03,39,4152,8.17,0.08,False,False,real-world,parity-blocked (timing-only via allow-mismatch)
+scss,IV,timing-only,18723,0.87,18000918.0,8.71,141,64105,1.3,0.01,True,True,real-world,GSS-forest fast path (default-on); external scanner; parity-blocked (timing-only via allow-mismatch)
+smithy,I,parity-clean,10654,0.32,37670,10.19,31,2352,0.7,0.17,False,False,real-world,
+solidity,IV,timing-only,36835,1.4,37547,12.46,36,2424,1.13,0.18,False,False,real-world,parity-blocked (timing-only via allow-mismatch)
+sparql,IV,timing-only,31438,1.16,24933800.0,4.78,6916,670190,1.6,0.53,False,False,real-world,parity-blocked (timing-only via allow-mismatch)
+sql,III,parity-clean,581443,20.35,664338.0,5.59,189,46904,0.92,1.67,False,True,real-world,external scanner
+squirrel,I,parity-clean,41098,1.15,123068,5.49,110,22864,0.8,2.53,True,True,real-world,GSS-forest fast path (default-on); external scanner
+ssh_config,IV,timing-only,32953,1.19,1723846.0,0.86,13,1384,29.84,0.05,False,False,real-world,parity-blocked (timing-only via allow-mismatch)
+starlark,I,parity-clean,47765,1.56,147693,3.76,42,2704,0.82,0.19,False,True,real-world,external scanner
+svelte,IV,timing-only,7909,0.24,49647,7.73,142,3336,1.02,1.9,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+swift,IV,timing-only,4999426,1252.8,152629,12.06,97,6668,2.9,0.73,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch); very large blob (5.0MB) — exclude from latency-sensitive builds; slow cold decode (1253ms)
+tablegen,IV,timing-only,13124,0.69,48546,29.29,63,5352,1.65,0.5,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+tcl,IV,timing-only,15363,0.76,271450,2.09,39,4152,2.42,0.09,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+teal,IV,timing-only,17639,0.82,865243,1.43,52,5464,3.9,6.22,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+templ,IV,timing-only,62214,5.56,25212,5.36,25,1544,1.13,,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+textproto,IV,timing-only,4837,0.27,285199,2.64,39,4152,3.46,0.38,False,False,real-world,parity-blocked (timing-only via allow-mismatch)
+thrift,IV,timing-only,19711,1.11,44424,56.73,63,6200,1.13,0.32,False,False,real-world,parity-blocked (timing-only via allow-mismatch)
+tlaplus,IV,timing-only,229105,17.15,25071,8.02,117,15504,0.66,,True,True,real-world,GSS-forest fast path (default-on); external scanner; parity-blocked (timing-only via allow-mismatch)
+tmux,IV,timing-only,276557,12.61,29894731,3.34,228,182776,8.58,0.0,False,False,real-world,parity-blocked (timing-only via allow-mismatch)
+todotxt,IV,timing-only,1720,0.08,288905,1.17,13,1392,7.6,0.14,False,False,real-world,parity-blocked (timing-only via allow-mismatch)
+toml,IV,timing-only,5317,0.19,259390.0,4.11,19,1592,1.87,0.2,False,False,real-world,parity-blocked (timing-only via allow-mismatch)
+tsx,IV,timing-only,123959,4.36,187723,5.89,75,40432,1.18,,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+turtle,IV,timing-only,6404,0.24,17745,3.61,7,728,1.07,0.07,False,False,real-world,parity-blocked (timing-only via allow-mismatch)
+twig,IV,timing-only,12934,0.43,239758,3.02,116,13504,1.92,0.63,False,False,real-world,parity-blocked (timing-only via allow-mismatch)
+typescript,IV,timing-only,121462,4.08,56427472,6.67,71,79406,1.7,0.03,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+typst,IV,timing-only,90237,3.2,3257499,0.15,74,4490,12.38,23.69,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+uxntal,IV,timing-only,6904,0.22,2766325,0.37,117,10427,16.28,52.99,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+v,II,parity-clean,165049,4.77,97725,3.93,22,2696,0.94,0.09,False,False,real-world,
+verilog,IV,timing-only,652713,33.6,184471,2.08,73,5264,1.33,0.07,False,False,real-world,parity-blocked (timing-only via allow-mismatch)
+vhdl,I,parity-clean,149823,3.66,43723,8.78,59,3016,0.06,0.04,False,True,real-world,external scanner
+vimdoc,IV,timing-only,12576,0.79,3334080,0.25,197,17860,1.27,0.2,False,False,real-world,parity-blocked (timing-only via allow-mismatch)
+vue,IV,timing-only,5179,0.17,155611,5.59,418,8536,1.91,1.92,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+wat,I,parity-clean,23515,0.75,76603,7.9,34,2352,0.51,0.69,False,False,real-world,
+wgsl,IV,timing-only,12035,0.38,42556,3.69,16,2480,1.73,0.55,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+wolfram,IV,timing-only,3617,0.13,91034,3.54,17,992,4.44,0.21,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+xml,IV,timing-only,10955,0.32,46078,10.41,13,800,1.43,0.13,False,True,real-world,external scanner; parity-blocked (timing-only via allow-mismatch)
+yaml,I,parity-clean,25479,0.65,555063,9.89,511,10104,0.58,2.09,False,True,real-world,external scanner
+yuck,I,parity-clean,5018,0.19,4127559,0.77,25,2723,1.25,0.07,False,True,real-world,external scanner
+zig,I,parity-clean,45316,1.93,39258,9.78,42,2632,0.9,0.17,False,False,real-world,
