@@ -7,6 +7,19 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+## [0.20.5] - 2026-06-24
+
+### Changed
+
+- `grammargen` no longer imports the `grammars` registry. The `grammar.js`
+  importer (`ImportGrammarJS`) previously pulled in `grammars` for the embedded
+  JavaScript language, which transitively bundled all ~200 grammar blobs
+  (~22MB) into *every* consumer that merely defined a grammar via the DSL —
+  including `taproot` and all downstream DSLs. The JS language is now injected
+  via `SetJSGrammarProvider`; blank-import `grammargen/grammarjs` (or `cmd`s
+  that need `-js`) to register it. Net effect: `grammargen`, `taproot`, and
+  anything that only defines/loads a grammar are now grammar-registry-free.
+
 ## [0.20.4] - 2026-06-24
 
 ### Added
