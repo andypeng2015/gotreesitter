@@ -4711,25 +4711,6 @@ func javascriptRepetitionShiftConflictChoiceForDispatch(lang *Language, tok Toke
 	return javascriptRepetitionShiftConflictChoice(lang, tok, state, actions)
 }
 
-// pythonRepetitionShiftConflictChoice resolves the module_repeat1 boundary
-// where statement-start identifiers and definitions can either reduce the
-// existing module list or shift as the next top-level statement. The shift
-// continues the list while preserving current Python parity gates.
-func pythonRepetitionShiftConflictChoice(lang *Language, tok Token, state StateID, actions []ParseAction) (ParseAction, bool) {
-	if lang == nil {
-		return ParseAction{}, false
-	}
-	switch state {
-	case 71, 72:
-		if !symbolHasName(lang, tok.Symbol, "identifier") && !symbolHasName(lang, tok.Symbol, "def") {
-			return ParseAction{}, false
-		}
-	default:
-		return ParseAction{}, false
-	}
-	return repetitionShiftConflictChoice(actions)
-}
-
 func rRepetitionShiftConflictChoice(lang *Language, state StateID, actions []ParseAction) (ParseAction, bool) {
 	if lang == nil {
 		return ParseAction{}, false
@@ -4826,33 +4807,6 @@ func sqlRepetitionShiftConflictChoice(lang *Language, tok Token, state StateID, 
 	switch state {
 	case 10852:
 		if !symbolHasName(lang, tok.Symbol, ",") || !allReducesHaveSymbol(lang, actions, "select_clause_body_repeat1") {
-			return ParseAction{}, false
-		}
-	default:
-		return ParseAction{}, false
-	}
-	return repetitionShiftConflictChoice(actions)
-}
-
-// dartRepetitionShiftConflictChoice collapses Dart list-boundary forks where a
-// repeat reduce competes with shifting the next element. These states dominate
-// the current Dart real-corpus shard: enum bodies, extension bodies, and
-// top-level program declarations.
-func dartRepetitionShiftConflictChoice(lang *Language, state StateID, actions []ParseAction) (ParseAction, bool) {
-	if lang == nil {
-		return ParseAction{}, false
-	}
-	switch state {
-	case 596:
-		if !allReducesHaveSymbol(lang, actions, "enum_body_repeat2") {
-			return ParseAction{}, false
-		}
-	case 602:
-		if !allReducesHaveSymbol(lang, actions, "extension_body_repeat1") {
-			return ParseAction{}, false
-		}
-	case 479:
-		if !allReducesHaveSymbol(lang, actions, "program_repeat4") {
 			return ParseAction{}, false
 		}
 	default:
@@ -5111,50 +5065,6 @@ func dotRepetitionShiftConflictChoice(lang *Language, tok Token, state StateID, 
 		}
 	}
 	return repetitionShiftConflictChoice(actions)
-}
-
-// erlangMacroCallExprConflictChoice resolves the `?Name(...)` macro-invocation
-// fork in favor of the shift, matching C tree-sitter. Upstream declares
-// `macro_call_expr: prec.right(seq('?', name, optional(macro_call_args)))` and a
-// conflict between `macro_call_expr` and `macro_call_none` (`? name` with no
-// args). After `? name`, with `(` lookahead, the table offers reduce(s) to the
-// bare two-child macro_call_expr/macro_call_none plus a shift into
-// macro_call_args. The prec.right associativity makes C take the shift, yielding
-// a single three-child macro_call_expr (`?`, name, args). Without this, the GLR
-// cull picks the reduce path, producing `(call (macro_call_expr) (expr_args))`.
-//
-// Scoped strictly by action shape: every conflict reduce must be a two-child
-// macro_call_expr / macro_call_none, accompanied by exactly one non-repetition
-// shift. The erlang table has exactly three such entries (the `?Name(` states),
-// all matching this shape, so the choice is unambiguous.
-func erlangMacroCallExprConflictChoice(lang *Language, actions []ParseAction) (ParseAction, bool) {
-	if lang == nil || len(actions) < 2 {
-		return ParseAction{}, false
-	}
-	var shift ParseAction
-	haveShift := false
-	haveReduce := false
-	for _, act := range actions {
-		switch act.Type {
-		case ParseActionShift:
-			if haveShift || act.Repetition {
-				return ParseAction{}, false
-			}
-			shift = act
-			haveShift = true
-		case ParseActionReduce:
-			if act.ChildCount != 2 || !symbolHasName(lang, act.Symbol, "macro_call_expr") {
-				return ParseAction{}, false
-			}
-			haveReduce = true
-		default:
-			return ParseAction{}, false
-		}
-	}
-	if !haveShift || !haveReduce {
-		return ParseAction{}, false
-	}
-	return shift, true
 }
 
 func singleReduceAgainstRepetitionShiftConflictChoice(actions []ParseAction) (ParseAction, bool) {
