@@ -97,6 +97,39 @@ func TestEmbeddedReduceChainHints(t *testing.T) {
 	}
 }
 
+func TestDecodeLanguageBlobDataInfersGeneratedRepeatAuxMetadata(t *testing.T) {
+	lang := &gotreesitter.Language{
+		TokenCount: 2,
+		SymbolNames: []string{
+			"end",
+			"token_repeat1",
+			"module_repeat1",
+			"visible_repeat2",
+			"named_repeat3",
+		},
+		SymbolMetadata: []gotreesitter.SymbolMetadata{
+			{Name: "end", Named: true},
+			{},
+			{},
+			{Visible: true},
+			{Named: true},
+		},
+	}
+
+	decoded, err := decodeLanguageBlobData("tiny.bin", encodeLanguageBlobForTest(t, lang))
+	if err != nil {
+		t.Fatalf("decodeLanguageBlobData: %v", err)
+	}
+	if !decoded.SymbolMetadata[2].GeneratedRepeatAux {
+		t.Fatal("decodeLanguageBlobData did not infer GeneratedRepeatAux for invisible anonymous module_repeat1")
+	}
+	for _, idx := range []int{1, 3, 4} {
+		if decoded.SymbolMetadata[idx].GeneratedRepeatAux {
+			t.Fatalf("SymbolMetadata[%d].GeneratedRepeatAux = true, want false", idx)
+		}
+	}
+}
+
 func TestDhallUnicodeAnonymousSymbolNamesDecodeOnLoad(t *testing.T) {
 	t.Cleanup(func() { PurgeEmbeddedLanguageCache() })
 

@@ -165,9 +165,7 @@ func loadEmbeddedLanguageBase(blobName string) *gotreesitter.Language {
 			// Attach external scanner and lex states if registered.
 			name := strings.TrimSuffix(blobName, ".bin")
 			attachExternalScannerForLanguage(name, entry.lang)
-			if els, ok := externalLexStatesRegistry[name]; ok {
-				entry.lang.ExternalLexStates = els
-			}
+			attachRegisteredExternalLexStates(name, entry.lang)
 		}
 	})
 	if entry.err != nil {
@@ -461,11 +459,7 @@ func AdaptScannerForLanguage(name string, targetLang *gotreesitter.Language) boo
 		}
 	}
 	if targetLang.ExternalScanner != nil {
-		if len(targetLang.ExternalLexStates) == 0 {
-			if els := externalLexStatesRegistry[lookupName]; els != nil {
-				targetLang.ExternalLexStates = els
-			}
-		}
+		attachRegisteredExternalLexStates(lookupName, targetLang)
 		return true
 	}
 
@@ -487,11 +481,7 @@ func AdaptScannerForLanguage(name string, targetLang *gotreesitter.Language) boo
 		}
 		if same {
 			targetLang.ExternalScanner = refLang.ExternalScanner
-			if len(targetLang.ExternalLexStates) == 0 {
-				if els := externalLexStatesRegistry[lookupName]; els != nil {
-					targetLang.ExternalLexStates = els
-				}
-			}
+			attachRegisteredExternalLexStates(lookupName, targetLang)
 			return true
 		}
 	}
@@ -501,12 +491,19 @@ func AdaptScannerForLanguage(name string, targetLang *gotreesitter.Language) boo
 		return false
 	}
 	targetLang.ExternalScanner = adapted
-	if len(targetLang.ExternalLexStates) == 0 {
-		if els := externalLexStatesRegistry[lookupName]; els != nil {
-			targetLang.ExternalLexStates = els
-		}
-	}
+	attachRegisteredExternalLexStates(lookupName, targetLang)
 	return true
+}
+
+func attachRegisteredExternalLexStates(name string, targetLang *gotreesitter.Language) {
+	if targetLang == nil {
+		return
+	}
+	els := externalLexStatesRegistry[name]
+	if len(els) > 0 && len(targetLang.ExternalLexStates) == 0 {
+		targetLang.ExternalLexStates = els
+	}
+	gotreesitter.CertifyCRecoveryCostCompetition(targetLang)
 }
 
 func decodeEmbeddedLanguage(blobName string) (*gotreesitter.Language, error) {
@@ -532,6 +529,7 @@ func decodeLanguageBlobData(blobName string, data []byte) (*gotreesitter.Languag
 		return nil, fmt.Errorf("decode grammar blob %q: %w", blobName, err)
 	}
 
+	gotreesitter.InferGeneratedRepeatAuxMetadata(&lang)
 	compactDecodedLanguage(&lang)
 	repairNoLookaheadLexModes(&lang)
 	repairJavaScriptTypeScriptOptionalChainTokenSymbol(blobName, &lang)
