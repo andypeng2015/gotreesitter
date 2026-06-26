@@ -885,6 +885,215 @@ func TestNextGLRUnionDFATokenPrefersStateLiteralOverIdentifierCapture(t *testing
 	}
 }
 
+func testCloseAngleFrontierLanguage() *Language {
+	return &Language{
+		Name: "cuda_probe",
+		SymbolNames: []string{
+			"end",
+			">",
+			">>",
+		},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "end", Visible: false, Named: false},
+			{Name: ">", Visible: true, Named: false},
+			{Name: ">>", Visible: true, Named: false},
+		},
+		SymbolCount:     3,
+		TokenCount:      3,
+		StateCount:      4,
+		LargeStateCount: 4,
+		InitialState:    1,
+		LexStates: []LexState{
+			{Default: -1, EOF: -1},
+			{AcceptToken: 0, Default: -1, EOF: -1, Transitions: []LexTransition{{Lo: '>', Hi: '>', NextState: 3}}},
+			{AcceptToken: 0, Default: -1, EOF: -1, Transitions: []LexTransition{{Lo: '>', Hi: '>', NextState: 4}}},
+			{AcceptToken: 1, Default: -1, EOF: -1},
+			{AcceptToken: 1, Default: -1, EOF: -1, Transitions: []LexTransition{{Lo: '>', Hi: '>', NextState: 5}}},
+			{AcceptToken: 2, Default: -1, EOF: -1},
+		},
+		LexModes: []LexMode{
+			{LexState: 0},
+			{LexState: 1},
+			{LexState: 2},
+			{LexState: 1},
+		},
+		ParseTable: [][]uint16{
+			{0, 0, 0},
+			{0, 1, 0},
+			{0, 1, 2},
+			{0, 1, 0},
+		},
+		ParseActions: []ParseActionEntry{
+			{Actions: nil},
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 1}}},
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 2}}},
+		},
+	}
+}
+
+func newCloseAngleFrontierTokenSource(lang *Language, states ...StateID) *dfaTokenSource {
+	parser := NewParser(lang)
+	return &dfaTokenSource{
+		lexer:             NewLexer(lang.LexStates, []byte(">>")),
+		language:          lang,
+		state:             states[0],
+		glrStates:         states,
+		lookupActionIndex: parser.lookupActionIndex,
+	}
+}
+
+func requireFrontierCandidate(t *testing.T, frontier tokenFrontier, sym Symbol) tokenCandidate {
+	t.Helper()
+	for _, cand := range frontier.Candidates {
+		if cand.Tok.Symbol == sym {
+			return cand
+		}
+	}
+	t.Fatalf("frontier missing symbol %d; candidates=%#v", sym, frontier.Candidates)
+	return tokenCandidate{}
+}
+
+func TestCollectGLRDFATokenFrontierKeepsCloseAngleAlternatives(t *testing.T) {
+	lang := testCloseAngleFrontierLanguage()
+	d := newCloseAngleFrontierTokenSource(lang, 1, 2)
+
+	frontier, ok := d.PeekTokenFrontier(nil, nil)
+	if !ok {
+		t.Fatal("PeekTokenFrontier returned ok=false, want true")
+	}
+	if got, want := len(frontier.Candidates), 2; got != want {
+		t.Fatalf("candidate count = %d, want %d: %#v", got, want, frontier.Candidates)
+	}
+	if got, want := frontier.StartByte, uint32(0); got != want {
+		t.Fatalf("frontier start byte = %d, want %d", got, want)
+	}
+	if got, want := frontier.StartPoint, (Point{}); got != want {
+		t.Fatalf("frontier start point = %#v, want %#v", got, want)
+	}
+
+	single := requireFrontierCandidate(t, frontier, 1)
+	if got, want := single.Tok.EndByte, uint32(1); got != want {
+		t.Fatalf("> end byte = %d, want %d", got, want)
+	}
+	if got, want := single.RouteMask, uint16(0b01); got != want {
+		t.Fatalf("> route mask = %02b, want %02b", got, want)
+	}
+
+	double := requireFrontierCandidate(t, frontier, 2)
+	if got, want := double.Tok.EndByte, uint32(2); got != want {
+		t.Fatalf(">> end byte = %d, want %d", got, want)
+	}
+	if got, want := double.RouteMask, uint16(0b10); got != want {
+		t.Fatalf(">> route mask = %02b, want %02b", got, want)
+	}
+	if got, want := d.lexer.pos, 0; got != want {
+		t.Fatalf("lexer.pos after peek = %d, want %d", got, want)
+	}
+}
+
+func TestCollectGLRDFATokenFrontierMergesEquivalentLexModes(t *testing.T) {
+	lang := testCloseAngleFrontierLanguage()
+	d := newCloseAngleFrontierTokenSource(lang, 1, 3, 2)
+
+	frontier, ok := d.PeekTokenFrontier(nil, nil)
+	if !ok {
+		t.Fatal("PeekTokenFrontier returned ok=false, want true")
+	}
+	if got, want := len(frontier.Candidates), 2; got != want {
+		t.Fatalf("candidate count = %d, want %d: %#v", got, want, frontier.Candidates)
+	}
+
+	single := requireFrontierCandidate(t, frontier, 1)
+	if got, want := single.RouteMask, uint16(0b011); got != want {
+		t.Fatalf("> route mask = %03b, want %03b", got, want)
+	}
+	if got, want := single.Origin, StateID(1); got != want {
+		t.Fatalf("> origin = %d, want %d", got, want)
+	}
+
+	double := requireFrontierCandidate(t, frontier, 2)
+	if got, want := double.RouteMask, uint16(0b100); got != want {
+		t.Fatalf(">> route mask = %03b, want %03b", got, want)
+	}
+}
+
+func TestCollectGLRDFATokenFrontierKeepsNoLookaheadEOFToken(t *testing.T) {
+	lang := &Language{
+		SymbolNames: []string{"end", "identifier"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "end", Visible: false, Named: false},
+			{Name: "identifier", Visible: true, Named: true},
+		},
+		SymbolCount:     2,
+		TokenCount:      2,
+		StateCount:      3,
+		LargeStateCount: 3,
+		InitialState:    1,
+		LexStates: []LexState{
+			{Default: -1, EOF: -1},
+			{AcceptToken: 1, Default: -1, EOF: -1},
+		},
+		LexModes: []LexMode{
+			{LexState: 0},
+			{LexStateID: noLookaheadLexState},
+			{LexState: 1},
+		},
+		ParseTable: [][]uint16{
+			{0, 0},
+			{1, 0},
+			{0, 1},
+		},
+		ParseActions: []ParseActionEntry{
+			{Actions: nil},
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 1}}},
+		},
+	}
+	parser := NewParser(lang)
+	d := &dfaTokenSource{
+		lexer:             NewLexer(lang.LexStates, []byte("x")),
+		language:          lang,
+		state:             1,
+		glrStates:         []StateID{1, 2},
+		lookupActionIndex: parser.lookupActionIndex,
+	}
+
+	frontier, ok := d.PeekTokenFrontier(nil, nil)
+	if !ok {
+		t.Fatal("PeekTokenFrontier returned ok=false, want true")
+	}
+	eof := requireFrontierCandidate(t, frontier, 0)
+	if !eof.Tok.NoLookahead {
+		t.Fatalf("EOF candidate NoLookahead = false, want true: %#v", eof.Tok)
+	}
+	if got, want := eof.RouteMask, uint16(0b01); got != want {
+		t.Fatalf("EOF route mask = %02b, want %02b", got, want)
+	}
+	if got, want := eof.Tok.EndByte, uint32(0); got != want {
+		t.Fatalf("EOF end byte = %d, want %d", got, want)
+	}
+
+	ident := requireFrontierCandidate(t, frontier, 1)
+	if got, want := ident.RouteMask, uint16(0b10); got != want {
+		t.Fatalf("identifier route mask = %02b, want %02b", got, want)
+	}
+}
+
+func TestNextGLRUnionDFATokenStillChoosesLegacyBest(t *testing.T) {
+	lang := testCloseAngleFrontierLanguage()
+	d := newCloseAngleFrontierTokenSource(lang, 1, 2)
+
+	tok, ok := d.nextGLRUnionDFAToken()
+	if !ok {
+		t.Fatal("nextGLRUnionDFAToken returned ok=false, want true")
+	}
+	if got, want := tok.Symbol, Symbol(2); got != want {
+		t.Fatalf("token symbol = %d (%q), want %d (%q)", got, lang.SymbolNames[got], want, lang.SymbolNames[want])
+	}
+	if got, want := d.lexer.pos, 2; got != want {
+		t.Fatalf("lexer.pos = %d, want %d", got, want)
+	}
+}
+
 func TestPromoteActiveLiteralDoesNotUndoContextualKeywordDemotion(t *testing.T) {
 	lang := &Language{
 		Name:                "javascript",

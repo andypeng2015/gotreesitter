@@ -93,6 +93,27 @@ const maxConsecutiveZeroWidthTokensRepeatableExternal = 4096
 const noLookaheadLexState = ^uint32(0)
 const externalScannerSerializationBufferSize = 4096
 
+type tokenFrontierSource interface {
+	PeekTokenFrontier(states []StateID, dst []tokenCandidate) (tokenFrontier, bool)
+	SeekTokenFrontier(pos uint32, pt Point)
+}
+
+type tokenCandidate struct {
+	Tok                Token
+	Origin             StateID
+	RouteMask          uint16
+	EndPos             int
+	EndRow             uint32
+	EndCol             uint32
+	ExternalCheckpoint *externalScannerCheckpoint
+}
+
+type tokenFrontier struct {
+	StartByte  uint32
+	StartPoint Point
+	Candidates []tokenCandidate
+}
+
 var dfaTokenSourcePool = sync.Pool{
 	New: func() any {
 		return &dfaTokenSource{
@@ -677,6 +698,148 @@ func (d *dfaTokenSource) lexModeStartRows() []lexModeStart {
 		d.lexModeStarts = d.language.LexModeStarts()
 	}
 	return d.lexModeStarts
+}
+
+func (d *dfaTokenSource) SeekTokenFrontier(pos uint32, pt Point) {
+	if d == nil || d.lexer == nil {
+		return
+	}
+	d.lexer.pos = int(pos)
+	d.lexer.row = pt.Row
+	d.lexer.col = pt.Column
+}
+
+func (d *dfaTokenSource) PeekTokenFrontier(states []StateID, dst []tokenCandidate) (tokenFrontier, bool) {
+	dst = dst[:0]
+	if d == nil || d.lexer == nil || d.language == nil || d.lookupActionIndex == nil {
+		return tokenFrontier{}, false
+	}
+	activeStates := states
+	if len(activeStates) == 0 {
+		activeStates = d.glrStates
+	}
+	if len(activeStates) <= 1 {
+		return tokenFrontier{}, false
+	}
+
+	lexModes := d.lexModeStartRows()
+	primaryState := d.state
+	if len(states) > 0 {
+		primaryState = states[0]
+	}
+	if int(primaryState) >= len(lexModes) {
+		return tokenFrontier{}, false
+	}
+	primaryMode := lexModes[primaryState]
+	allSame := true
+	for _, st := range activeStates {
+		if int(st) >= len(lexModes) {
+			allSame = false
+			break
+		}
+		if lexModes[st] != primaryMode {
+			allSame = false
+			break
+		}
+	}
+	if allSame {
+		return tokenFrontier{}, false
+	}
+
+	startPos := d.lexer.pos
+	startRow := d.lexer.row
+	startCol := d.lexer.col
+	defer func() {
+		d.lexer.pos = startPos
+		d.lexer.row = startRow
+		d.lexer.col = startCol
+	}()
+
+	type lexModeKey struct {
+		lexState                uint32
+		afterWhitespaceLexState uint32
+	}
+
+	var seenBuf [32]lexModeKey
+	seen := seenBuf[:0]
+	for _, st := range activeStates {
+		if int(st) >= len(lexModes) {
+			continue
+		}
+		mode := lexModes[st]
+		key := lexModeKey{
+			lexState:                mode.lexState,
+			afterWhitespaceLexState: mode.afterWhitespaceLexState,
+		}
+		alreadySeen := false
+		for _, existing := range seen {
+			if existing == key {
+				alreadySeen = true
+				break
+			}
+		}
+		if alreadySeen {
+			continue
+		}
+		seen = append(seen, key)
+
+		candTok, candEndPos, candEndRow, candEndCol := d.scanPreferredTokenForState(st)
+		routeMask := d.tokenFrontierRouteMask(activeStates, candTok, candEndPos, candEndRow, candEndCol)
+		if routeMask == 0 {
+			continue
+		}
+
+		merged := false
+		for i := range dst {
+			if dst[i].Tok == candTok && dst[i].EndPos == candEndPos && dst[i].EndRow == candEndRow && dst[i].EndCol == candEndCol {
+				dst[i].RouteMask |= routeMask
+				merged = true
+				break
+			}
+		}
+		if merged {
+			continue
+		}
+		dst = append(dst, tokenCandidate{
+			Tok:       candTok,
+			Origin:    st,
+			RouteMask: routeMask,
+			EndPos:    candEndPos,
+			EndRow:    candEndRow,
+			EndCol:    candEndCol,
+		})
+	}
+
+	if len(dst) == 0 {
+		return tokenFrontier{}, false
+	}
+	return tokenFrontier{
+		StartByte:  uint32(startPos),
+		StartPoint: Point{Row: startRow, Column: startCol},
+		Candidates: dst,
+	}, true
+}
+
+func (d *dfaTokenSource) tokenFrontierRouteMask(states []StateID, tok Token, endPos int, endRow, endCol uint32) uint16 {
+	var mask uint16
+	for i, st := range states {
+		if i >= 16 {
+			break
+		}
+		if d.lookupActionIndex(st, tok.Symbol) == 0 {
+			continue
+		}
+		if !d.stateProducesTokenFrontierCandidate(st, tok, endPos, endRow, endCol) {
+			continue
+		}
+		mask |= uint16(1) << uint(i)
+	}
+	return mask
+}
+
+func (d *dfaTokenSource) stateProducesTokenFrontierCandidate(state StateID, tok Token, endPos int, endRow, endCol uint32) bool {
+	stateTok, stateEndPos, stateEndRow, stateEndCol := d.scanPreferredTokenForState(state)
+	return stateTok == tok && stateEndPos == endPos && stateEndRow == endRow && stateEndCol == endCol
 }
 
 // nextGLRUnionDFAToken tries each unique GLR stack state's lex mode and
