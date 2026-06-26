@@ -84,6 +84,117 @@ func TestBuildLexDFAPrefersExtractionOrderForSameLengthTie(t *testing.T) {
 	}
 }
 
+func TestBuildLexDFAPrefersModeDirectSymbolForSameLengthTie(t *testing.T) {
+	word, err := expandPatternRule("[a-z]+")
+	if err != nil {
+		t.Fatalf("expand word: %v", err)
+	}
+	specific, err := expandPatternRule("[a-z]+")
+	if err != nil {
+		t.Fatalf("expand specific: %v", err)
+	}
+	lexStates, modeOffsets, err := buildLexDFA(
+		context.Background(),
+		[]TerminalPattern{
+			{SymbolID: 1, Rule: word, Priority: 0},
+			{SymbolID: 2, Rule: specific, Priority: 0},
+		},
+		nil,
+		nil,
+		[]lexModeSpec{{
+			validSymbols:     map[int]bool{1: true, 2: true},
+			preferredSymbols: map[int]bool{2: true},
+		}},
+	)
+	if err != nil {
+		t.Fatalf("buildLexDFA: %v", err)
+	}
+	if len(modeOffsets) != 1 {
+		t.Fatalf("len(modeOffsets) = %d, want 1", len(modeOffsets))
+	}
+
+	lexer := gotreesitter.NewLexer(lexStates, []byte("attributename"))
+	tok := lexer.Next(uint32(modeOffsets[0]))
+	if got, want := tok.Symbol, gotreesitter.Symbol(2); got != want {
+		t.Fatalf("same-length token symbol = %d, want %d", got, want)
+	}
+	if got, want := tok.EndByte, uint32(len("attributename")); got != want {
+		t.Fatalf("same-length token end = %d, want %d", got, want)
+	}
+}
+
+func TestBuildLexDFADistinguishesModePreferredSymbols(t *testing.T) {
+	word, err := expandPatternRule("[a-z]+")
+	if err != nil {
+		t.Fatalf("expand word: %v", err)
+	}
+	specific, err := expandPatternRule("[a-z]+")
+	if err != nil {
+		t.Fatalf("expand specific: %v", err)
+	}
+	lexModes, stateToMode, _ := computeLexModes(
+		2,
+		3,
+		func(state, sym int) bool {
+			switch state {
+			case 0:
+				return sym == 1
+			case 1:
+				return sym == 2
+			default:
+				return false
+			}
+		},
+		nil,
+		nil,
+		-1,
+		nil,
+		nil,
+		1,
+		nil,
+		map[int]bool{1: true, 2: true},
+		nil,
+		func(state int) []int {
+			switch state {
+			case 0:
+				return []int{2}
+			case 1:
+				return []int{1}
+			default:
+				return nil
+			}
+		},
+		nil,
+	)
+	if got, want := len(lexModes), 2; got != want {
+		t.Fatalf("lex mode count = %d, want %d", got, want)
+	}
+	if stateToMode[0] == stateToMode[1] {
+		t.Fatalf("states with different preferred symbols shared lex mode %d", stateToMode[0])
+	}
+
+	lexStates, modeOffsets, err := buildLexDFA(
+		context.Background(),
+		[]TerminalPattern{
+			{SymbolID: 1, Rule: word, Priority: 0},
+			{SymbolID: 2, Rule: specific, Priority: 0},
+		},
+		nil,
+		nil,
+		lexModes,
+	)
+	if err != nil {
+		t.Fatalf("buildLexDFA: %v", err)
+	}
+	for state, want := range []gotreesitter.Symbol{1, 2} {
+		lexer := gotreesitter.NewLexer(lexStates, []byte("name"))
+		tok := lexer.Next(uint32(modeOffsets[stateToMode[state]]))
+		if tok.Symbol != want {
+			t.Fatalf("state %d token symbol = %d, want %d", state, tok.Symbol, want)
+		}
+	}
+}
+
 func TestKeywordLikeInlinePatternClassification(t *testing.T) {
 	if !isKeywordLikeInlinePattern(`[sS][uU][bB][gG][rR][aA][pP][hH]`) {
 		t.Fatalf("case-insensitive keyword pattern should be keyword-like")

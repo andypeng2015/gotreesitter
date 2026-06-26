@@ -52,6 +52,9 @@ func buildLexDFA(ctx context.Context, patterns []TerminalPattern, extraSymbols [
 				}
 			}
 		}
+		if len(mode.preferredSymbols) > 0 {
+			modePatterns = preferModePatterns(modePatterns, mode.preferredSymbols)
+		}
 
 		// Build combined NFA for this mode's terminals.
 		combined, err := buildCombinedNFA(modePatterns)
@@ -140,8 +143,27 @@ func buildLexDFA(ctx context.Context, patterns []TerminalPattern, extraSymbols [
 
 // lexModeSpec describes what a lex mode should recognize.
 type lexModeSpec struct {
-	validSymbols   map[int]bool // terminal symbol IDs valid in this mode
-	skipWhitespace bool         // whether to add skip transitions for whitespace
+	validSymbols     map[int]bool // terminal symbol IDs valid in this mode
+	preferredSymbols map[int]bool // symbols directly valid in this mode; win same-span DFA ties
+	skipWhitespace   bool         // whether to add skip transitions for whitespace
+}
+
+func preferModePatterns(patterns []TerminalPattern, preferred map[int]bool) []TerminalPattern {
+	if len(patterns) < 2 || len(preferred) == 0 {
+		return patterns
+	}
+	out := make([]TerminalPattern, 0, len(patterns))
+	for _, pat := range patterns {
+		if preferred[pat.SymbolID] {
+			out = append(out, pat)
+		}
+	}
+	for _, pat := range patterns {
+		if !preferred[pat.SymbolID] {
+			out = append(out, pat)
+		}
+	}
+	return out
 }
 
 // fixExtrasOverrideConflicts fixes DFA states where a non-extras terminal
@@ -1281,6 +1303,7 @@ func computeLexModes(
 	keywordSymbols map[int]bool,
 	terminalPatternSyms map[int]bool, // symbols that have DFA terminal patterns
 	followTokens func(state int) []int, // additional tokens from reduce-follow expansion (may be nil)
+	missingRecoveryTokens func(state int) []int, // lookaheads needed for missing-token recovery (may be nil)
 	suppressAfterWhitespaceSyms map[int]bool,
 ) ([]lexModeSpec, []int, []afterWSModeEntry) {
 	extraSet := make(map[int]bool)
@@ -1331,13 +1354,28 @@ func computeLexModes(
 				directValid[sym] = true
 			}
 		}
-		if followTokens != nil {
+		// Reduce-follow and missing-token recovery widening are parser-main-state
+		// conveniences. Synthetic nonterminal-extra-chain states lex only their
+		// own chain actions; applying main-grammar lookahead widening there is
+		// unnecessary and dominates generation time for grammars with many chains.
+		if followTokens != nil && !isExtraChainState {
 			for _, sym := range followTokens(state) {
 				// Reduce-follow expansion exists to admit the word token in
 				// states where a keyword becomes valid only after reducing a
 				// preceding nonterminal. Widening lex modes with every follow
 				// terminal is both unnecessary and expensive for large grammars.
 				if sym > 0 && sym < tokenCount && !extSet[sym] && keywordSymbols[sym] {
+					directValid[sym] = true
+				}
+			}
+		}
+		preferredSyms := make(map[int]bool, len(directValid))
+		for sym := range directValid {
+			preferredSyms[sym] = true
+		}
+		if missingRecoveryTokens != nil && !isExtraChainState {
+			for _, sym := range missingRecoveryTokens(state) {
+				if sym > 0 && sym < tokenCount && !extSet[sym] {
 					directValid[sym] = true
 				}
 			}
@@ -1394,7 +1432,7 @@ func computeLexModes(
 		// Otherwise, skip whitespace unless ALL valid tokens are immediate.
 		skipWS := stateHasTerminalExtras && (!hasImmediate || len(validSyms) > countImmediate(validSyms, immediateTokens))
 
-		key := buildModeKey(validSyms, skipWS)
+		key := buildModeKey(validSyms, preferredSyms, skipWS)
 
 		if modeIdx, ok := modeMap[key]; ok {
 			stateToMode[state] = modeIdx
@@ -1402,8 +1440,9 @@ func computeLexModes(
 			modeIdx := len(modes)
 			modeMap[key] = modeIdx
 			modes = append(modes, lexModeSpec{
-				validSymbols:   validSyms,
-				skipWhitespace: skipWS,
+				validSymbols:     validSyms,
+				preferredSymbols: preferredSyms,
+				skipWhitespace:   skipWS,
 			})
 			stateToMode[state] = modeIdx
 		}
@@ -1432,15 +1471,22 @@ func computeLexModes(
 					}
 				}
 				if len(awsSyms) > 0 && len(awsSyms) < len(validSyms) {
-					awsKey := buildModeKey(awsSyms, skipWS)
+					awsPreferredSyms := make(map[int]bool, len(preferredSyms))
+					for sym := range preferredSyms {
+						if awsSyms[sym] {
+							awsPreferredSyms[sym] = true
+						}
+					}
+					awsKey := buildModeKey(awsSyms, awsPreferredSyms, skipWS)
 					if awsModeIdx, ok := modeMap[awsKey]; ok {
 						afterWSModeMap = append(afterWSModeMap, afterWSModeEntry{state, awsModeIdx})
 					} else {
 						awsModeIdx := len(modes)
 						modeMap[awsKey] = awsModeIdx
 						modes = append(modes, lexModeSpec{
-							validSymbols:   awsSyms,
-							skipWhitespace: skipWS,
+							validSymbols:     awsSyms,
+							preferredSymbols: awsPreferredSyms,
+							skipWhitespace:   skipWS,
 						})
 						afterWSModeMap = append(afterWSModeMap, afterWSModeEntry{state, awsModeIdx})
 					}
@@ -1481,18 +1527,34 @@ func countImmediate(syms map[int]bool, imm map[int]bool) int {
 	return n
 }
 
-func buildModeKey(syms map[int]bool, skip bool) string {
+func buildModeKey(syms, preferred map[int]bool, skip bool) string {
 	sorted := make([]int, 0, len(syms))
 	for s := range syms {
 		sorted = append(sorted, s)
 	}
 	sort.Ints(sorted)
-	buf := make([]byte, len(sorted)*4+1)
+	preferredSorted := make([]int, 0, len(preferred))
+	for s := range preferred {
+		if syms[s] {
+			preferredSorted = append(preferredSorted, s)
+		}
+	}
+	sort.Ints(preferredSorted)
+	buf := make([]byte, len(sorted)*4+1+len(preferredSorted)*4+1)
 	for i, s := range sorted {
 		buf[i*4] = byte(s >> 24)
 		buf[i*4+1] = byte(s >> 16)
 		buf[i*4+2] = byte(s >> 8)
 		buf[i*4+3] = byte(s)
+	}
+	sep := len(sorted) * 4
+	buf[sep] = 0xff
+	base := sep + 1
+	for i, s := range preferredSorted {
+		buf[base+i*4] = byte(s >> 24)
+		buf[base+i*4+1] = byte(s >> 16)
+		buf[base+i*4+2] = byte(s >> 8)
+		buf[base+i*4+3] = byte(s)
 	}
 	if skip {
 		buf[len(buf)-1] = 1

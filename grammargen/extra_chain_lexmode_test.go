@@ -76,7 +76,9 @@ func TestNonterminalExtraChainLexModesDoNotInheritTerminalExtras(t *testing.T) {
 		ng.WordSymbolID,
 		map[int]bool{},
 		terminalPatternSymSet(ng),
-		nil, nil,
+		nil,
+		nil,
+		nil,
 	)
 
 	initialMode := lexModes[stateToMode[0]]
@@ -769,5 +771,81 @@ func TestNonterminalExtraChainRuntimeMatchesScalaStyleNestedBlockCommentsAtEOF(t
 	}
 	if got := safeSExpr(root, report.Language, 64); got != "(source_file (block_comment) (block_comment (block_comment (block_comment))))" {
 		t.Fatalf("sexpr = %s, want Scala-style nested block_comment EOF shape", got)
+	}
+}
+
+func TestExtraChainLexModesSkipMainStateLookaheadWidening(t *testing.T) {
+	const (
+		tokenCount     = 5
+		mainToken      = 1
+		chainToken     = 2
+		nextChainToken = 3
+		widenedToken   = 4
+	)
+
+	actionLookup := func(state, sym int) bool {
+		switch state {
+		case 0:
+			return sym == mainToken
+		case 2:
+			return sym == chainToken
+		case 3:
+			return sym == nextChainToken
+		default:
+			return false
+		}
+	}
+	followCalls := make(map[int]int)
+	missingCalls := make(map[int]int)
+
+	lexModes, stateToMode, _ := computeLexModes(
+		4,
+		tokenCount,
+		actionLookup,
+		nil,
+		nil,
+		2,
+		nil,
+		nil,
+		0,
+		map[int]bool{widenedToken: true},
+		map[int]bool{mainToken: true, chainToken: true, nextChainToken: true, widenedToken: true},
+		func(state int) []int {
+			followCalls[state]++
+			return []int{widenedToken}
+		},
+		func(state int) []int {
+			missingCalls[state]++
+			return []int{widenedToken}
+		},
+		nil,
+	)
+
+	if followCalls[2] != 0 || followCalls[3] != 0 {
+		t.Fatalf("follow widening called for extra-chain states: %v", followCalls)
+	}
+	if missingCalls[2] != 0 || missingCalls[3] != 0 {
+		t.Fatalf("missing-recovery widening called for extra-chain states: %v", missingCalls)
+	}
+
+	mainMode := lexModes[stateToMode[0]]
+	if !mainMode.validSymbols[widenedToken] {
+		t.Fatal("main state should still receive lookahead widening")
+	}
+
+	chainMode := lexModes[stateToMode[2]]
+	if !chainMode.validSymbols[chainToken] {
+		t.Fatal("extra-chain state should keep direct chain action token")
+	}
+	if chainMode.validSymbols[widenedToken] {
+		t.Fatal("extra-chain state should not receive parser-main-state lookahead widening")
+	}
+
+	nextChainMode := lexModes[stateToMode[3]]
+	if !nextChainMode.validSymbols[nextChainToken] {
+		t.Fatal("later extra-chain state should keep direct chain action token")
+	}
+	if nextChainMode.validSymbols[widenedToken] {
+		t.Fatal("later extra-chain state should not receive parser-main-state lookahead widening")
 	}
 }
