@@ -3,6 +3,8 @@ package grammargen
 import (
 	"context"
 	"testing"
+
+	"github.com/odvcencio/gotreesitter"
 )
 
 func TestBuildSeqCoalescesAdjacentStrings(t *testing.T) {
@@ -55,6 +57,29 @@ func TestBuildPatternMergesAdjacentCharClassRanges(t *testing.T) {
 	}
 	if transitions[0].lo != 'a' || transitions[0].hi != 'b' {
 		t.Fatalf("transition = [%q,%q], want ['a','b']", transitions[0].lo, transitions[0].hi)
+	}
+}
+
+func TestBuildPatternExpandsNegatedShorthandInsideCharClass(t *testing.T) {
+	n, err := buildCombinedNFA([]TerminalPattern{
+		{SymbolID: 1, Rule: Pat(`[\s\S]`), Priority: 0},
+	})
+	if err != nil {
+		t.Fatalf("buildCombinedNFA: %v", err)
+	}
+	dfa, err := subsetConstruction(context.Background(), n)
+	if err != nil {
+		t.Fatalf("subsetConstruction: %v", err)
+	}
+	lexStates := convertDFAToLexStates(dfa, false)
+
+	for _, input := range []string{"*", " ", "S", "\n", "x"} {
+		lexer := gotreesitter.NewLexer(lexStates, []byte(input))
+		tok := lexer.Next(0)
+		if tok.Symbol != 1 || tok.Text != input || tok.StartByte != 0 || tok.EndByte != uint32(len(input)) {
+			t.Fatalf("token for %q = sym %d text %q span %d..%d, want sym 1 full-span",
+				input, tok.Symbol, tok.Text, tok.StartByte, tok.EndByte)
+		}
 	}
 }
 

@@ -274,15 +274,30 @@ func (p *regexParser) parseCharClass() (*regexNode, error) {
 				p.advance() // consume 's'
 				ranges = append(ranges, runeRange{' ', ' '}, runeRange{'\t', '\t'}, runeRange{'\n', '\n'}, runeRange{'\r', '\r'}, runeRange{'\f', '\f'}, runeRange{'\v', '\v'})
 				continue
+			case 'S': // \S → non-whitespace chars
+				p.advance()
+				p.advance()
+				ranges = append(ranges, complementRanges([]runeRange{{' ', ' '}, {'\t', '\t'}, {'\n', '\n'}, {'\r', '\r'}, {'\f', '\f'}, {'\v', '\v'}})...)
+				continue
 			case 'd': // \d → digits
 				p.advance()
 				p.advance()
 				ranges = append(ranges, runeRange{'0', '9'})
 				continue
+			case 'D': // \D → non-digits
+				p.advance()
+				p.advance()
+				ranges = append(ranges, complementRanges([]runeRange{{'0', '9'}})...)
+				continue
 			case 'w': // \w → word chars
 				p.advance()
 				p.advance()
 				ranges = append(ranges, runeRange{'a', 'z'}, runeRange{'A', 'Z'}, runeRange{'0', '9'}, runeRange{'_', '_'})
+				continue
+			case 'W': // \W → non-word chars
+				p.advance()
+				p.advance()
+				ranges = append(ranges, complementRanges([]runeRange{{'a', 'z'}, {'A', 'Z'}, {'0', '9'}, {'_', '_'}})...)
 				continue
 			}
 		}
