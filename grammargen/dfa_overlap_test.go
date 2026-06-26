@@ -127,6 +127,40 @@ func TestBuildLexDFAPreservesStringOperatorBeforeLineComment(t *testing.T) {
 	}
 }
 
+func TestBuildLexDFADoesNotAddUnavailableTerminalExtraToMode(t *testing.T) {
+	catchAll, err := expandPatternRule(".+")
+	if err != nil {
+		t.Fatalf("expand catch-all: %v", err)
+	}
+	lexStates, modeOffsets, err := buildLexDFA(
+		context.Background(),
+		[]TerminalPattern{
+			{SymbolID: 1, Rule: Str("library"), Priority: 0},
+			{SymbolID: 2, Rule: catchAll, Priority: 0},
+		},
+		[]int{2},
+		nil,
+		[]lexModeSpec{{
+			validSymbols: map[int]bool{1: true},
+		}},
+	)
+	if err != nil {
+		t.Fatalf("buildLexDFA: %v", err)
+	}
+	if len(modeOffsets) != 1 {
+		t.Fatalf("len(modeOffsets) = %d, want 1", len(modeOffsets))
+	}
+
+	lexer := gotreesitter.NewLexer(lexStates, []byte("library;"))
+	tok := lexer.Next(uint32(modeOffsets[0]))
+	if got, want := tok.Symbol, gotreesitter.Symbol(1); got != want {
+		t.Fatalf("token symbol = %d, want %d", got, want)
+	}
+	if got, want := tok.EndByte, uint32(len("library")); got != want {
+		t.Fatalf("token end = %d, want %d", got, want)
+	}
+}
+
 func TestLineBreakOnlyRuleDetectsOptionalCRLF(t *testing.T) {
 	newline, err := expandPatternRule(`\r?\n`)
 	if err != nil {

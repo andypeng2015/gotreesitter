@@ -43,9 +43,13 @@ func buildLexDFA(ctx context.Context, patterns []TerminalPattern, extraSymbols [
 		modeOffsets[mi] = len(allStates)
 		// Filter patterns to only those valid in this mode.
 		var modePatterns []TerminalPattern
+		modeExtraSet := make(map[int]bool)
 		for _, p := range patterns {
-			if mode.validSymbols[p.SymbolID] || extraSet[p.SymbolID] {
+			if mode.validSymbols[p.SymbolID] {
 				modePatterns = append(modePatterns, p)
+				if extraSet[p.SymbolID] {
+					modeExtraSet[p.SymbolID] = true
+				}
 			}
 		}
 
@@ -102,7 +106,7 @@ func buildLexDFA(ctx context.Context, patterns []TerminalPattern, extraSymbols [
 		// reached via non-extras characters (meaning it's not exclusively
 		// reachable through extras chars), we change the accept to skip.
 		if mode.skipWhitespace && len(dfa) > 0 {
-			dfa = fixExtrasOverrideConflicts(dfa, modePatterns, extraSet, skipExtras)
+			dfa = fixExtrasOverrideConflicts(dfa, modePatterns, modeExtraSet, skipExtras)
 		}
 		protectStringOperatorsFromLineComments(dfa, modePatterns)
 
