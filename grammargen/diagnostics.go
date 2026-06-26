@@ -586,7 +586,44 @@ type GenerateReport struct {
 }
 
 // resolveConflictsWithDiag is like resolveConflicts but collects diagnostics.
-func resolveConflictsWithDiag(tables *LRTables, ng *NormalizedGrammar, prov *mergeProvenance) ([]ConflictDiag, error) {
+func resolveConflictsWithDiag(ctx context.Context, tables *LRTables, ng *NormalizedGrammar, prov *mergeProvenance) ([]ConflictDiag, conflictResolutionStats, error) {
+	return resolveConflictsWithDiagAndTrace(ctx, tables, ng, prov, phaseTrace{})
+}
+
+func resolveConflictsWithDiagAndTrace(ctx context.Context, tables *LRTables, ng *NormalizedGrammar, prov *mergeProvenance, trace phaseTrace) ([]ConflictDiag, conflictResolutionStats, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	var stats conflictResolutionStats
+
+	endAugment := trace.start("resolve_conflicts_augment", nil)
+	augmentStats, err := augmentAdjacentRepeatElementReduceLookaheadsWithTrace(ctx, tables, ng, trace)
+	stats.add(augmentStats)
+	if err != nil {
+		endAugment(stats.augmentTraceFields())
+		return nil, stats, err
+	}
+	endAugment(augmentStats.augmentTraceFields())
+
+	cache := getConflictResolutionCache(ng)
+	if cache != nil {
+		cache.resetStructuralStats()
+	}
+	endActions := trace.start("resolve_conflicts_actions", nil)
+	actionFields := func() map[string]any {
+		current := stats
+		current.add(cache.snapshotStructuralStats())
+		return current.actionTraceFields()
+	}
+	finishActions := func() {
+		stats.add(cache.snapshotStructuralStats())
+		endActions(stats.actionTraceFields())
+	}
+	if err := checkConflictResolutionContext(ctx, "before diagnostic action resolution"); err != nil {
+		finishActions()
+		return nil, stats, err
+	}
+
 	var diags []ConflictDiag
 
 	// Sort states and syms for deterministic conflict resolution order.
@@ -597,6 +634,11 @@ func resolveConflictsWithDiag(tables *LRTables, ng *NormalizedGrammar, prov *mer
 	sort.Ints(states)
 
 	for _, state := range states {
+		if err := checkConflictResolutionContext(ctx, "scanning diagnostic states"); err != nil {
+			finishActions()
+			return diags, stats, err
+		}
+		stats.StatesScanned++
 		actions := tables.ActionTable[state]
 		syms := make([]int, 0, len(actions))
 		for sym := range actions {
@@ -604,9 +646,23 @@ func resolveConflictsWithDiag(tables *LRTables, ng *NormalizedGrammar, prov *mer
 		}
 		sort.Ints(syms)
 		for _, sym := range syms {
+			stats.ActionEntriesScanned++
+			if stats.ActionEntriesScanned&1023 == 0 {
+				if trace.enabled {
+					trace.log("resolve_conflicts_actions", "progress", 0, actionFields())
+				}
+				if err := checkConflictResolutionContext(ctx, "scanning diagnostic action entries"); err != nil {
+					finishActions()
+					return diags, stats, err
+				}
+			}
 			acts := actions[sym]
 			if len(acts) <= 1 {
 				continue
+			}
+			stats.ConflictsResolved++
+			if len(acts) > stats.MaxActionsPerConflict {
+				stats.MaxActionsPerConflict = len(acts)
 			}
 
 			diag := ConflictDiag{
@@ -638,7 +694,8 @@ func resolveConflictsWithDiag(tables *LRTables, ng *NormalizedGrammar, prov *mer
 
 			resolved, err := resolveActionConflict(sym, acts, ng)
 			if err != nil {
-				return diags, fmt.Errorf("state %d, symbol %d: %w", state, sym, err)
+				finishActions()
+				return diags, stats, fmt.Errorf("state %d, symbol %d: %w", state, sym, err)
 			}
 			tables.ActionTable[state][sym] = resolved
 
@@ -677,7 +734,12 @@ func resolveConflictsWithDiag(tables *LRTables, ng *NormalizedGrammar, prov *mer
 			diags = append(diags, diag)
 		}
 	}
-	return diags, nil
+	if err := checkConflictResolutionContext(ctx, "after diagnostic action resolution"); err != nil {
+		finishActions()
+		return diags, stats, err
+	}
+	finishActions()
+	return diags, stats, nil
 }
 
 // Validate checks the grammar for common issues and returns warnings.
@@ -867,31 +929,55 @@ func GenerateWithReport(g *Grammar) (*GenerateReport, error) {
 // is cancelled, the LR builder aborts promptly and returns an error.
 func generateWithReportCtx(bgCtx context.Context, g *Grammar, opts reportBuildOptions) (*GenerateReport, error) {
 	report := &GenerateReport{}
+	trace := newPhaseTrace(g)
 
+	endPhase := trace.start("validate_normalize", trace.grammarCounters(g))
 	report.Warnings = Validate(g)
 
 	ng, err := Normalize(g)
 	if err != nil {
+		endPhase(map[string]any{"error": true, "warnings": len(report.Warnings)})
 		return nil, fmt.Errorf("normalize: %w", err)
 	}
+	normalizeCounters := trace.normalizedCounters(ng)
+	if trace.enabled {
+		normalizeCounters["warnings"] = len(report.Warnings)
+	}
+	endPhase(normalizeCounters)
 
 	needDiagnostics := opts.includeDiagnostics || g.EnableLRSplitting
+	endPhase = trace.start("build_lr", map[string]any{"diagnostics": needDiagnostics})
 	tables, lrCtx, err := buildLRTablesInternal(bgCtx, ng, needDiagnostics)
 	if err != nil {
+		endPhase(map[string]any{"error": true})
 		return nil, fmt.Errorf("build LR tables: %w", err)
 	}
+	endPhase(trace.lrCounters(tables))
 	prov := lrCtx.provenance
 
+	endPhase = trace.start("resolve_conflicts", map[string]any{"diagnostics": needDiagnostics})
 	if needDiagnostics {
-		diags, err := resolveConflictsWithDiag(tables, ng, prov)
+		diags, conflictStats, err := resolveConflictsWithDiagAndTrace(bgCtx, tables, ng, prov, trace)
 		if err != nil {
+			endFields := conflictStats.traceFields()
+			endFields["error"] = true
+			endPhase(endFields)
 			return nil, fmt.Errorf("resolve conflicts: %w", err)
 		}
 		if opts.includeDiagnostics {
 			report.Conflicts = diags
 		}
+		resolveFields := trace.lrCounters(tables)
+		if trace.enabled {
+			resolveFields["conflicts"] = len(diags)
+			for key, value := range conflictStats.traceFields() {
+				resolveFields[key] = value
+			}
+		}
+		endPhase(resolveFields)
 
 		var splitCandidates []splitCandidate
+		endPhase = trace.start("split_candidate_rebuild", map[string]any{"enabled": g.EnableLRSplitting})
 		if opts.includeDiagnostics || g.EnableLRSplitting {
 			splitCandidates = newSplitOracle(diags, prov, tables, ng).candidates()
 			if opts.includeDiagnostics {
@@ -936,7 +1022,7 @@ func generateWithReportCtx(bgCtx context.Context, g *Grammar, opts reportBuildOp
 					splitCount, sr.NewStatesAdded, splitErr)
 			}
 
-			diagsAfter, _ := resolveConflictsWithDiag(tables, ng, prov)
+			diagsAfter, _, _ := resolveConflictsWithDiag(bgCtx, tables, ng, prov)
 			sr.ConflictsAfter = len(diagsAfter)
 
 			glrAfter := 0
@@ -954,9 +1040,11 @@ func generateWithReportCtx(bgCtx context.Context, g *Grammar, opts reportBuildOp
 			if !keepSplit {
 				tables, err = buildLRTables(ng)
 				if err != nil {
+					endPhase(map[string]any{"enabled": g.EnableLRSplitting, "error": true})
 					return nil, fmt.Errorf("rebuild LR tables after split rollback: %w", err)
 				}
 				if _, err := resolveConflicts(bgCtx, tables, ng); err != nil {
+					endPhase(map[string]any{"enabled": g.EnableLRSplitting, "error": true})
 					return nil, fmt.Errorf("resolve conflicts after split rollback: %w", err)
 				}
 				sr.StatesSplit = 0
@@ -972,13 +1060,36 @@ func generateWithReportCtx(bgCtx context.Context, g *Grammar, opts reportBuildOp
 				report.SplitResult = sr
 			}
 		}
+		endFields := trace.lrCounters(tables)
+		if trace.enabled {
+			endFields["split_candidates"] = len(splitCandidates)
+			endFields["enabled"] = g.EnableLRSplitting
+		}
+		endPhase(endFields)
 	} else {
-		if _, err := resolveConflicts(bgCtx, tables, ng); err != nil {
+		conflictStats, err := resolveConflictsWithTrace(bgCtx, tables, ng, trace)
+		if err != nil {
+			endFields := conflictStats.traceFields()
+			endFields["error"] = true
+			endPhase(endFields)
 			return nil, fmt.Errorf("resolve conflicts: %w", err)
 		}
+		endFields := trace.lrCounters(tables)
+		if trace.enabled {
+			for key, value := range conflictStats.traceFields() {
+				endFields[key] = value
+			}
+		}
+		endPhase(endFields)
 	}
 
+	endPhase = trace.start("add_nonterminal_extra_chains", trace.lrCounters(tables))
 	addNonterminalExtraChains(tables, ng, lrCtx)
+	endFields := trace.lrCounters(tables)
+	if trace.enabled {
+		endFields["extra_chain_start"] = tables.ExtraChainStateStart
+	}
+	endPhase(endFields)
 
 	lrCtx.releaseScratch()
 	prov = nil
@@ -1006,11 +1117,12 @@ func generateWithReportCtx(bgCtx context.Context, g *Grammar, opts reportBuildOp
 	}
 	stringPrefixExtensions := computeStringPrefixExtensions(ng.Terminals)
 	termPatSyms := terminalPatternSymSet(ng)
+	skipExtras := computeSkipExtras(ng)
 
 	var lexModes []lexModeSpec
 	var stateToMode []int
 	var afterWSModes []afterWSModeEntry
-	skipExtras := computeSkipExtras(ng)
+	endPhase = trace.start("compute_lex_modes", map[string]any{"states": tables.StateCount, "tokens": tokenCount})
 	if useForcedBroadLexFallback() {
 		// Escape hatch only. The broad DFA is much faster to build for huge
 		// grammars, but it is not parser-correct for languages that rely on
@@ -1051,26 +1163,40 @@ func generateWithReportCtx(bgCtx context.Context, g *Grammar, opts reportBuildOp
 			suppressAfterWhitespaceSymbols(g, ng),
 		)
 	}
+	endPhase(map[string]any{
+		"lex_modes":       len(lexModes),
+		"state_modes":     len(stateToMode),
+		"after_ws_modes":  len(afterWSModes),
+		"forced_fallback": useForcedBroadLexFallback(),
+	})
 
+	endPhase = trace.start("build_lex_dfa", map[string]any{"lex_modes": len(lexModes), "terminals": len(ng.Terminals), "extras": len(ng.ExtraSymbols)})
 	lexStates, lexModeOffsets, err := buildLexDFA(bgCtx, ng.Terminals, ng.ExtraSymbols, skipExtras, lexModes)
 	if err != nil {
+		endPhase(map[string]any{"error": true})
 		return nil, fmt.Errorf("build lex DFA: %w", err)
 	}
+	endPhase(map[string]any{"lex_states": len(lexStates), "lex_modes": len(lexModeOffsets)})
 
 	var keywordLexStates []gotreesitter.LexState
+	endPhase = trace.start("build_keyword_dfa", map[string]any{"keywords": len(ng.KeywordEntries)})
 	if len(ng.KeywordEntries) > 0 {
 		kls, _, err := buildLexDFA(bgCtx, ng.KeywordEntries, nil, nil, []lexModeSpec{{
 			validSymbols:   allSymbolsSet(ng.KeywordEntries),
 			skipWhitespace: false,
 		}})
 		if err != nil {
+			endPhase(map[string]any{"error": true})
 			return nil, fmt.Errorf("build keyword DFA: %w", err)
 		}
 		keywordLexStates = kls
 	}
+	endPhase(map[string]any{"keyword_lex_states": len(keywordLexStates)})
 
+	endPhase = trace.start("assemble", map[string]any{"states": tables.StateCount, "lex_states": len(lexStates)})
 	lang, err := assemble(ng, tables, lexStates, stateToMode, lexModeOffsets, afterWSModes)
 	if err != nil {
+		endPhase(map[string]any{"error": true})
 		return nil, fmt.Errorf("assemble: %w", err)
 	}
 	lang.Name = g.Name
@@ -1080,6 +1206,13 @@ func generateWithReportCtx(bgCtx context.Context, g *Grammar, opts reportBuildOp
 		lang.KeywordLexStates = keywordLexStates
 		lang.KeywordCaptureToken = gotreesitter.Symbol(ng.WordSymbolID)
 	}
+	endPhase(map[string]any{
+		"symbols":       lang.SymbolCount,
+		"states":        lang.StateCount,
+		"tokens":        lang.TokenCount,
+		"parse_actions": len(lang.ParseActions),
+		"lex_states":    len(lang.LexStates),
+	})
 
 	report.Language = lang
 	report.SymbolCount = int(lang.SymbolCount)
@@ -1090,11 +1223,18 @@ func generateWithReportCtx(bgCtx context.Context, g *Grammar, opts reportBuildOp
 		return report, nil
 	}
 
+	endPhase = trace.start("encode_blob", map[string]any{
+		"symbols": lang.SymbolCount,
+		"states":  lang.StateCount,
+		"tokens":  lang.TokenCount,
+	})
 	blob, err := encodeLanguageBlob(lang)
 	if err != nil {
+		endPhase(map[string]any{"error": true})
 		return nil, fmt.Errorf("encode: %w", err)
 	}
 	report.Blob = blob
+	endPhase(map[string]any{"blob_bytes": len(blob)})
 
 	return report, nil
 }
