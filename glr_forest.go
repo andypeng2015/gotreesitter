@@ -1217,7 +1217,7 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte, captureExternalChe
 			node.processedDirty = node.dirty
 
 			nodeActions := p.actionsForParseState(node.state, tok.Symbol, lang.ParseActions)
-			nodeActions = p.forestResolveConflict(nodeActions)
+			nodeActions = p.forestResolveConflict(node.state, tok, nodeActions)
 			for _, act := range nodeActions {
 				switch act.Type {
 				case ParseActionReduce:

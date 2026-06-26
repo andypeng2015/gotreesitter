@@ -3276,118 +3276,8 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				}
 				var chosen ParseAction
 				choice := false
-				if p.language != nil && p.language.Name == "gomod" {
-					if next, ok := gomodRepetitionShiftConflictChoice(p.language, currentState, actions); ok {
-						chosen, choice = next, true
-					}
-				}
-				if !choice && reuse == nil && p.language != nil {
-					switch p.language.Name {
-					case "java":
-						if next, ok := p.javaSwitchArrowConflictChoice(s, tok, actions); ok {
-							chosen, choice = next, true
-						} else if next, ok := javaRepetitionShiftConflictChoiceForDispatch(p.language, source, tok, currentState, actions); ok {
-							chosen, choice = next, true
-						}
-					case "c_sharp":
-						if next, ok := csharpRepetitionShiftConflictChoice(p.language, tok, actions); ok {
-							chosen, choice = next, true
-						}
-					case "go":
-						if next, ok := goRepetitionShiftConflictChoice(maxStacksSeen, currentState, tok, actions); ok {
-							chosen, choice = next, true
-						}
-					case "c":
-						if next, ok := cRepetitionShiftConflictChoice(p.language, actions); ok {
-							chosen, choice = next, true
-						}
-					case "rust":
-						if !p.noTreeBenchmarkOnly {
-							if next, ok := rustRepetitionShiftConflictChoice(p.language, tok, currentState, actions); ok {
-								chosen, choice = next, true
-							}
-						}
-					case "typescript":
-						if next, ok := typescriptRepetitionShiftConflictChoiceForDispatch(p.language, tok, currentState, actions); ok {
-							chosen, choice = next, true
-						}
-					case "tsx":
-						if next, ok := tsxRepetitionReduceConflictChoice(p.language, tok, currentState, actions); ok {
-							chosen, choice = next, true
-						}
-					case "javascript":
-						if next, ok := javascriptRepetitionShiftConflictChoiceForDispatch(p.language, tok, currentState, actions); ok {
-							chosen, choice = next, true
-						}
-					case "python":
-						if next, ok := pythonRepetitionShiftConflictChoice(p.language, tok, currentState, actions); ok {
-							chosen, choice = next, true
-						}
-					case "r":
-						if next, ok := rRepetitionShiftConflictChoice(p.language, currentState, actions); ok {
-							chosen, choice = next, true
-						}
-					case "php":
-						if next, ok := phpRepetitionShiftConflictChoice(p.language, tok, currentState, actions); ok {
-							chosen, choice = next, true
-						}
-					case "perl":
-						if next, ok := perlRepetitionShiftConflictChoice(p.language, currentState, actions); ok {
-							chosen, choice = next, true
-						}
-					case "sql":
-						if next, ok := sqlRepetitionShiftConflictChoice(p.language, tok, currentState, actions); ok {
-							chosen, choice = next, true
-						}
-					case "dart":
-						if next, ok := dartRepetitionShiftConflictChoice(p.language, currentState, actions); ok {
-							chosen, choice = next, true
-						}
-					case "hcl":
-						if next, ok := hclRepetitionShiftConflictChoice(p.language, currentState, actions); ok {
-							chosen, choice = next, true
-						}
-					case "haskell":
-						if next, ok := haskellRepeatBoundaryConflictChoice(p.language, currentState, actions); ok {
-							chosen, choice = next, true
-						}
-					case "make":
-						if next, ok := makeRepetitionShiftConflictChoice(p.language, currentState, actions); ok {
-							chosen, choice = next, true
-						}
-					case "swift":
-						if next, ok := swiftBraceTypeExpressionConflictChoice(p.language, tok, currentState, actions); ok {
-							chosen, choice = next, true
-						}
-					case "d":
-						if next, ok := dRepetitionShiftConflictChoice(p.language, currentState, actions); ok {
-							chosen, choice = next, true
-						}
-					case "clojure":
-						if next, ok := clojureRepetitionShiftConflictChoice(p.language, currentState, actions); ok {
-							chosen, choice = next, true
-						}
-					case "awk":
-						if next, ok := awkRepetitionShiftConflictChoice(p.language, currentState, actions); ok {
-							chosen, choice = next, true
-						}
-					case "scheme":
-						if next, ok := schemeRepetitionShiftConflictChoice(p.language, tok, currentState, actions); ok {
-							chosen, choice = next, true
-						}
-					case "dot":
-						if next, ok := dotRepetitionShiftConflictChoice(p.language, tok, currentState, actions); ok {
-							chosen, choice = next, true
-						}
-					case "kotlin":
-						if next, ok := kotlinObjectLiteralConflictChoice(p.language, actions); ok {
-							chosen, choice = next, true
-						}
-					case "erlang":
-						if next, ok := erlangMacroCallExprConflictChoice(p.language, actions); ok {
-							chosen, choice = next, true
-						}
-					}
+				if next, ok := p.deterministicConflictChoiceForDispatch(source, s, tok, currentState, actions, maxStacksSeen, reuse); ok {
+					chosen, choice = next, true
 				}
 				if !choice && deterministicExternalConflicts && p.language != nil && p.language.Name == "yaml" && p.language.ExternalScanner != nil {
 					chosen, choice = deterministicExternalConflictAction(actions), true
@@ -4192,8 +4082,17 @@ func (p *Parser) actionsForParseState(state StateID, symbol Symbol, parseActions
 // we collapse the action set to the single C-preferred action so the forest
 // builds the matching shape. When no scoped rule applies, the full action set is
 // returned unchanged and the forest's normal multi-action handling proceeds.
-func (p *Parser) forestResolveConflict(actions []ParseAction) []ParseAction {
+func (p *Parser) forestResolveConflict(state StateID, tok Token, actions []ParseAction) []ParseAction {
 	if p == nil || p.language == nil || len(actions) < 2 {
+		return actions
+	}
+	if chosen, ok := conflictPolicyChoice(p.language, tok, state, actions); ok {
+		return p.forestSingletonActions(chosen)
+	}
+	if generatedRepeatBoundaryConflict(p.language, actions) {
+		return actions
+	}
+	if p.language.GeneratedByGrammargen {
 		return actions
 	}
 	switch p.language.Name {
@@ -4202,7 +4101,7 @@ func (p *Parser) forestResolveConflict(actions []ParseAction) []ParseAction {
 			return p.forestSingletonActions(chosen)
 		}
 	case "dot":
-		if chosen, ok := dotRepetitionShiftConflictChoice(p.language, Token{}, 4, actions); ok {
+		if chosen, ok := dotRepetitionShiftConflictChoice(p.language, tok, state, actions); ok {
 			return p.forestSingletonActions(chosen)
 		}
 	}

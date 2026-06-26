@@ -8,7 +8,11 @@ import (
 
 func TestConflictPolicyChoiceRepetitionShift(t *testing.T) {
 	lang := &Language{
-		ConflictPolicies: []ConflictPolicy{{State: 42, Lookahead: 7, Kind: ConflictPolicyRepetitionShift, ReduceSymbols: []Symbol{3}}},
+		Name:                  "synthetic_policy_test",
+		GeneratedByGrammargen: true,
+		ConflictPolicies:      []ConflictPolicy{{State: 42, Lookahead: 7, Kind: ConflictPolicyRepetitionShift, ReduceSymbols: []Symbol{3}}},
+		SymbolNames:           []string{"end", "token", "other", "items_repeat1"},
+		SymbolMetadata:        []SymbolMetadata{{Name: "end"}, {Name: "token"}, {Name: "other"}, {Name: "items_repeat1"}},
 	}
 	actions := []ParseAction{
 		{Type: ParseActionReduce, Symbol: 3, ChildCount: 2},
@@ -22,11 +26,22 @@ func TestConflictPolicyChoiceRepetitionShift(t *testing.T) {
 	if chosen.Type != ParseActionShift || chosen.State != 99 || !chosen.Repetition {
 		t.Fatalf("conflictPolicyChoice picked %+v, want repetition shift", chosen)
 	}
+
+	parser := &Parser{language: lang}
+	chosen, ok = parser.deterministicConflictChoiceForDispatch(nil, nil, Token{Symbol: 7}, 42, actions, 1, nil)
+	if !ok {
+		t.Fatal("deterministicConflictChoiceForDispatch = false, want generated policy choice")
+	}
+	if chosen.Type != ParseActionShift || chosen.State != 99 || !chosen.Repetition {
+		t.Fatalf("deterministicConflictChoiceForDispatch picked %+v, want repetition shift", chosen)
+	}
 }
 
 func TestConflictPolicyChoiceShift(t *testing.T) {
 	lang := &Language{
-		ConflictPolicies: []ConflictPolicy{{State: 42, Lookahead: 7, Kind: ConflictPolicyShift, ReduceSymbols: []Symbol{3}}},
+		Name:                  "synthetic_policy_test",
+		GeneratedByGrammargen: true,
+		ConflictPolicies:      []ConflictPolicy{{State: 42, Lookahead: 7, Kind: ConflictPolicyShift, ReduceSymbols: []Symbol{3}}},
 	}
 	actions := []ParseAction{
 		{Type: ParseActionReduce, Symbol: 3, ChildCount: 1},
@@ -61,8 +76,14 @@ func TestConflictPolicyChoiceShiftRejectsExtraAndRepetitionShifts(t *testing.T) 
 		name  string
 		shift ParseAction
 	}{
-		{name: "extra", shift: ParseAction{Type: ParseActionShift, State: 99, Extra: true}},
-		{name: "repetition", shift: ParseAction{Type: ParseActionShift, State: 99, Repetition: true}},
+		{
+			name:  "extra",
+			shift: ParseAction{Type: ParseActionShift, State: 99, Extra: true},
+		},
+		{
+			name:  "repetition",
+			shift: ParseAction{Type: ParseActionShift, State: 99, Repetition: true},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			lang := &Language{
@@ -97,11 +118,73 @@ func TestConflictPolicyChoiceRejectsNonmatchingStateLookahead(t *testing.T) {
 	}
 }
 
+func TestConflictPolicyChoiceAllowsPolicyNamedGeneratedRepeatBoundary(t *testing.T) {
+	lang := &Language{
+		Name:                  "synthetic_policy_test",
+		GeneratedByGrammargen: true,
+		ConflictPolicies:      []ConflictPolicy{{State: 42, Lookahead: 7, Kind: ConflictPolicyRepetitionShift, ReduceSymbols: []Symbol{3}}},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "end"},
+			{Name: "token"},
+			{Name: "other"},
+			{Name: "items_repeat1", GeneratedRepeatAux: true},
+		},
+	}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 3, ChildCount: 2},
+		{Type: ParseActionShift, State: 99, Repetition: true},
+	}
+
+	chosen, ok := conflictPolicyChoice(lang, Token{Symbol: 7}, 42, actions)
+	if !ok {
+		t.Fatal("conflictPolicyChoice = false, want generated-repeat policy choice")
+	}
+	if chosen.Type != ParseActionShift || chosen.State != 99 || !chosen.Repetition {
+		t.Fatalf("conflictPolicyChoice picked %+v, want repetition shift", chosen)
+	}
+
+	parser := &Parser{language: lang}
+	chosen, ok = parser.deterministicConflictChoiceForDispatch(nil, nil, Token{Symbol: 7}, 42, actions, 1, nil)
+	if !ok {
+		t.Fatal("deterministicConflictChoiceForDispatch = false, want generated policy choice")
+	}
+	if chosen.Type != ParseActionShift || chosen.State != 99 || !chosen.Repetition {
+		t.Fatalf("deterministicConflictChoiceForDispatch picked %+v, want repetition shift", chosen)
+	}
+}
+
+func TestConflictPolicyChoiceRejectsGeneratedRepeatBoundaryPolicyMiss(t *testing.T) {
+	lang := &Language{
+		Name:                  "synthetic_policy_test",
+		GeneratedByGrammargen: true,
+		ConflictPolicies:      []ConflictPolicy{{State: 42, Lookahead: 8, Kind: ConflictPolicyRepetitionShift, ReduceSymbols: []Symbol{3}}},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "end"},
+			{Name: "token"},
+			{Name: "other"},
+			{Name: "items_repeat1", GeneratedRepeatAux: true},
+		},
+	}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 3, ChildCount: 2},
+		{Type: ParseActionShift, State: 99, Repetition: true},
+	}
+
+	if _, ok := conflictPolicyChoice(lang, Token{Symbol: 7}, 42, actions); ok {
+		t.Fatal("conflictPolicyChoice matched wrong lookahead")
+	}
+	parser := &Parser{language: lang}
+	if chosen, ok := parser.deterministicConflictChoiceForDispatch(nil, nil, Token{Symbol: 7}, 42, actions, 1, nil); ok {
+		t.Fatalf("deterministicConflictChoiceForDispatch picked %+v, want generated-repeat-boundary veto after policy miss", chosen)
+	}
+}
+
 func TestConflictPolicyChoiceAgreesWithLegacyRepetitionHelperShape(t *testing.T) {
 	lang := &Language{
-		Name:             "synthetic_policy_test",
-		SymbolNames:      []string{"end", "namespace", "\\", "name", "use", "new", "program_repeat1"},
-		ConflictPolicies: []ConflictPolicy{{State: 2, Lookahead: 1, Kind: ConflictPolicyRepetitionShift, ReduceSymbols: []Symbol{6}}},
+		Name:                  "synthetic_policy_test",
+		GeneratedByGrammargen: true,
+		SymbolNames:           []string{"end", "namespace", "\\", "name", "use", "new", "program_repeat1"},
+		ConflictPolicies:      []ConflictPolicy{{State: 2, Lookahead: 1, Kind: ConflictPolicyRepetitionShift, ReduceSymbols: []Symbol{6}}},
 	}
 	actions := []ParseAction{
 		{Type: ParseActionReduce, Symbol: 6, ChildCount: 2},
@@ -115,6 +198,201 @@ func TestConflictPolicyChoiceAgreesWithLegacyRepetitionHelperShape(t *testing.T)
 	}
 	if legacy != policy {
 		t.Fatalf("policy picked %+v, legacy picked %+v", policy, legacy)
+	}
+
+	parser := &Parser{language: lang}
+	chosen, ok := parser.deterministicConflictChoiceForDispatch(nil, nil, Token{Symbol: 1}, 2, actions, 1, nil)
+	if !ok {
+		t.Fatal("deterministicConflictChoiceForDispatch = false, want generated policy choice")
+	}
+	if chosen != policy {
+		t.Fatalf("deterministicConflictChoiceForDispatch picked %+v, want policy %+v", chosen, policy)
+	}
+}
+
+func TestGeneratedConflictPolicyPrecedesLanguageSwitch(t *testing.T) {
+	for _, name := range []string{"java", "dart", "typescript"} {
+		t.Run(name, func(t *testing.T) {
+			lang := &Language{
+				Name:                  name,
+				GeneratedByGrammargen: true,
+				SymbolNames:           []string{"end", "identifier", "statement_list"},
+				SymbolMetadata:        []SymbolMetadata{{Name: "end"}, {Name: "identifier"}, {Name: "statement_list"}},
+				ConflictPolicies:      []ConflictPolicy{{State: 123, Lookahead: 1, Kind: ConflictPolicyRepetitionShift, ReduceSymbols: []Symbol{2}}},
+			}
+			actions := []ParseAction{
+				{Type: ParseActionReduce, Symbol: 2, ChildCount: 2},
+				{Type: ParseActionShift, State: 456, Repetition: true},
+			}
+
+			if name == "typescript" {
+				if _, ok := typescriptRepetitionShiftConflictChoiceForDispatch(lang, Token{Symbol: 1}, 123, actions); ok {
+					t.Fatal("typescript legacy shortcut unexpectedly matched synthetic policy conflict")
+				}
+			}
+
+			parser := &Parser{language: lang}
+			chosen, ok := parser.deterministicConflictChoiceForDispatch(nil, nil, Token{Symbol: 1}, 123, actions, 1, nil)
+			if !ok {
+				t.Fatal("deterministicConflictChoiceForDispatch = false, want generated policy before language switch")
+			}
+			if chosen.Type != ParseActionShift || chosen.State != 456 || !chosen.Repetition {
+				t.Fatalf("deterministicConflictChoiceForDispatch picked %+v, want policy repetition shift", chosen)
+			}
+		})
+	}
+}
+
+func TestEmbeddedConflictPolicyPrecedesLanguageSwitch(t *testing.T) {
+	lang := &Language{
+		Name:             "php",
+		SymbolNames:      []string{"end", "namespace", "\\", "name", "use", "new", "program_repeat1", "list"},
+		SymbolMetadata:   []SymbolMetadata{{Name: "end"}, {Name: "namespace"}, {Name: "\\"}, {Name: "name"}, {Name: "use"}, {Name: "new"}, {Name: "program_repeat1"}, {Name: "list"}},
+		ConflictPolicies: []ConflictPolicy{{State: 123, Lookahead: 1, Kind: ConflictPolicyRepetitionShift, ReduceSymbols: []Symbol{7}}},
+	}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 7, ChildCount: 2},
+		{Type: ParseActionShift, State: 456, Repetition: true},
+	}
+	if _, ok := phpRepetitionShiftConflictChoice(lang, Token{Symbol: 1}, 123, actions); ok {
+		t.Fatal("php legacy shortcut unexpectedly matched synthetic embedded policy conflict")
+	}
+
+	parser := &Parser{language: lang}
+	chosen, ok := parser.deterministicConflictChoiceForDispatch(nil, nil, Token{Symbol: 1}, 123, actions, 1, nil)
+	if !ok {
+		t.Fatal("deterministicConflictChoiceForDispatch = false, want embedded policy choice")
+	}
+	if chosen.Type != ParseActionShift || chosen.State != 456 || !chosen.Repetition {
+		t.Fatalf("deterministicConflictChoiceForDispatch picked %+v, want policy repetition shift", chosen)
+	}
+}
+
+func TestGeneratedConflictPolicyMissDoesNotUseLanguageSwitch(t *testing.T) {
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 6, ChildCount: 2},
+		{Type: ParseActionShift, State: 1846, Repetition: true},
+	}
+	for _, tc := range []struct {
+		name     string
+		policies []ConflictPolicy
+	}{
+		{name: "no policy"},
+		{
+			name:     "nonmatching policy",
+			policies: []ConflictPolicy{{State: 99, Lookahead: 1, Kind: ConflictPolicyRepetitionShift, ReduceSymbols: []Symbol{6}}},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			lang := &Language{
+				Name:                  "php",
+				GeneratedByGrammargen: true,
+				SymbolNames:           []string{"end", "namespace", "\\", "name", "use", "new", "program_repeat1"},
+				SymbolMetadata: []SymbolMetadata{
+					{Name: "end"},
+					{Name: "namespace"},
+					{Name: "\\"},
+					{Name: "name"},
+					{Name: "use"},
+					{Name: "new"},
+					{Name: "program_repeat1"},
+				},
+				ConflictPolicies: tc.policies,
+			}
+			if _, ok := phpRepetitionShiftConflictChoice(lang, Token{Symbol: 1}, 2, actions); !ok {
+				t.Fatal("php legacy shortcut did not match synthetic fallback canary")
+			}
+
+			parser := &Parser{language: lang}
+			if chosen, ok := parser.deterministicConflictChoiceForDispatch(nil, nil, Token{Symbol: 1}, 2, actions, 1, nil); ok {
+				t.Fatalf("deterministicConflictChoiceForDispatch picked %+v, want no generated fallback", chosen)
+			}
+		})
+	}
+}
+
+func TestForestResolveConflictUsesGeneratedPolicy(t *testing.T) {
+	lang := &Language{
+		Name:                  "synthetic_policy_test",
+		GeneratedByGrammargen: true,
+		ConflictPolicies:      []ConflictPolicy{{State: 42, Lookahead: 7, Kind: ConflictPolicyRepetitionShift, ReduceSymbols: []Symbol{3}}},
+	}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 3, ChildCount: 2},
+		{Type: ParseActionShift, State: 99, Repetition: true},
+	}
+
+	got := NewParser(lang).forestResolveConflict(42, Token{Symbol: 7}, actions)
+	if len(got) != 1 {
+		t.Fatalf("forestResolveConflict returned %d actions, want singleton", len(got))
+	}
+	if got[0].Type != ParseActionShift || got[0].State != 99 || !got[0].Repetition {
+		t.Fatalf("forestResolveConflict picked %+v, want generated policy repetition shift", got[0])
+	}
+}
+
+func TestForestResolveConflictGeneratedPolicyMissVetoesLegacy(t *testing.T) {
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 6, ChildCount: 2},
+		{Type: ParseActionShift, State: 1846, Repetition: true},
+	}
+	lang := &Language{
+		Name:                  "php",
+		GeneratedByGrammargen: true,
+		SymbolNames:           []string{"end", "namespace", "\\", "name", "use", "new", "program_repeat1"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "end"},
+			{Name: "namespace"},
+			{Name: "\\"},
+			{Name: "name"},
+			{Name: "use"},
+			{Name: "new"},
+			{Name: "program_repeat1"},
+		},
+		ConflictPolicies: []ConflictPolicy{{State: 99, Lookahead: 1, Kind: ConflictPolicyRepetitionShift, ReduceSymbols: []Symbol{6}}},
+	}
+	if _, ok := phpRepetitionShiftConflictChoice(lang, Token{Symbol: 1}, 2, actions); !ok {
+		t.Fatal("php legacy shortcut did not match synthetic fallback canary")
+	}
+
+	got := NewParser(lang).forestResolveConflict(2, Token{Symbol: 1}, actions)
+	if len(got) != len(actions) {
+		t.Fatalf("forestResolveConflict returned %d actions, want original %d", len(got), len(actions))
+	}
+	for i := range actions {
+		if got[i] != actions[i] {
+			t.Fatalf("forestResolveConflict[%d] = %+v, want original %+v", i, got[i], actions[i])
+		}
+	}
+}
+
+func TestForestResolveConflictDotLegacyUsesStateAndLookahead(t *testing.T) {
+	lang := &Language{
+		Name:           "dot",
+		SymbolNames:    []string{"end", "identifier", "other", "stmt_list_repeat1"},
+		SymbolMetadata: []SymbolMetadata{{Name: "end"}, {Name: "identifier"}, {Name: "other"}, {Name: "stmt_list_repeat1"}},
+	}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 3, ChildCount: 2},
+		{Type: ParseActionShift, State: 99, Repetition: true},
+	}
+
+	parser := NewParser(lang)
+	got := parser.forestResolveConflict(4, Token{Symbol: 1}, actions)
+	if len(got) != 1 {
+		t.Fatalf("forestResolveConflict returned %d actions, want dot singleton", len(got))
+	}
+	if got[0].Type != ParseActionShift || got[0].State != 99 || !got[0].Repetition {
+		t.Fatalf("forestResolveConflict picked %+v, want dot repetition shift", got[0])
+	}
+
+	got = parser.forestResolveConflict(5, Token{Symbol: 1}, actions)
+	if len(got) != len(actions) {
+		t.Fatalf("forestResolveConflict with wrong state returned %d actions, want original %d", len(got), len(actions))
+	}
+	got = parser.forestResolveConflict(4, Token{Symbol: 2}, actions)
+	if len(got) != len(actions) {
+		t.Fatalf("forestResolveConflict with wrong lookahead returned %d actions, want original %d", len(got), len(actions))
 	}
 }
 
