@@ -86,6 +86,48 @@ func TestJSONGenerateLanguage(t *testing.T) {
 	}
 }
 
+func TestGenerateLanguageCertifiesCRecoveryCostCompetitionByGenericSurface(t *testing.T) {
+	tests := []struct {
+		name           string
+		grammar        *Grammar
+		wantDefaultOn  bool
+		wantParserGate bool
+	}{
+		{name: "json", grammar: JSONGrammar(), wantDefaultOn: true, wantParserGate: true},
+		{name: "external", grammar: ExtScannerGrammar(), wantDefaultOn: false, wantParserGate: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lang, err := GenerateLanguage(tt.grammar)
+			if err != nil {
+				t.Fatalf("GenerateLanguage failed: %v", err)
+			}
+			if !lang.GeneratedByGrammargen {
+				t.Fatal("GeneratedByGrammargen = false")
+			}
+			if !lang.CRecoveryCostCompetitionCapable {
+				t.Fatal("CRecoveryCostCompetitionCapable = false")
+			}
+			if got := lang.CRecoveryCostCompetitionEnabledByDefault; got != tt.wantDefaultOn {
+				t.Fatalf("CRecoveryCostCompetitionEnabledByDefault = %v, want %v", got, tt.wantDefaultOn)
+			}
+			if got := parserCRecoveryEnabledForTest(gotreesitter.NewParser(lang)); got != tt.wantParserGate {
+				t.Fatalf("parser C recovery gate = %v, want %v", got, tt.wantParserGate)
+			}
+			if len(lang.ExternalSymbols) > 0 {
+				if len(lang.ExternalLexStates) == 0 {
+					t.Fatal("external generated language was certified without ExternalLexStates")
+				}
+				for state := 0; state < int(lang.StateCount) && state < len(lang.LexModes); state++ {
+					if int(lang.LexModes[state].ExternalLexState) >= len(lang.ExternalLexStates) {
+						t.Fatalf("LexModes[%d].ExternalLexState = %d beyond %d rows", state, lang.LexModes[state].ExternalLexState, len(lang.ExternalLexStates))
+					}
+				}
+			}
+		})
+	}
+}
+
 func parserCRecoveryEnabledForTest(parser *gotreesitter.Parser) bool {
 	if parser == nil {
 		return false
@@ -930,6 +972,59 @@ func TestExtExternalLexStates(t *testing.T) {
 			t.Logf("  state %d → ExternalLexState %d", i, lm.ExternalLexState)
 		}
 	}
+}
+
+func TestExternalExtraLexStateValidInAllParserStates(t *testing.T) {
+	g := NewGrammar("external_extra_lex_state")
+	g.SetExternals(Sym("_comment"))
+	g.Define("source_file", Seq(Str("a"), Str("b")))
+	g.SetExtras(Sym("_comment"))
+
+	lang, err := GenerateLanguage(g)
+	if err != nil {
+		t.Fatalf("GenerateLanguage failed: %v", err)
+	}
+	if len(lang.ExternalSymbols) != 1 {
+		t.Fatalf("len(ExternalSymbols) = %d, want 1", len(lang.ExternalSymbols))
+	}
+	for state, mode := range lang.LexModes {
+		extState := int(mode.ExternalLexState)
+		if extState < 0 || extState >= len(lang.ExternalLexStates) {
+			t.Fatalf("state %d ExternalLexState=%d outside %d rows", state, extState, len(lang.ExternalLexStates))
+		}
+		row := lang.ExternalLexStates[extState]
+		if len(row) != 1 || !row[0] {
+			t.Fatalf("state %d external row %d = %v, want _comment valid", state, extState, row)
+		}
+	}
+}
+
+func TestNormalizeKeepsExternalSymbolExtra(t *testing.T) {
+	g := NewGrammar("external_symbol_extra")
+	g.SetExternals(Sym("_comment"))
+	g.Define("source_file", Seq(Str("a"), Str("b")))
+	g.SetExtras(Sym("_comment"))
+
+	ng, err := Normalize(g)
+	if err != nil {
+		t.Fatalf("Normalize failed: %v", err)
+	}
+	if len(ng.ExternalSymbols) != 1 {
+		t.Fatalf("len(ExternalSymbols) = %d, want 1", len(ng.ExternalSymbols))
+	}
+	external := ng.ExternalSymbols[0]
+	if external < 0 || external >= len(ng.Symbols) {
+		t.Fatalf("external symbol %d outside symbols", external)
+	}
+	if got := ng.Symbols[external]; got.Name != "_comment" || got.Kind != SymbolExternal {
+		t.Fatalf("external symbol = %+v, want external _comment", got)
+	}
+	for _, extra := range ng.ExtraSymbols {
+		if extra == external {
+			return
+		}
+	}
+	t.Fatalf("external symbol %d (%s) missing from ExtraSymbols %v", external, ng.Symbols[external].Name, ng.ExtraSymbols)
 }
 
 func TestExtParse(t *testing.T) {

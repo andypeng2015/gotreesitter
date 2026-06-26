@@ -195,7 +195,13 @@ func assemble(
 	// Supertype map.
 	buildSupertypeMap(lang, ng)
 
+	certifyGeneratedCRecoveryCostCompetition(lang)
+
 	return lang, nil
+}
+
+func certifyGeneratedCRecoveryCostCompetition(lang *gotreesitter.Language) {
+	gotreesitter.CertifyCRecoveryCostCompetition(lang)
 }
 
 func buildHiddenChoicePassthroughSymbols(ng *NormalizedGrammar, symbolCount int) []bool {
@@ -819,14 +825,12 @@ func buildExternalLexStates(lang *gotreesitter.Language, tables *LRTables, ng *N
 	// entries for them because their shift-extra actions are added later
 	// in the assembly step, so we must mark them explicitly here.
 	extraExtSet := make(map[int]bool, len(ng.ExtraSymbols))
-	tokenCount := ng.TokenCount()
 	for _, extraSym := range ng.ExtraSymbols {
-		if extraSym < tokenCount {
-			if _, isExt := extSymSet[extraSym]; isExt {
-				extraExtSet[extSymSet[extraSym]] = true
-			}
+		if extIdx, isExt := extSymSet[extraSym]; isExt {
+			extraExtSet[extIdx] = true
 		}
 	}
+	tokenCount := ng.TokenCount()
 
 	// Build counterpart map: external symbol ID -> non-external terminals
 	// with the same surface token name. Used to detect LALR merging artifacts
