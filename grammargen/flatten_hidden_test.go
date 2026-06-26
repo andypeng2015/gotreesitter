@@ -358,6 +358,63 @@ func TestFlattenHiddenPassthroughTransitiveChoice(t *testing.T) {
 	}
 }
 
+func TestFlattenHiddenPassthroughPreservesContinuationSensitiveWrappers(t *testing.T) {
+	g := &Grammar{
+		Name: "test_flatten_hidden_continuation_sensitive",
+		Rules: map[string]*Rule{
+			"document": Seq(Sym("_outer"), Sym("tail")),
+			"_outer":   Choice(Sym("_inner"), Seq(Sym("_inner"), Sym("tail"))),
+			"_inner":   Choice(Sym("item"), Seq(Str("all"), Sym("item"))),
+			"item":     Pat(`[a-z]+`),
+			"tail":     Pat(`[0-9]+`),
+		},
+		RuleOrder: []string{"document", "_outer", "_inner", "item", "tail"},
+	}
+
+	ng, err := Normalize(g)
+	if err != nil {
+		t.Fatalf("normalize: %v", err)
+	}
+
+	symNameToID := make(map[string]int)
+	for i, info := range ng.Symbols {
+		symNameToID[info.Name] = i
+	}
+
+	documentID := symNameToID["document"]
+	outerID := symNameToID["_outer"]
+	innerID := symNameToID["_inner"]
+	itemID := symNameToID["item"]
+
+	hasOuterInner := false
+	hasDocumentInner := false
+	hasDocumentItem := false
+	for _, p := range ng.Productions {
+		switch p.LHS {
+		case outerID:
+			if len(p.RHS) == 1 && p.RHS[0] == innerID {
+				hasOuterInner = true
+			}
+		case documentID:
+			for _, sym := range p.RHS {
+				if sym == innerID {
+					hasDocumentInner = true
+				}
+				if sym == itemID {
+					hasDocumentItem = true
+				}
+			}
+		}
+	}
+
+	if !hasOuterInner {
+		t.Fatal("_outer pass-through _inner production should be retained when it also starts a compound continuation")
+	}
+	if !hasDocumentInner || !hasDocumentItem {
+		t.Fatalf("document missing inlined passthrough refs: inner=%v item=%v", hasDocumentInner, hasDocumentItem)
+	}
+}
+
 func choiceHasSymbolAlt(r *Rule, name string) bool {
 	if r == nil || r.Kind != RuleChoice {
 		return false
