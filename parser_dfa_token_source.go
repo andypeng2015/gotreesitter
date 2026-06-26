@@ -377,6 +377,12 @@ func (d *dfaTokenSource) Next() Token {
 		if d.usesExternalCheckpoints {
 			externalStartSnapshot = d.captureExternalScannerStateInto(&d.externalTokenStart)
 		}
+		var glrExternalStartSnapshot []byte
+		keepGLRExternalStartSnapshot := false
+		if d.hasExternalScanner && len(d.glrStates) > 1 {
+			glrExternalStartSnapshot = d.captureExternalScannerStateInto(&d.externalCompare)
+			keepGLRExternalStartSnapshot = true
+		}
 		if d.shouldForceEOFLookahead() {
 			tok := d.syntheticEOFLookaheadToken()
 			d.lastExternalTokenValid = false
@@ -393,6 +399,24 @@ func (d *dfaTokenSource) Next() Token {
 			if extTok, ok := d.nextExternalToken(); ok {
 				tok = extTok
 				tokenFromExternal = true
+				extEndPos := d.lexer.pos
+				extEndRow := d.lexer.row
+				extEndCol := d.lexer.col
+				if dfaTok, dfaEndPos, dfaEndRow, dfaEndCol, preferDFA :=
+					d.preferGLRUnionDFAOverExternalToken(extTok, extEndPos, extEndRow, extEndCol, scanStartPos, scanStartRow, scanStartCol); preferDFA {
+					if keepGLRExternalStartSnapshot {
+						d.restoreExternalScannerState(glrExternalStartSnapshot)
+					}
+					tok = dfaTok
+					tokenFromExternal = false
+					d.lexer.pos = dfaEndPos
+					d.lexer.row = dfaEndRow
+					d.lexer.col = dfaEndCol
+				} else {
+					d.lexer.pos = extEndPos
+					d.lexer.row = extEndRow
+					d.lexer.col = extEndCol
+				}
 				if d.isBashGenerated {
 					if dfaTok, ok := d.bashGeneratedTokenOverZeroWidthConcat(tok, scanStartPos, scanStartRow, scanStartCol); ok {
 						tok = dfaTok
@@ -584,6 +608,120 @@ func (d *dfaTokenSource) nextDFAToken() Token {
 	d.lexer.row = endRow
 	d.lexer.col = endCol
 	return tok
+}
+
+func (d *dfaTokenSource) preferGLRUnionDFAOverExternalToken(extTok Token, extEndPos int, extEndRow, extEndCol uint32, startPos int, startRow, startCol uint32) (Token, int, uint32, uint32, bool) {
+	if d == nil || d.lexer == nil || d.language == nil || d.lookupActionIndex == nil {
+		return Token{}, 0, 0, 0, false
+	}
+	if len(d.glrStates) <= 1 || extTok.Symbol == 0 || extTok.StartByte != uint32(startPos) {
+		return Token{}, 0, 0, 0, false
+	}
+	extSupport := d.countGLRActionSupport(extTok.Symbol)
+	if extSupport <= 0 {
+		return Token{}, 0, 0, 0, false
+	}
+
+	d.lexer.pos = startPos
+	d.lexer.row = startRow
+	d.lexer.col = startCol
+	dfaTok, ok := d.nextGLRUnionDFAToken()
+	dfaEndPos := d.lexer.pos
+	dfaEndRow := d.lexer.row
+	dfaEndCol := d.lexer.col
+	if !ok || dfaTok.Symbol == 0 || dfaTok.StartByte != extTok.StartByte {
+		if DebugDFA.Load() && ok && dfaTok.Symbol != 0 {
+			fmt.Printf("  GLR ext/dfa keep external: dfa start mismatch ext=%s(%d)[%d-%d] dfa=%s(%d)[%d-%d]\n",
+				d.symbolName(extTok.Symbol), extTok.Symbol, extTok.StartByte, extTok.EndByte,
+				d.symbolName(dfaTok.Symbol), dfaTok.Symbol, dfaTok.StartByte, dfaTok.EndByte)
+		}
+		return Token{}, 0, 0, 0, false
+	}
+	dfaSupport := d.countGLRActionSupport(dfaTok.Symbol)
+	dfaSpecificity := tokenSymbolSpecificity(d.language, dfaTok.Symbol)
+	extSpecificity := tokenSymbolSpecificity(d.language, extTok.Symbol)
+	if dfaSupport < extSupport {
+		if dfaSpecificity <= extSpecificity || !d.hasGLRActionSupportForBoth(dfaTok.Symbol, extTok.Symbol) {
+			if DebugDFA.Load() {
+				fmt.Printf("  GLR ext/dfa keep external: ext=%s(%d) support=%d specificity=%d dfa=%s(%d) support=%d specificity=%d\n",
+					d.symbolName(extTok.Symbol), extTok.Symbol, extSupport, extSpecificity,
+					d.symbolName(dfaTok.Symbol), dfaTok.Symbol, dfaSupport, dfaSpecificity)
+			}
+			return Token{}, 0, 0, 0, false
+		}
+	}
+	if dfaSupport == extSupport {
+		hasSpecificBranch := d.hasGLRActionSupportExclusiveTo(dfaTok.Symbol, extTok.Symbol) ||
+			d.hasGLRActionSupportForBoth(dfaTok.Symbol, extTok.Symbol)
+		if dfaSpecificity <= extSpecificity || !hasSpecificBranch {
+			if DebugDFA.Load() {
+				fmt.Printf("  GLR ext/dfa keep external: ext=%s(%d) support=%d specificity=%d dfa=%s(%d) support=%d specificity=%d\n",
+					d.symbolName(extTok.Symbol), extTok.Symbol, extSupport, extSpecificity,
+					d.symbolName(dfaTok.Symbol), dfaTok.Symbol, dfaSupport, dfaSpecificity)
+			}
+			return Token{}, 0, 0, 0, false
+		}
+	}
+
+	if DebugDFA.Load() {
+		fmt.Printf("  GLR ext/dfa choose dfa: ext=%s(%d)[%d-%d] end=%d:%d:%d support=%d dfa=%s(%d)[%d-%d] end=%d:%d:%d support=%d\n",
+			d.symbolName(extTok.Symbol), extTok.Symbol, extTok.StartByte, extTok.EndByte, extEndPos, extEndRow, extEndCol, extSupport,
+			d.symbolName(dfaTok.Symbol), dfaTok.Symbol, dfaTok.StartByte, dfaTok.EndByte, dfaEndPos, dfaEndRow, dfaEndCol, dfaSupport)
+	}
+	return dfaTok, dfaEndPos, dfaEndRow, dfaEndCol, true
+}
+
+func (d *dfaTokenSource) countGLRActionSupport(sym Symbol) int {
+	if d == nil || d.lookupActionIndex == nil || sym == 0 {
+		return 0
+	}
+	if len(d.glrStates) == 0 {
+		if d.lookupActionIndex(d.state, sym) != 0 {
+			return 1
+		}
+		return 0
+	}
+	support := 0
+	for _, st := range d.glrStates {
+		if d.lookupActionIndex(st, sym) != 0 {
+			support++
+		}
+	}
+	return support
+}
+
+func (d *dfaTokenSource) hasGLRActionSupportExclusiveTo(cand, other Symbol) bool {
+	if d == nil || d.lookupActionIndex == nil || cand == 0 {
+		return false
+	}
+	states := d.glrStates
+	if len(states) == 0 {
+		d.singleState[0] = d.state
+		states = d.singleState[:]
+	}
+	for _, st := range states {
+		if d.lookupActionIndex(st, cand) != 0 && d.lookupActionIndex(st, other) == 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func (d *dfaTokenSource) hasGLRActionSupportForBoth(a, b Symbol) bool {
+	if d == nil || d.lookupActionIndex == nil || a == 0 || b == 0 {
+		return false
+	}
+	states := d.glrStates
+	if len(states) == 0 {
+		d.singleState[0] = d.state
+		states = d.singleState[:]
+	}
+	for _, st := range states {
+		if d.lookupActionIndex(st, a) != 0 && d.lookupActionIndex(st, b) != 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // schemeIsErrorRunBoundary reports whether r terminates an error-recovery run
@@ -2411,6 +2549,8 @@ func (d *dfaTokenSource) nextExternalToken() (Token, bool) {
 	if !ok {
 		return Token{}, false
 	}
+	tok.ExternalScannerToken = true
+	tok.ExternalScannerStartByte = uint32(d.lexer.pos)
 
 	if dfaTok, endPos, endRow, endCol, ok := d.preferDFASemicolonOverJSXText(tok, states); ok {
 		d.lexer.pos = endPos
@@ -2702,6 +2842,8 @@ func (d *dfaTokenSource) nextGLRScoredExternalToken(states []StateID) (Token, bo
 		if !ok {
 			continue
 		}
+		tok.ExternalScannerToken = true
+		tok.ExternalScannerStartByte = uint32(startPos)
 
 		support := 0
 		originActions := 0
@@ -2726,18 +2868,17 @@ func (d *dfaTokenSource) nextGLRScoredExternalToken(states []StateID) (Token, bo
 		specificity := tokenSymbolSpecificity(d.language, tok.Symbol)
 		better := !bestFound ||
 			support > bestSupport ||
-			(support == bestSupport && primaryHasAction && !bestPrimaryHasAction) ||
-			(support == bestSupport && primaryHasAction == bestPrimaryHasAction && originActions > bestOriginActions) ||
-			(support == bestSupport && primaryHasAction == bestPrimaryHasAction && originActions == bestOriginActions &&
+			(support == bestSupport && specificity > bestSpecificity) ||
+			(support == bestSupport && specificity == bestSpecificity && primaryHasAction && !bestPrimaryHasAction) ||
+			(support == bestSupport && specificity == bestSpecificity && primaryHasAction == bestPrimaryHasAction && originActions > bestOriginActions) ||
+			(support == bestSupport && specificity == bestSpecificity && primaryHasAction == bestPrimaryHasAction && originActions == bestOriginActions &&
 				primaryELS == elsID && primaryELS != bestELS) ||
-			(support == bestSupport && primaryHasAction == bestPrimaryHasAction && originActions == bestOriginActions &&
-				primaryELS == bestELS && specificity > bestSpecificity) ||
-			(support == bestSupport && primaryHasAction == bestPrimaryHasAction && originActions == bestOriginActions &&
-				primaryELS == bestELS && specificity == bestSpecificity && tok.StartByte < bestTok.StartByte) ||
-			(support == bestSupport && primaryHasAction == bestPrimaryHasAction && originActions == bestOriginActions &&
-				primaryELS == bestELS && specificity == bestSpecificity && tok.StartByte == bestTok.StartByte && tok.EndByte > bestTok.EndByte) ||
-			(support == bestSupport && primaryHasAction == bestPrimaryHasAction && originActions == bestOriginActions &&
-				primaryELS == bestELS && specificity == bestSpecificity && tok.StartByte == bestTok.StartByte &&
+			(support == bestSupport && specificity == bestSpecificity && primaryHasAction == bestPrimaryHasAction && originActions == bestOriginActions &&
+				primaryELS == bestELS && tok.StartByte < bestTok.StartByte) ||
+			(support == bestSupport && specificity == bestSpecificity && primaryHasAction == bestPrimaryHasAction && originActions == bestOriginActions &&
+				primaryELS == bestELS && tok.StartByte == bestTok.StartByte && tok.EndByte > bestTok.EndByte) ||
+			(support == bestSupport && specificity == bestSpecificity && primaryHasAction == bestPrimaryHasAction && originActions == bestOriginActions &&
+				primaryELS == bestELS && tok.StartByte == bestTok.StartByte &&
 				tok.EndByte == bestTok.EndByte &&
 				(int(tok.EndByte) > bestEndPos || tok.EndPoint.Row > bestEndRow || (tok.EndPoint.Row == bestEndRow && tok.EndPoint.Column > bestEndCol)))
 		if !better {
@@ -2772,6 +2913,8 @@ func (d *dfaTokenSource) nextGLRScoredExternalToken(states []StateID) (Token, bo
 		d.restoreExternalScannerState(snapshot)
 		return Token{}, false
 	}
+	tok.ExternalScannerToken = true
+	tok.ExternalScannerStartByte = uint32(startPos)
 
 	d.trackZeroWidthExternalToken(tok)
 	d.lexer.pos = int(tok.EndByte)
