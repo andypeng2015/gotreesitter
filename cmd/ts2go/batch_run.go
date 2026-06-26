@@ -122,6 +122,10 @@ func RunBatchManifest(manifestPath, outDir, pkg string, compact bool) error {
 			if err := writeRegisterStub(outDir, entry, highlightQuery); err != nil {
 				return fmt.Errorf("%s: write register stub: %w", entry.Name, err)
 			}
+			sourceComment := externalLexStatesSourceComment(entry)
+			if err := writeExternalLexStatesSidecar(outDir, pkg, entry.Name, sourceComment, grammar.ExternalLexStates); err != nil {
+				return fmt.Errorf("%s: write external lex states: %w", entry.Name, err)
+			}
 
 			fmt.Printf("generated %s (%d states, %d symbols)\n", blobPath, grammar.StateCount, grammar.SymbolCount)
 			return nil
@@ -303,6 +307,62 @@ func languageRegisterIdentifier(name string) string {
 		id = "Lang"
 	}
 	return strings.ToLower(id[:1]) + id[1:]
+}
+
+func externalLexStatesSourceComment(entry ManifestEntry) string {
+	parts := []string{entry.RepoURL}
+	if entry.Commit != "" {
+		parts = append(parts, entry.Commit)
+	}
+	if entry.Subdir != "" {
+		parts = append(parts, filepath.Join(entry.Subdir, "parser.c"))
+	} else {
+		parts = append(parts, "parser.c")
+	}
+	return strings.Join(parts, " ")
+}
+
+func writeExternalLexStatesSidecar(outDir, pkg, name, sourceComment string, states [][]bool) error {
+	if len(states) == 0 {
+		return nil
+	}
+
+	fileBase := safeFileBase(name)
+	varName := languageRegisterIdentifier(name) + "ExternalLexStates"
+	buildTag := "grammar_subset_" + fileBase
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "//go:build !grammar_subset || %s\n\n", buildTag)
+	b.WriteString("// Code generated from tree-sitter parser.c; DO NOT EDIT.\n")
+	if strings.TrimSpace(sourceComment) != "" {
+		fmt.Fprintf(&b, "// Source: %s\n", sourceComment)
+	}
+	b.WriteString("\n")
+	fmt.Fprintf(&b, "package %s\n\n", pkg)
+	fmt.Fprintf(&b, "// %s mirrors C tree-sitter ts_external_scanner_states.\n", varName)
+	fmt.Fprintf(&b, "var %s = [][]bool{\n", varName)
+	width := len(fmt.Sprintf("%d", len(states)-1))
+	for i, row := range states {
+		fmt.Fprintf(&b, "\t/* %*d */ {", width, i)
+		for j, v := range row {
+			if j > 0 {
+				b.WriteString(", ")
+			}
+			if v {
+				b.WriteString("true")
+			} else {
+				b.WriteString("false")
+			}
+		}
+		b.WriteString("},\n")
+	}
+	b.WriteString("}\n\n")
+	b.WriteString("func init() {\n")
+	fmt.Fprintf(&b, "\tRegisterExternalLexStates(%q, %s)\n", name, varName)
+	b.WriteString("}\n")
+
+	outFile := filepath.Join(outDir, fileBase+"_external_lex_states_gen.go")
+	return os.WriteFile(outFile, []byte(b.String()), 0644)
 }
 
 func findParserC(repoDir string) (string, error) {

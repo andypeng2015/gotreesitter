@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -748,6 +750,112 @@ static const bool ts_external_scanner_states[4][EXTERNAL_TOKEN_COUNT] = {
 	}
 	if g.ExternalLexStates[3][0] || !g.ExternalLexStates[3][1] || g.ExternalLexStates[3][2] {
 		t.Fatalf("row 3 = %v, want [false true false]", g.ExternalLexStates[3])
+	}
+}
+
+func TestExtractExternalLexStatesFromWgslAndAngularWitnessShapes(t *testing.T) {
+	tests := []struct {
+		name      string
+		source    string
+		tokens    int
+		wantRows  int
+		wantTrue  [][2]int
+		wantFalse [][2]int
+	}{
+		{
+			name: "wgsl anonymous enum",
+			source: `
+enum {
+  ts_external_token_block_comment = 0,
+};
+static const bool ts_external_scanner_states[2][EXTERNAL_TOKEN_COUNT] = {
+  [1] = {
+    [ts_external_token_block_comment] = true,
+  },
+};
+`,
+			tokens:   1,
+			wantRows: 2,
+			wantTrue: [][2]int{{1, 0}},
+		},
+		{
+			name: "angular named enum",
+			source: `
+enum ts_external_scanner_symbol_identifiers {
+  ts_external_token__start_tag_name = 0,
+  ts_external_token_SLASH_GT = 5,
+  ts_external_token_comment = 8,
+  ts_external_token__control_flow_start = 11,
+};
+static const bool ts_external_scanner_states[13][EXTERNAL_TOKEN_COUNT] = {
+  [1] = {
+    [ts_external_token__start_tag_name] = true,
+    [ts_external_token_comment] = true,
+    [ts_external_token__control_flow_start] = true,
+  },
+  [6] = {
+    [ts_external_token_SLASH_GT] = true,
+    [ts_external_token_comment] = true,
+  },
+};
+`,
+			tokens:    12,
+			wantRows:  13,
+			wantTrue:  [][2]int{{1, 0}, {1, 8}, {1, 11}, {6, 5}, {6, 8}},
+			wantFalse: [][2]int{{1, 5}, {6, 0}, {12, 8}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := &ExtractedGrammar{
+				ExternalTokenCount: tt.tokens,
+				enumValues:         extractEnum(tt.source),
+			}
+			if err := extractExternalLexStates(tt.source, g); err != nil {
+				t.Fatal(err)
+			}
+			if len(g.ExternalLexStates) != tt.wantRows {
+				t.Fatalf("rows = %d, want %d", len(g.ExternalLexStates), tt.wantRows)
+			}
+			for _, pos := range tt.wantTrue {
+				if !g.ExternalLexStates[pos[0]][pos[1]] {
+					t.Fatalf("ExternalLexStates[%d][%d] = false, want true", pos[0], pos[1])
+				}
+			}
+			for _, pos := range tt.wantFalse {
+				if g.ExternalLexStates[pos[0]][pos[1]] {
+					t.Fatalf("ExternalLexStates[%d][%d] = true, want false", pos[0], pos[1])
+				}
+			}
+		})
+	}
+}
+
+func TestWriteExternalLexStatesSidecarRegistersTable(t *testing.T) {
+	dir := t.TempDir()
+	states := [][]bool{
+		{false, false},
+		{true, false},
+	}
+	if err := writeExternalLexStatesSidecar(dir, "grammars", "test_lang", "repo abc src/parser.c", states); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "test_lang_external_lex_states_gen.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		"//go:build !grammar_subset || grammar_subset_test_lang",
+		"var testLangExternalLexStates = [][]bool{",
+		"/* 1 */ {true, false},",
+		"RegisterExternalLexStates(\"test_lang\", testLangExternalLexStates)",
+		"// Source: repo abc src/parser.c",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("generated sidecar missing %q:\n%s", want, got)
+		}
 	}
 }
 

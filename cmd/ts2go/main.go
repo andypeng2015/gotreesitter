@@ -82,6 +82,10 @@ func main() {
 		fmt.Fprintf(os.Stderr, "write %s: %v\n", *output, err)
 		os.Exit(1)
 	}
+	if err := writeExternalLexStatesSidecar(filepath.Dir(*output), *pkg, grammar.Name, filepath.Base(*input), grammar.ExternalLexStates); err != nil {
+		fmt.Fprintf(os.Stderr, "write external lex states: %v\n", err)
+		os.Exit(1)
+	}
 
 	fmt.Printf("Generated %s and %s (%s language, %d states, %d symbols)\n",
 		*output, blobPath, grammar.Name, grammar.StateCount, grammar.SymbolCount)
