@@ -163,6 +163,8 @@ func BuildLanguage(g *ExtractedGrammar) *gotreesitter.Language {
 		}
 	}
 
+	gotreesitter.InferGeneratedRepeatAuxMetadata(lang)
+
 	return lang
 }
 

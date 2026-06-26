@@ -888,6 +888,41 @@ func TestExtractGrammarFull(t *testing.T) {
 	}
 }
 
+func TestBuildLanguageInfersGeneratedRepeatAuxMetadata(t *testing.T) {
+	lang := BuildLanguage(&ExtractedGrammar{
+		Name:        "repeat_meta",
+		SymbolCount: 5,
+		TokenCount:  2,
+		SymbolNames: []string{
+			"end",
+			"token_repeat1",
+			"module_repeat1",
+			"visible_repeat2",
+			"named_repeat3",
+		},
+		SymbolMetadata: []SymbolMeta{
+			{Named: true},
+			{},
+			{},
+			{Visible: true},
+			{Named: true},
+		},
+	})
+
+	if !lang.SymbolMetadata[2].GeneratedRepeatAux {
+		t.Fatal("BuildLanguage did not infer GeneratedRepeatAux for invisible anonymous module_repeat1")
+	}
+	if lang.SymbolMetadata[1].GeneratedRepeatAux {
+		t.Fatal("BuildLanguage marked terminal repeat-like symbol GeneratedRepeatAux")
+	}
+	if lang.SymbolMetadata[3].GeneratedRepeatAux {
+		t.Fatal("BuildLanguage marked visible repeat-like symbol GeneratedRepeatAux")
+	}
+	if lang.SymbolMetadata[4].GeneratedRepeatAux {
+		t.Fatal("BuildLanguage marked named repeat-like symbol GeneratedRepeatAux")
+	}
+}
+
 func TestGenerateEmbeddedGo(t *testing.T) {
 	g, err := ExtractGrammar(miniParserC)
 	if err != nil {
