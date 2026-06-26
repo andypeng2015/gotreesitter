@@ -2339,6 +2339,10 @@ func (d *dfaTokenSource) RelexFromTokenStart(tok Token) (Token, bool) {
 		snapshot.restore(d)
 		return Token{}, false
 	}
+	if tok.ExternalScannerToken && next.ExternalScannerToken &&
+		next.StartByte == tok.StartByte && next.EndByte == tok.EndByte {
+		next.ExternalScannerStartByte = tok.ExternalScannerStartByte
+	}
 	return next, true
 }
 
