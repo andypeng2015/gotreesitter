@@ -72,6 +72,16 @@ type ExtractedGrammar struct {
 	LanguageMetadataMajor int
 	LanguageMetadataMinor int
 	LanguageMetadataPatch int
+
+	// Capability inferred from parser.c evidence that the grammar has
+	// C recovery-cost competition prerequisites: RECOVER actions plus extracted
+	// lex-mode surface. This is not default-on certification.
+	CRecoveryCostCompetitionCapable bool
+
+	// Explicit parity certification for default-on C recovery-cost competition.
+	// The parser.c extractor leaves this false unless a generic certification
+	// source is added by callers.
+	CRecoveryCostCompetitionEnabledByDefault bool
 }
 
 // FieldMapEntry mirrors gotreesitter.FieldMapEntry for code generation.
@@ -198,6 +208,7 @@ func ExtractGrammar(source string) (*ExtractedGrammar, error) {
 	if err := extractLexModes(source, g); err != nil {
 		return nil, fmt.Errorf("lex modes: %w", err)
 	}
+	g.CRecoveryCostCompetitionCapable = extractedCRecoveryCostCompetitionSurface(source, g)
 
 	// Lex state extraction is intentionally staged:
 	// first lock helper/parsing interfaces, then emit full DFA tables.
@@ -1655,6 +1666,26 @@ func extractLexModes(source string, g *ExtractedGrammar) error {
 
 	g.LexModes = modes
 	return nil
+}
+
+func extractedCRecoveryCostCompetitionSurface(source string, g *ExtractedGrammar) bool {
+	if g == nil || g.StateCount <= 1 || g.SymbolCount == 0 || g.TokenCount == 0 {
+		return false
+	}
+	if !strings.Contains(source, "RECOVER()") || !strings.Contains(source, "ts_lex_modes") {
+		return false
+	}
+	if len(g.LexModes) == 0 || g.LexModes[0].LexState < 0 {
+		return false
+	}
+	for _, group := range g.ParseActions {
+		for _, action := range group.Actions {
+			if action.Type == "recover" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // extractLexStates normalizes the ts_lex and ts_lex_keywords function bodies.

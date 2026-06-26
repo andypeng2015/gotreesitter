@@ -13,15 +13,17 @@ import (
 // BuildLanguage materializes a runtime language directly from extracted parser data.
 func BuildLanguage(g *ExtractedGrammar) *gotreesitter.Language {
 	lang := &gotreesitter.Language{
-		Name:               g.Name,
-		SymbolCount:        uint32(g.SymbolCount),
-		TokenCount:         uint32(g.TokenCount),
-		ExternalTokenCount: uint32(g.ExternalTokenCount),
-		StateCount:         uint32(g.StateCount),
-		LargeStateCount:    uint32(g.LargeStateCount),
-		FieldCount:         uint32(g.FieldCount),
-		ProductionIDCount:  uint32(g.ProductionIDCount),
-		InitialState:       1,
+		Name:                                     g.Name,
+		SymbolCount:                              uint32(g.SymbolCount),
+		TokenCount:                               uint32(g.TokenCount),
+		ExternalTokenCount:                       uint32(g.ExternalTokenCount),
+		StateCount:                               uint32(g.StateCount),
+		LargeStateCount:                          uint32(g.LargeStateCount),
+		FieldCount:                               uint32(g.FieldCount),
+		ProductionIDCount:                        uint32(g.ProductionIDCount),
+		InitialState:                             1,
+		CRecoveryCostCompetitionCapable:          g.CRecoveryCostCompetitionCapable,
+		CRecoveryCostCompetitionEnabledByDefault: g.CRecoveryCostCompetitionEnabledByDefault,
 	}
 
 	if len(g.SymbolNames) > 0 {

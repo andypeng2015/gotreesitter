@@ -1076,6 +1076,44 @@ func TestExtractGrammarFull(t *testing.T) {
 	if len(g.ParseActions) < 4 {
 		t.Errorf("len(ParseActions) = %d, want >= 4", len(g.ParseActions))
 	}
+	if g.CRecoveryCostCompetitionCapable {
+		t.Fatal("miniParserC unexpectedly reported C recovery capability without RECOVER()")
+	}
+	if g.CRecoveryCostCompetitionEnabledByDefault {
+		t.Fatal("miniParserC unexpectedly default-enabled C recovery")
+	}
+}
+
+func TestExtractCRecoveryCostCompetitionCapabilityDoesNotDefaultEnable(t *testing.T) {
+	source := strings.Replace(miniParserC,
+		`[1] = {.entry = {.count = 1, .reusable = true}}, ACCEPT_INPUT(),`,
+		`[1] = {.entry = {.count = 1, .reusable = true}}, ACCEPT_INPUT(),
+  [9] = {.entry = {.count = 1, .reusable = false}}, RECOVER(),`,
+		1,
+	)
+	g, err := ExtractGrammar(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !g.CRecoveryCostCompetitionCapable {
+		t.Fatal("ExtractGrammar did not preserve C recovery capability from RECOVER()+LexModes evidence")
+	}
+	if g.CRecoveryCostCompetitionEnabledByDefault {
+		t.Fatal("ExtractGrammar default-enabled C recovery from parser.c evidence")
+	}
+	lang := BuildLanguage(g)
+	if !lang.CRecoveryCostCompetitionCapable {
+		t.Fatal("BuildLanguage did not preserve C recovery capability")
+	}
+	if lang.CRecoveryCostCompetitionEnabledByDefault {
+		t.Fatal("BuildLanguage default-enabled C recovery from parser.c evidence")
+	}
+
+	g.CRecoveryCostCompetitionEnabledByDefault = true
+	lang = BuildLanguage(g)
+	if !lang.CRecoveryCostCompetitionCapable || !lang.CRecoveryCostCompetitionEnabledByDefault {
+		t.Fatal("BuildLanguage did not preserve explicit C recovery default certification")
+	}
 }
 
 func TestBuildLanguageInfersGeneratedRepeatAuxMetadata(t *testing.T) {
