@@ -1378,6 +1378,24 @@ func (a *nodeArena) ensureExternalScannerCheckpointCapacity(min int) {
 	a.allocatedBytes += a.externalScannerNodeCheckpoints.ensureCapacity(min)
 }
 
+func (a *nodeArena) dropExternalScannerCheckpointStorage() {
+	if a == nil {
+		return
+	}
+	before := a.externalScannerCheckpointBytesAllocated()
+	a.externalScannerNodeCheckpoints = externalScannerCheckpointSet{}
+	a.externalScannerNodeCheckpointSlabs = nil
+	a.externalScannerLastSnapshotRef = externalScannerSnapshotRef{}
+	if before <= 0 {
+		return
+	}
+	if a.allocatedBytes >= before {
+		a.allocatedBytes -= before
+		return
+	}
+	a.recomputeAllocatedBytes()
+}
+
 func (a *nodeArena) allocNodeSlice(n int) []*Node {
 	return a.allocNodeSliceInternal(n, true)
 }
