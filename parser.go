@@ -5866,3 +5866,34 @@ func classifyConflictShape(actions []ParseAction) (rrConflict, rsConflict bool) 
 	}
 	return reduceCount >= 2, false
 }
+func parserTailAllowsCleanAcceptance(source []byte, start, end uint32, included []Range) bool {
+	if start >= end {
+		return true
+	}
+	if start > end || int(end) > len(source) {
+		return false
+	}
+	if len(included) == 0 {
+		return bytesAreParserPadding(source, start, end)
+	}
+	for _, r := range included {
+		if r.EndByte <= start {
+			continue
+		}
+		if r.StartByte >= end {
+			break
+		}
+		overlapStart := start
+		if r.StartByte > overlapStart {
+			overlapStart = r.StartByte
+		}
+		overlapEnd := end
+		if r.EndByte < overlapEnd {
+			overlapEnd = r.EndByte
+		}
+		if overlapStart < overlapEnd && !bytesAreParserPadding(source, overlapStart, overlapEnd) {
+			return false
+		}
+	}
+	return true
+}

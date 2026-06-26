@@ -1372,13 +1372,15 @@ func flattenRootSelfFragments(nodes []*Node, arena *nodeArena, rootSymbol Symbol
 }
 
 func flattenInvisibleRootChildren(root *Node, arena *nodeArena, lang *Language) *Node {
-	childCount := resultChildCount(root)
-	if root == nil || lang == nil || childCount == 0 {
+	if root == nil || lang == nil || resultChildCount(root) == 0 {
 		return root
 	}
+	symbolMeta := lang.SymbolMetadata
 	changed := false
+	childCount := resultChildCount(root)
 	for i := 0; i < childCount; i++ {
-		if shouldFlattenInvisibleRootChild(resultChildAt(root, i), lang) {
+		child := resultChildAt(root, i)
+		if shouldFlattenInvisibleRootChild(child, symbolMeta) {
 			changed = true
 			break
 		}
@@ -1392,31 +1394,34 @@ func flattenInvisibleRootChildren(root *Node, arena *nodeArena, lang *Language) 
 		if child == nil {
 			continue
 		}
-		if shouldFlattenInvisibleRootChild(child, lang) {
-			for i := 0; i < resultChildCount(child); i++ {
-				grandchild := resultChildAt(child, i)
-				if grandchild != nil {
-					out = append(out, grandchild)
-				}
-			}
-			continue
-		}
-		out = append(out, child)
+		out = appendFlattenedInvisibleRootChild(out, child, arena, symbolMeta)
 	}
 	if arena != nil {
 		buf := arena.allocNodeSlice(len(out))
 		copy(buf, out)
 		out = buf
 	}
-	root.children = out
-	root.fieldIDs = nil
-	root.fieldSources = nil
+	replaceNodeChildrenUnfielded(root, out)
 	return root
 }
 
-func shouldFlattenInvisibleRootChild(child *Node, lang *Language) bool {
-	if child == nil || child.isExtra() || child.isNamed() || resultChildCount(child) == 0 {
+func appendFlattenedInvisibleRootChild(out []*Node, child *Node, arena *nodeArena, symbolMeta []SymbolMetadata) []*Node {
+	if child == nil {
+		return out
+	}
+	if !shouldFlattenInvisibleRootChild(child, symbolMeta) {
+		return append(out, child)
+	}
+	childCount := resultChildCount(child)
+	for i := 0; i < childCount; i++ {
+		out = appendFlattenedInvisibleRootChild(out, resultChildAt(child, i), arena, symbolMeta)
+	}
+	return out
+}
+
+func shouldFlattenInvisibleRootChild(child *Node, symbolMeta []SymbolMetadata) bool {
+	if child == nil || child.isExtra() || child.isMissing() {
 		return false
 	}
-	return lang != nil && !symbolIsVisible(lang, child.symbol)
+	return !symbolStructuralForHiddenFlattening(child.symbol, symbolMeta, nil)
 }

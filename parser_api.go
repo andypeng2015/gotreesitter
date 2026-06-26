@@ -122,7 +122,9 @@ func (p *Parser) normalizeReturnedIncrementalTree(tree, oldTree *Tree, source []
 	}
 	if reason := p.normalizeReturnedTree(rawRootOrNil(tree), source); parseStopReasonIsTerminal(reason) {
 		tree.setParseStopReason(reason)
+		return
 	}
+	finalizeReturnedTreeRootSpan(tree, source)
 }
 
 func shouldNormalizeReturnedTree(tree *Tree) bool {
@@ -138,7 +140,9 @@ func (p *Parser) normalizeReturnedTreeForParse(tree *Tree, source []byte) {
 	}
 	if reason := p.normalizeReturnedTree(rawRootOrNil(tree), source); parseStopReasonIsTerminal(reason) {
 		tree.setParseStopReason(reason)
+		return
 	}
+	finalizeReturnedTreeRootSpan(tree, source)
 }
 
 const forestIncrementalReuseUnsupportedReason = "old tree was built by GSS forest fast path"
@@ -295,6 +299,45 @@ func (p *Parser) normalizeReturnedTree(root *Node, source []byte) ParseStopReaso
 	}
 	normalizeResultCompatibility(root, source, p)
 	return p.parseStopReasonNow()
+}
+
+func finalizeReturnedTreeRootSpan(tree *Tree, source []byte) {
+	if tree == nil {
+		return
+	}
+	root := rawRootOrNil(tree)
+	if root == nil {
+		return
+	}
+	rt := tree.parseRuntime
+	if rt.StopReason == ParseStopAccepted {
+		extendRootToAcceptedCleanTail(root, source, rt.ExpectedEOFByte, tree.includedRanges)
+	}
+	rt.RootEndByte = root.endByte
+	rt.Truncated = rt.ExpectedEOFByte > root.endByte
+	if rt.Truncated && parserTailAllowsCleanAcceptance(source, root.endByte, rt.ExpectedEOFByte, tree.includedRanges) {
+		rt.Truncated = false
+	}
+	tree.setParseRuntime(rt)
+}
+
+func extendRootToAcceptedCleanTail(root *Node, source []byte, expectedEOFByte uint32, included []Range) bool {
+	if root == nil || expectedEOFByte <= root.endByte {
+		return false
+	}
+	if !parserTailAllowsCleanAcceptance(source, root.endByte, expectedEOFByte, included) {
+		return false
+	}
+	extendNodeEndToByte(root, source, expectedEOFByte)
+	return root.endByte >= expectedEOFByte
+}
+
+func extendNodeEndToByte(n *Node, source []byte, endByte uint32) {
+	if n == nil || endByte <= n.endByte || int(endByte) > len(source) {
+		return
+	}
+	n.endPoint = advancePointByBytes(n.endPoint, source[n.endByte:endByte])
+	n.endByte = endByte
 }
 
 func (p *Parser) dfaReparseFactory() TokenSourceFactory {

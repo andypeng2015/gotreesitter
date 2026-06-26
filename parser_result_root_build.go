@@ -123,10 +123,10 @@ func (b *resultRootBuild) syntheticRootSymbol(originalNodes, rootChildren []*Nod
 	if b.isLanguage("dart") && dartProgramChildrenLookComplete(originalNodes, b.lang) {
 		return b.expectedRootSymbol
 	}
-	if b.isLanguage("go") {
+	if b.isLanguage("proto") && protoSourceFileChildrenLookComplete(rootChildren, b.lang) {
 		return b.expectedRootSymbol
 	}
-	if b.isLanguage("proto") && protoSourceFileChildrenLookComplete(rootChildren, b.lang) {
+	if b.expectedRootCanFrameRecoveredFragments(rootChildren) {
 		return b.expectedRootSymbol
 	}
 	if b.isLanguage("sql") {
@@ -160,6 +160,60 @@ func (b *resultRootBuild) syntheticRootSymbol(originalNodes, rootChildren []*Nod
 		return b.expectedRootSymbol
 	}
 	return errorSymbol
+}
+
+func (b *resultRootBuild) expectedRootCanFrameRecoveredFragments(rootChildren []*Node) bool {
+	if b == nil || b.parser == nil || b.lang == nil || !b.hasExpectedRoot || len(rootChildren) == 0 {
+		return false
+	}
+	if b.lang.InitialState == 0 {
+		return false
+	}
+	state := b.lang.InitialState
+	consumedNonError := false
+	sawRecovery := false
+	for _, child := range rootChildren {
+		if b.syntheticRootReplaySkipsChild(child) {
+			continue
+		}
+		if child.IsError() || child.HasError() {
+			sawRecovery = true
+			continue
+		}
+		next, ok := b.syntheticRootReplayChild(state, child)
+		if !ok || !b.parser.stateHasAcceptOnEOF(next) {
+			return false
+		}
+		state = next
+		consumedNonError = true
+	}
+	if consumedNonError {
+		return b.parser.stateHasAcceptOnEOF(state)
+	}
+	return sawRecovery && b.expectedRootEmptyFrameAcceptsEOF()
+}
+
+func (b *resultRootBuild) syntheticRootReplaySkipsChild(child *Node) bool {
+	return child == nil || (child.isExtra() && child.startByte == child.endByte)
+}
+
+func (b *resultRootBuild) syntheticRootReplayChild(state StateID, child *Node) (StateID, bool) {
+	if b == nil || b.parser == nil || b.lang == nil || child == nil {
+		return 0, false
+	}
+	if b.lang.TokenCount > 0 && uint32(child.symbol) < b.lang.TokenCount {
+		return b.parser.shiftTargetForStateSymbol(state, child.symbol)
+	}
+	next := b.parser.lookupGoto(state, child.symbol)
+	return next, next != 0
+}
+
+func (b *resultRootBuild) expectedRootEmptyFrameAcceptsEOF() bool {
+	if b == nil || b.parser == nil || b.lang == nil {
+		return false
+	}
+	next := b.parser.lookupGoto(b.lang.InitialState, b.expectedRootSymbol)
+	return next != 0 && b.parser.stateHasAcceptOnEOF(next)
 }
 
 func (b *resultRootBuild) syntheticRootCanDropError(rootChildren []*Node) bool {
@@ -399,6 +453,7 @@ func (p *Parser) finalizeResultRoot(root *Node, source []byte, linkScratch *[]*N
 	if p != nil {
 		root = flattenInvisibleRootChildren(root, root.ownerArena, p.language)
 	}
+	widenNodeSpanToRetainedChildren(root)
 	if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
 		return
 	}

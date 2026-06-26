@@ -132,6 +132,8 @@ func newPendingParentShellWithEntrySlotsInArena(arena *nodeArena, sym Symbol, na
 	p.parseState = 0
 	p.preGotoState = 0
 	p.productionID = productionID
+	p.rawShape = 0
+	p.dynamicPrecedence = 0
 	p.flags = noTreeNodeInitialFlags(named)
 	p.setHasError(hasError)
 	p.startPoint = startPoint
@@ -349,6 +351,9 @@ func materializeStackEntryPendingParentEntryWithParser(p *Parser, arena *nodeAre
 		node.endPoint = parent.endPoint
 		node.parseState = parent.parseState
 		node.preGotoState = parent.preGotoState
+		node.rawShape = parent.rawShape
+		node.dynamicPrecedence = parent.dynamicPrecedence
+		widenNodeSpanToPendingChildren(node, parent, arena)
 		setStackEntryNode(&entry, node)
 		arena.recordPendingParentMaterialized(reason)
 		return node, entry
@@ -388,10 +393,70 @@ func materializeStackEntryPendingParentEntryWithParser(p *Parser, arena *nodeAre
 	node.endPoint = parent.endPoint
 	node.parseState = parent.parseState
 	node.preGotoState = parent.preGotoState
+	node.rawShape = parent.rawShape
+	node.dynamicPrecedence = parent.dynamicPrecedence
+	widenNodeSpanToMaterializedChildren(node, children)
 	rebuildExternalScannerCheckpointForMaterializedParent(node, reason)
 	setStackEntryNode(&entry, node)
 	arena.recordPendingParentMaterialized(reason)
 	return node, entry
+}
+
+func widenNodeSpanToPendingChildren(node *Node, parent *pendingParent, arena *nodeArena) {
+	if node == nil || parent == nil {
+		return
+	}
+	for i := 0; i < parent.childEntryCount(); i++ {
+		child := parent.childEntry(arena, i)
+		widenNodeSpanToStackEntry(node, child)
+	}
+}
+
+func widenNodeSpanToMaterializedChildren(node *Node, children []*Node) {
+	if node == nil {
+		return
+	}
+	for _, child := range children {
+		if child == nil {
+			continue
+		}
+		widenNodeSpanToChildSpan(node, child.startByte, child.endByte, child.startPoint, child.endPoint)
+	}
+}
+
+func widenNodeSpanToRetainedChildren(node *Node) {
+	if node == nil {
+		return
+	}
+	childCount := nodeChildCountNoMaterialize(node)
+	for i := 0; i < childCount; i++ {
+		entry, ok := nodeChildEntryAtNoMaterialize(node, i)
+		if !ok {
+			continue
+		}
+		widenNodeSpanToStackEntry(node, entry)
+	}
+}
+
+func widenNodeSpanToStackEntry(node *Node, entry stackEntry) {
+	if node == nil || !stackEntryHasNode(entry) || stackEntryNodeIsMissing(entry) {
+		return
+	}
+	widenNodeSpanToChildSpan(node, stackEntryNodeStartByte(entry), stackEntryNodeEndByte(entry), stackEntryNodeStartPoint(entry), stackEntryNodeEndPoint(entry))
+}
+
+func widenNodeSpanToChildSpan(node *Node, startByte, endByte uint32, startPoint, endPoint Point) {
+	if node == nil {
+		return
+	}
+	if startByte < node.startByte || (node.startByte == node.endByte && node.startByte == 0 && endByte > startByte) {
+		node.startByte = startByte
+		node.startPoint = startPoint
+	}
+	if endByte > node.endByte {
+		node.endByte = endByte
+		node.endPoint = endPoint
+	}
 }
 
 func materializeStackEntryPayload(arena *nodeArena, entry *stackEntry, leafReason compactFullLeafMaterializeReason, parentReason pendingParentMaterializeReason) *Node {

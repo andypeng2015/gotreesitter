@@ -24,8 +24,8 @@ func TestCompactFullLeafSizeBudget(t *testing.T) {
 }
 
 func TestPendingParentSizeBudget(t *testing.T) {
-	if got := unsafe.Sizeof(pendingParent{}); got != 48 {
-		t.Fatalf("pendingParent size = %d, want 48", got)
+	if got := unsafe.Sizeof(pendingParent{}); got != 56 {
+		t.Fatalf("pendingParent size = %d, want 56", got)
 	}
 }
 
