@@ -217,6 +217,28 @@ type ReduceChainHint struct {
 	MaxSteps       uint16
 }
 
+// ConflictPolicyKind identifies a deterministic conflict policy class.
+type ConflictPolicyKind uint8
+
+const (
+	ConflictPolicyNone ConflictPolicyKind = iota
+	ConflictPolicyRepetitionShift
+	ConflictPolicyShift
+)
+
+// ConflictPolicy describes one table row/lookahead conflict that can be
+// collapsed deterministically after validating the action shape.
+type ConflictPolicy struct {
+	State     StateID
+	Lookahead Symbol
+	Kind      ConflictPolicyKind
+
+	// ReduceSymbols, when non-empty, requires every reduce in the conflict to
+	// reduce one of these symbols. The generic action-shape validator still
+	// requires at least one reduce.
+	ReduceSymbols []Symbol
+}
+
 // Language holds all data needed to parse a specific language.
 // It mirrors tree-sitter's TSLanguage C struct, translated into
 // idiomatic Go types with slice-based tables instead of raw pointers.
@@ -265,6 +287,10 @@ type Language struct {
 	// ReduceChainHints are optional generated hot-path hints for deterministic
 	// reduce runs. They are only consumed when reduce-chain hints are enabled.
 	ReduceChainHints []ReduceChainHint
+
+	// ConflictPolicies are optional deterministic conflict policies derived
+	// from grammar tables.
+	ConflictPolicies []ConflictPolicy
 
 	// Lex tables
 	LexModes            []LexMode

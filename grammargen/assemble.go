@@ -130,6 +130,7 @@ func assemble(
 	if err != nil {
 		return nil, fmt.Errorf("build parse tables: %w", err)
 	}
+	lang.ConflictPolicies = buildConflictPolicies(tables, ng)
 
 	buildReservedWordTables(lang, ng)
 
