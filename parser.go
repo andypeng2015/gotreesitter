@@ -706,7 +706,8 @@ func (p *Parser) tryRelexBroadDFA(tok Token, parserState StateID, ts TokenSource
 			return cand.token, true
 		}
 	} else {
-		if cand, ok := tryAt(int(tok.StartByte), tok.StartPoint.Row, tok.StartPoint.Column); ok && cand.extraShift {
+		if cand, ok := tryAt(int(tok.StartByte), tok.StartPoint.Row, tok.StartPoint.Column); ok &&
+			(cand.extraShift || p.sameSurfaceRelexToken(tok, cand.token)) {
 			return cand.token, true
 		}
 	}
@@ -757,6 +758,37 @@ func (p *Parser) tryRelexBroadDFA(tok Token, parserState StateID, ts TokenSource
 	// Restore lexer state
 	dts.lexer.pos, dts.lexer.row, dts.lexer.col = savedPos, savedRow, savedCol
 	return Token{}, false
+}
+
+func (p *Parser) sameSurfaceRelexToken(original, candidate Token) bool {
+	if p == nil || p.language == nil {
+		return false
+	}
+	if original.StartByte != candidate.StartByte || original.EndByte != candidate.EndByte {
+		return false
+	}
+	if original.Symbol == 0 || candidate.Symbol == 0 || original.Symbol == candidate.Symbol {
+		return false
+	}
+	return p.symbolSurfaceName(original.Symbol) != "" &&
+		p.symbolSurfaceName(original.Symbol) == p.symbolSurfaceName(candidate.Symbol)
+}
+
+func (p *Parser) symbolSurfaceName(sym Symbol) string {
+	if p == nil || p.language == nil {
+		return ""
+	}
+	idx := int(sym)
+	if idx < 0 {
+		return ""
+	}
+	if idx < len(p.language.SymbolMetadata) && p.language.SymbolMetadata[idx].Name != "" {
+		return p.language.SymbolMetadata[idx].Name
+	}
+	if idx < len(p.language.SymbolNames) {
+		return p.language.SymbolNames[idx]
+	}
+	return ""
 }
 
 func (p *Parser) allowStringContentWhitespaceBroadRelex(candidate Symbol) bool {
@@ -2420,6 +2452,9 @@ func realTokenAttachmentGapIsParserPadding(source []byte, s *glrStack, tok Token
 	if s == nil || tok.Missing || tok.NoLookahead || tok.StartByte <= s.byteOffset {
 		return true
 	}
+	if tok.ExternalScannerToken && tok.ExternalScannerStartByte == s.byteOffset {
+		return true
+	}
 	if int(s.byteOffset) > len(source) || int(tok.StartByte) > len(source) {
 		return true
 	}
@@ -2428,6 +2463,152 @@ func realTokenAttachmentGapIsParserPadding(source []byte, s *glrStack, tok Token
 
 func realShiftGapIsParserPadding(source []byte, s *glrStack, tok Token) bool {
 	return realTokenAttachmentGapIsParserPadding(source, s, tok)
+}
+
+func (p *Parser) tryMaterializeSkippedRealGap(source []byte, s *glrStack, state StateID, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) bool {
+	if s == nil || tok.StartByte <= s.byteOffset || realTokenAttachmentGapIsParserPadding(source, s, tok) {
+		return false
+	}
+	if p.tryExtendHiddenTrailingErrorAcrossSkippedRealGap(source, s, tok, nodeCount, arena, trackChildErrors) {
+		return s.byteOffset == tok.StartByte
+	}
+	top := stackEntryNode(s.top())
+	startPoint := stackEntryNodeEndPoint(s.top())
+	if top != nil && top.symbol == errorSymbol {
+		if top.isMissing() ||
+			len(top.children) != 0 ||
+			top.parseState != state ||
+			top.endByte != s.byteOffset {
+			return false
+		}
+		startPoint = top.endPoint
+	}
+	gapTok := Token{
+		Symbol:     errorSymbol,
+		StartByte:  s.byteOffset,
+		EndByte:    tok.StartByte,
+		StartPoint: startPoint,
+		EndPoint:   tok.StartPoint,
+	}
+	p.pushOrExtendErrorNode(s, state, gapTok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
+	return s.byteOffset == tok.StartByte
+}
+
+func (p *Parser) tryExtendHiddenTrailingErrorAcrossSkippedRealGap(source []byte, s *glrStack, tok Token, nodeCount *int, arena *nodeArena, trackChildErrors *bool) bool {
+	if p == nil || p.language == nil || s == nil || arena == nil {
+		return false
+	}
+	top := stackEntryNode(s.top())
+	if top == nil || top.symbol == errorSymbol || top.isMissing() || len(top.children) == 0 {
+		return false
+	}
+	if symbolStructuralForHiddenFlattening(top.symbol, p.language.SymbolMetadata, nil) {
+		return false
+	}
+	err, ok := trailingHiddenErrorLeaf(top, p.language.SymbolMetadata, s.byteOffset)
+	if !ok || err == nil || err.startByte >= err.endByte || tok.StartByte <= err.endByte {
+		return false
+	}
+
+	merged := newParentNodeInArena(arena, errorSymbol, true, nil, nil, 0)
+	cSetNodeSpan(merged, err.startByte, tok.StartByte, err.startPoint, tok.StartPoint)
+	merged.setHasError(true)
+	merged.setExtra(err.isExtra())
+	merged.preGotoState = err.preGotoState
+	merged.parseState = err.parseState
+	p.materializeAnonymousChildrenForRecoveredError(source, merged, arena)
+	if len(merged.children) == 0 {
+		return false
+	}
+	replaceTrailingHiddenErrorLeaf(top, p.language.SymbolMetadata, s.byteOffset, merged, tok.StartByte, tok.StartPoint)
+	if s.byteOffset < tok.StartByte {
+		s.byteOffset = tok.StartByte
+	}
+	if trackChildErrors != nil {
+		*trackChildErrors = true
+	}
+	if nodeCount != nil {
+		*nodeCount = *nodeCount + 1
+	}
+	if p.glrTrace {
+		fmt.Printf("    MATERIALIZE skipped real gap into hidden ERROR: gap=%d..%d before tok=%d..%d\n",
+			err.endByte, tok.StartByte, tok.StartByte, tok.EndByte)
+	}
+	return true
+}
+
+func trailingHiddenErrorLeaf(n *Node, symbolMeta []SymbolMetadata, end uint32) (*Node, bool) {
+	if n == nil || len(n.children) == 0 {
+		return nil, false
+	}
+	for i := len(n.children) - 1; i >= 0; i-- {
+		child := n.children[i]
+		if child == nil {
+			continue
+		}
+		if symbolStructuralForHiddenFlattening(child.symbol, symbolMeta, nil) {
+			if child.symbol == errorSymbol &&
+				!child.isMissing() &&
+				len(child.children) == 0 &&
+				child.endByte == end {
+				return child, true
+			}
+			if child.endByte == end && child.startByte == child.endByte {
+				continue
+			}
+			return nil, false
+		}
+		if child.endByte > end || end < child.startByte {
+			return nil, false
+		}
+		if err, ok := trailingHiddenErrorLeaf(child, symbolMeta, end); ok {
+			return err, true
+		}
+		if child.endByte == end && child.startByte == child.endByte {
+			continue
+		}
+		return nil, false
+	}
+	return nil, false
+}
+
+func replaceTrailingHiddenErrorLeaf(n *Node, symbolMeta []SymbolMetadata, oldEnd uint32, repl *Node, newEnd uint32, newEndPoint Point) bool {
+	if n == nil || repl == nil || len(n.children) == 0 {
+		return false
+	}
+	for i := len(n.children) - 1; i >= 0; i-- {
+		child := n.children[i]
+		if child == nil {
+			continue
+		}
+		if symbolStructuralForHiddenFlattening(child.symbol, symbolMeta, nil) {
+			if child.symbol == errorSymbol &&
+				!child.isMissing() &&
+				len(child.children) == 0 &&
+				child.endByte == oldEnd {
+				n.children[i] = repl
+				extendHiddenErrorAncestorEnd(n, newEnd, newEndPoint)
+				nodeBumpEquivVersion(n)
+				return true
+			}
+			continue
+		}
+		if replaceTrailingHiddenErrorLeaf(child, symbolMeta, oldEnd, repl, newEnd, newEndPoint) {
+			extendHiddenErrorAncestorEnd(n, newEnd, newEndPoint)
+			nodeBumpEquivVersion(n)
+			return true
+		}
+	}
+	return false
+}
+
+func extendHiddenErrorAncestorEnd(n *Node, end uint32, point Point) {
+	if n == nil || n.endByte > end {
+		return
+	}
+	n.endByte = end
+	n.endPoint = point
+	n.setHasError(true)
 }
 
 func bytesAreParserPadding(source []byte, start, end uint32) bool {
@@ -2442,6 +2623,17 @@ func bytesAreParserPadding(source []byte, start, end uint32) bool {
 		switch source[i] {
 		case ' ', '\t', '\n', '\r', '\f', '\v':
 			continue
+		case '\\':
+			next := i + 1
+			if next < int(end) && source[next] == '\n' {
+				i = next
+				continue
+			}
+			if next+1 < int(end) && source[next] == '\r' && source[next+1] == '\n' {
+				i = next + 1
+				continue
+			}
+			return false
 		default:
 			return false
 		}
@@ -3056,6 +3248,11 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				if actionTiming != nil {
 					actionKindStart = time.Now()
 				}
+				if numStacks == 1 && p.tryMaterializeSkippedRealGap(source, s, currentState, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors) {
+					anyReduced = true
+					needToken = false
+					goto retryAction
+				}
 				if !p.guardRealShiftGap(source, s, tok) {
 					continue
 				}
@@ -3463,10 +3660,16 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			} else {
 				switch act.Type {
 				case ParseActionShift:
+					if numStacks == 1 && p.tryMaterializeSkippedRealGap(source, s, currentState, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors) {
+						anyReduced = true
+						needToken = false
+						goto retryAction
+					}
 					if !p.guardRealShiftGap(source, s, tok) {
 						continue
 					}
 					p.applyShiftAction(s, act, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors)
+					dispatchConsumedCurrentToken = true
 					if actionTiming != nil {
 						ns := time.Since(actionKindStart).Nanoseconds()
 						actionTiming.actionSingleShiftNanos += ns
@@ -3480,10 +3683,16 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 						recordActionTiming(currentState, tok.Symbol, actions, ambiguityActionSingleAccept, ns)
 					}
 				case ParseActionRecover:
+					if numStacks == 1 && p.tryMaterializeSkippedRealGap(source, s, currentState, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors) {
+						anyReduced = true
+						needToken = false
+						goto retryAction
+					}
 					if !p.guardRealTokenAttachmentGap(source, s, tok, "recover") {
 						continue
 					}
 					p.applyRecoverAction(s, act, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors)
+					dispatchConsumedCurrentToken = true
 					if actionTiming != nil {
 						ns := time.Since(actionKindStart).Nanoseconds()
 						actionTiming.actionSingleRecoverNanos += ns
@@ -4384,6 +4593,7 @@ func (p *Parser) applyExtraShiftAction(s *glrStack, currentState StateID, act Pa
 		leaf.setHasError(true)
 	}
 	leaf.setExtra(true)
+	leaf.setExternalScannerToken(tok.ExternalScannerToken)
 	leaf.preGotoState = currentState
 	leaf.parseState = targetState
 	p.recordCurrentExternalLeafCheckpoint(leaf, tok)
@@ -4394,6 +4604,7 @@ func (p *Parser) applyCompactExtraShiftAction(s *glrStack, currentState, targetS
 	if cp, ok := p.currentExternalNoTreeLeafCheckpointRef(arena, tok); ok {
 		leaf := newCompactCheckpointLeafInArena(arena, tok.Symbol, named, tok.StartByte, tok.EndByte, cp)
 		leaf.setExtra(true)
+		leaf.setExternalScannerToken(tok.ExternalScannerToken)
 		leaf.preGotoState = currentState
 		leaf.parseState = targetState
 		p.pushStackCompactCheckpointLeaf(s, targetState, leaf, &scratch.entries, &scratch.gss)
@@ -4401,6 +4612,7 @@ func (p *Parser) applyCompactExtraShiftAction(s *glrStack, currentState, targetS
 	}
 	leaf := newNoTreeLeafNodeInArena(arena, tok.Symbol, named, tok.StartByte, tok.EndByte, tok.StartPoint, tok.EndPoint)
 	leaf.setExtra(true)
+	leaf.setExternalScannerToken(tok.ExternalScannerToken)
 	leaf.preGotoState = currentState
 	leaf.parseState = targetState
 	p.pushStackNoTreeNode(s, targetState, leaf, &scratch.entries, &scratch.gss)

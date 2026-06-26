@@ -74,6 +74,29 @@ func TestRealShiftGapAllowsTriviaOnlySource(t *testing.T) {
 	}
 }
 
+func TestRealShiftGapAllowsEscapedNewlinePadding(t *testing.T) {
+	source := []byte("call(arg1 \\\r\n  \\\n)")
+	stack := newGLRStack(1)
+	stack.byteOffset = uint32(len("call(arg1"))
+	tok := Token{
+		Symbol:    1,
+		StartByte: uint32(len(source) - 1),
+		EndByte:   uint32(len(source)),
+	}
+
+	if !realShiftGapIsParserPadding(source, &stack, tok) {
+		t.Fatalf("realShiftGapIsParserPadding = false, want true for gap %q", source[stack.byteOffset:tok.StartByte])
+	}
+
+	parser := &Parser{glrTrace: false}
+	if !parser.guardRealShiftGap(source, &stack, tok) {
+		t.Fatal("guardRealShiftGap = false, want true")
+	}
+	if stack.dead {
+		t.Fatal("stack.dead = true, want false")
+	}
+}
+
 func TestRealShiftGapAllowsNoLookaheadToken(t *testing.T) {
 	source := []byte("call(arg1/*c*/)")
 	stack := newGLRStack(1)
@@ -95,6 +118,58 @@ func TestRealShiftGapAllowsNoLookaheadToken(t *testing.T) {
 	}
 	if stack.dead {
 		t.Fatal("stack.dead = true, want false")
+	}
+}
+
+func TestRealShiftGapAllowsExternalScannerOwnedSkippedGap(t *testing.T) {
+	source := []byte("aaaaaa identification division.")
+	stack := newGLRStack(1)
+	tok := Token{
+		Symbol:                   1,
+		StartByte:                6,
+		EndByte:                  6,
+		StartPoint:               Point{Column: 6},
+		EndPoint:                 Point{Column: 6},
+		ExternalScannerToken:     true,
+		ExternalScannerStartByte: 0,
+	}
+
+	if !realShiftGapIsParserPadding(source, &stack, tok) {
+		t.Fatalf("realShiftGapIsParserPadding = false, want true for scanner-owned gap %q", source[stack.byteOffset:tok.StartByte])
+	}
+
+	parser := &Parser{glrTrace: false}
+	if !parser.guardRealShiftGap(source, &stack, tok) {
+		t.Fatal("guardRealShiftGap = false, want true")
+	}
+	if stack.dead {
+		t.Fatal("stack.dead = true, want false")
+	}
+}
+
+func TestRealShiftGapRejectsExternalScannerTokenFromDifferentStart(t *testing.T) {
+	source := []byte("aaaaaa identification division.")
+	stack := newGLRStack(1)
+	tok := Token{
+		Symbol:                   1,
+		StartByte:                6,
+		EndByte:                  6,
+		StartPoint:               Point{Column: 6},
+		EndPoint:                 Point{Column: 6},
+		ExternalScannerToken:     true,
+		ExternalScannerStartByte: 2,
+	}
+
+	if realShiftGapIsParserPadding(source, &stack, tok) {
+		t.Fatalf("realShiftGapIsParserPadding = true, want false for mismatched scanner start gap %q", source[stack.byteOffset:tok.StartByte])
+	}
+
+	parser := &Parser{glrTrace: false}
+	if parser.guardRealShiftGap(source, &stack, tok) {
+		t.Fatal("guardRealShiftGap = true, want false")
+	}
+	if !stack.dead {
+		t.Fatal("stack.dead = false, want true")
 	}
 }
 
@@ -170,6 +245,199 @@ func TestRealShiftGapRejectsNonLeadingBOM(t *testing.T) {
 	}
 }
 
+func TestMaterializeSkippedRealGapExtendsTopError(t *testing.T) {
+	source := []byte("1abc+")
+	parser := NewParser(buildArithmeticLanguage())
+	var entryScratch glrEntryScratch
+	var gssScratch gssScratch
+	arena := newNodeArena(arenaClassFull)
+	stack := newGLRStackWithScratch(2, &entryScratch)
+	errNode := newLeafNodeInArena(arena, errorSymbol, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	errNode.setHasError(true)
+	errNode.parseState = 2
+	parser.pushStackNode(&stack, 2, errNode, &entryScratch, &gssScratch)
+	stack.byteOffset = 2
+	nodeCount := 1
+	trackChildErrors := false
+	tok := Token{
+		Symbol:     2,
+		StartByte:  4,
+		EndByte:    5,
+		StartPoint: Point{Column: 4},
+		EndPoint:   Point{Column: 5},
+	}
+
+	if !parser.tryMaterializeSkippedRealGap(source, &stack, 2, tok, &nodeCount, arena, &entryScratch, &gssScratch, &trackChildErrors) {
+		t.Fatal("tryMaterializeSkippedRealGap = false, want true")
+	}
+	if got := stackEntryNode(stack.top()); got != errNode {
+		t.Fatalf("top error node changed: got %p want %p", got, errNode)
+	}
+	if got, want := errNode.EndByte(), uint32(4); got != want {
+		t.Fatalf("error end byte = %d, want %d", got, want)
+	}
+	if got, want := errNode.EndPoint(), (Point{Column: 4}); got != want {
+		t.Fatalf("error end point = %+v, want %+v", got, want)
+	}
+	if got, want := stack.byteOffset, uint32(4); got != want {
+		t.Fatalf("stack byte offset = %d, want %d", got, want)
+	}
+	if nodeCount != 1 {
+		t.Fatalf("nodeCount = %d, want 1 for extension", nodeCount)
+	}
+	if !trackChildErrors {
+		t.Fatal("trackChildErrors = false, want true")
+	}
+	if !parser.guardRealShiftGap(source, &stack, tok) {
+		t.Fatal("guardRealShiftGap after materialization = false, want true")
+	}
+}
+
+func TestMaterializeSkippedRealGapGroupsTrailingHiddenError(t *testing.T) {
+	source := []byte(".\n@a")
+	lang := &Language{
+		Name:        "hidden_error_gap",
+		TokenCount:  4,
+		SymbolCount: 5,
+		SymbolNames: []string{
+			"EOF",
+			".",
+			"@",
+			"a",
+			"_hidden",
+		},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF"},
+			{Name: ".", Visible: true},
+			{Name: "@", Visible: true},
+			{Name: "a", Visible: true},
+			{Name: "_hidden"},
+		},
+	}
+	parser := NewParser(lang)
+	var entryScratch glrEntryScratch
+	var gssScratch gssScratch
+	arena := newNodeArena(arenaClassFull)
+	stack := newGLRStackWithScratch(7, &entryScratch)
+	errLeaf := newLeafNodeInArena(arena, errorSymbol, true, 0, 1, Point{}, Point{Column: 1})
+	errLeaf.setHasError(true)
+	hidden := newParentNodeInArena(arena, 4, false, []*Node{errLeaf}, nil, 0)
+	hidden.startByte = 0
+	hidden.endByte = 1
+	hidden.startPoint = Point{}
+	hidden.endPoint = Point{Column: 1}
+	hidden.setHasError(true)
+	parser.pushStackNode(&stack, 7, hidden, &entryScratch, &gssScratch)
+	stack.byteOffset = 1
+	nodeCount := 1
+	trackChildErrors := false
+	tok := Token{
+		Symbol:     3,
+		StartByte:  3,
+		EndByte:    4,
+		StartPoint: Point{Row: 1, Column: 1},
+		EndPoint:   Point{Row: 1, Column: 2},
+	}
+
+	if !parser.tryMaterializeSkippedRealGap(source, &stack, 7, tok, &nodeCount, arena, &entryScratch, &gssScratch, &trackChildErrors) {
+		t.Fatal("tryMaterializeSkippedRealGap = false, want true")
+	}
+	if got := stackEntryNode(stack.top()); got != hidden {
+		t.Fatalf("top node changed: got %p want hidden %p", got, hidden)
+	}
+	if got, want := stack.byteOffset, uint32(3); got != want {
+		t.Fatalf("stack byte offset = %d, want %d", got, want)
+	}
+	if got, want := hidden.endByte, uint32(3); got != want {
+		t.Fatalf("hidden end byte = %d, want %d", got, want)
+	}
+	grouped := hidden.children[0]
+	if grouped == nil || grouped.symbol != errorSymbol {
+		t.Fatalf("hidden child = %v, want grouped ERROR", grouped)
+	}
+	if got, want := grouped.startByte, uint32(0); got != want {
+		t.Fatalf("grouped start byte = %d, want %d", got, want)
+	}
+	if got, want := grouped.endByte, uint32(3); got != want {
+		t.Fatalf("grouped end byte = %d, want %d", got, want)
+	}
+	if len(grouped.children) != 2 {
+		t.Fatalf("grouped child count = %d, want 2", len(grouped.children))
+	}
+	if got, want := grouped.children[0].symbol, Symbol(1); got != want {
+		t.Fatalf("grouped child 0 symbol = %d, want %d", got, want)
+	}
+	if got, want := grouped.children[1].symbol, Symbol(2); got != want {
+		t.Fatalf("grouped child 1 symbol = %d, want %d", got, want)
+	}
+	if nodeCount != 2 {
+		t.Fatalf("nodeCount = %d, want 2", nodeCount)
+	}
+	if !trackChildErrors {
+		t.Fatal("trackChildErrors = false, want true")
+	}
+	if !parser.guardRealShiftGap(source, &stack, tok) {
+		t.Fatal("guardRealShiftGap after materialization = false, want true")
+	}
+}
+
+func TestMaterializeSkippedRealGapCreatesErrorOnCleanStack(t *testing.T) {
+	source := []byte("1abc+")
+	parser := NewParser(buildArithmeticLanguage())
+	var entryScratch glrEntryScratch
+	var gssScratch gssScratch
+	arena := newNodeArena(arenaClassFull)
+	stack := newGLRStackWithScratch(2, &entryScratch)
+	stack.byteOffset = 2
+	nodeCount := 0
+	trackChildErrors := false
+	tok := Token{
+		Symbol:     2,
+		StartByte:  4,
+		EndByte:    5,
+		StartPoint: Point{Column: 4},
+		EndPoint:   Point{Column: 5},
+	}
+
+	if !parser.tryMaterializeSkippedRealGap(source, &stack, 2, tok, &nodeCount, arena, &entryScratch, &gssScratch, &trackChildErrors) {
+		t.Fatal("tryMaterializeSkippedRealGap = false, want true for clean stack")
+	}
+	errNode := stackEntryNode(stack.top())
+	if errNode == nil || errNode.symbol != errorSymbol {
+		t.Fatalf("top node = %v, want ERROR", errNode)
+	}
+	if got, want := errNode.StartByte(), uint32(2); got != want {
+		t.Fatalf("error start byte = %d, want %d", got, want)
+	}
+	if got, want := errNode.EndByte(), uint32(4); got != want {
+		t.Fatalf("error end byte = %d, want %d", got, want)
+	}
+	if got, want := errNode.StartPoint(), (Point{}); got != want {
+		t.Fatalf("error start point = %+v, want %+v", got, want)
+	}
+	if got, want := errNode.EndPoint(), (Point{Column: 4}); got != want {
+		t.Fatalf("error end point = %+v, want %+v", got, want)
+	}
+	if got, want := errNode.parseState, StateID(2); got != want {
+		t.Fatalf("error parse state = %d, want %d", got, want)
+	}
+	if got, want := stack.byteOffset, uint32(4); got != want {
+		t.Fatalf("stack byte offset = %d, want %d", got, want)
+	}
+	if nodeCount != 1 {
+		t.Fatalf("nodeCount = %d, want 1", nodeCount)
+	}
+	if !trackChildErrors {
+		t.Fatal("trackChildErrors = false, want true")
+	}
+	if !parser.guardRealShiftGap(source, &stack, tok) {
+		t.Fatal("guardRealShiftGap after materialization = false, want true")
+	}
+	if stack.dead {
+		t.Fatal("stack.dead = true, want false")
+	}
+}
+
 func TestRealShiftGapAllowsSyntheticMissingToken(t *testing.T) {
 	source := []byte("call(arg1, arg8)")
 	stack := newGLRStack(1)
@@ -186,7 +454,52 @@ func TestRealShiftGapAllowsSyntheticMissingToken(t *testing.T) {
 	}
 }
 
-func TestRecoverActionRejectsCommentGap(t *testing.T) {
+func TestReuseSubtreeRejectsCommentGapWithoutKillingStack(t *testing.T) {
+	source := []byte("a/*c*/#")
+	lang := buildExtraShiftGapLanguage()
+	parser := NewParser(lang)
+	a := NewLeafNode(1, true, 0, 1, Point{Column: 0}, Point{Column: 1})
+	hash := NewLeafNode(2, true, 6, 7, Point{Column: 6}, Point{Column: 7})
+	root := NewParentNode(1, true, []*Node{a, hash}, nil, 0)
+	oldTree := NewTree(root, source, lang)
+
+	var reuseScratch reuseScratch
+	reuse := (&reuseCursor{}).reset(oldTree, source, &reuseScratch)
+	if reuse == nil {
+		t.Fatal("reuse cursor reset returned nil")
+	}
+
+	var entryScratch glrEntryScratch
+	var gssScratch gssScratch
+	stack := newGLRStackWithScratch(1, &entryScratch)
+	stack.byteOffset = 1
+	gapStart := stack.byteOffset
+	lookahead := Token{
+		Symbol:     2,
+		StartByte:  6,
+		EndByte:    7,
+		StartPoint: Point{Column: 6},
+		EndPoint:   Point{Column: 7},
+	}
+	ts := &stubTokenSource{
+		tokens: []Token{
+			{Symbol: 0, StartByte: uint32(len(source)), EndByte: uint32(len(source))},
+		},
+	}
+
+	nextTok, reusedBytes, ok := parser.tryReuseSubtree(&stack, lookahead, ts, reuse, &entryScratch, &gssScratch)
+	if ok {
+		t.Fatalf("tryReuseSubtree reused across non-padding gap %q: bytes=%d next=%+v", source[gapStart:lookahead.StartByte], reusedBytes, nextTok)
+	}
+	if stack.dead {
+		t.Fatal("stack.dead = true, want false so ordinary lex/parse can decide")
+	}
+	if got := stackEntryNode(stack.top()); got != nil {
+		t.Fatalf("stack top node = %v, want nil after rejected reuse", got)
+	}
+}
+
+func TestRecoverActionMaterializesCommentGap(t *testing.T) {
 	source := []byte("1/*c*/*2")
 	parser := NewParser(buildArithmeticRecoverLanguage())
 	tree, err := parser.ParseWithTokenSource(source, &recoverCommentGapTokenSource{src: source})
@@ -194,12 +507,93 @@ func TestRecoverActionRejectsCommentGap(t *testing.T) {
 		t.Fatalf("ParseWithTokenSource failed: %v", err)
 	}
 
-	if got, want := tree.ParseRuntime().StopReason, ParseStopNoStacksAlive; got != want {
+	if got, want := tree.ParseRuntime().StopReason, ParseStopAccepted; got != want {
 		t.Fatalf("parse stop reason = %q, want %q; tree=%v", got, want, tree.RootNode())
 	}
-	if root := tree.RootNode(); root != nil && root.EndByte() > 1 {
-		t.Fatalf("recovery attached stale-gap token; root end byte = %d, want <= 1", root.EndByte())
+	if got := countGapTestNodesWithSymbolSpan(tree.RootNode(), errorSymbol, 1, 6); got != 1 {
+		t.Fatalf("ERROR span 1..6 count = %d, want 1; tree=%s", got, tree.RootNode().SExpr(parser.language))
 	}
+	if got := countGapTestNodesWithSymbolSpan(tree.RootNode(), errorSymbol, 6, 7); got != 1 {
+		t.Fatalf("recovered lookahead ERROR span 6..7 count = %d, want 1; tree=%s", got, tree.RootNode().SExpr(parser.language))
+	}
+	if got := countGapTestNodesWithSymbolSpan(tree.RootNode(), 1, 7, 8); got != 1 {
+		t.Fatalf("NUMBER span 7..8 count = %d, want 1 after recovered lookahead is consumed; tree=%s", got, tree.RootNode().SExpr(parser.language))
+	}
+	if got := countGapTestNodesWithSymbolSpan(tree.RootNode(), 3, 6, 7); got != 0 {
+		t.Fatalf("STAR span 6..7 count = %d, want 0 because recovered lookahead must not be redispatched; tree=%s", got, tree.RootNode().SExpr(parser.language))
+	}
+}
+
+func TestShiftActionMaterializesCommentGap(t *testing.T) {
+	source := []byte("1/*c*/+2")
+	parser := NewParser(buildArithmeticLanguage())
+	tree, err := parser.ParseWithTokenSource(source, &recoverCommentGapTokenSource{src: source})
+	if err != nil {
+		t.Fatalf("ParseWithTokenSource failed: %v", err)
+	}
+
+	if got, want := tree.ParseRuntime().StopReason, ParseStopAccepted; got != want {
+		t.Fatalf("parse stop reason = %q, want %q; tree=%v", got, want, tree.RootNode())
+	}
+	if got := countGapTestNodesWithSymbolSpan(tree.RootNode(), errorSymbol, 1, 6); got != 1 {
+		t.Fatalf("ERROR span 1..6 count = %d, want 1; tree=%s", got, tree.RootNode().SExpr(parser.language))
+	}
+}
+
+func TestExtraShiftActionMaterializesCommentGap(t *testing.T) {
+	source := []byte("a/*c*/#")
+	parser := NewParser(buildExtraShiftGapLanguage())
+	tree, err := parser.ParseWithTokenSource(source, &extraShiftGapTokenSource{src: source})
+	if err != nil {
+		t.Fatalf("ParseWithTokenSource failed: %v", err)
+	}
+
+	if got, want := tree.ParseRuntime().StopReason, ParseStopAccepted; got != want {
+		t.Fatalf("parse stop reason = %q, want %q; tree=%v", got, want, tree.RootNode())
+	}
+	if got := countGapTestNodesWithSymbolSpan(tree.RootNode(), errorSymbol, 1, 6); got != 1 {
+		t.Fatalf("ERROR span 1..6 count = %d, want 1; tree=%s", got, tree.RootNode().SExpr(parser.language))
+	}
+	if got := countGapTestNodesWithSymbolSpan(tree.RootNode(), 2, 6, 7); got != 1 {
+		t.Fatalf("extra lookahead span 6..7 count = %d, want 1; tree=%s", got, tree.RootNode().SExpr(parser.language))
+	}
+}
+
+func TestShiftActionExtendsExistingErrorAcrossSkippedRealGap(t *testing.T) {
+	source := []byte("1abc+2")
+	parser := NewParser(buildSkippedRealGapLanguage())
+	tree, err := parser.ParseWithTokenSource(source, &skippedRealGapTokenSource{
+		tokens: []Token{
+			{Symbol: 1, StartByte: 0, EndByte: 1, StartPoint: Point{Column: 0}, EndPoint: Point{Column: 1}, Text: "1"},
+			{Symbol: 3, StartByte: 1, EndByte: 2, StartPoint: Point{Column: 1}, EndPoint: Point{Column: 2}, Text: "a"},
+			{Symbol: 2, StartByte: 4, EndByte: 5, StartPoint: Point{Column: 4}, EndPoint: Point{Column: 5}, Text: "+"},
+			{Symbol: 1, StartByte: 5, EndByte: 6, StartPoint: Point{Column: 5}, EndPoint: Point{Column: 6}, Text: "2"},
+			{Symbol: 0, StartByte: 6, EndByte: 6, StartPoint: Point{Column: 6}, EndPoint: Point{Column: 6}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ParseWithTokenSource failed: %v", err)
+	}
+	if got, want := tree.ParseRuntime().StopReason, ParseStopAccepted; got != want {
+		t.Fatalf("parse stop reason = %q, want %q; tree=%v", got, want, tree.RootNode())
+	}
+	if got := countGapTestNodesWithSymbolSpan(tree.RootNode(), errorSymbol, 1, 4); got != 1 {
+		t.Fatalf("ERROR span 1..4 count = %d, want 1; tree=%v", got, tree.RootNode())
+	}
+}
+
+func buildSkippedRealGapLanguage() *Language {
+	lang := buildArithmeticRecoverLanguage()
+	lang.Name = "skipped_real_gap"
+	lang.SymbolNames = []string{"EOF", "NUMBER", "+", "BAD", "expression"}
+	lang.SymbolMetadata[3] = SymbolMetadata{Name: "BAD", Visible: true, Named: true}
+	// Keep BAD reducible after NUMBER, but illegal both at the start state and
+	// after a completed expression. This forces ordinary error materialization
+	// before the following PLUS lookahead skips additional real bytes.
+	lang.ParseTable[0][3] = 0
+	lang.ParseTable[1][3] = 2
+	lang.ParseTable[2][3] = 0
+	return lang
 }
 
 type recoverCommentGapTokenSource struct {
@@ -289,4 +683,119 @@ func (ts *recoverCommentGapTokenSource) advance() {
 	}
 	ts.pos++
 	ts.col++
+}
+
+func buildExtraShiftGapLanguage() *Language {
+	return &Language{
+		Name:              "extra_shift_gap",
+		SymbolCount:       3,
+		TokenCount:        3,
+		StateCount:        2,
+		ProductionIDCount: 1,
+		SymbolNames:       []string{"EOF", "a", "#"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF", Visible: false, Named: false},
+			{Name: "a", Visible: true, Named: false},
+			{Name: "#", Visible: true, Named: false},
+		},
+		FieldNames: []string{""},
+		ParseActions: []ParseActionEntry{
+			{Actions: nil},
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 1}}},
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 0, Extra: true}}},
+			{Actions: []ParseAction{{Type: ParseActionAccept}}},
+		},
+		ParseTable: [][]uint16{
+			{0, 1, 0},
+			{3, 0, 2},
+		},
+		LexModes: []LexMode{{LexState: 0}, {LexState: 0}},
+		LexStates: []LexState{{
+			Default: -1,
+			EOF:     -1,
+		}},
+	}
+}
+
+type extraShiftGapTokenSource struct {
+	src []byte
+	pos int
+	col uint32
+}
+
+func (ts *extraShiftGapTokenSource) Next() Token {
+	for ts.pos < len(ts.src) {
+		if ts.src[ts.pos] == '/' && ts.pos+1 < len(ts.src) && ts.src[ts.pos+1] == '*' {
+			ts.skipBlockComment()
+			continue
+		}
+		switch ts.src[ts.pos] {
+		case 'a':
+			return ts.singleByteToken(1)
+		case '#':
+			return ts.singleByteToken(2)
+		default:
+			ts.pos++
+			ts.col++
+		}
+	}
+	pt := Point{Column: ts.col}
+	return Token{StartByte: uint32(ts.pos), EndByte: uint32(ts.pos), StartPoint: pt, EndPoint: pt}
+}
+
+func (ts *extraShiftGapTokenSource) singleByteToken(sym Symbol) Token {
+	start := ts.pos
+	startPt := Point{Column: ts.col}
+	ts.pos++
+	ts.col++
+	return Token{
+		Symbol:     sym,
+		StartByte:  uint32(start),
+		EndByte:    uint32(ts.pos),
+		StartPoint: startPt,
+		EndPoint:   Point{Column: ts.col},
+		Text:       string(ts.src[start:ts.pos]),
+	}
+}
+
+func (ts *extraShiftGapTokenSource) skipBlockComment() {
+	ts.pos += 2
+	ts.col += 2
+	for ts.pos < len(ts.src) {
+		if ts.src[ts.pos] == '*' && ts.pos+1 < len(ts.src) && ts.src[ts.pos+1] == '/' {
+			ts.pos += 2
+			ts.col += 2
+			return
+		}
+		ts.pos++
+		ts.col++
+	}
+}
+
+type skippedRealGapTokenSource struct {
+	tokens []Token
+	idx    int
+}
+
+func (ts *skippedRealGapTokenSource) Next() Token {
+	if ts.idx >= len(ts.tokens) {
+		return Token{}
+	}
+	tok := ts.tokens[ts.idx]
+	ts.idx++
+	return tok
+}
+
+func countGapTestNodesWithSymbolSpan(n *Node, sym Symbol, start, end uint32) int {
+	if n == nil {
+		return 0
+	}
+	count := 0
+	if n.symbol == sym && n.StartByte() == start && n.EndByte() == end {
+		count++
+	}
+	for i := 0; i < n.ChildCount(); i++ {
+		count += countGapTestNodesWithSymbolSpan(n.Child(i), sym, start, end)
+	}
+	return count
 }

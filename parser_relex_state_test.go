@@ -50,3 +50,26 @@ func TestUpdateCurrentRelexParserStateTokenSourceExcludesShiftedStacks(t *testin
 		}
 	}
 }
+
+func TestSameSurfaceRelexTokenRequiresSameSpanAndSurface(t *testing.T) {
+	p := &Parser{language: &Language{
+		SymbolNames: []string{"end", "<", "<", ">"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "end"},
+			{Name: "<"},
+			{Name: "<"},
+			{Name: ">"},
+		},
+	}}
+	original := Token{Symbol: 1, StartByte: 10, EndByte: 11}
+
+	if !p.sameSurfaceRelexToken(original, Token{Symbol: 2, StartByte: 10, EndByte: 11}) {
+		t.Fatal("same-surface duplicate token was not accepted")
+	}
+	if p.sameSurfaceRelexToken(original, Token{Symbol: 2, StartByte: 10, EndByte: 12}) {
+		t.Fatal("same-surface token with different span was accepted")
+	}
+	if p.sameSurfaceRelexToken(original, Token{Symbol: 3, StartByte: 10, EndByte: 11}) {
+		t.Fatal("different-surface token was accepted")
+	}
+}
