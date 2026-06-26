@@ -75,6 +75,35 @@ func TestExtendParentSpanChainsInvisiblePrefixLeaves(t *testing.T) {
 	}
 }
 
+func TestExtendParentSpanCoversHiddenKeywordPrefixAcrossWhitespace(t *testing.T) {
+	// Dart reductions like `type_alias` and `declaration` can start with hidden
+	// non-extra keywords (`typedef ` / `static `) followed by a visible child.
+	parent := NewParentNode(3, true, nil, nil, 0)
+	parent.startByte = 8
+	parent.endByte = 47
+	parent.startPoint = Point{Row: 0, Column: 8}
+	parent.endPoint = Point{Row: 0, Column: 47}
+
+	hiddenKeyword := NewLeafNode(1, false, 0, 7, Point{Row: 0, Column: 0}, Point{Row: 0, Column: 7})
+	visibleTail := NewLeafNode(2, true, 8, 47, Point{Row: 0, Column: 8}, Point{Row: 0, Column: 47})
+
+	entries := []stackEntry{
+		newStackEntryNode(0, hiddenKeyword),
+		newStackEntryNode(0, visibleTail),
+	}
+	meta := []SymbolMetadata{
+		{}, {Visible: false}, {Visible: true},
+	}
+	extendParentSpanToWindowForTest(parent, entries, 0, len(entries), meta, []string{"", "_typedef", "visible"})
+
+	if got, want := parent.startByte, uint32(0); got != want {
+		t.Fatalf("parent.startByte = %d, want %d", got, want)
+	}
+	if got, want := parent.endByte, uint32(47); got != want {
+		t.Fatalf("parent.endByte = %d, want %d", got, want)
+	}
+}
+
 func TestExtendParentSpanSkipsDiscontiguousPhantom(t *testing.T) {
 	// A zero-width invisible entry AFTER the parent span (like javascript
 	// _automatic_semicolon at [27-27] after statement_block [13-26])
