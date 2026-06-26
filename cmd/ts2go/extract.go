@@ -28,8 +28,12 @@ type ExtractedGrammar struct {
 
 	ParseTable   [][]uint16
 	ParseActions []ActionGroup
-	LexModes     []LexModeEntry
-	LexStates    []LexStateEntry
+	// ConflictPolicies are deterministic conflict choices derived from parse
+	// action rows. State IDs are parser.c runtime states, with no grammargen
+	// state remapping.
+	ConflictPolicies []ExtractedConflictPolicy
+	LexModes         []LexModeEntry
+	LexStates        []LexStateEntry
 
 	// Optional keyword lexer DFA (from ts_lex_keywords).
 	KeywordLexStates    []LexStateEntry
@@ -102,6 +106,14 @@ type ExtractedAction struct {
 	ProductionID int    // for reduce
 	Extra        bool   // for shift (extra tokens)
 	Repetition   bool   // for shift (repetition)
+}
+
+// ExtractedConflictPolicy describes one derived deterministic conflict policy.
+type ExtractedConflictPolicy struct {
+	State         int
+	Lookahead     int
+	Kind          string
+	ReduceSymbols []int
 }
 
 // LexModeEntry maps a parser state to its lexer configuration.
@@ -177,6 +189,7 @@ func ExtractGrammar(source string) (*ExtractedGrammar, error) {
 	if err := extractParseActions(source, g); err != nil {
 		return nil, fmt.Errorf("parse actions: %w", err)
 	}
+	g.ConflictPolicies = extractConflictPolicies(g)
 
 	if err := extractAliasSequences(source, g); err != nil {
 		return nil, fmt.Errorf("alias sequences: %w", err)
@@ -1268,6 +1281,125 @@ func extractParseActions(source string, g *ExtractedGrammar) error {
 
 	g.ParseActions = groups
 	return nil
+}
+
+func extractConflictPolicies(g *ExtractedGrammar) []ExtractedConflictPolicy {
+	if g == nil || g.TokenCount <= 0 || len(g.ParseActions) == 0 {
+		return nil
+	}
+	actionGroups := make(map[int]*ActionGroup, len(g.ParseActions))
+	for i := range g.ParseActions {
+		actionGroups[g.ParseActions[i].Index] = &g.ParseActions[i]
+	}
+
+	var policies []ExtractedConflictPolicy
+	seen := make(map[[2]int]struct{})
+	visit := func(state, lookahead, actionIndex int) {
+		if state < 0 || lookahead < 0 || lookahead >= g.TokenCount || actionIndex == 0 {
+			return
+		}
+		key := [2]int{state, lookahead}
+		if _, ok := seen[key]; ok {
+			return
+		}
+		group := actionGroups[actionIndex]
+		if group == nil {
+			return
+		}
+		policy, ok := conflictPolicyForExtractedActionRow(state, lookahead, group.Actions)
+		if !ok {
+			return
+		}
+		seen[key] = struct{}{}
+		policies = append(policies, policy)
+	}
+
+	for state, row := range g.ParseTable {
+		limit := g.TokenCount
+		if len(row) < limit {
+			limit = len(row)
+		}
+		for lookahead := 0; lookahead < limit; lookahead++ {
+			visit(state, lookahead, int(row[lookahead]))
+		}
+	}
+
+	smallBase := g.LargeStateCount
+	table := g.SmallParseTable
+	for smallIdx, offset := range g.SmallParseTableMap {
+		state := smallBase + smallIdx
+		if int(offset) >= len(table) {
+			continue
+		}
+		groupCount := table[offset]
+		pos := int(offset) + 1
+		for i := uint16(0); i < groupCount; i++ {
+			if pos+1 >= len(table) {
+				break
+			}
+			actionIndex := int(table[pos])
+			symbolCount := int(table[pos+1])
+			pos += 2
+			for j := 0; j < symbolCount; j++ {
+				if pos >= len(table) {
+					break
+				}
+				lookahead := int(table[pos])
+				pos++
+				visit(state, lookahead, actionIndex)
+			}
+		}
+	}
+
+	sort.Slice(policies, func(i, j int) bool {
+		if policies[i].State != policies[j].State {
+			return policies[i].State < policies[j].State
+		}
+		return policies[i].Lookahead < policies[j].Lookahead
+	})
+	return policies
+}
+
+func conflictPolicyForExtractedActionRow(state, lookahead int, actions []ExtractedAction) (ExtractedConflictPolicy, bool) {
+	if state < 0 || lookahead < 0 || len(actions) < 2 {
+		return ExtractedConflictPolicy{}, false
+	}
+
+	shiftFound := false
+	reduceFound := false
+	reduceSymbols := make(map[int]struct{})
+	for _, action := range actions {
+		switch action.Type {
+		case "shift":
+			if shiftFound || !action.Repetition || action.Extra {
+				return ExtractedConflictPolicy{}, false
+			}
+			shiftFound = true
+		case "reduce":
+			if action.Extra || action.Symbol < 0 {
+				return ExtractedConflictPolicy{}, false
+			}
+			reduceFound = true
+			reduceSymbols[action.Symbol] = struct{}{}
+		default:
+			return ExtractedConflictPolicy{}, false
+		}
+	}
+	if !shiftFound || !reduceFound {
+		return ExtractedConflictPolicy{}, false
+	}
+
+	symbols := make([]int, 0, len(reduceSymbols))
+	for sym := range reduceSymbols {
+		symbols = append(symbols, sym)
+	}
+	sort.Ints(symbols)
+	return ExtractedConflictPolicy{
+		State:         state,
+		Lookahead:     lookahead,
+		Kind:          "repetition_shift",
+		ReduceSymbols: symbols,
+	}, true
 }
 
 // extractAliasSequences parses ts_alias_sequences[PRODUCTION_ID_COUNT][MAX_ALIAS_SEQUENCE_LENGTH].

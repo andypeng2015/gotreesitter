@@ -657,6 +657,196 @@ const TSLanguage *tree_sitter_named(void) {
 	}
 }
 
+func TestExtractGrammarDerivesConflictPoliciesFromDenseParseTable(t *testing.T) {
+	src := `
+#define STATE_COUNT 4
+#define LARGE_STATE_COUNT 4
+#define SYMBOL_COUNT 6
+#define ALIAS_COUNT 0
+#define TOKEN_COUNT 3
+#define EXTERNAL_TOKEN_COUNT 0
+#define FIELD_COUNT 0
+#define PRODUCTION_ID_COUNT 1
+#define MAX_ALIAS_SEQUENCE_LENGTH 0
+
+enum ts_symbol_identifiers {
+  anon_sym_token = 1,
+  anon_sym_other = 2,
+  sym_item = 3,
+  sym_list = 4,
+  sym_other = 5,
+};
+
+static const char * const ts_symbol_names[] = {
+  [ts_builtin_sym_end] = "end",
+  [anon_sym_token] = "token",
+  [anon_sym_other] = "other",
+  [sym_item] = "item",
+  [sym_list] = "list",
+  [sym_other] = "other_node",
+};
+
+static const TSSymbolMetadata ts_symbol_metadata[] = {
+  [ts_builtin_sym_end] = { .visible = false, .named = true, },
+  [anon_sym_token] = { .visible = true, .named = false, },
+  [anon_sym_other] = { .visible = true, .named = false, },
+  [sym_item] = { .visible = true, .named = true, },
+  [sym_list] = { .visible = true, .named = true, },
+  [sym_other] = { .visible = true, .named = true, },
+};
+
+static const uint16_t ts_parse_table[LARGE_STATE_COUNT][SYMBOL_COUNT] = {
+  [3] = {
+    [anon_sym_token] = ACTIONS(5),
+    [sym_item] = STATE(2),
+  },
+};
+
+static const TSParseActionEntry ts_parse_actions[] = {
+  [0] = {.entry = {.count = 0, .reusable = false}},
+  [5] = {.entry = {.count = 3, .reusable = true}}, REDUCE(sym_list, 2, 0, 0), REDUCE(sym_other, 1, 0, 0), SHIFT_REPEAT(9),
+};
+
+static const TSLexMode ts_lex_modes[STATE_COUNT] = {
+  [0] = {.lex_state = 0},
+  [1] = {.lex_state = 0},
+  [2] = {.lex_state = 0},
+  [3] = {.lex_state = 0},
+};
+
+const TSLanguage *tree_sitter_policy(void) {
+  return 0;
+}
+`
+	g, err := ExtractGrammar(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(g.ConflictPolicies) != 1 {
+		t.Fatalf("len(ConflictPolicies) = %d, want 1: %+v", len(g.ConflictPolicies), g.ConflictPolicies)
+	}
+	got := g.ConflictPolicies[0]
+	if got.State != 3 || got.Lookahead != 1 || got.Kind != "repetition_shift" {
+		t.Fatalf("policy = %+v, want state=3 lookahead=1 repetition_shift", got)
+	}
+	if len(got.ReduceSymbols) != 2 || got.ReduceSymbols[0] != 4 || got.ReduceSymbols[1] != 5 {
+		t.Fatalf("ReduceSymbols = %v, want [4 5]", got.ReduceSymbols)
+	}
+
+	lang := BuildLanguage(g)
+	if len(lang.ConflictPolicies) != 1 {
+		t.Fatalf("BuildLanguage ConflictPolicies = %d, want 1", len(lang.ConflictPolicies))
+	}
+	if lang.ConflictPolicies[0].State != 3 || lang.ConflictPolicies[0].Lookahead != 1 {
+		t.Fatalf("runtime policy = %+v, want parser.c state/lookahead", lang.ConflictPolicies[0])
+	}
+}
+
+func TestExtractConflictPoliciesFromSmallParseTable(t *testing.T) {
+	g := &ExtractedGrammar{
+		LargeStateCount: 2,
+		TokenCount:      3,
+		SmallParseTable: []uint16{
+			1, 5, 2, 1, 4,
+		},
+		SmallParseTableMap: []uint32{0},
+		ParseActions: []ActionGroup{
+			{Index: 5, Actions: []ExtractedAction{
+				{Type: "reduce", Symbol: 7},
+				{Type: "shift", State: 8, Repetition: true},
+			}},
+		},
+	}
+
+	policies := extractConflictPolicies(g)
+	if len(policies) != 1 {
+		t.Fatalf("extractConflictPolicies emitted %d policies, want 1: %+v", len(policies), policies)
+	}
+	if policies[0].State != 2 || policies[0].Lookahead != 1 {
+		t.Fatalf("policy = %+v, want small state 2 token lookahead 1", policies[0])
+	}
+}
+
+func TestExtractConflictPoliciesRejectsUnsafeActionShapes(t *testing.T) {
+	tests := []struct {
+		name    string
+		actions []ExtractedAction
+	}{
+		{
+			name: "plain shift",
+			actions: []ExtractedAction{
+				{Type: "reduce", Symbol: 4},
+				{Type: "shift", State: 5},
+			},
+		},
+		{
+			name: "extra repetition shift",
+			actions: []ExtractedAction{
+				{Type: "reduce", Symbol: 4},
+				{Type: "shift", State: 5, Repetition: true, Extra: true},
+			},
+		},
+		{
+			name: "multiple shifts",
+			actions: []ExtractedAction{
+				{Type: "reduce", Symbol: 4},
+				{Type: "shift", State: 5, Repetition: true},
+				{Type: "shift", State: 6, Repetition: true},
+			},
+		},
+		{
+			name: "accept",
+			actions: []ExtractedAction{
+				{Type: "reduce", Symbol: 4},
+				{Type: "shift", State: 5, Repetition: true},
+				{Type: "accept"},
+			},
+		},
+		{
+			name: "recover",
+			actions: []ExtractedAction{
+				{Type: "reduce", Symbol: 4},
+				{Type: "shift", State: 5, Repetition: true},
+				{Type: "recover"},
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if policy, ok := conflictPolicyForExtractedActionRow(1, 1, tc.actions); ok {
+				t.Fatalf("conflictPolicyForExtractedActionRow accepted %+v, want reject", policy)
+			}
+		})
+	}
+}
+
+func TestBuildLanguageDropsGeneratedRepeatAuxConflictPolicies(t *testing.T) {
+	lang := BuildLanguage(&ExtractedGrammar{
+		Name:        "repeat_policy",
+		SymbolCount: 4,
+		TokenCount:  2,
+		SymbolNames: []string{"end", "token", "module_repeat1", "module"},
+		SymbolMetadata: []SymbolMeta{
+			{Named: true},
+			{},
+			{},
+			{Visible: true, Named: true},
+		},
+		ConflictPolicies: []ExtractedConflictPolicy{
+			{State: 4, Lookahead: 1, Kind: "repetition_shift", ReduceSymbols: []int{2}},
+			{State: 5, Lookahead: 1, Kind: "repetition_shift", ReduceSymbols: []int{3}},
+		},
+	})
+
+	if len(lang.ConflictPolicies) != 1 {
+		t.Fatalf("BuildLanguage kept %d policies, want only non-generated reduce policy", len(lang.ConflictPolicies))
+	}
+	if lang.ConflictPolicies[0].State != 5 || len(lang.ConflictPolicies[0].ReduceSymbols) != 1 || lang.ConflictPolicies[0].ReduceSymbols[0] != 3 {
+		t.Fatalf("kept policy = %+v, want state 5 reduce symbol 3", lang.ConflictPolicies[0])
+	}
+}
+
 func TestExtractLexModes(t *testing.T) {
 	g := miniGrammar()
 	g.StateCount = 5
