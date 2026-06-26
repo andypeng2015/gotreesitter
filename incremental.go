@@ -390,6 +390,28 @@ func nodeBytesEqual(start, end uint32, oldSource, newSource []byte) bool {
 	return bytes.Equal(oldSource[start:end], newSource[start:end])
 }
 
+func reuseSubtreeGapIsParserPadding(source []byte, stackByteOffset, nodeStart uint32) bool {
+	stack := glrStack{byteOffset: stackByteOffset}
+	return realTokenAttachmentGapIsParserPadding(source, &stack, Token{StartByte: nodeStart})
+}
+
+func reuseStackByteOffsetAfterTruncate(s *glrStack, depth int, entryScratch *glrEntryScratch) (uint32, bool) {
+	if s == nil {
+		return 0, false
+	}
+	if depth <= 0 {
+		return 0, true
+	}
+	if depth >= s.depth() {
+		return s.byteOffset, true
+	}
+	entries := s.ensureEntries(entryScratch)
+	if depth > len(entries) {
+		return 0, false
+	}
+	return stackByteOffset(entries[:depth]), true
+}
+
 // tryReuseSubtree attempts to reuse an old subtree at the current lookahead.
 // On success it appends the reused node to the stack and returns the first
 // lookahead token that begins at or after the node's end byte.
@@ -421,6 +443,9 @@ func (p *Parser) tryReuseSubtree(s *glrStack, lookahead Token, ts TokenSource, i
 		if idx.forestFastPath && rejectForestLeafStateMismatch(n, nextState) {
 			continue
 		}
+		if !reuseSubtreeGapIsParserPadding(idx.newSource, s.byteOffset, n.StartByte()) {
+			continue
+		}
 		cp, ok := canReuseNodeWithExternalScannerCheckpoint(ts, state, n)
 		if !ok {
 			continue
@@ -445,6 +470,17 @@ func (p *Parser) tryReuseSubtree(s *glrStack, lookahead Token, ts TokenSource, i
 		}
 		nextState, truncateDepth, ok := p.reuseNonLeafTargetStateOnStack(s, n, lookahead.StartByte, entryScratch)
 		if !ok {
+			continue
+		}
+		reuseByteOffset := s.byteOffset
+		if truncateDepth > 0 && truncateDepth < s.depth() {
+			var ok bool
+			reuseByteOffset, ok = reuseStackByteOffsetAfterTruncate(s, truncateDepth, entryScratch)
+			if !ok {
+				continue
+			}
+		}
+		if !reuseSubtreeGapIsParserPadding(idx.newSource, reuseByteOffset, n.StartByte()) {
 			continue
 		}
 		if truncateDepth > 0 && truncateDepth < s.depth() {
