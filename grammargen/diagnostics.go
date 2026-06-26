@@ -94,6 +94,393 @@ func buildFollowTokensFunc(tables *LRTables, tokenCount int) func(int) []int {
 	}
 }
 
+// buildMissingRecoveryTokensFunc returns lookahead terminals that should be
+// lexable in a state solely so missing-token recovery can see them.
+// Example: after Dart's `library`, `;` is not a direct action. It is the real
+// lookahead that permits inserting a missing `identifier`, reducing
+// `library_name`, and then shifting `;`. If the lex mode excludes `;`, the
+// parser only sees EOF and cannot perform the same recovery.
+func buildMissingRecoveryTokensFunc(tables *LRTables, tokenCount int, terminalPatterns []TerminalPattern, skipExtras map[int]bool) func(int) []int {
+	if tables == nil {
+		return nil
+	}
+
+	stateShiftTerminals := make(map[int]map[int]bool)
+	for state := 0; state < tables.StateCount; state++ {
+		acts, ok := tables.ActionTable[state]
+		if !ok {
+			continue
+		}
+		for sym, actions := range acts {
+			if sym <= 0 || sym >= tokenCount {
+				continue
+			}
+			for _, act := range actions {
+				if act.kind == lrShift && !act.isExtra {
+					if stateShiftTerminals[state] == nil {
+						stateShiftTerminals[state] = make(map[int]bool)
+					}
+					stateShiftTerminals[state][sym] = true
+					break
+				}
+			}
+		}
+	}
+
+	gotoTarget := func(state, sym int) (int, bool) {
+		if sym < tokenCount {
+			return 0, false
+		}
+		if gotos, ok := tables.GotoTable[state]; ok {
+			if target, ok := gotos[sym]; ok {
+				return target, true
+			}
+		}
+		if acts, ok := tables.ActionTable[state]; ok {
+			for _, act := range acts[sym] {
+				if act.kind == lrShift {
+					return act.state, true
+				}
+			}
+		}
+		return 0, false
+	}
+
+	patternsBySymbol := terminalPatternsBySymbol(terminalPatterns)
+	type preemptionKey struct {
+		direct    int
+		lookahead int
+	}
+	preemptionCache := make(map[preemptionKey]bool)
+	preemptsDirectTerminalShift := func(state, lookahead int) bool {
+		if len(patternsBySymbol) == 0 {
+			return false
+		}
+		lookaheadPatterns, ok := patternsBySymbol[lookahead]
+		if !ok {
+			return false
+		}
+		for direct := range stateShiftTerminals[state] {
+			if direct == lookahead {
+				return true
+			}
+			directPatterns, ok := patternsBySymbol[direct]
+			if !ok {
+				continue
+			}
+			key := preemptionKey{direct: direct, lookahead: lookahead}
+			preempts, ok := preemptionCache[key]
+			if !ok {
+				preempts = recoveryLookaheadPreemptsDirectTerminal(directPatterns, lookaheadPatterns, direct, lookahead)
+				preemptionCache[key] = preempts
+			}
+			if preempts {
+				return true
+			}
+		}
+		return false
+	}
+	addSeen := func(state int, seen map[int]bool, lookahead int) {
+		if preemptsDirectTerminalShift(state, lookahead) {
+			return
+		}
+		if preemptsSkippedTerminalExtra(patternsBySymbol, skipExtras, lookahead) {
+			return
+		}
+		seen[lookahead] = true
+	}
+
+	cache := make(map[int][]int)
+	return func(state int) []int {
+		if cached, ok := cache[state]; ok {
+			return cached
+		}
+		acts, ok := tables.ActionTable[state]
+		if !ok {
+			cache[state] = nil
+			return nil
+		}
+
+		seen := make(map[int]bool)
+		for missingSym, missingActions := range acts {
+			if missingSym <= 0 || missingSym >= tokenCount {
+				continue
+			}
+			for _, shift := range missingActions {
+				if shift.kind != lrShift || shift.isExtra || shift.state == 0 || shift.state == state {
+					continue
+				}
+
+				queue := []int{shift.state}
+				visited := map[int]bool{shift.state: true}
+				for len(queue) > 0 {
+					top := queue[0]
+					queue = queue[1:]
+					nextActs, ok := tables.ActionTable[top]
+					if !ok {
+						continue
+					}
+					for lookahead, lookaheadActions := range nextActs {
+						if lookahead <= 0 || lookahead >= tokenCount || len(lookaheadActions) == 0 {
+							continue
+						}
+						if stateShiftTerminals[top][lookahead] {
+							addSeen(state, seen, lookahead)
+						}
+						for _, reduce := range lookaheadActions {
+							if reduce.kind != lrReduce || reduce.lhsSym <= 0 {
+								continue
+							}
+							target, ok := gotoTarget(state, reduce.lhsSym)
+							if !ok {
+								continue
+							}
+							if stateShiftTerminals[target][lookahead] {
+								addSeen(state, seen, lookahead)
+							}
+							if !visited[target] {
+								visited[target] = true
+								queue = append(queue, target)
+							}
+						}
+					}
+				}
+			}
+		}
+
+		result := make([]int, 0, len(seen))
+		for sym := range seen {
+			result = append(result, sym)
+		}
+		sort.Ints(result)
+		cache[state] = result
+		return result
+	}
+}
+
+func preemptsSkippedTerminalExtra(patternsBySymbol map[int][]TerminalPattern, skipExtras map[int]bool, lookahead int) bool {
+	if len(patternsBySymbol) == 0 || len(skipExtras) == 0 {
+		return false
+	}
+	lookaheadPatterns, ok := patternsBySymbol[lookahead]
+	if !ok {
+		return false
+	}
+	for extra := range skipExtras {
+		if extra == lookahead {
+			continue
+		}
+		extraPatterns, ok := patternsBySymbol[extra]
+		if !ok {
+			continue
+		}
+		if recoveryLookaheadPreemptsDirectTerminal(extraPatterns, lookaheadPatterns, extra, lookahead) {
+			return true
+		}
+	}
+	return false
+}
+
+func terminalPatternsBySymbol(patterns []TerminalPattern) map[int][]TerminalPattern {
+	if len(patterns) == 0 {
+		return nil
+	}
+	bySym := make(map[int][]TerminalPattern)
+	for _, pat := range patterns {
+		bySym[pat.SymbolID] = append(bySym[pat.SymbolID], pat)
+	}
+	return bySym
+}
+
+func recoveryLookaheadPreemptsDirectTerminal(directPatterns, lookaheadPatterns []TerminalPattern, direct, lookahead int) bool {
+	witnesses := directTerminalLexingWitnesses(directPatterns, direct)
+	if len(witnesses) == 0 {
+		return false
+	}
+
+	patterns := make([]TerminalPattern, 0, len(directPatterns)+len(lookaheadPatterns))
+	patterns = append(patterns, directPatterns...)
+	patterns = append(patterns, lookaheadPatterns...)
+	valid := map[int]bool{direct: true, lookahead: true}
+	lexStates, offsets, err := buildLexDFA(context.Background(), patterns, nil, nil, []lexModeSpec{{
+		validSymbols: valid,
+	}})
+	if err != nil || len(offsets) == 0 {
+		return false
+	}
+
+	// Bounded generalized preemption check: for each short string that a
+	// direct terminal can lex, try the exact string plus a small continuation
+	// alphabet. This catches broad recovery tokens like /.+/ stealing "#!..."
+	// while allowing same-first-rune non-preempting pairs like "ab" vs "ac".
+	for _, witness := range witnesses {
+		for _, suffix := range missingRecoveryPreemptionSuffixes() {
+			lexer := gotreesitter.NewLexer(lexStates, []byte(witness+suffix))
+			tok := lexer.Next(uint32(offsets[0]))
+			if int(tok.Symbol) == lookahead && tok.StartByte == 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func directTerminalLexingWitnesses(patterns []TerminalPattern, sym int) []string {
+	seen := make(map[string]bool)
+	var out []string
+	add := func(s string) {
+		if s == "" || seen[s] {
+			return
+		}
+		seen[s] = true
+		out = append(out, s)
+	}
+	for _, pat := range patterns {
+		if pat.SymbolID != sym || pat.Rule == nil {
+			continue
+		}
+		if value, ok := stringRuleValue(pat.Rule); ok {
+			add(value)
+			continue
+		}
+		for _, witness := range terminalPatternWitnesses(pat) {
+			add(witness)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func terminalPatternWitnesses(pat TerminalPattern) []string {
+	nfa, err := buildCombinedNFA([]TerminalPattern{pat})
+	if err != nil || nfa == nil {
+		return nil
+	}
+	type item struct {
+		states []int
+		text   string
+	}
+	start := epsilonClosure(nfa, []int{nfa.start})
+	queue := []item{{states: start}}
+	seen := map[string]bool{intSliceKey(start): true}
+	witnessSeen := make(map[string]bool)
+	var witnesses []string
+	const (
+		maxDepth     = 8
+		maxWitnesses = 32
+		maxSeen      = 4096
+	)
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		for _, state := range cur.states {
+			if nfa.states[state].accept == pat.SymbolID && cur.text != "" && !witnessSeen[cur.text] {
+				witnessSeen[cur.text] = true
+				witnesses = append(witnesses, cur.text)
+				if len(witnesses) >= maxWitnesses {
+					sort.Strings(witnesses)
+					return witnesses
+				}
+				break
+			}
+		}
+		if len([]rune(cur.text)) >= maxDepth {
+			continue
+		}
+		for _, tr := range representativeTransitions(nfa, cur.states) {
+			for _, r := range representativeRunesForRange(tr.lo, tr.hi) {
+				next := epsilonClosure(nfa, []int{tr.nextState})
+				nextText := cur.text + string(r)
+				key := intSliceKey(next) + ":" + nextText
+				if seen[key] {
+					continue
+				}
+				seen[key] = true
+				queue = append(queue, item{states: next, text: nextText})
+				if len(seen) >= maxSeen {
+					sort.Strings(witnesses)
+					return witnesses
+				}
+			}
+		}
+	}
+	sort.Strings(witnesses)
+	return witnesses
+}
+
+func representativeTransitions(nfa *nfa, states []int) []nfaTransition {
+	var out []nfaTransition
+	for _, state := range states {
+		for _, tr := range nfa.states[state].transitions {
+			if tr.epsilon || tr.hi < tr.lo {
+				continue
+			}
+			out = append(out, tr)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].lo != out[j].lo {
+			return out[i].lo < out[j].lo
+		}
+		if out[i].hi != out[j].hi {
+			return out[i].hi < out[j].hi
+		}
+		return out[i].nextState < out[j].nextState
+	})
+	return out
+}
+
+func representativeRuneForRange(lo, hi rune) (rune, bool) {
+	rs := representativeRunesForRange(lo, hi)
+	if len(rs) == 0 {
+		return 0, false
+	}
+	return rs[0], true
+}
+
+func representativeRunesForRange(lo, hi rune) []rune {
+	if hi < lo {
+		return nil
+	}
+	seen := make(map[rune]bool)
+	var out []rune
+	add := func(r rune) {
+		if r >= lo && r <= hi {
+			if !seen[r] {
+				seen[r] = true
+				out = append(out, r)
+			}
+		}
+	}
+	for _, r := range []rune{'\n', '\r', '\t', ' ', '\f', '\v', 'a', 'x', '0', '_', '#', '!', ';'} {
+		add(r)
+	}
+	if lo <= hi && lo >= 0 && lo <= maxSupportedRune {
+		add(lo)
+	}
+	return out
+}
+
+func missingRecoveryPreemptionSuffixes() []string {
+	return []string{
+		"", "x", "a", "0", "_", "#", "!", ";", " ",
+		"|", "&", "=", ".", ":", "-", "+", "*", "/", "%", "<", ">",
+	}
+}
+
+func intSliceKey(values []int) string {
+	sorted := append([]int(nil), values...)
+	sort.Ints(sorted)
+	var b strings.Builder
+	for i, value := range sorted {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		fmt.Fprintf(&b, "%d", value)
+	}
+	return b.String()
+}
+
 func useForcedBroadLexFallback() bool {
 	return os.Getenv("GTS_GRAMMARGEN_FORCE_BROAD_LEX") == "1"
 }
@@ -623,6 +1010,7 @@ func generateWithReportCtx(bgCtx context.Context, g *Grammar, opts reportBuildOp
 	var lexModes []lexModeSpec
 	var stateToMode []int
 	var afterWSModes []afterWSModeEntry
+	skipExtras := computeSkipExtras(ng)
 	if useForcedBroadLexFallback() {
 		// Escape hatch only. The broad DFA is much faster to build for huge
 		// grammars, but it is not parser-correct for languages that rely on
@@ -659,12 +1047,11 @@ func generateWithReportCtx(bgCtx context.Context, g *Grammar, opts reportBuildOp
 			keywordSet,
 			termPatSyms,
 			buildFollowTokensFunc(tables, tokenCount),
-			nil,
+			buildMissingRecoveryTokensFunc(tables, tokenCount, ng.Terminals, skipExtras),
 			suppressAfterWhitespaceSymbols(g, ng),
 		)
 	}
 
-	skipExtras := computeSkipExtras(ng)
 	lexStates, lexModeOffsets, err := buildLexDFA(bgCtx, ng.Terminals, ng.ExtraSymbols, skipExtras, lexModes)
 	if err != nil {
 		return nil, fmt.Errorf("build lex DFA: %w", err)
