@@ -20,6 +20,7 @@ const (
 	dartTokTemplateCharsRawSlash     = 4 // "_template_chars_raw_slash"
 	dartTokBlockComment              = 5 // "_block_comment"
 	dartTokDocBlockComment           = 6 // "_documentation_block_comment"
+	dartTokenCount                   = 7
 )
 
 // Concrete symbol IDs from the generated dart grammar ExternalSymbols.
@@ -33,6 +34,26 @@ const (
 	dartSymDocBlockComment           gotreesitter.Symbol = 160
 )
 
+var dartDefaultSymTable = [dartTokenCount]gotreesitter.Symbol{
+	dartSymTemplateCharsDouble,
+	dartSymTemplateCharsSingle,
+	dartSymTemplateCharsDoubleSingle,
+	dartSymTemplateCharsSingleSingle,
+	dartSymTemplateCharsRawSlash,
+	dartSymBlockComment,
+	dartSymDocBlockComment,
+}
+
+var dartExternalSymbolNames = []string{
+	"_template_chars_double",
+	"_template_chars_single",
+	"_template_chars_double_single",
+	"_template_chars_single_single",
+	"_template_chars_raw_slash",
+	"_block_comment",
+	"_documentation_block_comment",
+}
+
 // DartExternalScanner implements gotreesitter.ExternalScanner for tree-sitter-dart.
 //
 // This is a Go port of the C external scanner from UserNobody14/tree-sitter-dart.
@@ -40,7 +61,18 @@ const (
 //   - Template/string content tokens for 4 string variants (single/double x single/multi-line)
 //   - Raw string backslash passthrough
 //   - Nestable block comments (/* */ and /** */)
-type DartExternalScanner struct{}
+type DartExternalScanner struct {
+	symbols         [dartTokenCount]gotreesitter.Symbol
+	externalToToken []int
+}
+
+func (DartExternalScanner) ExternalScannerForLanguage(lang *gotreesitter.Language) gotreesitter.ExternalScanner {
+	s := DartExternalScanner{symbols: dartDefaultSymTable}
+	s.externalToToken = bindExternalScannerSymbolNames(lang, dartExternalSymbolNames, func(tokenIdx int, sym gotreesitter.Symbol) {
+		s.symbols[tokenIdx] = sym
+	})
+	return s
+}
 
 func (DartExternalScanner) Create() any                           { return nil }
 func (DartExternalScanner) Destroy(payload any)                   {}
@@ -48,13 +80,17 @@ func (DartExternalScanner) Serialize(payload any, buf []byte) int { return 0 }
 func (DartExternalScanner) Deserialize(payload any, buf []byte)   {}
 func (DartExternalScanner) SupportsIncrementalReuse() bool        { return true }
 
-func (DartExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
+func (s DartExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
+	var semanticValid [dartTokenCount]bool
+	validSymbols = s.remapValidSymbols(validSymbols, &semanticValid)
+	symbols := s.symbolTable()
+
 	// Template/string content takes priority.
 	if dartValid(validSymbols, dartTokTemplateCharsDouble) ||
 		dartValid(validSymbols, dartTokTemplateCharsSingle) ||
 		dartValid(validSymbols, dartTokTemplateCharsDoubleSingle) ||
 		dartValid(validSymbols, dartTokTemplateCharsSingleSingle) {
-		return dartScanTemplates(lexer, validSymbols)
+		return dartScanTemplates(lexer, validSymbols, symbols)
 	}
 
 	// Skip whitespace before checking for block comments.
@@ -63,28 +99,41 @@ func (DartExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, 
 	}
 
 	if lexer.Lookahead() == '/' {
-		return dartScanBlockComment(lexer)
+		return dartScanBlockComment(lexer, symbols)
 	}
 
 	return false
 }
 
+func (s DartExternalScanner) symbolTable() *[dartTokenCount]gotreesitter.Symbol {
+	if s.symbols == ([dartTokenCount]gotreesitter.Symbol{}) {
+		return &dartDefaultSymTable
+	}
+	return &s.symbols
+}
+
+func (s DartExternalScanner) remapValidSymbols(validSymbols []bool, semanticValid *[dartTokenCount]bool) []bool {
+	if len(s.externalToToken) == 0 {
+		return validSymbols
+	}
+	*semanticValid = [dartTokenCount]bool{}
+	for externalIdx, valid := range validSymbols {
+		if !valid || externalIdx >= len(s.externalToToken) {
+			continue
+		}
+		tokenIdx := s.externalToToken[externalIdx]
+		if tokenIdx >= 0 && tokenIdx < dartTokenCount {
+			semanticValid[tokenIdx] = true
+		}
+	}
+	return semanticValid[:]
+}
+
 // dartScanTemplates scans string literal content, stopping before
 // characters that the grammar needs to handle (quotes, $, \).
-func dartScanTemplates(lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
+func dartScanTemplates(lexer *gotreesitter.ExternalLexer, validSymbols []bool, symbols *[dartTokenCount]gotreesitter.Symbol) bool {
 	// Determine which token to emit based on priority.
-	var sym gotreesitter.Symbol
-	switch {
-	case dartValid(validSymbols, dartTokTemplateCharsDouble):
-		sym = dartSymTemplateCharsDouble
-	case dartValid(validSymbols, dartTokTemplateCharsSingle):
-		sym = dartSymTemplateCharsSingle
-	case dartValid(validSymbols, dartTokTemplateCharsSingleSingle):
-		sym = dartSymTemplateCharsSingleSingle
-	default:
-		sym = dartSymTemplateCharsDoubleSingle
-	}
-	lexer.SetResultSymbol(sym)
+	lexer.SetResultSymbol(dartTemplateResultSymbol(validSymbols, symbols))
 
 	isSingleLine := dartValid(validSymbols, dartTokTemplateCharsDoubleSingle) ||
 		dartValid(validSymbols, dartTokTemplateCharsSingleSingle)
@@ -111,7 +160,7 @@ func dartScanTemplates(lexer *gotreesitter.ExternalLexer, validSymbols []bool) b
 		case '\\':
 			if dartValid(validSymbols, dartTokTemplateCharsRawSlash) {
 				// In raw strings, consume the backslash as literal content.
-				lexer.SetResultSymbol(dartSymTemplateCharsRawSlash)
+				lexer.SetResultSymbol(symbols[dartTokTemplateCharsRawSlash])
 				lexer.Advance(false)
 			} else {
 				// Stop before escape sequence.
@@ -124,8 +173,21 @@ func dartScanTemplates(lexer *gotreesitter.ExternalLexer, validSymbols []bool) b
 	}
 }
 
+func dartTemplateResultSymbol(validSymbols []bool, symbols *[dartTokenCount]gotreesitter.Symbol) gotreesitter.Symbol {
+	switch {
+	case dartValid(validSymbols, dartTokTemplateCharsDouble):
+		return symbols[dartTokTemplateCharsDouble]
+	case dartValid(validSymbols, dartTokTemplateCharsSingle):
+		return symbols[dartTokTemplateCharsSingle]
+	case dartValid(validSymbols, dartTokTemplateCharsSingleSingle):
+		return symbols[dartTokTemplateCharsSingleSingle]
+	default:
+		return symbols[dartTokTemplateCharsDoubleSingle]
+	}
+}
+
 // dartScanBlockComment scans a nestable /* */ or /** */ comment.
-func dartScanBlockComment(lexer *gotreesitter.ExternalLexer) bool {
+func dartScanBlockComment(lexer *gotreesitter.ExternalLexer, symbols *[dartTokenCount]gotreesitter.Symbol) bool {
 	// Expect '/'
 	lexer.Advance(false)
 	if lexer.Lookahead() != '*' {
@@ -155,9 +217,9 @@ func dartScanBlockComment(lexer *gotreesitter.ExternalLexer) bool {
 				if nestingDepth == 0 {
 					lexer.MarkEnd()
 					if isDoc {
-						lexer.SetResultSymbol(dartSymDocBlockComment)
+						lexer.SetResultSymbol(symbols[dartTokDocBlockComment])
 					} else {
-						lexer.SetResultSymbol(dartSymBlockComment)
+						lexer.SetResultSymbol(symbols[dartTokBlockComment])
 					}
 					return true
 				}
