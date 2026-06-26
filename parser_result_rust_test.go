@@ -250,6 +250,117 @@ func TestRustCanonicalDotRangeBuildsOperatorChildren(t *testing.T) {
 	}
 }
 
+func TestNormalizeRustDotRangePreservesAssignmentExpression(t *testing.T) {
+	lang := &Language{
+		Name:        "rust",
+		SymbolNames: []string{"", "source_file", "range_expression", "assignment_expression", "..", "..=", "="},
+		SymbolMetadata: []SymbolMetadata{
+			{},
+			{Name: "source_file", Visible: true, Named: true},
+			{Name: "range_expression", Visible: true, Named: true},
+			{Name: "assignment_expression", Visible: true, Named: true},
+			{Name: "..", Visible: true, Named: false},
+			{Name: "..=", Visible: true, Named: false},
+			{Name: "=", Visible: true, Named: false},
+		},
+	}
+
+	tests := []struct {
+		name   string
+		source string
+		opSym  Symbol
+		opFrom uint32
+		opTo   uint32
+	}{
+		{
+			name:   "weird expr assignment",
+			source: "..=..",
+			opSym:  6,
+			opFrom: 2,
+			opTo:   3,
+		},
+		{
+			name:   "canonicalizable dot range span",
+			source: ".. ..=..",
+			opSym:  5,
+			opFrom: 3,
+			opTo:   6,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			arena := acquireNodeArena(arenaClassFull)
+			source := []byte(tt.source)
+			children := []*Node{
+				newLeafNodeInArena(arena, 2, true, 0, 2, Point{}, Point{Column: 2}),
+				newLeafNodeInArena(arena, tt.opSym, false, tt.opFrom, tt.opTo, Point{Column: tt.opFrom}, Point{Column: tt.opTo}),
+				newLeafNodeInArena(arena, 2, true, uint32(len(source)-2), uint32(len(source)), Point{Column: uint32(len(source) - 2)}, Point{Column: uint32(len(source))}),
+			}
+			assignment := newParentNodeInArena(arena, 3, true, children, nil, 0)
+			assignment.startByte = 0
+			assignment.startPoint = Point{}
+			assignment.endByte = uint32(len(source))
+			assignment.endPoint = Point{Column: uint32(len(source))}
+			root := newParentNodeInArena(arena, 1, true, []*Node{assignment}, nil, 0)
+			parser := &Parser{language: lang}
+
+			normalizeResultCompatibility(root, source, parser)
+
+			got := root.Child(0)
+			if got == nil {
+				t.Fatal("root child = nil")
+			}
+			if got.Type(lang) != "assignment_expression" {
+				t.Fatalf("normalized child type = %q, want assignment_expression; tree: %s", got.Type(lang), root.SExpr(lang))
+			}
+			if got.ChildCount() != 3 {
+				t.Fatalf("assignment child count = %d, want 3; tree: %s", got.ChildCount(), root.SExpr(lang))
+			}
+		})
+	}
+}
+
+func TestNormalizeRustDotRangeSkipsStructuredRangeExpression(t *testing.T) {
+	lang := &Language{
+		Name:        "rust",
+		SymbolNames: []string{"", "source_file", "range_expression", "..", "..=", "identifier"},
+		SymbolMetadata: []SymbolMetadata{
+			{},
+			{Name: "source_file", Visible: true, Named: true},
+			{Name: "range_expression", Visible: true, Named: true},
+			{Name: "..", Visible: true, Named: false},
+			{Name: "..=", Visible: true, Named: false},
+			{Name: "identifier", Visible: true, Named: true},
+		},
+	}
+	arena := acquireNodeArena(arenaClassFull)
+	source := []byte(".. ..=..")
+	rangeExpr := newParentNodeInArena(arena, 2, true, []*Node{
+		newLeafNodeInArena(arena, 5, true, 0, 2, Point{}, Point{Column: 2}),
+		newLeafNodeInArena(arena, 2, true, 6, 8, Point{Column: 6}, Point{Column: 8}),
+	}, nil, 0)
+	rangeExpr.startByte = 0
+	rangeExpr.startPoint = Point{}
+	rangeExpr.endByte = uint32(len(source))
+	rangeExpr.endPoint = Point{Column: uint32(len(source))}
+	root := newParentNodeInArena(arena, 1, true, []*Node{rangeExpr}, nil, 0)
+	parser := &Parser{language: lang}
+
+	normalizeResultCompatibility(root, source, parser)
+
+	got := root.Child(0)
+	if got == nil || got.Type(lang) != "range_expression" {
+		t.Fatalf("root child = %v, want range_expression", got)
+	}
+	if got.ChildCount() != 2 {
+		t.Fatalf("structured range child count = %d, want 2; tree: %s", got.ChildCount(), root.SExpr(lang))
+	}
+	if child := got.Child(0); child == nil || child.Type(lang) != "identifier" {
+		t.Fatalf("structured range first child = %v, want identifier; tree: %s", child, root.SExpr(lang))
+	}
+}
+
 func TestNormalizeRustTokenBindingPatterns(t *testing.T) {
 	lang := &Language{
 		Name: "rust",

@@ -325,17 +325,13 @@ func normalizeRustDotRangeExpressions(root *Node, source []byte, lang *Language)
 	if !ok {
 		return
 	}
-	assignmentExpressionSym, ok := symbolByName(lang, "assignment_expression")
-	if !ok {
-		return
-	}
 	changed := false
 	var walk func(*Node)
 	walk = func(node *Node) {
 		if node == nil {
 			return
 		}
-		if node.symbol == rangeExpressionSym || node.symbol == assignmentExpressionSym {
+		if node.symbol == rangeExpressionSym && rustRangeExpressionNeedsDotRangeRepair(node, lang) {
 			if recovered, ok := rustBuildCanonicalDotRangeNode(node.ownerArena, source, lang, node.startByte, node.endByte); ok && recovered != nil {
 				*node = *recovered
 				changed = true
@@ -350,6 +346,28 @@ func normalizeRustDotRangeExpressions(root *Node, source []byte, lang *Language)
 	if changed {
 		rustRefreshRecoveredErrorFlags(root)
 	}
+}
+
+func rustRangeExpressionNeedsDotRangeRepair(node *Node, lang *Language) bool {
+	if node == nil || lang == nil {
+		return false
+	}
+	childCount := resultChildCount(node)
+	if childCount == 0 {
+		return true
+	}
+	for i := 0; i < childCount; i++ {
+		child := resultChildAt(node, i)
+		if child == nil {
+			return false
+		}
+		switch child.Type(lang) {
+		case "range_expression", "..", "..=":
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func normalizeRustRecoveredPatternStatementsRoot(root *Node, source []byte, p *Parser) {
