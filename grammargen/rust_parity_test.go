@@ -263,6 +263,47 @@ func TestRustWeirdTopLevelParity(t *testing.T) {
 	assertGeneratedAndReferenceDeepParity(t, genLang, refLang, sample)
 }
 
+func TestRustCorpusMatchLetGuardParity(t *testing.T) {
+	jsonPath := rustGrammarJSONPathForTest(t)
+	source, err := os.ReadFile(jsonPath)
+	if err != nil {
+		t.Skipf("Rust grammar.json not available: %v", err)
+	}
+	gram, err := ImportGrammarJSON(source)
+	if err != nil {
+		t.Fatalf("import Rust grammar.json: %v", err)
+	}
+	genLang, err := generateWithTimeout(gram, 90*time.Second)
+	if err != nil {
+		t.Fatalf("generate Rust language: %v", err)
+	}
+	refLang := grammars.RustLanguage()
+	adaptExternalScanner(refLang, genLang)
+
+	sample := "match x {\n" +
+		"    1 => { \"one\" }\n" +
+		"    2 => \"two\",\n" +
+		"    -1 => 1,\n" +
+		"    -3.14 => 3,\n\n" +
+		"    #[attr1]\n" +
+		"    3 => \"three\",\n" +
+		"    macro!(4) => \"four\",\n" +
+		"    _ => \"something else\",\n" +
+		"}\n\n" +
+		"let msg = match x {\n" +
+		"    0 | 1 | 10 => \"one of zero, one, or ten\",\n" +
+		"    y if y < 20 => \"less than 20, but not zero, one, or ten\",\n" +
+		"    y if y == 200 =>\n" +
+		"      if a {\n" +
+		"        \"200 (but this is not very stylish)\"\n" +
+		"      }\n" +
+		"    y if let Some(z) = foo && z && let Some(w) = bar => \"very chained\",\n" +
+		"    _ => \"something else\",\n" +
+		"};\n"
+
+	assertGeneratedAndReferenceDeepParity(t, genLang, refLang, sample)
+}
+
 func rustGrammarJSONPathForTest(t *testing.T) string {
 	t.Helper()
 
