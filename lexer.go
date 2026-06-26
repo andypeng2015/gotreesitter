@@ -26,6 +26,11 @@ type Token struct {
 	// NoLookahead marks a synthetic EOF used to force EOF-table reductions
 	// without consuming input, matching tree-sitter's lex_state = -1.
 	NoLookahead bool
+	// ExternalScannerToken marks tokens produced by an external scanner.
+	// ExternalScannerStartByte is the byte offset where that scanner call
+	// began, before scanner-side skip advances moved StartByte forward.
+	ExternalScannerToken     bool
+	ExternalScannerStartByte uint32
 }
 
 func bytesToStringNoCopy(b []byte) string {

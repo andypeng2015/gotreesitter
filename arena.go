@@ -101,6 +101,10 @@ type nodeArena struct {
 	pendingParentSlabCursor         int
 	pendingChildEntrySlabs          []pendingChildEntrySlab
 	pendingChildEntrySlabCursor     int
+	rawShapeSlabs                   []rawShapeSlab
+	rawShapeSlabCursor              int
+	rawShapeChildSlabs              []rawShapeChildSlab
+	rawShapeChildSlabCursor         int
 	compactCheckpointLeafSlabs      []compactCheckpointLeafSlab
 	compactCheckpointLeafSlabCursor int
 	finalChildSidecars              []finalChildSidecar
@@ -482,6 +486,8 @@ func (a *nodeArena) reset() {
 	a.resetCompactFullLeafSlabs()
 	a.resetPendingParentSlabs()
 	a.resetPendingChildEntrySlabs()
+	a.resetRawShapeSlabs()
+	a.resetRawShapeChildSlabs()
 	a.resetFinalChildSidecars()
 	a.resetCompactCheckpointLeafSlabs()
 	a.resetChildSlabs()
@@ -675,6 +681,72 @@ func (a *nodeArena) resetPendingChildEntrySlabs() {
 		}
 	}
 	a.pendingChildEntrySlabCursor = 0
+}
+
+func (a *nodeArena) resetRawShapeSlabs() {
+	if len(a.rawShapeSlabs) > 0 {
+		retained := 0
+		keep := 0
+		limit := maxRetainedRawShapeCapacityForClass(a.class)
+		for i := 0; i < len(a.rawShapeSlabs); i++ {
+			capacity := len(a.rawShapeSlabs[i].data)
+			if capacity <= 0 {
+				break
+			}
+			if retained+capacity > limit {
+				break
+			}
+			retained += capacity
+			keep = i + 1
+		}
+		for i := keep; i < len(a.rawShapeSlabs); i++ {
+			a.rawShapeSlabs[i] = rawShapeSlab{}
+		}
+		a.rawShapeSlabs = a.rawShapeSlabs[:keep]
+	}
+	for i := range a.rawShapeSlabs {
+		slab := &a.rawShapeSlabs[i]
+		used := slab.used
+		if used > len(slab.data) {
+			used = len(slab.data)
+		}
+		clear(slab.data[:used])
+		slab.used = 0
+	}
+	a.rawShapeSlabCursor = 0
+}
+
+func (a *nodeArena) resetRawShapeChildSlabs() {
+	if len(a.rawShapeChildSlabs) > 0 {
+		retained := 0
+		keep := 0
+		limit := maxRetainedRawShapeChildCapacityForClass(a.class)
+		for i := 0; i < len(a.rawShapeChildSlabs); i++ {
+			capacity := len(a.rawShapeChildSlabs[i].data)
+			if capacity <= 0 {
+				break
+			}
+			if retained+capacity > limit {
+				break
+			}
+			retained += capacity
+			keep = i + 1
+		}
+		for i := keep; i < len(a.rawShapeChildSlabs); i++ {
+			a.rawShapeChildSlabs[i] = rawShapeChildSlab{}
+		}
+		a.rawShapeChildSlabs = a.rawShapeChildSlabs[:keep]
+	}
+	for i := range a.rawShapeChildSlabs {
+		slab := &a.rawShapeChildSlabs[i]
+		used := slab.used
+		if used > len(slab.data) {
+			used = len(slab.data)
+		}
+		clear(slab.data[:used])
+		slab.used = 0
+	}
+	a.rawShapeChildSlabCursor = 0
 }
 
 func (a *nodeArena) resetFinalChildSidecars() {
@@ -1153,6 +1225,74 @@ func (a *nodeArena) allocPendingChildEntryRange(logicalCount, slotCount int) (pe
 	}
 }
 
+func (a *nodeArena) allocRawShape() (rawShapeRef, *rawShape) {
+	if a == nil {
+		return 0, nil
+	}
+	if len(a.rawShapeSlabs) == 0 {
+		capacity := max(defaultRawShapeSlabCap(a.class), minArenaNodeCap)
+		a.rawShapeSlabs = append(a.rawShapeSlabs, rawShapeSlab{data: make([]rawShape, capacity)})
+		a.allocatedBytes += rawShapeBytesForCap(capacity)
+		a.rawShapeSlabCursor = 0
+	}
+	if a.rawShapeSlabCursor < 0 || a.rawShapeSlabCursor >= len(a.rawShapeSlabs) {
+		a.rawShapeSlabCursor = 0
+	}
+	for i := a.rawShapeSlabCursor; ; i++ {
+		if i >= len(a.rawShapeSlabs) {
+			capacity := max(defaultRawShapeSlabCap(a.class), minArenaNodeCap)
+			a.rawShapeSlabs = append(a.rawShapeSlabs, rawShapeSlab{data: make([]rawShape, capacity)})
+			a.allocatedBytes += rawShapeBytesForCap(capacity)
+		}
+		slab := &a.rawShapeSlabs[i]
+		if slab.used >= len(slab.data) {
+			continue
+		}
+		idx := slab.used
+		slab.used++
+		a.rawShapeSlabCursor = i
+		if i+1 >= 1<<(32-rawShapeRefIndexBits) || idx >= 1<<rawShapeRefIndexBits {
+			return 0, nil
+		}
+		ref := rawShapeRef((uint32(i+1) << rawShapeRefIndexBits) | uint32(idx))
+		return ref, &slab.data[idx]
+	}
+}
+
+func (a *nodeArena) allocRawShapeChildren(n int) rawShapeChildRange {
+	if n <= 0 {
+		return 0
+	}
+	if a == nil {
+		panic("raw shape child ranges require an arena")
+	}
+	if len(a.rawShapeChildSlabs) == 0 {
+		capacity := max(defaultRawShapeChildSlabCap(a.class), n)
+		a.rawShapeChildSlabs = append(a.rawShapeChildSlabs, rawShapeChildSlab{data: make([]rawShapeChild, capacity)})
+		a.allocatedBytes += rawShapeChildBytesForCap(capacity)
+		a.rawShapeChildSlabCursor = 0
+	}
+	if a.rawShapeChildSlabCursor < 0 || a.rawShapeChildSlabCursor >= len(a.rawShapeChildSlabs) {
+		a.rawShapeChildSlabCursor = 0
+	}
+	for i := a.rawShapeChildSlabCursor; ; i++ {
+		if i >= len(a.rawShapeChildSlabs) {
+			lastCap := len(a.rawShapeChildSlabs[len(a.rawShapeChildSlabs)-1].data)
+			capacity := max(lastCap*2, n)
+			a.rawShapeChildSlabs = append(a.rawShapeChildSlabs, rawShapeChildSlab{data: make([]rawShapeChild, capacity)})
+			a.allocatedBytes += rawShapeChildBytesForCap(capacity)
+		}
+		slab := &a.rawShapeChildSlabs[i]
+		if len(slab.data)-slab.used < n {
+			continue
+		}
+		start := slab.used
+		slab.used += n
+		a.rawShapeChildSlabCursor = i
+		return makeRawShapeChildRange(i, start, n)
+	}
+}
+
 func nextPendingChildEntrySlabCap(class arenaClass, lastCap, min int) int {
 	if class != arenaClassFull {
 		return max(lastCap*2, min)
@@ -1522,6 +1662,28 @@ func (a *nodeArena) pendingChildEntryBytesAllocated() int64 {
 	return total
 }
 
+func (a *nodeArena) rawShapeBytesAllocated() int64 {
+	if a == nil {
+		return 0
+	}
+	var total int64
+	for i := range a.rawShapeSlabs {
+		total += rawShapeBytesForCap(len(a.rawShapeSlabs[i].data))
+	}
+	return total
+}
+
+func (a *nodeArena) rawShapeChildBytesAllocated() int64 {
+	if a == nil {
+		return 0
+	}
+	var total int64
+	for i := range a.rawShapeChildSlabs {
+		total += rawShapeChildBytesForCap(len(a.rawShapeChildSlabs[i].data))
+	}
+	return total
+}
+
 func (a *nodeArena) pendingChildEntryCapacity() uint64 {
 	if a == nil {
 		return 0
@@ -1575,6 +1737,8 @@ func (a *nodeArena) recomputeAllocatedBytes() {
 		a.compactFullLeafBytesAllocated() +
 		a.pendingParentBytesAllocated() +
 		a.pendingChildEntryBytesAllocated() +
+		a.rawShapeBytesAllocated() +
+		a.rawShapeChildBytesAllocated() +
 		a.finalChildSidecarBytesAllocated() +
 		a.compactCheckpointLeafBytesAllocated() +
 		a.childSliceBytesAllocated() +
@@ -2334,6 +2498,30 @@ func maxRetainedPendingChildEntryCapacityForClass(class arenaClass) int {
 		return max(maxRetainedFullSliceCap, defaultPendingChildEntrySlabCap(class))
 	}
 	return max(defaultPendingChildEntrySlabCap(class)*maxRetainedArenaFactor, maxRetainedIncrementalSliceCap)
+}
+
+func maxRetainedRawShapeCapacityForClass(class arenaClass) int {
+	nodeSize := int(unsafe.Sizeof(rawShape{}))
+	if nodeSize <= 0 {
+		nodeSize = 1
+	}
+	if class == arenaClassFull {
+		return max(maxRetainedFullSliceCap, defaultRawShapeSlabCap(class))
+	}
+	floor := maxRetainedIncrementalSliceCap
+	return max(defaultRawShapeSlabCap(class)*maxRetainedArenaFactor, floor)
+}
+
+func maxRetainedRawShapeChildCapacityForClass(class arenaClass) int {
+	nodeSize := int(unsafe.Sizeof(rawShapeChild{}))
+	if nodeSize <= 0 {
+		nodeSize = 1
+	}
+	if class == arenaClassFull {
+		return max(maxRetainedFullSliceCap, defaultRawShapeChildSlabCap(class))
+	}
+	floor := maxRetainedIncrementalSliceCap
+	return max(defaultRawShapeChildSlabCap(class)*maxRetainedArenaFactor, floor)
 }
 
 func maxRetainedFinalChildSidecarCapacityForClass(class arenaClass) int {

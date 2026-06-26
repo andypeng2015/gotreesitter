@@ -430,7 +430,7 @@ func TestBuildReduceChildrenInheritedFieldYieldsToDirectTargetOnHiddenSpan(t *te
 	children := arena.allocNodeSlice(5)
 	fieldIDs := arena.allocFieldIDSlice(5)
 	fieldSources := make([]uint8, 5)
-	if got, want := appendFlattenedHiddenChildrenWithFields(children, fieldIDs, fieldSources, 0, hidden, lang.SymbolMetadata), 5; got != want {
+	if got, want := appendFlattenedHiddenChildrenWithFields(children, fieldIDs, fieldSources, 0, hidden, lang.SymbolMetadata, nil), 5; got != want {
 		t.Fatalf("appendFlattenedHiddenChildrenWithFields() = %d, want %d", got, want)
 	}
 	if got := fieldIDs[0]; got != 0 {
@@ -509,7 +509,7 @@ func TestAppendFlattenedHiddenChildrenRepeatedDirectFieldSkipsCommaSeparator(t *
 	children := arena.allocNodeSlice(3)
 	fieldIDs := arena.allocFieldIDSlice(3)
 	fieldSources := make([]uint8, 3)
-	if got, want := appendFlattenedHiddenChildrenWithFields(children, fieldIDs, fieldSources, 0, hidden, lang.SymbolMetadata), 3; got != want {
+	if got, want := appendFlattenedHiddenChildrenWithFields(children, fieldIDs, fieldSources, 0, hidden, lang.SymbolMetadata, nil), 3; got != want {
 		t.Fatalf("appendFlattenedHiddenChildrenWithFields() = %d, want %d", got, want)
 	}
 	if got, want := fieldIDs[0], FieldID(1); got != want {
@@ -1024,10 +1024,10 @@ func TestPendingNoFieldChildCountRejectsHiddenFields(t *testing.T) {
 	hidden := newParentNodeInArena(arena, 1, false, []*Node{child}, []FieldID{1}, 0)
 	entry := newStackEntryNode(0, hidden)
 
-	if _, _, _, ok := pendingNoFieldChildCount(entry, arena, true, lang.SymbolMetadata); ok {
+	if _, _, _, ok := pendingNoFieldChildCount(entry, arena, true, lang.SymbolMetadata, nil); ok {
 		t.Fatal("pendingNoFieldChildCount accepted hidden field-bearing child; want reject")
 	}
-	if count, _, _, ok := pendingNoFieldChildCount(entry, arena, false, lang.SymbolMetadata); !ok || count != 1 {
+	if count, _, _, ok := pendingNoFieldChildCount(entry, arena, false, lang.SymbolMetadata, nil); !ok || count != 1 {
 		t.Fatalf("hidden child under hidden parent count/ok = %d/%t, want 1/true", count, ok)
 	}
 }

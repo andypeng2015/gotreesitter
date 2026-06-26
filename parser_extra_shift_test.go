@@ -17,7 +17,7 @@ func TestApplyActionTerminalExtraShiftPreservesCurrentState(t *testing.T) {
 		EndPoint:   Point{Row: 0, Column: 1},
 	}
 
-	parser.applyAction(&s, ParseAction{
+	parser.applyAction(nil, &s, ParseAction{
 		Type:  ParseActionShift,
 		State: 0,
 		Extra: true,
@@ -50,7 +50,7 @@ func TestApplyActionNonterminalExtraShiftUsesActionState(t *testing.T) {
 		EndPoint:   Point{Row: 0, Column: 1},
 	}
 
-	parser.applyAction(&s, ParseAction{
+	parser.applyAction(nil, &s, ParseAction{
 		Type:  ParseActionShift,
 		State: targetState,
 		Extra: true,
@@ -83,7 +83,7 @@ func TestApplyActionNonExtraShiftUsesActionState(t *testing.T) {
 		EndPoint:   Point{Row: 0, Column: 1},
 	}
 
-	parser.applyAction(&s, ParseAction{
+	parser.applyAction(nil, &s, ParseAction{
 		Type:  ParseActionShift,
 		State: targetState,
 	}, tok, &anyReduced, &nodeCount, nil, nil, nil, nil, false, nil)
@@ -115,7 +115,7 @@ func TestApplyActionNoTreeCompactShiftUsesNoTreeNode(t *testing.T) {
 		EndPoint:   Point{Row: 0, Column: 3},
 	}
 
-	parser.applyAction(&s, ParseAction{
+	parser.applyAction(nil, &s, ParseAction{
 		Type:  ParseActionShift,
 		State: targetState,
 	}, tok, &anyReduced, &nodeCount, arena, nil, nil, nil, false, nil)
@@ -160,7 +160,7 @@ func TestApplyActionCompactFullShiftUsesCompactLeaf(t *testing.T) {
 		EndPoint:   Point{Row: 0, Column: 3},
 	}
 
-	parser.applyAction(&s, ParseAction{
+	parser.applyAction(nil, &s, ParseAction{
 		Type:  ParseActionShift,
 		State: targetState,
 	}, tok, &anyReduced, &nodeCount, arena, nil, nil, nil, false, nil)
@@ -203,7 +203,7 @@ func TestApplyActionNoTreeMissingShiftStaysNode(t *testing.T) {
 		Missing:    true,
 	}
 
-	parser.applyAction(&s, ParseAction{
+	parser.applyAction(nil, &s, ParseAction{
 		Type:  ParseActionShift,
 		State: targetState,
 	}, tok, &anyReduced, &nodeCount, arena, nil, nil, nil, false, nil)

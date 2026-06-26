@@ -36,7 +36,7 @@ func TestApplyReduceActionCollapsesUnarySelfReductionOnPrimaryStack(t *testing.T
 	var entryScratch glrEntryScratch
 	var gssScratch gssScratch
 
-	parser.applyReduceAction(&s, act, tok, &anyReduced, &nodeCount, arena, &entryScratch, &gssScratch, s.entries, false, false)
+	parser.applyReduceAction(nil, &s, act, tok, &anyReduced, &nodeCount, arena, &entryScratch, &gssScratch, s.entries, false, false)
 
 	if !anyReduced {
 		t.Fatal("expected reduce to succeed")
@@ -98,7 +98,7 @@ func TestApplyReduceActionCollapsesUnarySelfReductionOnGSSStack(t *testing.T) {
 	var entryScratch glrEntryScratch
 	var tmpEntries []stackEntry
 
-	parser.applyReduceActionFromGSS(&s, act, tok, &anyReduced, &nodeCount, arena, &entryScratch, &gssScratch, &tmpEntries, nil, false, false)
+	parser.applyReduceActionFromGSS(nil, &s, act, tok, &anyReduced, &nodeCount, arena, &entryScratch, &gssScratch, &tmpEntries, nil, false, false)
 
 	if !anyReduced {
 		t.Fatal("expected reduce to succeed")
@@ -161,7 +161,7 @@ func TestApplyReduceActionCollapsesInvisibleUnaryWrapper(t *testing.T) {
 	var entryScratch glrEntryScratch
 	var gssScratch gssScratch
 
-	parser.applyReduceAction(&s, act, tok, &anyReduced, &nodeCount, arena, &entryScratch, &gssScratch, s.entries, false, false)
+	parser.applyReduceAction(nil, &s, act, tok, &anyReduced, &nodeCount, arena, &entryScratch, &gssScratch, s.entries, false, false)
 
 	if !anyReduced {
 		t.Fatal("expected reduce to succeed")

@@ -119,7 +119,7 @@ func (p *Parser) eagerDefaultReduceAction(state StateID) (ParseAction, bool) {
 	return entry.action, entry.ok
 }
 
-func (p *Parser) applyEagerDefaultReduces(phase string, stacks []glrStack, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, deferParentLinks bool, trackChildErrors *bool) bool {
+func (p *Parser) applyEagerDefaultReduces(source []byte, phase string, stacks []glrStack, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, deferParentLinks bool, trackChildErrors *bool) bool {
 	if p == nil || len(stacks) == 0 || len(p.eagerDefaultReduces) == 0 {
 		return false
 	}
@@ -167,7 +167,7 @@ func (p *Parser) applyEagerDefaultReduces(phase string, stacks []glrStack, nodeC
 			}
 			reduceTok := eagerDefaultReduceToken(s)
 			reduced := false
-			p.applyAction(s, act, reduceTok, &reduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
+			p.applyAction(source, s, act, reduceTok, &reduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
 			if reduced {
 				anyReduced = true
 				progressed = true

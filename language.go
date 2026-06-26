@@ -145,10 +145,11 @@ type LanguageMetadata struct {
 
 // SymbolMetadata holds display information about a symbol.
 type SymbolMetadata struct {
-	Name      string
-	Visible   bool
-	Named     bool
-	Supertype bool
+	Name               string
+	Visible            bool
+	Named              bool
+	Supertype          bool
+	GeneratedRepeatAux bool
 }
 
 // FieldMapEntry maps a child index to a field name.
@@ -225,6 +226,18 @@ type Language struct {
 	// runtime rather than decoded from a checked-in ts2go blob.
 	GeneratedByGrammargen bool
 
+	// CRecoveryCostCompetitionCapable records parser.c/table evidence that the
+	// grammar exposes the C recovery surface: RECOVER actions plus an
+	// ERROR_STATE lex mode. It is capability metadata only, not a default-on
+	// parity certification.
+	CRecoveryCostCompetitionCapable bool
+
+	// CRecoveryCostCompetitionEnabledByDefault explicitly certifies that the
+	// faithful C recovery-cost competition gate is parity-safe as default
+	// behavior for this language. Runtime gating also requires capability
+	// metadata and conservative table validation.
+	CRecoveryCostCompetitionEnabledByDefault bool
+
 	// LanguageVersion is the tree-sitter language ABI version.
 	// A value of 0 means "unknown/unspecified" and is treated as compatible.
 	LanguageVersion uint32
@@ -283,6 +296,12 @@ type Language struct {
 	SupertypeSymbols    []Symbol
 	SupertypeMapSlices  [][2]uint16 // [supertype_symbol] -> (index, length)
 	SupertypeMapEntries []Symbol
+
+	// HiddenChoicePassthroughSymbols marks generated hidden nonterminals whose
+	// productions are only neutral single-symbol pass-throughs. These wrappers
+	// are structural parser routes, not tree nodes; checked-in blobs leave this
+	// nil to preserve legacy behavior.
+	HiddenChoicePassthroughSymbols []bool
 
 	// ABI 15: Grammar semantic version
 	Metadata LanguageMetadata

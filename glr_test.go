@@ -2371,7 +2371,7 @@ func TestNoTreeNodeConstructorsResetReusedSlots(t *testing.T) {
 	leaf.setHasError(true)
 	arena.reset()
 
-	reduced := newNoTreeReduceNodeInArena(arena, 9, true, 13, nil, 0, 0, Token{StartByte: 31}, false)
+	reduced := newNoTreeReduceNodeInArena(arena, ParseAction{Symbol: 9, ProductionID: 13}, true, nil, 0, 0, Token{StartByte: 31}, false)
 	if reduced.parseState != 0 || reduced.preGotoState != 0 || reduced.productionID != 13 {
 		t.Fatalf("reduce reused state = (%d,%d,%d), want production only", reduced.parseState, reduced.preGotoState, reduced.productionID)
 	}

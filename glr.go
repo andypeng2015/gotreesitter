@@ -44,6 +44,12 @@ type glrStack struct {
 	// faithful recovery port (parser_recover_c.go). nil for every grammar not
 	// gated by errorCostCompetitionLanguage, and for stacks not in error.
 	cRec *cRecoverState
+	// cRecoverMissingGroup marks a non-error stack created by C's
+	// recover_with_missing for the given recovery group. C lexes per version,
+	// so the missing sibling can lag behind the error-state version; the Go
+	// lockstep token loop uses this to avoid letting an already-advanced
+	// sibling suppress that group's Strategy 1 recovery.
+	cRecoverMissingGroup *cRecGroup
 	// cPaused mirrors C StackStatusPaused: the stack hit a no-action point
 	// under the gated recovery port and waits for the condense step to either
 	// resume it (ts_parser__handle_error) or remove it. Only ever set when
@@ -242,43 +248,46 @@ func (s *glrStack) clone() glrStack {
 		entries := make([]stackEntry, len(s.entries))
 		copy(entries, s.entries)
 		return glrStack{
-			entries:             entries,
-			cacheEntries:        s.cacheEntries,
-			byteOffset:          s.byteOffset,
-			score:               s.score,
-			recoverabilityKnown: s.recoverabilityKnown,
-			mayRecover:          s.mayRecover,
-			branchOrder:         s.branchOrder,
-			cRec:                s.cRec.clone(),
-			cNodeBaseline:       s.cNodeBaseline,
+			entries:              entries,
+			cacheEntries:         s.cacheEntries,
+			byteOffset:           s.byteOffset,
+			score:                s.score,
+			recoverabilityKnown:  s.recoverabilityKnown,
+			mayRecover:           s.mayRecover,
+			branchOrder:          s.branchOrder,
+			cRec:                 s.cRec.clone(),
+			cRecoverMissingGroup: s.cRecoverMissingGroup,
+			cNodeBaseline:        s.cNodeBaseline,
 		}
 	}
 	s.ensureGSS(nil)
 	return glrStack{
-		gss:                 s.gss.clone(),
-		cacheEntries:        s.cacheEntries,
-		byteOffset:          s.byteOffset,
-		score:               s.score,
-		recoverabilityKnown: s.recoverabilityKnown,
-		mayRecover:          s.mayRecover,
-		branchOrder:         s.branchOrder,
-		cRec:                s.cRec.clone(),
-		cNodeBaseline:       s.cNodeBaseline,
+		gss:                  s.gss.clone(),
+		cacheEntries:         s.cacheEntries,
+		byteOffset:           s.byteOffset,
+		score:                s.score,
+		recoverabilityKnown:  s.recoverabilityKnown,
+		mayRecover:           s.mayRecover,
+		branchOrder:          s.branchOrder,
+		cRec:                 s.cRec.clone(),
+		cRecoverMissingGroup: s.cRecoverMissingGroup,
+		cNodeBaseline:        s.cNodeBaseline,
 	}
 }
 
 func (s *glrStack) cloneWithScratch(scratch *gssScratch) glrStack {
 	s.ensureGSS(scratch)
 	return glrStack{
-		gss:                 s.gss.clone(),
-		cacheEntries:        false,
-		byteOffset:          s.byteOffset,
-		score:               s.score,
-		recoverabilityKnown: s.recoverabilityKnown,
-		mayRecover:          s.mayRecover,
-		branchOrder:         s.branchOrder,
-		cRec:                s.cRec.clone(),
-		cNodeBaseline:       s.cNodeBaseline,
+		gss:                  s.gss.clone(),
+		cacheEntries:         false,
+		byteOffset:           s.byteOffset,
+		score:                s.score,
+		recoverabilityKnown:  s.recoverabilityKnown,
+		mayRecover:           s.mayRecover,
+		branchOrder:          s.branchOrder,
+		cRec:                 s.cRec.clone(),
+		cRecoverMissingGroup: s.cRecoverMissingGroup,
+		cNodeBaseline:        s.cNodeBaseline,
 	}
 }
 
@@ -2199,6 +2208,19 @@ func stackErrorRank(s *glrStack) int {
 	return 0
 }
 
+func cRecoverStackTraceKind(s glrStack) string {
+	switch {
+	case s.cRec != nil && s.cRec.group != nil:
+		return "error-group"
+	case s.cRecoverMissingGroup != nil:
+		return "missing-group"
+	case s.cRec != nil:
+		return "error"
+	default:
+		return "ordinary"
+	}
+}
+
 func gssMainCanMerge(a, b *glrStack) bool {
 	if a.gss.head == nil || b.gss.head == nil {
 		return false
@@ -2210,6 +2232,17 @@ func gssMainCanMerge(a, b *glrStack) bool {
 		return false
 	}
 	return stackErrorRank(a) == stackErrorRank(b)
+}
+
+func tryGSSMainMergeForParser(p *Parser, a, b *glrStack) bool {
+	if p != nil && p.errorCostCompetitionEnabled() &&
+		cStackErrorCostForMerge(p.language, a) != cStackErrorCostForMerge(p.language, b) {
+		return false
+	}
+	if !gssMainCanMerge(a, b) {
+		return false
+	}
+	return gssMainMerge(a, b)
 }
 
 func gssMainLinkExists(n *gssNode, prev *gssNode, entry stackEntry) bool {

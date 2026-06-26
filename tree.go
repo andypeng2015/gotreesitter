@@ -20,24 +20,26 @@ type Range struct {
 type Node struct {
 	// Layout is performance-sensitive. Keep TestNodeLayoutSizeBudget updated
 	// when changing field order or adding fields.
-	children      []*Node
-	fieldIDs      []FieldID // parallel to children, 0 = no field
-	fieldSources  []uint8   // parallel to children, 0 = none, 1 = direct, 2 = inherited
-	parent        *Node
-	ownerArena    *nodeArena
-	startPoint    Point
-	endPoint      Point
-	startByte     uint32
-	endByte       uint32
-	parseState    StateID // parser state after this node was pushed
-	preGotoState  StateID // parser state before goto (state exposed after popping children)
-	equivVersion  uint32
-	childIndex    int32
-	symbol        Symbol
-	productionID  uint16
-	flags         nodeFlags
-	dirtyFlag     bool
-	subtreeHeight uint8 // forest dedup tie-break cache (0 = uncomputed); see nodeCachedHeight
+	children          []*Node
+	fieldIDs          []FieldID // parallel to children, 0 = no field
+	fieldSources      []uint8   // parallel to children, 0 = none, 1 = direct, 2 = inherited
+	parent            *Node
+	ownerArena        *nodeArena
+	startPoint        Point
+	endPoint          Point
+	startByte         uint32
+	endByte           uint32
+	parseState        StateID // parser state after this node was pushed
+	preGotoState      StateID // parser state before goto (state exposed after popping children)
+	equivVersion      uint32
+	dynamicPrecedence int32
+	childIndex        int32
+	symbol            Symbol
+	rawShape          rawShapeRef
+	productionID      uint16
+	flags             nodeFlags
+	dirtyFlag         bool
+	subtreeHeight     uint8 // forest dedup tie-break cache (0 = uncomputed); see nodeCachedHeight
 }
 
 type nodeFlags uint8
@@ -57,6 +59,7 @@ const (
 	// already-built immutable child subtrees.
 	nodeFlagFieldIDCacheComputed
 	nodeFlagFieldIDCacheHasFieldIDs
+	nodeFlagExternalScannerToken
 )
 
 func (n *Node) hasFlag(flag nodeFlags) bool {
@@ -71,14 +74,16 @@ func (n *Node) setFlag(flag nodeFlags, enabled bool) {
 	n.flags &^= flag
 }
 
-func (n *Node) isNamed() bool      { return n.hasFlag(nodeFlagNamed) }
-func (n *Node) setNamed(v bool)    { n.setFlag(nodeFlagNamed, v) }
-func (n *Node) isExtra() bool      { return n.hasFlag(nodeFlagExtra) }
-func (n *Node) setExtra(v bool)    { n.setFlag(nodeFlagExtra, v) }
-func (n *Node) isMissing() bool    { return n.hasFlag(nodeFlagMissing) }
-func (n *Node) setMissing(v bool)  { n.setFlag(nodeFlagMissing, v) }
-func (n *Node) hasError() bool     { return n.hasFlag(nodeFlagHasError) }
-func (n *Node) setHasError(v bool) { n.setFlag(nodeFlagHasError, v) }
+func (n *Node) isNamed() bool                  { return n.hasFlag(nodeFlagNamed) }
+func (n *Node) setNamed(v bool)                { n.setFlag(nodeFlagNamed, v) }
+func (n *Node) isExtra() bool                  { return n.hasFlag(nodeFlagExtra) }
+func (n *Node) setExtra(v bool)                { n.setFlag(nodeFlagExtra, v) }
+func (n *Node) isMissing() bool                { return n.hasFlag(nodeFlagMissing) }
+func (n *Node) setMissing(v bool)              { n.setFlag(nodeFlagMissing, v) }
+func (n *Node) hasError() bool                 { return n.hasFlag(nodeFlagHasError) }
+func (n *Node) setHasError(v bool)             { n.setFlag(nodeFlagHasError, v) }
+func (n *Node) isExternalScannerToken() bool   { return n.hasFlag(nodeFlagExternalScannerToken) }
+func (n *Node) setExternalScannerToken(v bool) { n.setFlag(nodeFlagExternalScannerToken, v) }
 func (n *Node) dirty() bool {
 	return n != nil && (n.dirtyFlag || n.hasFlag(nodeFlagDirty))
 }

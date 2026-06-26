@@ -4,12 +4,13 @@ import "testing"
 
 func extendParentSpanToWindowForTest(parent *Node, entries []stackEntry, start, reducedEnd int, symbolMeta []SymbolMetadata, symbolNames []string) {
 	spanExtending, nonSpanExtending := buildInvisibleSpanSymbolTables(symbolNames)
-	extendParentSpanToWindow(parent, entries, start, reducedEnd, symbolMeta, spanExtending, nonSpanExtending)
+	extendParentSpanToWindow(parent, entries, start, reducedEnd, symbolMeta, spanExtending, nonSpanExtending, nil)
 }
 
 func TestExtendParentSpanCoversInvisibleLeafChild(t *testing.T) {
 	// Invisible non-extra leaf child [20-22] dropped by buildReduceChildren
-	// should extend parent endByte from 20 to 22 (contiguous).
+	// should extend parent endByte from 20 to 22 (contiguous), but leading
+	// extras should not pull the visible parent start before the core child.
 	parent := NewParentNode(3, true, nil, nil, 0)
 	parent.startByte = 10
 	parent.endByte = 20
@@ -31,7 +32,7 @@ func TestExtendParentSpanCoversInvisibleLeafChild(t *testing.T) {
 	}
 	extendParentSpanToWindowForTest(parent, entries, 0, len(entries), meta, nil)
 
-	if got, want := parent.startByte, uint32(8); got != want {
+	if got, want := parent.startByte, uint32(10); got != want {
 		t.Fatalf("parent.startByte = %d, want %d", got, want)
 	}
 	if got, want := parent.endByte, uint32(22); got != want {

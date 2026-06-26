@@ -1499,11 +1499,11 @@ func normalizeTypeScriptRecoveredInternalModuleRoot(root *Node, source []byte, l
 		if child == nil || typeScriptWhitespaceOnlyRecoverySubtree(child, source) || typeScriptRecoveredNamespaceCloseBrace(child, source) {
 			continue
 		}
-		if countFlattenedHiddenChildren(child, lang.SymbolMetadata) > 0 {
-			count := countFlattenedHiddenChildren(child, lang.SymbolMetadata)
+		if countFlattenedHiddenChildren(child, lang.SymbolMetadata, nil) > 0 {
+			count := countFlattenedHiddenChildren(child, lang.SymbolMetadata, nil)
 			start := len(bodyChildren)
 			bodyChildren = append(bodyChildren, make([]*Node, count)...)
-			appendFlattenedHiddenChildren(bodyChildren[start:], 0, child, lang.SymbolMetadata)
+			appendFlattenedHiddenChildren(bodyChildren[start:], 0, child, lang.SymbolMetadata, nil)
 			continue
 		}
 		bodyChildren = append(bodyChildren, child)

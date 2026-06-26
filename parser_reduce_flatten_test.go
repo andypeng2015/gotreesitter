@@ -31,12 +31,12 @@ func TestFlattenHiddenChildrenHandlesDeepInvisibleChains(t *testing.T) {
 	}
 	root := buildDeepHiddenChain(600, 512)
 
-	if got, want := countFlattenedHiddenChildren(root, symbolMeta), 512; got != want {
+	if got, want := countFlattenedHiddenChildren(root, symbolMeta, nil), 512; got != want {
 		t.Fatalf("countFlattenedHiddenChildren() = %d, want %d", got, want)
 	}
 
 	dst := make([]*Node, 512)
-	out := appendFlattenedHiddenChildren(dst, 0, root, symbolMeta)
+	out := appendFlattenedHiddenChildren(dst, 0, root, symbolMeta, nil)
 	if got, want := out, 512; got != want {
 		t.Fatalf("appendFlattenedHiddenChildren() out = %d, want %d", got, want)
 	}
