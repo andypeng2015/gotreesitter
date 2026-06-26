@@ -46,17 +46,6 @@ func normalizePythonCompatibilityWithParser(root *Node, source []byte, parser *P
 	}, func() normalizationPassCounters {
 		return normalizePythonStringContinuationEscapes(root, source, lang)
 	})
-	// Post-repair: adjust block startBytes to match C tree-sitter behavior.
-	// C includes the newline+indentation between ":" and the first statement;
-	// Go's repair drops it.  This pass catches blocks inside match_statement,
-	// while_statement, for_statement, etc. that repairPythonNode doesn't reach.
-	// NOTE: no source flag gate — ":" is ubiquitous in Python (function defs,
-	// class defs, if/while/for/match), so a pre-scan would almost never skip.
-	parser.runNormalizationPass(func() bool {
-		return true
-	}, func() normalizationPassCounters {
-		return normalizePythonBlockStartBytes(root, lang)
-	})
 }
 
 // pythonCollapsedKeywordSetup holds the resolved symbols for one collapsed-
@@ -2346,53 +2335,6 @@ func pythonBlockStartAnchor(children []*Node, lang *Language) *Node {
 		}
 	}
 	return nil
-}
-
-// normalizePythonBlockStartBytes walks all nodes and adjusts their block
-// children's startByte to match C tree-sitter behavior: the block should
-// start at the preceding ":"'s endByte (including newline + indentation),
-// not at the first statement.  This must NOT access node.parent — parent
-// links are not yet wired when this pass runs.
-func normalizePythonBlockStartBytes(root *Node, lang *Language) normalizationPassCounters {
-	var counters normalizationPassCounters
-	blockSym, ok := symbolByName(lang, "block")
-	if !ok {
-		return counters
-	}
-	colonSym, hasColon := symbolByName(lang, ":")
-	if !hasColon {
-		return counters
-	}
-	walkResultTreeDenseFirst(root, func(n *Node) {
-		// Look for nodes that have a ":" child followed by a "block" child.
-		cc := resultChildCount(n)
-		if cc < 2 {
-			return
-		}
-		var lastColonEndByte uint32
-		var lastColonEndPoint Point
-		for i := 0; i < cc; i++ {
-			child := resultChildAt(n, i)
-			if child == nil {
-				continue
-			}
-			if child.symbol == colonSym {
-				lastColonEndByte = child.endByte
-				lastColonEndPoint = child.endPoint
-			} else if child.symbol == blockSym && lastColonEndByte > 0 {
-				counters.nodesVisited++
-				if lastColonEndByte < child.startByte {
-					child.startByte = lastColonEndByte
-					child.startPoint = lastColonEndPoint
-					counters.nodesRewritten++
-				}
-				lastColonEndByte = 0 // reset after use
-			} else {
-				lastColonEndByte = 0 // reset on non-colon, non-block
-			}
-		}
-	})
-	return counters
 }
 
 func pythonBlockStartAnchorNode(node *Node, lang *Language) *Node {
