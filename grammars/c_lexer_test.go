@@ -4,6 +4,7 @@ package grammars
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 
 	"github.com/odvcencio/gotreesitter"
@@ -1056,6 +1057,63 @@ func TestCTokenSourceLineCommentContinuationCRLF(t *testing.T) {
 	if got, want := ident.Text, "this_is_not"; got != want {
 		t.Fatalf("next token text = %q, want %q", got, want)
 	}
+}
+
+func TestCTokenSourcePreprocIfSkipsEscapedNewlineBeforeTerminator(t *testing.T) {
+	lang := CLanguage()
+	src := []byte("#if A(B || C) && \\\n    !D(F)\n\nuint32_t a;\n\n#endif")
+	lineEndAt := bytes.Index(src, []byte(")\n"))
+	if lineEndAt < 0 {
+		t.Fatal("test source missing conditional line terminator")
+	}
+	lineEndAt++
+	ts, err := NewCTokenSource(src, lang)
+	if err != nil {
+		t.Fatalf("NewCTokenSource failed: %v", err)
+	}
+
+	var sawAndAnd bool
+	var tokenSeq []string
+	for i := 0; i < 32; i++ {
+		tok := ts.Next()
+		name := ""
+		if int(tok.Symbol) < len(lang.SymbolNames) {
+			name = lang.SymbolNames[tok.Symbol]
+		}
+		tokenSeq = append(tokenSeq, name+"="+tok.Text)
+		if sawAndAnd {
+			if got, want := tok.Text, "!"; got != want {
+				t.Fatalf("token after && = %q (%s [%d:%d]), want %q", got, name, tok.StartByte, tok.EndByte, want)
+			}
+			if tok.StartByte <= 18 {
+				t.Fatalf("token after && starts at %d, want after escaped newline", tok.StartByte)
+			}
+			break
+		}
+		if tok.Text == "&&" {
+			sawAndAnd = true
+		}
+	}
+	if !sawAndAnd {
+		t.Fatalf("did not see && token: %s", strings.Join(tokenSeq, " "))
+	}
+
+	for i := 0; i < 16; i++ {
+		tok := ts.Next()
+		name := ""
+		if int(tok.Symbol) < len(lang.SymbolNames) {
+			name = lang.SymbolNames[tok.Symbol]
+		}
+		tokenSeq = append(tokenSeq, name+"="+tok.Text)
+		if tok.Text != "\n" {
+			continue
+		}
+		if got, want := tok.StartByte, uint32(lineEndAt); got != want {
+			t.Fatalf("conditional terminator starts at %d, want real newline %d; tokens: %s", got, want, strings.Join(tokenSeq, " "))
+		}
+		return
+	}
+	t.Fatalf("did not see conditional terminator at real newline; tokens: %s", strings.Join(tokenSeq, " "))
 }
 
 func TestCTokenSourceSystemIncludeAndPragmaTokens(t *testing.T) {
