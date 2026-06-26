@@ -101,6 +101,82 @@ func TestNonterminalExtraChainLexModesDoNotInheritTerminalExtras(t *testing.T) {
 	}
 }
 
+func TestExtraChainLexModesSkipMainStateLookaheadWidening(t *testing.T) {
+	const (
+		tokenCount     = 5
+		mainToken      = 1
+		chainToken     = 2
+		nextChainToken = 3
+		widenedToken   = 4
+	)
+
+	actionLookup := func(state, sym int) bool {
+		switch state {
+		case 0:
+			return sym == mainToken
+		case 2:
+			return sym == chainToken
+		case 3:
+			return sym == nextChainToken
+		default:
+			return false
+		}
+	}
+	followCalls := make(map[int]int)
+	missingCalls := make(map[int]int)
+
+	lexModes, stateToMode, _ := computeLexModes(
+		4,
+		tokenCount,
+		actionLookup,
+		nil,
+		nil,
+		2,
+		nil,
+		nil,
+		0,
+		map[int]bool{widenedToken: true},
+		map[int]bool{mainToken: true, chainToken: true, nextChainToken: true, widenedToken: true},
+		func(state int) []int {
+			followCalls[state]++
+			return []int{widenedToken}
+		},
+		func(state int) []int {
+			missingCalls[state]++
+			return []int{widenedToken}
+		},
+		nil,
+	)
+
+	if followCalls[2] != 0 || followCalls[3] != 0 {
+		t.Fatalf("follow widening called for extra-chain states: %v", followCalls)
+	}
+	if missingCalls[2] != 0 || missingCalls[3] != 0 {
+		t.Fatalf("missing-recovery widening called for extra-chain states: %v", missingCalls)
+	}
+
+	mainMode := lexModes[stateToMode[0]]
+	if !mainMode.validSymbols[widenedToken] {
+		t.Fatal("main state should still receive lookahead widening")
+	}
+
+	chainMode := lexModes[stateToMode[2]]
+	if !chainMode.validSymbols[chainToken] {
+		t.Fatal("extra-chain state should keep direct chain action token")
+	}
+	if chainMode.validSymbols[widenedToken] {
+		t.Fatal("extra-chain state should not receive parser-main-state lookahead widening")
+	}
+
+	nextChainMode := lexModes[stateToMode[3]]
+	if !nextChainMode.validSymbols[nextChainToken] {
+		t.Fatal("later extra-chain state should keep direct chain action token")
+	}
+	if nextChainMode.validSymbols[widenedToken] {
+		t.Fatal("later extra-chain state should not receive parser-main-state lookahead widening")
+	}
+}
+
 func TestNonterminalExtraChainRuntimeProducesReducedExtraNode(t *testing.T) {
 	g := NewGrammar("extra_chain_runtime")
 	g.Define("source_file", Repeat1(Sym("item")))
@@ -206,6 +282,71 @@ func TestNonterminalExtraChainRuntimeProducesReducedRepeatedExtraNodeWithSibling
 	}
 	if got := safeSExpr(root, report.Language, 16); got != "(source_file (block_comment) (item))" {
 		t.Fatalf("sexpr = %s, want (source_file (block_comment) (item))", got)
+	}
+}
+
+func TestNonterminalExtraChainRuntimeKeepsSiblingCommentStartAsBlockText(t *testing.T) {
+	g := NewGrammar("extra_chain_runtime_comment_start_text")
+	g.Define("source_file", Repeat(Sym("item")))
+	g.Define("item", Pat(`[a-z]+`))
+	g.Define("comment", Seq(
+		Token(Str("//")),
+		Repeat(Token(Pat(`[^\n]`))),
+	))
+	g.Define("block_comment", Seq(
+		Token(Str("/*")),
+		Repeat(Choice(Token(Pat(`[\s\S]`)), Token(Str("//")))),
+		Token(Str("*/")),
+	))
+	g.SetExtras(Pat(`\s`), Sym("comment"), Sym("block_comment"))
+
+	report, err := GenerateWithReport(g)
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name string
+		src  []byte
+		want string
+	}{
+		{name: "eof", src: []byte("/* // */"), want: "(source_file (block_comment))"},
+		{name: "before_item", src: []byte("/* // */foo"), want: "(source_file (block_comment) (item))"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tree, err := gotreesitter.NewParser(report.Language).Parse(tc.src)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			root := tree.RootNode()
+			if root == nil {
+				t.Fatal("nil root")
+			}
+			if root.HasError() {
+				t.Fatalf("root has error: %s", safeSExpr(root, report.Language, 16))
+			}
+			if got := safeSExpr(root, report.Language, 16); got != tc.want {
+				t.Fatalf("sexpr = %s, want %s", got, tc.want)
+			}
+			block := root.Child(0)
+			if block == nil || block.Type(report.Language) != "block_comment" {
+				t.Fatalf("first child = %v, want block_comment; tree=%s", block, safeSExpr(root, report.Language, 16))
+			}
+			wantSpans := [][2]uint32{{0, 2}, {2, 5}, {5, 8}}
+			if got := block.ChildCount(); got != len(wantSpans) {
+				t.Fatalf("block_comment child count = %d, want %d; tree=%s", got, len(wantSpans), safeSExpr(root, report.Language, 16))
+			}
+			for i, want := range wantSpans {
+				child := block.Child(i)
+				if child == nil {
+					t.Fatalf("block child %d is nil", i)
+				}
+				if child.StartByte() != want[0] || child.EndByte() != want[1] {
+					t.Fatalf("block child %d span = %d..%d (%q), want %d..%d",
+						i, child.StartByte(), child.EndByte(), string(tc.src[child.StartByte():child.EndByte()]), want[0], want[1])
+				}
+			}
+		})
 	}
 }
 
@@ -771,81 +912,5 @@ func TestNonterminalExtraChainRuntimeMatchesScalaStyleNestedBlockCommentsAtEOF(t
 	}
 	if got := safeSExpr(root, report.Language, 64); got != "(source_file (block_comment) (block_comment (block_comment (block_comment))))" {
 		t.Fatalf("sexpr = %s, want Scala-style nested block_comment EOF shape", got)
-	}
-}
-
-func TestExtraChainLexModesSkipMainStateLookaheadWidening(t *testing.T) {
-	const (
-		tokenCount     = 5
-		mainToken      = 1
-		chainToken     = 2
-		nextChainToken = 3
-		widenedToken   = 4
-	)
-
-	actionLookup := func(state, sym int) bool {
-		switch state {
-		case 0:
-			return sym == mainToken
-		case 2:
-			return sym == chainToken
-		case 3:
-			return sym == nextChainToken
-		default:
-			return false
-		}
-	}
-	followCalls := make(map[int]int)
-	missingCalls := make(map[int]int)
-
-	lexModes, stateToMode, _ := computeLexModes(
-		4,
-		tokenCount,
-		actionLookup,
-		nil,
-		nil,
-		2,
-		nil,
-		nil,
-		0,
-		map[int]bool{widenedToken: true},
-		map[int]bool{mainToken: true, chainToken: true, nextChainToken: true, widenedToken: true},
-		func(state int) []int {
-			followCalls[state]++
-			return []int{widenedToken}
-		},
-		func(state int) []int {
-			missingCalls[state]++
-			return []int{widenedToken}
-		},
-		nil,
-	)
-
-	if followCalls[2] != 0 || followCalls[3] != 0 {
-		t.Fatalf("follow widening called for extra-chain states: %v", followCalls)
-	}
-	if missingCalls[2] != 0 || missingCalls[3] != 0 {
-		t.Fatalf("missing-recovery widening called for extra-chain states: %v", missingCalls)
-	}
-
-	mainMode := lexModes[stateToMode[0]]
-	if !mainMode.validSymbols[widenedToken] {
-		t.Fatal("main state should still receive lookahead widening")
-	}
-
-	chainMode := lexModes[stateToMode[2]]
-	if !chainMode.validSymbols[chainToken] {
-		t.Fatal("extra-chain state should keep direct chain action token")
-	}
-	if chainMode.validSymbols[widenedToken] {
-		t.Fatal("extra-chain state should not receive parser-main-state lookahead widening")
-	}
-
-	nextChainMode := lexModes[stateToMode[3]]
-	if !nextChainMode.validSymbols[nextChainToken] {
-		t.Fatal("later extra-chain state should keep direct chain action token")
-	}
-	if nextChainMode.validSymbols[widenedToken] {
-		t.Fatal("later extra-chain state should not receive parser-main-state lookahead widening")
 	}
 }

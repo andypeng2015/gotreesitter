@@ -6344,9 +6344,9 @@ func flattenedHiddenPaddingTarget(n, source *Node, symbolMeta []SymbolMetadata) 
 		if len(n.children) > 0 {
 			return true
 		}
-		return false
+		return source != nil && source.startByte < n.startByte && source.endByte <= n.endByte
 	}
-	return !n.isNamed() && len(n.children) > 0
+	return !n.isNamed() && (len(n.children) > 0 || (source != nil && source.startByte < n.startByte && source.endByte <= n.endByte))
 }
 
 func flattenedHiddenSiblingPaddingTarget(n, source *Node, symbolMeta []SymbolMetadata) bool {
