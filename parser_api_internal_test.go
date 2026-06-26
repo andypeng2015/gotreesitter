@@ -233,33 +233,104 @@ func TestTypeScriptRepetitionShiftConflictChoiceForDispatchSkipsFaithfulCondense
 	}
 }
 
-func TestPythonRepetitionShiftConflictChoiceAllowsHotModuleRepeat(t *testing.T) {
-	lang := &Language{SymbolNames: []string{"end", "identifier", "def", "module_repeat1"}}
-	actions := []ParseAction{
-		{Type: ParseActionReduce, Symbol: 3, ChildCount: 2},
-		{Type: ParseActionShift, State: 616, Repetition: true},
-	}
-
-	for _, sym := range []Symbol{1, 2} {
-		chosen, ok := pythonRepetitionShiftConflictChoice(lang, Token{Symbol: sym}, 72, actions)
-		if !ok {
-			t.Fatalf("pythonRepetitionShiftConflictChoice(%q) = false, want true", lang.SymbolNames[sym])
+func TestGeneratedRepeatBoundaryConflictBypassesDispatchShortcut(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		state StateID
+		tok   Symbol
+	}{
+		{name: "python", state: 72, tok: 1},
+		{name: "dart", state: 596, tok: 1},
+	} {
+		lang := &Language{
+			Name:        tc.name,
+			SymbolNames: []string{"end", "identifier", "def", "module_repeat1"},
+			SymbolMetadata: []SymbolMetadata{
+				{Name: "end"},
+				{Name: "identifier"},
+				{Name: "def"},
+				{Name: "module_repeat1", GeneratedRepeatAux: true},
+			},
 		}
-		if chosen.Type != ParseActionShift || chosen.State != 616 || !chosen.Repetition {
-			t.Fatalf("pythonRepetitionShiftConflictChoice(%q) picked %+v, want repetition shift", lang.SymbolNames[sym], chosen)
+		actions := []ParseAction{
+			{Type: ParseActionReduce, Symbol: 3, ChildCount: 2},
+			{Type: ParseActionShift, State: 616, Repetition: true},
+		}
+		if !generatedRepeatBoundaryConflict(lang, actions) {
+			t.Fatalf("%s generatedRepeatBoundaryConflict = false, want true", tc.name)
+		}
+		parser := &Parser{language: lang}
+		if chosen, ok := parser.deterministicConflictChoiceForDispatch(nil, nil, Token{Symbol: tc.tok}, tc.state, actions, 2, nil); ok {
+			t.Fatalf("%s deterministicConflictChoiceForDispatch picked %+v, want GLR fork", tc.name, chosen)
 		}
 	}
 }
 
-func TestPythonRepetitionShiftConflictChoiceRejectsOtherState(t *testing.T) {
-	lang := &Language{SymbolNames: []string{"end", "identifier", "module_repeat1"}}
+func TestGeneratedRepeatBoundaryConflictRequiresGeneratedReduce(t *testing.T) {
+	lang := &Language{
+		Name:        "python",
+		SymbolNames: []string{"end", "identifier", "module_repeat1"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "end"},
+			{Name: "identifier"},
+			{Name: "module_repeat1"},
+		},
+	}
 	actions := []ParseAction{
 		{Type: ParseActionReduce, Symbol: 2, ChildCount: 2},
 		{Type: ParseActionShift, State: 616, Repetition: true},
 	}
+	if generatedRepeatBoundaryConflict(lang, actions) {
+		t.Fatal("generatedRepeatBoundaryConflict = true for non-generated reduce, want false")
+	}
+}
 
-	if _, ok := pythonRepetitionShiftConflictChoice(lang, Token{Symbol: 1}, 73, actions); ok {
-		t.Fatal("pythonRepetitionShiftConflictChoice = true, want false")
+func TestGeneratedRepeatBoundaryConflictAllowsMixedReduces(t *testing.T) {
+	lang := &Language{
+		Name:        "python",
+		SymbolNames: []string{"end", "identifier", "module_repeat1", "statement"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "end"},
+			{Name: "identifier"},
+			{Name: "module_repeat1", GeneratedRepeatAux: true},
+			{Name: "statement"},
+		},
+	}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 2, ChildCount: 2},
+		{Type: ParseActionReduce, Symbol: 3, ChildCount: 1},
+		{Type: ParseActionShift, State: 616, Repetition: true},
+	}
+	if !generatedRepeatBoundaryConflict(lang, actions) {
+		t.Fatal("generatedRepeatBoundaryConflict = false for mixed generated/non-generated reduces, want true")
+	}
+}
+
+func TestDeterministicConflictChoiceKeepsNonGeneratedShortcut(t *testing.T) {
+	lang := &Language{
+		Name:        "php",
+		SymbolNames: []string{"end", "namespace", "\\", "name", "use", "new", "program_repeat1"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "end"},
+			{Name: "namespace"},
+			{Name: "\\"},
+			{Name: "name"},
+			{Name: "use"},
+			{Name: "new"},
+			{Name: "program_repeat1"},
+		},
+	}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 6, ChildCount: 2},
+		{Type: ParseActionShift, State: 1846, Repetition: true},
+	}
+	parser := &Parser{language: lang}
+	chosen, ok := parser.deterministicConflictChoiceForDispatch(nil, nil, Token{Symbol: 1}, 2, actions, 2, nil)
+	if !ok {
+		t.Fatal("deterministicConflictChoiceForDispatch = false, want non-generated PHP shortcut")
+	}
+	if chosen.Type != ParseActionShift || chosen.State != 1846 || !chosen.Repetition {
+		t.Fatalf("deterministicConflictChoiceForDispatch picked %+v, want repetition shift", chosen)
 	}
 }
 
@@ -1257,6 +1328,92 @@ func TestNoStacksCleanRootRetryWidenMergeBeforeStackCap(t *testing.T) {
 	}
 }
 
+func TestShouldTakeCleanWideRetryRejectsNodeLimitNonTruncatedNoError(t *testing.T) {
+	incumbent := &Tree{
+		root: &Node{
+			endByte: 64,
+		},
+		parseRuntime: ParseRuntime{
+			StopReason:      ParseStopNoStacksAlive,
+			ExpectedEOFByte: 128,
+			RootEndByte:     64,
+		},
+	}
+	candidate := &Tree{
+		root: &Node{
+			endByte: 128,
+		},
+		parseRuntime: ParseRuntime{
+			StopReason:      ParseStopNodeLimit,
+			ExpectedEOFByte: 128,
+			RootEndByte:     128,
+		},
+	}
+
+	if shouldTakeCleanWideRetry(incumbent, candidate, 128, 8) {
+		t.Fatal("shouldTakeCleanWideRetry(node_limit non-truncated clean candidate) = true, want false")
+	}
+}
+
+func TestShouldTakeCleanWideRetryAcceptsAcceptedNoError(t *testing.T) {
+	incumbent := &Tree{
+		root: &Node{
+			endByte: 64,
+		},
+		parseRuntime: ParseRuntime{
+			StopReason:      ParseStopNoStacksAlive,
+			ExpectedEOFByte: 128,
+			RootEndByte:     64,
+		},
+	}
+	candidate := &Tree{
+		root: &Node{
+			endByte: 128,
+		},
+		parseRuntime: ParseRuntime{
+			StopReason:      ParseStopAccepted,
+			ExpectedEOFByte: 128,
+			RootEndByte:     128,
+		},
+	}
+
+	if !shouldTakeCleanWideRetry(incumbent, candidate, 128, 8) {
+		t.Fatal("shouldTakeCleanWideRetry(accepted clean candidate) = false, want true")
+	}
+}
+
+func TestShouldTakeCleanWideRetryNoStacksAliveRequiresExpectedEOFCoverage(t *testing.T) {
+	incumbent := &Tree{
+		root: &Node{
+			endByte: 64,
+		},
+		parseRuntime: ParseRuntime{
+			StopReason:      ParseStopNoStacksAlive,
+			ExpectedEOFByte: 128,
+			RootEndByte:     64,
+		},
+	}
+	candidate := &Tree{
+		root: &Node{
+			endByte: 127,
+		},
+		parseRuntime: ParseRuntime{
+			StopReason:      ParseStopNoStacksAlive,
+			ExpectedEOFByte: 128,
+			RootEndByte:     127,
+		},
+	}
+
+	if shouldTakeCleanWideRetry(incumbent, candidate, 128, 8) {
+		t.Fatal("shouldTakeCleanWideRetry(no_stacks_alive short clean candidate) = true, want false")
+	}
+	candidate.root.endByte = 128
+	candidate.parseRuntime.RootEndByte = 128
+	if !shouldTakeCleanWideRetry(incumbent, candidate, 128, 8) {
+		t.Fatal("shouldTakeCleanWideRetry(no_stacks_alive EOF-covering clean candidate) = false, want true")
+	}
+}
+
 func TestShouldRepeatExternalScannerFullParseSkipsDart(t *testing.T) {
 	tree := &Tree{
 		root: &Node{
@@ -1511,6 +1668,58 @@ func TestPreferRetryTreePrefersFurtherAcceptedProgress(t *testing.T) {
 
 	if !preferRetryTree(nil, candidate, incumbent) {
 		t.Fatal("preferRetryTree = false, want true for accepted full-length retry")
+	}
+}
+
+func TestPreferRetryTreeKeepsFurtherErrorOverShortCleanCandidate(t *testing.T) {
+	incumbent := &Tree{
+		root: &Node{
+			endByte: 200,
+			flags:   nodeFlagHasError,
+		},
+		parseRuntime: ParseRuntime{
+			StopReason:      ParseStopAccepted,
+			ExpectedEOFByte: 200,
+		},
+	}
+	candidate := &Tree{
+		root: &Node{
+			endByte: 120,
+		},
+		parseRuntime: ParseRuntime{
+			StopReason:      ParseStopAccepted,
+			ExpectedEOFByte: 200,
+		},
+	}
+
+	if preferRetryTree(nil, candidate, incumbent) {
+		t.Fatal("preferRetryTree = true, want false for short clean retry against further error incumbent")
+	}
+}
+
+func TestPreferRetryTreePrefersFullCleanCandidateOverError(t *testing.T) {
+	incumbent := &Tree{
+		root: &Node{
+			endByte: 200,
+			flags:   nodeFlagHasError,
+		},
+		parseRuntime: ParseRuntime{
+			StopReason:      ParseStopAccepted,
+			ExpectedEOFByte: 200,
+		},
+	}
+	candidate := &Tree{
+		root: &Node{
+			endByte: 200,
+		},
+		parseRuntime: ParseRuntime{
+			StopReason:      ParseStopAccepted,
+			ExpectedEOFByte: 200,
+		},
+	}
+
+	if !preferRetryTree(nil, candidate, incumbent) {
+		t.Fatal("preferRetryTree = false, want true for full clean retry against error incumbent")
 	}
 }
 
@@ -1795,8 +2004,8 @@ func TestEffectiveParseMergePerKeyCap(t *testing.T) {
 	if got := effectiveParseMergePerKeyCap(&Language{Name: "rust"}, maxStacksPerMergeKey, false); got != 1 {
 		t.Fatalf("effectiveParseMergePerKeyCap(rust, default, full) = %d, want 1", got)
 	}
-	if got := effectiveParseMergePerKeyCap(&Language{Name: "svelte"}, maxStacksPerMergeKey, false); got != 1 {
-		t.Fatalf("effectiveParseMergePerKeyCap(svelte, default, full) = %d, want 1", got)
+	if got := effectiveParseMergePerKeyCap(&Language{Name: "svelte"}, maxStacksPerMergeKey, false); got != maxStacksPerMergeKey {
+		t.Fatalf("effectiveParseMergePerKeyCap(svelte, default, full) = %d, want %d", got, maxStacksPerMergeKey)
 	}
 	if got := effectiveParseMergePerKeyCap(&Language{Name: "xml"}, maxStacksPerMergeKey, false); got != 1 {
 		t.Fatalf("effectiveParseMergePerKeyCap(xml, default, full) = %d, want 1", got)
@@ -2010,27 +2219,34 @@ func TestEffectiveParseMergePerKeyCapDartExplicitOverride(t *testing.T) {
 	}
 }
 
-func TestErrorCostCompetitionLanguageSchemeDefault(t *testing.T) {
+func TestErrorCostCompetitionLanguageRequiresCapabilityByDefault(t *testing.T) {
 	t.Setenv("GOT_C_RECOVERY", "")
-	if !errorCostCompetitionLanguage(&Language{Name: "scheme"}) {
-		t.Fatal("errorCostCompetitionLanguage(scheme) = false, want true")
+	if errorCostCompetitionLanguage(&Language{
+		CRecoveryCostCompetitionCapable:          true,
+		Name:                                     "scheme",
+		CRecoveryCostCompetitionEnabledByDefault: true,
+	}) {
+		t.Fatal("errorCostCompetitionLanguage enabled without table capability")
 	}
-	if !errorCostCompetitionLanguage(&Language{Name: "objc"}) {
-		t.Fatal("errorCostCompetitionLanguage(objc) = false, want true")
+
+	t.Setenv("GOT_C_RECOVERY", "scheme")
+	if errorCostCompetitionLanguage(&Language{Name: "scheme"}) {
+		t.Fatal("GOT_C_RECOVERY=scheme enabled without table capability")
 	}
-	if !errorCostCompetitionLanguage(&Language{Name: "kotlin"}) {
-		t.Fatal("errorCostCompetitionLanguage(kotlin) = false, want true")
+	lang := cRecoveryGateLanguage()
+	lang.Name = "scheme"
+	lang.CRecoveryCostCompetitionEnabledByDefault = false
+	if !errorCostCompetitionLanguage(lang) {
+		t.Fatal("GOT_C_RECOVERY=scheme did not force-enable diagnostic gate with runtime capability")
 	}
 
 	t.Setenv("GOT_C_RECOVERY", "0")
-	if errorCostCompetitionLanguage(&Language{Name: "scheme"}) {
-		t.Fatal("errorCostCompetitionLanguage(scheme, GOT_C_RECOVERY=0) = true, want false")
-	}
-	if errorCostCompetitionLanguage(&Language{Name: "objc"}) {
-		t.Fatal("errorCostCompetitionLanguage(objc, GOT_C_RECOVERY=0) = true, want false")
-	}
-	if errorCostCompetitionLanguage(&Language{Name: "kotlin"}) {
-		t.Fatal("errorCostCompetitionLanguage(kotlin, GOT_C_RECOVERY=0) = true, want false")
+	if errorCostCompetitionLanguage(&Language{
+		CRecoveryCostCompetitionCapable:          true,
+		Name:                                     "scheme",
+		CRecoveryCostCompetitionEnabledByDefault: true,
+	}) {
+		t.Fatal("GOT_C_RECOVERY=0 did not disable C recovery")
 	}
 }
 
