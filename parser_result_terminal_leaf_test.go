@@ -1,0 +1,165 @@
+package gotreesitter
+
+import "testing"
+
+func TestNormalizeResultTerminalLeafNodesCollapsesRedundantAnonymousTokenChild(t *testing.T) {
+	lang := &Language{
+		TokenCount: 3,
+		SymbolNames: []string{
+			"EOF",
+			".",
+			"any_character",
+			"root",
+		},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF"},
+			{Name: ".", Visible: true, Named: false},
+			{Name: "any_character", Visible: true, Named: true},
+			{Name: "root", Visible: true, Named: true},
+		},
+	}
+	arena := newNodeArena(arenaClassFull)
+	child := newLeafNodeInArena(arena, 1, false, 11, 12, Point{Row: 0, Column: 11}, Point{Row: 0, Column: 12})
+	token := newParentNodeInArena(arena, 2, true, []*Node{child}, nil, 0)
+	token.startByte = 10
+	token.endByte = 12
+	token.startPoint = Point{Row: 0, Column: 10}
+	token.endPoint = Point{Row: 0, Column: 12}
+	root := newParentNodeInArena(arena, 3, true, []*Node{token}, nil, 0)
+
+	counters := normalizeResultTerminalLeafNodes(root, lang)
+
+	if got, want := counters.nodesRewritten, uint64(1); got != want {
+		t.Fatalf("nodesRewritten = %d, want %d", got, want)
+	}
+	if got, want := token.ChildCount(), 0; got != want {
+		t.Fatalf("token.ChildCount() = %d, want %d", got, want)
+	}
+	if got, want := token.Type(lang), "any_character"; got != want {
+		t.Fatalf("token.Type() = %q, want %q", got, want)
+	}
+	if !token.IsNamed() {
+		t.Fatal("terminal parent named flag was not preserved")
+	}
+	if got, want := token.StartByte(), uint32(11); got != want {
+		t.Fatalf("token.StartByte() = %d, want %d", got, want)
+	}
+	if got, want := token.EndByte(), uint32(12); got != want {
+		t.Fatalf("token.EndByte() = %d, want %d", got, want)
+	}
+}
+
+func TestNormalizeResultTerminalLeafNodesPreservesNonterminalWrapper(t *testing.T) {
+	lang := &Language{
+		TokenCount: 2,
+		SymbolNames: []string{
+			"EOF",
+			"var",
+			"implicit_type",
+			"root",
+		},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF"},
+			{Name: "var", Visible: true, Named: false},
+			{Name: "implicit_type", Visible: true, Named: true},
+			{Name: "root", Visible: true, Named: true},
+		},
+	}
+	arena := newNodeArena(arenaClassFull)
+	child := newLeafNodeInArena(arena, 1, false, 4, 7, Point{Row: 0, Column: 4}, Point{Row: 0, Column: 7})
+	wrapper := newParentNodeInArena(arena, 2, true, []*Node{child}, nil, 0)
+	root := newParentNodeInArena(arena, 3, true, []*Node{wrapper}, nil, 0)
+
+	counters := normalizeResultTerminalLeafNodes(root, lang)
+
+	if got, want := counters.nodesRewritten, uint64(0); got != want {
+		t.Fatalf("nodesRewritten = %d, want %d", got, want)
+	}
+	if got, want := wrapper.ChildCount(), 1; got != want {
+		t.Fatalf("wrapper.ChildCount() = %d, want %d", got, want)
+	}
+	if got := wrapper.Child(0); got != child {
+		t.Fatalf("wrapper.Child(0) = %p, want original child %p", got, child)
+	}
+}
+
+func TestNormalizeResultTerminalLeafNodesCollapsesTerminalAliasTarget(t *testing.T) {
+	lang := &Language{
+		TokenCount: 2,
+		SymbolNames: []string{
+			"EOF",
+			"]",
+			"root",
+			"]",
+		},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF"},
+			{Name: "]", Visible: true, Named: false},
+			{Name: "root", Visible: true, Named: true},
+			{Name: "]", Visible: true, Named: false},
+		},
+		AliasSequences: [][]Symbol{
+			{3},
+		},
+	}
+	arena := newNodeArena(arenaClassFull)
+	child := newLeafNodeInArena(arena, 1, false, 1910, 1911, Point{Row: 12, Column: 0}, Point{Row: 12, Column: 1})
+	alias := newParentNodeInArena(arena, 3, false, []*Node{child}, nil, 0)
+	alias.startByte = 1909
+	alias.endByte = 1911
+	alias.startPoint = Point{Row: 11, Column: 42}
+	alias.endPoint = Point{Row: 12, Column: 1}
+	root := newParentNodeInArena(arena, 2, true, []*Node{alias}, nil, 0)
+
+	counters := normalizeResultTerminalLeafNodes(root, lang)
+
+	if got, want := counters.nodesRewritten, uint64(1); got != want {
+		t.Fatalf("nodesRewritten = %d, want %d", got, want)
+	}
+	if got, want := alias.ChildCount(), 0; got != want {
+		t.Fatalf("alias.ChildCount() = %d, want %d", got, want)
+	}
+	if alias.IsNamed() {
+		t.Fatal("alias named flag changed")
+	}
+	if got, want := alias.StartByte(), uint32(1910); got != want {
+		t.Fatalf("alias.StartByte() = %d, want %d", got, want)
+	}
+	if got, want := alias.EndByte(), uint32(1911); got != want {
+		t.Fatalf("alias.EndByte() = %d, want %d", got, want)
+	}
+}
+
+func TestNormalizeResultTerminalLeafNodesPreservesFieldedTerminal(t *testing.T) {
+	lang := &Language{
+		TokenCount: 3,
+		SymbolNames: []string{
+			"EOF",
+			"]",
+			"decorated_token",
+			"root",
+		},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF"},
+			{Name: "]", Visible: true, Named: false},
+			{Name: "decorated_token", Visible: true, Named: true},
+			{Name: "root", Visible: true, Named: true},
+		},
+	}
+	arena := newNodeArena(arenaClassFull)
+	child := newLeafNodeInArena(arena, 1, false, 10, 11, Point{Row: 0, Column: 10}, Point{Row: 0, Column: 11})
+	token := newParentNodeInArena(arena, 2, true, []*Node{child}, []FieldID{1}, 0)
+	root := newParentNodeInArena(arena, 3, true, []*Node{token}, nil, 0)
+
+	counters := normalizeResultTerminalLeafNodes(root, lang)
+
+	if got, want := counters.nodesRewritten, uint64(0); got != want {
+		t.Fatalf("nodesRewritten = %d, want %d", got, want)
+	}
+	if got, want := token.ChildCount(), 1; got != want {
+		t.Fatalf("token.ChildCount() = %d, want %d", got, want)
+	}
+	if got, want := token.fieldIDs[0], FieldID(1); got != want {
+		t.Fatalf("token.fieldIDs[0] = %d, want %d", got, want)
+	}
+}

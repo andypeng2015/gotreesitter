@@ -44,6 +44,8 @@ func normalizeResultCompatibility(root *Node, source []byte, p *Parser) resultCo
 		result.stopReason = reason
 		return result
 	}
+	normalizeRootTrailingExtraTriviaCompatibility(root, source)
+	normalizeResultTerminalLeafNodes(root, lang)
 	normalizeResultCollapsedNamedLeafChildren(root, lang)
 	result.stopReason = ctx.stopReason()
 	return result
@@ -58,6 +60,13 @@ func (ctx resultCompatibilityContext) stopReason() ParseStopReason {
 		return ParseStopNone
 	}
 	return reason
+}
+
+func normalizeRootTrailingExtraTriviaCompatibility(root *Node, source []byte) {
+	if root == nil || root.hasError() {
+		return
+	}
+	trimTrailingExtraTriviaRoot(root, source)
 }
 
 func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompatibilityResult {
@@ -242,8 +251,6 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 		normalizeSQLSelectClauseBodyIntoFields(ctx.root, ctx.lang)
 	case "squirrel":
 		normalizeSquirrelCompatibility(ctx.root, ctx.source, ctx.lang)
-	case "svelte":
-		normalizeSvelteTrailingExtraTrivia(ctx.root, ctx.source, ctx.lang)
 	case "swift":
 		normalizeSwiftCompatibility(ctx.root, ctx.source, ctx.parser, ctx.lang)
 	case "templ":
