@@ -9,7 +9,7 @@ const (
 	// Retry no-stacks-alive full parses with a wider GLR cap. Large real-world
 	// files (for example this repo's parser.go) can legitimately need >8 stacks
 	// at peak even when parse tables report narrower local conflict widths.
-	fullParseRetryMaxGLRStacks = 32
+	fullParseRetryMaxGLRStacks = 48
 	// Some ambiguity clusters need more survivors per merge bucket even after
 	// the global GLR cap is widened. Only enable this on retries for parses
 	// that already proved the default merge budget was insufficient.
@@ -75,6 +75,36 @@ func shouldRetryAcceptedErrorParse(tree *Tree, sourceLen int, initialMaxStacks i
 	return rt.MaxStacksSeen >= initialMaxStacks
 }
 
+func shouldRetryStackPressureCleanFullParse(tree *Tree, sourceLen int, initialMaxStacks int) bool {
+	if tree == nil {
+		return false
+	}
+	if sourceLen <= 0 || sourceLen > fullParseRetryMaxSourceBytes {
+		return false
+	}
+	root := rawRootOrNil(tree)
+	if root == nil || root.HasError() {
+		return false
+	}
+	rt := tree.ParseRuntime()
+	if rt.TokenSourceEOFEarly {
+		return false
+	}
+	if rt.StopReason != ParseStopAccepted && rt.StopReason != ParseStopNoStacksAlive {
+		return false
+	}
+	if rt.Truncated && rt.StopReason != ParseStopAccepted {
+		return false
+	}
+	if initialMaxStacks <= 0 {
+		initialMaxStacks = maxGLRStacks
+	}
+	if rt.GlobalCullStacksIn > rt.GlobalCullStacksOut {
+		return true
+	}
+	return rt.MaxStacksSeen >= initialMaxStacks+fullParseGLRStackOverflow
+}
+
 func shouldRetryNodeLimitParse(tree *Tree, sourceLen int) bool {
 	if tree == nil {
 		return false
@@ -103,7 +133,7 @@ func treeParseClean(tree *Tree) bool {
 		return false
 	}
 	rt := tree.ParseRuntime()
-	return rt.StopReason == ParseStopAccepted && !rt.Truncated && !rt.TokenSourceEOFEarly
+	return rt.StopReason == ParseStopAccepted && !rt.TokenSourceEOFEarly && retryTreeCoversExpectedEOF(tree)
 }
 
 func rawRootOrNil(tree *Tree) *Node {
@@ -160,6 +190,18 @@ func retryNodeSubtreeHasError(node *Node, depth int) bool {
 		}
 	}
 	return false
+}
+
+func retryTreeCoversExpectedEOF(tree *Tree) bool {
+	if tree == nil {
+		return false
+	}
+	rt := tree.ParseRuntime()
+	if rt.ExpectedEOFByte == 0 {
+		return true
+	}
+	endByte := retryTreeEndByte(tree)
+	return endByte >= rt.ExpectedEOFByte || parserTailAllowsCleanAcceptance(tree.Source(), endByte, rt.ExpectedEOFByte, tree.includedRanges)
 }
 
 func retryStopRank(rt ParseRuntime) int {
@@ -219,6 +261,13 @@ func preferRetryTree(p *Parser, candidate, incumbent *Tree) bool {
 			return cc < ic
 		}
 	}
+	candRoot := rawRootOrNil(candidate)
+	incRoot := rawRootOrNil(incumbent)
+	candRootIsError := candRoot == nil || candRoot.IsError()
+	incRootIsError := incRoot == nil || incRoot.IsError()
+	if candRootIsError != incRootIsError {
+		return !candRootIsError
+	}
 	candStop := retryStopRank(candRT)
 	incStop := retryStopRank(incRT)
 	if candStop != incStop {
@@ -230,6 +279,33 @@ func preferRetryTree(p *Parser, candidate, incumbent *Tree) bool {
 		return candChildren < incChildren
 	}
 	return candRT.NodesAllocated < incRT.NodesAllocated
+}
+
+func shouldTakeCleanWideRetry(incumbent, candidate *Tree, sourceLen int, initialMaxStacks int) bool {
+	if candidate == nil || retryTreeHasError(candidate) {
+		return false
+	}
+	candRT := candidate.ParseRuntime()
+	if candRT.TokenSourceEOFEarly {
+		return false
+	}
+	if retryTreeEndByte(candidate) < retryTreeEndByte(incumbent) {
+		return false
+	}
+	switch candRT.StopReason {
+	case ParseStopAccepted:
+	case ParseStopNoStacksAlive:
+		if !retryTreeCoversExpectedEOF(candidate) {
+			return false
+		}
+	default:
+		return false
+	}
+	if !candRT.Truncated {
+		return true
+	}
+	return shouldRetryFullParse(incumbent, sourceLen) ||
+		shouldRetryStackPressureCleanFullParse(incumbent, sourceLen, initialMaxStacks)
 }
 
 func scaledNodeLimit(limit, scale int) int {
@@ -631,13 +707,6 @@ func effectiveParseMergePerKeyCap(lang *Language, mergePerKeyCap int, incrementa
 		if !parseMaxMergePerKeyEnvConfigured() && mergePerKeyCap > 1 {
 			return 1
 		}
-	case "svelte":
-		// Svelte's mixed markup/script/style grammar develops redundant
-		// same-key survivors on component-shaped inputs. One full-parse
-		// survivor keeps parse/highlight parity clean and removes merge churn.
-		if !parseMaxMergePerKeyEnvConfigured() && mergePerKeyCap > 1 {
-			return 1
-		}
 	case "xml":
 		// XML's nested markup grammar can keep equivalent element/text branches
 		// alive on document-shaped inputs. One full-parse survivor keeps the
@@ -885,7 +954,9 @@ func fullParseRetryMaxStacksOverride(tree *Tree, sourceLen int, initialMaxStacks
 	if parseMaxGLRStacksValue() >= retryMaxStacks {
 		return 0
 	}
-	if shouldRetryFullParse(tree, sourceLen) || shouldRetryAcceptedErrorParse(tree, sourceLen, initialMaxStacks) {
+	if shouldRetryFullParse(tree, sourceLen) ||
+		shouldRetryAcceptedErrorParse(tree, sourceLen, initialMaxStacks) ||
+		shouldRetryStackPressureCleanFullParse(tree, sourceLen, initialMaxStacks) {
 		return retryMaxStacks
 	}
 	return 0
@@ -1079,13 +1150,24 @@ func (p *Parser) retryFullParse(source []byte, initialMaxStacks int, tree *Tree,
 		// (which requires ParseStopAccepted) under-reports it. Accept any
 		// error-free root here; replaceBest/preferRetryTree still pick the best
 		// tree if a later pass does better.
-		if cleanRetryTree != nil && !retryTreeHasError(cleanRetryTree) &&
-			!cleanRetryTree.ParseRuntime().Truncated &&
-			!cleanRetryTree.ParseRuntime().TokenSourceEOFEarly {
+		if shouldTakeCleanWideRetry(tree, cleanRetryTree, len(source), initialMaxStacks) {
+			cleanMergePerKey := fullParseRetryMergePerKeyOverride(cleanRetryTree, len(source), initialMaxStacks)
 			replaceBest(&bestTree, cleanRetryTree)
-			return bestTree
+			if retryTreeCoversExpectedEOF(bestTree) {
+				return bestTree
+			}
+			if cleanMergePerKey != 0 && !retryDeadlineExceeded() {
+				p.forceCleanRetryPass = true
+				cleanMergeTree := runRetry(retryMaxStacks, cleanMergePerKey, maxNodesOverride)
+				p.forceCleanRetryPass = false
+				replaceBest(&bestTree, cleanMergeTree)
+				if !retryTreeHasError(bestTree) && retryTreeCoversExpectedEOF(bestTree) {
+					return bestTree
+				}
+			}
+		} else {
+			release(cleanRetryTree)
 		}
-		release(cleanRetryTree)
 		if retryDeadlineExceeded() {
 			return bestTree
 		}
