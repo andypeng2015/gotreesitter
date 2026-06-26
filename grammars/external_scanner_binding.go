@@ -30,18 +30,19 @@ func bindExternalScannerSymbolNames(lang *gotreesitter.Language, names []string,
 		}
 	}
 
-	// Fall back to positional binding for generated/test languages that do not
-	// carry symbol names, and for same-count grammars where upstream aliases can
-	// make symbol names differ from scanner token names.
+	// Fall back to positional binding for generated languages, whose external
+	// symbol order is preserved from grammargen SetExternals, and for test
+	// languages that do not carry symbol names. Named mismatches stay unbound for
+	// arbitrary languages so unrelated scanner tokens cannot bind to unrelated
+	// named target externals.
 	unmappedExternalIdx := 0
-	requireUnnamedExternal := len(lang.ExternalSymbols) != len(names)
 	for tokenIdx, wasMatched := range matched {
 		if wasMatched {
 			continue
 		}
 		for unmappedExternalIdx < len(externalToToken) &&
 			(externalToToken[unmappedExternalIdx] != -1 ||
-				(requireUnnamedExternal &&
+				(!lang.GeneratedByGrammargen && names[tokenIdx] != "" &&
 					externalScannerSymbolName(lang, lang.ExternalSymbols[unmappedExternalIdx]) != "")) {
 			unmappedExternalIdx++
 		}

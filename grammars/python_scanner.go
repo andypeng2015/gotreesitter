@@ -20,18 +20,62 @@ const (
 	pyTokCloseParen
 	pyTokCloseBrace
 	pyTokExcept
+	pyTokenCount
 )
 
-// Concrete symbol IDs from the generated Python grammar ExternalSymbols.
+// Concrete symbol IDs from the checked-in Python grammar ExternalSymbols.
 const (
-	pySymNewline             gotreesitter.Symbol = 101
-	pySymIndent              gotreesitter.Symbol = 102
-	pySymDedent              gotreesitter.Symbol = 103
-	pySymStringStart         gotreesitter.Symbol = 104
-	pySymStringContent       gotreesitter.Symbol = 105
-	pySymEscapeInterpolation gotreesitter.Symbol = 106
-	pySymStringEnd           gotreesitter.Symbol = 107
+	pySymNewline             gotreesitter.Symbol = 102
+	pySymIndent              gotreesitter.Symbol = 103
+	pySymDedent              gotreesitter.Symbol = 104
+	pySymStringStart         gotreesitter.Symbol = 105
+	pySymStringContent       gotreesitter.Symbol = 106
+	pySymEscapeInterpolation gotreesitter.Symbol = 107
+	pySymStringEnd           gotreesitter.Symbol = 108
+	pySymComment             gotreesitter.Symbol = 99
+	pySymCloseBracket        gotreesitter.Symbol = 46
+	pySymCloseParen          gotreesitter.Symbol = 7
+	pySymCloseBrace          gotreesitter.Symbol = 52
+	pySymExcept              gotreesitter.Symbol = 35
 )
+
+var pyDefaultSymTable = [pyTokenCount]gotreesitter.Symbol{
+	pySymNewline,
+	pySymIndent,
+	pySymDedent,
+	pySymStringStart,
+	pySymStringContent,
+	pySymEscapeInterpolation,
+	pySymStringEnd,
+	pySymComment,
+	pySymCloseBracket,
+	pySymCloseParen,
+	pySymCloseBrace,
+	pySymExcept,
+}
+
+var pythonExternalScannerSpec = ExternalScannerSpec{
+	Language:     "python",
+	UpstreamRepo: "https://github.com/tree-sitter/tree-sitter-python",
+	Externals: []string{
+		"_newline",
+		"_indent",
+		"_dedent",
+		"string_start",
+		"_string_content",
+		"escape_interpolation",
+		"string_end",
+		"comment",
+		"]",
+		")",
+		"}",
+		"except",
+	},
+}
+
+func init() {
+	RegisterExternalScannerSpec(pythonExternalScannerSpec)
+}
 
 type pyDelimiter byte
 
@@ -79,7 +123,18 @@ func (s *pythonScannerState) syncInsideInterpolatedString() {
 	}
 }
 
-type PythonExternalScanner struct{}
+type PythonExternalScanner struct {
+	symbols         [pyTokenCount]gotreesitter.Symbol
+	externalToToken []int
+}
+
+func (PythonExternalScanner) ExternalScannerForLanguage(lang *gotreesitter.Language) gotreesitter.ExternalScanner {
+	s := PythonExternalScanner{symbols: pyDefaultSymTable}
+	s.externalToToken = bindExternalScannerSpec(lang, pythonExternalScannerSpec, func(tokenIdx int, sym gotreesitter.Symbol) {
+		s.symbols[tokenIdx] = sym
+	})
+	return s
+}
 
 func (PythonExternalScanner) Create() any {
 	return &pythonScannerState{
@@ -168,12 +223,41 @@ func (PythonExternalScanner) SupportsIncrementalReuse() bool { return true }
 
 func (PythonExternalScanner) PreservesStateOnScanFailure() bool { return true }
 
-func (PythonExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
+func (p PythonExternalScanner) symbolTable() *[pyTokenCount]gotreesitter.Symbol {
+	if p.symbols == ([pyTokenCount]gotreesitter.Symbol{}) {
+		return &pyDefaultSymTable
+	}
+	return &p.symbols
+}
+
+func (p PythonExternalScanner) remapValidSymbols(validSymbols []bool, semanticValid *[pyTokenCount]bool) []bool {
+	if len(p.externalToToken) == 0 {
+		return validSymbols
+	}
+	*semanticValid = [pyTokenCount]bool{}
+	for externalIdx, valid := range validSymbols {
+		if !valid || externalIdx >= len(p.externalToToken) {
+			continue
+		}
+		tokenIdx := p.externalToToken[externalIdx]
+		if tokenIdx >= 0 && tokenIdx < pyTokenCount {
+			semanticValid[tokenIdx] = true
+		}
+	}
+	return semanticValid[:]
+}
+
+func (p PythonExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
 	s := payload.(*pythonScannerState)
 	if len(s.indents) == 0 {
 		s.indents = append(s.indents, 0)
 	}
 	s.syncInsideInterpolatedString()
+	symbols := p.symbolTable()
+	if len(p.externalToToken) > 0 {
+		var semanticValid [pyTokenCount]bool
+		validSymbols = p.remapValidSymbols(validSymbols, &semanticValid)
+	}
 
 	isValid := func(idx int) bool {
 		return idx >= 0 && idx < len(validSymbols) && validSymbols[idx]
@@ -194,7 +278,7 @@ func (PythonExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer
 			if (lexer.Lookahead() == '{' && isLeftBrace) || (lexer.Lookahead() == '}' && !isLeftBrace) {
 				lexer.Advance(false)
 				lexer.MarkEnd()
-				lexer.SetResultSymbol(pySymEscapeInterpolation)
+				lexer.SetResultSymbol(symbols[pyTokEscapeInterpolation])
 				return true
 			}
 			return false
@@ -209,7 +293,7 @@ func (PythonExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer
 		for lexer.Lookahead() != 0 {
 			if (advancedOnce || lexer.Lookahead() == '{' || lexer.Lookahead() == '}') && delimiter.isFormat() {
 				lexer.MarkEnd()
-				lexer.SetResultSymbol(pySymStringContent)
+				lexer.SetResultSymbol(symbols[pyTokStringContent])
 				return hasContent
 			}
 
@@ -236,12 +320,12 @@ func (PythonExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer
 					if lexer.Lookahead() == 'N' || lexer.Lookahead() == 'u' || lexer.Lookahead() == 'U' {
 						lexer.Advance(false)
 					} else {
-						lexer.SetResultSymbol(pySymStringContent)
+						lexer.SetResultSymbol(symbols[pyTokStringContent])
 						return hasContent
 					}
 				} else {
 					lexer.MarkEnd()
-					lexer.SetResultSymbol(pySymStringContent)
+					lexer.SetResultSymbol(symbols[pyTokStringContent])
 					return hasContent
 				}
 			} else if lexer.Lookahead() == endChar {
@@ -252,31 +336,31 @@ func (PythonExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer
 						lexer.Advance(false)
 						if lexer.Lookahead() == endChar {
 							if hasContent {
-								lexer.SetResultSymbol(pySymStringContent)
+								lexer.SetResultSymbol(symbols[pyTokStringContent])
 							} else {
 								lexer.Advance(false)
 								lexer.MarkEnd()
 								s.delimiters = s.delimiters[:len(s.delimiters)-1]
-								lexer.SetResultSymbol(pySymStringEnd)
+								lexer.SetResultSymbol(symbols[pyTokStringEnd])
 								s.insideInterpolatedString = false
 							}
 							return true
 						}
 						lexer.MarkEnd()
-						lexer.SetResultSymbol(pySymStringContent)
+						lexer.SetResultSymbol(symbols[pyTokStringContent])
 						return true
 					}
 					lexer.MarkEnd()
-					lexer.SetResultSymbol(pySymStringContent)
+					lexer.SetResultSymbol(symbols[pyTokStringContent])
 					return true
 				}
 
 				if hasContent {
-					lexer.SetResultSymbol(pySymStringContent)
+					lexer.SetResultSymbol(symbols[pyTokStringContent])
 				} else {
 					lexer.Advance(false)
 					s.delimiters = s.delimiters[:len(s.delimiters)-1]
-					lexer.SetResultSymbol(pySymStringEnd)
+					lexer.SetResultSymbol(symbols[pyTokStringEnd])
 					s.insideInterpolatedString = false
 				}
 				lexer.MarkEnd()
@@ -349,7 +433,7 @@ afterIndentLoop:
 
 		if isValid(pyTokIndent) && indentLength > currentIndent {
 			s.indents = append(s.indents, indentLength)
-			lexer.SetResultSymbol(pySymIndent)
+			lexer.SetResultSymbol(symbols[pyTokIndent])
 			return true
 		}
 
@@ -360,12 +444,12 @@ afterIndentLoop:
 			!s.insideInterpolatedString &&
 			firstCommentIndentLength < int32(currentIndent) {
 			s.indents = s.indents[:len(s.indents)-1]
-			lexer.SetResultSymbol(pySymDedent)
+			lexer.SetResultSymbol(symbols[pyTokDedent])
 			return true
 		}
 
 		if isValid(pyTokNewline) && !errorRecoveryMode {
-			lexer.SetResultSymbol(pySymNewline)
+			lexer.SetResultSymbol(symbols[pyTokNewline])
 			return true
 		}
 	}
@@ -425,7 +509,7 @@ afterIndentLoop:
 
 		if delimiter.endChar() != 0 {
 			s.delimiters = append(s.delimiters, delimiter)
-			lexer.SetResultSymbol(pySymStringStart)
+			lexer.SetResultSymbol(symbols[pyTokStringStart])
 			s.insideInterpolatedString = delimiter.isFormat()
 			return true
 		}

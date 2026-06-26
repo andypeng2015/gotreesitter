@@ -136,7 +136,7 @@ func TestExternalScannerBindingFallbackUsesUnmappedExternalSymbols(t *testing.T)
 	}
 }
 
-func TestExternalScannerBindingFallbackKeepsSameCountAliases(t *testing.T) {
+func TestExternalScannerBindingDoesNotFallbackForNamedMismatch(t *testing.T) {
 	lang := externalBindingTestLanguage(
 		"alias_zero",
 		"named_two",
@@ -153,17 +153,49 @@ func TestExternalScannerBindingFallbackKeepsSameCountAliases(t *testing.T) {
 		symbols[tokenIdx] = sym
 	})
 
-	if got, want := externalToToken, []int{0, 2, 1}; !slices.Equal(got, want) {
+	if got, want := externalToToken, []int{-1, 2, -1}; !slices.Equal(got, want) {
 		t.Fatalf("externalToToken = %v, want %v", got, want)
 	}
-	if got, want := symbols[0], gotreesitter.Symbol(1); got != want {
-		t.Fatalf("fallback token 0 symbol = %d, want %d", got, want)
+	if got, want := symbols[0], gotreesitter.Symbol(0); got != want {
+		t.Fatalf("unmatched token 0 symbol = %d, want %d", got, want)
 	}
-	if got, want := symbols[1], gotreesitter.Symbol(3); got != want {
-		t.Fatalf("fallback token 1 symbol = %d, want %d", got, want)
+	if got, want := symbols[1], gotreesitter.Symbol(0); got != want {
+		t.Fatalf("unmatched token 1 symbol = %d, want %d", got, want)
 	}
 	if got, want := symbols[2], gotreesitter.Symbol(2); got != want {
 		t.Fatalf("named token 2 symbol = %d, want %d", got, want)
+	}
+}
+
+func TestExternalScannerBindingFallbackKeepsGeneratedOrderAliases(t *testing.T) {
+	lang := externalBindingTestLanguage(
+		"alias_zero",
+		"alias_one",
+		"alias_two",
+	)
+	lang.GeneratedByGrammargen = true
+	names := []string{
+		"scanner_zero",
+		"scanner_one",
+		"scanner_two",
+	}
+
+	symbols := make([]gotreesitter.Symbol, len(names))
+	externalToToken := bindExternalScannerSymbolNames(lang, names, func(tokenIdx int, sym gotreesitter.Symbol) {
+		symbols[tokenIdx] = sym
+	})
+
+	if got, want := externalToToken, []int{0, 1, 2}; !slices.Equal(got, want) {
+		t.Fatalf("externalToToken = %v, want %v", got, want)
+	}
+	if got, want := symbols[0], gotreesitter.Symbol(1); got != want {
+		t.Fatalf("generated alias token 0 symbol = %d, want %d", got, want)
+	}
+	if got, want := symbols[1], gotreesitter.Symbol(2); got != want {
+		t.Fatalf("generated alias token 1 symbol = %d, want %d", got, want)
+	}
+	if got, want := symbols[2], gotreesitter.Symbol(3); got != want {
+		t.Fatalf("generated alias token 2 symbol = %d, want %d", got, want)
 	}
 }
 
