@@ -83,12 +83,14 @@ func assemble(
 	for i, sym := range ng.Symbols {
 		lang.SymbolNames[i] = sym.Name
 		lang.SymbolMetadata[i] = gotreesitter.SymbolMetadata{
-			Name:      sym.Name,
-			Visible:   sym.Visible,
-			Named:     sym.Named,
-			Supertype: sym.Supertype,
+			Name:               sym.Name,
+			Visible:            sym.Visible,
+			Named:              sym.Named,
+			Supertype:          sym.Supertype,
+			GeneratedRepeatAux: sym.GeneratedRepeatAux,
 		}
 	}
+	lang.HiddenChoicePassthroughSymbols = buildHiddenChoicePassthroughSymbols(ng, symbolCount)
 
 	// Field names.
 	lang.FieldNames = ng.FieldNames
@@ -193,6 +195,54 @@ func assemble(
 	buildSupertypeMap(lang, ng)
 
 	return lang, nil
+}
+
+func buildHiddenChoicePassthroughSymbols(ng *NormalizedGrammar, symbolCount int) []bool {
+	if ng == nil || symbolCount == 0 {
+		return nil
+	}
+	aliasReferenced := make([]bool, symbolCount)
+	prodCount := make([]int, symbolCount)
+	allNeutralUnary := make([]bool, symbolCount)
+	for i := range allNeutralUnary {
+		allNeutralUnary[i] = true
+	}
+	for _, prod := range ng.Productions {
+		if prod.LHS >= 0 && prod.LHS < symbolCount {
+			prodCount[prod.LHS]++
+			if len(prod.RHS) != 1 ||
+				prod.Prec != 0 || prod.DynPrec != 0 || prod.Assoc != AssocNone || prod.HasExplicitPrec ||
+				len(prod.Fields) != 0 || len(prod.Aliases) != 0 {
+				allNeutralUnary[prod.LHS] = false
+			}
+		}
+		for _, alias := range prod.Aliases {
+			if alias.ChildIndex < 0 || alias.ChildIndex >= len(prod.RHS) {
+				continue
+			}
+			child := prod.RHS[alias.ChildIndex]
+			if child >= 0 && child < symbolCount {
+				aliasReferenced[child] = true
+			}
+		}
+	}
+	var out []bool
+	for i, sym := range ng.Symbols {
+		if i >= symbolCount || prodCount[i] <= 1 || !allNeutralUnary[i] || aliasReferenced[i] {
+			continue
+		}
+		if sym.Kind != SymbolNonterminal || sym.Visible || !sym.Named || sym.Supertype || sym.GeneratedRepeatAux {
+			continue
+		}
+		if !strings.HasPrefix(sym.Name, "_") {
+			continue
+		}
+		if out == nil {
+			out = make([]bool, symbolCount)
+		}
+		out[i] = true
+	}
+	return out
 }
 
 func buildReservedWordTables(lang *gotreesitter.Language, ng *NormalizedGrammar) {
