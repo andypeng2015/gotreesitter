@@ -798,12 +798,26 @@ func (p *Parser) Parse(source []byte) (*Tree, error) {
 	}
 	endBudget := p.beginParseOperationBudget()
 	defer endBudget()
+	progress := newParseProgressTelemetry(p, len(source), uint32(len(source)), time.Now())
+	if progress.enabled {
+		progress.emit(time.Now(), "parse_entry", 0, 0, Token{}, false, nil, 0, 0, 0, true, 0, 0, "")
+		defer progress.emit(time.Now(), "parse_return", 0, 0, Token{}, false, nil, 0, 0, 0, false, 0, 0, "")
+	}
 	// GSS-forest fast path for languages whose production GLR parse blows up on
 	// deep stack-equivalence (e.g. bash). Returns nil to fall back to the
 	// production parser on any failure, error, or truncation. Off unless
 	// GOT_GLR_FOREST is set; see tryForestFastPath.
+	if progress.enabled {
+		progress.emit(time.Now(), "forest_fast_path_begin", 0, 0, Token{}, false, nil, 0, 0, 0, true, 0, 0, "")
+	}
 	if tree := p.tryForestFastPath(source); tree != nil {
+		if progress.enabled {
+			progress.emit(time.Now(), "forest_fast_path_end", 0, 0, Token{}, false, nil, 0, 0, 0, false, 0, 0, "used=true")
+		}
 		return tree, nil
+	}
+	if progress.enabled {
+		progress.emit(time.Now(), "forest_fast_path_end", 0, 0, Token{}, false, nil, 0, 0, 0, true, 0, 0, "used=false")
 	}
 	endParseBudget := p.enterParseBudget()
 	defer endParseBudget()
@@ -815,21 +829,39 @@ func (p *Parser) Parse(source []byte) (*Tree, error) {
 	defer func() {
 		p.reparseFactory = prevFactory
 	}()
+	if progress.enabled {
+		progress.emit(time.Now(), "token_source_setup_begin", 0, 0, Token{}, false, nil, 0, 0, 0, true, 0, 0, "")
+	}
 	lexer := NewLexer(p.language.LexStates, source)
 	ts := acquireDFATokenSource(lexer, p.language, p.lookupActionIndex, p.hasKeywordState, p.externalValidByState, p.externalValidMaskByState)
+	if progress.enabled {
+		progress.emit(time.Now(), "token_source_setup_end", 0, 0, Token{}, false, nil, 0, 0, 0, true, 0, 0, "")
+	}
 	if p.noTreeBenchmarkOnly && !p.noTreeCheckpointBenchmarkOnly {
 		ts.usesExternalCheckpoints = false
 	}
 	defer ts.Close()
 	deterministicExternalConflicts := fullParseUsesDeterministicExternalConflicts(p.language)
 	initialMaxStacks := fullParseInitialMaxStacks(p.language, p.maxConflictWidth)
+	if progress.enabled {
+		progress.emit(time.Now(), "parse_internal_begin", 0, 0, Token{}, false, nil, 0, 0, 0, true, 0, 0, fmt.Sprintf("initial_max_stacks=%d deterministic_external_conflicts=%t", initialMaxStacks, deterministicExternalConflicts))
+	}
 	tree := p.parseInternal(source, p.wrapIncludedRanges(ts), nil, nil, arenaClassFull, nil, initialMaxStacks, 0, 0, deterministicExternalConflicts)
+	if progress.enabled {
+		progress.emit(time.Now(), "parse_internal_end", 0, 0, Token{}, false, nil, 0, 0, 0, false, 0, 0, "")
+	}
 	if !p.noTreeBenchmarkOnly {
+		if progress.enabled {
+			progress.emit(time.Now(), "retry_begin", 0, 0, Token{}, false, nil, 0, 0, 0, false, 0, 0, "")
+		}
 		if tree != nil && !tree.ParseStoppedEarly() && !parseStopReasonIsActive(p.activeParseStopReason()) {
 			tree = p.retryFullParseWithDFA(source, initialMaxStacks, deterministicExternalConflicts, tree)
 			if tree != nil && !tree.ParseStoppedEarly() && !parseStopReasonIsActive(p.activeParseStopReason()) && shouldRepeatExternalScannerFullParse(p.language, tree) {
 				tree = p.retryFullParseWithDFA(source, initialMaxStacks, deterministicExternalConflicts, tree)
 			}
+		}
+		if progress.enabled {
+			progress.emit(time.Now(), "retry_end", 0, 0, Token{}, false, nil, 0, 0, 0, false, 0, 0, "")
 		}
 		p.normalizeReturnedTreeForParse(tree, source)
 	}
