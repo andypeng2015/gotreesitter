@@ -6842,6 +6842,10 @@ type hiddenUnaryWrapperReduce struct {
 	child int
 }
 
+type dropCandidate struct {
+	index int
+}
+
 func filterRedundantHiddenUnaryWrapperReduces(reduces []lrAction, ng *NormalizedGrammar, cache *conflictResolutionCache) ([]lrAction, bool) {
 	if len(reduces) < 3 || ng == nil {
 		return reduces, false
@@ -6856,9 +6860,6 @@ func filterRedundantHiddenUnaryWrapperReduces(reduces []lrAction, ng *Normalized
 		reduceLHS[prod.LHS] = true
 	}
 
-	type dropCandidate struct {
-		index int
-	}
 	var candidates []dropCandidate
 	for i, r := range reduces {
 		wrapper, ok := hiddenUnaryWrapperReduceAt(i, r, ng)
@@ -6884,8 +6885,13 @@ func filterRedundantHiddenUnaryWrapperReduces(reduces []lrAction, ng *Normalized
 		}
 	}
 	for _, candidate := range candidates {
-		if hasUnprotectedCandidate && reduceHasDeclaredConflictPartner(candidate.index, reduces, ng, cache) {
-			continue
+		if hasUnprotectedCandidate {
+			if reduceHasDeclaredConflictPartner(candidate.index, reduces, ng, cache) {
+				continue
+			}
+			if hiddenUnaryCandidateEnclosesOtherCandidate(candidate.index, candidates, reduces, ng) {
+				continue
+			}
 		}
 		drop[candidate.index] = true
 	}
@@ -6903,6 +6909,26 @@ func filterRedundantHiddenUnaryWrapperReduces(reduces []lrAction, ng *Normalized
 		return reduces, false
 	}
 	return filtered, true
+}
+
+func hiddenUnaryCandidateEnclosesOtherCandidate(index int, candidates []dropCandidate, reduces []lrAction, ng *NormalizedGrammar) bool {
+	if index < 0 || index >= len(reduces) || ng == nil {
+		return false
+	}
+	enclosing, ok := unaryReduce(reduces[index], ng)
+	if !ok {
+		return false
+	}
+	for _, candidate := range candidates {
+		if candidate.index == index || candidate.index < 0 || candidate.index >= len(reduces) {
+			continue
+		}
+		wrapped, ok := unaryReduce(reduces[candidate.index], ng)
+		if ok && enclosing.child == wrapped.lhs {
+			return true
+		}
+	}
+	return false
 }
 
 func reduceHasDeclaredConflictPartner(index int, reduces []lrAction, ng *NormalizedGrammar, cache *conflictResolutionCache) bool {
