@@ -27,17 +27,6 @@ func (CooklangExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLex
 	}
 	ch := lexer.Lookahead()
 	if ch == '\n' {
-		lexer.Advance(false)
-		lexer.MarkEnd()
-		lexer.SetResultSymbol(cooklangSymNewline)
-		return true
-	}
-	if ch == '\r' {
-		lexer.Advance(false)
-		if lexer.Lookahead() == '\n' {
-			lexer.Advance(false)
-		}
-		lexer.MarkEnd()
 		lexer.SetResultSymbol(cooklangSymNewline)
 		return true
 	}
