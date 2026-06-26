@@ -2724,6 +2724,7 @@ func adaptExternalScanner(refLang, genLang *gotreesitter.Language) {
 	}
 	if scanner, ok := gotreesitter.AdaptExternalScannerByExternalOrder(refLang, genLang); ok {
 		genLang.ExternalScanner = scanner
+		gotreesitter.CertifyGeneratedCRecoveryCostCompetition(genLang)
 	}
 }
 
