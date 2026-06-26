@@ -2921,6 +2921,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		numStacks := len(stacks)
 		anyReduced := false
 		forceAdvanceAfterReduce := false
+		dispatchConsumedCurrentToken := false
 		dispatchStart := time.Time{}
 		if phaseTiming {
 			dispatchStart = time.Now()
@@ -2929,6 +2930,65 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			p.traceParseIteration(iter, tok, stacks, needToken)
 		}
 		parseActions := p.language.ParseActions
+		if !tok.NoLookahead && p.isExternalToken(tok.Symbol) {
+			if relexer, canRelex := ts.(tokenSourceRelexer); canRelex && relexer.CanRelexFromTokenStart(tok) {
+				preDispatchDefaultReduced := false
+				seen := make(map[externalDefaultReduceSeenKey]int)
+				for step := 0; step < maxConsecutivePrimaryReduces; step++ {
+					if !p.applyExternalNoActionDefaultReduceStep(source, tok, stacks, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors, seen) {
+						break
+					}
+					preDispatchDefaultReduced = true
+					anyReduced = true
+					drainPendingForkStacks()
+					numStacks = len(stacks)
+					if !p.canApplyExternalNoActionDefaultReduce(tok, stacks) {
+						break
+					}
+				}
+				if preDispatchDefaultReduced {
+					numStacks = len(stacks)
+					if !p.externalNoActionDefaultReducesStable(tok, stacks) {
+						if parseEagerDefaultReduceDebugEnabled() {
+							fmt.Printf("  EXTERNAL-DEFAULT-RELEX-DEFER old=%d[%d-%d]\n",
+								tok.Symbol, tok.StartByte, tok.EndByte)
+						}
+					} else if !p.updateCurrentRelexParserStateTokenSource(ts, stacks, scratch) {
+						if parseEagerDefaultReduceDebugEnabled() {
+							fmt.Printf("  EXTERNAL-DEFAULT-RELEX-STATE-FAILED old=%d[%d-%d]\n",
+								tok.Symbol, tok.StartByte, tok.EndByte)
+						}
+						if p.logger != nil {
+							p.logf(ParserLogLex, "relex state update failed sym=%d start=%d end=%d", tok.Symbol, tok.StartByte, tok.EndByte)
+						}
+					} else if nextTok, ok := relexer.RelexFromTokenStart(tok); !ok {
+						if parseEagerDefaultReduceDebugEnabled() {
+							fmt.Printf("  EXTERNAL-DEFAULT-RELEX-FAILED old=%d[%d-%d]\n",
+								tok.Symbol, tok.StartByte, tok.EndByte)
+						}
+						if p.logger != nil {
+							p.logf(ParserLogLex, "relex failed sym=%d start=%d end=%d", tok.Symbol, tok.StartByte, tok.EndByte)
+						}
+					} else {
+						if parseEagerDefaultReduceDebugEnabled() {
+							fmt.Printf("  EXTERNAL-DEFAULT-RELEX old=%d[%d-%d] new=%d[%d-%d]\n",
+								tok.Symbol, tok.StartByte, tok.EndByte, nextTok.Symbol, nextTok.StartByte, nextTok.EndByte)
+						}
+						tok = nextTok
+						p.updateCurrentExternalTokenCheckpoint(ts, tok)
+						lastTokenEndByte = tok.EndByte
+						lastTokenSymbol = tok.Symbol
+						lastTokenWasEOF = tok.Symbol == 0 && tok.StartByte == tok.EndByte && !tok.NoLookahead
+						if lastTokenWasEOF && tok.EndByte < expectedEOFByte {
+							tokenSourceEOFEarly = true
+						}
+						if p.logger != nil {
+							p.logf(ParserLogLex, "relex token sym=%d start=%d end=%d", tok.Symbol, tok.StartByte, tok.EndByte)
+						}
+					}
+				}
+			}
+		}
 		for si := 0; si < numStacks; si++ {
 			s := &stacks[si]
 			if s.dead || s.shifted {
@@ -3002,6 +3062,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				p.applyExtraShiftAction(s, currentState, actions[0], tok, arena, scratch)
 				nodeCount++
 				needToken = true
+				dispatchConsumedCurrentToken = true
 				if actionTiming != nil {
 					ns := time.Since(actionKindStart).Nanoseconds()
 					actionTiming.actionExtraShiftNanos += ns
@@ -3052,6 +3113,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					}
 					p.pushLexErrorRunLeaf(s, currentState, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors)
 					needToken = true
+					dispatchConsumedCurrentToken = true
 					if actionTiming != nil {
 						ns := recordNoActionTiming()
 						actionTiming.actionNoActionErrorNanos += ns
@@ -3072,6 +3134,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					}
 					if tok.StartByte != tok.EndByte {
 						needToken = true
+						dispatchConsumedCurrentToken = true
 						if actionTiming != nil {
 							recordNoActionTiming()
 						}
@@ -3117,6 +3180,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				}
 				if tok.StartByte == tok.EndByte {
 					needToken = true
+					dispatchConsumedCurrentToken = true
 					if actionTiming != nil {
 						recordNoActionTiming()
 					}
@@ -3204,6 +3268,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					drainPendingForkStacks()
 					drainPendingFrontierForkStacks()
 					needToken = true
+					dispatchConsumedCurrentToken = true
 					if actionTiming != nil {
 						ns := recordNoActionTiming()
 						actionTiming.actionNoActionRecoverNanos += ns
@@ -3252,6 +3317,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					goto retryAction
 				case resyncAdvance:
 					needToken = true
+					dispatchConsumedCurrentToken = true
 					if actionTiming != nil {
 						ns := recordNoActionTiming()
 						actionTiming.actionNoActionRecoverNanos += ns
@@ -3263,6 +3329,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				}
 				p.pushOrExtendErrorNode(s, currentState, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors)
 				needToken = true
+				dispatchConsumedCurrentToken = true
 				if actionTiming != nil {
 					ns := recordNoActionTiming()
 					actionTiming.actionNoActionErrorNanos += ns
@@ -3467,6 +3534,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					drainPendingForkStacks()
 					drainPendingFrontierForkStacks()
 					needToken = true
+					dispatchConsumedCurrentToken = true
 				} else {
 					stacks[0].dead = true
 				}
@@ -3476,6 +3544,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				}
 				p.pushOrExtendErrorNode(&stacks[0], currentState, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors)
 				needToken = true
+				dispatchConsumedCurrentToken = true
 			}
 		}
 
@@ -3540,7 +3609,11 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		// the current lookahead). Otherwise, advance to next token.
 		if anyReduced {
 			needToken = tok.NoLookahead || forceAdvanceAfterReduce
-			if tok.NoLookahead {
+			if dispatchConsumedCurrentToken {
+				needToken = true
+				lastReduceDepth = -1
+				consecutiveReduces = 0
+			} else if tok.NoLookahead {
 				lastReduceDepth = -1
 				consecutiveReduces = 0
 			} else if postDispatchDefaultReduced {

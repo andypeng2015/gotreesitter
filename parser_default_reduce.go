@@ -180,6 +180,119 @@ func (p *Parser) applyEagerDefaultReduces(source []byte, phase string, stacks []
 	return anyReduced
 }
 
+type externalDefaultReduceSeenKey struct {
+	stack int
+	sig   reduceChainSignature
+}
+
+func (p *Parser) canApplyExternalNoActionDefaultReduce(tok Token, stacks []glrStack) bool {
+	if p == nil || p.language == nil || len(stacks) == 0 || len(p.eagerDefaultReduces) == 0 || tok.NoLookahead || !p.isExternalToken(tok.Symbol) {
+		return false
+	}
+	if p.anyLiveStackShifted(stacks) {
+		return false
+	}
+	eligible := 0
+	for i := range stacks {
+		s := &stacks[i]
+		if !externalDefaultReduceStackEligible(s) {
+			continue
+		}
+		eligible++
+		state := s.top().state
+		if p.lookupActionIndex(state, tok.Symbol) != 0 {
+			return false
+		}
+		if _, ok := p.eagerDefaultReduceAction(state); !ok {
+			return false
+		}
+	}
+	if eligible == 0 {
+		return false
+	}
+	return true
+}
+
+func (p *Parser) externalNoActionDefaultReducesStable(tok Token, stacks []glrStack) bool {
+	if p == nil || p.language == nil || len(p.eagerDefaultReduces) == 0 || tok.NoLookahead || !p.isExternalToken(tok.Symbol) {
+		return true
+	}
+	for i := range stacks {
+		s := &stacks[i]
+		if !externalDefaultReduceStackEligible(s) {
+			continue
+		}
+		state := s.top().state
+		if p.lookupActionIndex(state, tok.Symbol) == 0 {
+			if _, ok := p.eagerDefaultReduceAction(state); ok {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func (p *Parser) applyExternalNoActionDefaultReduceStep(source []byte, tok Token, stacks []glrStack, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, deferParentLinks bool, trackChildErrors *bool, seen map[externalDefaultReduceSeenKey]int) bool {
+	if !p.canApplyExternalNoActionDefaultReduce(tok, stacks) {
+		return false
+	}
+	anyReduced := false
+	debug := parseEagerDefaultReduceDebugEnabled()
+	for i := range stacks {
+		s := &stacks[i]
+		if !externalDefaultReduceStackEligible(s) {
+			continue
+		}
+		state := s.top().state
+		act, ok := p.eagerDefaultReduceAction(state)
+		if !ok {
+			continue
+		}
+		sig := reduceChainSignature{
+			state:        state,
+			depth:        s.depth(),
+			symbol:       act.Symbol,
+			childCount:   act.ChildCount,
+			productionID: act.ProductionID,
+		}
+		if seen != nil {
+			key := externalDefaultReduceSeenKey{stack: i, sig: sig}
+			seen[key]++
+			if seen[key] > maxRepeatedReduceChainSignature+1 {
+				if p.glrTrace || debug {
+					fmt.Printf("      -> EXTERNAL-DEFAULT-REDUCE CYCLE state=%d depth=%d sym=%d prod=%d\n",
+						state, sig.depth, act.Symbol, act.ProductionID)
+				}
+				continue
+			}
+		}
+		if p.glrTrace || debug {
+			fmt.Printf("  stack[%d] EXTERNAL-DEFAULT-REDUCE state=%d lookahead=%d sym=%d cnt=%d prod=%d\n",
+				i, state, tok.Symbol, act.Symbol, act.ChildCount, act.ProductionID)
+		}
+		reduceTok := eagerDefaultReduceToken(s)
+		reduced := false
+		p.applyAction(source, s, act, reduceTok, &reduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
+		if reduced {
+			anyReduced = true
+		}
+	}
+	return anyReduced
+}
+
+func (p *Parser) anyLiveStackShifted(stacks []glrStack) bool {
+	for i := range stacks {
+		if !stacks[i].dead && stacks[i].shifted {
+			return true
+		}
+	}
+	return false
+}
+
+func externalDefaultReduceStackEligible(s *glrStack) bool {
+	return s != nil && !s.dead && !s.accepted && !s.shifted && !s.cPaused && s.depth() > 0
+}
+
 func eagerDefaultReduceToken(s *glrStack) Token {
 	if s == nil || s.depth() == 0 {
 		return Token{}
