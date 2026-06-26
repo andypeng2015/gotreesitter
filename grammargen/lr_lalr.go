@@ -278,10 +278,6 @@ func (ctx *lrContext) buildLR0() {
 						} else {
 							closedSet.annotationArgTag = templateContextPendingTag
 						}
-					} else if sym >= 0 && sym < len(ctx.definitionBoundaryTagBySym) {
-						if tag := ctx.definitionBoundaryTagBySym[sym]; tag != 0 && (sourceTemplateCarrier || srcTemplateTag != 0 || targetTemplateCarrier) {
-							closedSet.annotationArgTag = tag
-						}
 					} else if srcTemplateTag != 0 && targetTemplateCarrier {
 						closedSet.annotationArgTag = srcTemplateTag
 					}

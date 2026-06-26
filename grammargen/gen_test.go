@@ -2,6 +2,7 @@ package grammargen
 
 import (
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -83,6 +84,14 @@ func TestJSONGenerateLanguage(t *testing.T) {
 		}
 		t.Logf("  symbol[%d] = %q%s", i, name, vis)
 	}
+}
+
+func parserCRecoveryEnabledForTest(parser *gotreesitter.Parser) bool {
+	if parser == nil {
+		return false
+	}
+	v := reflect.ValueOf(parser).Elem().FieldByName("errorCostCompetition")
+	return v.IsValid() && v.Kind() == reflect.Bool && v.Bool()
 }
 
 func TestJSONParseRoundTrip(t *testing.T) {
