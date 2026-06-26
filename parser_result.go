@@ -1,6 +1,9 @@
 package gotreesitter
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 // Parser-result assembly owns the private handoff from GLR/parse-stack nodes to
 // the returned Tree. Runtime files named parser_result_*.go stay in this package
@@ -101,7 +104,8 @@ func (p *Parser) currentMaterializationTiming() *parseMaterializationTiming {
 // buildResultFromGLR picks the best stack and constructs the final tree.
 // Prefers accepted stacks, then highest score, then most entries. When
 // accepted stacks are otherwise tied, prefer the tree that retains an
-// alias-target symbol before falling back to branch order.
+// alias-target symbol, then the conservative tree-order tie-break before
+// falling back to branch order.
 func (p *Parser) buildResultFromGLR(stacks []glrStack, source []byte, arena *nodeArena, oldTree *Tree, reuseState *parseReuseState, linkScratch *[]*Node, transientParents *transientParentScratch, transientChildren *transientChildScratch, skipErrorRank bool, materializationTiming *parseMaterializationTiming) *Tree {
 	errorTreeWithStopReason := func(reason ParseStopReason) *Tree {
 		tree := parseErrorTreeWithArena(source, p.language, arena)
@@ -115,6 +119,7 @@ func (p *Parser) buildResultFromGLR(stacks []glrStack, source []byte, arena *nod
 		return parseErrorTreeWithArena(source, p.language, arena)
 	}
 	stacks = expandPackedGSSResultPaths(stacks)
+	p.emitRawShapeDiag("pre_result_selection", stacks, arena)
 	selectionStart := time.Time{}
 	if materializationTiming != nil {
 		selectionStart = time.Now()
@@ -126,15 +131,21 @@ func (p *Parser) buildResultFromGLR(stacks []glrStack, source []byte, arena *nod
 				return errorTreeWithStopReason(reason)
 			}
 		}
-		if stackCompareForResultSelection(p, arena, &stacks[i], &stacks[best], skipErrorRank) > 0 {
+		cmp := stackCompareForResultSelection(p, arena, &stacks[i], &stacks[best], skipErrorRank)
+		if p.glrTrace && p.errorCostCompetitionEnabled() {
+			p.traceCResultSelectionCompare(i, best, cmp, &stacks[i], &stacks[best], arena)
+		}
+		if cmp > 0 {
 			best = i
 		}
 	}
 	if materializationTiming != nil {
 		materializationTiming.resultSelectionNanos += time.Since(selectionStart).Nanoseconds()
 	}
-
 	selected := stacks[best]
+	if p.glrTrace && p.errorCostCompetitionEnabled() {
+		p.traceCResultSelectionSelected(best, &selected, arena)
+	}
 	if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
 		return errorTreeWithStopReason(reason)
 	}
@@ -190,6 +201,37 @@ func (p *Parser) buildResultFromGLR(stacks []glrStack, source []byte, arena *nod
 		materializationTiming.resultTreeBuildNanos += time.Since(buildStart).Nanoseconds()
 	}
 	return tree
+}
+
+func (p *Parser) traceCResultSelectionCompare(candidateIndex, bestIndex, cmp int, candidate, best *glrStack, arena *nodeArena) {
+	fmt.Printf("      -> C-RESULT-CMP cand=%d %s best=%d %s cmp=%d\n",
+		candidateIndex,
+		p.cResultSelectionTraceSummary(candidate, arena),
+		bestIndex,
+		p.cResultSelectionTraceSummary(best, arena),
+		cmp,
+	)
+}
+
+func (p *Parser) traceCResultSelectionSelected(index int, selected *glrStack, arena *nodeArena) {
+	fmt.Printf("      -> C-RESULT-SELECT index=%d %s\n", index, p.cResultSelectionTraceSummary(selected, arena))
+}
+
+func (p *Parser) cResultSelectionTraceSummary(s *glrStack, arena *nodeArena) string {
+	if s == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("{kind:%s accepted:%v state:%d byte:%d depth:%d score:%d cost:%d dyn:%d errRank:%d}",
+		cRecoverStackTraceKind(*s),
+		s.accepted,
+		s.top().state,
+		s.byteOffset,
+		s.depth(),
+		s.score,
+		p.cStackResultErrorCost(s),
+		stackResultDynamicPrecedence(s),
+		stackResultErrorRank(s, arena),
+	)
 }
 
 func expandPackedGSSResultPaths(stacks []glrStack) []glrStack {
@@ -299,6 +341,10 @@ func (p *Parser) buildNoTreeBenchmarkResult(source []byte, arena *nodeArena, roo
 }
 
 func stackCompareForResultSelection(p *Parser, arena *nodeArena, a, b *glrStack, skipErrorRank bool) int {
+	return stackCompareForResultSelectionWithRawShape(p, arena, a, b, skipErrorRank, true)
+}
+
+func stackCompareForResultSelectionWithRawShape(p *Parser, arena *nodeArena, a, b *glrStack, skipErrorRank bool, useRawShape bool) int {
 	if a.dead != b.dead {
 		if a.dead {
 			return -1
@@ -314,13 +360,27 @@ func stackCompareForResultSelection(p *Parser, arena *nodeArena, a, b *glrStack,
 	if p != nil && p.errorCostCompetitionEnabled() {
 		// Faithful C recovery port: ts_parser__select_tree picks the tree
 		// with the lower error cost first, then the higher dynamic
-		// precedence; remaining engine keys break exact ties.
+		// precedence. If both candidates still tie and have nonzero error
+		// cost, C selects the later candidate.
 		if ac, bc := p.cStackResultErrorCost(a), p.cStackResultErrorCost(b); ac != bc {
 			if ac < bc {
 				return 1
 			}
 			return -1
+		} else if aDyn, bDyn := stackResultDynamicPrecedence(a), stackResultDynamicPrecedence(b); aDyn != bDyn {
+			if aDyn > bDyn {
+				return 1
+			}
+			return -1
+		} else if ac > 0 {
+			return 1
 		}
+	}
+	if a.accepted != b.accepted {
+		if a.accepted {
+			return 1
+		}
+		return -1
 	}
 	if !skipErrorRank {
 		if aErr, bErr := stackResultErrorRank(a, arena), stackResultErrorRank(b, arena); aErr != bErr {
@@ -330,14 +390,28 @@ func stackCompareForResultSelection(p *Parser, arena *nodeArena, a, b *glrStack,
 			return -1
 		}
 	}
-	if cmp := compareAcceptedStackAliasPreference(p, arena, *a, *b); cmp != 0 {
-		return cmp
+	if aDyn, bDyn := stackResultDynamicPrecedence(a), stackResultDynamicPrecedence(b); aDyn != bDyn {
+		if aDyn > bDyn {
+			return 1
+		}
+		return -1
 	}
 	if a.score != b.score {
 		if a.score > b.score {
 			return 1
 		}
 		return -1
+	}
+	if cmp := compareAcceptedStackAliasPreference(p, arena, *a, *b); cmp != 0 {
+		return cmp
+	}
+	if cmp := compareAcceptedStackTreeOrderPreference(p, arena, *a, *b); cmp != 0 {
+		return cmp
+	}
+	if useRawShape {
+		if cmp := compareAcceptedStackRawShapePreference(p, arena, *a, *b); cmp != 0 {
+			return cmp
+		}
 	}
 	if a.shifted != b.shifted {
 		if !a.shifted {
@@ -368,6 +442,282 @@ func stackCompareForResultSelection(p *Parser, arena *nodeArena, a, b *glrStack,
 	return 0
 }
 
+// compareAcceptedStackTreeOrderPreference is a narrow final tie-break for
+// accepted stacks that already match on error cost and dynamic precedence. It
+// does not count descendants. It only compares candidates whose top-level
+// result entries have identical envelopes, and it only prefers a sibling-spliced
+// tree when both sides preserve a concrete shared prefix.
+func compareAcceptedStackTreeOrderPreference(p *Parser, arena *nodeArena, a, b glrStack) int {
+	if !a.accepted || !b.accepted {
+		return 0
+	}
+	aCount := stackMaterializingResultEntryCount(a)
+	if aCount == 0 || aCount != stackMaterializingResultEntryCount(b) {
+		return 0
+	}
+	const maxBufferedTreeOrderEntries = 8
+	if aCount > maxBufferedTreeOrderEntries {
+		return 0
+	}
+	var aBuf, bBuf [maxBufferedTreeOrderEntries]stackEntry
+	aEntries, aOK := stackMaterializingResultEntries(a, aBuf[:0], aCount)
+	bEntries, bOK := stackMaterializingResultEntries(b, bBuf[:0], aCount)
+	if !aOK || !bOK {
+		return 0
+	}
+	for i := 0; i < aCount; i++ {
+		if !stackEntriesHaveSameTreeOrderEnvelope(aEntries[i], bEntries[i]) {
+			return 0
+		}
+	}
+	for i := 0; i < aCount; i++ {
+		if cmp := compareStackEntryTreeOrder(p, arena, aEntries[i], bEntries[i], 0); cmp != 0 {
+			return cmp
+		}
+	}
+	return 0
+}
+
+func compareStackEntryTreeOrder(p *Parser, arena *nodeArena, a, b stackEntry, depth int) int {
+	if depth > maxTreeWalkDepth {
+		return 0
+	}
+	if !stackEntriesHaveSameTreeOrderEnvelope(a, b) {
+		return 0
+	}
+	aCount := stackEntryNodeChildCount(a)
+	bCount := stackEntryNodeChildCount(b)
+	limit := aCount
+	if bCount < limit {
+		limit = bCount
+	}
+	for i := 0; i < limit; i++ {
+		aChild, aOK := stackEntryAliasChild(a, arena, i)
+		bChild, bOK := stackEntryAliasChild(b, arena, i)
+		if !aOK || !bOK {
+			return 0
+		}
+		if !stackEntriesHaveSameTreeOrderEnvelope(aChild, bChild) {
+			if cmp := compareStackEntryDirectChildPreference(p, arena, aChild, bChild, depth+1); cmp != 0 {
+				return cmp
+			}
+			return compareStackEntrySharedPrefixSplice(p, arena, a, b, i, depth+1)
+		}
+		if cmp := compareStackEntryTreeOrder(p, arena, aChild, bChild, depth+1); cmp != 0 {
+			return cmp
+		}
+	}
+	return 0
+}
+
+func stackEntriesHaveSameTreeOrderEnvelope(a, b stackEntry) bool {
+	return stackEntryNodeSymbol(a) == stackEntryNodeSymbol(b) &&
+		stackEntryNodeStartByte(a) == stackEntryNodeStartByte(b) &&
+		stackEntryNodeEndByte(a) == stackEntryNodeEndByte(b) &&
+		stackEntryNodeIsExtra(a) == stackEntryNodeIsExtra(b) &&
+		stackEntryNodeIsMissing(a) == stackEntryNodeIsMissing(b) &&
+		stackEntryNodeHasError(a) == stackEntryNodeHasError(b)
+}
+
+func compareStackEntryDirectChildPreference(p *Parser, arena *nodeArena, a, b stackEntry, depth int) int {
+	if depth > maxTreeWalkDepth {
+		return 0
+	}
+	if stackEntryUnaryWrapperContains(p, arena, a, b, depth+1) {
+		return -1
+	}
+	if stackEntryUnaryWrapperContains(p, arena, b, a, depth+1) {
+		return 1
+	}
+	return 0
+}
+
+func stackEntryUnaryWrapperContains(p *Parser, arena *nodeArena, wrapper, direct stackEntry, depth int) bool {
+	for depth <= maxTreeWalkDepth {
+		if stackEntriesHaveSameTreeOrderEnvelope(wrapper, direct) {
+			return false
+		}
+		if !stackEntrySelectionUnaryWrapper(p, arena, wrapper, direct) {
+			return false
+		}
+		child, ok := stackEntryAliasChild(wrapper, arena, 0)
+		if !ok {
+			return false
+		}
+		if stackEntriesHaveSameTreeOrderEnvelope(child, direct) {
+			return true
+		}
+		wrapper = child
+		depth++
+	}
+	return false
+}
+
+func stackEntrySelectionUnaryWrapper(p *Parser, arena *nodeArena, wrapper, direct stackEntry) bool {
+	if p == nil || p.language == nil || !stackEntryHasNode(wrapper) || !stackEntryHasNode(direct) {
+		return false
+	}
+	if !stackEntryTreeOrderTransparentWrapper(p, arena, wrapper) {
+		return false
+	}
+	if stackEntryNodeStartByte(wrapper) != stackEntryNodeStartByte(direct) ||
+		stackEntryNodeEndByte(wrapper) != stackEntryNodeEndByte(direct) ||
+		stackEntryNodeChildCount(wrapper) != 1 {
+		return false
+	}
+	child, ok := stackEntryAliasChild(wrapper, arena, 0)
+	if !ok || !stackEntryHasNode(child) {
+		return false
+	}
+	return stackEntryNodeStartByte(child) == stackEntryNodeStartByte(wrapper) &&
+		stackEntryNodeEndByte(child) == stackEntryNodeEndByte(wrapper) &&
+		!stackEntryNodeIsExtra(child) &&
+		!stackEntryNodeIsMissing(child) &&
+		!stackEntryNodeHasError(child)
+}
+
+func compareStackEntrySharedPrefixSplice(p *Parser, arena *nodeArena, aParent, bParent stackEntry, childIndex int, depth int) int {
+	if depth > maxTreeWalkDepth {
+		return 0
+	}
+	aChild, aOK := stackEntryAliasChild(aParent, arena, childIndex)
+	bChild, bOK := stackEntryAliasChild(bParent, arena, childIndex)
+	if !aOK || !bOK {
+		return 0
+	}
+	if stackEntryMatchesSharedPrefixSplice(p, arena, aChild, bParent, childIndex, depth+1) {
+		return -1
+	}
+	if stackEntryMatchesSharedPrefixSplice(p, arena, bChild, aParent, childIndex, depth+1) {
+		return 1
+	}
+	return 0
+}
+
+func stackEntryMatchesSharedPrefixSplice(p *Parser, arena *nodeArena, wrapper stackEntry, splicedParent stackEntry, startIndex int, depth int) bool {
+	const minSharedPrefixChildren = 2
+	prefixWrapper, ok := stackEntryTreeOrderPrefixWrapper(p, arena, wrapper)
+	if !ok {
+		return false
+	}
+	wrapperChildren := stackEntryNodeChildCount(prefixWrapper)
+	splicedChildren := stackEntryNodeChildCount(splicedParent) - startIndex
+	if wrapperChildren < minSharedPrefixChildren+1 || splicedChildren < minSharedPrefixChildren+1 {
+		return false
+	}
+	shared := 0
+	for shared < wrapperChildren && startIndex+shared < stackEntryNodeChildCount(splicedParent) {
+		wrapperChild, wrapperOK := stackEntryAliasChild(prefixWrapper, arena, shared)
+		splicedChild, splicedOK := stackEntryAliasChild(splicedParent, arena, startIndex+shared)
+		if !wrapperOK || !splicedOK || !stackEntriesHaveSameTreeOrderEnvelope(wrapperChild, splicedChild) {
+			break
+		}
+		shared++
+	}
+	if shared < minSharedPrefixChildren || shared >= wrapperChildren || startIndex+shared >= stackEntryNodeChildCount(splicedParent) {
+		return false
+	}
+	wrapperNext, wrapperOK := stackEntryAliasChild(prefixWrapper, arena, shared)
+	splicedNext, splicedOK := stackEntryAliasChild(splicedParent, arena, startIndex+shared)
+	if !wrapperOK || !splicedOK {
+		return false
+	}
+	if stackEntryContainsVisibleNamedStructuralContainer(p, arena, wrapperNext, depth+1) {
+		return false
+	}
+	return stackEntryNodeStartByte(wrapperNext) == stackEntryNodeStartByte(splicedNext) &&
+		stackEntryNodeEndByte(splicedNext) == stackEntryNodeEndByte(wrapper)
+}
+
+func stackEntryContainsVisibleNamedStructuralContainer(p *Parser, arena *nodeArena, entry stackEntry, depth int) bool {
+	if p == nil || p.language == nil || depth > maxTreeWalkDepth || !stackEntryHasNode(entry) {
+		return false
+	}
+	sym := stackEntryNodeSymbol(entry)
+	if idx := int(sym); idx >= 0 && idx < len(p.language.SymbolMetadata) {
+		meta := p.language.SymbolMetadata[idx]
+		if (meta.Visible || meta.Named) && stackEntryNodeChildCount(entry) > 0 {
+			return true
+		}
+	}
+	if !stackEntryTreeOrderTransparentWrapper(p, arena, entry) {
+		return false
+	}
+	childCount := stackEntryNodeChildCount(entry)
+	for i := 0; i < childCount; i++ {
+		child, ok := stackEntryAliasChild(entry, arena, i)
+		if !ok {
+			return false
+		}
+		if stackEntryContainsVisibleNamedStructuralContainer(p, arena, child, depth+1) {
+			return true
+		}
+	}
+	return false
+}
+
+func stackEntryTreeOrderPrefixWrapper(p *Parser, arena *nodeArena, entry stackEntry) (stackEntry, bool) {
+	for depth := 0; depth < maxTreeWalkDepth; depth++ {
+		if !stackEntryTreeOrderTransparentWrapper(p, arena, entry) {
+			return stackEntry{}, false
+		}
+		if stackEntryNodeChildCount(entry) == 0 {
+			return entry, true
+		}
+		child, ok := stackEntryAliasChild(entry, arena, 0)
+		if !ok ||
+			stackEntryNodeSymbol(child) != stackEntryNodeSymbol(entry) ||
+			stackEntryNodeStartByte(child) != stackEntryNodeStartByte(entry) {
+			return entry, true
+		}
+		entry = child
+	}
+	return stackEntry{}, false
+}
+
+func stackEntryTreeOrderTransparentWrapper(p *Parser, arena *nodeArena, entry stackEntry) bool {
+	if p == nil || p.language == nil || stackEntryNodeIsExtra(entry) || stackEntryNodeIsMissing(entry) || stackEntryNodeHasError(entry) {
+		return false
+	}
+	sym := stackEntryNodeSymbol(entry)
+	if int(sym) >= len(p.language.SymbolMetadata) {
+		return false
+	}
+	meta := p.language.SymbolMetadata[sym]
+	if meta.Visible || meta.Named {
+		return false
+	}
+	if stackEntryTreeHasFieldIDs(entry, arena) {
+		return false
+	}
+	productionID := stackEntryNodeProductionID(entry)
+	childCount := stackEntryNodeChildCount(entry)
+	if fieldMapHasEffectiveFields(p.language, childCount, productionID) {
+		return false
+	}
+	return !languageProductionHasAliasSequence(p.language, productionID, childCount)
+}
+
+func languageProductionHasAliasSequence(lang *Language, productionID uint16, childCount int) bool {
+	if lang == nil || len(lang.AliasSequences) == 0 {
+		return false
+	}
+	pid := int(productionID)
+	if pid < 0 || pid >= len(lang.AliasSequences) {
+		return false
+	}
+	seq := lang.AliasSequences[pid]
+	if childCount > len(seq) {
+		childCount = len(seq)
+	}
+	for i := 0; i < childCount; i++ {
+		if seq[i] != 0 {
+			return true
+		}
+	}
+	return false
+}
+
 func stackResultErrorRank(s *glrStack, arena *nodeArena) int {
 	if s == nil {
 		return 2
@@ -389,6 +739,27 @@ func stackResultErrorRank(s *glrStack, arena *nodeArena) int {
 		}
 	}
 	return rank
+}
+
+func stackResultDynamicPrecedence(s *glrStack) int32 {
+	if s == nil {
+		return 0
+	}
+	var dyn int32
+	if len(s.entries) > 0 {
+		for i := range s.entries {
+			if stackEntryMaterializesForResult(s.entries[i]) {
+				dyn += stackEntryDynamicPrecedence(s.entries[i])
+			}
+		}
+		return dyn
+	}
+	for n := s.gss.head; n != nil; n = n.prev {
+		if stackEntryMaterializesForResult(n.entry) {
+			dyn += stackEntryDynamicPrecedence(n.entry)
+		}
+	}
+	return dyn
 }
 
 func stackEntryResultErrorRank(entry stackEntry, arena *nodeArena, rank *int) {

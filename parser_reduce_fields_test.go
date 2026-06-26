@@ -1469,6 +1469,62 @@ func TestBuildResultFromGLRScoreBeatsAliasTargetPreference(t *testing.T) {
 	tree.Release()
 }
 
+func TestBuildResultFromGLRDoesNotSpliceVisibleNamedPrefixWrapper(t *testing.T) {
+	lang := &Language{
+		SymbolCount: 6,
+		TokenCount:  1,
+		SymbolNames: []string{"EOF", "identifier", "selector", "operator", "semantic_group", "root"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF"},
+			{Name: "identifier", Visible: true, Named: true},
+			{Name: "selector", Visible: true, Named: true},
+			{Name: "operator", Visible: true, Named: false},
+			{Name: "semantic_group", Visible: true, Named: true},
+			{Name: "root", Visible: true, Named: true},
+		},
+	}
+	parser := NewParser(lang)
+	source := []byte("receiver.call")
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	groupID := newLeafNodeInArena(arena, 1, true, 0, 8, Point{}, Point{Column: 8})
+	groupQualifier := newLeafNodeInArena(arena, 2, true, 8, 10, Point{Column: 8}, Point{Column: 10})
+	groupOp := newLeafNodeInArena(arena, 3, false, 10, 11, Point{Column: 10}, Point{Column: 11})
+	groupArg := newLeafNodeInArena(arena, 1, true, 11, 13, Point{Column: 11}, Point{Column: 13})
+	group := newParentNodeInArena(arena, 4, true, []*Node{groupID, groupQualifier, groupOp, groupArg}, nil, 0)
+	groupRoot := newParentNodeInArena(arena, 5, true, []*Node{group}, nil, 0)
+
+	flatID := newLeafNodeInArena(arena, 1, true, 0, 8, Point{}, Point{Column: 8})
+	flatQualifier := newLeafNodeInArena(arena, 2, true, 8, 10, Point{Column: 8}, Point{Column: 10})
+	flatCall := newLeafNodeInArena(arena, 2, true, 10, 13, Point{Column: 10}, Point{Column: 13})
+	flatRoot := newParentNodeInArena(arena, 5, true, []*Node{flatID, flatQualifier, flatCall}, nil, 0)
+
+	stacks := []glrStack{
+		{
+			accepted:    true,
+			byteOffset:  13,
+			branchOrder: 0,
+			entries:     []stackEntry{newStackEntryNode(1, groupRoot)},
+		},
+		{
+			accepted:    true,
+			byteOffset:  13,
+			branchOrder: 1,
+			entries:     []stackEntry{newStackEntryNode(1, flatRoot)},
+		},
+	}
+
+	tree := parser.buildResultFromGLR(stacks, source, arena, nil, nil, nil, nil, nil, false, nil)
+	if tree == nil || tree.RootNode() == nil {
+		t.Fatal("buildResultFromGLR returned nil tree/root")
+	}
+	if tree.RootNode() != groupRoot {
+		t.Fatalf("root = %p, want visible-wrapper-preserving winner %p", tree.RootNode(), groupRoot)
+	}
+	tree.Release()
+}
+
 func TestFieldIDsAlignAfterExtrasFold(t *testing.T) {
 	lang := queryTestLanguage()
 
