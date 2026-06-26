@@ -137,27 +137,13 @@ func setLexerErrorRunLexState(l *Lexer, language *Language) {
 	if language == nil || len(language.LexModes) == 0 {
 		return
 	}
-	// Error runs are enabled per-grammar, only after real-corpus verification
-	// against the C oracle (the same way scheme earned its dedicated
-	// error-run path). Two hazards rule out a blanket enable: external
-	// scanners lex some tokens outside the DFA (powershell's newline
-	// _statement_terminator, which C's error-mode lex consults before
-	// skipping), and some DFA-only grammars (e.g. go) recover divergently
-	// from C when fed mid-parse error tokens. diff/elisp/jq are verified
-	// byte-faithful on the real corpus.
-	errorModeRetry := false
-	switch language.Name {
-	case "diff", "elisp", "jq":
-	default:
-		// Faithful C error-recovery port (parser_recover_c.go): gated
-		// grammars get C's complete ts_parser__lex failure behavior —
-		// error-mode retry first (returning real, often invisible tokens
-		// that the recovery absorbs as hidden error-region leaves), then
-		// skipped-run errorSymbol tokens when even LexModes[0] fails.
-		if !errorCostCompetitionLanguage(language) {
-			return
-		}
-		errorModeRetry = true
+	// Faithful C error-recovery port (parser_recover_c.go): gated grammars get
+	// C's complete ts_parser__lex failure behavior — error-mode retry first
+	// (returning real, often invisible tokens that recovery absorbs as hidden
+	// error-region leaves), then skipped-run errorSymbol tokens when even
+	// LexModes[0] fails.
+	if !errorCostCompetitionLanguage(language) {
+		return
 	}
 	ls := language.LexModes[0].LexStateIndex()
 	if ls == noLookaheadLexState {
@@ -165,7 +151,7 @@ func setLexerErrorRunLexState(l *Lexer, language *Language) {
 	}
 	l.errorRunLexState = ls
 	l.hasErrorRunLexState = true
-	l.errorModeRetry = errorModeRetry
+	l.errorModeRetry = true
 }
 
 func initDFATokenSource(ts *dfaTokenSource, lexer *Lexer, language *Language, lookupActionIndex func(state StateID, sym Symbol) uint16, hasKeywordState []bool, externalValidByState [][]uint16, externalValidMaskByState []uint64) {
@@ -1063,9 +1049,13 @@ func (d *dfaTokenSource) nextGLRUnionDFAToken() (Token, bool) {
 			if d.dedupeGLRUnionScoreStates() && d.priorGLRState(liveIdx, liveState) {
 				continue
 			}
-			if d.lookupActionIndex(liveState, candTok.Symbol) != 0 {
-				score++
+			if d.lookupActionIndex(liveState, candTok.Symbol) == 0 {
+				continue
 			}
+			if !d.stateProducesTokenFrontierCandidate(liveState, candTok, candEndPos, candEndRow, candEndCol) {
+				continue
+			}
+			score++
 		}
 		originActionCount := 0
 		if idx := d.lookupActionIndex(st, candTok.Symbol); idx != 0 && int(idx) < len(d.language.ParseActions) {
