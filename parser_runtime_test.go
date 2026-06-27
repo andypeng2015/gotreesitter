@@ -237,9 +237,9 @@ func newConflictReduceFrontierStackForTest(parser *Parser, arena *nodeArena, ent
 }
 
 func applyConflictFrontierReduceForTest(parser *Parser, stack *glrStack, reduce ParseAction, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entries *glrEntryScratch, gss *gssScratch, tmp *[]stackEntry, trackChildErrors *bool) conflictReduceFrontierSeed {
-	beforeState, beforeByte, beforeDepth := stack.top().state, stack.byteOffset, stack.depth()
+	beforeState, beforeByte, beforeDepth := stackTraceState(stack)
 	parser.applyAction(nil, stack, reduce, tok, anyReduced, nodeCount, arena, entries, gss, tmp, false, trackChildErrors)
-	afterState, afterByte, afterDepth := stack.top().state, stack.byteOffset, stack.depth()
+	afterState, afterByte, afterDepth := stackTraceState(stack)
 	return conflictReduceFrontierSeed{
 		action:      reduce,
 		beforeState: beforeState,
@@ -306,6 +306,17 @@ func TestConflictReduceFrontierDegenerateSameReduceShiftCompletes(t *testing.T) 
 		{Type: ParseActionShift, State: 3},
 	})
 	parser := NewParser(lang)
+	parser.stopActionDiag = &parseStopActionDiagnostic{
+		lastReduceCaptured:          true,
+		lastReduceSymbol:            99,
+		lastReduceChildCount:        7,
+		lastReduceProductionID:      11,
+		lastReduceDynamicPrecedence: 13,
+		lookaheadSymbol:             99,
+		lookaheadStartByte:          99,
+		lookaheadEndByte:            100,
+		lookaheadNoLookahead:        true,
+	}
 	arena := newNodeArena(arenaClassFull)
 	var entries glrEntryScratch
 	var gss gssScratch
@@ -811,6 +822,132 @@ func TestConflictReduceFrontierAllShiftedAdvancesLookahead(t *testing.T) {
 	}
 	if got, want := root.EndByte(), uint32(len(source)); got != want {
 		t.Fatalf("root end = %d, want %d; runtime=%s tree=%s", got, want, rt.Summary(), root.SExpr(lang))
+	}
+}
+
+func TestParseRuntimeStopDiagnosticSummary(t *testing.T) {
+	rt := ParseRuntime{
+		StopReason:                           ParseStopNoStacksAlive,
+		StopDiagnosticCaptured:               true,
+		StopDiagnosticCRecoveryEnabled:       true,
+		StopDiagnosticCRecoveryGateReason:    "runtime_supported",
+		StopDiagnosticRecoverActionAvailable: true,
+		StopDiagnosticLastStackState:         7,
+		StopDiagnosticLastStackByte:          11,
+		StopDiagnosticLastStackDepth:         3,
+		StopDiagnosticTokenSymbol:            5,
+		StopDiagnosticTokenStartByte:         11,
+		StopDiagnosticTokenEndByte:           12,
+		StopDiagnosticRootType:               "source",
+		StopDiagnosticRootStartByte:          0,
+		StopDiagnosticRootEndByte:            11,
+		StopDiagnosticRootHasError:           true,
+		StopDiagnosticFirstErrorFound:        true,
+		StopDiagnosticFirstErrorStartByte:    4,
+		StopDiagnosticFirstErrorEndByte:      8,
+		StopDiagnosticFrontierStacks:         "stacks={total=2 live=2 limit=16 rows=[0:7@11/d3 sh=false dead=false acc=false pause=false rec=false score=0 br=0 snap=true]}",
+		StopDiagnosticFrontierActions:        "post_dispatch_unshifted_actionable=1 post_dispatch_snapshot_actionable=1 post_dispatch_appended_actionable=0",
+		StopDiagnosticSameHeaderGroups:       "sameHeader={groups=1 max=2 pairs=1 deepReject=1 costDiff=0 externalScannerDiffKnown=false gssEligible=0 gssAttemptable=0 gssWouldMerge=0 pairBudgetHit=false}",
+		StopDiagnosticCondenseGating:         "condense={errorCostCompetitionEnabled=true anyReduced=true hasPaused=true hasCRec=false condenseSkippedDueToAnyReduced=true condenseRan=false condenseResumed=false}",
+	}
+	summary := rt.Summary()
+	for _, want := range []string{
+		"stopDiag={",
+		"cRecovery=true",
+		"cRecoveryGateReason=runtime_supported",
+		"recoverAction=true",
+		"stackState=7",
+		"token=5[11:12]",
+		"root=\"source\"[0:11]",
+		"firstError=true[4:8]",
+		"stacks={total=2 live=2",
+		"post_dispatch_snapshot_actionable=1",
+		"sameHeader={groups=1 max=2 pairs=1 deepReject=1",
+		"condenseSkippedDueToAnyReduced=true",
+	} {
+		if !strings.Contains(summary, want) {
+			t.Fatalf("Summary() missing %q: %s", want, summary)
+		}
+	}
+}
+
+func TestParseRuntimeStopDiagnosticCRecoveryGateReasonSummary(t *testing.T) {
+	rt := ParseRuntime{
+		StopReason:                        ParseStopNoStacksAlive,
+		StopDiagnosticCaptured:            true,
+		StopDiagnosticCRecoveryEnabled:    false,
+		StopDiagnosticCRecoveryGateReason: "external_scanner_requires_precise_externallexstates",
+	}
+	summary := rt.Summary()
+	for _, want := range []string{
+		"cRecovery=false",
+		"cRecoveryGateReason=external_scanner_requires_precise_externallexstates",
+	} {
+		if !strings.Contains(summary, want) {
+			t.Fatalf("Summary() missing %q: %s", want, summary)
+		}
+	}
+	if strings.Contains(summary, "precise ExternalLexStates") {
+		t.Fatalf("Summary() included spaced human reason in machine field: %s", summary)
+	}
+}
+
+func TestParseRuntimeStopDiagnosticRecordsCRecoveryGateReason(t *testing.T) {
+	t.Setenv("GOT_C_RECOVERY", "")
+	lang := buildPrefixAcceptLanguage()
+	parser := NewParser(lang)
+
+	tree := mustParse(t, parser, []byte("abb"))
+	defer tree.Release()
+	rt := tree.ParseRuntime()
+
+	if got, want := rt.StopReason, ParseStopNoStacksAlive; got != want {
+		t.Fatalf("StopReason = %q, want %q; runtime=%s", got, want, rt.Summary())
+	}
+	if !rt.StopDiagnosticCaptured {
+		t.Fatalf("StopDiagnosticCaptured = false; runtime=%s", rt.Summary())
+	}
+	if rt.StopDiagnosticCRecoveryEnabled {
+		t.Fatalf("StopDiagnosticCRecoveryEnabled = true, want false; runtime=%s", rt.Summary())
+	}
+	if got, want := rt.StopDiagnosticCRecoveryGateReason, "initial_state_is_not_1"; got != want {
+		t.Fatalf("StopDiagnosticCRecoveryGateReason = %q, want %q; runtime=%s", got, want, rt.Summary())
+	}
+	if !strings.Contains(rt.Summary(), "cRecoveryGateReason=initial_state_is_not_1") {
+		t.Fatalf("Summary() missing cRecoveryGateReason: %s", rt.Summary())
+	}
+}
+
+func TestCRecoveryGateReasonSlugs(t *testing.T) {
+	t.Setenv("GOT_C_RECOVERY", "all")
+	lang := cRecoveryGateLanguage()
+	lang.ExternalScanner = cRecoveryGateScanner{}
+	lang.ExternalSymbols = []Symbol{1}
+	lang.ExternalTokenCount = 1
+	if got, want := cRecoveryGateReason(lang), "external_scanner_requires_precise_externallexstates"; got != want {
+		t.Fatalf("cRecoveryGateReason(runtime unsupported) = %q, want %q", got, want)
+	}
+
+	t.Setenv("GOT_C_RECOVERY", "0")
+	if got, want := cRecoveryGateReason(lang), "disabled_by_got_c_recovery_0"; got != want {
+		t.Fatalf("cRecoveryGateReason(env disabled unsupported) = %q, want %q", got, want)
+	}
+
+	lang = cRecoveryGateLanguage()
+	if got, want := cRecoveryGateReason(lang), "disabled_by_got_c_recovery_0"; got != want {
+		t.Fatalf("cRecoveryGateReason(env disabled) = %q, want %q", got, want)
+	}
+
+	t.Setenv("GOT_C_RECOVERY", "")
+	lang = cRecoveryGateLanguage()
+	lang.CRecoveryCostCompetitionEnabledByDefault = false
+	if got, want := cRecoveryGateReason(lang), "not_enabled_by_default"; got != want {
+		t.Fatalf("cRecoveryGateReason(default disabled) = %q, want %q", got, want)
+	}
+
+	lang.CRecoveryCostCompetitionCapable = false
+	if got, want := cRecoveryGateReason(lang), "not_c_recovery_capable"; got != want {
+		t.Fatalf("cRecoveryGateReason(not capable) = %q, want %q", got, want)
 	}
 }
 
