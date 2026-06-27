@@ -85,11 +85,11 @@ func TestBuildLexDFAPrefersExtractionOrderForSameLengthTie(t *testing.T) {
 }
 
 func TestBuildLexDFAPrefersModeDirectSymbolForSameLengthTie(t *testing.T) {
-	word, err := expandPatternRule("[a-z]+")
+	word, err := expandPatternRule(`[a-z]+`)
 	if err != nil {
 		t.Fatalf("expand word: %v", err)
 	}
-	specific, err := expandPatternRule("[a-z]+")
+	specific, err := expandPatternRule(`[a-z]+`)
 	if err != nil {
 		t.Fatalf("expand specific: %v", err)
 	}
@@ -124,11 +124,11 @@ func TestBuildLexDFAPrefersModeDirectSymbolForSameLengthTie(t *testing.T) {
 }
 
 func TestBuildLexDFADistinguishesModePreferredSymbols(t *testing.T) {
-	word, err := expandPatternRule("[a-z]+")
+	word, err := expandPatternRule(`[a-z]+`)
 	if err != nil {
 		t.Fatalf("expand word: %v", err)
 	}
-	specific, err := expandPatternRule("[a-z]+")
+	specific, err := expandPatternRule(`[a-z]+`)
 	if err != nil {
 		t.Fatalf("expand specific: %v", err)
 	}
@@ -239,7 +239,7 @@ func TestBuildLexDFAPreservesStringOperatorBeforeLineComment(t *testing.T) {
 }
 
 func TestBuildLexDFADoesNotAddUnavailableTerminalExtraToMode(t *testing.T) {
-	catchAll, err := expandPatternRule(".+")
+	catchAll, err := expandPatternRule(`.+`)
 	if err != nil {
 		t.Fatalf("expand catch-all: %v", err)
 	}
