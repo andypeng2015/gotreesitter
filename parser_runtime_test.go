@@ -898,6 +898,37 @@ func TestParseRuntimeReportsNoTreeCheckpointLeavesRemainNodes(t *testing.T) {
 	}
 }
 
+func TestParseNoTreeBenchmarkDropsRetainedExternalCheckpointCapacity(t *testing.T) {
+	lang := buildArithmeticLanguage()
+	lang.Name = "python"
+	lang.ExternalScanner = byteStateExternalScanner{}
+
+	fullParser := NewParser(lang)
+	fullTree, err := fullParser.Parse([]byte("1+2"))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	fullRuntime := fullTree.ParseRuntime()
+	fullTree.Release()
+	if fullRuntime.ExternalScannerCheckpointBytesAllocated == 0 {
+		t.Fatalf("full checkpoint bytes = 0, want > 0; runtime=%s", fullRuntime.Summary())
+	}
+
+	noTreeParser := NewParser(lang)
+	noTree, err := noTreeParser.ParseNoTreeBenchmarkOnly([]byte("1+2"))
+	if err != nil {
+		t.Fatalf("ParseNoTreeBenchmarkOnly() error = %v", err)
+	}
+	defer noTree.Release()
+	noTreeRuntime := noTree.ParseRuntime()
+	if noTreeRuntime.ExternalScannerCheckpointRecords != 0 {
+		t.Fatalf("no-tree checkpoint records = %d, want 0; runtime=%s", noTreeRuntime.ExternalScannerCheckpointRecords, noTreeRuntime.Summary())
+	}
+	if noTreeRuntime.ExternalScannerCheckpointBytesAllocated != 0 {
+		t.Fatalf("no-tree checkpoint bytes = %d, want 0; runtime=%s", noTreeRuntime.ExternalScannerCheckpointBytesAllocated, noTreeRuntime.Summary())
+	}
+}
+
 func TestFinalTreeMaterializationStatsClassifiesHiddenParentsAndCheckpointLeaves(t *testing.T) {
 	arena := acquireNodeArena(arenaClassFull)
 	defer arena.Release()
