@@ -4034,6 +4034,10 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			// competes in ts_parser__select_tree); finalize only when every
 			// version has accepted or halted. Without the gate, finalize on
 			// the first accept exactly as before.
+			if p.errorCostCompetitionEnabled() && tok.Symbol == 0 && tok.StartByte == tok.EndByte && !tok.NoLookahead && anyReduced && liveUnaccepted > 0 {
+				needToken = false
+				continue
+			}
 			if !p.errorCostCompetitionEnabled() || liveUnaccepted == 0 {
 				accepted := compactAcceptedStacks(stacks)
 				selectable := accepted[:0]

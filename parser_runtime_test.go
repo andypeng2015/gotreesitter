@@ -1025,6 +1025,55 @@ func (s *slowArithmeticTokenSource) Next() Token {
 	return tok
 }
 
+func TestEOFDrainKeepsLiveReducedBranchAfterEarlyAccept(t *testing.T) {
+	lang := &Language{
+		Name:         "eof_drain_regression",
+		SymbolCount:  4,
+		TokenCount:   2,
+		StateCount:   5,
+		InitialState: 1,
+		SymbolNames:  []string{"end", "x", "low_root", "high_root"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "end", Visible: false},
+			{Name: "x", Visible: true},
+			{Name: "low_root", Visible: true, Named: true},
+			{Name: "high_root", Visible: true, Named: true},
+		},
+		ParseActions: []ParseActionEntry{
+			{},
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 3}}},
+			{Actions: []ParseAction{{Type: ParseActionReduce, Symbol: 2, ChildCount: 1}}},
+			{Actions: []ParseAction{
+				{Type: ParseActionAccept},
+				{Type: ParseActionReduce, Symbol: 3, ChildCount: 1, DynamicPrecedence: 1},
+			}},
+			{Actions: []ParseAction{{Type: ParseActionAccept}}},
+		},
+		ParseTable: [][]uint16{
+			make([]uint16, 4),
+			{0, 1, 2, 4},
+			{3, 0, 0, 0},
+			{2, 0, 0, 0},
+			{4, 0, 0, 0},
+		},
+	}
+	parser := NewParser(lang)
+	parser.hasRootSymbol = false
+	source := []byte("x")
+	tree, err := parser.ParseWithTokenSource(source, &slowArithmeticTokenSource{
+		tokens: []Token{
+			{Symbol: 1, StartByte: 0, EndByte: 1, EndPoint: Point{Column: 1}},
+			{Symbol: 0, StartByte: 1, EndByte: 1, StartPoint: Point{Column: 1}, EndPoint: Point{Column: 1}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ParseWithTokenSource() error = %v", err)
+	}
+	if got, want := tree.RootNode().Type(lang), "high_root"; got != want {
+		t.Fatalf("root type = %q, want %q; tree=%s", got, want, tree.RootNode().SExpr(lang))
+	}
+}
+
 func TestParseRuntimeReportsTokenSourceEOFEarly(t *testing.T) {
 	lang := buildArithmeticLanguage()
 	parser := NewParser(lang)
