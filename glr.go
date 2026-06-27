@@ -108,6 +108,8 @@ type glrMergeScratch struct {
 	equivCache        []glrNodeEquivCacheEntry
 	stackEquivCache   []glrStackEquivCacheEntry
 	frontierHashCache []glrStackFrontierHashCacheEntry
+	cErrorCost        map[*Node]glrCErrorCostEntry
+	materializing     map[*gssNode]glrMaterializingShapeHash
 	cleanZeroEpoch    uint32
 	cleanZeroScan     uint32
 	cleanZeroCache    map[*gssNode]gssCleanZeroErrorCacheEntry
@@ -121,6 +123,16 @@ type glrMergeScratch struct {
 	equivCacheBytes   int64
 	stackEquivBytes   int64
 	frontierHashBytes int64
+}
+
+type glrCErrorCostEntry struct {
+	ver  uint32
+	cost uint32
+}
+
+type glrMaterializingShapeHash struct {
+	hash uint64
+	ok   bool
 }
 
 type glrMergeKey struct {
@@ -664,6 +676,16 @@ func stackNodeGenericFrontierChildSignature(n *Node) uint64 {
 }
 
 func stackMaterializingShapeHash(s glrStack) (uint64, bool) {
+	return stackMaterializingShapeHashWithScratch(nil, s)
+}
+
+func stackMaterializingShapeHashWithScratch(scratch *glrMergeScratch, s glrStack) (uint64, bool) {
+	if len(s.entries) == 0 && s.gss.head != nil && scratch != nil {
+		if cached, ok := scratch.materializing[s.gss.head]; ok {
+			return cached.hash, cached.ok
+		}
+	}
+
 	h := gssHashSeed
 	count := 0
 	if len(s.entries) > 0 {
@@ -684,6 +706,12 @@ func stackMaterializingShapeHash(s glrStack) (uint64, bool) {
 		}
 	}
 	if count == 0 {
+		if len(s.entries) == 0 && s.gss.head != nil && scratch != nil {
+			if scratch.materializing == nil {
+				scratch.materializing = make(map[*gssNode]glrMaterializingShapeHash)
+			}
+			scratch.materializing[s.gss.head] = glrMaterializingShapeHash{}
+		}
 		return 0, false
 	}
 	h ^= uint64(count)
@@ -691,15 +719,25 @@ func stackMaterializingShapeHash(s glrStack) (uint64, bool) {
 	if h == 0 {
 		h = 1
 	}
+	if len(s.entries) == 0 && s.gss.head != nil && scratch != nil {
+		if scratch.materializing == nil {
+			scratch.materializing = make(map[*gssNode]glrMaterializingShapeHash)
+		}
+		scratch.materializing[s.gss.head] = glrMaterializingShapeHash{hash: h, ok: true}
+	}
 	return h, true
 }
 
 func gssStacksHaveDistinctMaterializingShapes(a, b *glrStack) bool {
+	return gssStacksHaveDistinctMaterializingShapesWithScratch(nil, a, b)
+}
+
+func gssStacksHaveDistinctMaterializingShapesWithScratch(scratch *glrMergeScratch, a, b *glrStack) bool {
 	if a == nil || b == nil {
 		return false
 	}
-	aHash, aOK := stackMaterializingShapeHash(*a)
-	bHash, bOK := stackMaterializingShapeHash(*b)
+	aHash, aOK := stackMaterializingShapeHashWithScratch(scratch, *a)
+	bHash, bOK := stackMaterializingShapeHashWithScratch(scratch, *b)
 	return aOK && bOK && aHash != bHash
 }
 
@@ -750,6 +788,16 @@ func (s *glrMergeScratch) beginEquivEpoch() {
 		s.equivEpoch = 0
 	}
 	s.equivEpoch++
+	if len(s.cErrorCost) > maxRetainedMergeResultCap {
+		s.cErrorCost = nil
+	} else if len(s.cErrorCost) > 0 {
+		clear(s.cErrorCost)
+	}
+	if len(s.materializing) > maxRetainedMergeResultCap {
+		s.materializing = nil
+	} else if len(s.materializing) > 0 {
+		clear(s.materializing)
+	}
 	if len(s.equivCache) == 0 {
 		s.equivCache = make([]glrNodeEquivCacheEntry, glrNodeEquivCacheSize)
 		s.equivCacheBytes = glrNodeEquivCacheBytesForCap(cap(s.equivCache))
@@ -1305,7 +1353,7 @@ func cRecoveryMergeCostsDiffer(scratch *glrMergeScratch, a, b *glrStack) bool {
 	if !stacksHeaderEquivalent(*a, *b) {
 		return false
 	}
-	return cStackErrorCostForMerge(scratch.language, a) != cStackErrorCostForMerge(scratch.language, b)
+	return cStackErrorCostForMergeWithScratch(scratch, scratch.language, a) != cStackErrorCostForMergeWithScratch(scratch, scratch.language, b)
 }
 
 func cRecoveryMergeCostsDifferForParser(p *Parser, a, b *glrStack) bool {
@@ -3175,10 +3223,13 @@ func tryGSSMainMergeResult(scratch *glrMergeScratch, result []glrStack, idx int,
 		return false, false
 	}
 	if (scratch == nil || scratch.perKeyCap != 1) &&
-		gssStacksHaveDistinctMaterializingShapes(&result[idx], stack) {
+		gssStacksHaveDistinctMaterializingShapesWithScratch(scratch, &result[idx], stack) {
 		return false, true
 	}
 	merged = gssMainMerge(&result[idx], stack)
+	if merged && scratch != nil && len(scratch.materializing) > 0 {
+		clear(scratch.materializing)
+	}
 	return merged, true
 }
 
@@ -3257,14 +3308,14 @@ func cRecoveryCostClassForSlot(scratch *glrMergeScratch, result []glrStack, slot
 	if scratch == nil || !scratch.cRecoveryCost || slot == nil || stack == nil || mergeSlotTrackedCount(slot) == 0 {
 		return -1, false
 	}
-	candidateCost := cStackErrorCostForMerge(scratch.language, stack)
+	candidateCost := cStackErrorCostForMergeWithScratch(scratch, scratch.language, stack)
 	sawDifferentCost := false
 	for j, n := 0, mergeSlotTrackedCount(slot); j < n; j++ {
 		idx := mergeSlotIndexAt(slot, j)
 		if idx < 0 || idx >= len(result) || !stacksHeaderEquivalent(result[idx], *stack) {
 			continue
 		}
-		if cStackErrorCostForMerge(scratch.language, &result[idx]) == candidateCost {
+		if cStackErrorCostForMergeWithScratch(scratch, scratch.language, &result[idx]) == candidateCost {
 			return idx, false
 		}
 		sawDifferentCost = true
@@ -3276,13 +3327,13 @@ func cRecoveryCostClassForSlice(scratch *glrMergeScratch, result []glrStack, key
 	if scratch == nil || !scratch.cRecoveryCost || stack == nil {
 		return -1, false
 	}
-	candidateCost := cStackErrorCostForMerge(scratch.language, stack)
+	candidateCost := cStackErrorCostForMergeWithScratch(scratch, scratch.language, stack)
 	sawDifferentCost := false
 	for j := range result {
 		if mergeKeyForStack(result[j]) != key || !stacksHeaderEquivalent(result[j], *stack) {
 			continue
 		}
-		if cStackErrorCostForMerge(scratch.language, &result[j]) == candidateCost {
+		if cStackErrorCostForMergeWithScratch(scratch, scratch.language, &result[j]) == candidateCost {
 			return j, false
 		}
 		sawDifferentCost = true
@@ -4184,6 +4235,16 @@ func (s *glrMergeScratch) reset() {
 	s.stackEquivBytes = glrStackEquivCacheBytesForCap(cap(s.stackEquivCache))
 	s.frontierHashBytes = glrStackFrontierHashCacheBytesForCap(cap(s.frontierHashCache))
 	s.frontierMergeHash = false
+	if len(s.cErrorCost) > maxRetainedMergeResultCap {
+		s.cErrorCost = nil
+	} else if len(s.cErrorCost) > 0 {
+		clear(s.cErrorCost)
+	}
+	if len(s.materializing) > maxRetainedMergeResultCap {
+		s.materializing = nil
+	} else if len(s.materializing) > 0 {
+		clear(s.materializing)
+	}
 	if len(s.cleanZeroCache) > 0 {
 		clear(s.cleanZeroCache)
 	}

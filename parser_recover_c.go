@@ -645,6 +645,56 @@ func cNodeErrorCostLang(lang *Language, n *Node) uint32 {
 	return cost
 }
 
+func cNodeErrorCostLangWithScratch(scratch *glrMergeScratch, lang *Language, n *Node) uint32 {
+	if n == nil {
+		return 0
+	}
+	if scratch == nil {
+		return cNodeErrorCostLang(lang, n)
+	}
+	if cached, ok := scratch.cErrorCost[n]; ok && cached.ver == n.equivVersion {
+		return cached.cost
+	}
+	if scratch.cErrorCost == nil {
+		scratch.cErrorCost = make(map[*Node]glrCErrorCostEntry)
+	}
+	if n.isMissing() && len(n.children) == 0 {
+		cost := uint32(cErrCostPerMissingTree + cErrCostPerRecovery)
+		scratch.cErrorCost[n] = glrCErrorCostEntry{ver: n.equivVersion, cost: cost}
+		return cost
+	}
+	var cost uint32
+	for _, c := range n.children {
+		cost += cNodeErrorCostLangWithScratch(scratch, lang, c)
+	}
+	if n.symbol == errorSymbol {
+		for _, c := range n.children {
+			if c == nil || c.isExtra() {
+				continue
+			}
+			if c.symbol == errorSymbol && len(c.children) == 0 {
+				continue
+			}
+			if cSymbolVisibleLang(lang, c.symbol) {
+				cost += cErrCostPerSkippedTree
+			} else if len(c.children) > 0 {
+				cost += cErrCostPerSkippedTree * uint32(cNodeVisibleChildCountLang(lang, c))
+			}
+		}
+		bytes := uint32(0)
+		rows := uint32(0)
+		if n.endByte > n.startByte {
+			bytes = n.endByte - n.startByte
+		}
+		if n.endPoint.Row > n.startPoint.Row {
+			rows = n.endPoint.Row - n.startPoint.Row
+		}
+		cost += cErrCostPerRecovery + cErrCostPerSkippedChar*bytes + cErrCostPerSkippedLine*rows
+	}
+	scratch.cErrorCost[n] = glrCErrorCostEntry{ver: n.equivVersion, cost: cost}
+	return cost
+}
+
 // cNodeMemoEntry caches the gated recovery's per-subtree aggregates, the
 // engine analogue of C SubtreeHeapData.error_cost / node counts computed once
 // per subtree in ts_subtree_summarize_children. Finished subtrees never
@@ -745,13 +795,17 @@ func (p *Parser) cStackErrorCost(s *glrStack) uint32 {
 }
 
 func cStackErrorCostForMerge(lang *Language, s *glrStack) uint32 {
+	return cStackErrorCostForMergeWithScratch(nil, lang, s)
+}
+
+func cStackErrorCostForMergeWithScratch(scratch *glrMergeScratch, lang *Language, s *glrStack) uint32 {
 	if s == nil {
 		return 0
 	}
 	var cost uint32
 	walk := func(n *Node) {
 		if n != nil {
-			cost += cNodeErrorCostLang(lang, n)
+			cost += cNodeErrorCostLangWithScratch(scratch, lang, n)
 		}
 	}
 	if len(s.entries) > 0 {

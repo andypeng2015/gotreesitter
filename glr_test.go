@@ -2882,6 +2882,60 @@ func TestMergeStacksCRecoveryCostBlocksGSSMerge(t *testing.T) {
 	}
 }
 
+func TestCNodeErrorCostScratchTracksEquivVersion(t *testing.T) {
+	lang := &Language{SymbolMetadata: make([]SymbolMetadata, 12)}
+	lang.SymbolMetadata[11].Visible = true
+
+	skipped := NewLeafNode(11, true, 0, 1, Point{}, Point{Column: 1})
+	errNode := NewParentNode(errorSymbol, false, []*Node{skipped}, nil, 0)
+
+	var scratch glrMergeScratch
+	first := cNodeErrorCostLangWithScratch(&scratch, lang, errNode)
+	skipped.setExtra(true)
+	nodeBumpEquivVersion(errNode)
+	second := cNodeErrorCostLangWithScratch(&scratch, lang, errNode)
+	want := cNodeErrorCostLang(lang, errNode)
+
+	if second != want {
+		t.Fatalf("scratch cost after version bump = %d, want %d", second, want)
+	}
+	if second >= first {
+		t.Fatalf("scratch cost did not reflect visible child removal: before=%d after=%d", first, second)
+	}
+}
+
+func TestTryGSSMainMergeResultClearsMaterializingCache(t *testing.T) {
+	var gssScratch gssScratch
+	node := NewLeafNode(11, true, 0, 5, Point{}, Point{Column: 5})
+	entries := []stackEntry{{state: 1}, newStackEntryNode(7, node)}
+	left := glrStack{
+		gss:        buildGSSStack(entries, &gssScratch),
+		byteOffset: 5,
+	}
+	right := glrStack{
+		gss:        buildGSSStack(entries, &gssScratch),
+		byteOffset: 5,
+	}
+
+	var scratch glrMergeScratch
+	scratch.beginEquivEpoch()
+	if gssStacksHaveDistinctMaterializingShapesWithScratch(&scratch, &left, &right) {
+		t.Fatalf("test setup produced distinct materializing shapes")
+	}
+	if len(scratch.materializing) == 0 {
+		t.Fatalf("test setup did not populate materializing cache")
+	}
+
+	result := []glrStack{left}
+	merged, attempted := tryGSSMainMergeResult(&scratch, result, 0, &right)
+	if !attempted || !merged {
+		t.Fatalf("GSS merge attempted=%v merged=%v, want true/true", attempted, merged)
+	}
+	if len(scratch.materializing) != 0 {
+		t.Fatalf("materializing cache entries after successful merge = %d, want 0", len(scratch.materializing))
+	}
+}
+
 func TestMergeStacksSmallCapOneScansLaterCRecoveryCostClass(t *testing.T) {
 	makeStack := func(node *Node, score int) glrStack {
 		s := newGLRStack(StateID(1))

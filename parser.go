@@ -727,7 +727,7 @@ func (p *Parser) stopFrontierSameHeaderSummary(stacks []glrStack) string {
 				if gssMainCanMergeWithScratch(&scratch, a, b) {
 					gssEligible++
 					gssAttemptable++
-					if !gssStacksHaveDistinctMaterializingShapes(a, b) {
+					if !gssStacksHaveDistinctMaterializingShapesWithScratch(&scratch, a, b) {
 						gssWouldMerge++
 					}
 				}
