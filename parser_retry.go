@@ -200,6 +200,9 @@ func retryTreeCoversExpectedEOF(tree *Tree) bool {
 	if rt.ExpectedEOFByte == 0 {
 		return true
 	}
+	if rt.LastTokenWasEOF && rt.LastTokenEndByte >= rt.ExpectedEOFByte {
+		return true
+	}
 	endByte := retryTreeEndByte(tree)
 	return endByte >= rt.ExpectedEOFByte || parserTailAllowsCleanAcceptance(tree.Source(), endByte, rt.ExpectedEOFByte, tree.includedRanges)
 }

@@ -333,7 +333,7 @@ func TestParseRuntimeRootStatsUsesRawRootForDeferredTypeScriptCompatibility(t *t
 	tree.deferResultCompatibility()
 
 	var rt ParseRuntime
-	recordParseRuntimeRootStats(&rt, tree, 1, false, lang)
+	recordParseRuntimeRootStats(&rt, tree, tree.Source(), 1, nil, false, lang)
 	if got, want := rt.RootEndByte, uint32(1); got != want {
 		t.Fatalf("RootEndByte = %d, want %d", got, want)
 	}

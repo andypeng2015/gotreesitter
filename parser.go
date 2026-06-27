@@ -2335,7 +2335,7 @@ func recordParseRuntimeTokenStats(parseRuntime *ParseRuntime, tokensConsumed uin
 	parseRuntime.TokenSourceEOFEarly = tokenSourceEOFEarly
 }
 
-func recordParseRuntimeRootStats(parseRuntime *ParseRuntime, tree *Tree, expectedEOFByte uint32, collectFinalStats bool, lang *Language) {
+func recordParseRuntimeRootStats(parseRuntime *ParseRuntime, tree *Tree, source []byte, expectedEOFByte uint32, included []Range, collectFinalStats bool, lang *Language) {
 	if parseRuntime == nil {
 		return
 	}
@@ -2347,6 +2347,17 @@ func recordParseRuntimeRootStats(parseRuntime *ParseRuntime, tree *Tree, expecte
 	}
 	parseRuntime.RootEndByte = root.EndByte()
 	parseRuntime.Truncated = parseRuntime.RootEndByte < expectedEOFByte
+	tailSource := source
+	if tailSource == nil && tree != nil {
+		tailSource = tree.Source()
+	}
+	tailStart := parseRuntime.RootEndByte
+	if parseRuntime.LastTokenWasEOF && parseRuntime.LastTokenEndByte > tailStart && parseRuntime.LastTokenEndByte <= expectedEOFByte {
+		tailStart = parseRuntime.LastTokenEndByte
+	}
+	if parseRuntime.Truncated && parserTailAllowsCleanAcceptance(tailSource, tailStart, expectedEOFByte, included) {
+		parseRuntime.Truncated = false
+	}
 	if !collectFinalStats {
 		return
 	}
@@ -2885,7 +2896,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		recordParseRuntimePhaseTiming(&parseRuntime, materializationTimingRef, parseStart, parserLoopNanos, tokenNextNanos, actionDispatchNanos, actionLookupNanos, glrMergeNanos, glrCullNanos)
 		recordParseRuntimeMaterializationTiming(&parseRuntime, materializationTimingRef, materializationTiming)
 		recordParseRuntimeTokenStats(&parseRuntime, perfTokensConsumed, lastTokenEndByte, lastTokenSymbol, lastTokenWasEOF, tokenSourceEOFEarly)
-		recordParseRuntimeRootStats(&parseRuntime, tree, expectedEOFByte, scratch.audit.enabled || (arena != nil && arena.breakdownEnabled), p.language)
+		recordParseRuntimeRootStats(&parseRuntime, tree, source, expectedEOFByte, p.included, scratch.audit.enabled || (arena != nil && arena.breakdownEnabled), p.language)
 		p.copyNormalizationStats(&parseRuntime)
 		if tree != nil {
 			tree.setParseRuntime(parseRuntime)
@@ -4025,6 +4036,18 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			// the first accept exactly as before.
 			if !p.errorCostCompetitionEnabled() || liveUnaccepted == 0 {
 				accepted := compactAcceptedStacks(stacks)
+				selectable := accepted[:0]
+				for i := range accepted {
+					if cleanAcceptedStackSelectableAtEOF(source, expectedEOFByte, p.included, arena, &accepted[i]) {
+						selectable = append(selectable, accepted[i])
+					}
+				}
+				if len(selectable) == 0 && liveUnaccepted > 0 {
+					continue
+				}
+				if len(selectable) > 0 {
+					accepted = selectable
+				}
 				if p.errorCostCompetitionEnabled() {
 					// Faithful C recovery port: ts_parser__accept rebuilds the
 					// root around trailing extras before the tree competes.
@@ -6315,6 +6338,16 @@ func classifyConflictShape(actions []ParseAction) (rrConflict, rsConflict bool) 
 	}
 	return reduceCount >= 2, false
 }
+func cleanAcceptedStackSelectableAtEOF(source []byte, expectedEOFByte uint32, included []Range, arena *nodeArena, s *glrStack) bool {
+	if s == nil || !s.accepted {
+		return false
+	}
+	if stackResultErrorRank(s, arena) != 0 {
+		return true
+	}
+	return parserTailAllowsCleanAcceptance(source, s.byteOffset, expectedEOFByte, included)
+}
+
 func parserTailAllowsCleanAcceptance(source []byte, start, end uint32, included []Range) bool {
 	if start >= end {
 		return true

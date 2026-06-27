@@ -315,7 +315,11 @@ func finalizeReturnedTreeRootSpan(tree *Tree, source []byte) {
 	}
 	rt.RootEndByte = root.endByte
 	rt.Truncated = rt.ExpectedEOFByte > root.endByte
-	if rt.Truncated && parserTailAllowsCleanAcceptance(source, root.endByte, rt.ExpectedEOFByte, tree.includedRanges) {
+	tailStart := root.endByte
+	if rt.LastTokenWasEOF && rt.LastTokenEndByte > tailStart && rt.LastTokenEndByte <= rt.ExpectedEOFByte {
+		tailStart = rt.LastTokenEndByte
+	}
+	if rt.Truncated && parserTailAllowsCleanAcceptance(source, tailStart, rt.ExpectedEOFByte, tree.includedRanges) {
 		rt.Truncated = false
 	}
 	tree.setParseRuntime(rt)

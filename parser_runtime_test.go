@@ -89,6 +89,112 @@ func TestParseRuntimeReportsAcceptedOnCompleteParse(t *testing.T) {
 	}
 }
 
+func TestAcceptedPrefixWithRealTailDoesNotReturnCleanParse(t *testing.T) {
+	lang := buildPrefixAcceptLanguage()
+	parser := NewParser(lang)
+
+	tree := mustParse(t, parser, []byte("ab"))
+	defer tree.Release()
+	root := tree.RootNode()
+	if root == nil {
+		t.Fatal("parse returned nil root")
+	}
+	rt := tree.ParseRuntime()
+
+	if got, want := rt.StopReason, ParseStopAccepted; got != want {
+		t.Fatalf("StopReason = %q, want %q; runtime=%s root=%s", got, want, rt.Summary(), root.SExpr(lang))
+	}
+	if rt.Truncated {
+		t.Fatalf("Truncated = true, want false; runtime=%s root=%s", rt.Summary(), root.SExpr(lang))
+	}
+	if root.HasError() {
+		t.Fatalf("root has error, want clean full parse; runtime=%s root=%s", rt.Summary(), root.SExpr(lang))
+	}
+	if got, want := root.EndByte(), uint32(2); got != want {
+		t.Fatalf("root end = %d, want %d; runtime=%s root=%s", got, want, rt.Summary(), root.SExpr(lang))
+	}
+	if got, want := root.Text(tree.Source()), "ab"; got != want {
+		t.Fatalf("root text = %q, want %q; root=%s", got, want, root.SExpr(lang))
+	}
+}
+
+func TestAcceptedPrefixOnlyBeforeRealTailDemotesToError(t *testing.T) {
+	lang := buildPrefixAcceptLanguage()
+	parser := NewParser(lang)
+
+	tree := mustParse(t, parser, []byte("abb"))
+	defer tree.Release()
+	root := tree.RootNode()
+	if root == nil {
+		t.Fatal("parse returned nil root")
+	}
+	rt := tree.ParseRuntime()
+
+	if rt.StopReason == ParseStopAccepted && !rt.Truncated && !root.HasError() {
+		t.Fatalf("clean accepted prefix returned before real tail; runtime=%s root=%s", rt.Summary(), root.SExpr(lang))
+	}
+	if root.EndByte() >= uint32(len(tree.Source())) && !root.HasError() {
+		t.Fatalf("real tail was reported as cleanly consumed; runtime=%s root=%s", rt.Summary(), root.SExpr(lang))
+	}
+}
+
+func TestAcceptedPrefixWithPaddingTailRemainsClean(t *testing.T) {
+	lang := buildPrefixAcceptLanguage()
+	parser := NewParser(lang)
+
+	tree := mustParse(t, parser, []byte("a \n\t"))
+	defer tree.Release()
+	root := tree.RootNode()
+	if root == nil {
+		t.Fatal("parse returned nil root")
+	}
+	rt := tree.ParseRuntime()
+
+	if got, want := rt.StopReason, ParseStopAccepted; got != want {
+		t.Fatalf("StopReason = %q, want %q; runtime=%s root=%s", got, want, rt.Summary(), root.SExpr(lang))
+	}
+	if rt.Truncated {
+		t.Fatalf("Truncated = true, want false for parser-padding tail; runtime=%s root=%s", rt.Summary(), root.SExpr(lang))
+	}
+	if root.HasError() {
+		t.Fatalf("root has error, want clean padding-tail parse; runtime=%s root=%s", rt.Summary(), root.SExpr(lang))
+	}
+	if got, want := root.EndByte(), uint32(len(tree.Source())); got != want {
+		t.Fatalf("root end = %d, want %d for padding-tail parse; runtime=%s root=%s", got, want, rt.Summary(), root.SExpr(lang))
+	}
+}
+
+func TestAcceptedPrefixWithIncludedRangePaddingTailRemainsClean(t *testing.T) {
+	lang := buildPrefixAcceptLanguage()
+	parser := NewParser(lang)
+	source := []byte("aXXX \t")
+	parser.SetIncludedRanges([]Range{
+		{StartByte: 0, EndByte: 1},
+		{StartByte: 4, EndByte: uint32(len(source))},
+	})
+
+	tree := mustParse(t, parser, source)
+	defer tree.Release()
+	root := tree.RootNode()
+	if root == nil {
+		t.Fatal("parse returned nil root")
+	}
+	rt := tree.ParseRuntime()
+
+	if got, want := rt.StopReason, ParseStopAccepted; got != want {
+		t.Fatalf("StopReason = %q, want %q; runtime=%s root=%s", got, want, rt.Summary(), root.SExpr(lang))
+	}
+	if rt.Truncated {
+		t.Fatalf("Truncated = true, want false for included padding tail; runtime=%s root=%s", rt.Summary(), root.SExpr(lang))
+	}
+	if root.HasError() {
+		t.Fatalf("root has error, want clean included padding-tail parse; runtime=%s root=%s", rt.Summary(), root.SExpr(lang))
+	}
+	if !retryTreeCoversExpectedEOF(tree) {
+		t.Fatalf("retryTreeCoversExpectedEOF = false for included padding tail; runtime=%s root=%s", rt.Summary(), root.SExpr(lang))
+	}
+}
+
 func buildConflictReduceFrontierLanguage(postReduceBAction uint16, frontierActions []ParseAction) *Language {
 	return &Language{
 		Name:              "conflict_reduce_frontier",
