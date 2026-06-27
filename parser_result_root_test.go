@@ -32,6 +32,69 @@ func newRootFrameReplayParser(lang *Language) *Parser {
 	return parser
 }
 
+func newRootFrameReplayGapLanguage() *Language {
+	const (
+		newlineSym = Symbol(2)
+		rootSym    = Symbol(3)
+		childSym   = Symbol(4)
+		repeatSym  = Symbol(5)
+	)
+	rows := make([][]uint16, 7)
+	for i := range rows {
+		rows[i] = make([]uint16, 7)
+	}
+	rows[1][rootSym] = 2
+	rows[1][childSym] = 3
+	rows[1][repeatSym] = 4
+	rows[2][0] = 1
+	rows[3][newlineSym] = 2
+	rows[4][0] = 5
+	rows[4][childSym] = 6
+	rows[5][0] = 4
+	rows[6][0] = 4
+
+	lexModes := make([]LexMode, 7)
+	for i := range lexModes {
+		lexModes[i] = LexMode{LexState: 0}
+	}
+	lexModes[3] = LexMode{LexState: 1}
+
+	return &Language{
+		Name:            "gap_root",
+		TokenCount:      3,
+		SymbolCount:     7,
+		StateCount:      7,
+		LargeStateCount: 7,
+		InitialState:    1,
+		SymbolNames:     []string{"EOF", "_token", "_newline", "source_file", "declaration", "source_file_repeat1", "comment"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF"},
+			{Name: "_token"},
+			{Name: "_newline"},
+			{Name: "source_file", Visible: true, Named: true},
+			{Name: "declaration", Visible: true, Named: true},
+			{Name: "source_file_repeat1"},
+			{Name: "comment", Visible: true, Named: true},
+		},
+		ParseActions: []ParseActionEntry{
+			{},
+			{Actions: []ParseAction{{Type: ParseActionAccept}}},
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 5}}},
+			{Actions: []ParseAction{{Type: ParseActionReduce, Symbol: repeatSym, ChildCount: 1}}},
+			{Actions: []ParseAction{{Type: ParseActionReduce, Symbol: repeatSym, ChildCount: 2}}},
+			{Actions: []ParseAction{{Type: ParseActionReduce, Symbol: rootSym, ChildCount: 1}}},
+		},
+		ParseTable: rows,
+		LexModes:   lexModes,
+		LexStates: []LexState{
+			{AcceptToken: 0, Default: -1, EOF: -1, Transitions: []LexTransition{{Lo: '\n', Hi: '\n', NextState: 2}}},
+			{AcceptToken: newlineSym, Default: -1, EOF: -1},
+			{AcceptToken: newlineSym, Default: -1, EOF: -1},
+		},
+		ZeroWidthTokens: []bool{false, false, true},
+	}
+}
+
 func newRootFrameReplayReduceLanguage() *Language {
 	const (
 		rootSym      = Symbol(2)
@@ -704,6 +767,73 @@ func TestBuildResultFromNodesExtendsGoSourceFileRootWhenChildrenHaveErrors(t *te
 	}
 	if got, want := root.EndByte(), uint32(len(source)); got != want {
 		t.Fatalf("root end = %d, want %d", got, want)
+	}
+}
+
+func TestBuildResultFromNodesFramesSingleErrorRootChildrenThroughSourceGapToken(t *testing.T) {
+	lang := newRootFrameReplayGapLanguage()
+	parser := NewParser(lang)
+	parser.rootSymbol = 3
+	parser.hasRootSymbol = true
+	arena := acquireNodeArena(arenaClassFull)
+	source := []byte("decl\ndecl\n")
+
+	first := newLeafNodeInArena(arena, 4, true, 0, 4, Point{}, Point{Column: 4})
+	second := newLeafNodeInArena(arena, 4, true, 5, 9, Point{Row: 1}, Point{Row: 1, Column: 4})
+	errRoot := newParentNodeInArena(arena, errorSymbol, true, []*Node{first, second}, nil, 0)
+	errRoot.setHasError(true)
+
+	tree := parser.buildResultFromNodes([]*Node{errRoot}, source, arena, nil, nil, nil)
+	t.Cleanup(tree.Release)
+
+	root := tree.RootNode()
+	if root == nil {
+		t.Fatal("buildResultFromNodes returned nil root")
+	}
+	if got, want := root.Type(lang), "source_file"; got != want {
+		t.Fatalf("root type = %q, want %q", got, want)
+	}
+	if !root.HasError() {
+		t.Fatal("expected framed root to retain HasError=true")
+	}
+	if got, want := root.ChildCount(), 2; got != want {
+		t.Fatalf("root child count = %d, want %d", got, want)
+	}
+}
+
+func TestBuildResultFromNodesFramesSingleErrorRootChildrenThroughSkippedExtraSourceGap(t *testing.T) {
+	lang := newRootFrameReplayGapLanguage()
+	parser := NewParser(lang)
+	parser.rootSymbol = 3
+	parser.hasRootSymbol = true
+	arena := acquireNodeArena(arenaClassFull)
+	source := []byte("decl\n# comment\ndecl\n")
+
+	first := newLeafNodeInArena(arena, 4, true, 0, 4, Point{}, Point{Column: 4})
+	comment := newLeafNodeInArena(arena, 6, true, 5, 14, Point{Row: 1}, Point{Row: 1, Column: 9})
+	comment.setExtra(true)
+	second := newLeafNodeInArena(arena, 4, true, 15, 19, Point{Row: 2}, Point{Row: 2, Column: 4})
+	errRoot := newParentNodeInArena(arena, errorSymbol, true, []*Node{first, comment, second}, nil, 0)
+	errRoot.setHasError(true)
+
+	tree := parser.buildResultFromNodes([]*Node{errRoot}, source, arena, nil, nil, nil)
+	t.Cleanup(tree.Release)
+
+	root := tree.RootNode()
+	if root == nil {
+		t.Fatal("buildResultFromNodes returned nil root")
+	}
+	if got, want := root.Type(lang), "source_file"; got != want {
+		t.Fatalf("root type = %q, want %q", got, want)
+	}
+	if !root.HasError() {
+		t.Fatal("expected framed root to retain HasError=true")
+	}
+	if got, want := root.ChildCount(), 3; got != want {
+		t.Fatalf("root child count = %d, want %d", got, want)
+	}
+	if got := root.Child(1); got == nil || !got.IsExtra() {
+		t.Fatalf("root child 1 extra = %v, want true", got != nil && got.IsExtra())
 	}
 }
 

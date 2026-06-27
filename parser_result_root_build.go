@@ -191,6 +191,8 @@ type syntheticRootReplayFrame struct {
 }
 
 const syntheticRootReplayMaxFrontier = 128
+const syntheticRootReplayMaxGapBytes = 4096
+const syntheticRootReplayMaxGapTokens = 64
 
 func (b *resultRootBuild) expectedRootCanFrameRecoveredFragments(rootChildren []*Node) bool {
 	if b == nil || b.parser == nil || b.lang == nil || !b.hasExpectedRoot || len(rootChildren) == 0 {
@@ -202,19 +204,43 @@ func (b *resultRootBuild) expectedRootCanFrameRecoveredFragments(rootChildren []
 	frontier := []syntheticRootReplayFrame{{states: []StateID{b.lang.InitialState}}}
 	consumedNonError := false
 	sawRecovery := false
+	gapStartByte := uint32(0)
+	gapStartPoint := Point{}
+	haveGapStart := false
 	for _, child := range rootChildren {
+		if child == nil {
+			continue
+		}
 		if b.syntheticRootReplaySkipsChild(child) {
+			if child.endByte > child.startByte && (!haveGapStart || child.endByte > gapStartByte) {
+				gapStartByte = child.endByte
+				gapStartPoint = child.endPoint
+				haveGapStart = true
+			}
 			continue
 		}
 		if child.IsError() || child.HasError() {
 			sawRecovery = true
+			gapStartByte = child.endByte
+			gapStartPoint = child.endPoint
+			haveGapStart = true
 			continue
 		}
-		frontier = b.syntheticRootReplayAdvance(frontier, child)
-		if len(frontier) == 0 {
+		next := b.syntheticRootReplayAdvance(frontier, child)
+		if len(next) == 0 && haveGapStart && child.startByte >= gapStartByte {
+			bridged := b.syntheticRootReplayBridgeGap(frontier, gapStartByte, gapStartPoint, child.startByte)
+			if len(bridged) > 0 {
+				next = b.syntheticRootReplayAdvance(bridged, child)
+			}
+		}
+		if len(next) == 0 {
 			return false
 		}
+		frontier = next
 		consumedNonError = true
+		gapStartByte = child.endByte
+		gapStartPoint = child.endPoint
+		haveGapStart = true
 	}
 	if consumedNonError {
 		return b.syntheticRootReplayFrontierAcceptsEOF(frontier)
@@ -226,6 +252,7 @@ func (b *resultRootBuild) syntheticRootReplayAdvance(frontier []syntheticRootRep
 	if len(frontier) == 0 || child == nil {
 		return nil
 	}
+	frontier = b.syntheticRootReplayCloseBeforeChild(frontier, child)
 	advanced := make([]syntheticRootReplayFrame, 0, len(frontier))
 	for _, frame := range frontier {
 		if len(frame.states) == 0 {
@@ -246,13 +273,203 @@ func (b *resultRootBuild) syntheticRootReplayAdvance(frontier []syntheticRootRep
 	return b.syntheticRootReplayCloseEOF(advanced)
 }
 
+func (b *resultRootBuild) syntheticRootReplayCloseBeforeChild(frontier []syntheticRootReplayFrame, child *Node) []syntheticRootReplayFrame {
+	if len(frontier) == 0 || child == nil {
+		return nil
+	}
+	if b.lang != nil && b.lang.TokenCount > 0 && uint32(child.symbol) < b.lang.TokenCount {
+		return b.syntheticRootReplayCloseLookahead(frontier, child.symbol)
+	}
+	closed := make([]syntheticRootReplayFrame, 0, len(frontier))
+	for _, frame := range frontier {
+		if len(frame.states) == 0 {
+			continue
+		}
+		if tok, ok := b.syntheticRootReplayLexChildStartToken(frame, child); ok {
+			for _, reduced := range b.syntheticRootReplayCloseLookahead([]syntheticRootReplayFrame{frame}, tok.Symbol) {
+				closed = appendSyntheticRootReplayFrame(closed, reduced.states)
+			}
+			continue
+		}
+		closed = appendSyntheticRootReplayFrame(closed, frame.states)
+	}
+	return closed
+}
+
+func (b *resultRootBuild) syntheticRootReplayLexChildStartToken(frame syntheticRootReplayFrame, child *Node) (Token, bool) {
+	if child == nil || child.startByte >= child.endByte {
+		return Token{}, false
+	}
+	return b.syntheticRootReplayLexGapToken(frame, child.startByte, child.startPoint, child.endByte)
+}
+
+type syntheticRootReplayGapCursor struct {
+	frame syntheticRootReplayFrame
+	byte  uint32
+	point Point
+}
+
+func (b *resultRootBuild) syntheticRootReplayBridgeGap(frontier []syntheticRootReplayFrame, startByte uint32, startPoint Point, endByte uint32) []syntheticRootReplayFrame {
+	if len(frontier) == 0 {
+		return nil
+	}
+	if startByte == endByte {
+		return frontier
+	}
+	if startByte > endByte || endByte > uint32(len(b.source)) || endByte-startByte > syntheticRootReplayMaxGapBytes {
+		return nil
+	}
+	cursors := make([]syntheticRootReplayGapCursor, 0, len(frontier))
+	for _, frame := range frontier {
+		cursors = appendSyntheticRootReplayGapCursor(cursors, frame, startByte, startPoint)
+	}
+	for step := 0; step < syntheticRootReplayMaxGapTokens; step++ {
+		allAtEnd := true
+		nextCursors := make([]syntheticRootReplayGapCursor, 0, len(cursors))
+		for _, cursor := range cursors {
+			if cursor.byte == endByte {
+				nextCursors = appendSyntheticRootReplayGapCursor(nextCursors, cursor.frame, cursor.byte, cursor.point)
+				continue
+			}
+			allAtEnd = false
+			if cursor.byte > endByte {
+				continue
+			}
+			tok, ok := b.syntheticRootReplayLexGapToken(cursor.frame, cursor.byte, cursor.point, endByte)
+			if !ok {
+				if syntheticRootReplayCanSkipGapByte(b.source[cursor.byte]) {
+					nextByte := cursor.byte + 1
+					nextPoint := advancePointByBytes(cursor.point, b.source[cursor.byte:nextByte])
+					nextCursors = appendSyntheticRootReplayGapCursor(nextCursors, cursor.frame, nextByte, nextPoint)
+				}
+				continue
+			}
+			advanced := b.syntheticRootReplayAdvanceToken([]syntheticRootReplayFrame{cursor.frame}, tok)
+			if len(advanced) == 0 {
+				if syntheticRootReplayCanSkipGapByte(b.source[cursor.byte]) {
+					nextByte := cursor.byte + 1
+					nextPoint := advancePointByBytes(cursor.point, b.source[cursor.byte:nextByte])
+					nextCursors = appendSyntheticRootReplayGapCursor(nextCursors, cursor.frame, nextByte, nextPoint)
+				}
+				continue
+			}
+			for _, frame := range advanced {
+				nextCursors = appendSyntheticRootReplayGapCursor(nextCursors, frame, tok.EndByte, tok.EndPoint)
+				if tok.EndByte == cursor.byte && cursor.byte < endByte {
+					nextByte := cursor.byte + 1
+					nextPoint := advancePointByBytes(cursor.point, b.source[cursor.byte:nextByte])
+					nextCursors = appendSyntheticRootReplayGapCursor(nextCursors, frame, nextByte, nextPoint)
+				}
+			}
+		}
+		if allAtEnd {
+			return syntheticRootReplayGapCursorFrames(cursors)
+		}
+		if len(nextCursors) == 0 {
+			return nil
+		}
+		cursors = nextCursors
+	}
+	return nil
+}
+
+func syntheticRootReplayCanSkipGapByte(ch byte) bool {
+	switch ch {
+	case 32, 9, 10, 13, 12:
+		return true
+	default:
+		return false
+	}
+}
+
+func (b *resultRootBuild) syntheticRootReplayLexGapToken(frame syntheticRootReplayFrame, startByte uint32, startPoint Point, endByte uint32) (Token, bool) {
+	if b == nil || b.parser == nil || b.lang == nil || len(frame.states) == 0 || len(b.lang.LexStates) == 0 {
+		return Token{}, false
+	}
+	if startByte >= endByte || endByte > uint32(len(b.source)) {
+		return Token{}, false
+	}
+	lexer := NewLexer(b.lang.LexStates, b.source)
+	ts := newDFATokenSourceDirect(lexer, b.lang, b.parser.lookupActionIndex, b.parser.hasKeywordState, b.parser.externalValidByState)
+	defer ts.Close()
+	ts.SetParserState(frame.states[len(frame.states)-1])
+	ts.SeekTokenFrontier(startByte, startPoint)
+	tok := ts.Next()
+	if tok.Symbol == 0 || tok.NoLookahead {
+		return Token{}, false
+	}
+	if tok.StartByte != startByte || tok.EndByte < tok.StartByte || tok.EndByte > endByte {
+		return Token{}, false
+	}
+	return tok, true
+}
+
+func (b *resultRootBuild) syntheticRootReplayAdvanceToken(frontier []syntheticRootReplayFrame, tok Token) []syntheticRootReplayFrame {
+	if len(frontier) == 0 || tok.Symbol == 0 {
+		return nil
+	}
+	closed := b.syntheticRootReplayCloseLookahead(frontier, tok.Symbol)
+	advanced := make([]syntheticRootReplayFrame, 0, len(closed))
+	for _, frame := range closed {
+		if len(frame.states) == 0 {
+			continue
+		}
+		top := frame.states[len(frame.states)-1]
+		for _, act := range b.syntheticRootReplayActions(frame, tok.Symbol) {
+			if act.Type != ParseActionShift {
+				continue
+			}
+			if act.Extra {
+				advanced = appendSyntheticRootReplayFrame(advanced, frame.states)
+				continue
+			}
+			target := extraShiftTargetState(top, act)
+			if target == 0 {
+				continue
+			}
+			states := make([]StateID, len(frame.states)+1)
+			copy(states, frame.states)
+			states[len(states)-1] = target
+			advanced = appendSyntheticRootReplayFrame(advanced, states)
+		}
+	}
+	if len(advanced) == 0 {
+		return nil
+	}
+	return b.syntheticRootReplayCloseEOF(advanced)
+}
+
+func appendSyntheticRootReplayGapCursor(cursors []syntheticRootReplayGapCursor, frame syntheticRootReplayFrame, pos uint32, point Point) []syntheticRootReplayGapCursor {
+	if len(frame.states) == 0 || len(cursors) >= syntheticRootReplayMaxFrontier {
+		return cursors
+	}
+	for _, cursor := range cursors {
+		if cursor.byte == pos && cursor.point == point && syntheticRootReplayStatesEqual(cursor.frame.states, frame.states) {
+			return cursors
+		}
+	}
+	return append(cursors, syntheticRootReplayGapCursor{frame: frame, byte: pos, point: point})
+}
+
+func syntheticRootReplayGapCursorFrames(cursors []syntheticRootReplayGapCursor) []syntheticRootReplayFrame {
+	frames := make([]syntheticRootReplayFrame, 0, len(cursors))
+	for _, cursor := range cursors {
+		frames = appendSyntheticRootReplayFrame(frames, cursor.frame.states)
+	}
+	return frames
+}
+
 func (b *resultRootBuild) syntheticRootReplayCloseEOF(frontier []syntheticRootReplayFrame) []syntheticRootReplayFrame {
+	return b.syntheticRootReplayCloseLookahead(frontier, 0)
+}
+
+func (b *resultRootBuild) syntheticRootReplayCloseLookahead(frontier []syntheticRootReplayFrame, lookahead Symbol) []syntheticRootReplayFrame {
 	closed := make([]syntheticRootReplayFrame, 0, len(frontier))
 	for _, frame := range frontier {
 		closed = appendSyntheticRootReplayFrame(closed, frame.states)
 	}
 	for i := 0; i < len(closed); i++ {
-		for _, act := range b.syntheticRootReplayEOFActions(closed[i]) {
+		for _, act := range b.syntheticRootReplayActions(closed[i], lookahead) {
 			if act.Type != ParseActionReduce {
 				continue
 			}
@@ -283,11 +500,11 @@ func (b *resultRootBuild) syntheticRootReplayReduce(frame syntheticRootReplayFra
 	return syntheticRootReplayFrame{states: states}, true
 }
 
-func (b *resultRootBuild) syntheticRootReplayEOFActions(frame syntheticRootReplayFrame) []ParseAction {
+func (b *resultRootBuild) syntheticRootReplayActions(frame syntheticRootReplayFrame, lookahead Symbol) []ParseAction {
 	if b == nil || b.parser == nil || b.lang == nil || len(frame.states) == 0 {
 		return nil
 	}
-	idx := b.parser.lookupActionIndex(frame.states[len(frame.states)-1], 0)
+	idx := b.parser.lookupActionIndex(frame.states[len(frame.states)-1], lookahead)
 	if idx == 0 || int(idx) >= len(b.lang.ParseActions) {
 		return nil
 	}
