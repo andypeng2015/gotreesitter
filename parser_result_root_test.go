@@ -508,7 +508,7 @@ func TestBuildResultFromNodesKeepsSQLSourceFileRootWhenChildrenHaveErrors(t *tes
 	}
 }
 
-func TestBuildResultFromNodesKeepsGoSourceFileRootWhenChildrenHaveErrors(t *testing.T) {
+func TestBuildResultFromNodesExtendsGoSourceFileRootWhenChildrenHaveErrors(t *testing.T) {
 	lang := newRootFrameReplayLanguage("go", "source_file", "package_clause", true)
 	parser := newRootFrameReplayParser(lang)
 	arena := acquireNodeArena(arenaClassFull)

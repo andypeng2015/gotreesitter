@@ -467,15 +467,21 @@ func parseWithSnippetParserInheriting(lang *Language, source []byte, parent *Par
 	}
 	defer releaseSnippetParser(parser)
 	if parent != nil {
-		parser.timeoutMicros = parent.timeoutMicros
+		parser.timeoutMicros = parent.remainingTimeoutMicros()
 		parser.cancellationFlag = parent.cancellationFlag
-		parser.parseStopBudgetActive = parent.parseStopBudgetActive
-		parser.parseStopDeadline = parent.parseStopDeadline
+		if reason := parent.activeParseStopReason(); parseStopReasonIsActive(reason) {
+			parser.parseStoppedReason = reason
+			parser.parseBudgetDepth = 1
+		}
 	}
-	if !parser.parseStopBudgetActive && len(timeoutMicros) > 0 && timeoutMicros[0] > 0 {
+	if parent == nil && len(timeoutMicros) > 0 && timeoutMicros[0] > 0 {
 		parser.timeoutMicros = timeoutMicros[0]
 	}
-	return parser.Parse(source)
+	tree, err := parser.Parse(source)
+	if parent != nil && tree != nil && parseStopReasonIsActive(tree.ParseStopReason()) {
+		parent.markActiveParseStopped(tree.ParseStopReason())
+	}
+	return tree, err
 }
 
 type closeableTokenSource interface {

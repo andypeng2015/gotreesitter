@@ -105,6 +105,60 @@ func TestReduceOverForestNestedForkNoExtras(t *testing.T) {
 	}
 }
 
+func TestReduceOverForestForkedTopWithForkedPredecessorChildCount2(t *testing.T) {
+	// A repeated-list reduction often pops [previous-list, new-item]. When the
+	// new item has multiple raw-distinct alternatives, each top link can point
+	// at a predecessor that is itself forked. childCount=2 must enumerate those
+	// predecessor alternatives, not only the first predecessor link.
+	n0 := &gssForestNode{state: 0}
+	n1 := &gssForestNode{state: 1, links: []gssLink{
+		{prev: n0, subtree: stackEntry{state: 10}},
+		{prev: n0, subtree: stackEntry{state: 20}},
+	}, noExtraDepth: 1}
+	n2 := &gssForestNode{state: 2, links: []gssLink{
+		{prev: n1, subtree: stackEntry{state: 11}},
+		{prev: n1, subtree: stackEntry{state: 21}},
+	}, noExtraDepth: 2}
+
+	got := pathsOf(n2, 2)
+	want := []string{"[10 11]|0", "[20 11]|0", "[10 21]|0", "[20 21]|0"}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("forked top with forked predecessor childCount=2: got %v want %v", got, want)
+	}
+}
+
+func TestReduceOverForestVisitorMutationDoesNotCorruptEnumeration(t *testing.T) {
+	n0 := &gssForestNode{state: 0}
+	n1 := &gssForestNode{state: 1, links: []gssLink{
+		{prev: n0, subtree: stackEntry{state: 10}},
+		{prev: n0, subtree: stackEntry{state: 20}},
+	}, noExtraDepth: 1}
+	n2 := &gssForestNode{state: 2, links: []gssLink{
+		{prev: n1, subtree: stackEntry{state: 11}},
+		{prev: n1, subtree: stackEntry{state: 21}},
+	}, noExtraDepth: 2}
+
+	var out []string
+	mutated := false
+	reduceOverForest(n2, 2, func(children []stackEntry, _ int, popTo *gssForestNode) {
+		states := make([]uint32, len(children))
+		for i, c := range children {
+			states[i] = uint32(c.state)
+		}
+		out = append(out, fmt.Sprintf("%v|%d", states, popTo.state))
+		if !mutated {
+			mutated = true
+			n1.links[1].subtree = stackEntry{state: 88}
+			n2.links[1].subtree = stackEntry{state: 99}
+		}
+	})
+
+	want := []string{"[10 11]|0", "[20 11]|0", "[10 21]|0", "[20 21]|0"}
+	if fmt.Sprint(out) != fmt.Sprint(want) {
+		t.Fatalf("visitor mutation corrupted enumeration: got %v want %v", out, want)
+	}
+}
+
 func TestReduceOverForestNestedForkNoExtrasChildCount4(t *testing.T) {
 	n0 := &gssForestNode{state: 0}
 	n1 := &gssForestNode{state: 1, links: []gssLink{
@@ -233,6 +287,231 @@ func TestCoalesceForestRefreshesMinLinkScoreOnReplacement(t *testing.T) {
 	}
 	if node.dirty <= initialDirty {
 		t.Fatalf("replacement dirty=%d, want > %d", node.dirty, initialDirty)
+	}
+}
+
+func TestCoalesceForestKeepsEqualScoreRawDistinctLinks(t *testing.T) {
+	idx := newGSSForestIndex(0)
+	slab := &gssForestNodeSlab{}
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	p := &Parser{}
+	base := &gssForestNode{state: 0}
+	leftChild := newLeafNodeInArena(arena, 11, true, 1, 2, Point{}, Point{})
+	rightChild := newLeafNodeInArena(arena, 10, true, 1, 2, Point{}, Point{})
+	left := newParentNodeInArena(arena, 100, true, []*Node{leftChild}, nil, 0)
+	right := newParentNodeInArena(arena, 100, true, []*Node{rightChild}, nil, 0)
+	left.rawShape = p.captureRawShape(arena, 100, 1, []stackEntry{newStackEntryNode(11, leftChild)}, 0, 1)
+	right.rawShape = p.captureRawShape(arena, 100, 2, []stackEntry{newStackEntryNode(10, rightChild)}, 0, 1)
+
+	node := coalesceForestWithRaw(p, arena, &idx, slab, 5, 4, base, newStackEntryNode(100, left), 3, 0)
+	again := coalesceForestWithRaw(p, arena, &idx, slab, 5, 4, base, newStackEntryNode(100, right), 3, 0)
+	if again != node {
+		t.Fatal("raw-distinct alternative reached a different coalesced node")
+	}
+	if len(node.links) != 2 {
+		t.Fatalf("raw-distinct equal-score links = %d, want 2", len(node.links))
+	}
+	if best := node.bestResultLink(p, arena); best == nil || stackEntryNode(best.subtree) != right {
+		t.Fatalf("best raw-distinct link = %v, want second raw-preferred link", best)
+	}
+}
+
+func TestCoalesceForestKeepsEqualScoreOneSidedRawUnknownLinks(t *testing.T) {
+	idx := newGSSForestIndex(0)
+	slab := &gssForestNodeSlab{}
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	p := &Parser{}
+	base := &gssForestNode{state: 0}
+	leftChild := newLeafNodeInArena(arena, 11, true, 1, 2, Point{}, Point{})
+	rightChild := newLeafNodeInArena(arena, 11, true, 1, 2, Point{}, Point{})
+	left := newParentNodeInArena(arena, 100, true, []*Node{leftChild}, nil, 0)
+	right := newParentNodeInArena(arena, 100, true, []*Node{rightChild}, nil, 0)
+	left.rawShape = p.captureRawShape(arena, 100, 1, []stackEntry{newStackEntryNode(11, leftChild)}, 0, 1)
+
+	node := coalesceForestWithRaw(p, arena, &idx, slab, 5, 4, base, newStackEntryNode(100, left), 3, 0)
+	again := coalesceForestWithRaw(p, arena, &idx, slab, 5, 4, base, newStackEntryNode(100, right), 3, 0)
+	if again != node {
+		t.Fatal("one-sided raw alternative reached a different coalesced node")
+	}
+	if len(node.links) != 2 {
+		t.Fatalf("one-sided raw equal-score links = %d, want 2", len(node.links))
+	}
+}
+
+func TestCoalesceForestCapPreservesRawDistinctCandidateOverDuplicateBucket(t *testing.T) {
+	idx := newGSSForestIndex(0)
+	slab := &gssForestNodeSlab{}
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	p := &Parser{}
+	makeEntry := func(childSym Symbol, prod uint16) stackEntry {
+		child := newLeafNodeInArena(arena, childSym, true, 1, 2, Point{}, Point{})
+		parent := newParentNodeInArena(arena, 100, true, []*Node{child}, nil, 0)
+		parent.rawShape = p.captureRawShape(arena, 100, prod, []stackEntry{newStackEntryNode(StateID(childSym), child)}, 0, 1)
+		return newStackEntryNode(100, parent)
+	}
+
+	node := (*gssForestNode)(nil)
+	for i := 0; i < forestMaxLinksPerNode-1; i++ {
+		prev := &gssForestNode{state: StateID(i + 1)}
+		node = coalesceForestWithRaw(p, arena, &idx, slab, 5, 4, prev, makeEntry(Symbol(10+i), uint16(i+1)), 10, 0)
+	}
+	duplicatePrev := &gssForestNode{state: 99}
+	duplicate := makeEntry(10, 1)
+	node = coalesceForestWithRaw(p, arena, &idx, slab, 5, 4, duplicatePrev, duplicate, 9, 0)
+	if len(node.links) != forestMaxLinksPerNode {
+		t.Fatalf("setup links = %d, want %d", len(node.links), forestMaxLinksPerNode)
+	}
+
+	candidatePrev := &gssForestNode{state: 100}
+	candidate := makeEntry(99, 99)
+	node = coalesceForestWithRaw(p, arena, &idx, slab, 5, 4, candidatePrev, candidate, 0, 0)
+	if len(node.links) != forestMaxLinksPerNode {
+		t.Fatalf("links after cap = %d, want %d", len(node.links), forestMaxLinksPerNode)
+	}
+	foundCandidate := false
+	duplicateBucketCount := 0
+	for i := range node.links {
+		if forestRawStackEntriesExactEqual(arena, node.links[i].subtree, candidate) == forestRawEqual {
+			foundCandidate = true
+		}
+		if forestRawStackEntriesExactEqual(arena, node.links[i].subtree, duplicate) == forestRawEqual {
+			duplicateBucketCount++
+		}
+	}
+	if !foundCandidate {
+		t.Fatal("raw-distinct cap candidate was dropped instead of replacing a duplicate bucket")
+	}
+	if duplicateBucketCount != 1 {
+		t.Fatalf("duplicate raw bucket count = %d, want 1", duplicateBucketCount)
+	}
+}
+
+func TestForestCoalesceWouldDropForCapDefersUntilRawShapeExists(t *testing.T) {
+	idx := newGSSForestIndex(0)
+	node := &gssForestNode{
+		state:        5,
+		byteOffset:   4,
+		errorCost:    0,
+		minLinkScore: 10,
+	}
+	for i := 0; i < forestMaxLinksPerNode; i++ {
+		node.links = append(node.links, gssLink{
+			prev:      &gssForestNode{state: StateID(i + 1)},
+			subtree:   stackEntry{state: StateID(100 + i)},
+			score:     10,
+			errorCost: 0,
+		})
+	}
+	idx.set(gssForestKey{state: 5, byteOffset: 4}, node)
+
+	if forestCoalesceWouldDropForCap(&idx, 5, 4, 0, 0, forestMaxLinksPerNode) {
+		t.Fatal("pre-cap guard dropped a candidate before raw-shape-aware cap replacement could run")
+	}
+}
+
+func TestCoalesceForestCapDoesNotLetLowerRankSameRawBucketEvictDistinctBucket(t *testing.T) {
+	idx := newGSSForestIndex(0)
+	slab := &gssForestNodeSlab{}
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	p := &Parser{}
+	makeEntry := func(childSym Symbol, prod uint16) stackEntry {
+		child := newLeafNodeInArena(arena, childSym, true, 1, 2, Point{}, Point{})
+		parent := newParentNodeInArena(arena, 100, true, []*Node{child}, nil, 0)
+		parent.rawShape = p.captureRawShape(arena, 100, prod, []stackEntry{newStackEntryNode(StateID(childSym), child)}, 0, 1)
+		return newStackEntryNode(100, parent)
+	}
+
+	node := (*gssForestNode)(nil)
+	for i := 0; i < forestMaxLinksPerNode; i++ {
+		prev := &gssForestNode{state: StateID(i + 1)}
+		node = coalesceForestWithRaw(p, arena, &idx, slab, 5, 4, prev, makeEntry(Symbol(10+i), uint16(i+1)), 10, 0)
+	}
+	candidatePrev := &gssForestNode{state: 100}
+	candidate := makeEntry(10, 1)
+	node = coalesceForestWithRaw(p, arena, &idx, slab, 5, 4, candidatePrev, candidate, 0, 0)
+
+	count := 0
+	for i := range node.links {
+		if forestRawStackEntriesExactEqual(arena, node.links[i].subtree, candidate) == forestRawEqual {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("same raw bucket count = %d, want existing representative only", count)
+	}
+}
+
+func TestForestResultLinkLowerErrorCostBeatsHigherScore(t *testing.T) {
+	lowError := &Node{symbol: 100, startByte: 1, endByte: 4, dynamicPrecedence: 1}
+	highError := &Node{symbol: 101, startByte: 1, endByte: 4, dynamicPrecedence: 9}
+	node := &gssForestNode{
+		state:      5,
+		byteOffset: 4,
+		links: []gssLink{
+			{subtree: newStackEntryNode(100, highError), score: 9, errorCost: 8},
+			{subtree: newStackEntryNode(101, lowError), score: 1, errorCost: 2},
+		},
+	}
+
+	best := node.bestResultLink(&Parser{}, nil)
+	if best == nil || stackEntryNode(best.subtree) != lowError {
+		t.Fatalf("best link = %v, want lower error-cost link", best)
+	}
+}
+
+func TestForestResultLinkUsesCumulativeDynamicPrecedenceBeforeMaterializedShape(t *testing.T) {
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	lang := &Language{
+		Name:        "forest-cumulative-dynamic-test",
+		SymbolNames: []string{"EOF", "root", "replacement_guard_and", "concatables", "var", "string"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF"},
+			{Name: "root", Visible: true, Named: true},
+			{Name: "replacement_guard_and", Visible: true, Named: true},
+			{Name: "concatables", Visible: true, Named: true},
+			{Name: "var", Visible: true, Named: true},
+			{Name: "string", Visible: true, Named: true},
+		},
+	}
+	parser := &Parser{language: lang, hasRootSymbol: true, rootSymbol: 1}
+
+	varNode := newLeafNodeInArena(arena, 4, true, 0, 3, Point{}, Point{Column: 3})
+	stringNode := newLeafNodeInArena(arena, 5, true, 4, 9, Point{Column: 4}, Point{Column: 9})
+	direct := newParentNodeInArena(arena, 3, true, []*Node{varNode, stringNode}, nil, 0)
+	direct.rawShape = parser.captureRawShape(arena, 3, 1, []stackEntry{
+		newStackEntryNode(4, varNode),
+		newStackEntryNode(5, stringNode),
+	}, 0, 2)
+
+	wrappedVar := newLeafNodeInArena(arena, 4, true, 0, 3, Point{}, Point{Column: 3})
+	wrappedString := newLeafNodeInArena(arena, 5, true, 4, 9, Point{Column: 4}, Point{Column: 9})
+	wrappedConcat := newParentNodeInArena(arena, 3, true, []*Node{wrappedVar, wrappedString}, nil, 0)
+	wrapper := newParentNodeInArena(arena, 2, true, []*Node{wrappedConcat}, nil, 0)
+	wrapper.dynamicPrecedence = 4
+	wrapper.rawShape = parser.captureRawShape(arena, 2, 2, []stackEntry{newStackEntryNode(3, wrappedConcat)}, 0, 1)
+
+	node := &gssForestNode{
+		state:      7,
+		byteOffset: 9,
+		links: []gssLink{
+			{subtree: newStackEntryNode(2, wrapper), score: 4, errorCost: 0},
+			{subtree: newStackEntryNode(3, direct), score: 6, errorCost: 0},
+		},
+	}
+
+	best := node.bestResultLink(parser, arena)
+	if best == nil || stackEntryNode(best.subtree) != direct {
+		t.Fatalf("best link = %v, want cumulative-dynamic direct concatables", best)
 	}
 }
 

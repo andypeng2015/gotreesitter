@@ -124,6 +124,24 @@ func TestForestDispatchReportsAcceptedRuntime(t *testing.T) {
 	}
 }
 
+func TestForestDispatchDeclinesIncludedRanges(t *testing.T) {
+	gts.SetGLRForestEnabled(true)
+	defer gts.SetGLRForestEnabled(true)
+
+	src := []byte("a { color: red; }\n")
+	parser := gts.NewParser(grm.CssLanguage())
+	parser.SetIncludedRanges([]gts.Range{{StartByte: 0, EndByte: uint32(len(src))}})
+	tree, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse with included range: %v", err)
+	}
+	defer tree.Release()
+	rt := tree.ParseRuntime()
+	if rt.TokensConsumed == 0 {
+		t.Fatalf("forest fast path was used despite included ranges: %s", rt.Summary())
+	}
+}
+
 func TestForestDispatchPromotesJavaScript(t *testing.T) {
 	gts.SetGLRForestEnabled(true)
 	defer gts.SetGLRForestEnabled(true)

@@ -40,7 +40,7 @@ func TestNextGLRUnionDFATokenScoresOnlyStatesProducingCandidate(t *testing.T) {
 		return 0
 	}
 
-	ts := acquireDFATokenSource(NewLexer(lang.LexStates, []byte("ab")), lang, lookup, nil, nil)
+	ts := acquireDFATokenSource(NewLexer(lang.LexStates, []byte("ab")), lang, lookup, nil, nil, nil)
 	defer ts.Close()
 	ts.SetParserState(1)
 	ts.SetGLRStates([]StateID{1, 2, 3})
