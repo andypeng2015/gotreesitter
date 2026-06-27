@@ -51,11 +51,32 @@ func (b *resultRootBuild) prepareRootNodes(nodes []*Node) []*Node {
 func (b *resultRootBuild) buildSingleRootTree(candidate *Node) *Tree {
 	candidate = flattenInvisibleRootChildren(candidate, b.arena, b.lang)
 	candidate = b.repairPythonKeywordNode(candidate)
+	if tree := b.tryBuildExpectedRootFromSingleError(candidate); tree != nil {
+		return tree
+	}
 	candidate = b.repairPythonRoot(candidate)
 	if !b.hasExpectedRoot || candidate.symbol == b.expectedRootSymbol {
 		return b.finishTree(candidate, b.shouldWireParentLinks, true)
 	}
 	return b.buildExpectedRootWrapperTree(candidate)
+}
+
+func (b *resultRootBuild) tryBuildExpectedRootFromSingleError(candidate *Node) *Tree {
+	if b == nil || candidate == nil || !b.hasExpectedRoot || candidate.symbol != errorSymbol || resultChildCount(candidate) == 0 {
+		return nil
+	}
+	rootChildren := resultChildSliceForMutation(candidate)
+	rootChildren = filterZeroWidthExtras(rootChildren, b.arena)
+	rootChildren = b.repairPythonKeywordNodes(rootChildren)
+	if len(rootChildren) == 0 || !b.expectedRootCanFrameRecoveredFragments(rootChildren) {
+		return nil
+	}
+	root := newParentNodeInArena(b.arena, b.expectedRootSymbol, true, rootChildren, nil, 0)
+	if (candidate.hasError() || resultNodesHaveError(rootChildren)) && !b.syntheticRootCanDropError(rootChildren) {
+		root.setHasError(true)
+	}
+	root = b.repairPythonRoot(root)
+	return b.finishTree(root, b.shouldWireParentLinks, true)
 }
 
 func (b *resultRootBuild) buildExpectedRootWrapperTree(child *Node) *Tree {
@@ -138,6 +159,9 @@ func (b *resultRootBuild) syntheticRootSymbol(originalNodes, rootChildren []*Nod
 	if b.isLanguage("gomod") {
 		return b.expectedRootSymbol
 	}
+	if b.isLanguage("go") {
+		return b.expectedRootSymbol
+	}
 	if b.isLanguage("make") {
 		// tree-sitter make keeps `makefile` as the root and embeds ERROR nodes
 		// as children; keep that expected root while preserving HasError.
@@ -162,6 +186,12 @@ func (b *resultRootBuild) syntheticRootSymbol(originalNodes, rootChildren []*Nod
 	return errorSymbol
 }
 
+type syntheticRootReplayFrame struct {
+	states []StateID
+}
+
+const syntheticRootReplayMaxFrontier = 128
+
 func (b *resultRootBuild) expectedRootCanFrameRecoveredFragments(rootChildren []*Node) bool {
 	if b == nil || b.parser == nil || b.lang == nil || !b.hasExpectedRoot || len(rootChildren) == 0 {
 		return false
@@ -169,7 +199,7 @@ func (b *resultRootBuild) expectedRootCanFrameRecoveredFragments(rootChildren []
 	if b.lang.InitialState == 0 {
 		return false
 	}
-	state := b.lang.InitialState
+	frontier := []syntheticRootReplayFrame{{states: []StateID{b.lang.InitialState}}}
 	consumedNonError := false
 	sawRecovery := false
 	for _, child := range rootChildren {
@@ -180,21 +210,128 @@ func (b *resultRootBuild) expectedRootCanFrameRecoveredFragments(rootChildren []
 			sawRecovery = true
 			continue
 		}
-		next, ok := b.syntheticRootReplayChild(state, child)
-		if !ok || !b.parser.stateHasAcceptOnEOF(next) {
+		frontier = b.syntheticRootReplayAdvance(frontier, child)
+		if len(frontier) == 0 {
 			return false
 		}
-		state = next
 		consumedNonError = true
 	}
 	if consumedNonError {
-		return b.parser.stateHasAcceptOnEOF(state)
+		return b.syntheticRootReplayFrontierAcceptsEOF(frontier)
 	}
 	return sawRecovery && b.expectedRootEmptyFrameAcceptsEOF()
 }
 
+func (b *resultRootBuild) syntheticRootReplayAdvance(frontier []syntheticRootReplayFrame, child *Node) []syntheticRootReplayFrame {
+	if len(frontier) == 0 || child == nil {
+		return nil
+	}
+	advanced := make([]syntheticRootReplayFrame, 0, len(frontier))
+	for _, frame := range frontier {
+		if len(frame.states) == 0 {
+			continue
+		}
+		next, ok := b.syntheticRootReplayChild(frame.states[len(frame.states)-1], child)
+		if !ok {
+			continue
+		}
+		states := make([]StateID, len(frame.states)+1)
+		copy(states, frame.states)
+		states[len(states)-1] = next
+		advanced = appendSyntheticRootReplayFrame(advanced, states)
+	}
+	if len(advanced) == 0 {
+		return nil
+	}
+	return b.syntheticRootReplayCloseEOF(advanced)
+}
+
+func (b *resultRootBuild) syntheticRootReplayCloseEOF(frontier []syntheticRootReplayFrame) []syntheticRootReplayFrame {
+	closed := make([]syntheticRootReplayFrame, 0, len(frontier))
+	for _, frame := range frontier {
+		closed = appendSyntheticRootReplayFrame(closed, frame.states)
+	}
+	for i := 0; i < len(closed); i++ {
+		for _, act := range b.syntheticRootReplayEOFActions(closed[i]) {
+			if act.Type != ParseActionReduce {
+				continue
+			}
+			next, ok := b.syntheticRootReplayReduce(closed[i], act)
+			if !ok {
+				continue
+			}
+			closed = appendSyntheticRootReplayFrame(closed, next.states)
+		}
+	}
+	return closed
+}
+
+func (b *resultRootBuild) syntheticRootReplayReduce(frame syntheticRootReplayFrame, act ParseAction) (syntheticRootReplayFrame, bool) {
+	childCount := int(act.ChildCount)
+	if childCount > len(frame.states)-1 {
+		return syntheticRootReplayFrame{}, false
+	}
+	predecessorIndex := len(frame.states) - 1 - childCount
+	predecessor := frame.states[predecessorIndex]
+	next := b.parser.lookupGoto(predecessor, act.Symbol)
+	if next == 0 {
+		return syntheticRootReplayFrame{}, false
+	}
+	states := make([]StateID, predecessorIndex+2)
+	copy(states, frame.states[:predecessorIndex+1])
+	states[len(states)-1] = next
+	return syntheticRootReplayFrame{states: states}, true
+}
+
+func (b *resultRootBuild) syntheticRootReplayEOFActions(frame syntheticRootReplayFrame) []ParseAction {
+	if b == nil || b.parser == nil || b.lang == nil || len(frame.states) == 0 {
+		return nil
+	}
+	idx := b.parser.lookupActionIndex(frame.states[len(frame.states)-1], 0)
+	if idx == 0 || int(idx) >= len(b.lang.ParseActions) {
+		return nil
+	}
+	return b.lang.ParseActions[idx].Actions
+}
+
+func (b *resultRootBuild) syntheticRootReplayFrontierAcceptsEOF(frontier []syntheticRootReplayFrame) bool {
+	for _, frame := range frontier {
+		if len(frame.states) == 0 {
+			continue
+		}
+		if b.parser.stateHasAcceptOnEOF(frame.states[len(frame.states)-1]) {
+			return true
+		}
+	}
+	return false
+}
+
+func appendSyntheticRootReplayFrame(frames []syntheticRootReplayFrame, states []StateID) []syntheticRootReplayFrame {
+	if len(states) == 0 || len(frames) >= syntheticRootReplayMaxFrontier {
+		return frames
+	}
+	for _, frame := range frames {
+		if syntheticRootReplayStatesEqual(frame.states, states) {
+			return frames
+		}
+	}
+	return append(frames, syntheticRootReplayFrame{states: states})
+}
+
+func syntheticRootReplayStatesEqual(a, b []StateID) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func (b *resultRootBuild) syntheticRootReplaySkipsChild(child *Node) bool {
-	return child == nil || (child.isExtra() && child.startByte == child.endByte)
+	return child == nil || child.isExtra()
 }
 
 func (b *resultRootBuild) syntheticRootReplayChild(state StateID, child *Node) (StateID, bool) {

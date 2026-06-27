@@ -32,6 +32,51 @@ func newRootFrameReplayParser(lang *Language) *Parser {
 	return parser
 }
 
+func newRootFrameReplayReduceLanguage() *Language {
+	const (
+		rootSym      = Symbol(2)
+		childSym     = Symbol(3)
+		childListSym = Symbol(4)
+	)
+	rows := make([][]uint16, 6)
+	for i := range rows {
+		rows[i] = make([]uint16, 5)
+	}
+	rows[1][rootSym] = 2
+	rows[1][childSym] = 3
+	rows[1][childListSym] = 4
+	rows[2][0] = 1
+	rows[3][0] = 2
+	rows[4][0] = 3
+	rows[4][childSym] = 5
+	rows[5][0] = 4
+
+	return &Language{
+		Name:            "reduce_root",
+		TokenCount:      2,
+		SymbolCount:     5,
+		StateCount:      6,
+		LargeStateCount: 6,
+		InitialState:    1,
+		SymbolNames:     []string{"EOF", "_token", "source_file", "declaration", "source_file_repeat1"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF"},
+			{Name: "_token"},
+			{Name: "source_file", Visible: true, Named: true},
+			{Name: "declaration", Visible: true, Named: true},
+			{Name: "source_file_repeat1"},
+		},
+		ParseActions: []ParseActionEntry{
+			{},
+			{Actions: []ParseAction{{Type: ParseActionAccept}}},
+			{Actions: []ParseAction{{Type: ParseActionReduce, Symbol: childListSym, ChildCount: 1}}},
+			{Actions: []ParseAction{{Type: ParseActionReduce, Symbol: rootSym, ChildCount: 1}}},
+			{Actions: []ParseAction{{Type: ParseActionReduce, Symbol: childListSym, ChildCount: 2}}},
+		},
+		ParseTable: rows,
+	}
+}
+
 func TestFinalizeReturnedTreeRootSpanExtendsAcceptedCleanTailOnlyOnRoot(t *testing.T) {
 	lang := &Language{
 		Name:        "root_tail",
@@ -508,7 +553,7 @@ func TestBuildResultFromNodesKeepsSQLSourceFileRootWhenChildrenHaveErrors(t *tes
 	}
 }
 
-func TestBuildResultFromNodesExtendsGoSourceFileRootWhenChildrenHaveErrors(t *testing.T) {
+func TestBuildResultFromNodesKeepsGoSourceFileRootWhenChildrenHaveErrors(t *testing.T) {
 	lang := newRootFrameReplayLanguage("go", "source_file", "package_clause", true)
 	parser := newRootFrameReplayParser(lang)
 	arena := acquireNodeArena(arenaClassFull)
@@ -616,7 +661,7 @@ func TestBuildResultFromNodesKeepsGomodSourceFileRootWhenChildrenHaveErrors(t *t
 	}
 }
 
-func TestBuildResultFromNodesKeepsGoSourceFileRootWhenChildrenHaveErrors(t *testing.T) {
+func TestBuildResultFromNodesExtendsGoSourceFileRootWhenChildrenHaveErrors(t *testing.T) {
 	lang := &Language{
 		Name: "go",
 		SymbolNames: []string{
@@ -659,6 +704,69 @@ func TestBuildResultFromNodesKeepsGoSourceFileRootWhenChildrenHaveErrors(t *test
 	}
 	if got, want := root.EndByte(), uint32(len(source)); got != want {
 		t.Fatalf("root end = %d, want %d", got, want)
+	}
+}
+
+func TestBuildResultFromNodesFramesSingleErrorRootChildrenThroughEOFReductions(t *testing.T) {
+	lang := newRootFrameReplayReduceLanguage()
+	parser := newRootFrameReplayParser(lang)
+	arena := acquireNodeArena(arenaClassFull)
+	source := []byte("decl\ndecl\n")
+
+	first := newLeafNodeInArena(arena, 3, true, 0, 4, Point{}, Point{Column: 4})
+	second := newLeafNodeInArena(arena, 3, true, 5, 9, Point{Row: 1}, Point{Row: 1, Column: 4})
+	errRoot := newParentNodeInArena(arena, errorSymbol, true, []*Node{first, second}, nil, 0)
+	errRoot.setHasError(true)
+
+	tree := parser.buildResultFromNodes([]*Node{errRoot}, source, arena, nil, nil, nil)
+	t.Cleanup(tree.Release)
+
+	root := tree.RootNode()
+	if root == nil {
+		t.Fatal("buildResultFromNodes returned nil root")
+	}
+	if got, want := root.Type(lang), "source_file"; got != want {
+		t.Fatalf("root type = %q, want %q", got, want)
+	}
+	if !root.HasError() {
+		t.Fatal("expected framed root to retain HasError=true")
+	}
+	if got, want := root.ChildCount(), 2; got != want {
+		t.Fatalf("root child count = %d, want %d", got, want)
+	}
+}
+
+func TestBuildResultFromNodesFramesSingleErrorRootChildrenWithExpectedRoot(t *testing.T) {
+	lang := newRootFrameReplayLanguage("generic", "source_file", "declaration", true)
+	parser := newRootFrameReplayParser(lang)
+	arena := acquireNodeArena(arenaClassFull)
+	source := []byte("#\ndecl\ndecl\n")
+
+	extra := newLeafNodeInArena(arena, 3, true, 0, 1, Point{}, Point{Column: 1})
+	extra.setExtra(true)
+	first := newLeafNodeInArena(arena, 3, true, 2, 6, Point{Row: 1}, Point{Row: 1, Column: 4})
+	second := newLeafNodeInArena(arena, 3, true, 7, 11, Point{Row: 2}, Point{Row: 2, Column: 4})
+	errRoot := newParentNodeInArena(arena, errorSymbol, true, []*Node{extra, first, second}, nil, 0)
+	errRoot.setHasError(true)
+
+	tree := parser.buildResultFromNodes([]*Node{errRoot}, source, arena, nil, nil, nil)
+	t.Cleanup(tree.Release)
+
+	root := tree.RootNode()
+	if root == nil {
+		t.Fatal("buildResultFromNodes returned nil root")
+	}
+	if got, want := root.Type(lang), "source_file"; got != want {
+		t.Fatalf("root type = %q, want %q", got, want)
+	}
+	if !root.HasError() {
+		t.Fatal("expected framed root to retain HasError=true")
+	}
+	if got, want := root.ChildCount(), 3; got != want {
+		t.Fatalf("root child count = %d, want %d", got, want)
+	}
+	if got := root.Child(0); got == nil || !got.IsExtra() {
+		t.Fatalf("root child 0 extra = %v, want true", got != nil && got.IsExtra())
 	}
 }
 
