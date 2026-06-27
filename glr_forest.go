@@ -1355,7 +1355,7 @@ func replaceRawShapeChildEntry(arena *nodeArena, parent, oldChild, newChild *Nod
 // parse in idx when EOF was reached without an accept (error recovery). It
 // mirrors production's buildSyntheticRootTree: pick the surviving actor that
 // consumed the most input at the lowest error cost, materialize its top-level
-// fragment list (the bestLink chain down to the start), and wrap it in the
+// fragment list (the result-link chain down to the start), and wrap it in the
 // grammar's expected root symbol — retagged to errorSymbol when a fragment
 // carries an error (production's synthetic-root rule). Recovery-only.
 func (p *Parser) collectForestErrorRoot(idx *gssForestIndex, arena *nodeArena) *Node {
@@ -1368,18 +1368,18 @@ func (p *Parser) collectForestErrorRoot(idx *gssForestIndex, arena *nodeArena) *
 		if n == nil {
 			continue
 		}
-		if best == nil || forestErrorRootBetter(n, best) {
+		if best == nil || forestErrorRootBetter(p, arena, n, best) {
 			best = n
 		}
 	}
 	if best == nil {
 		return nil
 	}
-	// Walk the bestLink chain down to the start, collecting top-level fragments
-	// latest-first, then reverse to source order.
+	// Walk the result-preferred chain down to the start, collecting top-level
+	// fragments latest-first, then reverse to source order.
 	var frags []*Node
 	for cur := best; cur != nil; {
-		link := cur.bestLink()
+		link := cur.bestResultLink(p, arena)
 		if link == nil {
 			break
 		}
@@ -1415,23 +1415,19 @@ func (p *Parser) collectForestErrorRoot(idx *gssForestIndex, arena *nodeArena) *
 }
 
 // forestErrorRootBetter ranks partial-parse actors for the synthetic error root:
-// consumed more input first, then lower error cost, then higher best-link score.
-func forestErrorRootBetter(a, b *gssForestNode) bool {
+// consumed more input first, then lower error cost, then result-link ordering.
+func forestErrorRootBetter(p *Parser, arena *nodeArena, a, b *gssForestNode) bool {
 	if a.byteOffset != b.byteOffset {
 		return a.byteOffset > b.byteOffset
 	}
 	if a.errorCost != b.errorCost {
 		return a.errorCost < b.errorCost
 	}
-	la, lb := a.bestLink(), b.bestLink()
-	sa, sb := 0, 0
-	if la != nil {
-		sa = la.score
+	la, lb := a.bestResultLink(p, arena), b.bestResultLink(p, arena)
+	if la != nil || lb != nil {
+		return forestResultLinkCompare(p, arena, a, la, 0, lb, 0) > 0
 	}
-	if lb != nil {
-		sb = lb.score
-	}
-	return sa > sb
+	return false
 }
 
 // bestLink returns the link whose subtree wins tree-sitter's selection:

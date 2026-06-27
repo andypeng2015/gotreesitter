@@ -449,6 +449,35 @@ func TestCoalesceForestCapDoesNotLetLowerRankSameRawBucketEvictDistinctBucket(t 
 	}
 }
 
+func TestCollectForestErrorRootUsesResultLinkErrorCost(t *testing.T) {
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	highScoreHighError := newLeafNodeInArena(arena, 100, true, 1, 4, Point{}, Point{Column: 3})
+	lowScoreLowError := newLeafNodeInArena(arena, 101, true, 1, 4, Point{}, Point{Column: 3})
+	start := &gssForestNode{state: 0}
+	partial := &gssForestNode{
+		state:      5,
+		byteOffset: 4,
+		errorCost:  2,
+		links: []gssLink{
+			{prev: start, subtree: newStackEntryNode(100, highScoreHighError), score: 9, errorCost: 8},
+			{prev: start, subtree: newStackEntryNode(101, lowScoreLowError), score: 1, errorCost: 2},
+		},
+	}
+	idx := newGSSForestIndex(1)
+	idx.set(gssForestKey{state: partial.state, byteOffset: partial.byteOffset}, partial)
+
+	parser := &Parser{rootSymbol: 1}
+	root := parser.collectForestErrorRoot(&idx, arena)
+	if root == nil || len(root.children) != 1 {
+		t.Fatalf("root children = %v, want one lower-error fragment", root)
+	}
+	if root.children[0] != lowScoreLowError {
+		t.Fatalf("error root fragment = %p, want lower-error fragment %p", root.children[0], lowScoreLowError)
+	}
+}
+
 func TestForestResultLinkLowerErrorCostBeatsHigherScore(t *testing.T) {
 	lowError := &Node{symbol: 100, startByte: 1, endByte: 4, dynamicPrecedence: 1}
 	highError := &Node{symbol: 101, startByte: 1, endByte: 4, dynamicPrecedence: 9}
