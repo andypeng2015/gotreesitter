@@ -3,10 +3,10 @@ package gotreesitter
 // stripResultTreeSelfCycles enforces that no node is its own descendant.
 //
 // The trailing-EOF error recovery clones the GSS (sharing node payload
-// pointers) and re-reduces, which can leave a recovered node — e.g. a
-// `source_file` — referencing itself as a child. The raw .children slice can
+// pointers) and re-reduces, which can leave a recovered node, e.g. a
+// `source_file`, referencing itself as a child. The raw .children slice can
 // look fine while the materialized child view is cyclic, so every later full
-// tree walk (parent-link wiring, the compat normalizers, recovery trimming, …)
+// tree walk (parent-link wiring, the compat normalizers, recovery trimming)
 // recurses or loops without end: a fatal stack overflow or an indefinite hang.
 //
 // This pass walks the tree once with an explicit stack and a visited set, so it
@@ -43,9 +43,8 @@ func stripResultTreeSelfCycles(root *Node) {
 				stack[i].idx++
 				continue
 			}
-			if _, ancestor := onPath[c]; c == n || ancestor {
-				n.children = append(children[:stack[i].idx], children[stack[i].idx+1:]...)
-				children = n.children
+			if _, ancestor := onPath[c]; ancestor {
+				children = removeResultTreeChildAt(n, children, stack[i].idx)
 				continue
 			}
 			if _, done := black[c]; done {
@@ -65,4 +64,16 @@ func stripResultTreeSelfCycles(root *Node) {
 		black[n] = struct{}{}
 		stack = stack[:len(stack)-1]
 	}
+}
+
+func removeResultTreeChildAt(n *Node, children []*Node, idx int) []*Node {
+	oldLen := len(children)
+	n.children = append(children[:idx], children[idx+1:]...)
+	if len(n.fieldIDs) == oldLen {
+		n.fieldIDs = append(n.fieldIDs[:idx], n.fieldIDs[idx+1:]...)
+	}
+	if len(n.fieldSources) == oldLen {
+		n.fieldSources = append(n.fieldSources[:idx], n.fieldSources[idx+1:]...)
+	}
+	return n.children
 }
