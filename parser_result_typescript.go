@@ -483,7 +483,7 @@ func normalizeTypeScriptImportKeywordNamedness(node *Node, ctx *typeScriptNormal
 // named import node in dynamic import() expressions. C tree-sitter produces
 // a 1-child structure with an anonymous "import" keyword token.
 func normalizeTypeScriptDynamicImportLeaf(node *Node, ctx *typeScriptNormalizationContext) {
-	if node == nil || ctx == nil || !ctx.hasDynamicImportSym || !ctx.hasImportSym || node.symbol != ctx.dynamicImportSym {
+	if node == nil || ctx == nil || !ctx.hasDynamicImportSym || node.symbol != ctx.dynamicImportSym {
 		return
 	}
 	if resultChildCount(node) == 0 && node.endByte > node.startByte {

@@ -122,9 +122,6 @@ func (b *resultRootBuild) syntheticRootSymbol(originalNodes, rootChildren []*Nod
 	if b.isLanguage("dart") && dartProgramChildrenLookComplete(originalNodes, b.lang) {
 		return b.expectedRootSymbol
 	}
-	// C tree-sitter always uses the grammar's start symbol (e.g. source_file)
-	// as the root node, even when the parse result contains errors. Match that
-	// behavior for Go (and SQL, Swift) so consumers see a consistent root type.
 	if b.isLanguage("go") {
 		return b.expectedRootSymbol
 	}
