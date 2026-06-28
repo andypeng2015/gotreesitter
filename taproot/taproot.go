@@ -1,29 +1,37 @@
 // Package taproot is the common front-end harness shared by M31 DSLs that use
-// the gotreesitter runtime. It provides:
+// the gotreesitter runtime. It provides grammar generation + caching, a CST
+// Walker, and one-stop Parse helpers.
 //
-//   - Language: grammar generation + per-name caching (sync.Mutex + map).
-//   - Walker: a bundle of *Language + source bytes with CST cursor helpers.
-//   - Parse: the one-stop flow (Language → parse → error check).
-//   - LanguageFromBlob/ParseFromBlob: the same cache/parse flow, but preferring
-//     an embedded pre-generated grammar blob when one is available.
+// The grammar-free core (Walker, blob-only language load, parse-from-blob) lives
+// in the taproot/walk subpackage, which depends only on the gotreesitter runtime
+// — no grammargen, no grammars registry. A DSL that embeds a pre-generated
+// grammar blob should import taproot/walk so it doesn't link the ~200-grammar
+// registry. The functions here add the grammargen DSL fallback (build-from-source
+// when no blob is present) and re-export walk's Walker for backward compatibility.
 //
-// The error-leaf finder in Walker.SyntaxError is lifted from
-// ~/work/elio/parse/tree.go (treeWalker.syntaxError): it collects every
-// ERROR/MISSING leaf, picks the latest-positioned one — preferring MISSING
-// nodes because they pinpoint expected-but-absent tokens — and formats either
-// "expected <type>" (MISSING) or "near <text>" (ERROR).
+// The Walker error-leaf finder is lifted from elio/parse/tree.go.
 package taproot
 
 import (
 	"fmt"
-	"strings"
 	"sync"
 
 	gts "github.com/odvcencio/gotreesitter"
 	"github.com/odvcencio/gotreesitter/grammargen"
+	"github.com/odvcencio/gotreesitter/taproot/walk"
 )
 
-// ── Language cache ────────────────────────────────────────────────────────────
+// Walker is the CST cursor helper. It is re-exported from taproot/walk so
+// existing taproot.Walker / *taproot.Walker references keep working; new code
+// that only needs the grammar-free path should import taproot/walk directly.
+type Walker = walk.Walker
+
+// NewWalker constructs a Walker for the given language and source.
+func NewWalker(lang *gts.Language, src []byte) *walk.Walker {
+	return walk.NewWalker(lang, src)
+}
+
+// ── grammargen DSL fallback cache ─────────────────────────────────────────────
 
 type langEntry struct {
 	lang *gts.Language
@@ -31,212 +39,67 @@ type langEntry struct {
 }
 
 var (
-	cacheMu sync.Mutex
-	cache   = map[string]langEntry{}
+	genMu    sync.Mutex
+	genCache = map[string]langEntry{}
 )
 
 // Language generates and caches (once per name) the tree-sitter Language for a
-// grammar. build is called only on a cache miss; subsequent calls for the same
-// name return the cached result without calling build again.
+// grammar. build is called only on a cache miss.
 func Language(name string, build func() *grammargen.Grammar) (*gts.Language, error) {
 	return language(name, nil, build)
 }
 
 // LanguageFromBlob loads and caches (once per name) the tree-sitter Language
 // from blob when possible, falling back to build when blob is empty or corrupt.
-// This is the fast path for DSLs that embed a generated grammar blob but still
-// want a source grammar fallback during development.
+// The blob path is grammar-free (delegated to taproot/walk); only the fallback
+// pulls grammargen.
 func LanguageFromBlob(name string, blob []byte, build func() *grammargen.Grammar) (*gts.Language, error) {
 	return language(name, blob, build)
 }
 
 func language(name string, blob []byte, build func() *grammargen.Grammar) (*gts.Language, error) {
-	cacheMu.Lock()
-	defer cacheMu.Unlock()
+	if len(blob) > 0 {
+		if lang, err := walk.LanguageFromBlob(name, blob); err == nil && lang != nil {
+			return lang, nil
+		}
+	}
 
-	if e, ok := cache[name]; ok {
+	genMu.Lock()
+	defer genMu.Unlock()
+
+	if e, ok := genCache[name]; ok {
 		return e.lang, e.err
 	}
 
 	var lang *gts.Language
 	var err error
-	if len(blob) > 0 {
-		lang, err = gts.LoadLanguage(blob)
+	if build == nil {
+		err = fmt.Errorf("no grammar blob or build function for %q", name)
+	} else {
+		lang, _, err = grammargen.GenerateLanguageAndBlob(build())
 	}
-	if lang == nil {
-		if build == nil {
-			if err == nil {
-				err = fmt.Errorf("no grammar blob or build function for %q", name)
-			}
-		} else {
-			lang, _, err = grammargen.GenerateLanguageAndBlob(build())
-		}
-	}
-	e := langEntry{lang: lang, err: err}
-	cache[name] = e
-	return e.lang, e.err
-}
-
-// ── Walker ────────────────────────────────────────────────────────────────────
-
-// Walker bundles a parse's language and source bytes with CST cursor helpers.
-// Lifted from elio/parse/tree.go (treeWalker) and confirmed against
-// selena/parse/parse.go (walker) and eos/syntax/cst.go (cstLowerer).
-type Walker struct {
-	Lang *gts.Language
-	Src  []byte
-}
-
-// NewWalker constructs a Walker for the given language and source.
-func NewWalker(lang *gts.Language, src []byte) *Walker {
-	return &Walker{Lang: lang, Src: src}
-}
-
-// Type returns the grammar type name of n.
-func (w *Walker) Type(n *gts.Node) string {
-	if n == nil {
-		return ""
-	}
-	return n.Type(w.Lang)
-}
-
-// Text returns the source text spanned by n.
-func (w *Walker) Text(n *gts.Node) string {
-	if n == nil {
-		return ""
-	}
-	return n.Text(w.Src)
-}
-
-// Field returns the child of n that is bound to the named field, or nil.
-func (w *Walker) Field(n *gts.Node, field string) *gts.Node {
-	if n == nil {
-		return nil
-	}
-	return n.ChildByFieldName(field, w.Lang)
-}
-
-// ChildByType returns the first direct child of n with grammar type typ, or nil.
-func (w *Walker) ChildByType(n *gts.Node, typ string) *gts.Node {
-	if n == nil {
-		return nil
-	}
-	for i := 0; i < n.ChildCount(); i++ {
-		c := n.Child(i)
-		if w.Type(c) == typ {
-			return c
-		}
-	}
-	return nil
-}
-
-// Pos returns the 1-based line and column where n begins.
-func (w *Walker) Pos(n *gts.Node) (line, col int) {
-	if n == nil {
-		return 1, 1
-	}
-	pt := n.StartPoint()
-	return int(pt.Row) + 1, int(pt.Column) + 1
-}
-
-// SyntaxError walks the subtree rooted at root to find the best error or
-// missing leaf and returns a formatted error.
-//
-// Strategy (lifted from elio/parse/tree.go treeWalker.syntaxError):
-//
-//  1. Collect every leaf that is an ERROR node or a MISSING node.
-//  2. Among those, prefer MISSING (which pinpoints an expected-but-absent
-//     token). Among peers of the same kind, pick the latest start byte
-//     (where the LR parser got stuck).
-//  3. Format as "line:col: syntax error: expected <type>" for MISSING, or
-//     "line:col: syntax error near <text>" for ERROR.
-func (w *Walker) SyntaxError(root *gts.Node) error {
-	var best *gts.Node
-	bestMissing := false
-
-	var walk func(n *gts.Node)
-	walk = func(n *gts.Node) {
-		bad := n.Type(w.Lang) == "ERROR" || n.IsError() || n.IsMissing()
-		childBad := false
-		for i := 0; i < n.ChildCount(); i++ {
-			c := n.Child(i)
-			if c == nil {
-				continue
-			}
-			if c.Type(w.Lang) == "ERROR" || c.IsError() || c.IsMissing() {
-				childBad = true
-			}
-			walk(c)
-		}
-		if bad && !childBad { // leaf error/missing node
-			miss := n.IsMissing()
-			switch {
-			case best == nil:
-			case miss && !bestMissing:
-			case miss == bestMissing && n.StartByte() > best.StartByte():
-			default:
-				return
-			}
-			best, bestMissing = n, miss
-		}
-	}
-	walk(root)
-
-	if best == nil {
-		return fmt.Errorf("syntax error")
-	}
-	pt := best.StartPoint()
-	line, col := int(pt.Row)+1, int(pt.Column)+1
-	if best.IsMissing() {
-		return fmt.Errorf("%d:%d: syntax error: expected %s", line, col, best.Type(w.Lang))
-	}
-	near := strings.TrimSpace(w.Text(best))
-	if len(near) > 30 {
-		near = near[:30] + "…"
-	}
-	return fmt.Errorf("%d:%d: syntax error near %q", line, col, near)
+	genCache[name] = langEntry{lang: lang, err: err}
+	return lang, err
 }
 
 // ── Parse ─────────────────────────────────────────────────────────────────────
 
-// Parse runs the full common DSL parse flow:
-//  1. Obtain (or generate+cache) the Language for name.
-//  2. Parse src with a new Parser.
-//  3. If the root HasError, return (root, walker, walker.SyntaxError(root)).
-//  4. Otherwise return (root, walker, nil).
-//
-// root and walker are always non-nil when the language step and parse step
-// succeed (even when a syntax error is present), so callers can inspect the
-// partial tree.
-func Parse(name string, build func() *grammargen.Grammar, src []byte) (*gts.Node, *Walker, error) {
+// Parse runs the full common DSL parse flow: obtain (or generate+cache) the
+// Language for name, parse src, and return (root, walker, syntaxErr).
+func Parse(name string, build func() *grammargen.Grammar, src []byte) (*gts.Node, *walk.Walker, error) {
 	lang, err := Language(name, build)
 	if err != nil {
 		return nil, nil, fmt.Errorf("generate language %q: %w", name, err)
 	}
-	return parseWithLanguage(lang, src)
+	return walk.ParseWithLanguage(lang, src)
 }
 
 // ParseFromBlob is the blob-aware variant of Parse. It obtains the language via
 // LanguageFromBlob, then follows the same parse/error flow as Parse.
-func ParseFromBlob(name string, blob []byte, build func() *grammargen.Grammar, src []byte) (*gts.Node, *Walker, error) {
+func ParseFromBlob(name string, blob []byte, build func() *grammargen.Grammar, src []byte) (*gts.Node, *walk.Walker, error) {
 	lang, err := LanguageFromBlob(name, blob, build)
 	if err != nil {
 		return nil, nil, fmt.Errorf("load language %q: %w", name, err)
 	}
-	return parseWithLanguage(lang, src)
-}
-
-func parseWithLanguage(lang *gts.Language, src []byte) (*gts.Node, *Walker, error) {
-	tree, err := gts.NewParser(lang).Parse(src)
-	if err != nil {
-		return nil, nil, fmt.Errorf("parse: %w", err)
-	}
-
-	root := tree.RootNode()
-	w := NewWalker(lang, src)
-
-	if root.HasError() {
-		return root, w, w.SyntaxError(root)
-	}
-	return root, w, nil
+	return walk.ParseWithLanguage(lang, src)
 }

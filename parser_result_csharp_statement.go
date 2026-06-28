@@ -454,7 +454,7 @@ func csharpRecoverTopLevelLocalFunctionStatementFromRange(source []byte, start, 
 		return nil, false
 	}
 	openBrace := start + uint32(openRel)
-	closeBrace := findMatchingBraceByte(source, int(openBrace), int(end))
+	closeBrace := csharpFindMatchingBraceByte(source, int(openBrace), int(end))
 	if closeBrace < 0 || uint32(closeBrace+1) != end {
 		return nil, false
 	}
@@ -556,7 +556,7 @@ func csharpRecoverSimpleTypePatternSwitchStatementFromRange(source []byte, start
 	if openBrace >= end || source[openBrace] != '{' {
 		return nil, false
 	}
-	closeBrace := findMatchingBraceByte(source, int(openBrace), int(end))
+	closeBrace := csharpFindMatchingBraceByte(source, int(openBrace), int(end))
 	if closeBrace < 0 || uint32(closeBrace+1) != end {
 		return nil, false
 	}
@@ -806,7 +806,7 @@ func csharpRecoverUsingStatementFromRange(source []byte, start, end uint32, p *P
 	if blockStart >= end || source[blockStart] != '{' {
 		return nil, false
 	}
-	blockEnd := findMatchingBraceByte(source, int(blockStart), int(end))
+	blockEnd := csharpFindMatchingBraceByte(source, int(blockStart), int(end))
 	if blockEnd < 0 || uint32(blockEnd+1) != end {
 		return nil, false
 	}

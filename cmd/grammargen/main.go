@@ -38,6 +38,9 @@ import (
 	"unicode"
 
 	"github.com/odvcencio/gotreesitter/grammargen"
+	// Enable grammargen.ImportGrammarJS (the -js flag) by registering the JS
+	// grammar provider; grammargen itself stays free of the grammars registry.
+	_ "github.com/odvcencio/gotreesitter/grammargen/grammarjs"
 )
 
 var builtinGrammars = map[string]func() *grammargen.Grammar{

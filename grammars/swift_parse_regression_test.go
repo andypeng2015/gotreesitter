@@ -134,3 +134,111 @@ class Foo {}
 		}
 	}
 }
+
+// countSwiftNodeType walks the tree and counts nodes of the given type.
+func countSwiftNodeType(lang *gotreesitter.Language, n *gotreesitter.Node, typ string) int {
+	if n == nil {
+		return 0
+	}
+	count := 0
+	if n.Type(lang) == typ {
+		count++
+	}
+	for i := 0; i < n.ChildCount(); i++ {
+		count += countSwiftNodeType(lang, n.Child(i), typ)
+	}
+	return count
+}
+
+// TestSwiftComparisonInConditionRecoversFunction is the regression test for
+// issue #118: a comparison operator (< / > / ==) in an if/while condition used
+// to make the body brace be consumed as a trailing closure, collapsing the
+// whole function into ERROR nodes with no recoverable function_declaration.
+func TestSwiftComparisonInConditionRecoversFunction(t *testing.T) {
+	lang := SwiftLanguage()
+	cases := []struct {
+		name string
+		src  string
+	}{
+		{"if-greater", "func a() { if x > 0 { foo() } }"},
+		{"if-less", "func a() { if x < 0 { foo() } }"},
+		{"if-equal", "func a() { if x == 0 { foo() } }"},
+		{"while-greater", "func a() { while x > 0 { foo() } }"},
+		{"compound", "func a() { if x > 0 && y < 1 { foo() } }"},
+		{"nested", "func a() { if x > 0 { if y < 2 { foo() } } }"},
+		{"if-else", "func a() { if x > 0 { a() } else { b() } }"},
+		{"class-methods", "class C {\n  func a() { if x > 0 { foo() } }\n  func b() { bar() }\n}"},
+		{"struct-method", "struct S {\n  func a() { if x > 0 { foo() } }\n}"},
+		{"extension-method", "extension S {\n  func a() { if x > 0 { foo() } }\n}"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			src := []byte(tc.src)
+			parser := gotreesitter.NewParser(lang)
+			tree, err := parser.Parse(src)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			defer tree.Release()
+			root := tree.RootNode()
+			if root.HasError() {
+				t.Fatalf("recovered tree still reports error: %s", root.SExpr(lang))
+			}
+			if got, want := root.EndByte(), uint32(len(src)); got != want {
+				t.Fatalf("root end = %d, want %d (span not byte-faithful): %s", got, want, root.SExpr(lang))
+			}
+			if got := countSwiftNodeType(lang, root, "function_declaration"); got < 1 {
+				t.Fatalf("function_declaration count = %d, want >= 1: %s", got, root.SExpr(lang))
+			}
+		})
+	}
+}
+
+// TestSwiftComparisonConditionTreeIsFaithful checks that the recovered tree is
+// structurally correct: a proper if_statement whose condition is the bare
+// comparison_expression (the synthetic parenthesis used during recovery is
+// stripped) with byte-faithful spans.
+func TestSwiftComparisonConditionTreeIsFaithful(t *testing.T) {
+	lang := SwiftLanguage()
+	src := []byte("func a() { if x > 0 { foo() } }")
+	parser := gotreesitter.NewParser(lang)
+	tree, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	defer tree.Release()
+	root := tree.RootNode()
+	sexpr := root.SExpr(lang)
+	for _, want := range []string{"(function_declaration", "(if_statement", "(comparison_expression"} {
+		if !strings.Contains(sexpr, want) {
+			t.Fatalf("missing %s in recovered tree: %s", want, sexpr)
+		}
+	}
+	// The synthetic parenthesis must not survive as a tuple_expression condition.
+	if countSwiftNodeType(lang, root, "tuple_expression") != 0 {
+		t.Fatalf("synthetic parenthesis leaked as tuple_expression: %s", sexpr)
+	}
+	if countSwiftNodeType(lang, root, "lambda_literal") != 0 {
+		t.Fatalf("if body misparsed as trailing-closure lambda_literal: %s", sexpr)
+	}
+}
+
+// TestSwiftNormalTrailingClosureUnaffected guards against the recovery pass
+// disturbing a legitimate trailing closure (which must stay a lambda_literal).
+func TestSwiftNormalTrailingClosureUnaffected(t *testing.T) {
+	lang := SwiftLanguage()
+	src := []byte("func a() { items.map { x in x } }")
+	parser := gotreesitter.NewParser(lang)
+	tree, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	defer tree.Release()
+	root := tree.RootNode()
+	if root.HasError() {
+		t.Fatalf("clean trailing-closure source reported error: %s", root.SExpr(lang))
+	}
+	if countSwiftNodeType(lang, root, "lambda_literal") != 1 {
+		t.Fatalf("expected exactly one lambda_literal: %s", root.SExpr(lang))
+	}
+}
