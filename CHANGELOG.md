@@ -7,6 +7,11 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+## [0.20.6] - 2026-06-28
+
+Patch release for parser recovery correctness, grammargen parity, and the
+forest/performance workstream merged after v0.20.5.
+
 ### Added
 
 - Strict parse variants return `ErrParseStoppedEarly` for timeout,
@@ -32,6 +37,16 @@ for tags and release notes while still in `0.x`.
   regression gate so release validation catches parser stack overflows like the
   `ParserPool.Parse` crash reported against `command_test.go` and
   `completions_test.go` (#110).
+- Recovered result trees now strip self-references and ancestor back-edges
+  before parent-link wiring, while keeping `children`, `fieldIDs`, and
+  `fieldSources` aligned when a cyclic edge is removed (#121).
+- Go and Go module recovered parses keep the grammar `source_file` root when
+  child nodes contain parse errors, matching the root-shape behavior already
+  used for SQL and Swift (#112).
+- `grammargen` now treats explicit precedence wrappers around finite string
+  choices, such as `prec.right(choice("=", "+=", "-="))`, as reducible
+  nonterminals instead of overlapping named lexer tokens. This restores wrapper
+  nodes and lets LR precedence resolve the intended conflict (#122).
 - Swift functions that iterate a `for…in` loop over a range (`0..<n`, `0...n`)
   or a call expression (`stride(from:to:by:)`) no longer silently collapse to
   `_modifierless_function_declaration_no_body` with the loop body spilled out as
@@ -936,7 +951,11 @@ Warm-reuse throughput ~10 % higher. 206-grammar parity green under `GTS_PARITY_M
 - Initial standalone pure-Go runtime module.
 - External scanner VM foundation and base parser/lexer/tree infrastructure.
 
-[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.20.2...HEAD
+[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.20.6...HEAD
+[0.20.6]: https://github.com/odvcencio/gotreesitter/compare/v0.20.5...v0.20.6
+[0.20.5]: https://github.com/odvcencio/gotreesitter/compare/v0.20.4...v0.20.5
+[0.20.4]: https://github.com/odvcencio/gotreesitter/compare/v0.20.3...v0.20.4
+[0.20.3]: https://github.com/odvcencio/gotreesitter/compare/v0.20.2...v0.20.3
 [0.20.2]: https://github.com/odvcencio/gotreesitter/compare/v0.20.1...v0.20.2
 [0.20.1]: https://github.com/odvcencio/gotreesitter/compare/v0.20.0...v0.20.1
 [0.20.0]: https://github.com/odvcencio/gotreesitter/compare/v0.20.0-rc4...v0.20.0
