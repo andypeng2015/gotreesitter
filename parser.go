@@ -4652,6 +4652,18 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 						goto retryAction
 					}
 				}
+				if len(stacks) == 1 && !p.resyncTopLevelLanguage() {
+					switch p.tryOpportunisticTopLevelResyncRecovery(source, s, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors) {
+					case resyncRetry:
+						currentState = s.top().state
+						needToken = false
+						if actionTiming != nil {
+							ns := recordNoActionTiming()
+							actionTiming.actionNoActionRecoverNanos += ns
+						}
+						goto retryAction
+					}
+				}
 				if p.errorCostCompetitionEnabled() {
 					// Faithful C recovery port: no action for the lookahead —
 					// pause the version (C detect_error / ts_stack_pause) and
@@ -4687,18 +4699,6 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 						actionTiming.actionNoActionErrorNanos += ns
 					}
 					continue
-				}
-				if !p.resyncTopLevelLanguage() {
-					switch p.tryOpportunisticTopLevelResyncRecovery(source, s, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors) {
-					case resyncRetry:
-						currentState = s.top().state
-						needToken = false
-						if actionTiming != nil {
-							ns := recordNoActionTiming()
-							actionTiming.actionNoActionRecoverNanos += ns
-						}
-						goto retryAction
-					}
 				}
 				if tryMissingSingleShift(si, s, currentState) {
 					anyReduced = true
