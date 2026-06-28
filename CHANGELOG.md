@@ -32,12 +32,82 @@ for tags and release notes while still in `0.x`.
   regression gate so release validation catches parser stack overflows like the
   `ParserPool.Parse` crash reported against `command_test.go` and
   `completions_test.go` (#110).
+- Swift functions that iterate a `for…in` loop over a range (`0..<n`, `0...n`)
+  or a call expression (`stride(from:to:by:)`) no longer silently collapse to
+  `_modifierless_function_declaration_no_body` with the loop body spilled out as
+  file-level siblings. As with the `if`/`while` case, the loop body brace was
+  being consumed as a trailing closure of the iterable; recovery now re-parses
+  the affected `for…in` headers with synthetic parentheses around the iterable
+  and maps the result back to byte-faithful original coordinates. Because this
+  misparse produced no `ERROR` node, the recovery pass now runs whenever the
+  detection walk finds a collapsed header rather than only on errored trees
+  (#123).
 
 ### Testing
 
 - Added `TestGoCobraLargeFileParseRegression`, gated by
   `GTS_COBRA_REGRESSION_ROOT`, for exact large-file release validation without
   making normal test runs network- or corpus-dependent.
+
+## [0.20.5] - 2026-06-24
+
+### Changed
+
+- `grammargen` no longer imports the `grammars` registry. The `grammar.js`
+  importer (`ImportGrammarJS`) previously pulled in `grammars` for the embedded
+  JavaScript language, which transitively bundled all ~200 grammar blobs
+  (~22MB) into *every* consumer that merely defined a grammar via the DSL —
+  including `taproot` and all downstream DSLs. The JS language is now injected
+  via `SetJSGrammarProvider`; blank-import `grammargen/grammarjs` (or `cmd`s
+  that need `-js`) to register it. Net effect: `grammargen`, `taproot`, and
+  anything that only defines/loads a grammar are now grammar-registry-free.
+
+## [0.20.4] - 2026-06-24
+
+### Added
+
+- `taproot/walk`: a grammar-free core of the `taproot` harness. It loads a
+  tree-sitter `Language` from a pre-generated blob (`LanguageFromBlob`) and
+  navigates the CST (`Walker`, `ParseFromBlob`, `ParseWithLanguage`) depending
+  only on the gotreesitter runtime — not `grammargen` or the `grammars`
+  registry. DSLs that embed a generated grammar blob can now parse/highlight
+  without linking the ~200-grammar registry (~22 MB). The grammargen-backed
+  build-from-DSL fallbacks remain in `taproot`, which re-exports `walk.Walker`
+  so existing `taproot.Walker`/`Parse` callers are unaffected.
+
+## [0.20.3] - 2026-06-23
+
+### Fixed
+
+- C# files whose namespace body does not parse cleanly no longer collapse into
+  a single top-level `ERROR` node with zero recoverable declarations. Namespace
+  recovery now falls back to a best-effort `namespace_declaration` built from
+  the existing sub-parse, surfacing the type declarations (and the members that
+  parsed) instead of discarding the whole file. C# brace matching used during
+  recovery is now trivia-aware, so braces inside char literals, strings and
+  comments no longer truncate a recovered declaration's span (#115).
+- Swift functions whose `if`/`while` condition contains a comparison operator
+  (`<` / `>` / `==`, etc.) no longer collapse into an `ERROR` tree with no
+  recoverable `function_declaration`. The body brace was being consumed as a
+  trailing closure of the condition's last operand; recovery now re-parses the
+  affected conditions with synthetic parentheses to remove the ambiguity and
+  maps the result back to byte-faithful original coordinates (#118).
+- Go: `normalizeGoDotLeafChildren` now walks dotted-selector chains with an
+  iterative DFS instead of recursion, removing a stack-depth risk on very long
+  selector chains.
+
+### Changed
+
+- Removed dead unexported code (#117).
+
+### Testing
+
+- Banked a (skipped) regression guard,
+  `TestJavaScriptBlockThenAssignmentParsesClean`, for the JavaScript
+  block-then-simple-assignment GLR collapse (`{a}b=c`, #111). The root cause is
+  the JSX-attribute-continuation ASI heuristic in the JS scanner; the fix is
+  still pending (targeted for the C-oracle-verified parity line). Remove the
+  `t.Skip` to validate once fixed.
 
 ## [0.20.2] - 2026-06-06
 
