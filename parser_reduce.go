@@ -1263,6 +1263,16 @@ func (p *Parser) opportunisticTopLevelResyncAllowed(tok Token) bool {
 	return p.lookupActionIndex(p.language.InitialState, tok.Symbol) != 0
 }
 
+func (p *Parser) retryStructuralTopLevelResyncAdvanceAllowed(tok Token) bool {
+	return p != nil &&
+		p.language != nil &&
+		p.retryStructuralTopLevelResync &&
+		!tok.NoLookahead &&
+		tok.Symbol != 0 &&
+		tok.Symbol != errorSymbol &&
+		tok.StartByte < tok.EndByte
+}
+
 // tryResyncErrorRecovery implements the panic-mode resync that mirrors C
 // tree-sitter's ts_parser__recover for the no-action fall-through. When the
 // current top state has no action for the lookahead, the parser is stuck: the
@@ -1300,15 +1310,18 @@ func (p *Parser) tryResyncErrorRecoveryMode(source []byte, s *glrStack, tok Toke
 	if p.noTreeBenchmarkOnly {
 		return resyncNone
 	}
-	// Scope: this top-level resync is currently enabled only for the C family
-	// (c/cpp/objc), whose start symbol is a flat translation_unit repeat for
-	// which the initial-state resync is well-behaved and validated. Other
-	// grammars (e.g. authzed, java, php) drive their own language-specific
-	// recovery post-processing tuned against the existing leaf path; enabling
-	// the resync for them changes those well-localized outputs, so we leave them
-	// on the proven path. See resyncTopLevelLanguage.
+	// Scope: always-on top-level resync stays language-scoped to grammars
+	// validated for it. The opportunistic path is narrower: ordinary passes may
+	// only replay at a legal top-level token, while selected full-parse retries
+	// may also advance through a concrete failed suffix token.
 	languageScoped := p.resyncTopLevelLanguage()
-	if !languageScoped && (!opportunisticRetryOnly || !p.opportunisticTopLevelResyncAllowed(tok)) {
+	opportunisticRetryAllowed := false
+	opportunisticAdvanceAllowed := false
+	if !languageScoped && opportunisticRetryOnly {
+		opportunisticRetryAllowed = p.opportunisticTopLevelResyncAllowed(tok)
+		opportunisticAdvanceAllowed = p.retryStructuralTopLevelResyncAdvanceAllowed(tok)
+	}
+	if !languageScoped && (!opportunisticRetryOnly || (!opportunisticRetryAllowed && !opportunisticAdvanceAllowed)) {
 		return resyncNone
 	}
 
@@ -1367,7 +1380,7 @@ func (p *Parser) tryResyncErrorRecoveryMode(source []byte, s *glrStack, tok Toke
 		}
 		poppedNodes = append(poppedNodes, node)
 	}
-	if !languageScoped && opportunisticRetryOnly && p.tryReplayTopLevelRecovery(s, tok, recoverState, poppedNodes, entryScratch, gssScratch) {
+	if !languageScoped && opportunisticRetryOnly && opportunisticRetryAllowed && p.tryReplayTopLevelRecovery(s, tok, recoverState, poppedNodes, entryScratch, gssScratch) {
 		if p.glrTrace {
 			fmt.Printf("      -> LEGAL-REPLAY-RESYNC tok=%d recover_state=%d popped=%d depth=%d\n",
 				tok.Symbol, recoverState, len(poppedNodes), s.depth())
@@ -1416,8 +1429,19 @@ func (p *Parser) tryResyncErrorRecoveryMode(source []byte, s *glrStack, tok Toke
 	if p.lookupActionIndex(gotoState, tok.Symbol) == 0 {
 		status = resyncAdvance
 	}
-	if !languageScoped && opportunisticRetryOnly && status != resyncRetry {
-		return resyncNone
+	if !languageScoped && opportunisticRetryOnly {
+		switch status {
+		case resyncRetry:
+			if !opportunisticRetryAllowed {
+				return resyncNone
+			}
+		case resyncAdvance:
+			if !opportunisticAdvanceAllowed {
+				return resyncNone
+			}
+		default:
+			return resyncNone
+		}
 	}
 	if status == resyncRetry {
 		if recovered, target, ok := p.rebuildAliasPrefixedRecoveredSuffix(source, gotoState, poppedNodes[preservedEnd:], tok.Symbol, arena); ok {

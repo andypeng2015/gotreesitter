@@ -33,17 +33,18 @@ type Parser struct {
 	// set, the extra budget alone keeps a winning branch alive to the same
 	// clean accepted forest a wider built-in budget (GOT_GLR_MAX_STACKS) would
 	// have produced, matching tree-sitter C on bash for/while/case scripts.
-	forceCleanRetryPass         bool
-	compatibilityBorrowedArenas []*nodeArena
-	fullArenaHint               uint32
-	pendingFullArenaHint        uint32
-	compactFullArenaHint        uint32
-	finalChildRefArenaHint      uint32
-	incrementalArenaHint        uint32
-	fullGSSHint                 uint32
-	incrementalGSSHint          uint32
-	rootSymbol                  Symbol
-	hasRootSymbol               bool
+	forceCleanRetryPass           bool
+	retryStructuralTopLevelResync bool
+	compatibilityBorrowedArenas   []*nodeArena
+	fullArenaHint                 uint32
+	pendingFullArenaHint          uint32
+	compactFullArenaHint          uint32
+	finalChildRefArenaHint        uint32
+	incrementalArenaHint          uint32
+	fullGSSHint                   uint32
+	incrementalGSSHint            uint32
+	rootSymbol                    Symbol
+	hasRootSymbol                 bool
 
 	// Forest-decline diagnostics: the experimental forest fast path records
 	// WHERE and WHY it last declined (fell back to production) so the language
@@ -4662,6 +4663,13 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 							actionTiming.actionNoActionRecoverNanos += ns
 						}
 						goto retryAction
+					case resyncAdvance:
+						consumeCurrentToken()
+						if actionTiming != nil {
+							ns := recordNoActionTiming()
+							actionTiming.actionNoActionRecoverNanos += ns
+						}
+						continue
 					}
 				}
 				if p.errorCostCompetitionEnabled() {
