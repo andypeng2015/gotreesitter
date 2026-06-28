@@ -1158,6 +1158,11 @@ func collectAliasedPatterns(g *Grammar) map[string]aliasInfo {
 //     (if multiple named rules define the same STRING, or the STRING is used
 //     inline in nonterminal rules, the named rule becomes a nonterminal
 //     wrapping the shared anonymous terminal — matching tree-sitter C behavior).
+//
+// Rules like prec.right(choice("=", "+=", "-=")) are not token wrappers:
+// their precedence participates in LR conflict resolution only if the rule is
+// reduced as a nonterminal. Collapsing them into a named DFA token bypasses
+// that conflict and drops the visible wrapper node.
 func classifyRules(g *Grammar) (tokens, nonterms []string) {
 	// Count how many distinct sources each STRING value has.
 	// Sources: named bare-STRING rules + inline STRING usage in nonterminal rules.
@@ -1174,7 +1179,8 @@ func classifyRules(g *Grammar) (tokens, nonterms []string) {
 			// because actions are on the named token symbol that the DFA never emits.
 			isVisible := !strings.HasPrefix(name, "_")
 			isBareString := terminalStringValue(rule) != ""
-			if (isVisible && isBareString) || (isBareString && sharedStrings[terminalStringValue(rule)]) {
+			if (isVisible && isBareString) || (isBareString && sharedStrings[terminalStringValue(rule)]) ||
+				isExplicitPrecedenceStringChoice(rule) {
 				nonterms = append(nonterms, name)
 			} else {
 				tokens = append(tokens, name)
@@ -1255,6 +1261,35 @@ func terminalStringValue(r *Rule) string {
 		}
 	}
 	return ""
+}
+
+func isExplicitPrecedenceStringChoice(r *Rule) bool {
+	sawPrec := false
+	for r != nil {
+		switch r.Kind {
+		case RulePrec, RulePrecLeft, RulePrecRight, RulePrecDynamic:
+			sawPrec = true
+			if len(r.Children) == 0 {
+				return false
+			}
+			r = r.Children[0]
+		default:
+			return sawPrec && isStringChoiceRule(r)
+		}
+	}
+	return false
+}
+
+func isStringChoiceRule(r *Rule) bool {
+	if r == nil || r.Kind != RuleChoice || len(r.Children) == 0 {
+		return false
+	}
+	for _, child := range r.Children {
+		if child == nil || child.Kind != RuleString {
+			return false
+		}
+	}
+	return true
 }
 
 // isTerminalRule returns true if the rule defines a terminal token.

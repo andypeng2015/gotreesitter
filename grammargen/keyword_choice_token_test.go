@@ -103,6 +103,79 @@ func TestBareLexicalChoiceBecomesNamedToken(t *testing.T) {
 	}
 }
 
+func TestExplicitPrecStringChoiceBecomesNonterminal(t *testing.T) {
+	g := NewGrammar("explicit_prec_string_choice_nonterminal")
+	g.Define("source_file", Sym("initializer"))
+	g.Define("initializer", Seq(Sym("init_class"), Sym("identifier")))
+	g.Define("init_class", PrecRight(0, Choice(Str("="), Str("+="), Str("-="))))
+	g.Define("identifier", Pat(`[a-z]+`))
+
+	ng, err := Normalize(g)
+	if err != nil {
+		t.Fatalf("Normalize: %v", err)
+	}
+
+	initClassSym := -1
+	for i, sym := range ng.Symbols {
+		if sym.Name == "init_class" {
+			initClassSym = i
+			if sym.Kind != SymbolNonterminal {
+				t.Fatalf("init_class kind = %v, want SymbolNonterminal", sym.Kind)
+			}
+			if !sym.Visible || !sym.Named {
+				t.Fatalf("init_class metadata = visible:%v named:%v, want visible/named", sym.Visible, sym.Named)
+			}
+			break
+		}
+	}
+	if initClassSym < 0 {
+		t.Fatal("init_class symbol not found")
+	}
+
+	for _, term := range ng.Terminals {
+		if term.SymbolID == initClassSym {
+			t.Fatalf("init_class sym %d was emitted as a terminal", initClassSym)
+		}
+	}
+
+	wantAlts := map[string]bool{"=": false, "+=": false, "-=": false}
+	for _, prod := range ng.Productions {
+		if prod.LHS != initClassSym || len(prod.RHS) != 1 {
+			continue
+		}
+		rhs := prod.RHS[0]
+		if rhs < 0 || rhs >= len(ng.Symbols) {
+			continue
+		}
+		name := ng.Symbols[rhs].Name
+		if _, ok := wantAlts[name]; ok {
+			wantAlts[name] = true
+		}
+	}
+	for name, found := range wantAlts {
+		if !found {
+			t.Fatalf("missing init_class -> %q production", name)
+		}
+	}
+
+	lang, err := GenerateLanguage(g)
+	if err != nil {
+		t.Fatalf("GenerateLanguage: %v", err)
+	}
+	tree, err := gotreesitter.NewParser(lang).Parse([]byte("+=abc"))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	defer tree.Release()
+	root := tree.RootNode()
+	if root.HasError() {
+		t.Fatalf("parse has error: %s", root.SExpr(lang))
+	}
+	if got := root.SExpr(lang); got != "(source_file (initializer (init_class) (identifier)))" {
+		t.Fatalf("SExpr = %s, want init_class wrapper", got)
+	}
+}
+
 func TestAliasedInlinePatternWinsSameLengthNamedPatternTie(t *testing.T) {
 	g := NewGrammar("aliased_inline_pattern_precedence")
 	g.Define("source_file", Choice(
