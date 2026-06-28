@@ -356,6 +356,13 @@ func (p *Parser) tryForestFastPath(source []byte) *Tree {
 		arena.Release()
 		return nil
 	}
+	if forestRootMustDecline(root) {
+		if progress.enabled {
+			progress.emit(time.Now(), "forest_try_decline", 0, 0, Token{}, false, nil, 0, 0, 0, true, 0, 0, "reason=error_root")
+		}
+		arena.Release()
+		return nil
+	}
 	if root.HasError() && !languageWantsForestRecover(p.language.Name) {
 		if progress.enabled {
 			progress.emit(time.Now(), "forest_try_decline", 0, 0, Token{}, false, nil, 0, 0, 0, true, 0, 0, "reason=root_has_error")
@@ -404,6 +411,10 @@ func (p *Parser) tryForestFastPath(source []byte) *Tree {
 		progress.emit(time.Now(), "forest_try_success", 0, 0, Token{}, false, nil, 0, 0, 0, false, 0, 0, fmt.Sprintf("root_end=%d", root.EndByte()))
 	}
 	return tree
+}
+
+func forestRootMustDecline(root *Node) bool {
+	return root != nil && root.IsError()
 }
 
 func (p *Parser) finalizeForestRoot(root *Node, source []byte) {

@@ -606,3 +606,18 @@ func TestGSSForestNodeSlabReleaseClearsPointers(t *testing.T) {
 		t.Fatalf("link batch retained stale prev pointer: %p", got)
 	}
 }
+
+func TestForestRootMustDeclineErrorRoot(t *testing.T) {
+	if forestRootMustDecline(nil) {
+		t.Fatal("nil root should not decline")
+	}
+	errorRoot := &Node{symbol: errorSymbol}
+	if !forestRootMustDecline(errorRoot) {
+		t.Fatal("ERROR root should decline")
+	}
+	errorBearingRoot := &Node{symbol: 2}
+	errorBearingRoot.setHasError(true)
+	if forestRootMustDecline(errorBearingRoot) {
+		t.Fatal("non-ERROR root with errors should stay governed by recovery policy")
+	}
+}
