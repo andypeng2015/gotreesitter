@@ -749,7 +749,16 @@ func (p *Parser) stopFrontierSameHeaderSummary(stacks []glrStack) string {
 	)
 }
 
-func stopCondenseGatingString(errorCostCompetitionEnabled, anyReduced, condenseRan, condenseResumed bool, stacks []glrStack) string {
+func cRecoveryRelevantStack(stacks []glrStack) bool {
+	for i := range stacks {
+		if stacks[i].cPaused || stacks[i].cRec != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func stopCondenseGatingString(errorCostCompetitionEnabled, anyReduced, condenseRelevant, condenseRan, condenseResumed bool, stacks []glrStack) string {
 	hasPaused := false
 	hasCRec := false
 	for i := range stacks {
@@ -769,7 +778,7 @@ func stopCondenseGatingString(errorCostCompetitionEnabled, anyReduced, condenseR
 		anyReduced,
 		hasPaused,
 		hasCRec,
-		errorCostCompetitionEnabled && anyReduced,
+		errorCostCompetitionEnabled && anyReduced && condenseRelevant && !condenseRan,
 		condenseRan,
 		condenseResumed,
 	)
@@ -5138,9 +5147,11 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		// clean parses are unaffected.
 		condenseErrorCostEnabled := p.errorCostCompetitionEnabled()
 		condenseAnyReduced := anyReduced
+		condenseRelevant := condenseErrorCostEnabled && cRecoveryRelevantStack(stacks)
+		condenseEOFRecovery := condenseRelevant && tok.Symbol == 0 && tok.StartByte == tok.EndByte && !tok.NoLookahead
 		condenseRan := false
 		condenseResumed := false
-		if condenseErrorCostEnabled && !anyReduced {
+		if condenseErrorCostEnabled && (!anyReduced || condenseEOFRecovery) {
 			var resumed bool
 			condenseRan = true
 			stacks, resumed = p.cCondenseAndResume(stacks, source, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors)
@@ -5149,7 +5160,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				anyReduced = true
 			}
 		}
-		stopDiagCondenseGating = stopCondenseGatingString(condenseErrorCostEnabled, condenseAnyReduced, condenseRan, condenseResumed, stacks)
+		stopDiagCondenseGating = stopCondenseGatingString(condenseErrorCostEnabled, condenseAnyReduced, condenseRelevant, condenseRan, condenseResumed, stacks)
 
 		postDispatchDefaultReduced := false
 		if anyReduced && !tok.NoLookahead && parseEagerDefaultReduceEnabled() && p.isExternalToken(tok.Symbol) {

@@ -1877,7 +1877,13 @@ func noteRepeatedReduceChainAction(prev *reduceChainSignature, prevCount int, st
 }
 
 func (p *Parser) recoverReduceChainCycle(source []byte, s *glrStack, state StateID, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) bool {
-	if tok.Symbol == 0 || tok.NoLookahead || s == nil || s.dead || s.accepted {
+	if tok.NoLookahead || s == nil || s.dead || s.accepted {
+		return false
+	}
+	if tok.Symbol == 0 {
+		if p.errorCostCompetitionEnabled() && tok.StartByte == tok.EndByte {
+			s.cPaused = true
+		}
 		return false
 	}
 	if !p.guardRealTokenAttachmentGap(source, s, tok, "reduce-chain-cycle") {

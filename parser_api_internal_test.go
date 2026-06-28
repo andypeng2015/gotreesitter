@@ -2409,6 +2409,36 @@ func TestRecoverReduceChainCycle(t *testing.T) {
 		}
 	})
 
+	t.Run("pauses eof cycle for c recovery", func(t *testing.T) {
+		parser := NewParser(lang)
+		parser.errorCostCompetition = true
+		s := newGLRStack(lang.InitialState)
+		s.byteOffset = 4
+		nodeCount := 7
+		beforeDepth := s.depth()
+
+		ok := parser.recoverReduceChainCycle([]byte("    "), &s, lang.InitialState, Token{
+			Symbol:    0,
+			StartByte: 4,
+			EndByte:   4,
+		}, &nodeCount, arena, &entryScratch, &gssScratch, nil)
+		if ok {
+			t.Fatal("recoverReduceChainCycle returned true, want false because EOF is not consumed")
+		}
+		if !s.cPaused {
+			t.Fatal("stack was not paused for C EOF recovery")
+		}
+		if got, want := nodeCount, 7; got != want {
+			t.Fatalf("nodeCount = %d, want %d", got, want)
+		}
+		if got, want := s.depth(), beforeDepth; got != want {
+			t.Fatalf("stack depth = %d, want %d", got, want)
+		}
+		if got, want := s.byteOffset, uint32(4); got != want {
+			t.Fatalf("stack byteOffset = %d, want %d", got, want)
+		}
+	})
+
 	t.Run("rejects skipped comment gap before attaching token", func(t *testing.T) {
 		source := []byte("1/*c*/234")
 		s := newGLRStack(lang.InitialState)
