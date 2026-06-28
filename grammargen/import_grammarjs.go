@@ -6,14 +6,33 @@ import (
 	"strings"
 
 	"github.com/odvcencio/gotreesitter"
-	"github.com/odvcencio/gotreesitter/grammars"
 )
 
+// jsGrammarProvider supplies the JavaScript tree-sitter language used to parse
+// grammar.js files. It is injected (rather than importing the grammars registry
+// directly) so that grammargen does NOT depend on gotreesitter/grammars — that
+// coupling otherwise forces every consumer that merely *defines* a grammar via
+// this DSL to link all ~200 embedded grammars (~22MB). Register it by
+// blank-importing github.com/odvcencio/gotreesitter/grammargen/grammarjs, or by
+// calling SetJSGrammarProvider directly.
+var jsGrammarProvider func() *gotreesitter.Language
+
+// SetJSGrammarProvider registers the JavaScript language provider used by
+// ImportGrammarJS. The grammargen/grammarjs subpackage calls this from an init
+// func with grammars.JavascriptLanguage.
+func SetJSGrammarProvider(provider func() *gotreesitter.Language) {
+	jsGrammarProvider = provider
+}
+
 // ImportGrammarJS parses a tree-sitter grammar.js file and returns a Grammar IR.
-// This uses gotreesitter's own JavaScript grammar to parse the file, demonstrating
-// the full-circle capability: gotreesitter parsing its own input format.
+// It uses gotreesitter's own JavaScript grammar to parse the file — the
+// full-circle capability of gotreesitter parsing its own input format. The JS
+// grammar must be registered first (blank-import .../grammargen/grammarjs).
 func ImportGrammarJS(source []byte) (*Grammar, error) {
-	lang := grammars.JavascriptLanguage()
+	if jsGrammarProvider == nil {
+		return nil, fmt.Errorf("grammar.js import requires a JS grammar provider; blank-import github.com/odvcencio/gotreesitter/grammargen/grammarjs (or call SetJSGrammarProvider)")
+	}
+	lang := jsGrammarProvider()
 	parser := gotreesitter.NewParser(lang)
 	tree, err := parser.Parse(source)
 	if err != nil {

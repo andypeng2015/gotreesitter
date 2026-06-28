@@ -7,6 +7,34 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+## [0.20.5] - 2026-06-24
+
+### Changed
+
+- `grammargen` no longer imports the `grammars` registry. The `grammar.js`
+  importer (`ImportGrammarJS`) previously pulled in `grammars` for the embedded
+  JavaScript language, which transitively bundled all ~200 grammar blobs
+  (~22MB) into *every* consumer that merely defined a grammar via the DSL —
+  including `taproot` and all downstream DSLs. The JS language is now injected
+  via `SetJSGrammarProvider`; blank-import `grammargen/grammarjs` (or `cmd`s
+  that need `-js`) to register it. Net effect: `grammargen`, `taproot`, and
+  anything that only defines/loads a grammar are now grammar-registry-free.
+
+## [0.20.4] - 2026-06-24
+
+### Added
+
+- `taproot/walk`: a grammar-free core of the `taproot` harness. It loads a
+  tree-sitter `Language` from a pre-generated blob (`LanguageFromBlob`) and
+  navigates the CST (`Walker`, `ParseFromBlob`, `ParseWithLanguage`) depending
+  only on the gotreesitter runtime — not `grammargen` or the `grammars`
+  registry. DSLs that embed a generated grammar blob can now parse/highlight
+  without linking the ~200-grammar registry (~22 MB). The grammargen-backed
+  build-from-DSL fallbacks remain in `taproot`, which re-exports `walk.Walker`
+  so existing `taproot.Walker`/`Parse` callers are unaffected.
+
+## [0.20.3] - 2026-06-23
+
 ### Fixed
 
 - C# files whose namespace body does not parse cleanly no longer collapse into
@@ -22,6 +50,22 @@ for tags and release notes while still in `0.x`.
   trailing closure of the condition's last operand; recovery now re-parses the
   affected conditions with synthetic parentheses to remove the ambiguity and
   maps the result back to byte-faithful original coordinates (#118).
+- Go: `normalizeGoDotLeafChildren` now walks dotted-selector chains with an
+  iterative DFS instead of recursion, removing a stack-depth risk on very long
+  selector chains.
+
+### Changed
+
+- Removed dead unexported code (#117).
+
+### Testing
+
+- Banked a (skipped) regression guard,
+  `TestJavaScriptBlockThenAssignmentParsesClean`, for the JavaScript
+  block-then-simple-assignment GLR collapse (`{a}b=c`, #111). The root cause is
+  the JSX-attribute-continuation ASI heuristic in the JS scanner; the fix is
+  still pending (targeted for the C-oracle-verified parity line). Remove the
+  `t.Skip` to validate once fixed.
 
 ## [0.20.2] - 2026-06-06
 
