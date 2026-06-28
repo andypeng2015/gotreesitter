@@ -199,6 +199,49 @@ func TestParseJavaCollapsedModifierAndWildcardChildren(t *testing.T) {
 	}
 }
 
+func TestParseJavaDottedFieldAssignmentStatement(t *testing.T) {
+	src := `class X {
+  @Generated("com.github.javaparser.generator.metamodel.MetaModelGenerator")
+  private static void initializePropertyMetaModels() {
+    nodeMetaModel.commentPropertyMetaModel = new PropertyMetaModel(
+        nodeMetaModel,
+        "comment",
+        com.github.javaparser.ast.comments.Comment.class,
+        Optional.of(commentMetaModel),
+        true,
+        false,
+        false,
+        false);
+  }
+
+  void f() {
+    nodeMetaModel.commentPropertyMetaModel = new PropertyMetaModel(nodeMetaModel, "comment");
+  }
+}
+`
+	entry := grammars.DetectLanguage("Test.java")
+	lang := entry.Language()
+	parser := gotreesitter.NewParser(lang)
+	tree, err := parser.ParseWithTokenSource([]byte(src), entry.TokenSourceFactory([]byte(src), lang))
+	if err != nil {
+		t.Fatalf("java parse failed: %v", err)
+	}
+	t.Cleanup(tree.Release)
+
+	root := tree.RootNode()
+	t.Logf("runtime: %s", tree.ParseRuntime().Summary())
+	sexpr := root.SExpr(lang)
+	if root.HasError() {
+		t.Fatalf("java parse has error: %s root=%s", tree.ParseRuntime().Summary(), sexpr)
+	}
+	if !strings.Contains(sexpr, "(expression_statement (assignment_expression (field_access") {
+		t.Fatalf("missing dotted field assignment expression; root=%s", sexpr)
+	}
+	if strings.Contains(sexpr, "local_variable_declaration") {
+		t.Fatalf("dotted field assignment parsed as local variable declaration; root=%s", sexpr)
+	}
+}
+
 func TestParsePythonCollapsedWildcardImportChild(t *testing.T) {
 	src := "from os import *\n"
 	tree, lang := parseLanguageSample(t, "python", src)
@@ -369,6 +412,39 @@ func TestParseTSXOptionalChainIsLeaf(t *testing.T) {
 	// should match after normalization strips any materialized "?." child.
 	if got, want := node.ChildCount(), 0; got != want {
 		t.Fatalf("optional_chain child count = %d, want %d; root=%s", got, want, tree.RootNode().SExpr(lang))
+	}
+}
+
+func TestParseJavaScriptTypeScriptDynamicImportKeepsKeywordChild(t *testing.T) {
+	for _, tc := range []struct {
+		lang string
+		src  string
+	}{
+		{lang: "javascript", src: "async function load(name) { return import(`./${name}.js`); }\n"},
+		{lang: "typescript", src: "async function load(name: string) { return import(\"fs\"); }\n"},
+	} {
+		t.Run(tc.lang, func(t *testing.T) {
+			tree, lang := parseLanguageSample(t, tc.lang, tc.src)
+			t.Cleanup(tree.Release)
+
+			node := firstNodeByTypeAndText(tree.RootNode(), lang, []byte(tc.src), "import", "import")
+			if node == nil {
+				t.Fatalf("missing dynamic import node: %s", tree.RootNode().SExpr(lang))
+			}
+			if got, want := node.ChildCount(), 1; got != want {
+				t.Fatalf("dynamic import child count = %d, want %d; root=%s", got, want, tree.RootNode().SExpr(lang))
+			}
+			child := node.Child(0)
+			if child == nil {
+				t.Fatal("dynamic import keyword child is nil")
+			}
+			if got, want := child.Type(lang), "import"; got != want {
+				t.Fatalf("dynamic import child type = %q, want %q", got, want)
+			}
+			if child.IsNamed() {
+				t.Fatal("dynamic import keyword child is named, want anonymous")
+			}
+		})
 	}
 }
 

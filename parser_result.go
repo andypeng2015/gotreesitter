@@ -230,9 +230,6 @@ func stackCompareForResultSelection(p *Parser, arena *nodeArena, a, b *glrStack,
 			return -1
 		}
 	}
-	if cmp := compareAcceptedStackAliasPreference(p, arena, *a, *b); cmp != 0 {
-		return cmp
-	}
 	if a.score != b.score {
 		if a.score > b.score {
 			return 1
@@ -258,6 +255,9 @@ func stackCompareForResultSelection(p *Parser, arena *nodeArena, a, b *glrStack,
 			return 1
 		}
 		return -1
+	}
+	if cmp := compareAcceptedStackAliasPreference(p, arena, *a, *b); cmp != 0 {
+		return cmp
 	}
 	if a.branchOrder != b.branchOrder {
 		if a.branchOrder < b.branchOrder {

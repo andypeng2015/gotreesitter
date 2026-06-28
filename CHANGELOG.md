@@ -7,8 +7,31 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+### Added
+
+- Strict parse variants return `ErrParseStoppedEarly` for timeout,
+  cancellation, token-source EOF, and parser safety-limit partial trees while
+  preserving the returned tree for diagnostics.
+- `NodeAtByte` and `NamedNodeAtByte` helpers on `Tree` and `Node` for editor
+  offset lookup without hand-written tree walks.
+- One-pass code-understanding helpers for common definition spans, call
+  references, heritage edges, and enclosing-definition lookup.
+- Benchmarks comparing the one-pass code-understanding helpers against the
+  tags-query path for both parse-plus-inspect and already-parsed trees.
+- `grammars.LoadLanguage(name, blob)` attaches registered external scanners and
+  external lex-state tables when loading raw grammar blobs.
+- `Language.Size()` reports approximate decoded table and lookup-cache bytes for
+  diagnostics and cache policy decisions.
+
 ### Fixed
 
+- JavaScript, TypeScript, and TSX automatic-semicolon scanning now preserves
+  standalone block statements before simple assignments such as `{a}b=c`,
+  matching the C parser on minified bundle shapes (#111).
+- Large Go files with wide table-driven literals now have an opt-in Cobra
+  regression gate so release validation catches parser stack overflows like the
+  `ParserPool.Parse` crash reported against `command_test.go` and
+  `completions_test.go` (#110).
 - Swift functions that iterate a `for…in` loop over a range (`0..<n`, `0...n`)
   or a call expression (`stride(from:to:by:)`) no longer silently collapse to
   `_modifierless_function_declaration_no_body` with the loop body spilled out as
@@ -19,6 +42,12 @@ for tags and release notes while still in `0.x`.
   misparse produced no `ERROR` node, the recovery pass now runs whenever the
   detection walk finds a collapsed header rather than only on errored trees
   (#123).
+
+### Testing
+
+- Added `TestGoCobraLargeFileParseRegression`, gated by
+  `GTS_COBRA_REGRESSION_ROOT`, for exact large-file release validation without
+  making normal test runs network- or corpus-dependent.
 
 ## [0.20.5] - 2026-06-24
 

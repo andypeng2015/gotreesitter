@@ -22,6 +22,10 @@ static void* tsParitySymbol(void* handle, const char* name) {
 	return dlsym(handle, name);
 }
 
+static int tsParityClose(void* handle) {
+	return dlclose(handle);
+}
+
 static const char* tsParityError(void) {
 	return dlerror();
 }
@@ -35,11 +39,14 @@ import "C"
 
 import (
 	"bufio"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -67,18 +74,29 @@ const (
 	parityMaxLanguageVersion = 15
 	parityGenerateABI        = 15
 	parityRepoRootEnv        = "GTS_PARITY_REPO_ROOT"
+	parityCBuildCacheEnv     = "GTS_PARITY_C_REF_BUILD_CACHE"
+	parityCBuildJobsEnv      = "GTS_PARITY_C_REF_BUILD_JOBS"
 )
 
 var languageVersionPattern = regexp.MustCompile(`(?m)^#define\s+LANGUAGE_VERSION\s+(\d+)`)
 
-var parityCRefState = struct {
-	once    sync.Once
-	lock    map[string]parityLockEntry
-	rootDir string
-
-	mu   sync.Mutex
-	refs map[string]*parityCRef
+type parityCRefBuild struct {
+	done chan struct{}
+	ref  *parityCRef
 	err  error
+}
+
+var parityCRefState = struct {
+	once          sync.Once
+	lock          map[string]parityLockEntry
+	rootDir       string
+	buildCacheDir string
+	buildSem      chan struct{}
+
+	mu       sync.Mutex
+	refs     map[string]*parityCRef
+	inflight map[string]*parityCRefBuild
+	err      error
 }{}
 
 // ParityCLanguage loads a C reference language compiled from the pinned
@@ -102,28 +120,60 @@ func ParityCLanguage(name string) (*sitter.Language, error) {
 		}
 		parityCRefState.lock = lock
 		parityCRefState.rootDir = rootDir
+		parityCRefState.buildCacheDir = parityDefaultCBuildCacheDir(lockPath)
+		parityCRefState.buildSem = make(chan struct{}, parityCBuildJobs())
 		parityCRefState.refs = make(map[string]*parityCRef)
+		parityCRefState.inflight = make(map[string]*parityCRefBuild)
 	})
 	if parityCRefState.err != nil {
 		return nil, parityCRefState.err
 	}
 
 	parityCRefState.mu.Lock()
-	defer parityCRefState.mu.Unlock()
-
 	if ref, ok := parityCRefState.refs[name]; ok {
+		parityCRefState.mu.Unlock()
 		return ref.lang, nil
 	}
 	entry, ok := parityCRefState.lock[name]
 	if !ok {
+		parityCRefState.mu.Unlock()
 		return nil, fmt.Errorf("parity lock has no entry for %q", name)
 	}
+	if build := parityCRefState.inflight[name]; build != nil {
+		parityCRefState.mu.Unlock()
+		<-build.done
+		if build.err != nil {
+			return nil, build.err
+		}
+		return build.ref.lang, nil
+	}
 
-	ref, err := buildParityCRef(parityCRefState.rootDir, entry)
+	build := &parityCRefBuild{done: make(chan struct{})}
+	parityCRefState.inflight[name] = build
+	rootDir := parityCRefState.rootDir
+	cacheDir := parityCRefState.buildCacheDir
+	buildSem := parityCRefState.buildSem
+	parityCRefState.mu.Unlock()
+
+	buildSem <- struct{}{}
+	ref, err := func() (*parityCRef, error) {
+		defer func() { <-buildSem }()
+		return buildParityCRef(rootDir, cacheDir, entry)
+	}()
+
+	parityCRefState.mu.Lock()
+	build.ref = ref
+	build.err = err
 	if err != nil {
+		delete(parityCRefState.inflight, name)
+		close(build.done)
+		parityCRefState.mu.Unlock()
 		return nil, err
 	}
 	parityCRefState.refs[name] = ref
+	delete(parityCRefState.inflight, name)
+	close(build.done)
+	parityCRefState.mu.Unlock()
 	return ref.lang, nil
 }
 
@@ -140,7 +190,11 @@ func findParityLockPath() (string, error) {
 	return "", fmt.Errorf("could not find grammars/languages.lock from cgo_harness")
 }
 
-func buildParityCRef(rootDir string, entry parityLockEntry) (*parityCRef, error) {
+func buildParityCRef(rootDir, cacheDir string, entry parityLockEntry) (*parityCRef, error) {
+	if ref, ok := loadCachedParityCRef(cacheDir, entry); ok {
+		return ref, nil
+	}
+
 	repoDir, ok := parityLocalRepoDir(entry)
 	if !ok {
 		// Compute a temp clone destination under rootDir.
@@ -175,11 +229,97 @@ func buildParityCRef(rootDir string, entry parityLockEntry) (*parityCRef, error)
 	for _, symbol := range parityLanguageSymbols(entry) {
 		ref, err := loadParitySharedLanguage(soPath, symbol)
 		if err == nil {
+			storeCachedParityCRef(cacheDir, entry, soPath)
 			return ref, nil
 		}
 		loadErrs = append(loadErrs, fmt.Sprintf("%s: %v", symbol, err))
 	}
 	return nil, fmt.Errorf("%s: load language symbol failed: %s", entry.Name, strings.Join(loadErrs, "; "))
+}
+
+func parityCBuildJobs() int {
+	raw := strings.TrimSpace(os.Getenv(parityCBuildJobsEnv))
+	if raw == "" {
+		return 1
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 1 {
+		return 1
+	}
+	return n
+}
+
+func parityDefaultCBuildCacheDir(lockPath string) string {
+	raw := strings.TrimSpace(os.Getenv(parityCBuildCacheEnv))
+	switch strings.ToLower(raw) {
+	case "0", "false", "off", "none", "no":
+		return ""
+	}
+	if raw != "" {
+		if abs, err := filepath.Abs(raw); err == nil {
+			return abs
+		}
+		return raw
+	}
+
+	repoRoot := filepath.Dir(filepath.Dir(lockPath))
+	if abs, err := filepath.Abs(repoRoot); err == nil {
+		repoRoot = abs
+	}
+	return filepath.Join(repoRoot, "harness_out", "parity_c_ref_cache", runtime.GOOS+"_"+runtime.GOARCH)
+}
+
+func parityCachedSOPath(cacheDir string, entry parityLockEntry) string {
+	if strings.TrimSpace(cacheDir) == "" {
+		return ""
+	}
+	keyInput := strings.Join([]string{
+		entry.Name,
+		entry.RepoURL,
+		entry.Commit,
+		entry.Subdir,
+		strconv.Itoa(parityMinLanguageVersion),
+		strconv.Itoa(parityMaxLanguageVersion),
+		strconv.Itoa(parityGenerateABI),
+		runtime.GOOS,
+		runtime.GOARCH,
+	}, "\x00")
+	sum := sha256.Sum256([]byte(keyInput))
+	return filepath.Join(cacheDir, paritySafeName(entry.Name)+"-"+hex.EncodeToString(sum[:])[:16]+".so")
+}
+
+func loadCachedParityCRef(cacheDir string, entry parityLockEntry) (*parityCRef, bool) {
+	soPath := parityCachedSOPath(cacheDir, entry)
+	if soPath == "" {
+		return nil, false
+	}
+	if _, err := os.Stat(soPath); err != nil {
+		return nil, false
+	}
+	ref, err := loadParitySharedLanguageAny(soPath, parityLanguageSymbols(entry))
+	if err == nil {
+		return ref, true
+	}
+	_ = os.Remove(soPath)
+	return nil, false
+}
+
+func storeCachedParityCRef(cacheDir string, entry parityLockEntry, soPath string) {
+	cacheSO := parityCachedSOPath(cacheDir, entry)
+	if cacheSO == "" {
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(cacheSO), 0o755); err != nil {
+		return
+	}
+	tmp := fmt.Sprintf("%s.tmp.%d.%d", cacheSO, os.Getpid(), time.Now().UnixNano())
+	if err := runCommand("", "cp", soPath, tmp); err != nil {
+		_ = os.Remove(tmp)
+		return
+	}
+	if err := os.Rename(tmp, cacheSO); err != nil {
+		_ = os.Remove(tmp)
+	}
 }
 
 func parityLocalRepoDir(entry parityLockEntry) (string, bool) {
@@ -574,6 +714,18 @@ func readParserLanguageVersion(parserPath string) (int, bool) {
 	return version, true
 }
 
+func loadParitySharedLanguageAny(soPath string, symbols []string) (*parityCRef, error) {
+	var loadErrs []string
+	for _, symbol := range symbols {
+		ref, err := loadParitySharedLanguage(soPath, symbol)
+		if err == nil {
+			return ref, nil
+		}
+		loadErrs = append(loadErrs, fmt.Sprintf("%s: %v", symbol, err))
+	}
+	return nil, fmt.Errorf("load language symbol failed: %s", strings.Join(loadErrs, "; "))
+}
+
 func loadParitySharedLanguage(soPath, symbol string) (*parityCRef, error) {
 	cPath := C.CString(soPath)
 	defer C.free(unsafe.Pointer(cPath))
@@ -588,16 +740,19 @@ func loadParitySharedLanguage(soPath, symbol string) (*parityCRef, error) {
 
 	sym := C.tsParitySymbol(handle, cSym)
 	if sym == nil {
+		C.tsParityClose(handle)
 		return nil, fmt.Errorf("dlsym %s: %s", symbol, parityDLError())
 	}
 
 	langPtr := C.tsParityCall(sym)
 	if langPtr == nil {
+		C.tsParityClose(handle)
 		return nil, fmt.Errorf("%s returned nil TSLanguage", symbol)
 	}
 
 	lang := sitter.NewLanguage(unsafe.Pointer(langPtr))
 	if lang == nil {
+		C.tsParityClose(handle)
 		return nil, fmt.Errorf("NewLanguage(%s) returned nil", symbol)
 	}
 

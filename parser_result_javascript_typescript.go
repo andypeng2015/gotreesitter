@@ -25,10 +25,15 @@ func normalizeTypeScriptTreeCompatibilityWithParser(root *Node, source []byte, p
 	if !recordPasses {
 		// OptionalChainLeaves was fused into the statement-keyword walk; one less
 		// tree traversal per file containing "?." (most modern JS/TS).
-		normalizeJavaScriptTypeScriptStatementKeywordsAndPrecedence(root, source, lang)
+		syntaxStats := normalizeJavaScriptTypeScriptStatementKeywordsAndPrecedenceWithDetailedStats(root, source, lang)
+		normalizeTypeScriptRecoveredTernaryGenericCallRoot(root, source, lang)
 		normalizeTypeScriptRecoveredNamespaceRoot(root, source, lang)
 		normalizeJavaScriptTopLevelDeclarationBounds(root, lang)
-		normalizeTypeScriptCompatibility(root, source, lang)
+		if syntaxStats.typeScriptCompatibility.built {
+			normalizeTypeScriptCompatibilityCandidates(syntaxStats.typeScriptCompatibility, source, lang)
+		} else {
+			normalizeTypeScriptCompatibility(root, source, lang)
+		}
 		normalizeJavaScriptTopLevelExpressionStatementBounds(root, lang)
 		return
 	}
@@ -85,6 +90,9 @@ func normalizeTypeScriptTreeCompatibilityWithParser(root *Node, source []byte, p
 		}
 		return normalizeJavaScriptTypeScriptBinaryPrecedenceWithStats(root, lang)
 	})
+	runVoid("ts_recovered_ternary_generic_call_root", func() {
+		normalizeTypeScriptRecoveredTernaryGenericCallRoot(root, source, lang)
+	})
 	runVoid("ts_recovered_namespace_root", func() {
 		normalizeTypeScriptRecoveredNamespaceRoot(root, source, lang)
 	})
@@ -92,7 +100,12 @@ func normalizeTypeScriptTreeCompatibilityWithParser(root *Node, source []byte, p
 		normalizeJavaScriptTopLevelDeclarationBounds(root, lang)
 	})
 	run("ts_type_compatibility", func() normalizationPassCounters {
-		stats := normalizeTypeScriptCompatibilityWithStats(root, source, lang)
+		var stats typeScriptCompatibilityStats
+		if haveSyntaxStats && syntaxStats.typeScriptCompatibility.built {
+			stats = normalizeTypeScriptCompatibilityCandidatesWithStats(syntaxStats.typeScriptCompatibility, source, lang)
+		} else {
+			stats = normalizeTypeScriptCompatibilityWithStats(root, source, lang)
+		}
 		parser.recordNormalizationMetric("ts_type_identifier_alias_candidates", 1, 1, stats.identifierAliases.nodesVisited, stats.identifierAliases.nodesRewritten)
 		parser.recordNormalizationMetric("ts_type_import_keyword_candidates", 1, 1, stats.importKeywords.nodesVisited, stats.importKeywords.nodesRewritten)
 		parser.recordNormalizationMetric("ts_type_member_modifier_candidates", 1, 1, stats.memberModifiers.nodesVisited, stats.memberModifiers.nodesRewritten)
@@ -118,9 +131,13 @@ type typeScriptCompatSourceFlags struct {
 	hasSemicolon        bool
 	hasKeywordStatement bool
 	hasCallAngle        bool
+	hasAsKeyword        bool
+	hasClassKeyword     bool
+	hasEnumKeyword      bool
 	hasUnaryCandidate   bool
 	hasBinaryCandidate  bool
 	hasTypeKeyword      bool
+	hasImportKeyword    bool
 	hasImportType       bool
 	hasMappedTypeSyntax bool
 	hasIndexTypeSyntax  bool
@@ -169,12 +186,20 @@ func typeScriptCompatSourceFlagsFor(source []byte) typeScriptCompatSourceFlags {
 			flags.hasKeywordStatement = true
 		case "type", "keyof", "as", "satisfies":
 			flags.hasTypeKeyword = true
+			if typeScriptBytesEqualString(source[start:i], "as") {
+				flags.hasAsKeyword = true
+			}
 		case "import":
+			flags.hasImportKeyword = true
 			if typeScriptImportSourceLooksTypeLike(source, i) {
 				flags.hasImportType = true
 			}
-		case "public", "private", "protected", "readonly", "static", "abstract", "declare", "accessor", "override":
+		case "public", "private", "protected", "readonly", "static", "abstract", "async", "get", "set", "declare", "accessor", "override":
 			flags.hasMemberModifier = true
+		case "class":
+			flags.hasClassKeyword = true
+		case "enum":
+			flags.hasEnumKeyword = true
 		case "namespace", "module":
 			flags.hasNamespaceModule = true
 		case "delete", "typeof", "void", "await":
@@ -238,9 +263,13 @@ func recordTypeScriptCompatSourceFlagMetrics(parser *Parser, flags typeScriptCom
 	record("ts_source_has_semicolon", flags.hasSemicolon)
 	record("ts_source_has_keyword_statement", flags.hasKeywordStatement)
 	record("ts_source_has_call_angle", flags.hasCallAngle)
+	record("ts_source_has_as_keyword", flags.hasAsKeyword)
+	record("ts_source_has_class_keyword", flags.hasClassKeyword)
+	record("ts_source_has_enum_keyword", flags.hasEnumKeyword)
 	record("ts_source_has_unary_candidate", flags.hasUnaryCandidate)
 	record("ts_source_has_binary_candidate", flags.hasBinaryCandidate)
 	record("ts_source_has_type_keyword", flags.hasTypeKeyword)
+	record("ts_source_has_import_keyword", flags.hasImportKeyword)
 	record("ts_source_has_import_type", flags.hasImportType)
 	record("ts_source_has_mapped_type_syntax", flags.hasMappedTypeSyntax)
 	record("ts_source_has_index_type_syntax", flags.hasIndexTypeSyntax)
@@ -900,14 +929,15 @@ type javaScriptTypeScriptPrecedenceStats struct {
 }
 
 type javaScriptTypeScriptSyntaxNormalizationStats struct {
-	emptyStatement    normalizationPassCounters
-	existentialType   normalizationPassCounters
-	statementKeyword  normalizationPassCounters
-	call              normalizationPassCounters
-	unary             normalizationPassCounters
-	binary            normalizationPassCounters
-	indexBuilds       uint64
-	indexNodesVisited uint64
+	emptyStatement          normalizationPassCounters
+	existentialType         normalizationPassCounters
+	statementKeyword        normalizationPassCounters
+	call                    normalizationPassCounters
+	unary                   normalizationPassCounters
+	binary                  normalizationPassCounters
+	typeScriptCompatibility typeScriptCompatibilityCandidates
+	indexBuilds             uint64
+	indexNodesVisited       uint64
 }
 
 func normalizeJavaScriptTypeScriptStatementKeywordsAndPrecedence(root *Node, source []byte, lang *Language) {
@@ -950,7 +980,18 @@ func normalizeJavaScriptTypeScriptStatementKeywordsAndPrecedenceWithDetailedStat
 	optionalChainSym, hasOptionalChainSym := symbolByName(lang, "optional_chain")
 	optionalChainTokenSym, hasOptionalChainTokenSym := symbolByName(lang, "?.")
 	optionalChainTokenNamed := hasOptionalChainTokenSym && symbolIsNamed(lang, optionalChainTokenSym)
-	enableOptionalChain := hasOptionalChainSym && hasOptionalChainTokenSym && bytes.Contains(source, []byte("?."))
+	enableOptionalChain := hasOptionalChainSym && bytes.Contains(source, []byte("?."))
+	dynamicImportSym, hasDynamicImport := lang.symbolByNameAndNamed("import", true)
+	importKeywordSym, hasImportKeyword := lang.symbolByNameAndNamed("import", false)
+	enableDynamicImport := hasDynamicImport && hasImportKeyword && bytes.Contains(source, []byte("import"))
+
+	var typeScriptCtx *typeScriptNormalizationContext
+	if lang.Name == "typescript" || lang.Name == "tsx" {
+		sourceFlags := typeScriptCompatSourceFlagsFor(source)
+		if ctx, ok := newTypeScriptNormalizationContextForSourceFlags(source, lang, sourceFlags); ok {
+			typeScriptCtx = &ctx
+		}
+	}
 
 	index := rewriteJavaScriptTypeScriptStatementKeywordsCallPrecedenceAndBuildUnaryBinaryIndex(
 		root, source, lang,
@@ -961,11 +1002,14 @@ func normalizeJavaScriptTypeScriptStatementKeywordsAndPrecedenceWithDetailedStat
 		whileStmtSym, hasWhileStmt, whileSym, whileNamed, hasWhile,
 		closeBraceSym, hasCloseBrace,
 		optionalChainSym, optionalChainTokenSym, optionalChainTokenNamed, enableOptionalChain,
+		dynamicImportSym, importKeywordSym, enableDynamicImport,
+		typeScriptCtx,
 	)
 	stats.emptyStatement = index.emptyStatement
 	stats.existentialType = index.existentialType
 	stats.statementKeyword = index.statementKeyword
 	stats.call = index.call
+	stats.typeScriptCompatibility = index.typeScriptCompatibility
 	stats.indexBuilds += index.builds
 	stats.indexNodesVisited += index.nodesVisited
 	if hasUnarySym {
@@ -1068,6 +1112,10 @@ func rewriteJavaScriptTypeScriptStatementKeywordsCallPrecedenceAndBuildUnaryBina
 	optionalChainTokenSym Symbol,
 	optionalChainTokenNamed bool,
 	enableOptionalChain bool,
+	dynamicImportSym Symbol,
+	importKeywordSym Symbol,
+	enableDynamicImport bool,
+	typeScriptCtx *typeScriptNormalizationContext,
 ) javaScriptTypeScriptUnaryBinaryPrecedenceIndex {
 	var index javaScriptTypeScriptUnaryBinaryPrecedenceIndex
 	if root == nil {
@@ -1079,43 +1127,63 @@ func rewriteJavaScriptTypeScriptStatementKeywordsCallPrecedenceAndBuildUnaryBina
 	// other compat passes.
 	if !hasCallSym && !hasUnarySym && !hasBinarySym &&
 		!hasEmptyStatement && !hasExistentialType &&
-		!hasIfStmt && !hasWhileStmt && !enableOptionalChain {
+		!hasIfStmt && !hasWhileStmt && !enableOptionalChain && !enableDynamicImport &&
+		typeScriptCtx == nil {
 		return index
 	}
 	index.builds = 1
+	if typeScriptCtx != nil {
+		index.typeScriptCompatibility.built = true
+	}
+	enableTypeScriptChildCompatibility := typeScriptCtx != nil &&
+		(typeScriptCtx.canRewriteGenericCalls ||
+			typeScriptCtx.canRewriteInstantiatedCalls ||
+			typeScriptCtx.canRewriteAsExpressions ||
+			typeScriptCtx.canRewriteGenericArrows ||
+			typeScriptCtx.canRewriteClassDeclarations)
 	var walk func(*Node)
 	walk = func(n *Node) {
 		if n == nil {
 			return
 		}
 		index.nodesVisited++
-		if hasEmptyStatement && hasSemicolon && n.symbol == emptyStatementSym {
-			index.emptyStatement.nodesVisited++
-			if normalizeJavaScriptTypeScriptEmptyStatementLeafWithSymbolChanged(n, source, semicolonSym, semicolonNamed) {
-				index.emptyStatement.nodesRewritten++
+		switch n.symbol {
+		case emptyStatementSym:
+			if hasEmptyStatement && hasSemicolon {
+				index.emptyStatement.nodesVisited++
+				if normalizeJavaScriptTypeScriptEmptyStatementLeafWithSymbolChanged(n, source, semicolonSym, semicolonNamed) {
+					index.emptyStatement.nodesRewritten++
+				}
 			}
-		}
-		if hasExistentialType && hasStar && n.symbol == existentialTypeSym {
-			index.existentialType.nodesVisited++
-			if normalizeJavaScriptTypeScriptCollapsedLeafWithSymbolChanged(n, starSym, starNamed) {
-				index.existentialType.nodesRewritten++
+		case existentialTypeSym:
+			if hasExistentialType && hasStar {
+				index.existentialType.nodesVisited++
+				if normalizeJavaScriptTypeScriptCollapsedLeafWithSymbolChanged(n, starSym, starNamed) {
+					index.existentialType.nodesRewritten++
+				}
 			}
-		}
-		if hasIfStmt && hasIf && n.symbol == ifStmtSym {
-			index.statementKeyword.nodesVisited++
-			if normalizeJavaScriptTypeScriptStatementKeywordLeafWithSymbolChanged(n, source, "if", ifSym, ifNamed, closeBraceSym, hasCloseBrace) {
-				index.statementKeyword.nodesRewritten++
+		case ifStmtSym:
+			if hasIfStmt && hasIf {
+				index.statementKeyword.nodesVisited++
+				if normalizeJavaScriptTypeScriptStatementKeywordLeafWithSymbolChanged(n, source, "if", ifSym, ifNamed, closeBraceSym, hasCloseBrace) {
+					index.statementKeyword.nodesRewritten++
+				}
 			}
-		} else if hasWhileStmt && hasWhile && n.symbol == whileStmtSym {
-			index.statementKeyword.nodesVisited++
-			if normalizeJavaScriptTypeScriptStatementKeywordLeafWithSymbolChanged(n, source, "while", whileSym, whileNamed, closeBraceSym, hasCloseBrace) {
-				index.statementKeyword.nodesRewritten++
+		case whileStmtSym:
+			if hasWhileStmt && hasWhile {
+				index.statementKeyword.nodesVisited++
+				if normalizeJavaScriptTypeScriptStatementKeywordLeafWithSymbolChanged(n, source, "while", whileSym, whileNamed, closeBraceSym, hasCloseBrace) {
+					index.statementKeyword.nodesRewritten++
+				}
 			}
-		} else if enableOptionalChain && n.symbol == optionalChainSym && len(n.children) == 1 {
-			// The C reference parser emits optional_chain as a 0-child leaf.
-			// Strip the materialized "?." child to match C.
-			child := n.children[0]
-			if child != nil && child.endByte > child.startByte && int(child.endByte) <= len(source) && bytes.Equal(source[child.startByte:child.endByte], []byte("?.")) {
+		case optionalChainSym:
+			if enableOptionalChain && len(n.children) == 1 {
+				// The C reference parser emits optional_chain as a 0-child leaf.
+				// Strip the materialized "?." child to match C.
+				child := n.children[0]
+				if child == nil || child.endByte <= child.startByte || int(child.endByte) > len(source) || !bytes.Equal(source[child.startByte:child.endByte], []byte("?.")) {
+					break
+				}
 				n.children = nil
 				n.fieldIDs = nil
 				n.fieldSources = nil
@@ -1123,9 +1191,14 @@ func rewriteJavaScriptTypeScriptStatementKeywordsCallPrecedenceAndBuildUnaryBina
 					n.ownerArena.clearFinalChildRefs(n)
 				}
 			}
+		case dynamicImportSym:
+			if enableDynamicImport {
+				normalizeJavaScriptTypeScriptDynamicImportLeafWithSymbolChanged(n, importKeywordSym)
+			}
 		}
+		collectTypeScriptCompatibilityNodeCandidate(&index.typeScriptCompatibility, n, typeScriptCtx)
 
-		if nodeHasFinalChildRefs(n) {
+		if n.childIndex <= finalChildSidecarIndexBase && n.ownerArena != nil {
 			childCount := resultChildCount(n)
 			for i := 0; i < childCount; i++ {
 				child := resultChildAt(n, i)
@@ -1142,54 +1215,111 @@ func rewriteJavaScriptTypeScriptStatementKeywordsCallPrecedenceAndBuildUnaryBina
 					}
 				}
 				walk(child)
-				if hasUnarySym && child.symbol == unarySym {
-					index.unaryCandidates = append(index.unaryCandidates, javaScriptTypeScriptPrecedenceCandidate{
-						parent:     n,
-						childIndex: i,
-					})
-				} else if hasBinarySym && child.symbol == binarySym {
-					index.binaryCandidates = append(index.binaryCandidates, javaScriptTypeScriptPrecedenceCandidate{
-						parent:     n,
-						childIndex: i,
-					})
+				switch child.symbol {
+				case unarySym:
+					if hasUnarySym {
+						index.unaryCandidates = append(index.unaryCandidates, javaScriptTypeScriptPrecedenceCandidate{
+							parent:     n,
+							childIndex: i,
+						})
+					}
+				case binarySym:
+					if hasBinarySym {
+						index.binaryCandidates = append(index.binaryCandidates, javaScriptTypeScriptPrecedenceCandidate{
+							parent:     n,
+							childIndex: i,
+						})
+					}
 				}
 			}
 			return
 		}
 
 		children := n.children
-		if hasCallSym {
-			for i, child := range children {
-				if child == nil || child.symbol != callSym {
-					continue
-				}
-				index.call.nodesVisited++
-				rewritten := rewriteJavaScriptTypeScriptCallPrecedenceWithSymbol(child, lang, callSym)
-				if rewritten == nil {
-					continue
-				}
-				children[i] = rewritten
-				setNodeParentLink(rewritten, n, i)
-				index.call.nodesRewritten++
-			}
-		}
-		for _, child := range children {
-			walk(child)
-		}
 		for i, child := range children {
 			if child == nil {
 				continue
 			}
-			if hasUnarySym && child.symbol == unarySym {
-				index.unaryCandidates = append(index.unaryCandidates, javaScriptTypeScriptPrecedenceCandidate{
-					parent:     n,
-					childIndex: i,
-				})
-			} else if hasBinarySym && child.symbol == binarySym {
-				index.binaryCandidates = append(index.binaryCandidates, javaScriptTypeScriptPrecedenceCandidate{
-					parent:     n,
-					childIndex: i,
-				})
+			if hasCallSym && child.symbol == callSym {
+				index.call.nodesVisited++
+				if rewritten := rewriteJavaScriptTypeScriptCallPrecedenceWithSymbol(child, lang, callSym); rewritten != nil {
+					children[i] = rewritten
+					setNodeParentLink(rewritten, n, i)
+					child = rewritten
+					index.call.nodesRewritten++
+				}
+			}
+			if enableTypeScriptChildCompatibility {
+				switch child.symbol {
+				case typeScriptCtx.binaryExpressionSym:
+					if (typeScriptCtx.canRewriteGenericCalls && typeScriptBinaryOperatorCouldBeGenericCall(child, typeScriptCtx)) ||
+						(typeScriptCtx.canRewriteAsExpressions && typeScriptBinaryOperatorCouldBeAsTypeChain(child, typeScriptCtx)) {
+						index.typeScriptCompatibility.append(typeScriptCompatibilityCandidate{
+							kind: typeScriptCompatibilityCandidateChild,
+							child: javaScriptTypeScriptPrecedenceCandidate{
+								parent:     n,
+								childIndex: i,
+							},
+						})
+					}
+				case typeScriptCtx.callSym:
+					if typeScriptCtx.canRewriteInstantiatedCalls && typeScriptCallCouldBeInstantiated(child, typeScriptCtx) {
+						index.typeScriptCompatibility.append(typeScriptCompatibilityCandidate{
+							kind: typeScriptCompatibilityCandidateChild,
+							child: javaScriptTypeScriptPrecedenceCandidate{
+								parent:     n,
+								childIndex: i,
+							},
+						})
+					}
+				case typeScriptCtx.asExpressionSym:
+					if typeScriptCtx.canRewriteAsExpressions && typeScriptAsAssignmentOrTernaryCandidate(child, typeScriptCtx) {
+						index.typeScriptCompatibility.append(typeScriptCompatibilityCandidate{
+							kind: typeScriptCompatibilityCandidateChild,
+							child: javaScriptTypeScriptPrecedenceCandidate{
+								parent:     n,
+								childIndex: i,
+							},
+						})
+					}
+				case typeScriptCtx.typeAssertionSym:
+					if typeScriptCtx.canRewriteGenericArrows && typeScriptGenericArrowTypeAssertionCandidate(child, typeScriptCtx) {
+						index.typeScriptCompatibility.append(typeScriptCompatibilityCandidate{
+							kind: typeScriptCompatibilityCandidateChild,
+							child: javaScriptTypeScriptPrecedenceCandidate{
+								parent:     n,
+								childIndex: i,
+							},
+						})
+					}
+				case typeScriptCtx.expressionStatementSym:
+					if typeScriptCtx.canRewriteClassDeclarations && typeScriptClassExpressionStatementCandidate(child, typeScriptCtx) {
+						index.typeScriptCompatibility.append(typeScriptCompatibilityCandidate{
+							kind: typeScriptCompatibilityCandidateChild,
+							child: javaScriptTypeScriptPrecedenceCandidate{
+								parent:     n,
+								childIndex: i,
+							},
+						})
+					}
+				}
+			}
+			walk(child)
+			switch child.symbol {
+			case unarySym:
+				if hasUnarySym {
+					index.unaryCandidates = append(index.unaryCandidates, javaScriptTypeScriptPrecedenceCandidate{
+						parent:     n,
+						childIndex: i,
+					})
+				}
+			case binarySym:
+				if hasBinarySym {
+					index.binaryCandidates = append(index.binaryCandidates, javaScriptTypeScriptPrecedenceCandidate{
+						parent:     n,
+						childIndex: i,
+					})
+				}
 			}
 		}
 	}
@@ -1217,6 +1347,15 @@ func normalizeJavaScriptTypeScriptCollapsedLeafWithSymbolChanged(node *Node, chi
 		return false
 	}
 	child := newLeafNodeInArena(node.ownerArena, childSym, childNamed, node.startByte, node.endByte, node.startPoint, node.endPoint)
+	replaceNodeChildrenUnfielded(node, cloneNodeSliceInArena(node.ownerArena, []*Node{child}))
+	return true
+}
+
+func normalizeJavaScriptTypeScriptDynamicImportLeafWithSymbolChanged(node *Node, importKeywordSym Symbol) bool {
+	if node == nil || resultChildCount(node) != 0 || node.endByte <= node.startByte {
+		return false
+	}
+	child := newLeafNodeInArena(node.ownerArena, importKeywordSym, false, node.startByte, node.endByte, node.startPoint, node.endPoint)
 	replaceNodeChildrenUnfielded(node, cloneNodeSliceInArena(node.ownerArena, []*Node{child}))
 	return true
 }
@@ -1524,14 +1663,15 @@ func normalizeJavaScriptTypeScriptUnaryPrecedenceWithStats(root *Node, lang *Lan
 }
 
 type javaScriptTypeScriptUnaryBinaryPrecedenceIndex struct {
-	emptyStatement   normalizationPassCounters
-	existentialType  normalizationPassCounters
-	statementKeyword normalizationPassCounters
-	call             normalizationPassCounters
-	unaryCandidates  []javaScriptTypeScriptPrecedenceCandidate
-	binaryCandidates []javaScriptTypeScriptPrecedenceCandidate
-	builds           uint64
-	nodesVisited     uint64
+	emptyStatement          normalizationPassCounters
+	existentialType         normalizationPassCounters
+	statementKeyword        normalizationPassCounters
+	call                    normalizationPassCounters
+	typeScriptCompatibility typeScriptCompatibilityCandidates
+	unaryCandidates         []javaScriptTypeScriptPrecedenceCandidate
+	binaryCandidates        []javaScriptTypeScriptPrecedenceCandidate
+	builds                  uint64
+	nodesVisited            uint64
 }
 
 func buildJavaScriptTypeScriptUnaryBinaryPrecedenceIndex(root *Node, unarySym, binarySym Symbol) javaScriptTypeScriptUnaryBinaryPrecedenceIndex {
@@ -1546,7 +1686,7 @@ func buildJavaScriptTypeScriptUnaryBinaryPrecedenceIndex(root *Node, unarySym, b
 			return
 		}
 		children := n.children
-		if n.ownerArena != nil && n.childIndex <= finalChildSidecarIndexBase {
+		if n.childIndex <= finalChildSidecarIndexBase && n.ownerArena != nil {
 			children = resultDenseChildrenFallbackForMutation(n)
 		}
 		for i, child := range children {

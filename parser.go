@@ -18,23 +18,33 @@ import (
 // Parser is not safe for concurrent use. Use one parser per goroutine, a
 // ParserPool, or guard shared parser instances with external synchronization.
 type Parser struct {
-	language                            *Language
-	reuseCursor                         reuseCursor
-	reuseScratch                        reuseScratch
-	reuseMu                             sync.Mutex
-	reparseFactory                      TokenSourceFactory
-	recoveryParser                      *Parser
-	skipRecoveryReparse                 bool
-	compatibilityBorrowedArenas         []*nodeArena
-	fullArenaHint                       uint32
-	pendingFullArenaHint                uint32
-	compactFullArenaHint                uint32
-	finalChildRefArenaHint              uint32
-	incrementalArenaHint                uint32
-	fullGSSHint                         uint32
-	incrementalGSSHint                  uint32
-	rootSymbol                          Symbol
-	hasRootSymbol                       bool
+	language                    *Language
+	reuseCursor                 reuseCursor
+	reuseScratch                reuseScratch
+	reuseMu                     sync.Mutex
+	reparseFactory              TokenSourceFactory
+	recoveryParser              *Parser
+	skipRecoveryReparse         bool
+	compatibilityBorrowedArenas []*nodeArena
+	fullArenaHint               uint32
+	pendingFullArenaHint        uint32
+	compactFullArenaHint        uint32
+	finalChildRefArenaHint      uint32
+	incrementalArenaHint        uint32
+	fullGSSHint                 uint32
+	incrementalGSSHint          uint32
+	rootSymbol                  Symbol
+	hasRootSymbol               bool
+
+	// Forest-decline diagnostics: the experimental forest fast path records
+	// WHERE and WHY it last declined (fell back to production) so the language
+	// burndown can triage dead-ends without re-instrumenting. Set on the parser
+	// (not package globals) so concurrent parsers don't race. Cleared at the
+	// start of each forest parse.
+	forestDeclineByte                   uint32
+	forestDeclineSym                    Symbol
+	forestDeclineReason                 string
+	forestDeclineStates                 []StateID
 	hasRecoverState                     []bool
 	hasRecoverSymbol                    []bool
 	recoverByState                      [][]recoverSymbolAction
@@ -67,6 +77,8 @@ type Parser struct {
 	smallLookup                         [][]smallActionPair
 	smallTokenLookup                    [][]uint16
 	externalValidByState                [][]uint16
+	externalValidMaskByState            []uint64
+	hasExtraChainActions                bool
 	classifiedActions                   []classifiedParseAction
 	reduceChainHints                    []reduceChainHint
 	reduceChainHintByState              []int
@@ -74,6 +86,7 @@ type Parser struct {
 	aliasTargetSymbol                   []bool
 	singleTokenWrapperSymbol            []bool
 	reduceHasFields                     []bool
+	reduceFieldPlans                    []reduceFieldPlan
 	fieldIDScratch                      []FieldID
 	fieldInheritedScratch               []bool
 	fieldConflictedScratch              []bool
@@ -360,6 +373,8 @@ func NewParser(lang *Language) *Parser {
 			p.smallLookup = buildSmallLookup(lang, p.smallTokenLookup)
 		}
 		p.externalValidByState = p.buildExternalValidByState()
+		p.externalValidMaskByState = buildExternalValidMaskByState(p.externalValidByState, len(lang.ExternalSymbols))
+		p.hasExtraChainActions = languageHasExtraChainActions(lang)
 		p.classifiedActions = buildClassifiedParseActions(lang)
 		p.reduceChainHints = buildReduceChainHints(lang)
 		p.reduceChainHintByState = buildReduceChainHintIndex(p.reduceChainHints)
@@ -367,6 +382,7 @@ func NewParser(lang *Language) *Parser {
 		p.aliasTargetSymbol = buildAliasTargetSymbols(lang)
 		p.singleTokenWrapperSymbol = buildSingleTokenWrapperSymbols(lang)
 		p.reduceHasFields = buildReduceFieldPresence(lang)
+		p.reduceFieldPlans = buildReduceFieldPlans(lang)
 		p.recoverByState, p.hasRecoverState, p.hasRecoverSymbol = buildRecoverActionsByState(lang)
 		p.hasKeywordState = buildKeywordStates(lang)
 		p.spanExtendingInvisibleSymbols, p.nonSpanExtendingInvisibleSymbols = buildInvisibleSpanSymbolTables(lang.SymbolNames)
@@ -375,6 +391,20 @@ func NewParser(lang *Language) *Parser {
 		p.maxConflictWidth = computeMaxConflictWidth(lang)
 	}
 	return p
+}
+
+func languageHasExtraChainActions(lang *Language) bool {
+	if lang == nil {
+		return false
+	}
+	for _, entry := range lang.ParseActions {
+		for _, action := range entry.Actions {
+			if action.ExtraChain {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func snippetParserPool(lang *Language) *sync.Pool {
@@ -756,6 +786,10 @@ func (p *Parser) canRelexExternalTokenWithCurrentStateDFA(tok Token) bool {
 }
 
 func (p *Parser) canFinalizeNoActionEOF(s *glrStack) bool {
+	return p.canFinalizeNoActionEOFAt(s, 0, nil)
+}
+
+func (p *Parser) canFinalizeNoActionEOFAt(s *glrStack, expectedEOFByte uint32, source []byte) bool {
 	if s == nil || s.dead {
 		return false
 	}
@@ -777,12 +811,14 @@ func (p *Parser) canFinalizeNoActionEOF(s *glrStack) bool {
 
 	nonExtraCount := 0
 	onlyNonExtraSymbol := Symbol(0)
+	onlyNonExtraEndByte := uint32(0)
 	countEntry := func(e stackEntry) bool {
 		if !stackEntryHasNode(e) || stackEntryNodeIsExtra(e) {
 			return false
 		}
 		nonExtraCount++
 		onlyNonExtraSymbol = stackEntryNodeSymbol(e)
+		onlyNonExtraEndByte = stackEntryNodeEndByte(e)
 		return nonExtraCount > 1
 	}
 
@@ -806,7 +842,18 @@ func (p *Parser) canFinalizeNoActionEOF(s *glrStack) bool {
 	if onlyNonExtraSymbol == errorSymbol {
 		return false
 	}
-	return uint32(onlyNonExtraSymbol) >= tokenCount
+	if uint32(onlyNonExtraSymbol) < tokenCount {
+		return false
+	}
+	if expectedEOFByte > onlyNonExtraEndByte {
+		if int(expectedEOFByte) > len(source) || !isWhitespaceOnlySource(source[onlyNonExtraEndByte:expectedEOFByte]) {
+			return false
+		}
+		if onlyNonExtraSymbol != p.rootSymbol {
+			return false
+		}
+	}
+	return true
 }
 
 func (p *Parser) tryInsertMissingSingleShift(s *glrStack, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) bool {
@@ -873,6 +920,70 @@ func (p *Parser) tryInsertMissingSingleShift(s *glrStack, tok Token, nodeCount *
 	}
 	p.applyAction(s, candidateAct, missingTok, new(bool), nodeCount, arena, entryScratch, gssScratch, nil, false, trackChildErrors)
 	s.shifted = false
+	return true
+}
+
+func (p *Parser) tryRecoverPreviousShiftAsError(s *glrStack, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, trackChildErrors *bool) bool {
+	if p == nil || p.language == nil || s == nil || s.dead || tok.NoLookahead || tok.Missing || tok.Symbol == 0 {
+		return false
+	}
+	// Go has contextual identifier aliases after keywords such as package and
+	// func; extra-chain grammars use synthetic states where replacing the prior
+	// shift corrupts nested visible extras.
+	if p.language.Name == "go" || p.hasExtraChainActions {
+		return false
+	}
+	entries := s.ensureEntries(entryScratch)
+	if len(entries) < 2 {
+		return false
+	}
+	topIndex := len(entries) - 1
+	topEntry := entries[topIndex]
+	if !stackEntryHasNode(topEntry) || stackEntryNodeIsExtra(topEntry) || stackEntryNodeIsMissing(topEntry) {
+		return false
+	}
+	topSymbol := stackEntryNodeSymbol(topEntry)
+	if topSymbol == errorSymbol || uint32(topSymbol) >= p.language.TokenCount || stackEntryNodeChildCount(topEntry) != 0 {
+		return false
+	}
+	topStartByte := stackEntryNodeStartByte(topEntry)
+	topEndByte := stackEntryNodeEndByte(topEntry)
+	if topEndByte == topStartByte || topEndByte > tok.StartByte {
+		return false
+	}
+	prevState := entries[topIndex-1].state
+	if prevState == topEntry.state {
+		return false
+	}
+	actionIdx := p.lookupActionIndex(prevState, tok.Symbol)
+	if actionIdx == 0 || int(actionIdx) >= len(p.language.ParseActions) || len(p.language.ParseActions[actionIdx].Actions) == 0 {
+		return false
+	}
+
+	errNode := newLeafNodeInArena(arena, errorSymbol, true,
+		topStartByte, topEndByte,
+		stackEntryNodeStartPoint(topEntry), stackEntryNodeEndPoint(topEntry))
+	errNode.setExtra(true)
+	errNode.setHasError(true)
+	errNode.parseState = prevState
+	if perfCountersEnabled {
+		perfRecordErrorNode()
+	}
+	if nodeCount != nil {
+		*nodeCount = *nodeCount + 1
+	}
+	entries[topIndex] = newStackEntryNode(prevState, errNode)
+	s.entries = entries
+	s.gss = gssStack{}
+	s.cacheEntries = true
+	s.byteOffset = stackByteOffset(entries)
+	s.shifted = false
+	if s.recoverabilityKnown && !s.mayRecover && p.stateCanRecover(prevState) {
+		s.mayRecover = true
+	}
+	if trackChildErrors != nil {
+		*trackChildErrors = true
+	}
 	return true
 }
 
@@ -980,7 +1091,7 @@ func normalizeSQLRecoveredMissingNull(root *Node, arena *nodeArena, lang *Langua
 	walk(root)
 }
 
-func (p *Parser) tryAdvanceEOFOnSingleStack(s *glrStack, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry) bool {
+func (p *Parser) tryAdvanceEOFOnSingleStack(s *glrStack, tok Token, expectedEOFByte uint32, source []byte, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry) bool {
 	if p == nil || p.language == nil || s == nil || s.dead || s.depth() == 0 {
 		return false
 	}
@@ -993,7 +1104,7 @@ func (p *Parser) tryAdvanceEOFOnSingleStack(s *glrStack, tok Token, nodeCount *i
 		}
 		actionIdx := p.lookupActionIndex(s.top().state, 0)
 		if actionIdx == 0 || int(actionIdx) >= len(parseActions) {
-			return p.canFinalizeNoActionEOF(s)
+			return p.canFinalizeNoActionEOFAt(s, expectedEOFByte, source)
 		}
 		actions := parseActions[actionIdx].Actions
 		if len(actions) != 1 {
@@ -1110,7 +1221,7 @@ func (p *Parser) tryRecoverTrailingEOFSuffix(s *glrStack, tok Token, nodeCount *
 				continue
 			}
 			prefixEOF := eofTokenForTrailingCut(tok, entries, cut, node)
-			insertedMissing, advanced := p.advanceTrailingEOFPrefix(&prefix, prefixEOF, nodeCount, arena, entryScratch, gssScratch, tmpEntries)
+			insertedMissing, advanced := p.advanceTrailingEOFPrefix(&prefix, prefixEOF, prefixEOF.EndByte, source, nodeCount, arena, entryScratch, gssScratch, tmpEntries)
 			if !advanced {
 				continue
 			}
@@ -1168,14 +1279,14 @@ func eofTokenForTrailingCut(tok Token, entries []stackEntry, cut int, fallback *
 	return prefixEOF
 }
 
-func (p *Parser) advanceTrailingEOFPrefix(prefix *glrStack, prefixEOF Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry) (bool, bool) {
-	if p.tryAdvanceEOFOnSingleStack(prefix, prefixEOF, nodeCount, arena, entryScratch, gssScratch, tmpEntries) {
+func (p *Parser) advanceTrailingEOFPrefix(prefix *glrStack, prefixEOF Token, expectedEOFByte uint32, source []byte, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry) (bool, bool) {
+	if p.tryAdvanceEOFOnSingleStack(prefix, prefixEOF, expectedEOFByte, source, nodeCount, arena, entryScratch, gssScratch, tmpEntries) {
 		return false, true
 	}
 	if !p.tryInsertMissingSingleShiftAtEOF(prefix, prefixEOF, nodeCount, arena, entryScratch, gssScratch) {
 		return false, false
 	}
-	if !p.tryAdvanceEOFOnSingleStack(prefix, prefixEOF, nodeCount, arena, entryScratch, gssScratch, tmpEntries) {
+	if !p.tryAdvanceEOFOnSingleStack(prefix, prefixEOF, expectedEOFByte, source, nodeCount, arena, entryScratch, gssScratch, tmpEntries) {
 		return false, false
 	}
 	return true, true
@@ -1287,17 +1398,36 @@ func (p *Parser) parseIncrementalInternal(source []byte, oldTree *Tree, ts Token
 	return tree
 }
 
+// Dart's external scanner is stateless enough for subtree reuse, but keep a
+// bounded source-size guard so very large generated files fall back safely.
+const dartIncrementalReuseMaxSourceBytes = 256 * 1024
+
 func tokenSourceSupportsIncrementalReuse(ts TokenSource) bool {
 	if ts == nil {
 		return false
 	}
 	if dts, ok := ts.(*dfaTokenSource); ok {
-		return languageSupportsIncrementalReuse(dts.language)
+		return dfaTokenSourceSupportsIncrementalReuse(dts)
 	}
 	if reusable, ok := ts.(IncrementalReuseTokenSource); ok {
 		return reusable.SupportsIncrementalReuse()
 	}
 	return false
+}
+
+func dfaTokenSourceSupportsIncrementalReuse(dts *dfaTokenSource) bool {
+	if dts == nil || !languageSupportsIncrementalReuse(dts.language) {
+		return false
+	}
+	return !dfaTokenSourceIncrementalReuseBlockedBySource(dts)
+}
+
+func dfaTokenSourceIncrementalReuseBlockedBySource(dts *dfaTokenSource) bool {
+	return dts != nil &&
+		dts.language != nil &&
+		dts.language.Name == "dart" &&
+		dts.lexer != nil &&
+		len(dts.lexer.source) > dartIncrementalReuseMaxSourceBytes
 }
 
 func languageSupportsIncrementalReuse(lang *Language) bool {
@@ -1320,6 +1450,9 @@ func incrementalReuseUnavailableReason(ts TokenSource) string {
 	if dts, ok := ts.(*dfaTokenSource); ok {
 		if dts.language == nil {
 			return "dfa_token_source_no_language"
+		}
+		if dfaTokenSourceIncrementalReuseBlockedBySource(dts) {
+			return "dart_large_external_scanner_unsupported"
 		}
 		if languageSupportsIncrementalReuse(dts.language) {
 			return ""
@@ -2376,7 +2509,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 						continue
 					}
 					if len(stacks) == 1 {
-						if p.canFinalizeNoActionEOF(s) {
+						if p.canFinalizeNoActionEOFAt(s, expectedEOFByte, source) {
 							if actionTiming != nil {
 								recordNoActionTiming()
 							}
@@ -2428,6 +2561,17 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 						}
 						goto retryAction
 					}
+				}
+				if _, _, hasRecoverAction := p.findRecoverActionOnStack(s, tok.Symbol, timing); !hasRecoverAction &&
+					p.tryRecoverPreviousShiftAsError(s, tok, &nodeCount, arena, &scratch.entries, &trackChildErrors) {
+					anyReduced = true
+					needToken = false
+					consecutiveReduces = 0
+					if actionTiming != nil {
+						ns := recordNoActionTiming()
+						actionTiming.actionNoActionRecoverNanos += ns
+					}
+					continue
 				}
 				if len(stacks) > 1 {
 					if p.glrTrace {
@@ -2492,7 +2636,12 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				}
 				var chosen ParseAction
 				choice := false
-				if reuse == nil && p.language != nil {
+				if p.language != nil && p.language.Name == "gomod" {
+					if next, ok := gomodRepetitionShiftConflictChoice(p.language, currentState, actions); ok {
+						chosen, choice = next, true
+					}
+				}
+				if !choice && reuse == nil && p.language != nil {
 					switch p.language.Name {
 					case "java":
 						if next, ok := p.javaSwitchArrowConflictChoice(s, tok, actions); ok {
@@ -2536,8 +2685,16 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 						if next, ok := pythonRepetitionShiftConflictChoice(p.language, tok, currentState, actions); ok {
 							chosen, choice = next, true
 						}
+					case "r":
+						if next, ok := rRepetitionShiftConflictChoice(p.language, currentState, actions); ok {
+							chosen, choice = next, true
+						}
 					case "php":
 						if next, ok := phpRepetitionShiftConflictChoice(p.language, tok, currentState, actions); ok {
+							chosen, choice = next, true
+						}
+					case "perl":
+						if next, ok := perlRepetitionShiftConflictChoice(p.language, currentState, actions); ok {
 							chosen, choice = next, true
 						}
 					case "sql":
@@ -2546,6 +2703,18 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 						}
 					case "dart":
 						if next, ok := dartRepetitionShiftConflictChoice(p.language, currentState, actions); ok {
+							chosen, choice = next, true
+						}
+					case "hcl":
+						if next, ok := hclRepetitionShiftConflictChoice(p.language, currentState, actions); ok {
+							chosen, choice = next, true
+						}
+					case "haskell":
+						if next, ok := haskellRepeatBoundaryConflictChoice(p.language, currentState, actions); ok {
+							chosen, choice = next, true
+						}
+					case "make":
+						if next, ok := makeRepetitionShiftConflictChoice(p.language, currentState, actions); ok {
 							chosen, choice = next, true
 						}
 					case "swift":
@@ -2704,6 +2873,11 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				anyReduced = true
 				needToken = false
 				consecutiveReduces = 0
+			} else if _, _, hasRecoverAction := p.findRecoverActionOnStack(&stacks[0], tok.Symbol, timing); !hasRecoverAction &&
+				p.tryRecoverPreviousShiftAsError(&stacks[0], tok, &nodeCount, arena, &scratch.entries, &trackChildErrors) {
+				anyReduced = true
+				needToken = false
+				consecutiveReduces = 0
 			} else if depth, recoverAct, ok := p.findRecoverActionOnStack(&stacks[0], tok.Symbol, timing); ok {
 				if stacks[0].truncate(depth + 1) {
 					p.applyAction(&stacks[0], recoverAct, tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
@@ -2741,7 +2915,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 						if tree, ok := tryFinalizeTrailingEOFSuffix(&stacks[0], tok); ok {
 							return tree
 						}
-						if p.canFinalizeNoActionEOF(&stacks[0]) {
+						if p.canFinalizeNoActionEOFAt(&stacks[0], expectedEOFByte, source) {
 							return finalize(stacks, ParseStopAccepted)
 						}
 						return finalize(stacks, ParseStopNoStacksAlive)
@@ -2916,8 +3090,8 @@ func (p *Parser) configureParseCaps(source []byte, reuse *reuseCursor, arenaClas
 	if tsxFullParseNeedsTypedArrowMergeWidth(p.language, source, reuse) && mergePerKeyCap < 2 {
 		mergePerKeyCap = 2
 	}
-	if javaFullParseNeedsAnnotationDeclarationMergeWidth(p.language, source, reuse) && mergePerKeyCap < maxStacksPerMergeKey {
-		mergePerKeyCap = maxStacksPerMergeKey
+	if javaFullParseNeedsAnnotationDeclarationMergeWidth(p.language, source, reuse) && mergePerKeyCap < javaFullParseRetryMaxMergePerKey {
+		mergePerKeyCap = javaFullParseRetryMaxMergePerKey
 	}
 	if maxMergePerKeyOverride > mergePerKeyCap {
 		mergePerKeyCap = maxMergePerKeyOverride
@@ -2981,11 +3155,21 @@ func languageDefersExactDedupe(lang *Language, noTreeBenchmarkOnly bool) bool {
 		return false
 	}
 	switch lang.Name {
-	case "dart", "typescript", "tsx", "rust":
+	case "dart", "java", "typescript", "tsx", "rust":
 		return true
 	default:
 		return false
 	}
+}
+
+func (p *Parser) usesGenericFrontierMergeHash() bool {
+	return p != nil &&
+		p.language != nil &&
+		p.language.Name == "perl" &&
+		!p.noTreeBenchmarkOnly &&
+		!p.compactFullShiftLeaves &&
+		!p.pendingFullParents &&
+		!p.finalChildRefs
 }
 
 type parseStackPrepResult struct {
@@ -3016,6 +3200,7 @@ func (p *Parser) prepareParseStacksForIteration(stacks []glrStack, scratch *pars
 	}
 	scratch.merge.language = p.language
 	scratch.merge.deferExactDedupe = languageDefersExactDedupe(p.language, p.noTreeBenchmarkOnly)
+	scratch.merge.frontierMergeHash = p.usesGenericFrontierMergeHash()
 	if p.ambiguityProfile != nil {
 		p.ambiguityProfile.recordMergeBefore(stacks)
 	}
@@ -3700,6 +3885,25 @@ func pythonRepetitionShiftConflictChoice(lang *Language, tok Token, state StateI
 	return repetitionShiftConflictChoice(actions)
 }
 
+func rRepetitionShiftConflictChoice(lang *Language, state StateID, actions []ParseAction) (ParseAction, bool) {
+	if lang == nil {
+		return ParseAction{}, false
+	}
+	switch state {
+	case 448:
+		if !allReducesHaveSymbol(lang, actions, "program_repeat1") {
+			return ParseAction{}, false
+		}
+	case 445:
+		if !allReducesHaveSymbol(lang, actions, "braced_expression_repeat1") {
+			return ParseAction{}, false
+		}
+	default:
+		return ParseAction{}, false
+	}
+	return repetitionShiftConflictChoice(actions)
+}
+
 func phpRepetitionShiftConflictChoice(lang *Language, tok Token, state StateID, actions []ParseAction) (ParseAction, bool) {
 	if lang == nil || state != 2 {
 		return ParseAction{}, false
@@ -3718,6 +3922,52 @@ func phpRepetitionShiftConflictChoice(lang *Language, tok Token, state StateID, 
 	case symbolHasName(lang, tok.Symbol, "class"):
 	case symbolHasName(lang, tok.Symbol, "while"):
 	case symbolHasName(lang, tok.Symbol, "echo"):
+	default:
+		return ParseAction{}, false
+	}
+	return repetitionShiftConflictChoice(actions)
+}
+
+// perlRepetitionShiftConflictChoice keeps top-level Perl statements and
+// heredoc content on their repeat-continuation paths. Profiling the real-corpus
+// shard showed state 27/source_file_repeat1 and state 2853/heredoc_content_repeat1
+// dominate Perl fork pressure; terminators do not carry a repetition shift and
+// are excluded by repetitionShiftConflictChoice.
+func perlRepetitionShiftConflictChoice(lang *Language, state StateID, actions []ParseAction) (ParseAction, bool) {
+	if lang == nil || lang.GeneratedByGrammargen {
+		return ParseAction{}, false
+	}
+	switch state {
+	case 27:
+		if !allReducesHaveSymbol(lang, actions, "source_file_repeat1") {
+			return ParseAction{}, false
+		}
+	case 2853:
+		if !allReducesHaveSymbol(lang, actions, "heredoc_content_repeat1") {
+			return ParseAction{}, false
+		}
+	default:
+		return ParseAction{}, false
+	}
+	return repetitionShiftConflictChoice(actions)
+}
+
+// gomodRepetitionShiftConflictChoice keeps parenthesized require lists on the
+// repetition-shift path. On real go.mod corpora, state 37 forks for every
+// following require_spec starter; C continues the list deterministically.
+func gomodRepetitionShiftConflictChoice(lang *Language, state StateID, actions []ParseAction) (ParseAction, bool) {
+	if lang == nil {
+		return ParseAction{}, false
+	}
+	switch state {
+	case 3:
+		if !allReducesHaveSymbol(lang, actions, "source_file_repeat1") {
+			return ParseAction{}, false
+		}
+	case 37:
+		if !allReducesHaveSymbol(lang, actions, "require_directive_repeat1") {
+			return ParseAction{}, false
+		}
 	default:
 		return ParseAction{}, false
 	}
@@ -3758,6 +4008,72 @@ func dartRepetitionShiftConflictChoice(lang *Language, state StateID, actions []
 		}
 	case 479:
 		if !allReducesHaveSymbol(lang, actions, "program_repeat4") {
+			return ParseAction{}, false
+		}
+	default:
+		return ParseAction{}, false
+	}
+	return repetitionShiftConflictChoice(actions)
+}
+
+// hclRepetitionShiftConflictChoice collapses HCL list-continuation forks where
+// the reduce side closes the current repeat and the shift side consumes the
+// next item.
+func hclRepetitionShiftConflictChoice(lang *Language, state StateID, actions []ParseAction) (ParseAction, bool) {
+	if lang == nil {
+		return ParseAction{}, false
+	}
+	switch state {
+	case 426, 541:
+		if !allReducesHaveSymbol(lang, actions, "template_literal_repeat1") {
+			return ParseAction{}, false
+		}
+	case 408:
+		if !allReducesHaveSymbol(lang, actions, "body_repeat1") {
+			return ParseAction{}, false
+		}
+	default:
+		return ParseAction{}, false
+	}
+	return repetitionShiftConflictChoice(actions)
+}
+
+// haskellRepeatBoundaryConflictChoice collapses the two profiled Haskell
+// repeat-boundary forks that dominate large real-corpus parsing. Layout
+// declaration lists (state 9609) and export lists (state 10984) both offer a
+// reduce of the current repeat alongside a repetition shift; reducing here
+// matches C tree-sitter's boundary choice for the real-corpus cases.
+func haskellRepeatBoundaryConflictChoice(lang *Language, state StateID, actions []ParseAction) (ParseAction, bool) {
+	if lang == nil {
+		return ParseAction{}, false
+	}
+	switch state {
+	case 9609:
+		if !allReducesHaveSymbol(lang, actions, "declarations_repeat1") {
+			return ParseAction{}, false
+		}
+	case 10984:
+		if !allReducesHaveSymbol(lang, actions, "exports_repeat1") {
+			return ParseAction{}, false
+		}
+	default:
+		return ParseAction{}, false
+	}
+	return singleReduceAgainstRepetitionShiftConflictChoice(actions)
+}
+
+// makeRepetitionShiftConflictChoice collapses Makefile repeat-continuation
+// forks that dominate real-corpus parses. The reduce side closes the current
+// top-level or line-text repeat, while the shift side consumes the next repeat
+// element. Terminators have no repetition shift, so repetitionShiftConflictChoice
+// naturally leaves close/EOF reductions intact.
+func makeRepetitionShiftConflictChoice(lang *Language, state StateID, actions []ParseAction) (ParseAction, bool) {
+	if lang == nil {
+		return ParseAction{}, false
+	}
+	switch state {
+	case 25:
+		if !allReducesHaveSymbol(lang, actions, "makefile_repeat1") {
 			return ParseAction{}, false
 		}
 	default:
@@ -4097,6 +4413,18 @@ func rustRepetitionShiftConflictChoice(lang *Language, tok Token, state StateID,
 		// tree on these tokens; held to byte-for-byte parity by
 		// TestRustTokenTreeParity + the Docker ring matrix.
 		if !rustAllReducesAreDelimTokenTree(lang, actions) {
+			// The same state also carries source_file_repeat1 continuation forks
+			// for recovered token-tree-shaped top-level fragments; keep them on
+			// the repeat path instead of leaving a dead reduced source-file branch.
+			if !allReducesHaveSymbol(lang, actions, "source_file_repeat1") {
+				return ParseAction{}, false
+			}
+		}
+	case 175, 205:
+		// Comment/trivia boundaries reached after token-tree reductions can
+		// continue the source_file repeat. Reducing here creates a branch that
+		// survives to EOF and burns no-action checks without becoming the winner.
+		if !allReducesHaveSymbol(lang, actions, "source_file_repeat1") {
 			return ParseAction{}, false
 		}
 	default:

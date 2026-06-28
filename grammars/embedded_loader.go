@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/odvcencio/gotreesitter"
@@ -59,6 +60,31 @@ var (
 	embeddedLanguageJanitorAlive bool
 )
 
+// embeddedLanguageEvictionActive is a lock-free mirror of "is any eviction
+// configured" (cache limit set OR idle TTL set). The default is no eviction, in
+// which case recordEmbeddedLanguageUse's LRU/lastAccess bookkeeping is dead work
+// — and that bookkeeping runs on EVERY loadEmbeddedLanguage, which hot external
+// scanners (d, html, scss, sql, yaml) trigger per external token. Reading this
+// flag instead of locking lets the common path skip the lock + time.Now(). Set
+// only from the config setters under embeddedLanguageCacheMu.
+var embeddedLanguageEvictionActive atomic.Bool
+
+// recomputeEmbeddedLanguageEvictionActiveLocked refreshes the lock-free flag and
+// rebuilds the LRU when transitioning into an eviction-active state, because
+// entries loaded while eviction was inactive carry no LRU node (the fast path
+// skipped their bookkeeping) and would otherwise be unevictable.
+func recomputeEmbeddedLanguageEvictionActiveLocked() {
+	active := embeddedLanguageLimit >= 0 || embeddedLanguageIdleTTL > 0
+	if active && !embeddedLanguageEvictionActive.Load() {
+		for _, entry := range embeddedLanguageCache {
+			if entry != nil && entry.lruNode == nil {
+				entry.lruNode = embeddedLanguageLRU.PushFront(entry)
+			}
+		}
+	}
+	embeddedLanguageEvictionActive.Store(active)
+}
+
 func init() {
 	if raw := os.Getenv("GOTREESITTER_GRAMMAR_CACHE_LIMIT"); raw != "" {
 		limit, err := strconv.Atoi(raw)
@@ -86,6 +112,47 @@ func loadEmbeddedLanguage(blobName string) *gotreesitter.Language {
 		}
 	}
 	return loadEmbeddedLanguageBase(blobName)
+}
+
+// LoadLanguage deserializes a raw grammar blob and attaches registered
+// gotreesitter/grammars runtime support for name, including external scanners
+// and external lex-state tables. Use this instead of gotreesitter.LoadLanguage
+// when loading blobs that came from BlobByName, grammar_subset, or a remote WASM
+// bundle and the caller knows the language name.
+func LoadLanguage(name string, data []byte) (*gotreesitter.Language, error) {
+	lang, err := gotreesitter.LoadLanguage(data)
+	if err != nil {
+		return nil, err
+	}
+	AttachLanguageSupport(name, lang)
+	return lang, nil
+}
+
+// AttachLanguageSupport attaches registered scanner support for name to lang.
+// It returns true when scanner or external lex-state support was attached.
+func AttachLanguageSupport(name string, lang *gotreesitter.Language) bool {
+	if lang == nil {
+		return false
+	}
+	lookupName := canonicalLanguageName(name)
+	if lookupName == "" {
+		lookupName = canonicalLanguageName(lang.Name)
+	}
+	if lang.Name == "" {
+		lang.Name = lookupName
+	}
+	return AdaptScannerForLanguage(lookupName, lang)
+}
+
+func canonicalLanguageName(name string) string {
+	name = strings.TrimSuffix(strings.TrimSpace(name), ".bin")
+	if name == "" {
+		return ""
+	}
+	if entry := DetectLanguageByName(name); entry != nil {
+		return entry.Name
+	}
+	return strings.ToLower(name)
 }
 
 func loadEmbeddedLanguageBase(blobName string) *gotreesitter.Language {
@@ -120,6 +187,15 @@ func getEmbeddedLanguageCacheEntry(blobName string) *embeddedLanguageCacheEntry 
 }
 
 func recordEmbeddedLanguageUse(entry *embeddedLanguageCacheEntry) {
+	// Fast path: with no cache limit and no idle TTL (the default), nothing below
+	// is ever consulted — no eviction can occur and getEmbeddedLanguageCacheEntry
+	// already inserted the entry — so the lock + time.Now() + LRU bookkeeping are
+	// pure overhead. Hot external scanners re-fetch their Language per token, so
+	// this runs on the tokenization hot path.
+	if !embeddedLanguageEvictionActive.Load() {
+		return
+	}
+
 	embeddedLanguageCacheMu.Lock()
 	defer embeddedLanguageCacheMu.Unlock()
 
@@ -199,9 +275,11 @@ func SetEmbeddedLanguageCacheLimit(limit int) {
 
 	if limit < 0 {
 		embeddedLanguageLimit = -1
+		recomputeEmbeddedLanguageEvictionActiveLocked()
 		return
 	}
 	embeddedLanguageLimit = limit
+	recomputeEmbeddedLanguageEvictionActiveLocked()
 	enforceEmbeddedLanguageLimitLocked()
 	evictIdleEmbeddedLanguagesLocked(time.Now())
 }
@@ -250,11 +328,13 @@ func SetEmbeddedLanguageIdleTTL(ttl time.Duration) {
 	embeddedLanguageIdleTTL = ttl
 	if ttl <= 0 {
 		stopEmbeddedLanguageJanitorLocked()
+		recomputeEmbeddedLanguageEvictionActiveLocked()
 		return
 	}
 	if embeddedLanguageIdleSweep <= 0 {
 		embeddedLanguageIdleSweep = 30 * time.Second
 	}
+	recomputeEmbeddedLanguageEvictionActiveLocked()
 	startEmbeddedLanguageJanitorLocked()
 	evictIdleEmbeddedLanguagesLocked(time.Now())
 }

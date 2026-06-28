@@ -151,6 +151,297 @@ func normalizeTypeScriptCompatibility(root *Node, source []byte, lang *Language)
 	})
 }
 
+type typeScriptCompatibilityCandidateKind uint8
+
+const (
+	typeScriptCompatibilityCandidateIdentifierAlias typeScriptCompatibilityCandidateKind = iota
+	typeScriptCompatibilityCandidateImportKeyword
+	typeScriptCompatibilityCandidateDynamicImport
+	typeScriptCompatibilityCandidateMemberModifier
+	typeScriptCompatibilityCandidateEnumBody
+	typeScriptCompatibilityCandidateChild
+)
+
+type typeScriptCompatibilityCandidate struct {
+	kind  typeScriptCompatibilityCandidateKind
+	node  *Node
+	child javaScriptTypeScriptPrecedenceCandidate
+}
+
+const typeScriptCompatibilityInlineCandidateEvents = 64
+
+type typeScriptCompatibilityCandidates struct {
+	inline   [typeScriptCompatibilityInlineCandidateEvents]typeScriptCompatibilityCandidate
+	overflow []typeScriptCompatibilityCandidate
+	count    int
+	built    bool
+}
+
+func (candidates *typeScriptCompatibilityCandidates) append(candidate typeScriptCompatibilityCandidate) {
+	if candidates == nil {
+		return
+	}
+	if candidates.count < len(candidates.inline) {
+		candidates.inline[candidates.count] = candidate
+	} else {
+		candidates.overflow = append(candidates.overflow, candidate)
+	}
+	candidates.count++
+}
+
+func (candidates *typeScriptCompatibilityCandidates) len() int {
+	if candidates == nil {
+		return 0
+	}
+	return candidates.count
+}
+
+func (candidates *typeScriptCompatibilityCandidates) forEach(fn func(typeScriptCompatibilityCandidate)) {
+	if candidates == nil || fn == nil {
+		return
+	}
+	inlineCount := candidates.count
+	if inlineCount > len(candidates.inline) {
+		inlineCount = len(candidates.inline)
+	}
+	for i := 0; i < inlineCount; i++ {
+		fn(candidates.inline[i])
+	}
+	for _, candidate := range candidates.overflow {
+		fn(candidate)
+	}
+}
+
+func collectTypeScriptCompatibilityNodeCandidate(candidates *typeScriptCompatibilityCandidates, node *Node, ctx *typeScriptNormalizationContext) {
+	if candidates == nil || node == nil || ctx == nil {
+		return
+	}
+	candidates.built = true
+	if ctx.identifierSym != 0 && node.symbol == ctx.identifierSym && typeScriptIdentifierKeywordAliasCandidate(node, ctx) {
+		candidates.append(typeScriptCompatibilityCandidate{
+			kind: typeScriptCompatibilityCandidateIdentifierAlias,
+			node: node,
+		})
+		return
+	}
+	if ctx.hasImportSym && node.symbol == ctx.importSym && typeScriptImportKeywordNamednessWouldChange(node, ctx) {
+		candidates.append(typeScriptCompatibilityCandidate{
+			kind: typeScriptCompatibilityCandidateImportKeyword,
+			node: node,
+		})
+		return
+	}
+	if ctx.hasDynamicImportSym && node.symbol == ctx.dynamicImportSym && resultChildCount(node) == 0 {
+		candidates.append(typeScriptCompatibilityCandidate{
+			kind: typeScriptCompatibilityCandidateDynamicImport,
+			node: node,
+		})
+		return
+	}
+	if ctx.accessibilityModSym != 0 &&
+		((ctx.methodDefinitionSym != 0 && node.symbol == ctx.methodDefinitionSym) ||
+			(ctx.methodSignatureSym != 0 && node.symbol == ctx.methodSignatureSym) ||
+			(ctx.abstractMethodSignatureSym != 0 && node.symbol == ctx.abstractMethodSignatureSym) ||
+			(ctx.propertySignatureSym != 0 && node.symbol == ctx.propertySignatureSym) ||
+			(ctx.publicFieldDefinitionSym != 0 && node.symbol == ctx.publicFieldDefinitionSym)) &&
+		typeScriptMemberPrefixStartsWithModifier(ctx.source, node.startByte, node.endByte) {
+		candidates.append(typeScriptCompatibilityCandidate{
+			kind: typeScriptCompatibilityCandidateMemberModifier,
+			node: node,
+		})
+		return
+	}
+	if ctx.canClearEnumBodyFields && node.symbol == ctx.enumBodySym && typeScriptEnumBodyHasUnclearedAssignmentFields(node, ctx) {
+		candidates.append(typeScriptCompatibilityCandidate{
+			kind: typeScriptCompatibilityCandidateEnumBody,
+			node: node,
+		})
+	}
+}
+
+func collectTypeScriptCompatibilityChildCandidate(candidates *typeScriptCompatibilityCandidates, parent *Node, childIndex int, child *Node, ctx *typeScriptNormalizationContext) {
+	if candidates == nil || parent == nil || child == nil || ctx == nil {
+		return
+	}
+	candidates.built = true
+	if !typeScriptCompatibilityChildMightRewrite(child, ctx) {
+		return
+	}
+	candidates.append(typeScriptCompatibilityCandidate{
+		kind: typeScriptCompatibilityCandidateChild,
+		child: javaScriptTypeScriptPrecedenceCandidate{
+			parent:     parent,
+			childIndex: childIndex,
+		},
+	})
+}
+
+func typeScriptCompatibilityIsMemberModifierCandidate(node *Node, ctx *typeScriptNormalizationContext) bool {
+	if node == nil || ctx == nil || ctx.accessibilityModSym == 0 {
+		return false
+	}
+	return (ctx.methodDefinitionSym != 0 && node.symbol == ctx.methodDefinitionSym) ||
+		(ctx.methodSignatureSym != 0 && node.symbol == ctx.methodSignatureSym) ||
+		(ctx.abstractMethodSignatureSym != 0 && node.symbol == ctx.abstractMethodSignatureSym) ||
+		(ctx.propertySignatureSym != 0 && node.symbol == ctx.propertySignatureSym) ||
+		(ctx.publicFieldDefinitionSym != 0 && node.symbol == ctx.publicFieldDefinitionSym)
+}
+
+func typeScriptIdentifierKeywordAliasCandidate(node *Node, ctx *typeScriptNormalizationContext) bool {
+	if node == nil || ctx == nil || ctx.identifierSym == 0 || node.symbol != ctx.identifierSym || len(node.children) != 1 {
+		return false
+	}
+	child := node.children[0]
+	if child == nil || child.IsNamed() || child.IsExtra() {
+		return false
+	}
+	return child.startByte == node.startByte &&
+		child.endByte == node.endByte &&
+		child.startPoint == node.startPoint &&
+		child.endPoint == node.endPoint
+}
+
+func typeScriptImportKeywordNamednessWouldChange(node *Node, ctx *typeScriptNormalizationContext) bool {
+	if node == nil || ctx == nil || !ctx.hasImportSym || node.symbol != ctx.importSym {
+		return false
+	}
+	return node.isNamed() != (typeScriptNextNonspaceByte(ctx.source, node.endByte) == '(')
+}
+
+func typeScriptCompatibilityChildMightRewrite(child *Node, ctx *typeScriptNormalizationContext) bool {
+	if child == nil || ctx == nil {
+		return false
+	}
+	switch child.symbol {
+	case ctx.binaryExpressionSym:
+		return (ctx.canRewriteGenericCalls && typeScriptBinaryOperatorCouldBeGenericCall(child, ctx)) ||
+			(ctx.canRewriteAsExpressions && typeScriptBinaryOperatorCouldBeAsTypeChain(child, ctx))
+	case ctx.callSym:
+		return ctx.canRewriteInstantiatedCalls && typeScriptCallCouldBeInstantiated(child, ctx)
+	case ctx.asExpressionSym:
+		return ctx.canRewriteAsExpressions && typeScriptAsAssignmentOrTernaryCandidate(child, ctx)
+	case ctx.typeAssertionSym:
+		return ctx.canRewriteGenericArrows && typeScriptGenericArrowTypeAssertionCandidate(child, ctx)
+	case ctx.expressionStatementSym:
+		return ctx.canRewriteClassDeclarations && typeScriptClassExpressionStatementCandidate(child, ctx)
+	default:
+		return false
+	}
+}
+
+func typeScriptAsAssignmentOrTernaryCandidate(node *Node, ctx *typeScriptNormalizationContext) bool {
+	if node == nil || ctx == nil || node.symbol != ctx.asExpressionSym || len(node.children) < 2 {
+		return false
+	}
+	value := node.children[0]
+	if value == nil {
+		return false
+	}
+	switch value.symbol {
+	case ctx.assignmentExprSym:
+		return len(value.children) >= 2
+	case ctx.ternaryExprSym:
+		return len(value.children) >= 3
+	default:
+		return false
+	}
+}
+
+func typeScriptGenericArrowTypeAssertionCandidate(node *Node, ctx *typeScriptNormalizationContext) bool {
+	if node == nil || ctx == nil || node.symbol != ctx.typeAssertionSym || len(node.children) < 2 {
+		return false
+	}
+	typeArgs := node.children[0]
+	arrow := node.children[len(node.children)-1]
+	return typeArgs != nil &&
+		arrow != nil &&
+		typeArgs.symbol == ctx.typeArgsSym &&
+		arrow.symbol == ctx.arrowFunctionSym &&
+		typeScriptTypeArgumentsCanConvertToParameters(typeArgs, ctx)
+}
+
+func typeScriptTypeArgumentsCanConvertToParameters(typeArgs *Node, ctx *typeScriptNormalizationContext) bool {
+	if typeArgs == nil || ctx == nil || typeArgs.symbol != ctx.typeArgsSym || len(typeArgs.children) == 0 {
+		return false
+	}
+	convertedNamed := 0
+	for _, child := range typeArgs.children {
+		if child == nil || !child.isNamed() {
+			continue
+		}
+		if child.symbol != ctx.typeIdentifierSym {
+			return false
+		}
+		convertedNamed++
+	}
+	return convertedNamed != 0
+}
+
+func typeScriptClassExpressionStatementCandidate(node *Node, ctx *typeScriptNormalizationContext) bool {
+	if node == nil || ctx == nil || node.symbol != ctx.expressionStatementSym {
+		return false
+	}
+	var classNode *Node
+	for _, child := range node.children {
+		if child == nil || child.isExtra() {
+			continue
+		}
+		if child.symbol == ctx.classSym {
+			if classNode != nil {
+				return false
+			}
+			classNode = child
+			continue
+		}
+		if child.isNamed() {
+			return false
+		}
+	}
+	return classNode != nil && typeScriptClassExpressionHasName(classNode, ctx)
+}
+
+func normalizeTypeScriptCompatibilityCandidates(candidates typeScriptCompatibilityCandidates, source []byte, lang *Language) {
+	if candidates.len() == 0 {
+		return
+	}
+	ctx, ok := newTypeScriptNormalizationContext(source, lang)
+	if !ok {
+		return
+	}
+	candidates.forEach(func(candidate typeScriptCompatibilityCandidate) {
+		switch candidate.kind {
+		case typeScriptCompatibilityCandidateIdentifierAlias:
+			normalizeTypeScriptIdentifierKeywordAliases(candidate.node, &ctx)
+		case typeScriptCompatibilityCandidateImportKeyword:
+			normalizeTypeScriptImportKeywordNamedness(candidate.node, &ctx)
+		case typeScriptCompatibilityCandidateDynamicImport:
+			normalizeTypeScriptDynamicImportLeaf(candidate.node, &ctx)
+		case typeScriptCompatibilityCandidateMemberModifier:
+			normalizeTypeScriptRecoveredMemberModifiers(candidate.node, &ctx)
+		case typeScriptCompatibilityCandidateEnumBody:
+			normalizeTypeScriptEnumBodyCompatibility(candidate.node, &ctx)
+		case typeScriptCompatibilityCandidateChild:
+			normalizeTypeScriptCompatibilityChildCandidate(candidate.child, &ctx)
+		}
+	})
+}
+
+func normalizeTypeScriptCompatibilityChildCandidate(candidate javaScriptTypeScriptPrecedenceCandidate, ctx *typeScriptNormalizationContext) {
+	for {
+		child := javaScriptTypeScriptPrecedenceCandidateNode(candidate)
+		if !typeScriptCompatibilityChildCanRewrite(child, ctx) {
+			return
+		}
+		rewritten := rewriteTypeScriptCompatibilityChild(child, ctx)
+		if rewritten == nil {
+			return
+		}
+		if !replaceJavaScriptTypeScriptPrecedenceCandidate(candidate, rewritten) {
+			return
+		}
+	}
+}
+
 type typeScriptCompatibilityStats struct {
 	total                       normalizationPassCounters
 	identifierAliases           normalizationPassCounters
@@ -167,6 +458,118 @@ type typeScriptCompatibilityStats struct {
 	asChildren                  normalizationPassCounters
 	typeAssertionChildren       normalizationPassCounters
 	expressionStatementChildren normalizationPassCounters
+}
+
+func normalizeTypeScriptCompatibilityCandidatesWithStats(candidates typeScriptCompatibilityCandidates, source []byte, lang *Language) typeScriptCompatibilityStats {
+	var stats typeScriptCompatibilityStats
+	if candidates.len() == 0 {
+		return stats
+	}
+	ctx, ok := newTypeScriptNormalizationContext(source, lang)
+	if !ok {
+		return stats
+	}
+	candidates.forEach(func(candidate typeScriptCompatibilityCandidate) {
+		stats.total.nodesVisited++
+		switch candidate.kind {
+		case typeScriptCompatibilityCandidateIdentifierAlias:
+			stats.identifierAliases.nodesVisited++
+			before := len(candidate.node.children)
+			normalizeTypeScriptIdentifierKeywordAliases(candidate.node, &ctx)
+			if len(candidate.node.children) != before {
+				stats.identifierAliases.nodesRewritten++
+				stats.total.nodesRewritten++
+			}
+		case typeScriptCompatibilityCandidateImportKeyword:
+			stats.importKeywords.nodesVisited++
+			before := candidate.node.isNamed()
+			normalizeTypeScriptImportKeywordNamedness(candidate.node, &ctx)
+			if candidate.node.isNamed() != before {
+				stats.importKeywords.nodesRewritten++
+				stats.total.nodesRewritten++
+			}
+		case typeScriptCompatibilityCandidateDynamicImport:
+			stats.importKeywords.nodesVisited++
+			before := resultChildCount(candidate.node)
+			normalizeTypeScriptDynamicImportLeaf(candidate.node, &ctx)
+			if resultChildCount(candidate.node) != before {
+				stats.importKeywords.nodesRewritten++
+				stats.total.nodesRewritten++
+			}
+		case typeScriptCompatibilityCandidateMemberModifier:
+			stats.memberModifiers.nodesVisited++
+			beforeSymbol := candidate.node.symbol
+			beforeChildren := len(candidate.node.children)
+			normalizeTypeScriptRecoveredMemberModifiers(candidate.node, &ctx)
+			if candidate.node.symbol != beforeSymbol || len(candidate.node.children) != beforeChildren {
+				stats.memberModifiers.nodesRewritten++
+				stats.total.nodesRewritten++
+			}
+		case typeScriptCompatibilityCandidateEnumBody:
+			stats.enumBodies.nodesVisited++
+			beforeCleared := typeScriptEnumBodyClearedFieldCount(candidate.node, &ctx)
+			normalizeTypeScriptEnumBodyCompatibility(candidate.node, &ctx)
+			if typeScriptEnumBodyClearedFieldCount(candidate.node, &ctx) != beforeCleared {
+				stats.enumBodies.nodesRewritten++
+				stats.total.nodesRewritten++
+			}
+		case typeScriptCompatibilityCandidateChild:
+			normalizeTypeScriptCompatibilityChildCandidateWithStats(candidate.child, &ctx, &stats)
+		}
+	})
+	return stats
+}
+
+func normalizeTypeScriptCompatibilityChildCandidateWithStats(candidate javaScriptTypeScriptPrecedenceCandidate, ctx *typeScriptNormalizationContext, stats *typeScriptCompatibilityStats) {
+	for {
+		child := javaScriptTypeScriptPrecedenceCandidateNode(candidate)
+		bucket := typeScriptCompatibilityChildStatsBucket(child, ctx, stats)
+		if bucket == nil {
+			return
+		}
+		binaryGenericCandidate := false
+		binaryAsTypeCandidate := false
+		if child != nil && child.symbol == ctx.binaryExpressionSym {
+			binaryGenericCandidate = ctx.canRewriteGenericCalls && typeScriptBinaryOperatorCouldBeGenericCall(child, ctx)
+			binaryAsTypeCandidate = ctx.canRewriteAsExpressions && typeScriptBinaryOperatorCouldBeAsTypeChain(child, ctx)
+			if binaryGenericCandidate {
+				stats.binaryGenericChildren.nodesVisited++
+			}
+			if binaryAsTypeCandidate {
+				stats.binaryAsTypeChildren.nodesVisited++
+			}
+			if !binaryGenericCandidate && !binaryAsTypeCandidate {
+				stats.binaryFastSkipped.nodesVisited++
+			}
+		}
+		callInstantiatedCandidate := false
+		if child != nil && child.symbol == ctx.callSym && ctx.canRewriteInstantiatedCalls {
+			callInstantiatedCandidate = typeScriptCallCouldBeInstantiated(child, ctx)
+			if callInstantiatedCandidate {
+				stats.callInstantiatedChildren.nodesVisited++
+			} else {
+				stats.callFastSkipped.nodesVisited++
+			}
+		}
+		bucket.nodesVisited++
+		rewritten := rewriteTypeScriptCompatibilityChild(child, ctx)
+		if rewritten == nil {
+			return
+		}
+		if !replaceJavaScriptTypeScriptPrecedenceCandidate(candidate, rewritten) {
+			return
+		}
+		bucket.nodesRewritten++
+		if binaryGenericCandidate {
+			stats.binaryGenericChildren.nodesRewritten++
+		} else if binaryAsTypeCandidate {
+			stats.binaryAsTypeChildren.nodesRewritten++
+		}
+		if callInstantiatedCandidate {
+			stats.callInstantiatedChildren.nodesRewritten++
+		}
+		stats.total.nodesRewritten++
+	}
 }
 
 func normalizeTypeScriptCompatibilityWithStats(root *Node, source []byte, lang *Language) typeScriptCompatibilityStats {
@@ -371,6 +774,23 @@ func typeScriptEnumBodyClearedFieldCount(n *Node, ctx *typeScriptNormalizationCo
 		}
 	}
 	return cleared
+}
+
+func typeScriptEnumBodyHasUnclearedAssignmentFields(n *Node, ctx *typeScriptNormalizationContext) bool {
+	if n == nil || ctx == nil || !ctx.canClearEnumBodyFields || n.symbol != ctx.enumBodySym || len(n.fieldIDs) == 0 {
+		return false
+	}
+	limit := len(n.children)
+	if len(n.fieldIDs) < limit {
+		limit = len(n.fieldIDs)
+	}
+	for i := 0; i < limit; i++ {
+		child := n.children[i]
+		if child != nil && child.symbol == ctx.enumAssignmentSym && n.fieldIDs[i] != 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func rewriteTypeScriptCompatibilityChild(child *Node, ctx *typeScriptNormalizationContext) *Node {
@@ -617,6 +1037,292 @@ func normalizeTypeScriptRecoveredNamespaceRoot(root *Node, source []byte, lang *
 		retagResultRoot(root, programSym, symbolIsNamed(lang, programSym))
 	}
 	replaceNodeChildrenUnfielded(root, newChildren)
+}
+
+func normalizeTypeScriptRecoveredTernaryGenericCallRoot(root *Node, source []byte, lang *Language) {
+	if root == nil || lang == nil || root.symbol != errorSymbol {
+		return
+	}
+	switch lang.Name {
+	case "tsx", "typescript":
+	default:
+		return
+	}
+	ctx, ok := newTypeScriptNormalizationContext(source, lang)
+	if !ok || !ctx.canRewriteGenericCalls || !ctx.canRewriteAsExpressions {
+		return
+	}
+	programSym, ok := symbolByName(lang, "program")
+	if !ok || ctx.identifierSym == 0 || ctx.argsSym == 0 || ctx.typeArgsSym == 0 ||
+		ctx.callSym == 0 || ctx.ternaryExprSym == 0 || ctx.asExpressionSym == 0 || ctx.lessThanSym == 0 ||
+		ctx.greaterThanSym == 0 {
+		return
+	}
+	expressionStatementSym, ok := symbolByName(lang, "expression_statement")
+	if !ok {
+		return
+	}
+	openParenSym, ok := symbolByName(lang, "(")
+	if !ok {
+		return
+	}
+	closeParenSym, ok := symbolByName(lang, ")")
+	if !ok {
+		return
+	}
+	colonSym, ok := symbolByName(lang, ":")
+	if !ok {
+		return
+	}
+	asSym, ok := symbolByName(lang, "as")
+	if !ok {
+		return
+	}
+
+	children := resultDenseChildrenFallbackForMutation(root)
+	if len(children) != 12 {
+		return
+	}
+	condition := children[0]
+	question := children[1]
+	trueOpen := children[2]
+	trueGreater := children[3]
+	trueParams := children[4]
+	colon := children[5]
+	falseCalleeRecovery := children[6]
+	falseOpen := children[7]
+	falseArg := children[8]
+	falseCloseRecovery := children[9]
+	asLeaf := children[10]
+	falseType := children[11]
+	if condition == nil || question == nil || trueOpen == nil || trueGreater == nil || trueParams == nil ||
+		colon == nil || falseCalleeRecovery == nil || falseOpen == nil || falseArg == nil ||
+		falseCloseRecovery == nil || asLeaf == nil || falseType == nil {
+		return
+	}
+	questionSym, ok := typeScriptRecoveredConcreteSymbolForText(source, lang, question, "?", "_ternary_qmark")
+	if !ok {
+		return
+	}
+	falseCloseSym := closeParenSym
+	if recoveredCloseSym, ok := typeScriptRecoveredConcreteSymbolForText(source, lang, falseCloseRecovery, ")", ")"); ok {
+		falseCloseSym = recoveredCloseSym
+	}
+	if condition.symbol != ctx.binaryExpressionSym || trueOpen.symbol != ctx.binaryExpressionSym ||
+		trueGreater.symbol != ctx.greaterThanSym || trueParams.Type(lang) != "formal_parameters" ||
+		colon.symbol != colonSym || falseOpen.symbol != openParenSym || falseArg.symbol != ctx.callSym ||
+		asLeaf.symbol != asSym {
+		return
+	}
+	if !typeScriptRecoveredNodeTextEquals(source, question, "?") ||
+		!typeScriptRecoveredNodeTextEquals(source, trueGreater, ">") ||
+		!typeScriptRecoveredNodeTextEquals(source, trueParams, "()") ||
+		!typeScriptRecoveredNodeTextEquals(source, colon, ":") ||
+		!typeScriptRecoveredNodeTextEquals(source, falseOpen, "(") ||
+		!typeScriptRecoveredNodeTextEquals(source, falseCloseRecovery, ")") ||
+		!typeScriptRecoveredNodeTextEquals(source, asLeaf, "as") {
+		return
+	}
+	if !typeScriptRecoveredIdentifierLikeText(source, falseCalleeRecovery) ||
+		!typeScriptRecoveredIdentifierLikeText(source, falseType) {
+		return
+	}
+	trueOpenChildren := resultDenseChildrenFallbackForMutation(trueOpen)
+	trueParamsChildren := resultDenseChildrenFallbackForMutation(trueParams)
+	if len(trueOpenChildren) != 3 || len(trueParamsChildren) != 2 {
+		return
+	}
+	trueCallee := trueOpenChildren[0]
+	trueLess := trueOpenChildren[1]
+	trueType := trueOpenChildren[2]
+	trueOpenParen := trueParamsChildren[0]
+	trueCloseParen := trueParamsChildren[1]
+	if trueCallee == nil || trueLess == nil || trueType == nil || trueOpenParen == nil || trueCloseParen == nil ||
+		trueCallee.symbol != ctx.identifierSym || trueLess.symbol != ctx.lessThanSym ||
+		trueOpenParen.symbol != openParenSym || trueCloseParen.symbol != closeParenSym ||
+		!typeScriptRecoveredIdentifierLikeText(source, trueType) {
+		return
+	}
+
+	arena := root.ownerArena
+	conditionClone := cloneNodeInArena(arena, condition)
+	trueCall := buildTypeScriptRecoveredGenericCall(arena, &ctx, source, trueCallee, trueLess, trueType, trueGreater, trueOpenParen, trueCloseParen)
+	falseCall := buildTypeScriptRecoveredFalseArmCall(arena, &ctx, source, falseCalleeRecovery, falseOpen, falseArg, falseCloseRecovery, falseCloseSym)
+	if conditionClone == nil || trueCall == nil || falseCall == nil {
+		return
+	}
+	falseAs := buildTypeScriptRecoveredAsExpression(arena, &ctx, source, falseCall, asLeaf, falseType)
+	if falseAs == nil {
+		return
+	}
+
+	ternaryChildren := phpAllocChildren(arena, 5)
+	ternaryChildren[0] = conditionClone
+	ternaryChildren[1] = typeScriptRecoveredLeafFromNode(arena, source, questionSym, symbolIsNamed(lang, questionSym), question)
+	ternaryChildren[2] = trueCall
+	ternaryChildren[3] = typeScriptRecoveredLeafFromNode(arena, source, colonSym, symbolIsNamed(lang, colonSym), colon)
+	ternaryChildren[4] = falseAs
+	if ternaryChildren[1] == nil || ternaryChildren[3] == nil {
+		return
+	}
+	ternary := newParentNodeInArena(arena, ctx.ternaryExprSym, ctx.ternaryExprNamed, ternaryChildren, nil, 0)
+	statement := newParentNodeInArena(arena, expressionStatementSym, symbolIsNamed(lang, expressionStatementSym), []*Node{ternary}, nil, 0)
+
+	retagResultRoot(root, programSym, symbolIsNamed(lang, programSym))
+	replaceNodeChildrenUnfielded(root, []*Node{statement})
+	root.setHasError(false)
+	extendNodeEndTo(root, uint32(len(source)), source)
+}
+
+func buildTypeScriptRecoveredGenericCall(arena *nodeArena, ctx *typeScriptNormalizationContext, source []byte, calleeNode, lessNode, typeNode, greaterNode, openNode, closeNode *Node) *Node {
+	if ctx == nil || ctx.lang == nil {
+		return nil
+	}
+	callee := cloneNodeInArena(arena, calleeNode)
+	less := typeScriptRecoveredLeafFromNode(arena, source, ctx.lessThanSym, symbolIsNamed(ctx.lang, ctx.lessThanSym), lessNode)
+	typeArgSym := ctx.identifierSym
+	typeArgNamed := symbolIsNamed(ctx.lang, typeArgSym)
+	if ctx.hasTypeIdentifierSym {
+		typeArgSym = ctx.typeIdentifierSym
+		typeArgNamed = ctx.typeIdentifierNamed
+	}
+	typeArg := typeScriptRecoveredLeafFromNode(arena, source, typeArgSym, typeArgNamed, typeNode)
+	greater := typeScriptRecoveredLeafFromNode(arena, source, ctx.greaterThanSym, symbolIsNamed(ctx.lang, ctx.greaterThanSym), greaterNode)
+	open := typeScriptRecoveredLeafFromNode(arena, source, openNode.symbol, symbolIsNamed(ctx.lang, openNode.symbol), openNode)
+	close := typeScriptRecoveredLeafFromNode(arena, source, closeNode.symbol, symbolIsNamed(ctx.lang, closeNode.symbol), closeNode)
+	if callee == nil || less == nil || typeArg == nil || greater == nil || open == nil || close == nil {
+		return nil
+	}
+	typeArgs := newParentNodeInArena(arena, ctx.typeArgsSym, ctx.typeArgsNamed, []*Node{less, typeArg, greater}, nil, 0)
+	args := newParentNodeInArena(arena, ctx.argsSym, ctx.argsNamed, []*Node{open, close}, nil, 0)
+	return buildTypeScriptRecoveredCallExpression(arena, ctx, callee, typeArgs, args)
+}
+
+func buildTypeScriptRecoveredFalseArmCall(arena *nodeArena, ctx *typeScriptNormalizationContext, source []byte, calleeNode, openNode, argNode, closeNode *Node, closeParenSym Symbol) *Node {
+	if ctx == nil || ctx.lang == nil {
+		return nil
+	}
+	callee := typeScriptRecoveredLeafFromNode(arena, source, ctx.identifierSym, symbolIsNamed(ctx.lang, ctx.identifierSym), calleeNode)
+	open := typeScriptRecoveredLeafFromNode(arena, source, openNode.symbol, symbolIsNamed(ctx.lang, openNode.symbol), openNode)
+	arg := cloneNodeInArena(arena, argNode)
+	close := typeScriptRecoveredLeafFromNode(arena, source, closeParenSym, symbolIsNamed(ctx.lang, closeParenSym), closeNode)
+	if callee == nil || open == nil || arg == nil || close == nil {
+		return nil
+	}
+	args := newParentNodeInArena(arena, ctx.argsSym, ctx.argsNamed, []*Node{open, arg, close}, nil, 0)
+	return buildTypeScriptRecoveredCallExpression(arena, ctx, callee, nil, args)
+}
+
+func buildTypeScriptRecoveredCallExpression(arena *nodeArena, ctx *typeScriptNormalizationContext, callee, typeArgs, args *Node) *Node {
+	if ctx == nil || callee == nil || args == nil {
+		return nil
+	}
+	childCount := 2
+	if typeArgs != nil {
+		childCount = 3
+	}
+	children := phpAllocChildren(arena, childCount)
+	children[0] = callee
+	var fieldIDs []FieldID
+	if ctx.functionFieldID != 0 || ctx.typeArgsFieldID != 0 || ctx.argumentsFieldID != 0 {
+		if arena != nil {
+			fieldIDs = arena.allocFieldIDSlice(childCount)
+		} else {
+			fieldIDs = make([]FieldID, childCount)
+		}
+		fieldIDs[0] = ctx.functionFieldID
+	}
+	if typeArgs != nil {
+		children[1] = typeArgs
+		children[2] = args
+		if len(fieldIDs) == childCount {
+			fieldIDs[1] = ctx.typeArgsFieldID
+			fieldIDs[2] = ctx.argumentsFieldID
+		}
+	} else {
+		children[1] = args
+		if len(fieldIDs) == childCount {
+			fieldIDs[1] = ctx.argumentsFieldID
+		}
+	}
+	call := newParentNodeInArena(arena, ctx.callSym, ctx.callNamed, children, fieldIDs, 0)
+	call.fieldSources = defaultFieldSourcesInArena(arena, fieldIDs)
+	return call
+}
+
+func buildTypeScriptRecoveredAsExpression(arena *nodeArena, ctx *typeScriptNormalizationContext, source []byte, value, asNode, typeNode *Node) *Node {
+	if ctx == nil || ctx.lang == nil || value == nil || asNode == nil {
+		return nil
+	}
+	as := typeScriptRecoveredLeafFromNode(arena, source, asNode.symbol, symbolIsNamed(ctx.lang, asNode.symbol), asNode)
+	typeSym := ctx.identifierSym
+	typeNamed := symbolIsNamed(ctx.lang, typeSym)
+	if ctx.hasTypeIdentifierSym {
+		typeSym = ctx.typeIdentifierSym
+		typeNamed = ctx.typeIdentifierNamed
+	}
+	typeLeaf := typeScriptRecoveredLeafFromNode(arena, source, typeSym, typeNamed, typeNode)
+	if as == nil || typeLeaf == nil {
+		return nil
+	}
+	return newParentNodeInArena(arena, ctx.asExpressionSym, ctx.asExpressionNamed, []*Node{value, as, typeLeaf}, nil, 0)
+}
+
+func typeScriptRecoveredLeafFromNode(arena *nodeArena, source []byte, sym Symbol, named bool, node *Node) *Node {
+	if node == nil || node.startByte > node.endByte || int(node.endByte) > len(source) {
+		return nil
+	}
+	return newLeafNodeInArena(arena, sym, named, node.startByte, node.endByte, node.startPoint, node.endPoint)
+}
+
+func typeScriptRecoveredConcreteSymbolForText(source []byte, lang *Language, node *Node, text, fallbackName string) (Symbol, bool) {
+	if sym, ok := typeScriptRecoveredConcreteSymbolForTextInTree(source, node, text); ok {
+		return sym, true
+	}
+	if fallbackName != "" {
+		if sym, ok := symbolByName(lang, fallbackName); ok {
+			return sym, true
+		}
+	}
+	return symbolByName(lang, text)
+}
+
+func typeScriptRecoveredConcreteSymbolForTextInTree(source []byte, node *Node, text string) (Symbol, bool) {
+	if node == nil || node.startByte > node.endByte || int(node.endByte) > len(source) {
+		return 0, false
+	}
+	if node.symbol != errorSymbol && resultChildCount(node) == 0 && typeScriptRecoveredNodeTextEquals(source, node, text) {
+		return node.symbol, true
+	}
+	for i := 0; i < resultChildCount(node); i++ {
+		if sym, ok := typeScriptRecoveredConcreteSymbolForTextInTree(source, resultChildAt(node, i), text); ok {
+			return sym, true
+		}
+	}
+	return 0, false
+}
+
+func typeScriptRecoveredNodeTextEquals(source []byte, node *Node, text string) bool {
+	if node == nil || node.startByte > node.endByte || int(node.endByte) > len(source) {
+		return false
+	}
+	if int(node.endByte-node.startByte) != len(text) {
+		return false
+	}
+	return string(source[node.startByte:node.endByte]) == text
+}
+
+func typeScriptRecoveredIdentifierLikeText(source []byte, node *Node) bool {
+	if node == nil || node.startByte >= node.endByte || int(node.endByte) > len(source) {
+		return false
+	}
+	for _, c := range source[node.startByte:node.endByte] {
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '$' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func normalizeTypeScriptRecoveredInternalModuleRoot(root *Node, source []byte, lang *Language, module *Node, moduleIdx int, stmtBlockSym, exprStmtSym Symbol, hasExprStmtSym bool, programSym Symbol, hasProgramSym bool) {
@@ -917,6 +1623,34 @@ func newTypeScriptNormalizationContext(source []byte, lang *Language) (typeScrip
 	return ctx, ctx.canRewriteGenericCalls || ctx.canRewriteInstantiatedCalls || ctx.canRewriteAsExpressions || ctx.canRewriteGenericArrows || ctx.canRewriteClassDeclarations || ctx.canClearEnumBodyFields
 }
 
+func newTypeScriptNormalizationContextForSourceFlags(source []byte, lang *Language, flags typeScriptCompatSourceFlags) (typeScriptNormalizationContext, bool) {
+	ctx, ok := newTypeScriptNormalizationContext(source, lang)
+	if !ok {
+		return ctx, false
+	}
+	if !flags.hasCallAngle {
+		ctx.canRewriteGenericCalls = false
+		ctx.canRewriteInstantiatedCalls = false
+		ctx.canRewriteGenericArrows = false
+	}
+	if !flags.hasAsKeyword {
+		ctx.canRewriteAsExpressions = false
+	}
+	if !flags.hasClassKeyword {
+		ctx.canRewriteClassDeclarations = false
+	}
+	if !flags.hasEnumKeyword {
+		ctx.canClearEnumBodyFields = false
+	}
+	if !flags.hasMemberModifier {
+		ctx.accessibilityModSym = 0
+	}
+	if !flags.hasImportKeyword {
+		ctx.hasImportSym = false
+	}
+	return ctx, true
+}
+
 type typeScriptMemberTokenKind uint8
 
 const (
@@ -1112,6 +1846,20 @@ func typeScriptBytesEqualString(b []byte, s string) bool {
 		}
 	}
 	return true
+}
+
+func typeScriptNextNonspaceByte(source []byte, after uint32) byte {
+	pos := int(after)
+	for pos < len(source) {
+		switch source[pos] {
+		case ' ', '\t', '\n', '\r':
+			pos++
+			continue
+		default:
+			return source[pos]
+		}
+	}
+	return 0
 }
 
 func buildTypeScriptMemberModifierNode(arena *nodeArena, ctx *typeScriptNormalizationContext, tok typeScriptMemberToken, mod typeScriptMemberModifier) *Node {

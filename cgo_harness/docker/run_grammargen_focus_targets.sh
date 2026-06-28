@@ -14,6 +14,7 @@ DEFAULT_GOFLAGS_VALUE="-p=1"
 DEFAULT_REAL_TIMEOUT="15m"
 DEFAULT_REAL_MAX_CASES="25"
 DEFAULT_REAL_PROFILE="aggressive"
+DEFAULT_JOBS="1"
 
 FORTRAN_SAFE_MEMORY_LIMIT="3g"
 FORTRAN_SAFE_CPUS_LIMIT="1"
@@ -44,6 +45,8 @@ LR_SPLIT=0
 REAL_LR0_CORE_BUDGET=""
 REAL_GENERATE_TIMEOUT=""
 FORTRAN_SAFE_DEFAULTS=1
+JOBS="$DEFAULT_JOBS"
+ALLOW_HOST_OVERSUBSCRIBE=0
 
 MEMORY_SET=0
 CPUS_SET=0
@@ -92,6 +95,13 @@ Options:
   --seed-dir <path>      Seed grammar repos from a dir under repo root
   --offline              Do not clone missing grammar repos in containers
   --lr-split             Enable GTS_GRAMMARGEN_LR_SPLIT for real-corpus runs
+  --jobs <n>             Concurrent per-language containers (default: 1).
+                         Each language still runs in its own memory/pid-limited
+                         container. Aggregate container memory is guarded
+                         against host MemAvailable by default.
+  --allow-host-oversubscribe
+                         Allow --jobs * --memory to exceed the host memory
+                         guard. Intended only for dedicated CI hosts.
   --no-build             Skip Docker image builds in the underlying runners
   --list                 Print canonical target languages and exit
   -h, --help             Show this help
@@ -167,6 +177,8 @@ while [[ $# -gt 0 ]]; do
     --seed-dir) SEED_DIR="$2"; shift 2 ;;
     --offline) OFFLINE=1; shift ;;
     --lr-split) LR_SPLIT=1; shift ;;
+    --jobs) JOBS="$2"; shift 2 ;;
+    --allow-host-oversubscribe) ALLOW_HOST_OVERSUBSCRIBE=1; shift ;;
     --no-build) BUILD_IMAGE=0; shift ;;
     --list)
       printf '%s\n' css javascript typescript tsx c cpp c_sharp cobol fortran
@@ -216,6 +228,38 @@ if [[ ${#TARGET_LANGS[@]} -eq 0 ]]; then
   exit 2
 fi
 
+require_positive_int() {
+  local name="$1"
+  local value="$2"
+  if ! [[ "$value" =~ ^[1-9][0-9]*$ ]]; then
+    echo "$name must be a positive integer, got: $value" >&2
+    exit 2
+  fi
+}
+
+docker_memory_limit_to_bytes() {
+  local value="$1"
+  local number unit
+  value="${value//[[:space:]]/}"
+  if [[ "$value" =~ ^([0-9]+)([bBkKmMgG]?)$ ]]; then
+    number="${BASH_REMATCH[1]}"
+    unit="${BASH_REMATCH[2],,}"
+  else
+    return 1
+  fi
+  case "$unit" in
+    ""|b) printf '%s\n' "$number" ;;
+    k) printf '%s\n' "$((number * 1024))" ;;
+    m) printf '%s\n' "$((number * 1024 * 1024))" ;;
+    g) printf '%s\n' "$((number * 1024 * 1024 * 1024))" ;;
+    *) return 1 ;;
+  esac
+}
+
+host_mem_available_bytes() {
+  awk '/^MemAvailable:/ { printf "%.0f\n", $2 * 1024 }' /proc/meminfo 2>/dev/null
+}
+
 resolve_fortran_real_corpus_setting() {
   local lang="$1"
   local current="$2"
@@ -229,6 +273,133 @@ resolve_fortran_real_corpus_setting() {
 
   echo "$current"
 }
+
+effective_real_corpus_memory_limit() {
+  local lang="$1"
+  resolve_fortran_real_corpus_setting "$lang" "$MEMORY_LIMIT" "$MEMORY_SET" "$FORTRAN_SAFE_MEMORY_LIMIT"
+}
+
+max_parallel_memory_budget_bytes() {
+  local effective_jobs="$1"
+  local phase="$2"
+  shift 2
+
+  local lang limit limit_bytes
+  local -a ranked_limits=()
+  for lang in "$@"; do
+    case "$phase" in
+      real-corpus)
+        limit="$(effective_real_corpus_memory_limit "$lang")"
+        ;;
+      cgo)
+        if ! supports_cgo_parity "$lang"; then
+          continue
+        fi
+        limit="$MEMORY_LIMIT"
+        ;;
+      *)
+        echo "internal error: unknown memory guard phase: $phase" >&2
+        exit 2
+        ;;
+    esac
+    limit_bytes="$(docker_memory_limit_to_bytes "$limit" || true)"
+    if [[ -z "$limit_bytes" ]]; then
+      echo "warning: could not parse $phase memory limit for $lang: $limit" >&2
+      return 1
+    fi
+    ranked_limits+=("$limit_bytes|$lang|$limit")
+  done
+
+  if [[ "${#ranked_limits[@]}" -eq 0 ]]; then
+    printf '0|\n'
+    return 0
+  fi
+
+  local aggregate_bytes=0
+  local count=0
+  local entry detail lang_name limit_text
+  local -a selected_limits=()
+  while IFS= read -r entry; do
+    [[ -n "$entry" ]] || continue
+    limit_bytes="${entry%%|*}"
+    detail="${entry#*|}"
+    lang_name="${detail%%|*}"
+    limit_text="${detail#*|}"
+    aggregate_bytes="$((aggregate_bytes + limit_bytes))"
+    selected_limits+=("$lang_name=$limit_text")
+    ((count+=1))
+    if [[ "$count" -ge "$effective_jobs" ]]; then
+      break
+    fi
+  done < <(printf '%s\n' "${ranked_limits[@]}" | sort -t '|' -k1,1nr)
+
+  printf '%s|%s\n' "$aggregate_bytes" "${selected_limits[*]}"
+}
+
+guard_parallel_memory_budget() {
+  local target_count="${1:-0}"
+  local effective_jobs="$JOBS"
+  if [[ "$target_count" =~ ^[1-9][0-9]*$ && "$effective_jobs" -gt "$target_count" ]]; then
+    effective_jobs="$target_count"
+  fi
+  if [[ "$effective_jobs" -le 1 || "$ALLOW_HOST_OVERSUBSCRIBE" == "1" ]]; then
+    return 0
+  fi
+  local available_bytes aggregate_bytes guard_bytes
+  available_bytes="$(host_mem_available_bytes || true)"
+  if [[ -z "$available_bytes" ]]; then
+    echo "warning: could not read host MemAvailable; proceeding with --jobs=$JOBS memory=$MEMORY_LIMIT" >&2
+    return 0
+  fi
+
+  local phase_result phase_bytes phase_details
+  local max_phase="selected"
+  local selected_limits=""
+  aggregate_bytes=0
+  if [[ "$MODE" == "all" || "$MODE" == "real-corpus" ]]; then
+    phase_result="$(max_parallel_memory_budget_bytes "$effective_jobs" real-corpus "${TARGET_LANGS[@]}" || true)"
+    if [[ -z "$phase_result" ]]; then
+      echo "warning: could not calculate real-corpus memory guard; proceeding with --jobs=$JOBS" >&2
+      return 0
+    fi
+    phase_bytes="${phase_result%%|*}"
+    phase_details="${phase_result#*|}"
+    if [[ "$phase_bytes" -gt "$aggregate_bytes" ]]; then
+      aggregate_bytes="$phase_bytes"
+      max_phase="real-corpus"
+      selected_limits="$phase_details"
+    fi
+  fi
+  if [[ "$MODE" == "all" || "$MODE" == "cgo" ]]; then
+    phase_result="$(max_parallel_memory_budget_bytes "$effective_jobs" cgo "${TARGET_LANGS[@]}" || true)"
+    if [[ -z "$phase_result" ]]; then
+      echo "warning: could not calculate cgo memory guard; proceeding with --jobs=$JOBS" >&2
+      return 0
+    fi
+    phase_bytes="${phase_result%%|*}"
+    phase_details="${phase_result#*|}"
+    if [[ "$phase_bytes" -gt "$aggregate_bytes" ]]; then
+      aggregate_bytes="$phase_bytes"
+      max_phase="cgo"
+      selected_limits="$phase_details"
+    fi
+  fi
+
+  guard_bytes="$((available_bytes * 80 / 100))"
+  if [[ "$aggregate_bytes" -gt "$guard_bytes" ]]; then
+    {
+      echo "refusing --jobs=$JOBS: aggregate effective container memory exceeds 80% of host MemAvailable"
+      echo "effective_jobs=$effective_jobs"
+      echo "phase=$max_phase aggregate_bytes=$aggregate_bytes memavailable_bytes=$available_bytes guard_bytes=$guard_bytes"
+      echo "selected_limits=$selected_limits"
+      echo "lower --jobs/--memory or pass --allow-host-oversubscribe on a dedicated host"
+    } >&2
+    exit 2
+  fi
+}
+
+require_positive_int "--jobs" "$JOBS"
+guard_parallel_memory_budget "${#TARGET_LANGS[@]}"
 
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 REAL_REPORT_DIR="$REPORT_ROOT/$STAMP/real_corpus"
@@ -351,16 +522,16 @@ run_real_corpus_lang() {
 
   case "$status" in
     ok)
-      ((real_ok+=1))
       echo "[real-corpus] $lang -> PARITY"
+      return 0
       ;;
     oom)
-      ((real_oom+=1))
       echo "[real-corpus] $lang -> OOM"
+      return 137
       ;;
     *)
-      ((real_fail+=1))
       echo "[real-corpus] $lang -> MISMATCH"
+      return 1
       ;;
   esac
 }
@@ -368,9 +539,8 @@ run_real_corpus_lang() {
 run_cgo_lang() {
   local lang="$1"
   if ! supports_cgo_parity "$lang"; then
-    ((cgo_skip+=1))
     echo "[cgo] $lang -> SKIP (not wired in direct grammargen-vs-C harness)"
-    return 0
+    return 125
   fi
 
   local -a args=(
@@ -407,34 +577,226 @@ run_cgo_lang() {
   cgo_build_enabled=0
 
   if [[ "$exit_code" == "0" ]]; then
-    ((cgo_ok+=1))
     echo "[cgo] $lang -> OK"
+    return 0
   elif [[ "$exit_code" == "137" ]]; then
-    ((cgo_oom+=1))
     echo "[cgo] $lang -> OOM"
+    return 137
   else
-    ((cgo_fail+=1))
     echo "[cgo] $lang -> FAIL (exit=$exit_code)"
+    return 1
   fi
 }
 
+record_real_rc() {
+  local lang="$1"
+  local rc="$2"
+  case "$rc" in
+    0) ((real_ok+=1)) || true ;;
+    137) ((real_oom+=1)) || true ;;
+    *) ((real_fail+=1)) || true ;;
+  esac
+}
+
+record_cgo_rc() {
+  local lang="$1"
+  local rc="$2"
+  case "$rc" in
+    0) ((cgo_ok+=1)) || true ;;
+    125) ((cgo_skip+=1)) || true ;;
+    137) ((cgo_oom+=1)) || true ;;
+    *) ((cgo_fail+=1)) || true ;;
+  esac
+}
+
+run_real_corpus_phase() {
+  if [[ "$JOBS" -eq 1 || "${#TARGET_LANGS[@]}" -eq 1 ]]; then
+    for lang in "${TARGET_LANGS[@]}"; do
+      local rc
+      if run_real_corpus_lang "$lang"; then
+        rc=0
+      else
+        rc=$?
+      fi
+      record_real_rc "$lang" "$rc"
+    done
+    return
+  fi
+
+  declare -a pids=()
+  declare -a pid_langs=()
+  declare -a pid_statuses=()
+  local status_dir
+  status_dir="$(mktemp -d "${TMPDIR:-/tmp}/gts-focus-real.XXXXXX")"
+
+  wait_for_one_real() {
+    local running_pids status_file lang idx rc
+    if [[ "${#pids[@]}" -eq 0 ]]; then
+      return 0
+    fi
+    while true; do
+      running_pids="$(jobs -pr || true)"
+      for idx in "${!pids[@]}"; do
+        status_file="${pid_statuses[$idx]}"
+        if [[ -f "$status_file" ]]; then
+          rc="$(<"$status_file")"
+        elif [[ $'\n'"$running_pids"$'\n' != *$'\n'"${pids[$idx]}"$'\n'* ]]; then
+          set +e
+          wait "${pids[$idx]}"
+          rc=$?
+          set -e
+        else
+          continue
+        fi
+        lang="${pid_langs[$idx]}"
+        set +e
+        wait "${pids[$idx]}" 2>/dev/null
+        set -e
+        unset 'pids[idx]'
+        unset 'pid_langs[idx]'
+        unset 'pid_statuses[idx]'
+        pids=("${pids[@]}")
+        pid_langs=("${pid_langs[@]}")
+        pid_statuses=("${pid_statuses[@]}")
+        echo "[done] real-corpus: $lang exit=$rc"
+        record_real_rc "$lang" "$rc"
+        return
+      done
+      sleep 0.2
+    done
+  }
+
+  local job_id=0
+  for lang in "${TARGET_LANGS[@]}"; do
+    while [[ "${#pids[@]}" -ge "$JOBS" ]]; do
+      wait_for_one_real
+    done
+    echo "[start] real-corpus: $lang"
+    local status_file="$status_dir/$job_id.status"
+    (
+      set +e
+      run_real_corpus_lang "$lang"
+      printf '%s\n' "$?" >"$status_file.tmp"
+      mv "$status_file.tmp" "$status_file"
+    ) &
+    pids+=("$!")
+    pid_langs+=("$lang")
+    pid_statuses+=("$status_file")
+    ((job_id+=1)) || true
+  done
+
+  while [[ "${#pids[@]}" -gt 0 ]]; do
+    wait_for_one_real
+  done
+  rm -rf "$status_dir"
+}
+
+run_cgo_phase() {
+  if [[ "$JOBS" -eq 1 || "${#TARGET_LANGS[@]}" -eq 1 ]]; then
+    for lang in "${TARGET_LANGS[@]}"; do
+      local rc
+      if run_cgo_lang "$lang"; then
+        rc=0
+      else
+        rc=$?
+      fi
+      record_cgo_rc "$lang" "$rc"
+    done
+    return
+  fi
+
+  declare -a pids=()
+  declare -a pid_langs=()
+  declare -a pid_statuses=()
+  local status_dir
+  status_dir="$(mktemp -d "${TMPDIR:-/tmp}/gts-focus-cgo.XXXXXX")"
+
+  wait_for_one_cgo() {
+    local running_pids status_file lang idx rc
+    if [[ "${#pids[@]}" -eq 0 ]]; then
+      return 0
+    fi
+    while true; do
+      running_pids="$(jobs -pr || true)"
+      for idx in "${!pids[@]}"; do
+        status_file="${pid_statuses[$idx]}"
+        if [[ -f "$status_file" ]]; then
+          rc="$(<"$status_file")"
+        elif [[ $'\n'"$running_pids"$'\n' != *$'\n'"${pids[$idx]}"$'\n'* ]]; then
+          set +e
+          wait "${pids[$idx]}"
+          rc=$?
+          set -e
+        else
+          continue
+        fi
+        lang="${pid_langs[$idx]}"
+        set +e
+        wait "${pids[$idx]}" 2>/dev/null
+        set -e
+        unset 'pids[idx]'
+        unset 'pid_langs[idx]'
+        unset 'pid_statuses[idx]'
+        pids=("${pids[@]}")
+        pid_langs=("${pid_langs[@]}")
+        pid_statuses=("${pid_statuses[@]}")
+        echo "[done] cgo: $lang exit=$rc"
+        record_cgo_rc "$lang" "$rc"
+        return
+      done
+      sleep 0.2
+    done
+  }
+
+  local job_id=0
+  for lang in "${TARGET_LANGS[@]}"; do
+    while [[ "${#pids[@]}" -ge "$JOBS" ]]; do
+      wait_for_one_cgo
+    done
+    echo "[start] cgo: $lang"
+    local status_file="$status_dir/$job_id.status"
+    (
+      set +e
+      run_cgo_lang "$lang"
+      printf '%s\n' "$?" >"$status_file.tmp"
+      mv "$status_file.tmp" "$status_file"
+    ) &
+    pids+=("$!")
+    pid_langs+=("$lang")
+    pid_statuses+=("$status_file")
+    ((job_id+=1)) || true
+  done
+
+  while [[ "${#pids[@]}" -gt 0 ]]; do
+    wait_for_one_cgo
+  done
+  rm -rf "$status_dir"
+}
+
+if [[ "$JOBS" -gt 1 && "$BUILD_IMAGE" == "1" ]]; then
+  if [[ "$MODE" == "all" || "$MODE" == "real-corpus" ]]; then
+    docker build -t gotreesitter/cgo-harness:go1.25-local "$SCRIPT_DIR"
+    real_build_enabled=0
+  fi
+  if [[ "$MODE" == "all" || "$MODE" == "cgo" ]]; then
+    docker build -t gotreesitter-grammargen-cparity:latest -f "$SCRIPT_DIR/Dockerfile" "$SCRIPT_DIR"
+    cgo_build_enabled=0
+  fi
+fi
+
 echo "Focused grammargen targets: ${TARGET_LANGS[*]}"
-echo "mode=$MODE memory=$MEMORY_LIMIT cpus=$CPUS_LIMIT pids=$PIDS_LIMIT gomaxprocs=${GOMAXPROCS_VALUE:-inherit} goflags=${GOFLAGS_VALUE:-inherit} lr0_core_budget=${REAL_LR0_CORE_BUDGET:-inherit} generate_timeout=${REAL_GENERATE_TIMEOUT:-inherit} fortran_safe_defaults=$FORTRAN_SAFE_DEFAULTS offline=$OFFLINE lr_split=$LR_SPLIT"
+echo "mode=$MODE memory=$MEMORY_LIMIT cpus=$CPUS_LIMIT pids=$PIDS_LIMIT gomaxprocs=${GOMAXPROCS_VALUE:-inherit} goflags=${GOFLAGS_VALUE:-inherit} lr0_core_budget=${REAL_LR0_CORE_BUDGET:-inherit} generate_timeout=${REAL_GENERATE_TIMEOUT:-inherit} fortran_safe_defaults=$FORTRAN_SAFE_DEFAULTS offline=$OFFLINE lr_split=$LR_SPLIT jobs=$JOBS allow_host_oversubscribe=$ALLOW_HOST_OVERSUBSCRIBE"
 echo ""
 
 if [[ "$MODE" == "all" || "$MODE" == "real-corpus" ]]; then
   echo "=== Real-Corpus Parity (per-grammar isolation) ==="
-  for lang in "${TARGET_LANGS[@]}"; do
-    run_real_corpus_lang "$lang"
-  done
+  run_real_corpus_phase
   echo ""
 fi
 
 if [[ "$MODE" == "all" || "$MODE" == "cgo" ]]; then
   echo "=== Direct Grammargen-vs-C Parity (per-language isolation) ==="
-  for lang in "${TARGET_LANGS[@]}"; do
-    run_cgo_lang "$lang"
-  done
+  run_cgo_phase
   echo ""
 fi
 

@@ -132,9 +132,6 @@ func tsScanAutoSemicolon(lexer *gotreesitter.ExternalLexer, validSymbols []bool,
 				if tsValid(validSymbols, tsTokJsxText) {
 					return false
 				}
-				if tsLooksLikeJSXAttributeContinuation(lexer) {
-					return false
-				}
 			}
 			switch lexer.Lookahead() {
 			case '>':
@@ -372,27 +369,6 @@ func tsScanJsxText(lexer *gotreesitter.ExternalLexer) bool {
 }
 
 func tsValid(vs []bool, i int) bool { return i < len(vs) && vs[i] }
-
-func tsLooksLikeJSXAttributeContinuation(lexer *gotreesitter.ExternalLexer) bool {
-	ch := lexer.Lookahead()
-	if ch != '_' && !unicode.IsLetter(ch) {
-		return false
-	}
-	for {
-		lexer.Advance(true)
-		ch = lexer.Lookahead()
-		if ch == '_' || ch == '-' || ch == ':' || ch == '.' ||
-			unicode.IsLetter(ch) || unicode.IsDigit(ch) {
-			continue
-		}
-		break
-	}
-	for unicode.IsSpace(ch) {
-		lexer.Advance(true)
-		ch = lexer.Lookahead()
-	}
-	return ch == '=' || ch == '/' || ch == '>'
-}
 
 func tsPreferAutoSemicolonOverJsxText(lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
 	if !tsValid(validSymbols, tsTokAutoSemicolon) || !tsValid(validSymbols, tsTokJsxText) {

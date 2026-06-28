@@ -116,6 +116,9 @@ func TestForestDispatchReportsAcceptedRuntime(t *testing.T) {
 	if rt.StopReason != gts.ParseStopAccepted {
 		t.Fatalf("forest dispatch stop reason = %q, want %q (%s)", rt.StopReason, gts.ParseStopAccepted, rt.Summary())
 	}
+	if !rt.ForestFastPath {
+		t.Fatalf("forest dispatch ForestFastPath = false, want true (%s)", rt.Summary())
+	}
 	if rt.SourceLen != uint32(len(src)) || rt.ExpectedEOFByte != uint32(len(src)) || rt.LastTokenEndByte != uint32(len(src)) || !rt.LastTokenWasEOF {
 		t.Fatalf("forest dispatch runtime mismatch: %s", rt.Summary())
 	}
@@ -144,7 +147,7 @@ func TestForestDispatchPromotesJavaScript(t *testing.T) {
 		t.Fatalf("JavaScript forest dispatch diverged\n got: %s\nwant: %s", got, want)
 	}
 	rt := tree.ParseRuntime()
-	if rt.StopReason != gts.ParseStopAccepted || !rt.LastTokenWasEOF || rt.TokensConsumed != 0 {
+	if rt.StopReason != gts.ParseStopAccepted || !rt.ForestFastPath || !rt.LastTokenWasEOF || rt.TokensConsumed != 0 {
 		t.Fatalf("JavaScript did not use forest accepted runtime: %s", rt.Summary())
 	}
 }
@@ -181,12 +184,321 @@ class C {
 		t.Fatalf("C# forest dispatch diverged\n got: %s\nwant: %s", got, want)
 	}
 	rt := tree.ParseRuntime()
-	if rt.StopReason != gts.ParseStopAccepted || !rt.LastTokenWasEOF || rt.TokensConsumed != 0 {
+	if rt.StopReason != gts.ParseStopAccepted || !rt.ForestFastPath || !rt.LastTokenWasEOF || rt.TokensConsumed != 0 {
 		t.Fatalf("C# did not use forest accepted runtime: %s", rt.Summary())
 	}
 }
 
-func TestForestTreeIncrementalEditSupportsCSSReuse(t *testing.T) {
+func TestForestTreeIncrementalEditCSharpNumericLiteralFastRescue(t *testing.T) {
+	gts.SetGLRForestEnabled(true)
+	defer gts.SetGLRForestEnabled(true)
+
+	src := makeCSharpBenchmarkSource(16)
+	sites := makeBenchmarkEditSites(src, "var v = ")
+	if len(sites) == 0 {
+		t.Fatal("missing C# numeric edit site")
+	}
+	site := sites[0]
+	edited := append([]byte(nil), src...)
+	toggleDigitAt(edited, site.offset)
+
+	lang := grm.CSharpLanguage()
+	parser := gts.NewParser(lang)
+	oldTree, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("initial parse: %v", err)
+	}
+	defer oldTree.Release()
+	if rt := oldTree.ParseRuntime(); rt.StopReason != gts.ParseStopAccepted || !rt.ForestFastPath || !rt.LastTokenWasEOF || rt.TokensConsumed != 0 {
+		t.Fatalf("initial parse did not use forest fast path: %s", rt.Summary())
+	}
+	oldTree.Edit(gts.InputEdit{
+		StartByte:   uint32(site.offset),
+		OldEndByte:  uint32(site.offset + 1),
+		NewEndByte:  uint32(site.offset + 1),
+		StartPoint:  site.start,
+		OldEndPoint: site.end,
+		NewEndPoint: site.end,
+	})
+
+	newTree, profile, err := parser.ParseIncrementalProfiled(edited, oldTree)
+	if err != nil {
+		t.Fatalf("incremental parse: %v", err)
+	}
+	defer newTree.Release()
+	requireCompleteParse(t, newTree, edited, lang, "incremental")
+	if profile.ReuseUnsupported {
+		t.Fatalf("C# numeric literal edit fell back to fresh parse: %s", profile.ReuseUnsupportedReason)
+	}
+	if profile.ReparseNanos != 0 {
+		t.Fatalf("ReparseNanos = %d, want 0 for token-invariant C# numeric literal edit", profile.ReparseNanos)
+	}
+	if profile.ReusedSubtrees != 1 || profile.ReusedBytes != uint64(len(edited)) {
+		t.Fatalf("reuse profile = subtrees %d bytes %d, want 1/%d", profile.ReusedSubtrees, profile.ReusedBytes, len(edited))
+	}
+	freshTree, err := parser.Parse(edited)
+	if err != nil {
+		t.Fatalf("fresh parse: %v", err)
+	}
+	defer freshTree.Release()
+	if got, want := newTree.RootNode().SExpr(lang), freshTree.RootNode().SExpr(lang); got != want {
+		t.Fatalf("incremental C# tree diverged from fresh parse\n got: %s\nwant: %s", got, want)
+	}
+}
+
+func TestForestTreeIncrementalEditAwkNumberFastRescue(t *testing.T) {
+	gts.SetGLRForestEnabled(true)
+	defer gts.SetGLRForestEnabled(true)
+
+	src := []byte("BEGIN { print 1 }\n")
+	offset := strings.Index(string(src), "1")
+	if offset < 0 || src[offset] != '1' {
+		t.Fatalf("AWK fixture drifted: byte %d", offset)
+	}
+	edited := append([]byte(nil), src...)
+	edited[offset] = '2'
+
+	lang := grm.AwkLanguage()
+	parser := gts.NewParser(lang)
+	oldTree, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("initial parse: %v", err)
+	}
+	defer oldTree.Release()
+	if rt := oldTree.ParseRuntime(); rt.StopReason != gts.ParseStopAccepted || !rt.ForestFastPath || !rt.LastTokenWasEOF || rt.TokensConsumed != 0 {
+		t.Fatalf("initial parse did not use forest fast path: %s", rt.Summary())
+	}
+	oldTree.Edit(gts.InputEdit{
+		StartByte:   uint32(offset),
+		OldEndByte:  uint32(offset + 1),
+		NewEndByte:  uint32(offset + 1),
+		StartPoint:  pointForOffset(src, offset),
+		OldEndPoint: pointForOffset(src, offset+1),
+		NewEndPoint: pointForOffset(edited, offset+1),
+	})
+
+	newTree, profile, err := parser.ParseIncrementalProfiled(edited, oldTree)
+	if err != nil {
+		t.Fatalf("incremental parse: %v", err)
+	}
+	defer newTree.Release()
+	requireCompleteParse(t, newTree, edited, lang, "incremental")
+	if profile.ReuseUnsupported {
+		t.Fatalf("AWK number edit fell back to fresh parse: %s", profile.ReuseUnsupportedReason)
+	}
+	if profile.ReparseNanos != 0 {
+		t.Fatalf("ReparseNanos = %d, want 0 for token-invariant AWK number edit", profile.ReparseNanos)
+	}
+	if profile.ReusedSubtrees == 0 {
+		t.Fatalf("AWK number edit reused no subtrees: %+v", profile)
+	}
+	freshTree, err := parser.Parse(edited)
+	if err != nil {
+		t.Fatalf("fresh parse: %v", err)
+	}
+	defer freshTree.Release()
+	if got, want := newTree.RootNode().SExpr(lang), freshTree.RootNode().SExpr(lang); got != want {
+		t.Fatalf("incremental AWK tree diverged from fresh parse\n got: %s\nwant: %s", got, want)
+	}
+}
+
+func TestForestTreeIncrementalEditCSharpIdentifierFastRescue(t *testing.T) {
+	gts.SetGLRForestEnabled(true)
+	defer gts.SetGLRForestEnabled(true)
+
+	src := []byte(`interface I1 {}
+interface I2 {}
+record F<T1, T2> where T1 : I1, I2, new() where T2 : I2 { }
+`)
+	oldNeedle := []byte("T1, T2")
+	offset := strings.Index(string(src), string(oldNeedle)) + len("T")
+	if offset < len("T") || src[offset] != '1' {
+		t.Fatalf("C# identifier fixture drifted: byte %d = %q, want '1'", offset, src[offset])
+	}
+	edited := append([]byte(nil), src...)
+	edited[offset] = '3'
+	edit := gts.InputEdit{
+		StartByte:   uint32(offset),
+		OldEndByte:  uint32(offset + 1),
+		NewEndByte:  uint32(offset + 1),
+		StartPoint:  pointForOffset(src, offset),
+		OldEndPoint: pointForOffset(src, offset+1),
+		NewEndPoint: pointForOffset(edited, offset+1),
+	}
+
+	lang := grm.CSharpLanguage()
+	parser := gts.NewParser(lang)
+	oldTree, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("initial parse: %v", err)
+	}
+	defer oldTree.Release()
+	if rt := oldTree.ParseRuntime(); rt.StopReason != gts.ParseStopAccepted || !rt.ForestFastPath || !rt.LastTokenWasEOF || rt.TokensConsumed != 0 {
+		t.Fatalf("initial parse did not use forest fast path: %s", rt.Summary())
+	}
+
+	tree := oldTree
+	current := src
+	for i := 0; i < 4; i++ {
+		next := append([]byte(nil), current...)
+		if next[offset] == '1' {
+			next[offset] = '3'
+		} else {
+			next[offset] = '1'
+		}
+		tree.Edit(edit)
+
+		newTree, profile, err := parser.ParseIncrementalProfiled(next, tree)
+		if err != nil {
+			t.Fatalf("incremental parse %d: %v", i, err)
+		}
+		requireCompleteParse(t, newTree, next, lang, "incremental")
+		if profile.ReuseUnsupported {
+			leaf := tree.RootNode().DescendantForByteRange(uint32(offset), uint32(offset+1))
+			t.Fatalf("C# identifier edit %d fell back to fresh parse: %s leaf=%s text=%q", i, profile.ReuseUnsupportedReason, leaf.Type(lang), leaf.Text(current))
+		}
+		if profile.ReparseNanos != 0 {
+			t.Fatalf("ReparseNanos = %d, want 0 for token-invariant C# identifier edit %d", profile.ReparseNanos, i)
+		}
+		freshTree, err := parser.Parse(next)
+		if err != nil {
+			newTree.Release()
+			t.Fatalf("fresh parse %d: %v", i, err)
+		}
+		if got, want := newTree.RootNode().SExpr(lang), freshTree.RootNode().SExpr(lang); got != want {
+			freshTree.Release()
+			newTree.Release()
+			t.Fatalf("incremental C# identifier tree %d diverged from fresh parse\n got: %s\nwant: %s", i, got, want)
+		}
+		freshTree.Release()
+		if tree != oldTree {
+			tree.Release()
+		}
+		tree = newTree
+		current = next
+	}
+	if tree != oldTree {
+		tree.Release()
+	}
+}
+
+func TestForestTreeIncrementalEditCSharpContextualIdentifierStillFallsBack(t *testing.T) {
+	gts.SetGLRForestEnabled(true)
+	defer gts.SetGLRForestEnabled(true)
+
+	src := []byte(`class C {
+  void M() {
+    var l = scoped => null;
+  }
+}
+`)
+	const oldNeedle = "scoped"
+	offset := strings.Index(string(src), oldNeedle)
+	if offset < 0 || src[offset] != 's' {
+		t.Fatalf("C# contextual identifier fixture drifted: offset=%d", offset)
+	}
+	edited := append([]byte(nil), src...)
+	edited[offset] = 't'
+	edit := gts.InputEdit{
+		StartByte:   uint32(offset),
+		OldEndByte:  uint32(offset + 1),
+		NewEndByte:  uint32(offset + 1),
+		StartPoint:  pointForOffset(src, offset),
+		OldEndPoint: pointForOffset(src, offset+1),
+		NewEndPoint: pointForOffset(edited, offset+1),
+	}
+
+	lang := grm.CSharpLanguage()
+	parser := gts.NewParser(lang)
+	oldTree, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("initial parse: %v", err)
+	}
+	defer oldTree.Release()
+	if rt := oldTree.ParseRuntime(); rt.StopReason != gts.ParseStopAccepted || !rt.ForestFastPath || !rt.LastTokenWasEOF || rt.TokensConsumed != 0 {
+		t.Fatalf("initial parse did not use forest fast path: %s", rt.Summary())
+	}
+	oldTree.Edit(edit)
+
+	newTree, profile, err := parser.ParseIncrementalProfiled(edited, oldTree)
+	if err != nil {
+		t.Fatalf("incremental parse: %v", err)
+	}
+	defer newTree.Release()
+	requireCompleteParse(t, newTree, edited, lang, "incremental")
+	if !profile.ReuseUnsupported {
+		t.Fatal("C# contextual identifier edit used disabled-tree token-invariant rescue, want fresh fallback")
+	}
+	freshTree, err := parser.Parse(edited)
+	if err != nil {
+		t.Fatalf("fresh parse: %v", err)
+	}
+	defer freshTree.Release()
+	if got, want := newTree.RootNode().SExpr(lang), freshTree.RootNode().SExpr(lang); got != want {
+		t.Fatalf("incremental C# contextual identifier tree diverged from fresh parse\n got: %s\nwant: %s", got, want)
+	}
+}
+
+func TestForestTreeIncrementalEditCSharpStringLiteralStillFallsBack(t *testing.T) {
+	gts.SetGLRForestEnabled(true)
+	defer gts.SetGLRForestEnabled(true)
+
+	src := []byte(`class C {
+  string M(int x) => $"value={x}";
+}
+`)
+	const oldNeedle = "value="
+	offset := strings.Index(string(src), oldNeedle)
+	if offset < 0 || src[offset] != 'v' {
+		t.Fatalf("C# string fixture drifted: offset=%d", offset)
+	}
+	edited := append([]byte(nil), src...)
+	edited[offset] = 'V'
+	edit := gts.InputEdit{
+		StartByte:   uint32(offset),
+		OldEndByte:  uint32(offset + 1),
+		NewEndByte:  uint32(offset + 1),
+		StartPoint:  pointForOffset(src, offset),
+		OldEndPoint: pointForOffset(src, offset+1),
+		NewEndPoint: pointForOffset(edited, offset+1),
+	}
+
+	lang := grm.CSharpLanguage()
+	parser := gts.NewParser(lang)
+	oldTree, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("initial parse: %v", err)
+	}
+	defer oldTree.Release()
+	if rt := oldTree.ParseRuntime(); rt.StopReason != gts.ParseStopAccepted || !rt.ForestFastPath || !rt.LastTokenWasEOF || rt.TokensConsumed != 0 {
+		t.Fatalf("initial parse did not use forest fast path: %s", rt.Summary())
+	}
+	oldTree.Edit(edit)
+
+	newTree, profile, err := parser.ParseIncrementalProfiled(edited, oldTree)
+	if err != nil {
+		t.Fatalf("incremental parse: %v", err)
+	}
+	defer newTree.Release()
+	requireCompleteParse(t, newTree, edited, lang, "incremental")
+	if !profile.ReuseUnsupported {
+		t.Fatal("C# string literal edit used disabled-tree token-invariant rescue, want fresh fallback")
+	}
+	freshTree, err := parser.Parse(edited)
+	if err != nil {
+		t.Fatalf("fresh parse: %v", err)
+	}
+	defer freshTree.Release()
+	if got, want := newTree.RootNode().SExpr(lang), freshTree.RootNode().SExpr(lang); got != want {
+		t.Fatalf("incremental C# string tree diverged from fresh parse\n got: %s\nwant: %s", got, want)
+	}
+}
+
+// TestForestTreeIncrementalEditCSSTokenInvariantLeafReuseIsCorrect verifies the
+// safe reuse path for css forest trees that are otherwise demoted from general
+// forest-incremental reuse. Same-length edits inside a leaf can reuse the old
+// tree when rescanning the edited leaf preserves token kind and span.
+func TestForestTreeIncrementalEditCSSTokenInvariantLeafReuseIsCorrect(t *testing.T) {
 	gts.SetGLRForestEnabled(true)
 	defer gts.SetGLRForestEnabled(true)
 
@@ -224,9 +536,20 @@ func TestForestTreeIncrementalEditSupportsCSSReuse(t *testing.T) {
 	if got, want := newTree.RootNode().EndByte(), uint32(len(edited)); got != want {
 		t.Fatalf("incremental root end = %d, want %d", got, want)
 	}
-	if profile.ReuseUnsupported || profile.ReuseUnsupportedReason != "" {
-		t.Fatalf("profile reuse unsupported = %v reason %q, want CSS reuse path",
-			profile.ReuseUnsupported, profile.ReuseUnsupportedReason)
+	if profile.ReuseUnsupported {
+		leaf := oldTree.RootNode().DescendantForByteRange(uint32(offset), uint32(offset+1))
+		leafType := "<nil>"
+		leafText := ""
+		leafChildren := 0
+		if leaf != nil {
+			leafType = leaf.Type(grm.CssLanguage())
+			leafText = leaf.Text(src)
+			leafChildren = leaf.ChildCount()
+		}
+		t.Fatalf("css token-invariant leaf edit fell back to fresh parse: %s leaf=%s children=%d text=%q", profile.ReuseUnsupportedReason, leafType, leafChildren, leafText)
+	}
+	if profile.ReusedSubtrees == 0 {
+		t.Fatalf("css token-invariant leaf edit reused no subtrees: %+v", profile)
 	}
 	freshTree, err := parser.Parse(edited)
 	if err != nil {
@@ -238,7 +561,317 @@ func TestForestTreeIncrementalEditSupportsCSSReuse(t *testing.T) {
 	}
 }
 
-func TestForestTreeIncrementalEditSupportsCMakeReuse(t *testing.T) {
+func TestForestTreeIncrementalEditSCSSTokenInvariantLeafReuseIsCorrect(t *testing.T) {
+	gts.SetGLRForestEnabled(true)
+	defer gts.SetGLRForestEnabled(true)
+
+	src := []byte("$gap: 1px;\n.a { color: red; margin: $gap; padding: 4px; .child { width: 1px; } }\n")
+	const oldNeedle = "padding: 4px"
+	offset := strings.Index(string(src), oldNeedle) + len("padding: ")
+	if offset < len("padding: ") || len(src) <= offset || src[offset] != '4' {
+		t.Fatalf("scss fixture drifted: byte %d = %q, want '4'", offset, src[offset])
+	}
+
+	edited := append([]byte(nil), src...)
+	edited[offset] = '5'
+	edit := gts.InputEdit{
+		StartByte:   uint32(offset),
+		OldEndByte:  uint32(offset + 1),
+		NewEndByte:  uint32(offset + 1),
+		StartPoint:  pointForOffset(src, offset),
+		OldEndPoint: pointForOffset(src, offset+1),
+		NewEndPoint: pointForOffset(edited, offset+1),
+	}
+
+	parser := gts.NewParser(grm.ScssLanguage())
+	oldTree, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("initial parse: %v", err)
+	}
+	defer oldTree.Release()
+	oldTree.Edit(edit)
+
+	newTree, profile, err := parser.ParseIncrementalProfiled(edited, oldTree)
+	if err != nil {
+		t.Fatalf("incremental parse: %v", err)
+	}
+	defer newTree.Release()
+	if got, want := newTree.RootNode().EndByte(), uint32(len(edited)); got != want {
+		t.Fatalf("incremental root end = %d, want %d", got, want)
+	}
+	if profile.ReuseUnsupported {
+		leaf := oldTree.RootNode().DescendantForByteRange(uint32(offset), uint32(offset+1))
+		leafType := "<nil>"
+		leafText := ""
+		leafChildren := 0
+		if leaf != nil {
+			leafType = leaf.Type(grm.ScssLanguage())
+			leafText = leaf.Text(src)
+			leafChildren = leaf.ChildCount()
+		}
+		t.Fatalf("scss token-invariant leaf edit fell back to fresh parse: %s leaf=%s children=%d text=%q", profile.ReuseUnsupportedReason, leafType, leafChildren, leafText)
+	}
+	if profile.ReusedSubtrees == 0 {
+		t.Fatalf("scss token-invariant leaf edit reused no subtrees: %+v", profile)
+	}
+	freshTree, err := parser.Parse(edited)
+	if err != nil {
+		t.Fatalf("fresh parse: %v", err)
+	}
+	defer freshTree.Release()
+	if got, want := newTree.RootNode().SExpr(grm.ScssLanguage()), freshTree.RootNode().SExpr(grm.ScssLanguage()); got != want {
+		t.Fatalf("incremental SCSS tree diverged from fresh parse\n got: %s\nwant: %s", got, want)
+	}
+}
+
+func TestYAMLIncrementalEditScalarTokenInvariantLeafReuseIsCorrect(t *testing.T) {
+	lang := grm.YamlLanguage()
+	src := []byte("uses: actions/checkout@v4\ncount: [0]\ntime: 2001-11-23 15:01:42 -5\n")
+	for _, tc := range []struct {
+		name        string
+		needle      string
+		oldByte     byte
+		replacement byte
+	}{
+		{name: "string version", needle: "v4", oldByte: '4', replacement: '5'},
+		{name: "integer scalar", needle: "[0]", oldByte: '0', replacement: '1'},
+		{name: "timestamp string", needle: "2001", oldByte: '2', replacement: '3'},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			offset := strings.Index(string(src), tc.needle)
+			if offset < 0 {
+				t.Fatalf("fixture missing %q", tc.needle)
+			}
+			for offset < len(src) && src[offset] != tc.oldByte {
+				offset++
+			}
+			if offset >= len(src) {
+				t.Fatalf("fixture missing byte %q in %q", tc.oldByte, tc.needle)
+			}
+			edited := append([]byte(nil), src...)
+			edited[offset] = tc.replacement
+			edit := gts.InputEdit{
+				StartByte:   uint32(offset),
+				OldEndByte:  uint32(offset + 1),
+				NewEndByte:  uint32(offset + 1),
+				StartPoint:  pointForOffset(src, offset),
+				OldEndPoint: pointForOffset(src, offset+1),
+				NewEndPoint: pointForOffset(edited, offset+1),
+			}
+
+			parser := gts.NewParser(lang)
+			oldTree, err := parser.Parse(src)
+			if err != nil {
+				t.Fatalf("initial parse: %v", err)
+			}
+			defer oldTree.Release()
+			oldTree.Edit(edit)
+
+			newTree, profile, err := parser.ParseIncrementalProfiled(edited, oldTree)
+			if err != nil {
+				t.Fatalf("incremental parse: %v", err)
+			}
+			defer newTree.Release()
+			if profile.ReuseUnsupported {
+				leaf := oldTree.RootNode().DescendantForByteRange(uint32(offset), uint32(offset+1))
+				leafType := "<nil>"
+				leafText := ""
+				if leaf != nil {
+					leafType = leaf.Type(lang)
+					leafText = leaf.Text(src)
+				}
+				t.Fatalf("yaml token-invariant leaf edit fell back to fresh parse: %s leaf=%s text=%q", profile.ReuseUnsupportedReason, leafType, leafText)
+			}
+			if profile.ReusedSubtrees == 0 {
+				t.Fatalf("yaml token-invariant leaf edit reused no subtrees: %+v", profile)
+			}
+			if got, want := newTree.RootNode().EndByte(), uint32(len(edited)); got != want {
+				t.Fatalf("incremental root end = %d, want %d", got, want)
+			}
+			freshTree, err := parser.Parse(edited)
+			if err != nil {
+				t.Fatalf("fresh parse: %v", err)
+			}
+			defer freshTree.Release()
+			if got, want := newTree.RootNode().SExpr(lang), freshTree.RootNode().SExpr(lang); got != want {
+				t.Fatalf("incremental YAML tree diverged from fresh parse\n got: %s\nwant: %s", got, want)
+			}
+		})
+	}
+}
+
+func TestPowerShellIncrementalEditTextInvariantLeafReuseIsCorrect(t *testing.T) {
+	lang := grm.PowershellLanguage()
+	src := []byte(`# note 1
+. "$PSScriptRoot\..\buildCommon\startNativeExecution.ps1"
+@{ GUID = "56D66100-99A0-4FFC-A12D-EEE9A6718AEF" }
+`)
+	for _, tc := range []struct {
+		name        string
+		needle      string
+		oldByte     byte
+		replacement byte
+	}{
+		{name: "line comment", needle: "# note 1", oldByte: '1', replacement: '2'},
+		{name: "interpolated string text", needle: "startNativeExecution.ps1", oldByte: '1', replacement: '2'},
+		{name: "guid string", needle: "56D66100", oldByte: '5', replacement: '6'},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			offset := strings.Index(string(src), tc.needle)
+			if offset < 0 {
+				t.Fatalf("fixture missing %q", tc.needle)
+			}
+			for offset < len(src) && src[offset] != tc.oldByte {
+				offset++
+			}
+			if offset >= len(src) {
+				t.Fatalf("fixture missing byte %q in %q", tc.oldByte, tc.needle)
+			}
+			edited := append([]byte(nil), src...)
+			edited[offset] = tc.replacement
+			edit := gts.InputEdit{
+				StartByte:   uint32(offset),
+				OldEndByte:  uint32(offset + 1),
+				NewEndByte:  uint32(offset + 1),
+				StartPoint:  pointForOffset(src, offset),
+				OldEndPoint: pointForOffset(src, offset+1),
+				NewEndPoint: pointForOffset(edited, offset+1),
+			}
+
+			parser := gts.NewParser(lang)
+			oldTree, err := parser.Parse(src)
+			if err != nil {
+				t.Fatalf("initial parse: %v", err)
+			}
+			defer oldTree.Release()
+			requireCompleteParse(t, oldTree, src, lang, "initial")
+			oldTree.Edit(edit)
+
+			newTree, profile, err := parser.ParseIncrementalProfiled(edited, oldTree)
+			if err != nil {
+				t.Fatalf("incremental parse: %v", err)
+			}
+			defer newTree.Release()
+			if profile.ReuseUnsupported {
+				leaf := oldTree.RootNode().DescendantForByteRange(uint32(offset), uint32(offset+1))
+				leafType := "<nil>"
+				leafText := ""
+				leafChildren := 0
+				if leaf != nil {
+					leafType = leaf.Type(lang)
+					leafText = leaf.Text(src)
+					leafChildren = leaf.ChildCount()
+				}
+				t.Fatalf("powershell text-invariant edit fell back to fresh parse: %s leaf=%s children=%d text=%q", profile.ReuseUnsupportedReason, leafType, leafChildren, leafText)
+			}
+			if profile.ReusedSubtrees == 0 {
+				t.Fatalf("powershell text-invariant edit reused no subtrees: %+v", profile)
+			}
+			requireCompleteParse(t, newTree, edited, lang, "incremental")
+			freshTree, err := parser.Parse(edited)
+			if err != nil {
+				t.Fatalf("fresh parse: %v", err)
+			}
+			defer freshTree.Release()
+			requireCompleteParse(t, freshTree, edited, lang, "fresh")
+			if got, want := newTree.RootNode().SExpr(lang), freshTree.RootNode().SExpr(lang); got != want {
+				t.Fatalf("incremental PowerShell tree diverged from fresh parse\n got: %s\nwant: %s", got, want)
+			}
+		})
+	}
+}
+
+func TestHCLIncrementalEditDigitLeafReuseIsCorrect(t *testing.T) {
+	gts.SetGLRForestEnabled(true)
+	defer gts.SetGLRForestEnabled(true)
+
+	lang := grm.HclLanguage()
+	src := []byte(`resource "aws_instance" "foo" {
+  count = "2"
+  cidr = "10.0.0.0/16"
+  priority = 1
+}
+`)
+	for _, tc := range []struct {
+		name        string
+		needle      string
+		oldByte     byte
+		replacement byte
+	}{
+		{name: "template literal", needle: "10.0.0.0/16", oldByte: '1', replacement: '2'},
+		{name: "numeric literal", needle: "priority = 1", oldByte: '1', replacement: '2'},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			offset := strings.Index(string(src), tc.needle)
+			if offset < 0 {
+				t.Fatalf("fixture missing %q", tc.needle)
+			}
+			for offset < len(src) && src[offset] != tc.oldByte {
+				offset++
+			}
+			if offset >= len(src) {
+				t.Fatalf("fixture missing byte %q in %q", tc.oldByte, tc.needle)
+			}
+			edited := append([]byte(nil), src...)
+			edited[offset] = tc.replacement
+			edit := gts.InputEdit{
+				StartByte:   uint32(offset),
+				OldEndByte:  uint32(offset + 1),
+				NewEndByte:  uint32(offset + 1),
+				StartPoint:  pointForOffset(src, offset),
+				OldEndPoint: pointForOffset(src, offset+1),
+				NewEndPoint: pointForOffset(edited, offset+1),
+			}
+
+			parser := gts.NewParser(lang)
+			oldTree, err := parser.Parse(src)
+			if err != nil {
+				t.Fatalf("initial parse: %v", err)
+			}
+			defer oldTree.Release()
+			if oldTree.RootNode().HasError() {
+				t.Fatalf("initial HCL parse has errors: %s", oldTree.RootNode().SExpr(lang))
+			}
+			oldTree.Edit(edit)
+
+			newTree, profile, err := parser.ParseIncrementalProfiled(edited, oldTree)
+			if err != nil {
+				t.Fatalf("incremental parse: %v", err)
+			}
+			defer newTree.Release()
+			if profile.ReuseUnsupported {
+				leaf := oldTree.RootNode().DescendantForByteRange(uint32(offset), uint32(offset+1))
+				leafType := "<nil>"
+				leafText := ""
+				if leaf != nil {
+					leafType = leaf.Type(lang)
+					leafText = leaf.Text(src)
+				}
+				t.Fatalf("hcl digit leaf edit fell back to fresh parse: %s leaf=%s text=%q", profile.ReuseUnsupportedReason, leafType, leafText)
+			}
+			if profile.ReparseNanos != 0 {
+				t.Fatalf("ReparseNanos = %d, want 0 for HCL digit leaf edit", profile.ReparseNanos)
+			}
+			if profile.ReusedSubtrees == 0 {
+				t.Fatalf("hcl digit leaf edit reused no subtrees: %+v", profile)
+			}
+			freshTree, err := parser.Parse(edited)
+			if err != nil {
+				t.Fatalf("fresh parse: %v", err)
+			}
+			defer freshTree.Release()
+			if got, want := newTree.RootNode().SExpr(lang), freshTree.RootNode().SExpr(lang); got != want {
+				t.Fatalf("incremental HCL tree diverged from fresh parse\n got: %s\nwant: %s", got, want)
+			}
+		})
+	}
+}
+
+// TestForestTreeIncrementalEditCMakeTextInvariantLeafReuseIsCorrect: cmake
+// remains demoted from languageAllowsForestIncrementalPath, but same-length
+// alphanumeric edits inside unquoted_argument leaves can use the token-invariant
+// rescue path safely.
+func TestForestTreeIncrementalEditCMakeTextInvariantLeafReuseIsCorrect(t *testing.T) {
 	gts.SetGLRForestEnabled(true)
 	defer gts.SetGLRForestEnabled(true)
 
@@ -276,15 +909,21 @@ func TestForestTreeIncrementalEditSupportsCMakeReuse(t *testing.T) {
 	if got, want := newTree.RootNode().EndByte(), uint32(len(edited)); got != want {
 		t.Fatalf("incremental root end = %d, want %d", got, want)
 	}
-	if profile.ReuseUnsupported || profile.ReuseUnsupportedReason != "" {
-		t.Fatalf("profile reuse unsupported = %v reason %q, want CMake reuse path",
-			profile.ReuseUnsupported, profile.ReuseUnsupportedReason)
+	if profile.ReuseUnsupported {
+		leaf := oldTree.RootNode().DescendantForByteRange(uint32(offset), uint32(offset+1))
+		leafType := "<nil>"
+		leafText := ""
+		if leaf != nil {
+			leafType = leaf.Type(grm.CmakeLanguage())
+			leafText = leaf.Text(src)
+		}
+		t.Fatalf("cmake text-invariant leaf edit fell back to fresh parse: %s leaf=%s text=%q", profile.ReuseUnsupportedReason, leafType, leafText)
 	}
 	if profile.ReparseNanos != 0 {
-		t.Fatalf("profile reparse nanos = %d, want 0 for CMake text-invariant leaf reuse", profile.ReparseNanos)
+		t.Fatalf("ReparseNanos = %d, want 0 for CMake text-invariant leaf edit", profile.ReparseNanos)
 	}
 	if profile.ReusedSubtrees == 0 {
-		t.Fatalf("profile reused subtrees = 0, want CMake sibling reuse")
+		t.Fatalf("cmake text-invariant leaf edit reused no subtrees: %+v", profile)
 	}
 	freshTree, err := parser.Parse(edited)
 	if err != nil {

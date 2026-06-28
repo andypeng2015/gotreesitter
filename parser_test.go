@@ -285,6 +285,35 @@ func TestCanFinalizeNoActionEOFAcceptsSingleNonterminalWithExtras(t *testing.T) 
 	}
 }
 
+func TestCanFinalizeNoActionEOFAtRejectsNonRootBeforeTrailingSyntax(t *testing.T) {
+	lang := buildArithmeticLanguage()
+	lang.InitialState = 1
+	lang.SymbolCount = 5
+	lang.SymbolNames = append(lang.SymbolNames, "fragment")
+	lang.SymbolMetadata = append(lang.SymbolMetadata, SymbolMetadata{Name: "fragment", Visible: true, Named: true})
+	parser := &Parser{language: lang, hasRootSymbol: true, rootSymbol: 3}
+
+	s := newGLRStack(lang.InitialState)
+	s.push(2, NewLeafNode(4, true, 0, 1, Point{Row: 0, Column: 0}, Point{Row: 0, Column: 1}), nil, nil)
+
+	if parser.canFinalizeNoActionEOFAt(&s, 2, []byte("x}")) {
+		t.Fatal("canFinalizeNoActionEOFAt() = true, want false for non-root before trailing syntax")
+	}
+}
+
+func TestCanFinalizeNoActionEOFAtAcceptsRootBeforeTrailingWhitespace(t *testing.T) {
+	lang := buildArithmeticLanguage()
+	lang.InitialState = 1
+	parser := &Parser{language: lang, hasRootSymbol: true, rootSymbol: 3}
+
+	s := newGLRStack(lang.InitialState)
+	s.push(2, NewLeafNode(3, true, 0, 1, Point{Row: 0, Column: 0}, Point{Row: 0, Column: 1}), nil, nil)
+
+	if !parser.canFinalizeNoActionEOFAt(&s, 3, []byte("x\n\n")) {
+		t.Fatal("canFinalizeNoActionEOFAt() = false, want true for root before trailing whitespace")
+	}
+}
+
 func TestPushOrExtendErrorNodeCoalescesConsecutiveTokens(t *testing.T) {
 	lang := buildArithmeticLanguage()
 	parser := NewParser(lang)

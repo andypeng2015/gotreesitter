@@ -13,6 +13,54 @@ type parseConfig struct {
 	profiling   bool
 }
 
+// ParseStoppedEarlyError reports a parse that returned a tree but stopped
+// before accepting the input. The returned tree is still available to callers
+// that want diagnostics or partial output.
+type ParseStoppedEarlyError struct {
+	Reason  ParseStopReason
+	Runtime ParseRuntime
+}
+
+func (e *ParseStoppedEarlyError) Error() string {
+	if e == nil {
+		return ErrParseStoppedEarly.Error()
+	}
+	reason := e.Reason
+	if reason == "" {
+		reason = ParseStopNone
+	}
+	return fmt.Sprintf("%s: %s", ErrParseStoppedEarly, reason)
+}
+
+func (e *ParseStoppedEarlyError) Is(target error) bool {
+	return target == ErrParseStoppedEarly
+}
+
+func parseStoppedEarlyError(tree *Tree) error {
+	if tree == nil || !tree.ParseStoppedEarly() {
+		return nil
+	}
+	rt := tree.ParseRuntime()
+	reason := rt.StopReason
+	if reason == "" {
+		reason = tree.ParseStopReason()
+	}
+	return &ParseStoppedEarlyError{
+		Reason:  reason,
+		Runtime: rt,
+	}
+}
+
+func strictParseResult(tree *Tree, err error) (*Tree, error) {
+	if err != nil {
+		return tree, err
+	}
+	if stoppedErr := parseStoppedEarlyError(tree); stoppedErr != nil {
+		return tree, stoppedErr
+	}
+	return tree, nil
+}
+
 // TokenSourceFactory builds a token source for parser source bytes.
 type TokenSourceFactory func(source []byte) (TokenSource, error)
 
@@ -75,6 +123,127 @@ func oldTreeDisablesIncrementalReuse(oldTree *Tree) bool {
 	return oldTree != nil && oldTree.incrementalReuseDisabled
 }
 
+func (p *Parser) tryTokenInvariantReuseForDisabledOldTree(source []byte, oldTree *Tree, timing *incrementalParseTiming) (*Tree, bool) {
+	if !oldTreeDisablesIncrementalReuse(oldTree) {
+		return nil, false
+	}
+	if p == nil || p.language == nil {
+		return nil, false
+	}
+	if !p.disabledOldTreeTokenInvariantLeafAllowed(source, oldTree) {
+		return nil, false
+	}
+	if p.checkDFALexer() != nil {
+		return nil, false
+	}
+	prevFactory := p.reparseFactory
+	p.reparseFactory = p.dfaReparseFactory()
+	defer func() {
+		p.reparseFactory = prevFactory
+	}()
+	lexer := NewLexer(p.language.LexStates, source)
+	ts := acquireDFATokenSource(lexer, p.language, p.lookupActionIndex, p.hasKeywordState, p.externalValidByState, p.externalValidMaskByState)
+	defer ts.Close()
+	tree, ok := p.tryTokenInvariantLeafEdit(source, oldTree, p.wrapIncludedRanges(ts), timing)
+	if !ok {
+		return nil, false
+	}
+	normalizeReturnedIncrementalTree(tree, oldTree, source, p.language)
+	return tree, true
+}
+
+func (p *Parser) disabledOldTreeTokenInvariantLeafAllowed(source []byte, oldTree *Tree) bool {
+	root, edit, ok := p.tokenInvariantLeafEditCandidate(source, oldTree)
+	if !ok {
+		return false
+	}
+	node := oldTree.lastEditedLeaf
+	if node == nil || !node.containsByteRange(edit.StartByte, edit.OldEndByte) {
+		node = root.DescendantForByteRange(edit.StartByte, edit.OldEndByte)
+	}
+	if p.canReuseLanguageTextInvariantNode(source, oldTree, node, edit) {
+		return true
+	}
+	if !tokenInvariantLeafReusable(node) {
+		return false
+	}
+	switch p.language.Name {
+	case "go":
+		return true
+	case "css", "scss":
+		return cssDisabledTreeTokenInvariantLeafAllowed(oldTree, node)
+	case "c_sharp":
+		return csharpDisabledTreeTokenInvariantLeafAllowed(p.language, node, oldTree.source, source)
+	default:
+		return false
+	}
+}
+
+func cssDisabledTreeTokenInvariantLeafAllowed(oldTree *Tree, leaf *Node) bool {
+	return oldTree != nil && oldTree.forestFastPath && tokenInvariantLeafReusable(leaf)
+}
+
+func csharpDisabledTreeTokenInvariantLeafAllowed(lang *Language, leaf *Node, oldSource, newSource []byte) bool {
+	switch leaf.Type(lang) {
+	case "integer_literal", "real_literal":
+		return true
+	case "identifier":
+		return csharpTokenInvariantIdentifierText(oldSource, leaf) &&
+			csharpTokenInvariantIdentifierText(newSource, leaf)
+	default:
+		return false
+	}
+}
+
+func csharpTokenInvariantIdentifierText(source []byte, leaf *Node) bool {
+	if leaf == nil || leaf.startByte >= leaf.endByte || int(leaf.endByte) > len(source) {
+		return false
+	}
+	text := source[leaf.startByte:leaf.endByte]
+	if !csharpSimpleIdentifierBytes(text) {
+		return false
+	}
+	return !csharpTokenInvariantIdentifierKeyword(string(text))
+}
+
+func csharpSimpleIdentifierBytes(text []byte) bool {
+	if len(text) == 0 {
+		return false
+	}
+	if !csharpIdentifierStartByte(text[0]) {
+		return false
+	}
+	for _, b := range text[1:] {
+		if !csharpIdentifierContinueByte(b) {
+			return false
+		}
+	}
+	return true
+}
+
+func csharpTokenInvariantIdentifierKeyword(text string) bool {
+	switch text {
+	case "abstract", "add", "alias", "as", "ascending", "async", "await", "base",
+		"bool", "break", "by", "byte", "case", "catch", "char", "checked",
+		"class", "const", "continue", "decimal", "default", "delegate",
+		"descending", "do", "double", "dynamic", "else", "enum", "equals",
+		"event", "explicit", "extern", "false", "file", "finally", "fixed",
+		"float", "for", "foreach", "from", "get", "global", "goto", "group",
+		"if", "implicit", "in", "init", "int", "interface", "internal", "into",
+		"is", "join", "let", "lock", "long", "namespace", "new", "notnull",
+		"null", "object", "on", "operator", "orderby", "out", "override",
+		"params", "partial", "private", "protected", "public", "readonly",
+		"record", "ref", "remove", "return", "sbyte", "scoped", "sealed",
+		"select", "set", "short", "sizeof", "stackalloc", "static", "string",
+		"struct", "switch", "this", "throw", "true", "try", "typeof", "uint",
+		"ulong", "unchecked", "unsafe", "ushort", "using", "var", "virtual",
+		"void", "volatile", "when", "where", "while", "with", "yield":
+		return true
+	default:
+		return false
+	}
+}
+
 func profileFreshParseFallback(start time.Time, tree *Tree, reason string) IncrementalParseProfile {
 	profile := IncrementalParseProfile{
 		ReparseNanos:           time.Since(start).Nanoseconds(),
@@ -106,7 +275,7 @@ func (p *Parser) dfaReparseFactory() TokenSourceFactory {
 	}
 	return func(source []byte) (TokenSource, error) {
 		lexer := NewLexer(p.language.LexStates, source)
-		return newDFATokenSourceDirect(lexer, p.language, p.lookupActionIndex, p.hasKeywordState, p.externalValidByState), nil
+		return newDFATokenSourceDirect(lexer, p.language, p.lookupActionIndex, p.hasKeywordState, p.externalValidByState, p.externalValidMaskByState), nil
 	}
 }
 
@@ -352,8 +521,11 @@ func (p *Parser) Logger() ParserLogger {
 	return p.logger
 }
 
-// SetTimeoutMicros configures a per-parse timeout in microseconds.
-// A value of 0 disables timeout checks.
+// SetTimeoutMicros configures a per-parse timeout in microseconds. A value of 0
+// disables timeout checks. Parse methods preserve tree-sitter's partial-tree
+// behavior on timeout: they return a tree and nil error, with
+// tree.ParseStopReason() == ParseStopTimeout and tree.ParseStoppedEarly() true.
+// Use ParseStrict or another strict parse method to treat early stops as errors.
 func (p *Parser) SetTimeoutMicros(timeoutMicros uint64) {
 	if p == nil {
 		return
@@ -525,7 +697,7 @@ func (p *Parser) Parse(source []byte) (*Tree, error) {
 		p.reparseFactory = prevFactory
 	}()
 	lexer := NewLexer(p.language.LexStates, source)
-	ts := acquireDFATokenSource(lexer, p.language, p.lookupActionIndex, p.hasKeywordState, p.externalValidByState)
+	ts := acquireDFATokenSource(lexer, p.language, p.lookupActionIndex, p.hasKeywordState, p.externalValidByState, p.externalValidMaskByState)
 	if p.noTreeBenchmarkOnly && !p.noTreeCheckpointBenchmarkOnly {
 		ts.usesExternalCheckpoints = false
 	}
@@ -541,6 +713,13 @@ func (p *Parser) Parse(source []byte) (*Tree, error) {
 		p.normalizeReturnedTree(rawRootOrNil(tree), source)
 	}
 	return tree, nil
+}
+
+// ParseStrict is like Parse, but returns ErrParseStoppedEarly when parsing
+// returns a partial tree due to timeout, cancellation, token-source EOF, or a
+// parser safety limit. The partial tree is returned alongside the error.
+func (p *Parser) ParseStrict(source []byte) (*Tree, error) {
+	return strictParseResult(p.Parse(source))
 }
 
 // ParseNoTreeBenchmarkOnly parses source while suppressing parent/child tree
@@ -649,6 +828,12 @@ func (p *Parser) ParseWithTokenSource(source []byte, ts TokenSource) (*Tree, err
 	return p.parseWithTokenSource(source, ts, p.tokenSourceReparseFactory(ts))
 }
 
+// ParseWithTokenSourceStrict is like ParseWithTokenSource, but returns
+// ErrParseStoppedEarly when parsing returns a partial tree.
+func (p *Parser) ParseWithTokenSourceStrict(source []byte, ts TokenSource) (*Tree, error) {
+	return strictParseResult(p.ParseWithTokenSource(source, ts))
+}
+
 // ParseWithTokenSourceFactory parses source using a freshly built custom token
 // source. The factory is also retained for recovery reparses.
 func (p *Parser) ParseWithTokenSourceFactory(source []byte, factory TokenSourceFactory) (*Tree, error) {
@@ -662,6 +847,12 @@ func (p *Parser) ParseWithTokenSourceFactory(source []byte, factory TokenSourceF
 	return p.parseWithTokenSource(source, ts, factory)
 }
 
+// ParseWithTokenSourceFactoryStrict is like ParseWithTokenSourceFactory, but
+// returns ErrParseStoppedEarly when parsing returns a partial tree.
+func (p *Parser) ParseWithTokenSourceFactoryStrict(source []byte, factory TokenSourceFactory) (*Tree, error) {
+	return strictParseResult(p.ParseWithTokenSourceFactory(source, factory))
+}
+
 // ParseIncremental re-parses source after edits were applied to oldTree.
 // It reuses unchanged subtrees from the old tree for better performance.
 // Call oldTree.Edit() for each edit before calling this method.
@@ -673,6 +864,9 @@ func (p *Parser) ParseIncremental(source []byte, oldTree *Tree) (*Tree, error) {
 		return oldTree, nil
 	}
 	if oldTreeDisablesIncrementalReuse(oldTree) {
+		if tree, ok := p.tryTokenInvariantReuseForDisabledOldTree(source, oldTree, nil); ok {
+			return tree, nil
+		}
 		return p.Parse(source)
 	}
 	if err := p.checkDFALexer(); err != nil {
@@ -684,11 +878,17 @@ func (p *Parser) ParseIncremental(source []byte, oldTree *Tree) (*Tree, error) {
 		p.reparseFactory = prevFactory
 	}()
 	lexer := NewLexer(p.language.LexStates, source)
-	ts := acquireDFATokenSource(lexer, p.language, p.lookupActionIndex, p.hasKeywordState, p.externalValidByState)
+	ts := acquireDFATokenSource(lexer, p.language, p.lookupActionIndex, p.hasKeywordState, p.externalValidByState, p.externalValidMaskByState)
 	defer ts.Close()
 	tree := p.parseIncrementalInternal(source, oldTree, p.wrapIncludedRanges(ts), nil)
 	normalizeReturnedIncrementalTree(tree, oldTree, source, p.language)
 	return tree, nil
+}
+
+// ParseIncrementalStrict is like ParseIncremental, but returns
+// ErrParseStoppedEarly when parsing returns a partial tree.
+func (p *Parser) ParseIncrementalStrict(source []byte, oldTree *Tree) (*Tree, error) {
+	return strictParseResult(p.ParseIncremental(source, oldTree))
 }
 
 // ParseIncrementalUTF16 re-parses UTF-16 source after edits were applied to
@@ -742,6 +942,12 @@ func (p *Parser) ParseIncrementalWithTokenSource(source []byte, oldTree *Tree, t
 	return p.parseIncrementalWithTokenSource(source, oldTree, ts, p.tokenSourceReparseFactory(ts))
 }
 
+// ParseIncrementalWithTokenSourceStrict is like ParseIncrementalWithTokenSource,
+// but returns ErrParseStoppedEarly when parsing returns a partial tree.
+func (p *Parser) ParseIncrementalWithTokenSourceStrict(source []byte, oldTree *Tree, ts TokenSource) (*Tree, error) {
+	return strictParseResult(p.ParseIncrementalWithTokenSource(source, oldTree, ts))
+}
+
 // ParseIncrementalWithTokenSourceFactory is like ParseWithTokenSourceFactory
 // for an edited old tree.
 func (p *Parser) ParseIncrementalWithTokenSourceFactory(source []byte, oldTree *Tree, factory TokenSourceFactory) (*Tree, error) {
@@ -753,6 +959,13 @@ func (p *Parser) ParseIncrementalWithTokenSourceFactory(source []byte, oldTree *
 		return nil, err
 	}
 	return p.parseIncrementalWithTokenSource(source, oldTree, ts, factory)
+}
+
+// ParseIncrementalWithTokenSourceFactoryStrict is like
+// ParseIncrementalWithTokenSourceFactory, but returns ErrParseStoppedEarly when
+// parsing returns a partial tree.
+func (p *Parser) ParseIncrementalWithTokenSourceFactoryStrict(source []byte, oldTree *Tree, factory TokenSourceFactory) (*Tree, error) {
+	return strictParseResult(p.ParseIncrementalWithTokenSourceFactory(source, oldTree, factory))
 }
 
 func attachUTF16Source(tree *Tree, source []uint16, sourceMap *utf16SourceMap) {
@@ -774,6 +987,10 @@ func (p *Parser) ParseIncrementalProfiled(source []byte, oldTree *Tree) (*Tree, 
 		return oldTree, IncrementalParseProfile{}, nil
 	}
 	if oldTreeDisablesIncrementalReuse(oldTree) {
+		timing := &incrementalParseTiming{}
+		if tree, ok := p.tryTokenInvariantReuseForDisabledOldTree(source, oldTree, timing); ok {
+			return tree, timing.toProfile(), nil
+		}
 		start := time.Now()
 		tree, err := p.Parse(source)
 		return tree, profileFreshParseFallback(start, tree, forestIncrementalReuseUnsupportedReason), err
@@ -787,7 +1004,7 @@ func (p *Parser) ParseIncrementalProfiled(source []byte, oldTree *Tree) (*Tree, 
 		p.reparseFactory = prevFactory
 	}()
 	lexer := NewLexer(p.language.LexStates, source)
-	ts := acquireDFATokenSource(lexer, p.language, p.lookupActionIndex, p.hasKeywordState, p.externalValidByState)
+	ts := acquireDFATokenSource(lexer, p.language, p.lookupActionIndex, p.hasKeywordState, p.externalValidByState, p.externalValidMaskByState)
 	defer ts.Close()
 	timing := &incrementalParseTiming{}
 	tree := p.parseIncrementalInternal(source, oldTree, p.wrapIncludedRanges(ts), timing)
@@ -861,8 +1078,25 @@ func (p *Parser) ParseWith(source []byte, opts ...ParseOption) (ParseResult, err
 	return ParseResult{Tree: tree, ProfileAvailable: false}, err
 }
 
+// ParseWithStrict is like ParseWith, but returns ErrParseStoppedEarly when
+// parsing returns a partial tree. The ParseResult still carries that tree.
+func (p *Parser) ParseWithStrict(source []byte, opts ...ParseOption) (ParseResult, error) {
+	result, err := p.ParseWith(source, opts...)
+	if err != nil {
+		return result, err
+	}
+	if stoppedErr := parseStoppedEarlyError(result.Tree); stoppedErr != nil {
+		return result, stoppedErr
+	}
+	return result, nil
+}
+
 // ErrNoLanguage is returned when a Parser has no language configured.
 var ErrNoLanguage = errors.New("parser has no language configured")
+
+// ErrParseStoppedEarly is matched by ParseStoppedEarlyError when a strict parse
+// returns a partial tree.
+var ErrParseStoppedEarly = errors.New("parse stopped before accepting input")
 
 // ErrNoTokenSourceFactory is returned when a factory-based parse is called
 // without a token source factory.

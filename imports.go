@@ -55,7 +55,7 @@ func ExtractImports(tree *Tree) []ImportRef {
 	lang := tree.Language()
 	source := tree.Source()
 	var refs []ImportRef
-	walkImportTree(tree.RootNode(), lang, func(n *Node) bool {
+	walkTree(tree.RootNode(), lang, func(n *Node) bool {
 		switch lang.Name {
 		case "go":
 			return extractGoImportNode(n, lang, source, &refs)
@@ -111,7 +111,7 @@ func importExtractResult(refs []ImportRef, status ImportExtractStatus, reason st
 	}
 }
 
-func walkImportTree(n *Node, lang *Language, visit func(*Node) bool) {
+func walkTree(n *Node, lang *Language, visit func(*Node) bool) {
 	if n == nil {
 		return
 	}
@@ -119,7 +119,7 @@ func walkImportTree(n *Node, lang *Language, visit func(*Node) bool) {
 		return
 	}
 	for i := 0; i < n.ChildCount(); i++ {
-		walkImportTree(n.Child(i), lang, visit)
+		walkTree(n.Child(i), lang, visit)
 	}
 }
 

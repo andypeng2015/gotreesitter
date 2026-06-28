@@ -275,10 +275,20 @@ func cppClassSpecifierFromRootChildren(arena *nodeArena, lang *Language, source 
 	}
 	lbrace := children[cursor]
 	cursor++
-	if cursor >= len(children) || children[cursor] == nil || children[cursor].Type(lang) != "field_declaration_list" {
+	if cursor >= len(children) || children[cursor] == nil {
 		return nil, index, false
 	}
-	fieldList := cppFieldDeclarationListForRecoveredClass(arena, lang, lbrace, children[cursor])
+	fieldListNode := children[cursor]
+	nextIndex := cursor + 1
+	var rbrace *Node
+	if fieldListNode.Type(lang) != "field_declaration_list" {
+		if cursor+1 >= len(children) || !cppRecoveredClosingBrace(source, children[cursor+1]) {
+			return nil, index, false
+		}
+		rbrace = children[cursor+1]
+		nextIndex = cursor + 2
+	}
+	fieldList := cppFieldDeclarationListForRecoveredClass(arena, lang, lbrace, fieldListNode, rbrace)
 	if fieldList == nil {
 		return nil, index, false
 	}
@@ -305,7 +315,7 @@ func cppClassSpecifierFromRootChildren(arena *nodeArena, lang *Language, source 
 		cppClassSpecifierFieldIDs(arena, lang, len(classChildren)),
 		0,
 	)
-	return classSpec, cursor + 1, true
+	return classSpec, nextIndex, true
 }
 
 func cppClassNameForRecoveredClass(arena *nodeArena, className *Node) *Node {
@@ -327,7 +337,14 @@ func cppRecoveredClassKeyword(source []byte, node *Node) bool {
 	return string(source[node.startByte:node.endByte]) == "class"
 }
 
-func cppFieldDeclarationListForRecoveredClass(arena *nodeArena, lang *Language, lbrace, fieldList *Node) *Node {
+func cppRecoveredClosingBrace(source []byte, node *Node) bool {
+	if node == nil || int(node.endByte) > len(source) || node.startByte >= node.endByte {
+		return false
+	}
+	return string(source[node.startByte:node.endByte]) == "}"
+}
+
+func cppFieldDeclarationListForRecoveredClass(arena *nodeArena, lang *Language, lbrace, fieldList *Node, rbrace *Node) *Node {
 	if arena == nil || lang == nil || lbrace == nil || fieldList == nil {
 		return nil
 	}
@@ -346,6 +363,9 @@ func cppFieldDeclarationListForRecoveredClass(arena *nodeArena, lang *Language, 
 			continue
 		}
 		children = append(children, cloneTreeNodesIntoArena(child, arena))
+	}
+	if rbrace != nil {
+		children = append(children, cloneTreeNodesIntoArena(rbrace, arena))
 	}
 	if len(children) < 2 {
 		return nil

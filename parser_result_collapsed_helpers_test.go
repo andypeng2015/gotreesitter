@@ -64,3 +64,48 @@ func TestNormalizeResultCollapsedNamedLeafChildrenDispatchesByLanguage(t *testin
 		t.Fatalf("child.Type() = %q, want %q", got, want)
 	}
 }
+
+func TestNormalizeResultCompatibilityRestoresOCamlBooleanChild(t *testing.T) {
+	lang := &Language{
+		Name:        "ocaml",
+		SymbolNames: []string{"EOF", "compilation_unit", "boolean", "true", "false", "or_operator", "||", "or"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF"},
+			{Name: "compilation_unit", Visible: true, Named: true},
+			{Name: "boolean", Visible: true, Named: true},
+			{Name: "true", Visible: true, Named: false},
+			{Name: "false", Visible: true, Named: false},
+			{Name: "or_operator", Visible: true, Named: true},
+			{Name: "||", Visible: true, Named: false},
+			{Name: "or", Visible: true, Named: false},
+		},
+	}
+	arena := newNodeArena(arenaClassFull)
+	boolean := newLeafNodeInArena(arena, 2, true, 0, 4, Point{}, Point{Column: 4})
+	orOperator := newLeafNodeInArena(arena, 5, true, 5, 7, Point{Column: 5}, Point{Column: 7})
+	root := newParentNodeInArena(arena, 1, true, []*Node{boolean, orOperator}, nil, 0)
+
+	normalizeResultCompatibility(root, []byte("true ||"), &Parser{language: lang})
+
+	child := boolean.Child(0)
+	if child == nil {
+		t.Fatal("boolean.Child(0) = nil")
+	}
+	if got, want := child.Type(lang), "true"; got != want {
+		t.Fatalf("child.Type() = %q, want %q", got, want)
+	}
+	if child.IsNamed() {
+		t.Fatal("restored true child should remain anonymous")
+	}
+
+	operatorChild := orOperator.Child(0)
+	if operatorChild == nil {
+		t.Fatal("orOperator.Child(0) = nil")
+	}
+	if got, want := operatorChild.Type(lang), "||"; got != want {
+		t.Fatalf("operator child Type() = %q, want %q", got, want)
+	}
+	if operatorChild.IsNamed() {
+		t.Fatal("restored || child should remain anonymous")
+	}
+}

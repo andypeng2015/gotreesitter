@@ -22,7 +22,7 @@ func normalizePythonCompatibilityWithParser(root *Node, source []byte, parser *P
 	parser.runNormalizationPass(func() bool {
 		return sourceFlags.trailingSelfCalls
 	}, func() normalizationPassCounters {
-		return normalizePythonTrailingSelfCalls(root, source, lang)
+		return normalizePythonTrailingSelfCallsWithSemicolons(root, source, lang, &sourceFlags.trailingSelfCallSemicolons)
 	})
 	parser.runNormalizationPass(func() bool {
 		return sourceFlags.printChevron
@@ -35,22 +35,12 @@ func normalizePythonCompatibilityWithParser(root *Node, source []byte, parser *P
 		return normalizePythonInterpolationPatterns(root, lang)
 	})
 	// Fused preorder block: collapsed-keyword (pass/continue/break),
-	// inline-return/raise/yield blocks, inline-tuple-expression blocks, and
-	// assignment-right expression lists all share a preorder walk. Doing them
-	// together in ONE walkResultTree call eliminates ~7× walk overhead on
-	// large Python files. Each logical pass still increments passesChecked/
-	// passesRun so observability is preserved.
+	// inline-return/raise/yield blocks, inline-tuple-expression blocks,
+	// assignment-right expression lists, wildcard imports, and pattern targets
+	// all share a preorder walk. Doing them together in ONE walkResultTree call
+	// eliminates repeated walk overhead on large Python files. Each logical pass
+	// still increments passesChecked/passesRun so observability is preserved.
 	normalizePythonFusedPreorder(root, source, parser, lang, sourceFlags)
-	parser.runNormalizationPass(func() bool {
-		return sourceFlags.wildcardImport
-	}, func() normalizationPassCounters {
-		return normalizePythonStarCollapsedChildrenWithStats(root, source, lang)
-	})
-	parser.runNormalizationPass(func() bool {
-		return sourceFlags.asPattern || sourceFlags.casePattern
-	}, func() normalizationPassCounters {
-		return normalizePythonPatternTargetIdentifiers(root, source, lang)
-	})
 	parser.runNormalizationPass(func() bool {
 		return sourceFlags.continuationEscape
 	}, func() normalizationPassCounters {
@@ -101,21 +91,21 @@ func newPythonCollapsedKeywordSetup(lang *Language, statementName, keywordName s
 	}
 }
 
-// normalizePythonFusedPreorder runs eight Python preorder normalization passes
+// normalizePythonFusedPreorder runs ten Python preorder normalization passes
 // in a SINGLE walkResultTree. The original per-pass functions remain available
 // (and individually tested) — this is a perf-only fusion. Per-pass counters
 // (passesChecked/passesRun) are emulated to preserve observability.
 //
 // Fused passes: collapsed-keyword × 3 (pass/continue/break), inline-return-
 // blocks, inline-raise-blocks, assignment-right-expression-lists, inline-yield-
-// blocks, inline-tuple-expression-blocks. All operate on the same preorder
-// traversal and target mutually-distinguishable node shapes, so per-node
-// dispatch is cheap.
+// blocks, inline-tuple-expression-blocks, wildcard imports, and pattern
+// targets. All operate on the same preorder traversal and target
+// mutually-distinguishable node shapes, so per-node dispatch is cheap.
 func normalizePythonFusedPreorder(root *Node, source []byte, parser *Parser, lang *Language, flags pythonCompatibilitySourceFlags) {
 	if root == nil || lang == nil {
-		// Still account for the 8 pass checks so passesChecked stays stable.
+		// Still account for the 10 pass checks so passesChecked stays stable.
 		if parser != nil {
-			parser.normalizationStats.passesChecked += 8
+			parser.normalizationStats.passesChecked += 10
 		}
 		return
 	}
@@ -190,11 +180,73 @@ func normalizePythonFusedPreorder(root *Node, source []byte, parser *Parser, lan
 		}
 	}
 
-	// Always count 8 passes as checked. Count each as "run" only when its
+	var wildcardSym, keywordSeparatorSym, starSym Symbol
+	hasWildcardImport := false
+	hasWildcardSym := false
+	hasKeywordSeparatorSym := false
+	starNamed := false
+	if flags.wildcardImport {
+		wildcardSym, hasWildcardSym = lang.symbolByNameAndNamed("wildcard_import", true)
+		if !hasWildcardSym {
+			wildcardSym, hasWildcardSym = symbolByName(lang, "wildcard_import")
+		}
+		keywordSeparatorSym, hasKeywordSeparatorSym = lang.symbolByNameAndNamed("keyword_separator", true)
+		if !hasKeywordSeparatorSym {
+			keywordSeparatorSym, hasKeywordSeparatorSym = symbolByName(lang, "keyword_separator")
+		}
+		var ok bool
+		starSym, ok = lang.symbolByNameAndNamed("*", false)
+		if !ok {
+			starSym, ok = symbolByName(lang, "*")
+		}
+		if ok && (hasWildcardSym || hasKeywordSeparatorSym) {
+			hasWildcardImport = true
+			starNamed = symbolIsNamed(lang, starSym)
+		}
+	}
+
+	var asPatternTargetSym, asPatternIdentifierSym, asPatternTupleSym Symbol
+	asPatternIdentifierNamed := false
+	asPatternTupleNamed := false
+	hasAsPattern := false
+	hasAsPatternTuple := false
+	if flags.asPattern {
+		var ok bool
+		asPatternTargetSym, ok = symbolByName(lang, "as_pattern_target")
+		if ok {
+			asPatternIdentifierSym, ok = symbolByName(lang, "identifier")
+		}
+		if ok {
+			asPatternTupleSym, hasAsPatternTuple = symbolByName(lang, "tuple")
+			asPatternTupleNamed = hasAsPatternTuple && symbolIsNamed(lang, asPatternTupleSym)
+			if int(asPatternIdentifierSym) < len(lang.SymbolMetadata) {
+				asPatternIdentifierNamed = lang.SymbolMetadata[asPatternIdentifierSym].Named
+			}
+			hasAsPattern = true
+		}
+	}
+
+	var casePatternSym, casePatternUnderscoreSym Symbol
+	hasCasePattern := false
+	if flags.casePattern {
+		var ok bool
+		casePatternSym, ok = symbolByName(lang, "case_pattern")
+		if ok {
+			for i, name := range lang.SymbolNames {
+				if name == "_" && i < len(lang.SymbolMetadata) && !lang.SymbolMetadata[i].Named {
+					casePatternUnderscoreSym = Symbol(i)
+					hasCasePattern = true
+					break
+				}
+			}
+		}
+	}
+
+	// Always count 10 passes as checked. Count each as "run" only when its
 	// flag is set and its symbol resolution succeeded — mirroring the gating
 	// in the original runNormalizationPass(flag, fn) call sites.
 	if parser != nil {
-		parser.normalizationStats.passesChecked += 8
+		parser.normalizationStats.passesChecked += 10
 		ranCount := uint64(0)
 		if passCK.active {
 			ranCount++
@@ -220,11 +272,17 @@ func normalizePythonFusedPreorder(root *Node, source []byte, parser *Parser, lan
 		if hasTuple && flags.comma {
 			ranCount++
 		}
+		if hasWildcardImport {
+			ranCount++
+		}
+		if hasAsPattern || hasCasePattern {
+			ranCount++
+		}
 		parser.normalizationStats.passesRun += ranCount
 	}
 
 	// Short-circuit if no pass is actually active.
-	if !(passCK.active || continueCK.active || breakCK.active || hasReturn || hasRaise || hasAssignment || hasYield || hasTuple) {
+	if !(passCK.active || continueCK.active || breakCK.active || hasReturn || hasRaise || hasAssignment || hasYield || hasTuple || hasWildcardImport || hasAsPattern || hasCasePattern) {
 		return
 	}
 
@@ -256,6 +314,42 @@ func normalizePythonFusedPreorder(root *Node, source []byte, parser *Parser, lan
 				}
 				return
 			}
+			if hasWildcardImport && n.endByte-n.startByte == 1 && source[n.startByte] == '*' &&
+				((hasWildcardSym && n.symbol == wildcardSym) || (hasKeywordSeparatorSym && n.symbol == keywordSeparatorSym)) {
+				child := newLeafNodeInArena(n.ownerArena, starSym, starNamed, n.startByte, n.endByte, n.startPoint, n.endPoint)
+				child.parent = n
+				child.childIndex = 0
+				n.children = cloneNodeSliceInArena(n.ownerArena, []*Node{child})
+				rewritten++
+				return
+			}
+			if hasAsPattern && n.symbol == asPatternTargetSym && pythonSourceRangeIsIdentifier(source, n.startByte, n.endByte) {
+				child := newLeafNodeInArena(n.ownerArena, asPatternIdentifierSym, asPatternIdentifierNamed, n.startByte, n.endByte, n.startPoint, n.endPoint)
+				n.children = cloneNodeSliceInArena(n.ownerArena, []*Node{child})
+				rewritten++
+				return
+			}
+			if hasCasePattern && n.symbol == casePatternSym && n.endByte-n.startByte == 1 && source[n.startByte] == '_' {
+				child := newLeafNodeInArena(n.ownerArena, casePatternUnderscoreSym, false, n.startByte, n.endByte, n.startPoint, n.endPoint)
+				n.children = cloneNodeSliceInArena(n.ownerArena, []*Node{child})
+				rewritten++
+				return
+			}
+			return
+		}
+
+		if hasAsPattern && n.symbol == asPatternTargetSym && hasAsPatternTuple && pythonAsPatternTargetLooksLikeTuple(n, lang, childCount) {
+			children := resultChildSliceForMutation(n)
+			tupleChildren := cloneNodeSliceInArena(n.ownerArena, children)
+			tuple := newParentNodeInArena(n.ownerArena, asPatternTupleSym, asPatternTupleNamed, tupleChildren, nil, 0)
+			tuple.startByte = children[0].startByte
+			tuple.endByte = children[len(children)-1].endByte
+			tuple.startPoint = children[0].startPoint
+			tuple.endPoint = children[len(children)-1].endPoint
+			tuple.parent = n
+			tuple.childIndex = 0
+			n.children = cloneNodeSliceInArena(n.ownerArena, []*Node{tuple})
+			rewritten++
 			return
 		}
 
@@ -409,6 +503,42 @@ type pythonCompatibilitySourceFlags struct {
 	asPattern          bool
 	casePattern        bool
 	continuationEscape bool
+
+	trailingSelfCallSemicolons pythonTrailingSelfCallSemicolons
+}
+
+const pythonTrailingSelfCallInlineSemicolonLimit = 32
+
+type pythonTrailingSelfCallSemicolons struct {
+	count    int
+	inline   [pythonTrailingSelfCallInlineSemicolonLimit]uint32
+	overflow []uint32
+}
+
+func (s *pythonTrailingSelfCallSemicolons) add(offset uint32) {
+	if s == nil {
+		return
+	}
+	if s.count < len(s.inline) {
+		s.inline[s.count] = offset
+	} else {
+		s.overflow = append(s.overflow, offset)
+	}
+	s.count++
+}
+
+func (s *pythonTrailingSelfCallSemicolons) rangeMayContain(start, end uint32) bool {
+	if s == nil || s.count == 0 || start == end {
+		return true
+	}
+	inlineCount := s.count
+	if inlineCount > len(s.inline) {
+		inlineCount = len(s.inline)
+	}
+	if pythonSortedOffsetsMayIntersectRange(s.inline[:inlineCount], start, end) {
+		return true
+	}
+	return pythonSortedOffsetsMayIntersectRange(s.overflow, start, end)
 }
 
 func pythonCompatibilitySourceFlagsFor(source []byte) pythonCompatibilitySourceFlags {
@@ -464,6 +594,7 @@ func pythonCompatibilitySourceFlagsFor(source []byte) pythonCompatibilitySourceF
 		}
 		if source[i] == ';' {
 			flags.trailingSelfCalls = true
+			flags.trailingSelfCallSemicolons.add(uint32(i))
 		}
 		if !flags.assignmentList && source[i] == '=' && bytes.IndexByte(source[i+1:], ',') >= 0 {
 			flags.assignmentList = true
@@ -799,6 +930,25 @@ func pythonSourceContinuationEscapeAt(source []byte, i int) bool {
 		(source[i+1] == '\n' || (i+2 < len(source) && source[i+1] == '\r' && source[i+2] == '\n'))
 }
 
+func pythonContinuationEscapeOffsets(source []byte) []uint32 {
+	return appendPythonContinuationEscapeOffsets(source, nil)
+}
+
+func appendPythonContinuationEscapeOffsets(source []byte, offsets []uint32) []uint32 {
+	for i := 0; i+1 < len(source); i++ {
+		if !pythonSourceContinuationEscapeAt(source, i) {
+			continue
+		}
+		offsets = append(offsets, uint32(i))
+		if source[i+1] == '\r' {
+			i += 2
+		} else {
+			i++
+		}
+	}
+	return offsets
+}
+
 func pythonSourceMayContainFString(source []byte) bool {
 	for i, c := range source {
 		if c != '"' && c != '\'' {
@@ -1128,6 +1278,10 @@ func normalizePythonPrintStatements(root *Node, source []byte, lang *Language) n
 }
 
 func normalizePythonTrailingSelfCalls(root *Node, source []byte, lang *Language) normalizationPassCounters {
+	return normalizePythonTrailingSelfCallsWithSemicolons(root, source, lang, nil)
+}
+
+func normalizePythonTrailingSelfCallsWithSemicolons(root *Node, source []byte, lang *Language, semicolons *pythonTrailingSelfCallSemicolons) normalizationPassCounters {
 	var counters normalizationPassCounters
 	if root == nil || lang == nil || lang.Name != "python" || len(source) == 0 {
 		return counters
@@ -1139,22 +1293,25 @@ func normalizePythonTrailingSelfCalls(root *Node, source []byte, lang *Language)
 		})
 		return counters
 	}
-	normalizePythonTrailingSelfCallsPostorder(root, source, lang, blockSym, &counters)
+	normalizePythonTrailingSelfCallsPostorder(root, source, lang, blockSym, semicolons, &counters)
 	return counters
 }
 
-func normalizePythonTrailingSelfCallsPostorder(node *Node, source []byte, lang *Language, blockSym Symbol, counters *normalizationPassCounters) {
+func normalizePythonTrailingSelfCallsPostorder(node *Node, source []byte, lang *Language, blockSym Symbol, semicolons *pythonTrailingSelfCallSemicolons, counters *normalizationPassCounters) {
 	if node == nil {
+		return
+	}
+	if semicolons != nil && semicolons.count > 0 && !semicolons.rangeMayContain(node.startByte, node.endByte) {
 		return
 	}
 	if node.ownerArena == nil || node.childIndex > finalChildSidecarIndexBase {
 		for _, child := range node.children {
-			normalizePythonTrailingSelfCallsPostorder(child, source, lang, blockSym, counters)
+			normalizePythonTrailingSelfCallsPostorder(child, source, lang, blockSym, semicolons, counters)
 		}
 	} else {
 		childCount := resultChildCount(node)
 		for i := 0; i < childCount; i++ {
-			normalizePythonTrailingSelfCallsPostorder(resultChildAt(node, i), source, lang, blockSym, counters)
+			normalizePythonTrailingSelfCallsPostorder(resultChildAt(node, i), source, lang, blockSym, semicolons, counters)
 		}
 	}
 	counters.nodesVisited++
@@ -1168,6 +1325,25 @@ func normalizePythonTrailingSelfCallsPostorder(node *Node, source []byte, lang *
 	}
 	replaceNodeChildrenUnfielded(node, cloneNodeSliceInArena(node.ownerArena, rewritten))
 	counters.nodesRewritten++
+}
+
+func pythonSortedOffsetsMayIntersectRange(offsets []uint32, start, end uint32) bool {
+	if len(offsets) == 0 {
+		return false
+	}
+	if start == end {
+		return true
+	}
+	lo, hi := 0, len(offsets)
+	for lo < hi {
+		mid := (lo + hi) >> 1
+		if offsets[mid] < start {
+			lo = mid + 1
+		} else {
+			hi = mid
+		}
+	}
+	return lo < len(offsets) && offsets[lo] < end
 }
 
 func foldPythonTrailingSelfCallsInBlock(children []*Node, source []byte, lang *Language) ([]*Node, bool) {
@@ -2470,26 +2646,38 @@ func normalizePythonStringContinuationEscapes(root *Node, source []byte, lang *L
 	if !ok {
 		return counters
 	}
-	var walk func(*Node)
-	walk = func(n *Node) {
-		if n == nil {
-			return
-		}
-		counters.nodesVisited++
-		if n.Type(lang) == "string_content" && n.startByte < n.endByte && int(n.endByte) <= len(source) {
-			children, changed := addPythonContinuationEscapes(n, source, escapeSym)
-			if changed {
-				n.children = children
-				counters.nodesRewritten++
-			}
-			return
-		}
-		for i := 0; i < resultChildCount(n); i++ {
-			walk(resultChildAt(n, i))
-		}
+	stringContentSym, ok := symbolByName(lang, "string_content")
+	if !ok {
+		return counters
 	}
-	walk(root)
+	var continuationOffsetBuf [32]uint32
+	continuationOffsets := appendPythonContinuationEscapeOffsets(source, continuationOffsetBuf[:0])
+	if len(continuationOffsets) == 0 {
+		return counters
+	}
+	normalizePythonStringContinuationEscapesWalk(root, source, stringContentSym, escapeSym, continuationOffsets, &counters)
 	return counters
+}
+
+func normalizePythonStringContinuationEscapesWalk(n *Node, source []byte, stringContentSym, escapeSym Symbol, continuationOffsets []uint32, counters *normalizationPassCounters) {
+	if n == nil {
+		return
+	}
+	if !pythonSortedOffsetsMayIntersectRange(continuationOffsets, n.startByte, n.endByte) {
+		return
+	}
+	counters.nodesVisited++
+	if n.symbol == stringContentSym && n.startByte < n.endByte && int(n.endByte) <= len(source) {
+		children, changed := addPythonContinuationEscapes(n, source, escapeSym)
+		if changed {
+			n.children = children
+			counters.nodesRewritten++
+		}
+		return
+	}
+	for i := 0; i < resultChildCount(n); i++ {
+		normalizePythonStringContinuationEscapesWalk(resultChildAt(n, i), source, stringContentSym, escapeSym, continuationOffsets, counters)
+	}
 }
 
 func addPythonContinuationEscapes(node *Node, source []byte, escapeSym Symbol) ([]*Node, bool) {

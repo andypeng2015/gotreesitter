@@ -283,7 +283,7 @@ func TestInferredTagsQueryCoverage(t *testing.T) {
 }
 
 func TestInferredGoTagsQuerySkipsReturnTypes(t *testing.T) {
-	entry := lookupByName("go")
+	entry := DetectLanguageByName("go")
 	if entry == nil {
 		t.Fatal("expected go language entry")
 	}

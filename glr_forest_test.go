@@ -185,8 +185,8 @@ func TestCoalesceForestSharesNode(t *testing.T) {
 	slab := &gssForestNodeSlab{}
 	base := &gssForestNode{state: 0}
 	// Two distinct parses reach (state=5, byteOffset=42).
-	a := coalesceForest(&idx, slab, 5, 42, base, stackEntry{state: 100}, 3, 0)
-	b := coalesceForest(&idx, slab, 5, 42, base, stackEntry{state: 101}, 7, 0)
+	a := coalesceForest(&idx, slab, 5, 42, base, stackEntry{state: 100}, 3, 0, forestMaxLinksPerNode)
+	b := coalesceForest(&idx, slab, 5, 42, base, stackEntry{state: 101}, 7, 0, forestMaxLinksPerNode)
 	if a != b {
 		t.Fatal("coalesceForest created two nodes for the same (state,byteOffset)")
 	}
@@ -203,7 +203,7 @@ func TestCoalesceForestSharesNode(t *testing.T) {
 		t.Fatalf("want best link score 7, got %v", best)
 	}
 	// A different (state,byteOffset) is a separate node.
-	c := coalesceForest(&idx, slab, 6, 42, base, stackEntry{state: 102}, 1, 0)
+	c := coalesceForest(&idx, slab, 6, 42, base, stackEntry{state: 102}, 1, 0, forestMaxLinksPerNode)
 	if c == a {
 		t.Fatal("distinct (state,byteOffset) coalesced into the same node")
 	}
@@ -216,9 +216,9 @@ func TestCoalesceForestRefreshesMinLinkScoreOnReplacement(t *testing.T) {
 	loser := newStackEntryNode(100, &Node{symbol: 100, startByte: 1, endByte: 4})
 	winner := newStackEntryNode(100, &Node{symbol: 100, startByte: 1, endByte: 4})
 
-	node := coalesceForest(&idx, slab, 5, 4, base, loser, 3, 0)
+	node := coalesceForest(&idx, slab, 5, 4, base, loser, 3, 0, forestMaxLinksPerNode)
 	initialDirty := node.dirty
-	again := coalesceForest(&idx, slab, 5, 4, base, winner, 7, 0)
+	again := coalesceForest(&idx, slab, 5, 4, base, winner, 7, 0, forestMaxLinksPerNode)
 	if again != node {
 		t.Fatal("replacement reached a different coalesced node")
 	}
@@ -242,12 +242,12 @@ func TestCoalesceForestMarksDirtyWhenPredecessorChanges(t *testing.T) {
 	prev := &gssForestNode{state: 1, dirty: 1}
 	entry := newStackEntryNode(2, &Node{symbol: 7, startByte: 10, endByte: 20})
 
-	top := coalesceForest(&idx, slab, 5, 20, prev, entry, 0, 0)
+	top := coalesceForest(&idx, slab, 5, 20, prev, entry, 0, 0, forestMaxLinksPerNode)
 	initialDirty := top.dirty
 	initialLinks := len(top.links)
 
 	prev.dirty++
-	again := coalesceForest(&idx, slab, 5, 20, prev, entry, 0, 0)
+	again := coalesceForest(&idx, slab, 5, 20, prev, entry, 0, 0, forestMaxLinksPerNode)
 	if again != top {
 		t.Fatal("same link reached a different coalesced node")
 	}

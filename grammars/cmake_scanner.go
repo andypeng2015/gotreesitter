@@ -41,6 +41,9 @@ type CmakeExternalScanner struct{}
 func (CmakeExternalScanner) Create() any                    { return &cmakeState{} }
 func (CmakeExternalScanner) Destroy(payload any)            {}
 func (CmakeExternalScanner) SupportsIncrementalReuse() bool { return true }
+func (CmakeExternalScanner) PreservesStateOnScanFailure() bool {
+	return true
+}
 
 func (CmakeExternalScanner) Serialize(payload any, buf []byte) int {
 	s := payload.(*cmakeState)

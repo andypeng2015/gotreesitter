@@ -15,10 +15,11 @@ const (
 	// that already proved the default merge budget was insufficient.
 	fullParseRetryMaxMergePerKey = 24
 	// Java's default full-parse merge cap stays intentionally narrow for large
-	// generated bodies, but repeatable annotation declarations can need a wider
-	// bounded retry to preserve the declaration branch.
+	// generated bodies, but annotation-heavy declarations can need a wider
+	// bounded accepted-error retry to preserve the expression/declaration branch
+	// that C selects.
 	javaFullParseRetryMaxGLRStacks   = 64
-	javaFullParseRetryMaxMergePerKey = 6
+	javaFullParseRetryMaxMergePerKey = 16
 	javaTightMergeCapSourceLen       = 256 * 1024
 	// Retry node-limit full parses with a bounded larger node budget instead of
 	// globally raising the default cap for every parse.
@@ -58,8 +59,7 @@ func shouldRetryAcceptedErrorParse(tree *Tree, sourceLen int, initialMaxStacks i
 	if sourceLen <= 0 || sourceLen > fullParseRetryMaxSourceBytes {
 		return false
 	}
-	root := rawRootOrNil(tree)
-	if root == nil || !root.HasError() {
+	if !retryTreeHasError(tree) {
 		return false
 	}
 	rt := tree.ParseRuntime()
@@ -90,7 +90,7 @@ func treeParseClean(tree *Tree) bool {
 		return false
 	}
 	root := rawRootOrNil(tree)
-	if root == nil || root.HasError() {
+	if root == nil || retryNodeSubtreeHasError(root, 0) {
 		return false
 	}
 	rt := tree.ParseRuntime()
@@ -132,7 +132,25 @@ func retryTreeHasError(tree *Tree) bool {
 	if root == nil {
 		return true
 	}
-	return root.HasError()
+	return retryNodeSubtreeHasError(root, 0)
+}
+
+func retryNodeSubtreeHasError(node *Node, depth int) bool {
+	if node == nil {
+		return false
+	}
+	if node.IsError() || node.HasError() {
+		return true
+	}
+	if depth >= maxTreeWalkDepth {
+		return false
+	}
+	for i := 0; i < resultChildCount(node); i++ {
+		if retryNodeSubtreeHasError(resultChildAt(node, i), depth+1) {
+			return true
+		}
+	}
+	return false
 }
 
 func retryStopRank(rt ParseRuntime) int {
@@ -252,6 +270,15 @@ func effectiveFullParseInitialMaxStacks(lang *Language, initialMaxStacks int) in
 		if initialMaxStacks == maxGLRStacks {
 			initialMaxStacks = 6
 		}
+	case "dart":
+		// Dart's generic-call/relational ambiguity needs at least six survivors
+		// on real-world extension bodies; caps of two or four drop the branch C
+		// selects. The default cap of eight preserves parity but keeps redundant
+		// GLR frontiers alive through the large-source fallback path, so start at
+		// the minimum safe width while preserving explicit diagnostic overrides.
+		if initialMaxStacks == maxGLRStacks {
+			initialMaxStacks = 6
+		}
 	case "typescript":
 		// TypeScript benefits from a tighter steady-state survivor budget than
 		// JavaScript/TSX on both synthetic full parses and real-corpus files.
@@ -308,15 +335,23 @@ func effectiveFullParseInitialMaxStacks(lang *Language, initialMaxStacks int) in
 		if initialMaxStacks < 32 {
 			initialMaxStacks = 32
 		}
-	case "markdown", "markdown_inline":
+	case "markdown":
+		// Markdown block parsing benefits from a tight steady-state survivor
+		// budget, but link-reference-use followed by a definition needs the
+		// ninth live stack to preserve the clean paragraph + definition branch.
+		// Cap 5 keeps the cull threshold at 9, retaining that branch without
+		// returning to the broader default GLR budget.
+		if initialMaxStacks == maxGLRStacks {
+			initialMaxStacks = 5
+		}
+	case "markdown_inline":
 		// Dense inline-heavy markdown (mixed **bold**/*em*/`code`/tables/
 		// footnotes) converges on the winning branch very quickly. Wider
 		// steady-state survivor budgets keep equivalent GLR branches alive
 		// through the whole parse, and the stack-merge phase dominates CPU
 		// (~70% cum in pprof). A tight initial cap of 4 forces early pruning
-		// (50x speed-up on the mdpp zero-cgo-parsing.mdpp corpus while keeping
-		// link_reference_definition disambiguation working) and still lets the
-		// retry-widen cycle handle genuinely harder inputs.
+		// (50x speed-up on the mdpp zero-cgo-parsing.mdpp corpus) and still lets
+		// the retry-widen cycle handle genuinely harder inputs.
 		if initialMaxStacks == maxGLRStacks {
 			initialMaxStacks = 4
 		}
@@ -333,10 +368,25 @@ func fullParseInitialMaxStacks(lang *Language, conflictWidth int) int {
 }
 
 func effectiveParseMergePerKeyCap(lang *Language, mergePerKeyCap int, incremental bool, sourceLen ...int) int {
-	if lang == nil || incremental {
+	if lang == nil {
+		return mergePerKeyCap
+	}
+	if incremental {
+		if lang.Name == "dart" && dartIncrementalFallbackCanUseTightMergeCap(sourceLen...) &&
+			!parseMaxMergePerKeyEnvConfigured() && mergePerKeyCap > 4 {
+			return 4
+		}
 		return mergePerKeyCap
 	}
 	switch lang.Name {
+	case "dart":
+		// Dart's generic/postfix ambiguity keeps redundant same-key survivors
+		// alive across full parses. Three survivors preserve the current
+		// parse/highlight parity surface while reducing merge-equivalence churn;
+		// explicit env overrides stay available for grammar diagnosis.
+		if !parseMaxMergePerKeyEnvConfigured() && mergePerKeyCap > 3 {
+			return 3
+		}
 	case "go":
 		// Go's full-tree path is false-equivalence heavy around expression/type
 		// ambiguity. Three same-key survivors preserve the current parse,
@@ -424,6 +474,23 @@ func effectiveParseMergePerKeyCap(lang *Language, mergePerKeyCap int, incrementa
 		if !parseMaxMergePerKeyEnvConfigured() && mergePerKeyCap > 1 {
 			return 1
 		}
+	case "haskell":
+		// Haskell's layout-heavy grammar can retain redundant same-key module
+		// and declaration alternatives long enough for large generated sources
+		// to blow past practical parse bounds. One full-parse survivor preserves
+		// the current real-corpus C parity surface while making large files
+		// measurable; incremental reparses and explicit env overrides stay wide.
+		if !parseMaxMergePerKeyEnvConfigured() && mergePerKeyCap > 1 {
+			return 1
+		}
+	case "make":
+		// Makefile line-text ambiguities need both the open-repeat and
+		// close-repeat branches to preserve the C-compatible tree; one survivor
+		// misrecovers the current corpus. Two same-key survivors keep that
+		// branch pair alive while cutting most of the redundant GLR frontier.
+		if !parseMaxMergePerKeyEnvConfigured() && mergePerKeyCap > 2 {
+			return 2
+		}
 	case "lua":
 		// Lua's string/call-heavy recovery can keep redundant alternatives
 		// alive even on small files. One full-parse survivor bounds the GLR
@@ -437,6 +504,16 @@ func effectiveParseMergePerKeyCap(lang *Language, mergePerKeyCap int, incrementa
 		// same-key merge survivors are redundant on the current parity surface.
 		// One full-parse survivor removes the result-selection churn while
 		// preserving explicit env overrides for grammar diagnosis.
+		if !parseMaxMergePerKeyEnvConfigured() && mergePerKeyCap > 1 {
+			return 1
+		}
+	case "rust":
+		// Rust's impl/match-heavy full parses keep redundant same-key recovery
+		// branches alive through large AST-shaped sources. One survivor cuts
+		// full-parse GLR work while the Rust recovery path now clones recovered
+		// top-level chunks directly into the result arena, avoiding the old
+		// offset-root allocation cliff. Incremental reparses and explicit env
+		// overrides keep the wider default.
 		if !parseMaxMergePerKeyEnvConfigured() && mergePerKeyCap > 1 {
 			return 1
 		}
@@ -458,6 +535,23 @@ func effectiveParseMergePerKeyCap(lang *Language, mergePerKeyCap int, incrementa
 		// TOML has a small conflict surface, but redundant same-key table/value
 		// survivors dominate the current real-corpus full parse. One survivor
 		// keeps parse/highlight parity clean and brings it under the C baseline.
+		if !parseMaxMergePerKeyEnvConfigured() && mergePerKeyCap > 1 {
+			return 1
+		}
+	case "nix":
+		// Nix real-corpus parses are tiny in token count but spend most full-parse
+		// time comparing redundant same-key expression alternatives. One survivor
+		// preserves the current parity surface while removing the merge churn;
+		// incremental reparses and explicit env overrides keep the wider default.
+		if !parseMaxMergePerKeyEnvConfigured() && mergePerKeyCap > 1 {
+			return 1
+		}
+	case "ocaml":
+		// OCaml real-corpus full parses can retain over a million same-key
+		// survivors around expression/operator ambiguity. One survivor preserves
+		// strict C parity on the current corpus and removes the merge-equivalence
+		// cliff; incremental reparses and explicit env overrides keep the wider
+		// default.
 		if !parseMaxMergePerKeyEnvConfigured() && mergePerKeyCap > 1 {
 			return 1
 		}
@@ -513,6 +607,10 @@ func effectiveParseMergePerKeyCap(lang *Language, mergePerKeyCap int, incrementa
 
 func typescriptFullParseCanUseTightMergeCap(sourceLen ...int) bool {
 	return len(sourceLen) == 0 || sourceLen[0] <= 64*1024
+}
+
+func dartIncrementalFallbackCanUseTightMergeCap(sourceLen ...int) bool {
+	return len(sourceLen) > 0 && sourceLen[0] > dartIncrementalReuseMaxSourceBytes
 }
 
 func tsxFullParseNeedsTypedArrowMergeWidth(lang *Language, source []byte, reuse *reuseCursor) bool {
@@ -804,7 +902,7 @@ func (p *Parser) retryFullParse(source []byte, initialMaxStacks int, tree *Tree,
 func (p *Parser) retryFullParseWithDFA(source []byte, initialMaxStacks int, deterministicExternalConflicts bool, tree *Tree) *Tree {
 	result := p.retryFullParse(source, initialMaxStacks, tree, func(maxStacks int, maxMergePerKeyOverride int, maxNodes int) *Tree {
 		retryLexer := NewLexer(p.language.LexStates, source)
-		retryTS := acquireDFATokenSource(retryLexer, p.language, p.lookupActionIndex, p.hasKeywordState, p.externalValidByState)
+		retryTS := acquireDFATokenSource(retryLexer, p.language, p.lookupActionIndex, p.hasKeywordState, p.externalValidByState, p.externalValidMaskByState)
 		defer retryTS.Close()
 		return p.parseInternal(
 			source,

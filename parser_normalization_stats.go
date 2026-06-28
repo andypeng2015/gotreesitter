@@ -65,6 +65,10 @@ func (p *Parser) runNamedNormalizationPass(name string, enabled func() bool, fn 
 		}
 		return
 	}
+	if p.materializationTiming == nil {
+		p.runNormalizationPass(enabled, fn)
+		return
+	}
 	p.normalizationStats.passesChecked++
 	pass := p.normalizationStats.namedPass(name)
 	pass.checked++

@@ -61,10 +61,12 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) {
 		normalizeTopLevelTrailingLineBreakSpan(ctx.root, ctx.source, ctx.lang)
 	case "go":
 		normalizeGoReturnedTreeCompatibility(ctx.root, ctx.source, ctx.parser, ctx.lang)
+	case "graphql":
+		normalizeGraphQLCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "haskell":
 		normalizeHaskellCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "hcl":
-		normalizeHCLConfigFileRoot(ctx.root, ctx.lang)
+		normalizeHCLConfigFileRoot(ctx.root, ctx.source, ctx.lang)
 	case "html":
 		normalizeHTMLCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "ini":
@@ -83,6 +85,8 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) {
 		normalizeNginxAttributeLineBreaks(ctx.root, ctx.source, ctx.lang)
 	case "nim":
 		normalizeNimTopLevelCallEnd(ctx.root, ctx.source, ctx.lang)
+	case "ocaml":
+		normalizeOCamlCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "pascal":
 		normalizePascalTopLevelProgramEnd(ctx.root, ctx.source, ctx.lang)
 		normalizePascalTrailingExtraTrivia(ctx.root, ctx.source, ctx.lang)
@@ -92,11 +96,14 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) {
 		normalizePHPCompatibility(ctx.root, ctx.source, ctx.parser, ctx.lang)
 	case "powershell":
 		normalizePowerShellProgramShape(ctx.root, ctx.source, ctx.lang)
+		normalizePowerShellErrorProgramRoot(ctx.root, ctx.lang)
 		normalizePowerShellAssignmentOperatorTokens(ctx.root, ctx.source, ctx.lang)
 	case "pug":
 		normalizeTopLevelTrailingLineBreakSpan(ctx.root, ctx.source, ctx.lang)
 	case "python":
 		normalizePythonCompatibilityWithParser(ctx.root, ctx.source, ctx.parser, ctx.lang)
+	case "r":
+		normalizeRCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "rst":
 		normalizeRSTTopLevelSectionEnd(ctx.root, ctx.source, ctx.lang)
 	case "rust":

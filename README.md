@@ -48,6 +48,76 @@ func main() {}
 
 `grammars.DetectLanguage("main.go")` resolves a filename to the appropriate `LangEntry`.
 
+### Strict parsing and partial trees
+
+The default parse methods preserve tree-sitter's partial-tree behavior: if a
+timeout, cancellation flag, token-source EOF, or parser safety limit stops the
+parse early, the returned tree records the stop reason and the error remains
+nil. This is useful for editors and diagnostics, where a partial tree is still
+valuable.
+
+Use strict methods when partial output should fail a request:
+
+```go
+parser.SetTimeoutMicros(50_000)
+
+tree, err := parser.ParseStrict(src)
+if errors.Is(err, gotreesitter.ErrParseStoppedEarly) {
+    fmt.Println(tree.ParseStopReason())
+}
+```
+
+Strict variants are available for full parse, incremental parse, token-source
+parse, factory parse, `ParseWith`, and `ParserPool`.
+
+### Tree lookup helpers
+
+Use `NodeAtByte` or `NamedNodeAtByte` when turning an editor byte offset into a
+syntax node:
+
+```go
+node := tree.NamedNodeAtByte(offset)
+```
+
+The helpers return the smallest matching descendant and handle exact end-byte
+boundaries without requiring callers to hand-roll a tree walk.
+
+### Code-understanding helpers
+
+For hot indexing paths that need common symbols but not arbitrary tags-query
+semantics, use the one-pass extractors instead of running a fanout of queries:
+
+```go
+defs := gotreesitter.ExtractDefinitionSpans(tree)
+calls := gotreesitter.ExtractCalls(tree)
+bases := gotreesitter.ExtractHeritage(tree)
+
+enclosing, ok := tree.EnclosingDefinition(offset)
+```
+
+These helpers cover common Go, JavaScript, TypeScript/TSX, Python, Starlark,
+and Java definitions/calls, plus JavaScript/TypeScript, Python, and Java
+heritage edges. Unsupported languages or ambiguous shapes are skipped
+conservatively.
+
+### Taproot DSL harness
+
+The `taproot` package is a small front-end harness for grammargen-backed DSLs.
+It caches generated or blob-loaded languages, parses source, returns a `Walker`
+with common CST helpers, and reports syntax errors while still returning the
+partial root for diagnostics:
+
+```go
+root, walker, err := taproot.ParseFromBlob("dsl", blob, buildGrammar, src)
+if err != nil {
+    fmt.Println(err)
+}
+fmt.Println(walker.Type(root))
+```
+
+Use `taproot.LanguageFromBlob` when a DSL embeds a generated grammar blob but
+still wants a source-grammar fallback during development.
+
 ### Queries
 
 ```go
@@ -432,7 +502,7 @@ gotreesitter is a ground-up reimplementation of the tree-sitter runtime in Go. N
 
 **Rewriter** — Collects source-level edits (replace, insert, delete) targeting byte ranges, applies them atomically, and produces `InputEdit` records for incremental reparse. Edits are validated for non-overlap and applied in a single pass.
 
-**Grammar loading** — `ts2go` extracts parse tables, lex tables, field maps, symbol metadata, and external token lists from upstream `parser.c` files. These are serialized to compressed binary blobs under `grammars/grammar_blobs/` and lazy-loaded via `loadEmbeddedLanguage()` with an LRU cache. String and transition interning reduce memory footprint across loaded grammars. Grammargen-backed blobs use the same CLI surface; for example, the Go blob can be regenerated with `go run ./cmd/grammargen -lr-split -bin grammars/grammar_blobs/go.bin go`.
+**Grammar loading** — `ts2go` extracts parse tables, lex tables, field maps, symbol metadata, and external token lists from upstream `parser.c` files. These are serialized to compressed binary blobs under `grammars/grammar_blobs/` and lazy-loaded via `loadEmbeddedLanguage()` with an LRU cache. String and transition interning reduce memory footprint across loaded grammars. Grammargen-backed blobs use the same CLI surface; for example, the Go blob can be regenerated with `go run ./cmd/grammargen -lr-split -bin grammars/grammar_blobs/go.bin go`. When loading a raw blob yourself, prefer `grammars.LoadLanguage(name, blob)` over `gotreesitter.LoadLanguage(blob)` so the registered external scanner and external lex-state support for that language are attached automatically.
 
 ### Build tags and environment
 
@@ -478,6 +548,8 @@ blobs from `GOTREESITTER_GRAMMAR_BLOB_DIR` at runtime (no embedded blobs at all)
 grammars.SetEmbeddedLanguageCacheLimit(8)    // LRU cap
 grammars.UnloadEmbeddedLanguage("rust.bin")  // drop one
 grammars.PurgeEmbeddedLanguageCache()        // drop all
+
+fmt.Println(lang.Size())                      // approximate decoded table bytes
 ```
 
 ```sh

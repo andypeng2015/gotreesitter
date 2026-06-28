@@ -95,6 +95,52 @@ func (l *ExternalLexer) Advance(skip bool) {
 	}
 }
 
+// AdvanceSpaces consumes consecutive ASCII spaces and returns the number of
+// bytes consumed. It is equivalent to repeated Advance(skip) while Lookahead is
+// a space, but avoids per-byte rune decoding in external scanners that skip
+// indentation runs.
+func (l *ExternalLexer) AdvanceSpaces(skip bool) int {
+	if l == nil || l.pos >= len(l.source) || l.source[l.pos] != ' ' {
+		return 0
+	}
+	start := l.pos
+	for l.pos < len(l.source) && l.source[l.pos] == ' ' {
+		l.pos++
+	}
+	n := l.pos - start
+	l.point.Column += uint32(n)
+	if skip {
+		l.startPos = l.pos
+		l.startPoint = l.point
+	} else {
+		l.advancedContent = true
+	}
+	return n
+}
+
+// AdvanceUntilNewline consumes bytes up to, but not including, '\n' or EOF and
+// returns the number of bytes consumed. For non-newline bytes, Advance updates
+// Column by the UTF-8 width, which is equal to the byte count for the whole
+// consumed span.
+func (l *ExternalLexer) AdvanceUntilNewline(skip bool) int {
+	if l == nil || l.pos >= len(l.source) || l.source[l.pos] == '\n' {
+		return 0
+	}
+	start := l.pos
+	for l.pos < len(l.source) && l.source[l.pos] != '\n' {
+		l.pos++
+	}
+	n := l.pos - start
+	l.point.Column += uint32(n)
+	if skip {
+		l.startPos = l.pos
+		l.startPoint = l.point
+	} else {
+		l.advancedContent = true
+	}
+	return n
+}
+
 // MarkEnd marks the current scanner position as the token end.
 func (l *ExternalLexer) MarkEnd() {
 	l.endPos = l.pos

@@ -159,6 +159,16 @@ func (pp *ParserPool) Parse(source []byte) (*Tree, error) {
 	return p.Parse(source)
 }
 
+// ParseStrict delegates to a pooled Parser.ParseStrict call.
+func (pp *ParserPool) ParseStrict(source []byte) (*Tree, error) {
+	p := pp.checkout()
+	if p == nil {
+		return nil, ErrNoLanguage
+	}
+	defer pp.release(p)
+	return p.ParseStrict(source)
+}
+
 // ParseNoTreeBenchmarkOnly delegates to Parser.ParseNoTreeBenchmarkOnly.
 // It is intended only for parser-loop performance experiments; the returned
 // tree is not API-compatible.
@@ -226,6 +236,17 @@ func (pp *ParserPool) ParseWithTokenSource(source []byte, ts TokenSource) (*Tree
 	return p.ParseWithTokenSource(source, ts)
 }
 
+// ParseWithTokenSourceStrict delegates to a pooled
+// Parser.ParseWithTokenSourceStrict call.
+func (pp *ParserPool) ParseWithTokenSourceStrict(source []byte, ts TokenSource) (*Tree, error) {
+	p := pp.checkout()
+	if p == nil {
+		return nil, ErrNoLanguage
+	}
+	defer pp.release(p)
+	return p.ParseWithTokenSourceStrict(source, ts)
+}
+
 // ParseWithTokenSourceFactory delegates to a pooled
 // Parser.ParseWithTokenSourceFactory call.
 func (pp *ParserPool) ParseWithTokenSourceFactory(source []byte, factory TokenSourceFactory) (*Tree, error) {
@@ -235,6 +256,17 @@ func (pp *ParserPool) ParseWithTokenSourceFactory(source []byte, factory TokenSo
 	}
 	defer pp.release(p)
 	return p.ParseWithTokenSourceFactory(source, factory)
+}
+
+// ParseWithTokenSourceFactoryStrict delegates to a pooled
+// Parser.ParseWithTokenSourceFactoryStrict call.
+func (pp *ParserPool) ParseWithTokenSourceFactoryStrict(source []byte, factory TokenSourceFactory) (*Tree, error) {
+	p := pp.checkout()
+	if p == nil {
+		return nil, ErrNoLanguage
+	}
+	defer pp.release(p)
+	return p.ParseWithTokenSourceFactoryStrict(source, factory)
 }
 
 // ParseUTF16WithTokenSourceFactory delegates to a pooled
@@ -310,4 +342,14 @@ func (pp *ParserPool) ParseWith(source []byte, opts ...ParseOption) (ParseResult
 	}
 	defer pp.release(p)
 	return p.ParseWith(source, opts...)
+}
+
+// ParseWithStrict delegates to a pooled Parser.ParseWithStrict call.
+func (pp *ParserPool) ParseWithStrict(source []byte, opts ...ParseOption) (ParseResult, error) {
+	p := pp.checkout()
+	if p == nil {
+		return ParseResult{}, ErrNoLanguage
+	}
+	defer pp.release(p)
+	return p.ParseWithStrict(source, opts...)
 }

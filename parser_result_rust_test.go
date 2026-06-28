@@ -146,6 +146,63 @@ func TestNormalizeRustRangeExpressionRestoresOperatorChild(t *testing.T) {
 	}
 }
 
+func TestRustExtractRecoveredTopLevelNodesWithOffsetClonesIntoDestinationArena(t *testing.T) {
+	lang := &Language{
+		Name:        "rust",
+		SymbolNames: []string{"", "source_file", "line_comment", "function_item", "identifier"},
+		SymbolMetadata: []SymbolMetadata{
+			{},
+			{Name: "source_file", Visible: true, Named: true},
+			{Name: "line_comment", Visible: true, Named: true},
+			{Name: "function_item", Visible: true, Named: true},
+			{Name: "identifier", Visible: true, Named: true},
+		},
+	}
+	source := []byte("// c\nfn f() {}\n")
+	srcArena := acquireNodeArena(arenaClassFull)
+	comment := newLeafNodeInArena(srcArena, 2, true, 0, 4, Point{}, Point{Column: 4})
+	ident := newLeafNodeInArena(srcArena, 4, true, 8, 9, Point{Row: 1, Column: 3}, Point{Row: 1, Column: 4})
+	fn := newParentNodeInArena(srcArena, 3, true, []*Node{ident}, nil, 0)
+	fn.startByte = 5
+	fn.endByte = 14
+	fn.startPoint = Point{Row: 1}
+	fn.endPoint = Point{Row: 1, Column: 9}
+	root := newParentNodeInArena(srcArena, 1, true, []*Node{comment, fn}, nil, 0)
+	root.startByte = 0
+	root.endByte = uint32(len(source))
+	root.startPoint = Point{}
+	root.endPoint = Point{Row: 2}
+	populateParentNode(root, root.children)
+
+	dstArena := acquireNodeArena(arenaClassFull)
+	nodes := rustExtractRecoveredTopLevelNodesWithOffset(root, lang, dstArena, 100, Point{Row: 10, Column: 5})
+	if got, want := len(nodes), 2; got != want {
+		t.Fatalf("recovered node count = %d, want %d", got, want)
+	}
+	if nodes[0].ownerArena != dstArena || nodes[1].ownerArena != dstArena {
+		t.Fatal("recovered nodes were not cloned into destination arena")
+	}
+	if got, want := nodes[0].StartByte(), uint32(100); got != want {
+		t.Fatalf("comment start byte = %d, want %d", got, want)
+	}
+	if got, want := nodes[0].StartPoint(), (Point{Row: 10, Column: 5}); got != want {
+		t.Fatalf("comment start point = %+v, want %+v", got, want)
+	}
+	if got, want := nodes[1].StartByte(), uint32(105); got != want {
+		t.Fatalf("function start byte = %d, want %d", got, want)
+	}
+	if got, want := nodes[1].StartPoint(), (Point{Row: 11, Column: 0}); got != want {
+		t.Fatalf("function start point = %+v, want %+v", got, want)
+	}
+	child := nodes[1].NamedChild(0)
+	if child == nil {
+		t.Fatal("function identifier child = nil")
+	}
+	if got, want := child.StartPoint(), (Point{Row: 11, Column: 3}); got != want {
+		t.Fatalf("identifier start point = %+v, want %+v", got, want)
+	}
+}
+
 func TestRustCanonicalDotRangeBuildsOperatorChildren(t *testing.T) {
 	lang := &Language{
 		Name:        "rust",
@@ -237,7 +294,7 @@ func TestNormalizeRustTokenBindingPatterns(t *testing.T) {
 	}, nil, 0)
 	root := newParentNodeInArena(arena, 1, true, []*Node{tokenTree}, nil, 0)
 
-	normalizeRustTokenBindingPatterns(root, source, lang)
+	normalizeRustTokenBindingPatternsAndRecoveredTokenTrees(root, source, lang)
 
 	pattern := root.Child(0)
 	if pattern == nil || pattern.Type(lang) != "token_tree_pattern" {
@@ -355,5 +412,124 @@ func TestNormalizeRustRecoveredFunctionItems(t *testing.T) {
 	want := "(source_file (function_item (identifier) (parameters (parameter (identifier) (abstract_type (type_parameters (lifetime_parameter (lifetime (identifier)))) (generic_type (type_identifier) (type_arguments (generic_type (type_identifier) (type_arguments (lifetime (identifier))))))))) (block)))"
 	if got := root.SExpr(lang); got != want {
 		t.Fatalf("recovered Rust SExpr mismatch\nGOT:  %s\nWANT: %s", got, want)
+	}
+}
+
+func TestNormalizeRustRecoveredPatternStatementsRetagsCleanTopLevelRoot(t *testing.T) {
+	lang := &Language{
+		Name: "rust",
+		SymbolNames: []string{
+			"",
+			"source_file",
+			"line_comment",
+			"use_declaration",
+		},
+		SymbolMetadata: []SymbolMetadata{
+			{},
+			{Named: true},
+			{Named: true},
+			{Named: true},
+		},
+	}
+	parser := &Parser{language: lang}
+	arena := acquireNodeArena(arenaClassFull)
+	source := []byte("// doc\nuse foo;\n")
+	comment := newLeafNodeInArena(arena, 2, true, 0, 6, Point{}, Point{Column: 6})
+	useDecl := newLeafNodeInArena(arena, 3, true, 7, 15, Point{Row: 1}, Point{Row: 1, Column: 8})
+	root := newParentNodeInArena(arena, errorSymbol, true, []*Node{comment, useDecl}, nil, 0)
+	root.startByte = 0
+	root.endByte = uint32(len(source))
+
+	normalizeRustRecoveredPatternStatementsRoot(root, source, parser)
+
+	if got, want := root.Type(lang), "source_file"; got != want {
+		t.Fatalf("root type = %q, want %q", got, want)
+	}
+	if root.HasError() {
+		t.Fatalf("root has error after top-level retag: %s", root.SExpr(lang))
+	}
+	if got, want := root.ChildCount(), 2; got != want {
+		t.Fatalf("root child count = %d, want %d", got, want)
+	}
+	if root.Child(0) != comment || root.Child(1) != useDecl {
+		t.Fatalf("retag should preserve existing top-level children: %s", root.SExpr(lang))
+	}
+}
+
+func TestRustRetagCleanTopLevelErrorRootKeepsFinalChildRefsLazy(t *testing.T) {
+	lang := &Language{
+		Name: "rust",
+		SymbolNames: []string{
+			"",
+			"source_file",
+			"function_item",
+			"identifier",
+		},
+		SymbolMetadata: []SymbolMetadata{
+			{},
+			{Named: true},
+			{Named: true},
+			{Named: true},
+		},
+	}
+	arena := newNodeArena(arenaClassFull)
+	arena.finalChildRefs = true
+	ident := newCompactFullLeafInArena(arena, 3, true, 3, 4, Point{Column: 3}, Point{Column: 4})
+	ident.parseState = 12
+	fnParent := newPendingParentInArena(arena, 2, true, 0, []stackEntry{
+		newStackEntryCompactFullLeaf(ident.parseState, ident),
+	}, 0, 9, Point{}, Point{Column: 9}, false)
+	fnParent.parseState = 13
+	fnEntry := newStackEntryPendingParent(fnParent.parseState, fnParent)
+	fn := materializeStackEntryPendingParent(arena, &fnEntry, pendingParentMaterializeForFinalTree)
+	if fn == nil || !nodeHasFinalChildRefs(fn) {
+		t.Fatal("function_item did not retain final child refs")
+	}
+	root := newParentNodeInArena(arena, errorSymbol, true, []*Node{fn}, nil, 0)
+	root.startByte = 0
+	root.endByte = 9
+	root.startPoint = Point{}
+	root.endPoint = Point{Column: 9}
+
+	arena.finalChildRefsMaterializedParents = 0
+	arena.finalChildRefsMaterializedChildren = 0
+	arena.finalChildRefsSingleChildAccesses = 0
+	arena.finalChildRefsSingleChildMaterializedChildren = 0
+
+	if !rustRetagCleanTopLevelErrorRoot(root, []byte("fn f() {}"), lang) {
+		t.Fatal("rustRetagCleanTopLevelErrorRoot returned false")
+	}
+	if got, want := root.Type(lang), "source_file"; got != want {
+		t.Fatalf("root type = %q, want %q", got, want)
+	}
+	if root.HasError() {
+		t.Fatal("root has error after clean retag")
+	}
+	if !nodeHasFinalChildRefs(fn) {
+		t.Fatal("clean retag materialized function_item final child refs")
+	}
+	if got := arena.finalChildRefsMaterializedParents; got != 0 {
+		t.Fatalf("final child ref range materialized parents = %d, want 0", got)
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 0 {
+		t.Fatalf("final child ref single children materialized = %d, want 0", got)
+	}
+}
+
+func TestRustCompatibilitySourceFlags(t *testing.T) {
+	if flags := rustCompatibilitySourceFlagsFor([]byte("let x = 1\n")); flags.collapsedNamedLeafChildren || flags.dotRangeExpressions || flags.docCommentRanges || flags.tokenBindingPatterns || flags.recoveredFunctionItems {
+		t.Fatalf("unexpected Rust compatibility flags for plain binding: %+v", flags)
+	}
+	if flags := rustCompatibilitySourceFlagsFor([]byte("let x = true;")); !flags.collapsedNamedLeafChildren {
+		t.Fatalf("expected collapsed leaf flag for true/semicolon source: %+v", flags)
+	}
+	if flags := rustCompatibilitySourceFlagsFor([]byte("let r = 1..=3;")); !flags.dotRangeExpressions || !flags.collapsedNamedLeafChildren {
+		t.Fatalf("expected dot range and collapsed leaf flags for range source: %+v", flags)
+	}
+	if flags := rustCompatibilitySourceFlagsFor([]byte("/// docs\nfn f() {}\n")); !flags.docCommentRanges || !flags.recoveredFunctionItems {
+		t.Fatalf("expected doc comment and recovered function flags: %+v", flags)
+	}
+	if flags := rustCompatibilitySourceFlagsFor([]byte("macro_rules! m { ($e:expr) => {} }")); !flags.tokenBindingPatterns {
+		t.Fatalf("expected token binding flag for macro metavariable source: %+v", flags)
 	}
 }

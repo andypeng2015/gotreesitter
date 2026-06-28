@@ -85,6 +85,51 @@ func TestShouldSkipGoOnOracleRootError(t *testing.T) {
 	}
 }
 
+func TestMismatchGateExitCode(t *testing.T) {
+	cases := []struct {
+		name       string
+		enabled    bool
+		failedRows int
+		want       int
+	}{
+		{name: "disabled clean", enabled: false, failedRows: 0},
+		{name: "disabled failing", enabled: false, failedRows: 3},
+		{name: "enabled clean", enabled: true, failedRows: 0},
+		{name: "enabled failing", enabled: true, failedRows: 1, want: 2},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := mismatchGateExitCode(tc.enabled, tc.failedRows); got != tc.want {
+				t.Fatalf("mismatchGateExitCode(%v, %d) = %d, want %d", tc.enabled, tc.failedRows, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestEffectiveCorpusParityWorkers(t *testing.T) {
+	cases := []struct {
+		name      string
+		requested int
+		fileCount int
+		want      int
+	}{
+		{name: "no files", requested: 4, fileCount: 0, want: 0},
+		{name: "default single", requested: 1, fileCount: 5, want: 1},
+		{name: "invalid clamps to one", requested: 0, fileCount: 5, want: 1},
+		{name: "requested workers", requested: 3, fileCount: 5, want: 3},
+		{name: "more workers than files", requested: 8, fileCount: 2, want: 2},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := effectiveCorpusParityWorkers(tc.requested, tc.fileCount); got != tc.want {
+				t.Fatalf("effectiveCorpusParityWorkers(%d, %d) = %d, want %d", tc.requested, tc.fileCount, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestOracleParseFailure(t *testing.T) {
 	cases := []struct {
 		name          string

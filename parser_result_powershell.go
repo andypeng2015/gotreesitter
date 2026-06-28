@@ -96,44 +96,73 @@ func normalizePowerShellProgramShape(root *Node, source []byte, lang *Language) 
 			break
 		}
 	}
-	if statementListIdx < 0 || statementListIdx+3 >= len(root.children) {
+	if statementListIdx < 0 {
 		return
 	}
-	spill := root.children[statementListIdx+1:]
-	if !powerShellLooksLikeSpilledFunction(spill, lang) {
-		return
-	}
-	openBrace := spill[2]
-	if openBrace == nil {
-		return
-	}
-	closeBracePos := findMatchingBraceByte(source, int(openBrace.startByte), len(source))
-	if closeBracePos < 0 {
-		return
-	}
-
-	functionStatement := buildPowerShellSpilledFunctionStatement(
-		root.ownerArena, source, lang, spill, closeBracePos,
-		functionStatementSym, functionSym, scriptBlockSym, scriptBlockBodySym, statementListSym, closeBraceSym,
-	)
-	if functionStatement == nil {
-		return
-	}
-	pipelines := buildPowerShellTrailingPipelines(
-		root.ownerArena, source, lang, uint32(closeBracePos+1), root.endByte,
-		pipelineSym, pipelineChainSym, commandSym, commandNameSym, commandElementsSym,
-		commandArgSepSym, commandParameterSym, arrayLiteralSym, unaryExprSym,
-		variableSym, stringLiteralSym, expandableStringSym, genericTokenSym, spaceSym,
-	)
-	if len(pipelines) == 0 {
-		return
-	}
-
 	statementList := cloneNodeInArena(root.ownerArena, root.children[statementListIdx])
-	children := make([]*Node, 0, len(statementList.children)+1+len(pipelines))
+	children := make([]*Node, 0, len(statementList.children)+len(root.children)-statementListIdx)
 	children = append(children, statementList.children...)
-	children = append(children, functionStatement)
-	children = append(children, pipelines...)
+	statementListEnd := statementList.endByte
+	rebuiltTail := false
+	for tailIdx := statementListIdx + 1; tailIdx < len(root.children); {
+		child := root.children[tailIdx]
+		if child == nil {
+			tailIdx++
+			continue
+		}
+		if child.IsExtra() {
+			if child.endByte > statementListEnd {
+				children = append(children, child)
+				statementListEnd = child.endByte
+			}
+			tailIdx++
+			continue
+		}
+		spill := root.children[tailIdx:]
+		if !powerShellLooksLikeSpilledFunction(spill, lang) {
+			pipelines := buildPowerShellTrailingPipelines(
+				root.ownerArena, source, lang, child.startByte, root.endByte,
+				pipelineSym, pipelineChainSym, commandSym, commandNameSym, commandElementsSym,
+				commandArgSepSym, commandParameterSym, arrayLiteralSym, unaryExprSym,
+				variableSym, stringLiteralSym, expandableStringSym, genericTokenSym, spaceSym,
+			)
+			if len(pipelines) == 0 {
+				return
+			}
+			children = append(children, pipelines...)
+			statementListEnd = pipelines[len(pipelines)-1].endByte
+			rebuiltTail = true
+			break
+		}
+		openBrace := spill[2]
+		if openBrace == nil {
+			return
+		}
+		closeBracePos := findMatchingBraceByte(source, int(openBrace.startByte), len(source))
+		if closeBracePos < 0 {
+			return
+		}
+		functionStatement := buildPowerShellSpilledFunctionStatement(
+			root.ownerArena, source, lang, spill, closeBracePos,
+			functionStatementSym, functionSym, scriptBlockSym, scriptBlockBodySym, statementListSym, closeBraceSym,
+		)
+		if functionStatement == nil {
+			return
+		}
+		children = append(children, functionStatement)
+		statementListEnd = functionStatement.endByte
+		rebuiltTail = true
+		for tailIdx < len(root.children) {
+			next := root.children[tailIdx]
+			if next == nil || next.startByte >= uint32(closeBracePos+1) {
+				break
+			}
+			tailIdx++
+		}
+	}
+	if !rebuiltTail {
+		return
+	}
 	children = cloneNodeSliceIfArena(root.ownerArena, children)
 	statementList.children = children
 	statementList.fieldIDs = nil
@@ -141,7 +170,7 @@ func normalizePowerShellProgramShape(root *Node, source []byte, lang *Language) 
 	statementList.symbol = statementListSym
 	statementList.setNamed(symbolIsNamed(lang, statementListSym))
 	statementList.setHasError(true)
-	extendNodeEndTo(statementList, pipelines[len(pipelines)-1].endByte, source)
+	extendNodeEndTo(statementList, statementListEnd, source)
 
 	out := make([]*Node, 0, statementListIdx+1)
 	out = append(out, root.children[:statementListIdx]...)
@@ -152,12 +181,71 @@ func normalizePowerShellProgramShape(root *Node, source []byte, lang *Language) 
 	root.fieldSources = nil
 	retagResultRoot(root, programSym, symbolIsNamed(lang, programSym))
 	root.setHasError(true)
+	extendNodeEndTo(root, statementListEnd, source)
+	if root.endByte < uint32(len(source)) && bytesAreTrivia(source[root.endByte:]) {
+		extendNodeEndTo(root, uint32(len(source)), source)
+	}
+}
+
+func normalizePowerShellErrorProgramRoot(root *Node, lang *Language) {
+	if root == nil || lang == nil || lang.Name != "powershell" || root.Type(lang) != "ERROR" || len(root.children) == 0 {
+		return
+	}
+	programSym, ok := symbolByName(lang, "program")
+	if !ok {
+		return
+	}
+	sawStatementList := false
+	for _, child := range root.children {
+		if child == nil {
+			return
+		}
+		switch child.Type(lang) {
+		case "comment", "param_block":
+		case "statement_list":
+			sawStatementList = true
+		default:
+			return
+		}
+	}
+	if !sawStatementList {
+		return
+	}
+	retagResultRoot(root, programSym, symbolIsNamed(lang, programSym))
 }
 
 func normalizePowerShellAssignmentOperatorTokens(root *Node, source []byte, lang *Language) {
 	if root == nil || lang == nil || lang.Name != "powershell" {
 		return
 	}
+	normalizeCollapsedNamedLeafChildrenBySource(root, source, lang, "command_argument_sep", " ", ":")
+	normalizeCollapsedNamedLeafChildrenBySource(
+		root,
+		source,
+		lang,
+		"comparison_operator",
+		"-contains",
+		"-eq",
+		"-ge",
+		"-gt",
+		"-in",
+		"-is",
+		"-join",
+		"-like",
+		"-lt",
+		"-match",
+		"-ne",
+		"-notcontains",
+		"-notin",
+		"-notlike",
+		"-notmatch",
+		"-replace",
+		"-split",
+	)
+	normalizeCollapsedNamedLeafChildrenBySource(root, source, lang, "format_operator", "-f")
+	normalizeCollapsedNamedLeafChildrenBySource(root, source, lang, "file_redirection_operator", ">")
+	normalizeCollapsedNamedLeafChildrenBySource(root, source, lang, "merging_redirection_operator", "2>&1")
+	normalizeCollapsedNamedLeafChildrenBySource(root, source, lang, "command_invokation_operator", "&", ".")
 	var walk func(*Node)
 	walk = func(n *Node) {
 		if n == nil {
@@ -187,7 +275,11 @@ func powerShellLooksLikeSpilledFunction(nodes []*Node, lang *Language) bool {
 		return false
 	}
 	head := nodes[0]
-	if head == nil || head.Type(lang) != "ERROR" || len(head.children) != 1 || head.children[0] == nil || head.children[0].Type(lang) != "function" {
+	if head == nil || head.Type(lang) != "ERROR" || resultChildCount(head) != 1 {
+		return false
+	}
+	functionLeaf := resultChildAt(head, 0)
+	if functionLeaf == nil || functionLeaf.Type(lang) != "function" {
 		return false
 	}
 	return nodes[1] != nil && nodes[1].Type(lang) == "function_name" &&
@@ -198,7 +290,10 @@ func buildPowerShellSpilledFunctionStatement(arena *nodeArena, source []byte, la
 	if len(nodes) < 4 || nodes[0] == nil || nodes[1] == nil || nodes[2] == nil {
 		return nil
 	}
-	functionLeaf := nodes[0].children[0]
+	functionLeaf := resultChildAt(nodes[0], 0)
+	if functionLeaf == nil {
+		return nil
+	}
 	functionName := nodes[1]
 	openBrace := nodes[2]
 	scriptEnd := closeBracePos

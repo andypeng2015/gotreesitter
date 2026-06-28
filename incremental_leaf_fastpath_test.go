@@ -14,6 +14,410 @@ func TestSnapshotTokenSourceStateUnsupportedType(t *testing.T) {
 	}
 }
 
+func TestYAMLPlainScalarKind(t *testing.T) {
+	for _, tc := range []struct {
+		text string
+		want yamlScalarKind
+	}{
+		{text: "actions/checkout@v4", want: yamlScalarString},
+		{text: "2001-11-23 15:01:42 -5", want: yamlScalarString},
+		{text: "0", want: yamlScalarInteger},
+		{text: "-19", want: yamlScalarInteger},
+		{text: "0o7", want: yamlScalarInteger},
+		{text: "0x3A", want: yamlScalarInteger},
+		{text: "0.", want: yamlScalarFloat},
+		{text: "+12e03", want: yamlScalarFloat},
+		{text: "-2E+05", want: yamlScalarFloat},
+		{text: ".inf", want: yamlScalarFloat},
+		{text: "-.Inf", want: yamlScalarFloat},
+		{text: "true", want: yamlScalarBoolean},
+		{text: "FALSE", want: yamlScalarBoolean},
+		{text: "null", want: yamlScalarNull},
+		{text: "~", want: yamlScalarNull},
+	} {
+		if got := yamlPlainScalarKind([]byte(tc.text)); got != tc.want {
+			t.Fatalf("yamlPlainScalarKind(%q) = %d, want %d", tc.text, got, tc.want)
+		}
+	}
+}
+
+func TestYAMLPlainScalarStableEditRejectsKindChange(t *testing.T) {
+	oldSource := []byte("flag: truf\n")
+	source := []byte("flag: true\n")
+	node := &Node{startByte: 6, endByte: 10}
+	edit := InputEdit{StartByte: 9, OldEndByte: 10, NewEndByte: 10}
+	if yamlTextInvariantScalarEdit(source, oldSource, node, edit, "string_scalar") {
+		t.Fatal("yamlTextInvariantScalarEdit allowed string_scalar -> boolean_scalar")
+	}
+}
+
+func TestYAMLPlainScalarStableEditAllowsStringAndNumberScalars(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		oldText  string
+		newText  string
+		nodeType string
+		offset   uint32
+	}{
+		{name: "version string", oldText: "actions/checkout@v4", newText: "actions/checkout@v5", nodeType: "string_scalar", offset: 18},
+		{name: "timestamp string", oldText: "2001-11-23 15:01:42 -5", newText: "3001-11-23 15:01:42 -5", nodeType: "string_scalar", offset: 0},
+		{name: "integer", oldText: "0", newText: "1", nodeType: "integer_scalar", offset: 0},
+		{name: "float", oldText: "+12e03", newText: "+13e03", nodeType: "float_scalar", offset: 2},
+	} {
+		node := &Node{startByte: 0, endByte: uint32(len(tc.oldText))}
+		edit := InputEdit{StartByte: tc.offset, OldEndByte: tc.offset + 1, NewEndByte: tc.offset + 1}
+		if !yamlTextInvariantScalarEdit([]byte(tc.newText), []byte(tc.oldText), node, edit, tc.nodeType) {
+			t.Fatalf("%s: yamlTextInvariantScalarEdit rejected safe scalar edit", tc.name)
+		}
+	}
+}
+
+func TestClojureTextInvariantSymbolEdit(t *testing.T) {
+	lang := &Language{SymbolNames: []string{"sym_name"}}
+	oldSource := []byte("metabase.util.i18n")
+	source := []byte("metabase.util.i19n")
+	node := &Node{symbol: 0, startByte: 0, endByte: uint32(len(oldSource))}
+	edit := InputEdit{StartByte: 16, OldEndByte: 17, NewEndByte: 17}
+	if !clojureTextInvariantNodeEdit(source, oldSource, node, edit, lang) {
+		t.Fatal("clojureTextInvariantNodeEdit rejected stable sym_name edit")
+	}
+}
+
+func TestClojureTextInvariantSymbolEditRejectsTokenClassChanges(t *testing.T) {
+	lang := &Language{SymbolNames: []string{"sym_name"}}
+	for _, tc := range []struct {
+		name   string
+		source string
+		offset uint32
+	}{
+		{name: "leading digit", source: "1etabase.util.i18n", offset: 0},
+		{name: "reserved nil", source: "nil", offset: 0},
+		{name: "colon keyword", source: ":etabase.util.i18n", offset: 0},
+	} {
+		node := &Node{symbol: 0, startByte: 0, endByte: uint32(len(tc.source))}
+		edit := InputEdit{StartByte: tc.offset, OldEndByte: tc.offset + 1, NewEndByte: tc.offset + 1}
+		if clojureTextInvariantNodeEdit([]byte(tc.source), []byte("metabase.util.i18n")[:len(tc.source)], node, edit, lang) {
+			t.Fatalf("%s: clojureTextInvariantNodeEdit allowed token-class-changing sym_name edit", tc.name)
+		}
+	}
+}
+
+func TestClojureTextInvariantStringEdit(t *testing.T) {
+	lang := &Language{SymbolNames: []string{"str_lit"}}
+	oldSource := []byte("\"MBQL Lib v2\"")
+	source := []byte("\"MBQL Lib v3\"")
+	node := &Node{symbol: 0, startByte: 0, endByte: uint32(len(oldSource))}
+	edit := InputEdit{StartByte: 11, OldEndByte: 12, NewEndByte: 12}
+	if !clojureTextInvariantNodeEdit(source, oldSource, node, edit, lang) {
+		t.Fatal("clojureTextInvariantNodeEdit rejected stable str_lit edit")
+	}
+
+	source = []byte("\"MBQL Lib \\2\"")
+	escapeEdit := InputEdit{StartByte: 10, OldEndByte: 11, NewEndByte: 11}
+	if clojureTextInvariantNodeEdit(source, oldSource, node, escapeEdit, lang) {
+		t.Fatal("clojureTextInvariantNodeEdit allowed string escape delimiter edit")
+	}
+
+	source = []byte("xMBQL Lib v2\"")
+	openQuoteEdit := InputEdit{StartByte: 0, OldEndByte: 1, NewEndByte: 1}
+	if clojureTextInvariantNodeEdit(source, oldSource, node, openQuoteEdit, lang) {
+		t.Fatal("clojureTextInvariantNodeEdit allowed opening quote edit")
+	}
+
+	source = []byte("\"MBQL Lib v2x")
+	closeQuoteEdit := InputEdit{StartByte: 12, OldEndByte: 13, NewEndByte: 13}
+	if clojureTextInvariantNodeEdit(source, oldSource, node, closeQuoteEdit, lang) {
+		t.Fatal("clojureTextInvariantNodeEdit allowed closing quote edit")
+	}
+}
+
+func TestPowerShellCommentTextInvariantEdit(t *testing.T) {
+	oldSource := []byte("# note 1\n")
+	source := []byte("# note 2\n")
+	node := &Node{startByte: 0, endByte: uint32(len(oldSource) - 1)}
+	edit := InputEdit{StartByte: 7, OldEndByte: 8, NewEndByte: 8}
+	if !powershellCommentTextInvariantEdit(source, oldSource, node, edit) {
+		t.Fatal("powershellCommentTextInvariantEdit rejected stable comment text edit")
+	}
+
+	source = []byte("# note #\n")
+	if powershellCommentTextInvariantEdit(source, oldSource, node, edit) {
+		t.Fatal("powershellCommentTextInvariantEdit allowed comment delimiter byte")
+	}
+
+	source = []byte("< note 1\n")
+	edit = InputEdit{StartByte: 0, OldEndByte: 1, NewEndByte: 1}
+	if powershellCommentTextInvariantEdit(source, oldSource, node, edit) {
+		t.Fatal("powershellCommentTextInvariantEdit allowed edit at comment start")
+	}
+}
+
+func TestPowerShellStringTextInvariantEditAllowsStableTextOutsideChildren(t *testing.T) {
+	oldSource := []byte("\"$PSScriptRoot\\..\\build1.ps1\"")
+	source := []byte("\"$PSScriptRoot\\..\\build2.ps1\"")
+	offset := uint32(23)
+	node := &Node{
+		startByte: 0,
+		endByte:   uint32(len(oldSource)),
+		children: []*Node{
+			{startByte: 1, endByte: 14},
+		},
+	}
+	edit := InputEdit{StartByte: offset, OldEndByte: offset + 1, NewEndByte: offset + 1}
+	if !powershellStringTextInvariantEdit(source, oldSource, node, edit) {
+		t.Fatal("powershellStringTextInvariantEdit rejected stable string text edit outside interpolation child")
+	}
+}
+
+func TestPowerShellStringTextInvariantEditRejectsChildAndDelimiterEdits(t *testing.T) {
+	oldSource := []byte("\"$PSScriptRoot\\..\\build1.ps1\"")
+	node := &Node{
+		startByte: 0,
+		endByte:   uint32(len(oldSource)),
+		children: []*Node{
+			{startByte: 1, endByte: 14},
+		},
+	}
+
+	source := []byte("\"$QSScriptRoot\\..\\build1.ps1\"")
+	edit := InputEdit{StartByte: 2, OldEndByte: 3, NewEndByte: 3}
+	if powershellStringTextInvariantEdit(source, oldSource, node, edit) {
+		t.Fatal("powershellStringTextInvariantEdit allowed edit overlapping interpolation child")
+	}
+
+	source = []byte("\"$PSScriptRoot\\..\\build$.ps1\"")
+	edit = InputEdit{StartByte: 23, OldEndByte: 24, NewEndByte: 24}
+	if powershellStringTextInvariantEdit(source, oldSource, node, edit) {
+		t.Fatal("powershellStringTextInvariantEdit allowed interpolation delimiter byte")
+	}
+
+	source = []byte("\"$PSScriptRoot\\..\\build@.ps1\"")
+	if powershellStringTextInvariantEdit(source, oldSource, node, edit) {
+		t.Fatal("powershellStringTextInvariantEdit allowed here-string delimiter byte")
+	}
+}
+
+func TestHCLTextInvariantNodeEditAllowsDigitLeaves(t *testing.T) {
+	lang := &Language{Name: "hcl", SymbolNames: []string{"", "template_literal", "numeric_lit", "identifier"}}
+	for _, tc := range []struct {
+		name    string
+		oldText string
+		newText string
+		symbol  Symbol
+		offset  uint32
+	}{
+		{name: "template literal", oldText: "10.0.0.0/16", newText: "20.0.0.0/16", symbol: 1, offset: 0},
+		{name: "numeric literal", oldText: "1", newText: "2", symbol: 2, offset: 0},
+	} {
+		node := &Node{symbol: tc.symbol, startByte: 0, endByte: uint32(len(tc.oldText))}
+		edit := InputEdit{StartByte: tc.offset, OldEndByte: tc.offset + 1, NewEndByte: tc.offset + 1}
+		if !hclTextInvariantNodeEdit([]byte(tc.newText), []byte(tc.oldText), node, edit, lang) {
+			t.Fatalf("%s: hclTextInvariantNodeEdit rejected digit edit", tc.name)
+		}
+	}
+}
+
+func TestHCLTextInvariantNodeEditRejectsNonDigitsAndOtherLeaves(t *testing.T) {
+	lang := &Language{Name: "hcl", SymbolNames: []string{"", "template_literal", "numeric_lit", "identifier"}}
+	node := &Node{symbol: 1, startByte: 0, endByte: 6}
+	edit := InputEdit{StartByte: 1, OldEndByte: 2, NewEndByte: 2}
+	if hclTextInvariantNodeEdit([]byte("abbcde"), []byte("a1bcde"), node, edit, lang) {
+		t.Fatal("hclTextInvariantNodeEdit allowed non-digit template literal edit")
+	}
+
+	node = &Node{symbol: 3, startByte: 0, endByte: 8}
+	if hclTextInvariantNodeEdit([]byte("resource"), []byte("resourcf"), node, edit, lang) {
+		t.Fatal("hclTextInvariantNodeEdit allowed identifier edit")
+	}
+}
+
+func TestDisabledForestCMakeTextInvariantLeafAllowed(t *testing.T) {
+	lang := &Language{Name: "cmake", SymbolNames: []string{"unquoted_argument"}}
+	oldSource := []byte("target_1")
+	source := []byte("target_2")
+	leaf := &Node{symbol: 0, startByte: 0, endByte: uint32(len(oldSource))}
+	edit := InputEdit{StartByte: 7, OldEndByte: 8, NewEndByte: 8}
+	oldTree := &Tree{
+		root:                     leaf,
+		source:                   oldSource,
+		language:                 lang,
+		edits:                    []InputEdit{edit},
+		lastEditedLeaf:           leaf,
+		forestFastPath:           true,
+		incrementalReuseDisabled: true,
+	}
+	parser := &Parser{language: lang}
+	if !parser.disabledOldTreeTokenInvariantLeafAllowed(source, oldTree) {
+		t.Fatal("disabled forest CMake leaf edit was not admitted")
+	}
+
+	source = []byte("target-1")
+	edit = InputEdit{StartByte: 6, OldEndByte: 7, NewEndByte: 7}
+	oldTree.edits = []InputEdit{edit}
+	if parser.disabledOldTreeTokenInvariantLeafAllowed(source, oldTree) {
+		t.Fatal("disabled forest CMake leaf edit admitted delimiter change")
+	}
+}
+
+func TestAwkTextInvariantNumberEdit(t *testing.T) {
+	lang := &Language{Name: "awk", SymbolNames: []string{"number", "identifier"}}
+	oldSource := []byte("123")
+	source := []byte("124")
+	node := &Node{symbol: 0, startByte: 0, endByte: uint32(len(oldSource))}
+	edit := InputEdit{StartByte: 2, OldEndByte: 3, NewEndByte: 3}
+	tree := &Tree{source: oldSource, forestFastPath: true}
+	parser := &Parser{language: lang}
+	if !parser.canReuseLanguageTextInvariantNode(source, tree, node, edit) {
+		t.Fatal("AWK number digit edit was not reusable")
+	}
+
+	source = []byte("12x")
+	if parser.canReuseLanguageTextInvariantNode(source, tree, node, edit) {
+		t.Fatal("AWK number edit admitted non-digit replacement")
+	}
+
+	node.symbol = 1
+	source = []byte("124")
+	if parser.canReuseLanguageTextInvariantNode(source, tree, node, edit) {
+		t.Fatal("AWK text-invariant edit admitted non-number node")
+	}
+}
+
+func TestBashTextInvariantLeafEdit(t *testing.T) {
+	lang := &Language{Name: "bash", SymbolNames: []string{"comment", "number", "word"}}
+	oldSource := []byte("# look for old 0.x cruft\n")
+	source := []byte("# look for old 1.x cruft\n")
+	node := &Node{symbol: 0, startByte: 0, endByte: uint32(len(oldSource) - 1)}
+	edit := InputEdit{StartByte: 15, OldEndByte: 16, NewEndByte: 16}
+	tree := &Tree{source: oldSource, forestFastPath: true}
+	parser := &Parser{language: lang}
+	if !parser.canReuseLanguageTextInvariantNode(source, tree, node, edit) {
+		t.Fatal("Bash comment digit edit was not reusable")
+	}
+
+	oldSource = []byte("-9")
+	source = []byte("-0")
+	node = &Node{symbol: 1, startByte: 0, endByte: uint32(len(oldSource))}
+	edit = InputEdit{StartByte: 1, OldEndByte: 2, NewEndByte: 2}
+	tree.source = oldSource
+	if !parser.canReuseLanguageTextInvariantNode(source, tree, node, edit) {
+		t.Fatal("Bash number digit edit was not reusable")
+	}
+
+	source = []byte("-x")
+	if parser.canReuseLanguageTextInvariantNode(source, tree, node, edit) {
+		t.Fatal("Bash number edit admitted non-digit replacement")
+	}
+
+	source = []byte("+9")
+	edit = InputEdit{StartByte: 0, OldEndByte: 1, NewEndByte: 1}
+	if parser.canReuseLanguageTextInvariantNode(source, tree, node, edit) {
+		t.Fatal("Bash number edit admitted sign replacement")
+	}
+
+	node.symbol = 2
+	source = []byte("-0")
+	edit = InputEdit{StartByte: 1, OldEndByte: 2, NewEndByte: 2}
+	if parser.canReuseLanguageTextInvariantNode(source, tree, node, edit) {
+		t.Fatal("Bash text-invariant edit admitted non-number node")
+	}
+}
+
+func TestElixirTextInvariantIdentifierEdit(t *testing.T) {
+	lang := &Language{Name: "elixir", SymbolNames: []string{"identifier", "atom"}}
+	oldSource := []byte("defprotocol")
+	source := []byte("eefprotocol")
+	node := &Node{symbol: 0, startByte: 0, endByte: uint32(len(oldSource))}
+	edit := InputEdit{StartByte: 0, OldEndByte: 1, NewEndByte: 1}
+	if !elixirTextInvariantNodeEdit(source, oldSource, node, edit, lang) {
+		t.Fatal("elixirTextInvariantNodeEdit rejected stable identifier edit")
+	}
+
+	source = []byte("false")
+	oldSource = []byte("falsf")
+	node.endByte = uint32(len(oldSource))
+	edit = InputEdit{StartByte: 4, OldEndByte: 5, NewEndByte: 5}
+	if elixirTextInvariantNodeEdit(source, oldSource, node, edit, lang) {
+		t.Fatal("elixirTextInvariantNodeEdit allowed keyword replacement")
+	}
+
+	source = []byte("value!")
+	oldSource = []byte("value?")
+	node.endByte = uint32(len(oldSource))
+	edit = InputEdit{StartByte: 5, OldEndByte: 6, NewEndByte: 6}
+	if !elixirTextInvariantNodeEdit(source, oldSource, node, edit, lang) {
+		t.Fatal("elixirTextInvariantNodeEdit rejected stable bang/predicate suffix edit")
+	}
+
+	node.symbol = 1
+	if elixirTextInvariantNodeEdit(source, oldSource, node, edit, lang) {
+		t.Fatal("elixirTextInvariantNodeEdit allowed non-identifier node")
+	}
+}
+
+func TestSQLTextInvariantIdentifierEdit(t *testing.T) {
+	lang := &Language{Name: "sql", SymbolNames: []string{"identifier", "number"}}
+	oldSource := []byte("table1")
+	source := []byte("table2")
+	node := &Node{symbol: 0, startByte: 0, endByte: uint32(len(oldSource))}
+	edit := InputEdit{StartByte: 5, OldEndByte: 6, NewEndByte: 6}
+	if !sqlTextInvariantNodeEdit(source, oldSource, node, edit, lang) {
+		t.Fatal("sqlTextInvariantNodeEdit rejected stable identifier edit")
+	}
+
+	oldSource = []byte("from1")
+	source = []byte("from_")
+	node.endByte = uint32(len(oldSource))
+	edit = InputEdit{StartByte: 4, OldEndByte: 5, NewEndByte: 5}
+	if !sqlTextInvariantNodeEdit(source, oldSource, node, edit, lang) {
+		t.Fatal("sqlTextInvariantNodeEdit rejected underscore continuation edit")
+	}
+
+	oldSource = []byte("fron")
+	source = []byte("from")
+	node.endByte = uint32(len(oldSource))
+	edit = InputEdit{StartByte: 3, OldEndByte: 4, NewEndByte: 4}
+	if sqlTextInvariantNodeEdit(source, oldSource, node, edit, lang) {
+		t.Fatal("sqlTextInvariantNodeEdit allowed keyword replacement")
+	}
+
+	oldSource = []byte("table1")
+	source = []byte("table-")
+	node.endByte = uint32(len(oldSource))
+	edit = InputEdit{StartByte: 5, OldEndByte: 6, NewEndByte: 6}
+	if sqlTextInvariantNodeEdit(source, oldSource, node, edit, lang) {
+		t.Fatal("sqlTextInvariantNodeEdit allowed punctuation replacement")
+	}
+
+	node.symbol = 1
+	source = []byte("table2")
+	if sqlTextInvariantNodeEdit(source, oldSource, node, edit, lang) {
+		t.Fatal("sqlTextInvariantNodeEdit allowed non-identifier node")
+	}
+}
+
+func TestHashLineCommentTextInvariantEdit(t *testing.T) {
+	oldSource := []byte("# This file is part of Julia.\n")
+	source := []byte("# Uhis file is part of Julia.\n")
+	node := &Node{startByte: 0, endByte: uint32(len(oldSource) - 1)}
+	edit := InputEdit{StartByte: 2, OldEndByte: 3, NewEndByte: 3}
+	if !hashLineCommentTextInvariantEdit(source, oldSource, node, edit) {
+		t.Fatal("hashLineCommentTextInvariantEdit rejected stable comment text edit")
+	}
+
+	source = []byte("x This file is part of Julia.\n")
+	edit = InputEdit{StartByte: 0, OldEndByte: 1, NewEndByte: 1}
+	if hashLineCommentTextInvariantEdit(source, oldSource, node, edit) {
+		t.Fatal("hashLineCommentTextInvariantEdit allowed leading delimiter edit")
+	}
+
+	source = []byte("# \nhis file is part of Julia.\n")
+	edit = InputEdit{StartByte: 2, OldEndByte: 3, NewEndByte: 3}
+	if hashLineCommentTextInvariantEdit(source, oldSource, node, edit) {
+		t.Fatal("hashLineCommentTextInvariantEdit allowed line break insertion")
+	}
+}
+
 func TestSnapshotTokenSourceStateRestoresDFATokenSource(t *testing.T) {
 	original := &dfaTokenSource{
 		state:                      42,
@@ -165,7 +569,7 @@ func TestScanLeafTokenWithoutMutatingDFATokenSource(t *testing.T) {
 		t.Fatal("expected edited leaf to be tracked")
 	}
 
-	ts := newDFATokenSourceDirect(NewLexer(lang.LexStates, newSource), lang, parser.lookupActionIndex, parser.hasKeywordState, parser.externalValidByState)
+	ts := newDFATokenSourceDirect(NewLexer(lang.LexStates, newSource), lang, parser.lookupActionIndex, parser.hasKeywordState, parser.externalValidByState, parser.externalValidMaskByState)
 	ts.state = 88
 	ts.glrStates = []StateID{1, 3, 5}
 	ts.zeroWidthPos = 7
@@ -213,7 +617,7 @@ func TestScanLeafTokenWithoutMutatingIncludedRangeTokenSource(t *testing.T) {
 		t.Fatal("expected edited leaf to be tracked")
 	}
 
-	base := newDFATokenSourceDirect(NewLexer(lang.LexStates, newSource), lang, parser.lookupActionIndex, parser.hasKeywordState, parser.externalValidByState)
+	base := newDFATokenSourceDirect(NewLexer(lang.LexStates, newSource), lang, parser.lookupActionIndex, parser.hasKeywordState, parser.externalValidByState, parser.externalValidMaskByState)
 	wrapped := &includedRangeTokenSource{
 		base: base,
 		ranges: []Range{
@@ -258,7 +662,7 @@ func TestScanLeafTokenWithoutMutatingRejectsExternalScanner(t *testing.T) {
 		t.Fatal("expected edited leaf to be tracked")
 	}
 
-	ts := newDFATokenSourceDirect(NewLexer(lang.LexStates, newSource), &lang, parser.lookupActionIndex, parser.hasKeywordState, parser.externalValidByState)
+	ts := newDFATokenSourceDirect(NewLexer(lang.LexStates, newSource), &lang, parser.lookupActionIndex, parser.hasKeywordState, parser.externalValidByState, parser.externalValidMaskByState)
 	if tok, ok := scanLeafTokenWithoutMutatingSource(ts, leaf); ok {
 		t.Fatalf("scanLeafTokenWithoutMutatingSource succeeded for external-scanner language: %+v", tok)
 	}
@@ -284,7 +688,7 @@ func TestScanLeafTokenWithoutMutatingRejectsSyntheticExternalSymbols(t *testing.
 		t.Fatal("expected edited leaf to be tracked")
 	}
 
-	ts := newDFATokenSourceDirect(NewLexer(lang.LexStates, newSource), &lang, parser.lookupActionIndex, parser.hasKeywordState, parser.externalValidByState)
+	ts := newDFATokenSourceDirect(NewLexer(lang.LexStates, newSource), &lang, parser.lookupActionIndex, parser.hasKeywordState, parser.externalValidByState, parser.externalValidMaskByState)
 	if tok, ok := scanLeafTokenWithoutMutatingSource(ts, leaf); ok {
 		t.Fatalf("scanLeafTokenWithoutMutatingSource succeeded for synthetic-external language: %+v", tok)
 	}

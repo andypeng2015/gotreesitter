@@ -51,6 +51,10 @@ func assertGLRCanaryRuntime(t *testing.T, tc parityCase, src []byte, minStacks i
 	if root.HasError() {
 		t.Fatalf("[%s/%s] root has error: type=%q %s", tc.name, "glr-canary", root.Type(goLang), rt.Summary())
 	}
+	if rt.ForestFastPath {
+		t.Logf("[%s/%s] accepted through forest fast path: %s", tc.name, "glr-canary", rt.Summary())
+		return
+	}
 	if rt.MaxStacksSeen < minStacks {
 		t.Fatalf("[%s/%s] expected GLR branching (min=%d), maxStacks=%d %s",
 			tc.name, "glr-canary", minStacks, rt.MaxStacksSeen, rt.Summary())

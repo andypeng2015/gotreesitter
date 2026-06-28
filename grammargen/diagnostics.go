@@ -505,10 +505,19 @@ func generateWithReportCtx(bgCtx context.Context, g *Grammar, opts reportBuildOp
 			}
 
 			extTokenCandidates := 0
+			dirBCandidates := 0
 			for _, c := range splitCandidates {
 				if c.reason == "hidden external token in merged LALR state" {
 					extTokenCandidates++
 				}
+				if c.reason == "heavily merged LALR state with hidden external reduce" {
+					dirBCandidates++
+				}
+			}
+
+			if os.Getenv("GOT_DEBUG_SPLIT") == "1" {
+				fmt.Fprintf(os.Stderr, "[LRSPLIT] candidates=%d ext=%d dirB=%d\n",
+					len(splitCandidates), extTokenCandidates, dirBCandidates)
 			}
 
 			sr := &splitReport{CandidatesFound: len(splitCandidates)}
@@ -518,6 +527,11 @@ func generateWithReportCtx(bgCtx context.Context, g *Grammar, opts reportBuildOp
 			sr.StatesSplit = splitCount
 			sr.NewStatesAdded = tables.StateCount - statesBefore
 			sr.Error = splitErr
+
+			if os.Getenv("GOT_DEBUG_SPLIT") == "1" {
+				fmt.Fprintf(os.Stderr, "[LRSPLIT] split=%d new_states=%d err=%v\n",
+					splitCount, sr.NewStatesAdded, splitErr)
+			}
 
 			diagsAfter, _ := resolveConflictsWithDiag(tables, ng, prov)
 			sr.ConflictsAfter = len(diagsAfter)

@@ -659,6 +659,28 @@ func TestDescendantForByteRange(t *testing.T) {
 	}
 }
 
+func TestNodeAtByte(t *testing.T) {
+	lang := testLanguage()
+	left := NewLeafNode(Symbol(1), true, 0, 3, Point{Row: 0, Column: 0}, Point{Row: 0, Column: 3})
+	inner := NewLeafNode(Symbol(2), true, 4, 7, Point{Row: 1, Column: 0}, Point{Row: 1, Column: 3})
+	right := NewParentNode(Symbol(3), true, []*Node{inner}, nil, 0)
+	root := NewParentNode(Symbol(4), true, []*Node{left, right}, nil, 0)
+	tree := NewTree(root, []byte("abc\ndef"), lang)
+
+	if got := root.NodeAtByte(5); got != inner {
+		t.Fatalf("root.NodeAtByte(5) = %v, want inner", got)
+	}
+	if got := tree.NodeAtByte(5); got != inner {
+		t.Fatalf("tree.NodeAtByte(5) = %v, want inner", got)
+	}
+	if got := tree.NamedNodeAtByte(7); got != inner {
+		t.Fatalf("tree.NamedNodeAtByte(7) = %v, want inner at end boundary", got)
+	}
+	if got := tree.NodeAtByte(8); got != nil {
+		t.Fatalf("tree.NodeAtByte(8) = %v, want nil", got)
+	}
+}
+
 func TestDescendantForPointRange(t *testing.T) {
 	left := NewLeafNode(Symbol(1), true, 0, 3, Point{Row: 0, Column: 0}, Point{Row: 0, Column: 3})
 	inner := NewLeafNode(Symbol(2), true, 4, 7, Point{Row: 1, Column: 0}, Point{Row: 1, Column: 3})

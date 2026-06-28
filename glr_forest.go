@@ -43,6 +43,48 @@ var glrForestEnabled = os.Getenv("GOT_GLR_FOREST") != "0"
 // SetGLRForestEnabled toggles the GSS-forest path at runtime (tests/benchmarks).
 func SetGLRForestEnabled(on bool) { glrForestEnabled = on }
 
+// nodeCachedHeight returns the subtree height (root = 1), memoized on the node
+// (n.subtreeHeight, 0 = uncomputed). Nodes are immutable after build and arena
+// slots are zeroed on alloc, so the cache is valid within a parse and never stale
+// across parses. Keeps the coalesce dedup tie-break O(1) amortized instead of an
+// O(subtree) walk on every score tie (which 7x'd merge-heavy parses).
+func nodeCachedHeight(n *Node) int {
+	if n == nil {
+		return 0
+	}
+	if n.subtreeHeight != 0 {
+		return int(n.subtreeHeight)
+	}
+	best := 0
+	for _, c := range n.children {
+		if h := nodeCachedHeight(c); h > best {
+			best = h
+		}
+	}
+	h := best + 1
+	if h > 255 {
+		h = 255
+	}
+	n.subtreeHeight = uint8(h)
+	return h
+}
+
+func stackEntrySubtreeHeight(e stackEntry) int {
+	if e.kind != stackEntryKindNode || e.node == nil {
+		return 0
+	}
+	return nodeCachedHeight((*Node)(e.node))
+}
+
+// forestDedupTieReplace reports whether, on a coalesce dedup score tie, the new
+// entry should replace the existing link — true only when the new subtree is
+// taller, mirroring tree-sitter C / production stackCompareMerge's post-score
+// depth tie-break (go type_instantiation_expression over index_expression under
+// the shared `_expression` supertype on `m.T[r.s][r.t]`).
+func forestDedupTieReplace(entry, existing stackEntry) bool {
+	return stackEntrySubtreeHeight(entry) > stackEntrySubtreeHeight(existing)
+}
+
 // ParseForestExperimental parses source with the experimental GSS-forest GLR
 // path and returns a releasable tree (or nil,false if the parse dies — the
 // forest path has no error recovery yet). Exported so out-of-tree benchmarks
@@ -50,13 +92,29 @@ func SetGLRForestEnabled(on bool) { glrForestEnabled = on }
 // drive it; not part of the stable API.
 func (p *Parser) ParseForestExperimental(source []byte) (*Tree, bool) {
 	arena := acquireNodeArena(arenaClassFull)
-	root, ok := p.parseForest(arena, source)
+	root, ok := p.parseForest(arena, source, true)
 	if !ok || root == nil {
 		arena.Release()
 		return nil, false
 	}
 	p.finalizeForestRoot(root, source)
 	return newTreeWithArenas(root, source, p.language, arena, nil), true
+}
+
+// ForestDeclineInfo returns where/why the forest fast path last declined (fell
+// back to production): the byte offset and lookahead symbol at the decline, a
+// short reason code, and (for reason "dead_end") the surviving GLR states. It
+// drives language-burndown triage of forest dead-ends without re-instrumenting.
+// Valid after a ParseForestExperimental that returned ok=false.
+func (p *Parser) ForestDeclineInfo() (offset uint32, sym Symbol, reason string, states []StateID) {
+	return p.forestDeclineByte, p.forestDeclineSym, p.forestDeclineReason, p.forestDeclineStates
+}
+
+func (p *Parser) recordForestDecline(reason string, tok Token, states []StateID) {
+	p.forestDeclineByte = tok.StartByte
+	p.forestDeclineSym = tok.Symbol
+	p.forestDeclineReason = reason
+	p.forestDeclineStates = append(p.forestDeclineStates[:0], states...)
 }
 
 // languageWantsForest reports whether a language dispatches to the GSS-forest
@@ -92,9 +150,23 @@ func (p *Parser) ParseForestExperimental(source []byte) (*Tree, bool) {
 // corpus) because the failed forest attempts on the ~2/3 fallback files cost
 // more than the dispatched third saves. Re-promote only if the dispatch rate
 // rises (e.g. the forest learns the constructs it currently parse_fails on).
+//
+// go joined 2026-06-03. forest-vs-production on the curated corpus is diverged=0
+// at 1.5x; forest-vs-C oracle is diverged=0 at ~0.88x C (near C-tier); and a
+// 250-file repo sweep is forest>=production on EVERY file (BETTER 25, equal 224,
+// WORSE 0) — the forest is in fact MORE correct than production on real .go (it
+// fixes a for-range composite-literal-vs-block mis-parse and parses ~6% of valid
+// files production error-recovers). Required three forest fixes:
+//   - keyword-leaf collapse (false/nil -> leaf), commit 03031c9b
+//   - generics `T[X]` dedup tie-break (taller subtree wins a coalesce score tie,
+//     under the shared `_expression` supertype), with cached node height; 880124ca
+//   - blank_identifier `import _` C-oracle-seeded gap collapse; adb1a0fd
+//
+// One pre-existing gotreesitter-vs-C span quirk (off-by-3 on a few files) is
+// SHARED with production (not a forest regression), so it does not block.
 func languageWantsForest(name string) bool {
 	switch name {
-	case "bash", "erlang", "cmake", "css", "scss", "awk", "javascript", "c_sharp":
+	case "bash", "erlang", "cmake", "css", "scss", "awk", "javascript", "c_sharp", "go":
 		return true
 	default:
 		return false
@@ -113,7 +185,8 @@ func (p *Parser) tryForestFastPath(source []byte) *Tree {
 		return nil
 	}
 	arena := acquireNodeArena(arenaClassFull)
-	root, ok := p.parseForest(arena, source)
+	allowIncremental := languageAllowsForestIncrementalPath(p.language.Name)
+	root, ok := p.parseForest(arena, source, allowIncremental)
 	if !ok || root == nil || root.HasError() {
 		arena.Release()
 		return nil // production fallback handles failures and error recovery
@@ -138,7 +211,7 @@ func (p *Parser) tryForestFastPath(source []byte) *Tree {
 	tree := newTreeWithArenas(root, source, p.language, arena, nil)
 	tree.setParseRuntime(forestAcceptedRuntime(root, source))
 	tree.forestFastPath = true
-	if !languageAllowsForestIncrementalPath(p.language.Name) {
+	if !allowIncremental {
 		tree.incrementalReuseDisabled = true
 	}
 	p.normalizeReturnedTree(rawRootOrNil(tree), source)
@@ -156,6 +229,7 @@ func forestAcceptedRuntime(root *Node, source []byte) ParseRuntime {
 	sourceLen := uint32(len(source))
 	return ParseRuntime{
 		StopReason:       ParseStopAccepted,
+		ForestFastPath:   true,
 		SourceLen:        sourceLen,
 		ExpectedEOFByte:  sourceLen,
 		RootEndByte:      root.EndByte(),
@@ -171,9 +245,20 @@ func forestAcceptedRuntime(root *Node, source []byte) ParseRuntime {
 // that path can be much faster than forcing a fresh forest full parse. Languages
 // stay disabled until the edited real-corpus matrix proves the path is correct
 // and faster than fresh-parse fallback.
+//
+// 2026-06-03: restricted to {erlang, javascript}. The edited-corpus matrix gate
+// the comment above always required was finally written
+// (TestForestIncrementalCorrectness) and it found that cmake, css and scss had
+// been added here WITHOUT it — their forest-incremental reuse produces
+// structurally-wrong, often truncated trees on valid edits (e.g. one scss edit
+// yields a 413-byte s-expr vs the correct 377KB). erlang (49/66 valid edits) and
+// javascript (13/66) are byte-for-byte incremental==fresh; the rest are demoted
+// to fresh-forest-parse fallback on edits (correct) until the reuse bug is fixed.
+// A 2026-06-04 Go probe failed the same gate (21/28 valid edits diverged).
+// Do NOT re-add a language here without it passing TestForestIncrementalCorrectness.
 func languageAllowsForestIncrementalPath(name string) bool {
 	switch name {
-	case "erlang", "cmake", "css", "scss", "javascript":
+	case "erlang", "javascript":
 		return true
 	default:
 		return false
@@ -282,13 +367,12 @@ type gssForestNode struct {
 //
 // Stage 1 scaffold: builds the DAG. Correct trees require Stage 2 (reduce walks
 // every link); until then this is exercised only under the flag + parity gate.
-func coalesceForest(index *gssForestIndex, slab *gssForestNodeSlab, state StateID, byteOffset uint32, prev *gssForestNode, entry stackEntry, score, errorCost int) *gssForestNode {
+func coalesceForest(index *gssForestIndex, slab *gssForestNodeSlab, state StateID, byteOffset uint32, prev *gssForestNode, entry stackEntry, score, errorCost int, linkCap int) *gssForestNode {
 	if perfCountersEnabled {
 		perfRecordForestCoalesceCall()
 	}
 	key := gssForestKey{state: state, byteOffset: byteOffset}
 	node := index.lookup(key)
-	linkNoExtraDepth := forestLinkNoExtraDepth(prev, entry)
 	if node == nil {
 		node = slab.alloc(state, byteOffset, score, errorCost)
 		index.set(key, node)
@@ -329,9 +413,13 @@ func coalesceForest(index *gssForestIndex, slab *gssForestNodeSlab, state StateI
 				}
 				node.dirty++
 				replaced = true
+			} else if score == l.score && forestDedupTieReplace(entry, l.subtree) {
+				l.subtree = entry
+				node.dirty++
+				replaced = true
 			}
-			if l.prevDirty != forestNodeDirty(prev) {
-				l.prevDirty = forestNodeDirty(prev)
+			if prevDirty := forestNodeDirty(prev); l.prevDirty != prevDirty {
+				l.prevDirty = prevDirty
 				node.dirty++
 			}
 			if perfCountersEnabled {
@@ -344,7 +432,7 @@ func coalesceForest(index *gssForestIndex, slab *gssForestNodeSlab, state StateI
 	// a cap, a repeated/ambiguous structure accumulates O(n) links on one node and
 	// reduceOverForest enumerates O(n^childCount) paths. Keep the best-score links;
 	// replace the weakest when full.
-	if len(node.links) >= forestMaxLinksPerNode {
+	if len(node.links) >= linkCap {
 		worst := 0
 		for i := 1; i < len(node.links); i++ {
 			if node.links[i].score < node.links[worst].score {
@@ -354,6 +442,7 @@ func coalesceForest(index *gssForestIndex, slab *gssForestNodeSlab, state StateI
 		if score > node.links[worst].score {
 			node.links[worst] = gssLink{prev: prev, prevDirty: forestNodeDirty(prev), subtree: entry, score: score}
 			forestRefreshMinLinkScore(node)
+			linkNoExtraDepth := forestLinkNoExtraDepth(prev, entry)
 			forestRecordNoExtraDepth(node, false, linkNoExtraDepth)
 			node.dirty++
 			if perfCountersEnabled {
@@ -365,6 +454,7 @@ func coalesceForest(index *gssForestIndex, slab *gssForestNodeSlab, state StateI
 		return node
 	}
 	firstLink := len(node.links) == 0
+	linkNoExtraDepth := forestLinkNoExtraDepth(prev, entry)
 	node.links = append(node.links, gssLink{prev: prev, prevDirty: forestNodeDirty(prev), subtree: entry, score: score})
 	forestRecordMinLinkScore(node, firstLink, score)
 	forestRecordNoExtraDepth(node, firstLink, linkNoExtraDepth)
@@ -398,12 +488,12 @@ func (c *forestGotoCache) lookup(p *Parser, state StateID, sym Symbol) StateID {
 	return target
 }
 
-func forestCoalesceWouldDropForCap(index *gssForestIndex, state StateID, byteOffset uint32, score, errorCost int) bool {
+func forestCoalesceWouldDropForCap(index *gssForestIndex, state StateID, byteOffset uint32, score, errorCost int, linkCap int) bool {
 	if index == nil {
 		return false
 	}
 	node := index.lookup(gssForestKey{state: state, byteOffset: byteOffset})
-	if node == nil || len(node.links) < forestMaxLinksPerNode {
+	if node == nil || len(node.links) < linkCap {
 		return false
 	}
 	if errorCost < node.errorCost {
@@ -415,6 +505,13 @@ func forestCoalesceWouldDropForCap(index *gssForestIndex, state StateID, byteOff
 // forestMaxLinksPerNode caps the alternative fan-out coalesced at one
 // (state, byteOffset) node, bounding reduceOverForest's path enumeration.
 const forestMaxLinksPerNode = 8
+
+func forestLinkCapForLanguage(name string) int {
+	if name == "cmake" {
+		return 2
+	}
+	return forestMaxLinksPerNode
+}
 
 // entrySymSpan returns a materialized node entry's symbol and byte span for cheap
 // alternative-deduplication (no deep structural comparison).
@@ -479,8 +576,119 @@ func collectForestRootAndExtras(accepted *gssForestNode) (*Node, []*Node) {
 	return root, extras
 }
 
+// forestRootChildrenCoverNonTrivia reports whether the root's direct children
+// cover every NON-TRIVIA byte of the root span — i.e. no top-level item was
+// dropped or mis-attached into a hole in the middle of the child list. It reads
+// the no-materialize child view (stack entries) so the check never forces lazy
+// subtrees into existence. bytesAreTrivia is whitespace-only, matching the
+// end-coverage check at the accept site: comments are folded in as real
+// children, so a correct tree's inter-child gaps are whitespace only. A
+// non-trivia gap means the forest took a wrong GLR path at scale and must
+// decline rather than dispatch a structurally-incomplete tree.
+func forestRootChildrenCoverNonTrivia(root *Node, source []byte) bool {
+	if root == nil {
+		return true
+	}
+	prev := root.startByte
+	n := nodeChildCountNoMaterialize(root)
+	for i := 0; i < n; i++ {
+		entry, ok := nodeChildEntryAtNoMaterialize(root, i)
+		if !ok {
+			continue
+		}
+		start := stackEntryNodeStartByte(entry)
+		end := stackEntryNodeEndByte(entry)
+		if start > prev && int(start) <= len(source) && !bytesAreTrivia(source[prev:start]) {
+			return false
+		}
+		if end > prev {
+			prev = end
+		}
+	}
+	return true
+}
+
 // bestLink returns the link whose subtree wins tree-sitter's selection:
 // highest score (dynamic precedence), then earliest (production order).
+// forestCollapsibleNamedKeywordLeaf returns the collapsed LEAF for a unary reduce
+// `NamedSym -> single anonymous keyword token` whose token name equals the rule
+// name (a keyword-as-named-node: go `false`/`nil`/`true`/`iota`). tree-sitter C
+// inlines these to named leaves (ChildCount 0); the production reduce collapses
+// them too. Two gates make it forest-safe where the production predicate is not:
+//
+//   - sameSymbolName only (NOT the broader isSingleTokenWrapperSymbol path that
+//     collapsibleRawUnarySelfReduction also takes): production gates that path on
+//     child.parent != nil, but the forest connects nodes via gssLink and never
+//     sets node.parent, so it would over-collapse rules C keeps as cc=1 (css
+//     universal_selector `*`).
+//   - KeywordCaptureToken != 0: only languages with word-token keyword extraction
+//     inline a `Named -> 'kw'` rule; languages without it keep the token child
+//     even when names match (css `to`/`from`), so the same-name test alone is not
+//     enough.
+//
+// aliasedNodeInArena clones, so the shared child is never mutated. Returns nil
+// when not applicable.
+// forestGapCollapseSymbols lists, per forest language, the named single-token
+// rules tree-sitter C collapses to a LEAF that the sameSymbolName test misses
+// (the rule name != the token, so it is not a same-name keyword like false/nil:
+// go `blank_identifier` -> '_'). C-ORACLE-SEEDED: the collapse_extract dev tool
+// (parse each forest lang + go vs the C oracle, diff forest-keeps-vs-C-collapses
+// on single anonymous children) found this is the ONLY such gap across all forest
+// languages + go — the 8 allowlisted langs are gap-free. Re-run that tool when
+// adding a language. This whitelist is the only safe way to collapse these: they
+// are statically indistinguishable from single-token rules C KEEPS (awk
+// `pattern`), which production tells apart via child.parent, a contextual signal
+// the forest's link-based DAG lacks.
+var forestGapCollapseSymbols = map[string]map[string]bool{
+	"go": {"blank_identifier": true},
+}
+
+func forestGapCollapse(lang *Language, sym Symbol) bool {
+	if lang == nil {
+		return false
+	}
+	set := forestGapCollapseSymbols[lang.Name]
+	if set == nil {
+		return false
+	}
+	if int(sym) < 0 || int(sym) >= len(lang.SymbolNames) {
+		return false
+	}
+	return set[lang.SymbolNames[sym]]
+}
+
+func (p *Parser) forestCollapsibleNamedKeywordLeaf(act ParseAction, tok Token, arena *nodeArena, entries []stackEntry, start, reducedEnd int) *Node {
+	if p == nil || arena == nil || tok.NoLookahead {
+		return nil
+	}
+	if p.language == nil || p.language.KeywordCaptureToken == 0 {
+		return nil
+	}
+	if reducedEnd-start != 1 || start < 0 || reducedEnd > len(entries) {
+		return nil
+	}
+	if p.reduceProductionHasEffectiveFields(int(act.ChildCount), act.ProductionID, arena) || len(p.reduceAliasSequence(act.ProductionID)) != 0 {
+		return nil
+	}
+	child := stackEntryNode(entries[start])
+	if child == nil || child.ownerArena != arena || child.parent != nil {
+		return nil
+	}
+	if child.symbol == act.Symbol || child.ChildCount() != 0 {
+		return nil
+	}
+	if !p.canCollapseNamedLeafWrapper(act.Symbol, child.symbol) {
+		return nil
+	}
+	if p.shouldPreserveVisibleUnaryTokenWrapper(act.Symbol) {
+		return nil
+	}
+	if !p.sameSymbolName(act.Symbol, child.symbol) && !forestGapCollapse(p.language, act.Symbol) {
+		return nil
+	}
+	return aliasedNodeInArena(arena, p.language, child, act.Symbol)
+}
+
 func (n *gssForestNode) bestLink() *gssLink {
 	if n == nil || len(n.links) == 0 {
 		return nil
@@ -499,83 +707,65 @@ type gssForestKey struct {
 	byteOffset uint32
 }
 
-const gssForestLookupCacheSize = 16
-
-type gssForestLookupCacheEntry struct {
-	key   gssForestKey
-	node  *gssForestNode
-	valid bool
+// gssForestIndex maps (state, byteOffset) -> coalesced node for one parse step.
+// Profiling showed it holds very few entries per step (p50=1, p90=5, p99=10
+// across scss/js/go; rare max ~63), so a Go map was pure overhead: its hashing,
+// per-insert mapassign, and per-key delete-on-reset dominated ~15-20% of a
+// fork-heavy (scss) forest parse. A linear-scan slice wins at these sizes — no
+// hashing, no allocation, O(1) truncate reset. Keys are unique by construction
+// (coalesceForest only set()s after a lookup() miss; the per-step seed inserts
+// the frontier, which carries unique (state,byteOffset) because the prior step's
+// shift-coalesce deduplicated it), so set() appends blindly. lastKey caches the
+// hottest repeated lookup (consecutive coalesces of the same actor).
+type gssForestEntry struct {
+	key  gssForestKey
+	node *gssForestNode
 }
 
 type gssForestIndex struct {
-	nodes       map[gssForestKey]*gssForestNode
-	keys        []gssForestKey
-	lookupCache [gssForestLookupCacheSize]gssForestLookupCacheEntry
-	lastKey     gssForestKey
-	lastNode    *gssForestNode
-	lastValid   bool
+	entries   []gssForestEntry
+	lastKey   gssForestKey
+	lastNode  *gssForestNode
+	lastValid bool
 }
 
 func newGSSForestIndex(capacity int) gssForestIndex {
-	return gssForestIndex{
-		nodes: make(map[gssForestKey]*gssForestNode, capacity),
-		keys:  make([]gssForestKey, 0, capacity),
-	}
+	return gssForestIndex{entries: make([]gssForestEntry, 0, capacity)}
 }
 
 func (idx *gssForestIndex) reset() {
-	for _, key := range idx.keys {
-		delete(idx.nodes, key)
-	}
-	idx.keys = idx.keys[:0]
+	idx.entries = idx.entries[:0]
 	idx.lastValid = false
 	idx.lastNode = nil
-	for i := range idx.lookupCache {
-		idx.lookupCache[i] = gssForestLookupCacheEntry{}
-	}
 }
 
 func (idx *gssForestIndex) len() int {
 	if idx == nil {
 		return 0
 	}
-	return len(idx.nodes)
+	return len(idx.entries)
 }
 
 func (idx *gssForestIndex) lookup(key gssForestKey) *gssForestNode {
 	if idx.lastValid && idx.lastKey == key {
 		return idx.lastNode
 	}
-	slot := forestLookupCacheSlot(key)
-	cached := &idx.lookupCache[slot]
-	if cached.valid && cached.key == key {
-		idx.lastKey = key
-		idx.lastNode = cached.node
-		idx.lastValid = true
-		return cached.node
+	for i := range idx.entries {
+		if idx.entries[i].key == key {
+			idx.lastKey = key
+			idx.lastNode = idx.entries[i].node
+			idx.lastValid = true
+			return idx.entries[i].node
+		}
 	}
-	node := idx.nodes[key]
-	*cached = gssForestLookupCacheEntry{key: key, node: node, valid: true}
-	idx.lastKey = key
-	idx.lastNode = node
-	idx.lastValid = true
-	return node
+	return nil
 }
 
 func (idx *gssForestIndex) set(key gssForestKey, node *gssForestNode) {
-	if idx.nodes == nil {
-		idx.nodes = make(map[gssForestKey]*gssForestNode, 16)
-	}
-	idx.nodes[key] = node
-	idx.keys = append(idx.keys, key)
-	idx.lookupCache[forestLookupCacheSlot(key)] = gssForestLookupCacheEntry{key: key, node: node, valid: true}
+	idx.entries = append(idx.entries, gssForestEntry{key: key, node: node})
 	idx.lastKey = key
 	idx.lastNode = node
 	idx.lastValid = true
-}
-
-func forestLookupCacheSlot(key gssForestKey) uint32 {
-	return (uint32(key.state)*16777619 ^ key.byteOffset ^ (key.byteOffset >> 8)) & (gssForestLookupCacheSize - 1)
 }
 
 const (
@@ -618,11 +808,32 @@ func releaseGSSForestNodeSlab(s *gssForestNodeSlab) {
 		return
 	}
 	s.resetForRelease()
-	if s.retainedBytes() > maxRetainedGSSForestScratchBytes {
-		s.nodeBatches = nil
-		s.linkBatches = nil
-	}
+	s.trimToRetentionCap()
 	gssForestNodeSlabPool.Put(s)
+}
+
+// trimToRetentionCap drops batches from the tail until the slab is under the
+// retention cap, instead of the old all-or-nothing (dropping the ENTIRE slab when
+// over cap forced a large parse to re-allocate and re-zero its whole link slab
+// every parse — linkSlice was 76% of forest allocations). Keeping a cap's worth
+// of batches lets them be reused (acquire resets linkBatch/nodeBatch to 0), so a
+// large parse re-allocates only the overflow, at the SAME 32 MiB memory bound.
+func (s *gssForestNodeSlab) trimToRetentionCap() {
+	nodeSize := int(unsafe.Sizeof(gssForestNode{}))
+	linkSize := int(unsafe.Sizeof(gssLink{}))
+	total := s.retainedBytes()
+	// Link batches dominate; trim them first, then node batches. Always keep at
+	// least one batch of each so the slab stays warm.
+	for total > maxRetainedGSSForestScratchBytes && len(s.linkBatches) > 1 {
+		last := len(s.linkBatches) - 1
+		total -= cap(s.linkBatches[last]) * linkSize
+		s.linkBatches = s.linkBatches[:last]
+	}
+	for total > maxRetainedGSSForestScratchBytes && len(s.nodeBatches) > 1 {
+		last := len(s.nodeBatches) - 1
+		total -= cap(s.nodeBatches[last]) * nodeSize
+		s.nodeBatches = s.nodeBatches[:last]
+	}
 }
 
 func (s *gssForestNodeSlab) alloc(state StateID, byteOffset uint32, _ int, errorCost int) *gssForestNode {
@@ -711,10 +922,13 @@ func (s *gssForestNodeSlab) retainedBytes() int {
 // returned, or (nil,false) if the parse dies. This is the forest path the
 // GOT_GLR_FOREST flag dispatches into; parity-iteration (extras, recovery,
 // external scanners, full GLR-lexing) is layered on this core.
-func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
+func (p *Parser) parseForest(arena *nodeArena, source []byte, captureExternalCheckpoints bool) (*Node, bool) {
 	lang := p.language
 	meta := lang.SymbolMetadata
 	named := func(sym Symbol) bool { return int(sym) < len(meta) && meta[sym].Named }
+	p.forestDeclineReason = ""
+	p.forestDeclineByte, p.forestDeclineSym = 0, 0
+	p.forestDeclineStates = p.forestDeclineStates[:0]
 
 	// Reuse ONE child-builder scratch for every reduce in this parse (like the
 	// production loop). buildReduceChildrenWithPath calls newReduceBuildScratch,
@@ -730,7 +944,8 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 	// selection, immediate tokens, external scanners and GLR-lexing all match
 	// the production parser. State is set per step from the frontier.
 	lexer := NewLexer(lang.LexStates, source)
-	ts := acquireDFATokenSource(lexer, lang, p.lookupActionIndex, p.hasKeywordState, p.externalValidByState)
+	ts := acquireDFATokenSource(lexer, lang, p.lookupActionIndex, p.hasKeywordState, p.externalValidByState, p.externalValidMaskByState)
+	ts.setExternalScannerCheckpointsEnabled(captureExternalCheckpoints)
 
 	// tree-sitter convention: state 0 is the error state, state 1 is the start.
 	start := &gssForestNode{state: 1, byteOffset: 0}
@@ -739,19 +954,34 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 	reducer := &forestReducer{}
 	slab := acquireGSSForestNodeSlab()
 	defer releaseGSSForestNodeSlab(slab)
+	linkCap := forestLinkCapForLanguage(lang.Name)
+
+	// Honor the same per-parse memory budget the production loop enforces
+	// (parser.go: arena.budgetExhausted → ParseStopMemoryBudget). The forest has
+	// no partial-tree/error-recovery path, so on exhaustion it declines (returns
+	// false) and the production parser re-runs and reports ParseStopMemoryBudget.
+	arena.setBudget(parseMemoryBudgetForParser(p, len(source)))
 
 	// Per-step scratch reused across every token (cleared, not reallocated): the
 	// allocation/GC of fresh maps+slices each step dominated the profile.
 	curIndex := newGSSForestIndex(16)
 	nextIndex := newGSSForestIndex(16)
-	var work, nextFrontier []*gssForestNode
+	var work, nextFrontier, relex []*gssForestNode
 	processEpoch := int32(0)
+	noLookaheadSteps := 0
 
 	for {
 		processEpoch++
+		if arena.budgetExhausted() {
+			// Memory budget hit; decline so the production parser re-runs and
+			// reports ParseStopMemoryBudget (the forest has no partial-tree path).
+			p.recordForestDecline("budget", Token{StartByte: frontier[len(frontier)-1].byteOffset}, nil)
+			return nil, false
+		}
 		if reducer.capped {
 			// A forest reduce exceeded forestReduceStepCap (high-ambiguity
 			// blowup); decline so the caller falls back to the production parser.
+			p.recordForestDecline("reducer_capped", Token{StartByte: frontier[len(frontier)-1].byteOffset}, nil)
 			return nil, false
 		}
 		// GLR-lex over the union of frontier states; lead = the most-advanced.
@@ -763,7 +993,12 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 		ts.SetParserState(frontier[len(frontier)-1].state)
 		tok := ts.Next()
 		p.updateCurrentExternalTokenCheckpoint(ts, tok)
-		eof := tok.Symbol == 0
+		// A NoLookahead token is a SYNTHETIC EOF the token source emits to force
+		// the no-lookahead-state reduction (e.g. completing a multi-token comment
+		// extra) — it is NOT real end-of-input. Only Symbol==0 && !NoLookahead is
+		// real EOF. Treating the synthetic one as EOF truncated any file whose
+		// comment lexes as >1 token (rust/lua/dart starting with a comment).
+		eof := tok.Symbol == 0 && !tok.NoLookahead
 
 		// Reduces coalesce into curIndex (same position, seeded with the
 		// frontier so a reduced nonterminal can merge with an existing actor);
@@ -793,6 +1028,20 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 			for _, act := range p.actionsForParseState(node.state, tok.Symbol, lang.ParseActions) {
 				switch act.Type {
 				case ParseActionReduce:
+					// Synthetic-EOF containment: a NoLookahead token is the synthetic
+					// EOF the token source emits to FLUSH a state stuck mid-extra (a
+					// multi-token comment, e.g. rust `///` = `//`+`/`+doc_comment). It
+					// must not finalize the whole source unit. Reducing the ROOT symbol
+					// (source_file) on it caps a cascade — line_comment → const_item →
+					// … → source_file → ACCEPT — that collapses the file mid-parse and
+					// strands the item-list continuation, so the next top-level item
+					// can no longer shift (rust large__ast.rs dead-ended at a `pub`
+					// after a doc comment). The root reduce is valid only at REAL EOF;
+					// production re-lexes after each synthetic-EOF reduce (parser.go:
+					// needToken=tok.NoLookahead) and meets a real token first.
+					if tok.NoLookahead && p.hasRootSymbol && act.Symbol == p.rootSymbol {
+						continue
+					}
 					cc := int(act.ChildCount)
 					var gotoCache forestGotoCache
 					reducer.reduce(node, cc, func(children []stackEntry, childScore int, popTo *gssForestNode, noExtras bool) {
@@ -820,6 +1069,32 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 							reducedEnd = reducedEndBeforeTrailingExtras(children)
 						}
 						score := int(act.DynamicPrecedence) + childScore
+						// Coverage rejection: a reduction whose children leave a
+						// NON-TRIVIA hole skipped real input and is INVALID. This is
+						// the load-bearing fix for tree-sitter's binary repeat
+						// (`X_repeat1 -> X_repeat1 X_repeat1`): the forest forks on every
+						// grouping of the same statement list, and some binary merges
+						// combine two halves with a dropped statement between them
+						// (lua `chunk_repeat1[0-99] + chunk_repeat1[162-X]` skipping a
+						// `local function` statement). Such a gapped node shares its
+						// (symbol, start, end) span with the gap-free grouping, so the
+						// (sym,span) dedup merges them and a gapped one can win on score —
+						// dropping the statement. Scanning ALL children (extras provide
+						// coverage, so an interior comment is NOT a gap) and rejecting any
+						// real hole keeps only valid groupings; the gap-free merge then
+						// wins. Gap-free reductions (every promoted lang) never trip it.
+						if reducedEnd > 0 {
+							lastEnd := stackEntryNodeEndByte(children[0])
+							for k := 1; k < reducedEnd; k++ {
+								cs := stackEntryNodeStartByte(children[k])
+								if cs > lastEnd && int(cs) <= len(source) && !bytesAreInterTokenTrivia(source[lastEnd:cs]) {
+									return
+								}
+								if ce := stackEntryNodeEndByte(children[k]); ce > lastEnd {
+									lastEnd = ce
+								}
+							}
+						}
 						// If the target forest node is already at its fan-out cap and
 						// this reduction cannot displace an existing alternative, avoid
 						// building the reduced children and parent node just to drop it.
@@ -827,29 +1102,41 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 						if reducedEnd < len(children) && reducedEnd > 0 {
 							parentEnd = stackEntryNodeEndByte(children[reducedEnd-1])
 						}
-						if forestCoalesceWouldDropForCap(&curIndex, gotoState, parentEnd, score, popTo.errorCost) {
+						if forestCoalesceWouldDropForCap(&curIndex, gotoState, parentEnd, score, popTo.errorCost, linkCap) {
 							if perfCountersEnabled {
 								perfRecordForestCoalescePreCapDrop()
 							}
 							return
 						}
-						childNodes, fieldIDs, fieldSources, childPath := p.buildReduceChildrenWithPath(children, 0, reducedEnd, cc, act.Symbol, act.ProductionID, arena)
-						parent := newParentNodeInArenaWithFieldSources(arena, act.Symbol, named(act.Symbol), childNodes, fieldIDs, fieldSources, act.ProductionID)
-						// Recover the reduced node's byte span from the full window,
-						// mirroring the production reduce. newParentNode spans only the
-						// VISIBLE children, so anonymous/invisible tokens that
-						// buildReduceChildren drops (e.g. the digits of a css
-						// integer_value, or a node with zero visible children) would
-						// otherwise leave the span wrong or empty ([0:0]).
-						rawSpanApplied := false
-						if shouldUseRawSpanForReduction(act.Symbol, childNodes, lang.SymbolMetadata, p.forceRawSpanAll, p.forceRawSpanTable) && reducedEnd > 0 {
-							span := computeReduceRawSpan(children, 0, reducedEnd)
-							parent.startByte, parent.endByte = span.startByte, span.endByte
-							parent.startPoint, parent.endPoint = span.startPoint, span.endPoint
-							rawSpanApplied = true
-						}
-						if !rawSpanApplied && reduceChildPathMayDropSpan(childPath) {
-							extendParentSpanToWindow(parent, children, 0, reducedEnd, lang.SymbolMetadata, p.spanExtendingInvisibleSymbols, p.nonSpanExtendingInvisibleSymbols)
+						// A collapsible named-keyword-leaf reduce (e.g. go `false`->'false',
+						// `nil`, `iota`): the named node absorbs its single anonymous keyword
+						// token to a LEAF, matching the production reduce (applyReduceAction)
+						// and tree-sitter C (ChildCount 0, not 1). aliasedNodeInArena clones,
+						// so the shared forest child is never mutated; skip the child build
+						// entirely so the child's parent link is untouched and the collapsed
+						// leaf keeps the child's span.
+						var parent *Node
+						if collapsed := p.forestCollapsibleNamedKeywordLeaf(act, tok, arena, children, 0, reducedEnd); collapsed != nil {
+							parent = collapsed
+						} else {
+							childNodes, fieldIDs, fieldSources, childPath := p.buildReduceChildrenWithPath(children, 0, reducedEnd, cc, act.Symbol, act.ProductionID, arena)
+							parent = newParentNodeInArenaWithFieldSources(arena, act.Symbol, named(act.Symbol), childNodes, fieldIDs, fieldSources, act.ProductionID)
+							// Recover the reduced node's byte span from the full window,
+							// mirroring the production reduce. newParentNode spans only the
+							// VISIBLE children, so anonymous/invisible tokens that
+							// buildReduceChildren drops (e.g. the digits of a css
+							// integer_value, or a node with zero visible children) would
+							// otherwise leave the span wrong or empty ([0:0]).
+							rawSpanApplied := false
+							if shouldUseRawSpanForReduction(act.Symbol, childNodes, lang.SymbolMetadata, p.forceRawSpanAll, p.forceRawSpanTable) && reducedEnd > 0 {
+								span := computeReduceRawSpan(children, 0, reducedEnd)
+								parent.startByte, parent.endByte = span.startByte, span.endByte
+								parent.startPoint, parent.endPoint = span.startPoint, span.endPoint
+								rawSpanApplied = true
+							}
+							if !rawSpanApplied && reduceChildPathMayDropSpan(childPath) {
+								extendParentSpanToWindow(parent, children, 0, reducedEnd, lang.SymbolMetadata, p.spanExtendingInvisibleSymbols, p.nonSpanExtendingInvisibleSymbols)
+							}
 						}
 						// Coalescing tracks parser input position, not necessarily the
 						// visible node span. JavaScript blocks can end before dropped
@@ -859,11 +1146,23 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 						// re-pushed on top.
 						parent.preGotoState = popTo.state
 						parent.parseState = gotoState
+						// Mark a reduced EXTRA node (e.g. a multi-token comment like rust's
+						// doc_comment, which is parsed as `//`+content then reduced) as
+						// extra, mirroring the production reduce (parser_reduce.go:
+						// `if tok.NoLookahead && targetState == topState { parent.setExtra }`).
+						// A no-lookahead reduce whose goto is transparent (returns to the
+						// state it popped to) is an extra completing in place. Without this
+						// the comment node sits UNMARKED in the GSS chain, so the next
+						// reduce pops it as a real child (wrong popTo, goto=0, dead-end) —
+						// the between-item-comment bug for rust/lua/dart.
+						if tok.NoLookahead && gotoState == popTo.state {
+							parent.setExtra(true)
+						}
 						// Subtree score = this production's dynamic precedence +
 						// the children's accumulated scores.
 						top := coalesceForest(&curIndex, slab, gotoState, parentEnd, popTo,
 							stackEntry{node: unsafe.Pointer(parent), state: gotoState, kind: stackEntryKindNode},
-							score, popTo.errorCost)
+							score, popTo.errorCost, linkCap)
 						for _, ex := range children[reducedEnd:] {
 							extra := (*Node)(ex.node)
 							extra.parseState = gotoState
@@ -871,7 +1170,7 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 							exEnd := extra.endByte
 							top = coalesceForest(&curIndex, slab, gotoState, exEnd, top,
 								stackEntry{node: ex.node, state: gotoState, kind: stackEntryKindNode},
-								0, top.errorCost)
+								0, top.errorCost, linkCap)
 						}
 						work = append(work, top)
 					})
@@ -893,12 +1192,19 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 					before := nextIndex.len()
 					sh := coalesceForest(&nextIndex, slab, target, tok.EndByte, node,
 						stackEntry{node: unsafe.Pointer(leaf), state: target, kind: stackEntryKindNode},
-						0, node.errorCost) // a shifted leaf carries no dynamic precedence
+						0, node.errorCost, linkCap) // a shifted leaf carries no dynamic precedence
 					if nextIndex.len() != before {
 						nextFrontier = append(nextFrontier, sh)
 					}
 				case ParseActionAccept:
-					accepted = node
+					// Prefer the accept candidate that consumed the MOST input. A
+					// trailing multi-token extra (e.g. a single lua `-- comment` at
+					// EOF) produces a second accept node ABOVE the root whose
+					// byteOffset is larger; the plain root accepts too, and taking the
+					// last-seen one drops the trailing comment. Max-coverage keeps it.
+					if accepted == nil || node.byteOffset > accepted.byteOffset {
+						accepted = node
+					}
 				}
 			}
 		}
@@ -906,6 +1212,7 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 		if eof {
 			root, extras := collectForestRootAndExtras(accepted)
 			if root == nil {
+				p.recordForestDecline("eof_no_root", tok, nil)
 				return nil, false
 			}
 			// Leading/trailing extras live outside the start-symbol node (above or
@@ -920,9 +1227,50 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 			if int(root.endByte) < len(source) && bytesAreTrivia(source[root.endByte:]) {
 				extendNodeEndTo(root, uint32(len(source)), source)
 			}
+			// Coverage safety: the checks above only validate the END byte. A
+			// large-input GLR parse can still take a wrong path that drops or
+			// mis-attaches a RUN of top-level items, leaving a non-trivia hole
+			// in the MIDDLE of the root's child list (dart's large bindings drop
+			// a ~7KB run of typedefs). Dispatching that hands the caller a
+			// structurally-incomplete tree. Decline so production re-runs.
+			if !forestRootChildrenCoverNonTrivia(root, source) {
+				p.recordForestDecline("noncontiguous_root", tok, nil)
+				return nil, false
+			}
 			return root, true
 		}
+		if tok.NoLookahead {
+			// The no-lookahead reductions ran in the work loop above and advanced
+			// the frontier in place (no token was consumed, so nextIndex is for
+			// the same position). Re-lex at this position with the states those
+			// reductions produced — but DROP states that themselves only emit a
+			// no-lookahead reduce, which would re-emit the synthetic EOF and loop.
+			relex = relex[:0]
+			for i := range curIndex.entries {
+				n := curIndex.entries[i].node
+				if ts.lexStateForState(n.state) != noLookaheadLexState {
+					relex = append(relex, n)
+				}
+			}
+			if len(relex) == 0 {
+				p.recordForestDecline("nolook_relex_empty", tok, nil)
+				return nil, false
+			}
+			noLookaheadSteps++
+			if noLookaheadSteps > maxForestNoLookaheadSteps {
+				p.recordForestDecline("nolook_runaway", tok, nil) // fall back to production
+				return nil, false
+			}
+			frontier = append(frontier[:0], relex...)
+			continue
+		}
+		noLookaheadSteps = 0
 		if len(nextFrontier) == 0 {
+			curStates := make([]StateID, 0, len(curIndex.entries))
+			for i := range curIndex.entries {
+				curStates = append(curStates, curIndex.entries[i].node.state)
+			}
+			p.recordForestDecline("dead_end", tok, curStates)
 			return nil, false
 		}
 		// Copy (not alias) so the next step can reset nextFrontier in place;
@@ -930,6 +1278,12 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 		frontier = append(frontier[:0], nextFrontier...)
 	}
 }
+
+// maxForestNoLookaheadSteps bounds consecutive no-lookahead re-lex steps at one
+// input position (each should complete a no-lookahead reduction and advance the
+// frontier); exceeding it means a runaway chain, so the forest declines to
+// production rather than spin.
+const maxForestNoLookaheadSteps = 64
 
 // reduceOverForest enumerates every length-childCount path of subtrees ending at
 // `node` and invokes visit once per path with the children in left-to-right

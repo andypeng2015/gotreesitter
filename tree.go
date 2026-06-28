@@ -22,23 +22,24 @@ type Range struct {
 type Node struct {
 	// Layout is performance-sensitive. Keep TestNodeLayoutSizeBudget updated
 	// when changing field order or adding fields.
-	children     []*Node
-	fieldIDs     []FieldID // parallel to children, 0 = no field
-	fieldSources []uint8   // parallel to children, 0 = none, 1 = direct, 2 = inherited
-	parent       *Node
-	ownerArena   *nodeArena
-	startPoint   Point
-	endPoint     Point
-	startByte    uint32
-	endByte      uint32
-	parseState   StateID // parser state after this node was pushed
-	preGotoState StateID // parser state before goto (state exposed after popping children)
-	equivVersion uint32
-	childIndex   int32
-	symbol       Symbol
-	productionID uint16
-	flags        nodeFlags
-	dirtyFlag    bool
+	children      []*Node
+	fieldIDs      []FieldID // parallel to children, 0 = no field
+	fieldSources  []uint8   // parallel to children, 0 = none, 1 = direct, 2 = inherited
+	parent        *Node
+	ownerArena    *nodeArena
+	startPoint    Point
+	endPoint      Point
+	startByte     uint32
+	endByte       uint32
+	parseState    StateID // parser state after this node was pushed
+	preGotoState  StateID // parser state before goto (state exposed after popping children)
+	equivVersion  uint32
+	childIndex    int32
+	symbol        Symbol
+	productionID  uint16
+	flags         nodeFlags
+	dirtyFlag     bool
+	subtreeHeight uint8 // forest dedup tie-break cache (0 = uncomputed); see nodeCachedHeight
 }
 
 type nodeFlags uint8
@@ -49,6 +50,15 @@ const (
 	nodeFlagMissing
 	nodeFlagHasError
 	nodeFlagDirty
+	// nodeFlagFieldIDCacheComputed + nodeFlagFieldIDCacheHasFieldIDs memoize
+	// hiddenTreeHasFieldIDs: a materialized subtree's field-ID presence is an
+	// immutable property once built, but it was recomputed by a full subtree
+	// walk at every reduce-time call site (O(n^2)-ish on deeply nested grammars
+	// like scss). Fresh arena nodes start with flags=0 (cache uncomputed); the
+	// bit is set lazily on first query. Only ever read/written during reduce, on
+	// already-built immutable child subtrees.
+	nodeFlagFieldIDCacheComputed
+	nodeFlagFieldIDCacheHasFieldIDs
 )
 
 func (n *Node) hasFlag(flag nodeFlags) bool {
@@ -607,6 +617,10 @@ type ParseEquivStateRuntime struct {
 	StackEquivPairRepeatFalse             uint64
 	StackEquivPairRepeatMismatch          uint64
 	StackEquivPairStores                  uint64
+	MergeHeaderEqTotal                    uint64
+	MergeDeepTrue                         uint64
+	MergeDeepFalse                        uint64
+	MergeHeaderDeepDivergent              uint64
 	EquivCacheLookups                     uint64
 	EquivCacheHits                        uint64
 	EquivCacheStores                      uint64
@@ -638,6 +652,7 @@ type ParseEquivStateRuntime struct {
 // ParseRuntime captures parser-loop diagnostics for a completed tree.
 type ParseRuntime struct {
 	StopReason                                   ParseStopReason
+	ForestFastPath                               bool
 	SourceLen                                    uint32
 	ExpectedEOFByte                              uint32
 	RootEndByte                                  uint32
@@ -1043,8 +1058,8 @@ func (rt ParseRuntime) Summary() string {
 		stopReason = ParseStopNone
 	}
 	return fmt.Sprintf(
-		"truncated=%v stopReason=%s tokenEOFEarly=%v tokens=%d lastTokenEnd=%d expectedEOF=%d lastTokenSymbol=%d lastTokenEOF=%v iterations=%d/%d nodes=%d/%d arena=%d/%d scratch=%d(entry=%d gss=%d)/%d peakDepth=%d/%d maxStacks=%d",
-		rt.Truncated, stopReason, rt.TokenSourceEOFEarly, rt.TokensConsumed,
+		"truncated=%v stopReason=%s forestFastPath=%v tokenEOFEarly=%v tokens=%d lastTokenEnd=%d expectedEOF=%d lastTokenSymbol=%d lastTokenEOF=%v iterations=%d/%d nodes=%d/%d arena=%d/%d scratch=%d(entry=%d gss=%d)/%d peakDepth=%d/%d maxStacks=%d",
+		rt.Truncated, stopReason, rt.ForestFastPath, rt.TokenSourceEOFEarly, rt.TokensConsumed,
 		rt.LastTokenEndByte, rt.ExpectedEOFByte, rt.LastTokenSymbol, rt.LastTokenWasEOF,
 		rt.Iterations, rt.IterationLimit, rt.NodesAllocated, rt.NodeLimit,
 		rt.ArenaBytesAllocated, rt.MemoryBudgetBytes,
@@ -1454,10 +1469,37 @@ func (n *Node) DescendantForByteRange(startByte, endByte uint32) *Node {
 	return n.descendantForByteRange(startByte, endByte, false)
 }
 
+// NodeAtByte returns the smallest descendant that contains byteOffset. If the
+// offset is exactly at this node's end byte, it performs a zero-width lookup at
+// that boundary. Returns nil when the offset is outside this node.
+func (n *Node) NodeAtByte(byteOffset uint32) *Node {
+	if n == nil || byteOffset < n.startByte || byteOffset > n.endByte {
+		return nil
+	}
+	endByte := byteOffset
+	if byteOffset < n.endByte {
+		endByte = byteOffset + 1
+	}
+	return n.DescendantForByteRange(byteOffset, endByte)
+}
+
 // NamedDescendantForByteRange returns the smallest named descendant that fully
 // contains the given byte range, or nil when no such descendant exists.
 func (n *Node) NamedDescendantForByteRange(startByte, endByte uint32) *Node {
 	return n.descendantForByteRange(startByte, endByte, true)
+}
+
+// NamedNodeAtByte returns the smallest named descendant that contains
+// byteOffset. It follows the same boundary behavior as NodeAtByte.
+func (n *Node) NamedNodeAtByte(byteOffset uint32) *Node {
+	if n == nil || byteOffset < n.startByte || byteOffset > n.endByte {
+		return nil
+	}
+	endByte := byteOffset
+	if byteOffset < n.endByte {
+		endByte = byteOffset + 1
+	}
+	return n.NamedDescendantForByteRange(byteOffset, endByte)
 }
 
 // DescendantForPointRange returns the smallest descendant that fully contains
@@ -2984,6 +3026,23 @@ func (t *Tree) ParseStopReason() ParseStopReason {
 		return ParseStopNone
 	}
 	return t.parseRuntime.StopReason
+}
+
+// NodeAtByte returns the smallest root descendant that contains byteOffset.
+func (t *Tree) NodeAtByte(byteOffset uint32) *Node {
+	if t == nil {
+		return nil
+	}
+	return t.RootNode().NodeAtByte(byteOffset)
+}
+
+// NamedNodeAtByte returns the smallest named root descendant that contains
+// byteOffset.
+func (t *Tree) NamedNodeAtByte(byteOffset uint32) *Node {
+	if t == nil {
+		return nil
+	}
+	return t.RootNode().NamedNodeAtByte(byteOffset)
 }
 
 // ParseStoppedEarly reports whether parsing hit an early-stop condition.

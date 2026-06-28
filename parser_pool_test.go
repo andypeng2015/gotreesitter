@@ -53,7 +53,7 @@ func TestParserPoolParseWithTokenSource(t *testing.T) {
 
 	seedParser := NewParser(lang)
 	lexer := NewLexer(lang.LexStates, src)
-	ts := acquireDFATokenSource(lexer, lang, seedParser.lookupActionIndex, seedParser.hasKeywordState, seedParser.externalValidByState)
+	ts := acquireDFATokenSource(lexer, lang, seedParser.lookupActionIndex, seedParser.hasKeywordState, seedParser.externalValidByState, seedParser.externalValidMaskByState)
 
 	tree, err := pool.ParseWithTokenSource(src, ts)
 	if err != nil {

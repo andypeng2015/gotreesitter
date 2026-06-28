@@ -30,6 +30,17 @@ type ntTransition struct {
 	target  int // target state q = GOTO(p, A)
 }
 
+// lookbackEntry records: (q, A → ω) lookback (p, A) iff p --ω--> q.
+// We additionally retain the last predecessor of q on the trace (the state
+// at dot=len(ω)-1) so per-predecessor LR(1) splitting can partition reduce
+// lookaheads by which incoming edge into q contributed them.
+type lookbackEntry struct {
+	stateIdx      uint32 // state q where reduce happens
+	coreIdx       uint32 // completed core entry for A → ω in state q
+	ntIdx         uint32 // index into ntTrans for (p, A)
+	lastPredState uint32 // state immediately before q on this trace
+}
+
 // buildItemSetsLALR constructs LALR(1) item sets using the DeRemer/Pennello algorithm.
 // Returns the item sets with lookaheads attached only to reduce items.
 func (ctx *lrContext) buildItemSetsLALR() []lrItemSet {
@@ -602,11 +613,6 @@ func (ctx *lrContext) computeLALRLookaheads() {
 	// At the same time, compute LOOKBACK:
 	// (q, A → ω) lookback (p, A) iff p --ω--> q
 	// i.e., from state p, reading the entire RHS of production "A → ω" leads to q.
-	type lookbackEntry struct {
-		stateIdx uint32 // state q where reduce happens
-		coreIdx  uint32 // completed core entry for A → ω in state q
-		ntIdx    uint32 // index into ntTrans for (p, A)
-	}
 	var lookbacks []lookbackEntry
 
 	includes := make([][]uint32, numTrans)
@@ -655,6 +661,7 @@ func (ctx *lrContext) computeLALRLookaheads() {
 			lhs := prod.LHS
 			rhs := prod.RHS
 			curState := stateIdx
+			lastPred := stateIdx
 			valid := true
 			includePos := includePositionsByProd[pi]
 			nextIncludeIdx := 0
@@ -670,6 +677,7 @@ func (ctx *lrContext) computeLALRLookaheads() {
 					}
 					nextIncludeIdx++
 				}
+				lastPred = curState
 				if next, ok := ctx.transitionTarget(curState, sym); ok {
 					curState = next
 				} else {
@@ -686,9 +694,10 @@ func (ctx *lrContext) computeLALRLookaheads() {
 			}
 			if coreIdx, ok := ctx.lalrLR0ItemSets[curState].coreLookup(pi, len(rhs)); ok {
 				lookbacks = append(lookbacks, lookbackEntry{
-					stateIdx: uint32(curState),
-					coreIdx:  uint32(coreIdx),
-					ntIdx:    uint32(srcIdx),
+					stateIdx:      uint32(curState),
+					coreIdx:       uint32(coreIdx),
+					ntIdx:         uint32(srcIdx),
+					lastPredState: uint32(lastPred),
 				})
 			}
 		}
@@ -772,8 +781,17 @@ func (ctx *lrContext) computeLALRLookaheads() {
 	}
 
 	ctx.materializeLALRItemSets(reduceLookaheads)
-	lookbacks = nil
-	followSets = nil
+	// Retain DeRemer/Pennello data for LR(1) splitting when provenance is
+	// tracked. The splitter uses lookbacks (with lastPredState) and followSets
+	// to partition reduce lookaheads per predecessor of a candidate state.
+	if ctx.trackProvenance {
+		ctx.lalrLookbacks = lookbacks
+		ctx.lalrFollowSets = followSets
+		ctx.lalrNTTransIndex = ntTransIndex
+	} else {
+		lookbacks = nil
+		followSets = nil
+	}
 	reduceLookaheads = nil
 	ctx.maybeGCForLargeLALR()
 	ctx.pruneConditionalTypeQmarkLookaheads()

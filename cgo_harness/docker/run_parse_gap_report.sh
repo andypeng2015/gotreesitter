@@ -11,6 +11,7 @@ CPUS_LIMIT="1"
 PIDS_LIMIT="4096"
 GOMAXPROCS_VALUE="1"
 GOMEMLIMIT_VALUE="3GiB"
+REPORT_TIMEOUT="15m"
 LANGS_CSV="go,python,rust,java,c"
 MODES_CSV="cgo_full,go_full,go_no_tree,go_parse_query,go_cursor_walk,go_edit,go_noop_incremental"
 CORPUS_PATH="cgo_harness/corpus_manifest.json"
@@ -23,6 +24,7 @@ ALLOW_PARITY_FAIL=0
 TIME_PARITY_FAILURES=0
 REQUIRE_PARITY_LANGS=""
 GATE_ONLY=0
+PARSE_ONLY_GATE=0
 BUILD_IMAGE=1
 ARENA_BREAKDOWN=0
 PHASE_TIMING=0
@@ -54,11 +56,14 @@ Options:
   --pids <count>            Docker PID limit (default: 4096)
   --gomaxprocs <n>          GOMAXPROCS inside container (default: 1)
   --gomemlimit <value>      GOMEMLIMIT inside container (default: 3GiB)
+  --report-timeout <dur>    Wall-clock timeout for compile/report commands inside container (default: 15m; 0 disables)
+  --timeout <dur>           Alias for --report-timeout
   --allow-parity-fail       Write rows for parity-blocked samples and exit zero unless modes fail
   --require-parity-langs <list>
-                            Comma-separated languages that must pass parity even with --allow-parity-fail
+                            Comma-separated languages that must pass the selected parity gate even with --allow-parity-fail
   --time-parity-failures    Also run timing modes for parity-blocked samples
   --gate-only               Run parse/highlight/query correctness gates only
+  --parse-only-gate         Run only parse tree parity in correctness gates; skip highlight/query parity
   --arena-breakdown         Enable detailed gotreesitter arena breakdown in report rows
   --phase-timing            Enable parser phase/subphase timing in report rows
   --hot-shapes <n>          Include top-N GLR fork/reduce/merge hot-shape rows in runtime JSON
@@ -93,10 +98,12 @@ while [[ $# -gt 0 ]]; do
     --pids) PIDS_LIMIT="$2"; shift 2 ;;
     --gomaxprocs) GOMAXPROCS_VALUE="$2"; shift 2 ;;
     --gomemlimit) GOMEMLIMIT_VALUE="$2"; shift 2 ;;
+    --report-timeout|--timeout) REPORT_TIMEOUT="$2"; shift 2 ;;
     --allow-parity-fail) ALLOW_PARITY_FAIL=1; shift ;;
     --require-parity-langs) REQUIRE_PARITY_LANGS="$2"; shift 2 ;;
     --time-parity-failures) TIME_PARITY_FAILURES=1; shift ;;
     --gate-only) GATE_ONLY=1; shift ;;
+    --parse-only-gate) PARSE_ONLY_GATE=1; shift ;;
     --arena-breakdown) ARENA_BREAKDOWN=1; shift ;;
     --phase-timing) PHASE_TIMING=1; shift ;;
     --hot-shapes) HOT_SHAPES="$2"; shift 2 ;;
@@ -116,6 +123,13 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ "$REPORT_TIMEOUT" != "0" && "$REPORT_TIMEOUT" != "none" && "$REPORT_TIMEOUT" != "NONE" ]]; then
+  if ! [[ "$REPORT_TIMEOUT" =~ ^[0-9]+([.][0-9]+)?[smhd]?$ ]]; then
+    echo "--report-timeout must be 0, none, or a GNU timeout duration such as 30s, 10m, or 1h" >&2
+    exit 2
+  fi
+fi
 
 REPO_ROOT="$(cd "$REPO_ROOT" && pwd)"
 OUT_ROOT="${OUT_ROOT/#\~/$HOME}"
@@ -175,6 +189,7 @@ PARSE_NODE_LIMIT_SCALE="${GOT_PARSE_NODE_LIMIT_SCALE-}"
   echo "pids=$PIDS_LIMIT"
   echo "gomaxprocs=$GOMAXPROCS_VALUE"
   echo "gomemlimit=$GOMEMLIMIT_VALUE"
+  echo "report_timeout=$REPORT_TIMEOUT"
   echo "langs=$LANGS_CSV"
   echo "modes=$MODES_CSV"
   echo "corpus=$CORPUS_PATH"
@@ -185,6 +200,7 @@ PARSE_NODE_LIMIT_SCALE="${GOT_PARSE_NODE_LIMIT_SCALE-}"
   echo "require_parity_langs=$REQUIRE_PARITY_LANGS"
   echo "time_parity_failures=$TIME_PARITY_FAILURES"
   echo "gate_only=$GATE_ONLY"
+  echo "parse_only_gate=$PARSE_ONLY_GATE"
   echo "arena_breakdown=$ARENA_BREAKDOWN"
   echo "phase_timing=$PHASE_TIMING"
   echo "hot_shapes=$HOT_SHAPES"
@@ -213,6 +229,10 @@ fi
 gate_only_arg_text=""
 if [[ "$GATE_ONLY" == "1" ]]; then
   gate_only_arg_text="--gate-only"
+fi
+parse_only_gate_arg_text=""
+if [[ "$PARSE_ONLY_GATE" == "1" ]]; then
+  parse_only_gate_arg_text="--parse-only-gate"
 fi
 arena_breakdown_arg_text=""
 if [[ "$ARENA_BREAKDOWN" == "1" ]]; then
@@ -248,9 +268,20 @@ if [[ "$ACTION_TIMING" == "1" ]]; then
   action_timing_arg_text="--action-timing"
   action_timing_env_text="GOT_PARSE_ACTION_TIMING='1'"
 fi
+timeout_cmd_text=""
+timeout_check_text=":"
+case "$REPORT_TIMEOUT" in
+  0|none|NONE)
+    ;;
+  *)
+    timeout_cmd_text="timeout --kill-after=30s '$REPORT_TIMEOUT'"
+    timeout_check_text="command -v timeout >/dev/null || { echo 'timeout command not found in container' >&2; exit 127; }"
+    ;;
+esac
 
 inner_cmd=$(cat <<EOF
 cd /workspace/cgo_harness
+$timeout_check_text
 env \
   GOMAXPROCS='$GOMAXPROCS_VALUE' \
   GOMEMLIMIT='$GOMEMLIMIT_VALUE' \
@@ -264,7 +295,7 @@ env \
   GTS_PARSE_GAP_DOCKER_IMAGE='$IMAGE_TAG' \
   GTS_PARSE_GAP_CPUS='$CPUS_LIMIT' \
   GTS_PARSE_GAP_MEMORY='$MEMORY_LIMIT' \
-  go test ./cmd/parse_gap_report -tags 'treesitter_c_parity perf' -run '^$' -count=1
+  $timeout_cmd_text go test ./cmd/parse_gap_report -tags 'treesitter_c_parity perf' -run '^$' -count=1
 env \
   GOMAXPROCS='$GOMAXPROCS_VALUE' \
   GOMEMLIMIT='$GOMEMLIMIT_VALUE' \
@@ -278,7 +309,7 @@ env \
   GTS_PARSE_GAP_DOCKER_IMAGE='$IMAGE_TAG' \
   GTS_PARSE_GAP_CPUS='$CPUS_LIMIT' \
   GTS_PARSE_GAP_MEMORY='$MEMORY_LIMIT' \
-  /usr/bin/time -v go run -tags 'treesitter_c_parity perf' ./cmd/parse_gap_report \
+  /usr/bin/time -v $timeout_cmd_text go run -tags 'treesitter_c_parity perf' ./cmd/parse_gap_report \
     --repo-root /workspace \
     --langs '$LANGS_CSV' \
     --modes '$MODES_CSV' \
@@ -291,6 +322,7 @@ env \
     $require_parity_arg_text \
     $time_parity_arg_text \
     $gate_only_arg_text \
+    $parse_only_gate_arg_text \
     $arena_breakdown_arg_text \
     $phase_timing_arg_text \
     $hot_shapes_arg_text \

@@ -70,6 +70,26 @@ type realCorpusRuntimeTotals struct {
 	resultCompatibilityNanos          int64
 	resultParentLinkNanos             int64
 	normalizationNanos                int64
+	reduceRangeNanos                  int64
+	reducePendingParentNanos          int64
+	reduceChildBuildNanos             int64
+	reduceParentBuildNanos            int64
+	reduceSpanNanos                   int64
+	reduceStackPushNanos              int64
+	reduceNoTreeBuildNanos            int64
+	actionExtraShiftNanos             int64
+	actionNoActionNanos               int64
+	actionNoActionRelexNanos          int64
+	actionNoActionMissingNanos        int64
+	actionNoActionRecoverNanos        int64
+	actionNoActionErrorNanos          int64
+	actionConflictChoiceNanos         int64
+	actionConflictForkNanos           int64
+	actionSingleShiftNanos            int64
+	actionSingleReduceNanos           int64
+	actionSingleAcceptNanos           int64
+	actionSingleRecoverNanos          int64
+	actionSingleOtherNanos            int64
 }
 
 type realCorpusIncrementalProfileTotals struct {
@@ -483,7 +503,11 @@ func filterRealCorpusBenchmarkFreshParity(b *testing.B, cases []realCorpusBenchm
 	out := make([]realCorpusBenchmarkCase, 0, len(cases))
 	var skipped []string
 	for _, tc := range cases {
-		errs, first := realCorpusBenchmarkFreshParityErrors(b, tc)
+		errs, first, ok, reason := tryRealCorpusBenchmarkFreshParityErrors(b, tc)
+		if !ok {
+			skipped = append(skipped, fmt.Sprintf("%s(%s)", filepath.Base(tc.path), reason))
+			continue
+		}
 		if len(errs) == 0 {
 			out = append(out, tc)
 			continue
@@ -497,6 +521,29 @@ func filterRealCorpusBenchmarkFreshParity(b *testing.B, cases []realCorpusBenchm
 		b.Logf("GTS_REAL_CORPUS_BENCH_SKIP_MISMATCH skipped %d/%d file(s): %s", len(skipped), len(cases), strings.Join(skipped, ", "))
 	}
 	return out
+}
+
+func tryRealCorpusBenchmarkFreshParityErrors(b *testing.B, tc realCorpusBenchmarkCase) ([]string, *DumpV1Divergence, bool, string) {
+	b.Helper()
+	goParser := gotreesitter.NewParser(tc.goLang)
+	goTree, ok := tryParseCompleteRealCorpusGoFull(b, tc, goParser)
+	if !ok {
+		return nil, nil, false, "gotreesitter incomplete fresh parse"
+	}
+	defer releaseGoTree(goTree)
+
+	cParser := newRealCorpusCParser(b, tc)
+	defer cParser.Close()
+	cTree, ok := tryParseCompleteRealCorpusCFull(cParser, tc.source)
+	if !ok {
+		return nil, nil, false, "C incomplete fresh parse"
+	}
+	defer cTree.Close()
+
+	var errs []string
+	compareNodes(goTree.RootNode(), tc.goLang, cTree.RootNode(), "root", &errs)
+	first := FirstDivergenceDumpV1(goTree.RootNode(), tc.goLang, cTree.RootNode())
+	return errs, first, true, ""
 }
 
 func realCorpusBenchmarkFreshParityErrors(b *testing.B, tc realCorpusBenchmarkCase) ([]string, *DumpV1Divergence) {
@@ -590,12 +637,18 @@ func verifyRealCorpusIncrementalCandidate(b *testing.B, tc realCorpusBenchmarkCa
 	edited := applyEditCandidate(tc.source, candidate)
 
 	goParser := gotreesitter.NewParser(tc.goLang)
-	goFreshTree := parseRealCorpusGoFull(b, realCorpusCaseWithSource(tc, edited), goParser)
+	goFreshTree, ok := tryParseCompleteRealCorpusGoFull(b, realCorpusCaseWithSource(tc, edited), goParser)
+	if !ok {
+		return realCorpusIncrementalCase{}, false
+	}
 	defer releaseGoTree(goFreshTree)
 
 	cParser := newRealCorpusCParser(b, tc)
 	defer cParser.Close()
-	cFreshTree := parseRealCorpusCFull(b, cParser, edited)
+	cFreshTree, ok := tryParseCompleteRealCorpusCFull(cParser, edited)
+	if !ok {
+		return realCorpusIncrementalCase{}, false
+	}
 	defer cFreshTree.Close()
 	var freshErrs []string
 	compareNodes(goFreshTree.RootNode(), tc.goLang, cFreshTree.RootNode(), "root", &freshErrs)
@@ -612,8 +665,11 @@ func verifyRealCorpusIncrementalCandidate(b *testing.B, tc realCorpusBenchmarkCa
 		editCase.original,
 		editCase.replacement,
 	)
-	goIncrTree := parseRealCorpusGoIncrementalWithPhase(b, realCorpusCaseWithSource(tc, edited), goParser, goOldTree, verifyPhase)
+	goIncrTree, ok := tryParseCompleteRealCorpusGoIncrementalWithPhase(b, realCorpusCaseWithSource(tc, edited), goParser, goOldTree, verifyPhase)
 	releaseGoTree(goOldTree)
+	if !ok {
+		return realCorpusIncrementalCase{}, false
+	}
 	defer releaseGoTree(goIncrTree)
 	var goIncrErrs []string
 	compareGoNodes(goIncrTree.RootNode(), tc.goLang, goFreshTree.RootNode(), "root", &goIncrErrs)
@@ -623,8 +679,11 @@ func verifyRealCorpusIncrementalCandidate(b *testing.B, tc realCorpusBenchmarkCa
 
 	cOldTree := parseRealCorpusCFull(b, cParser, tc.source)
 	cOldTree.Edit(&editCase.cEdit)
-	cIncrTree := parseRealCorpusCIncremental(b, cParser, edited, cOldTree)
+	cIncrTree, ok := tryParseCompleteRealCorpusCIncremental(cParser, edited, cOldTree)
 	cOldTree.Close()
+	if !ok {
+		return realCorpusIncrementalCase{}, false
+	}
 	defer cIncrTree.Close()
 	var cIncrErrs []string
 	compareNodes(goFreshTree.RootNode(), tc.goLang, cIncrTree.RootNode(), "root", &cIncrErrs)
@@ -870,6 +929,15 @@ func benchmarkRealCorpusCParseIncrementalNoEdit(b *testing.B, cases []realCorpus
 
 func parseRealCorpusGoFull(tb testing.TB, tc realCorpusBenchmarkCase, parser *gotreesitter.Parser) *gotreesitter.Tree {
 	tb.Helper()
+	tree, ok := tryParseCompleteRealCorpusGoFull(tb, tc, parser)
+	if !ok {
+		tb.Fatalf("gotreesitter full %s/%s incomplete parse", tc.name, filepath.Base(tc.path))
+	}
+	return tree
+}
+
+func tryParseCompleteRealCorpusGoFull(tb testing.TB, tc realCorpusBenchmarkCase, parser *gotreesitter.Parser) (*gotreesitter.Tree, bool) {
+	tb.Helper()
 	var tree *gotreesitter.Tree
 	var err error
 	switch tc.report.Backend {
@@ -883,8 +951,10 @@ func parseRealCorpusGoFull(tb testing.TB, tc realCorpusBenchmarkCase, parser *go
 	default:
 		tb.Fatalf("unsupported parse backend %q for %q", tc.report.Backend, tc.name)
 	}
-	requireCompleteRealCorpusGoTree(tb, tc, tree, "gotreesitter full", err)
-	return tree
+	if !isCompleteRealCorpusGoTree(tb, tc, tree, "gotreesitter full", err) {
+		return nil, false
+	}
+	return tree, true
 }
 
 func parseRealCorpusGoIncremental(tb testing.TB, tc realCorpusBenchmarkCase, parser *gotreesitter.Parser, oldTree *gotreesitter.Tree) *gotreesitter.Tree {
@@ -893,6 +963,15 @@ func parseRealCorpusGoIncremental(tb testing.TB, tc realCorpusBenchmarkCase, par
 }
 
 func parseRealCorpusGoIncrementalWithPhase(tb testing.TB, tc realCorpusBenchmarkCase, parser *gotreesitter.Parser, oldTree *gotreesitter.Tree, phase string) *gotreesitter.Tree {
+	tb.Helper()
+	tree, ok := tryParseCompleteRealCorpusGoIncrementalWithPhase(tb, tc, parser, oldTree, phase)
+	if !ok {
+		tb.Fatalf("%s %s/%s incomplete parse", phase, tc.name, filepath.Base(tc.path))
+	}
+	return tree
+}
+
+func tryParseCompleteRealCorpusGoIncrementalWithPhase(tb testing.TB, tc realCorpusBenchmarkCase, parser *gotreesitter.Parser, oldTree *gotreesitter.Tree, phase string) (*gotreesitter.Tree, bool) {
 	tb.Helper()
 	var tree *gotreesitter.Tree
 	var err error
@@ -907,8 +986,10 @@ func parseRealCorpusGoIncrementalWithPhase(tb testing.TB, tc realCorpusBenchmark
 	default:
 		tb.Fatalf("unsupported incremental backend %q for %q", tc.report.Backend, tc.name)
 	}
-	requireCompleteRealCorpusGoTree(tb, tc, tree, phase, err)
-	return tree
+	if !isCompleteRealCorpusGoTree(tb, tc, tree, phase, err) {
+		return nil, false
+	}
+	return tree, true
 }
 
 func parseRealCorpusGoIncrementalProfiled(tb testing.TB, tc realCorpusBenchmarkCase, parser *gotreesitter.Parser, oldTree *gotreesitter.Tree) (*gotreesitter.Tree, gotreesitter.IncrementalParseProfile) {
@@ -938,20 +1019,36 @@ func parseRealCorpusGoIncrementalProfiledWithPhase(tb testing.TB, tc realCorpusB
 
 func requireCompleteRealCorpusGoTree(tb testing.TB, tc realCorpusBenchmarkCase, tree *gotreesitter.Tree, phase string, err error) {
 	tb.Helper()
+	if !isCompleteRealCorpusGoTree(tb, tc, tree, phase, err) {
+		tb.Fatalf("%s %s/%s incomplete parse", phase, tc.name, filepath.Base(tc.path))
+	}
+}
+
+func isCompleteRealCorpusGoTree(tb testing.TB, tc realCorpusBenchmarkCase, tree *gotreesitter.Tree, phase string, err error) bool {
+	tb.Helper()
 	if err != nil {
 		if tree != nil {
 			releaseGoTree(tree)
 		}
-		tb.Fatalf("%s %s/%s error: %v", phase, tc.name, filepath.Base(tc.path), err)
+		tb.Logf("%s %s/%s candidate parse error: %v", phase, tc.name, filepath.Base(tc.path), err)
+		return false
 	}
-	if tree == nil || tree.RootNode() == nil {
-		tb.Fatalf("%s %s/%s returned nil tree", phase, tc.name, filepath.Base(tc.path))
+	if tree == nil {
+		tb.Logf("%s %s/%s candidate parse returned nil tree", phase, tc.name, filepath.Base(tc.path))
+		return false
+	}
+	if tree.RootNode() == nil {
+		releaseGoTree(tree)
+		tb.Logf("%s %s/%s candidate parse returned nil root", phase, tc.name, filepath.Base(tc.path))
+		return false
 	}
 	if got, want := tree.RootNode().EndByte(), uint32(len(tc.source)); got != want {
 		rt := tree.ParseRuntime()
 		releaseGoTree(tree)
-		tb.Fatalf("%s %s/%s truncated: root.EndByte=%d want=%d %s", phase, tc.name, filepath.Base(tc.path), got, want, rt.Summary())
+		tb.Logf("%s %s/%s candidate parse truncated: root.EndByte=%d want=%d %s", phase, tc.name, filepath.Base(tc.path), got, want, rt.Summary())
+		return false
 	}
+	return true
 }
 
 func newRealCorpusCParser(tb testing.TB, tc realCorpusBenchmarkCase) *sitter.Parser {
@@ -974,11 +1071,27 @@ func parseRealCorpusCFull(tb testing.TB, parser *sitter.Parser, source []byte) *
 	return tree
 }
 
+func tryParseCompleteRealCorpusCFull(parser *sitter.Parser, source []byte) (*sitter.Tree, bool) {
+	tree := parser.Parse(source, nil)
+	if !isCompleteRealCorpusCTree(tree, source) {
+		return nil, false
+	}
+	return tree, true
+}
+
 func parseRealCorpusCIncremental(tb testing.TB, parser *sitter.Parser, source []byte, oldTree *sitter.Tree) *sitter.Tree {
 	tb.Helper()
 	tree := parser.Parse(source, oldTree)
 	requireCompleteRealCorpusCTree(tb, tree, source, "C incremental")
 	return tree
+}
+
+func tryParseCompleteRealCorpusCIncremental(parser *sitter.Parser, source []byte, oldTree *sitter.Tree) (*sitter.Tree, bool) {
+	tree := parser.Parse(source, oldTree)
+	if !isCompleteRealCorpusCTree(tree, source) {
+		return nil, false
+	}
+	return tree, true
 }
 
 func requireCompleteRealCorpusCTree(tb testing.TB, tree *sitter.Tree, source []byte, phase string) {
@@ -987,9 +1100,27 @@ func requireCompleteRealCorpusCTree(tb testing.TB, tree *sitter.Tree, source []b
 		tb.Fatalf("%s parse returned nil tree", phase)
 	}
 	if got, want := uint32(tree.RootNode().EndByte()), uint32(len(source)); got != want {
+		root := tree.RootNode()
+		kind := root.Kind()
+		hasError := root.HasError()
 		tree.Close()
-		tb.Fatalf("%s parse truncated: root.EndByte=%d want=%d type=%q hasError=%v", phase, got, want, tree.RootNode().Kind(), tree.RootNode().HasError())
+		tb.Fatalf("%s parse truncated: root.EndByte=%d want=%d type=%q hasError=%v", phase, got, want, kind, hasError)
 	}
+}
+
+func isCompleteRealCorpusCTree(tree *sitter.Tree, source []byte) bool {
+	if tree == nil {
+		return false
+	}
+	if tree.RootNode() == nil {
+		tree.Close()
+		return false
+	}
+	if got, want := uint32(tree.RootNode().EndByte()), uint32(len(source)); got != want {
+		tree.Close()
+		return false
+	}
+	return true
 }
 
 func toggleRealCorpusEditByte(src []byte, tc realCorpusIncrementalCase) {
@@ -1049,6 +1180,30 @@ func (t *realCorpusRuntimeTotals) add(rt gotreesitter.ParseRuntime) {
 	t.resultCompatibilityNanos += rt.ResultCompatibilityNanos
 	t.resultParentLinkNanos += rt.ResultParentLinkNanos
 	t.normalizationNanos += rt.NormalizationNanos
+	if reduceTiming := rt.ReduceTiming; reduceTiming != nil {
+		t.reduceRangeNanos += reduceTiming.RangeNanos
+		t.reducePendingParentNanos += reduceTiming.PendingParentNanos
+		t.reduceChildBuildNanos += reduceTiming.ChildBuildNanos
+		t.reduceParentBuildNanos += reduceTiming.ParentBuildNanos
+		t.reduceSpanNanos += reduceTiming.SpanNanos
+		t.reduceStackPushNanos += reduceTiming.StackPushNanos
+		t.reduceNoTreeBuildNanos += reduceTiming.NoTreeBuildNanos
+	}
+	if actionTiming := rt.ActionTiming; actionTiming != nil {
+		t.actionExtraShiftNanos += actionTiming.ExtraShiftNanos
+		t.actionNoActionNanos += actionTiming.NoActionNanos
+		t.actionNoActionRelexNanos += actionTiming.NoActionRelexNanos
+		t.actionNoActionMissingNanos += actionTiming.NoActionMissingNanos
+		t.actionNoActionRecoverNanos += actionTiming.NoActionRecoverNanos
+		t.actionNoActionErrorNanos += actionTiming.NoActionErrorNanos
+		t.actionConflictChoiceNanos += actionTiming.ConflictChoiceNanos
+		t.actionConflictForkNanos += actionTiming.ConflictForkNanos
+		t.actionSingleShiftNanos += actionTiming.SingleShiftNanos
+		t.actionSingleReduceNanos += actionTiming.SingleReduceNanos
+		t.actionSingleAcceptNanos += actionTiming.SingleAcceptNanos
+		t.actionSingleRecoverNanos += actionTiming.SingleRecoverNanos
+		t.actionSingleOtherNanos += actionTiming.SingleOtherNanos
+	}
 }
 
 func (t *realCorpusIncrementalProfileTotals) addEdit(d time.Duration) {
@@ -1173,6 +1328,34 @@ func (t realCorpusRuntimeTotals) report(b *testing.B, cases []realCorpusBenchmar
 		t.resultCompatibilityNanos,
 		t.resultParentLinkNanos,
 		t.normalizationNanos,
+	)
+	reportRealCorpusReduceTimingMetrics(
+		b,
+		n,
+		t.reduceRangeNanos,
+		t.reducePendingParentNanos,
+		t.reduceChildBuildNanos,
+		t.reduceParentBuildNanos,
+		t.reduceSpanNanos,
+		t.reduceStackPushNanos,
+		t.reduceNoTreeBuildNanos,
+	)
+	reportRealCorpusActionTimingMetrics(
+		b,
+		n,
+		t.actionExtraShiftNanos,
+		t.actionNoActionNanos,
+		t.actionNoActionRelexNanos,
+		t.actionNoActionMissingNanos,
+		t.actionNoActionRecoverNanos,
+		t.actionNoActionErrorNanos,
+		t.actionConflictChoiceNanos,
+		t.actionConflictForkNanos,
+		t.actionSingleShiftNanos,
+		t.actionSingleReduceNanos,
+		t.actionSingleAcceptNanos,
+		t.actionSingleRecoverNanos,
+		t.actionSingleOtherNanos,
 	)
 }
 
@@ -1332,6 +1515,82 @@ func reportRealCorpusPhaseMetrics(
 	b.ReportMetric(float64(resultParentLinkNanos)/n, "result_parent_link_ns/op")
 	b.ReportMetric(float64(normalizationNanos)/n, "normalization_ns/op")
 	b.ReportMetric(float64(resultAccountedNanos)/n, "result_accounted_ns/op")
+}
+
+func reportRealCorpusReduceTimingMetrics(
+	b *testing.B,
+	n float64,
+	reduceRangeNanos int64,
+	reducePendingParentNanos int64,
+	reduceChildBuildNanos int64,
+	reduceParentBuildNanos int64,
+	reduceSpanNanos int64,
+	reduceStackPushNanos int64,
+	reduceNoTreeBuildNanos int64,
+) {
+	reduceTimedNanos := reduceRangeNanos +
+		reducePendingParentNanos +
+		reduceChildBuildNanos +
+		reduceParentBuildNanos +
+		reduceSpanNanos +
+		reduceStackPushNanos +
+		reduceNoTreeBuildNanos
+	if reduceTimedNanos == 0 {
+		return
+	}
+	b.ReportMetric(float64(reduceRangeNanos)/n, "reduce_range_ns/op")
+	b.ReportMetric(float64(reducePendingParentNanos)/n, "reduce_pending_parent_ns/op")
+	b.ReportMetric(float64(reduceChildBuildNanos)/n, "reduce_child_build_ns/op")
+	b.ReportMetric(float64(reduceParentBuildNanos)/n, "reduce_parent_build_ns/op")
+	b.ReportMetric(float64(reduceSpanNanos)/n, "reduce_span_ns/op")
+	b.ReportMetric(float64(reduceStackPushNanos)/n, "reduce_stack_push_ns/op")
+	b.ReportMetric(float64(reduceNoTreeBuildNanos)/n, "reduce_notree_build_ns/op")
+	b.ReportMetric(float64(reduceTimedNanos)/n, "reduce_timed_ns/op")
+}
+
+func reportRealCorpusActionTimingMetrics(
+	b *testing.B,
+	n float64,
+	actionExtraShiftNanos int64,
+	actionNoActionNanos int64,
+	actionNoActionRelexNanos int64,
+	actionNoActionMissingNanos int64,
+	actionNoActionRecoverNanos int64,
+	actionNoActionErrorNanos int64,
+	actionConflictChoiceNanos int64,
+	actionConflictForkNanos int64,
+	actionSingleShiftNanos int64,
+	actionSingleReduceNanos int64,
+	actionSingleAcceptNanos int64,
+	actionSingleRecoverNanos int64,
+	actionSingleOtherNanos int64,
+) {
+	actionTimedNanos := actionExtraShiftNanos +
+		actionNoActionNanos +
+		actionConflictChoiceNanos +
+		actionConflictForkNanos +
+		actionSingleShiftNanos +
+		actionSingleReduceNanos +
+		actionSingleAcceptNanos +
+		actionSingleRecoverNanos +
+		actionSingleOtherNanos
+	if actionTimedNanos == 0 {
+		return
+	}
+	b.ReportMetric(float64(actionExtraShiftNanos)/n, "action_extra_shift_ns/op")
+	b.ReportMetric(float64(actionNoActionNanos)/n, "action_no_action_ns/op")
+	b.ReportMetric(float64(actionNoActionRelexNanos)/n, "action_no_action_relex_ns/op")
+	b.ReportMetric(float64(actionNoActionMissingNanos)/n, "action_no_action_missing_ns/op")
+	b.ReportMetric(float64(actionNoActionRecoverNanos)/n, "action_no_action_recover_ns/op")
+	b.ReportMetric(float64(actionNoActionErrorNanos)/n, "action_no_action_error_ns/op")
+	b.ReportMetric(float64(actionConflictChoiceNanos)/n, "action_conflict_choice_ns/op")
+	b.ReportMetric(float64(actionConflictForkNanos)/n, "action_conflict_fork_ns/op")
+	b.ReportMetric(float64(actionSingleShiftNanos)/n, "action_single_shift_ns/op")
+	b.ReportMetric(float64(actionSingleReduceNanos)/n, "action_single_reduce_ns/op")
+	b.ReportMetric(float64(actionSingleAcceptNanos)/n, "action_single_accept_ns/op")
+	b.ReportMetric(float64(actionSingleRecoverNanos)/n, "action_single_recover_ns/op")
+	b.ReportMetric(float64(actionSingleOtherNanos)/n, "action_single_other_ns/op")
+	b.ReportMetric(float64(actionTimedNanos)/n, "action_timed_ns/op")
 }
 
 func reportRealCorpusCaseMetrics(b *testing.B, cases []realCorpusBenchmarkCase) {

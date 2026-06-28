@@ -38,6 +38,73 @@ func TestPendingChildEntrySizeBudget(t *testing.T) {
 	}
 }
 
+func TestGLRStackClonePreservesRecoverability(t *testing.T) {
+	original := glrStack{
+		entries:             []stackEntry{{state: 1}, {state: 2}},
+		cacheEntries:        true,
+		byteOffset:          12,
+		score:               7,
+		recoverabilityKnown: true,
+		mayRecover:          false,
+		branchOrder:         3,
+	}
+
+	entryClone := original.clone()
+	if !entryClone.recoverabilityKnown {
+		t.Fatal("entry clone lost recoverabilityKnown")
+	}
+	if entryClone.mayRecover {
+		t.Fatal("entry clone changed mayRecover")
+	}
+
+	var scratch gssScratch
+	original.ensureGSS(&scratch)
+	gssClone := original.clone()
+	if !gssClone.recoverabilityKnown {
+		t.Fatal("GSS clone lost recoverabilityKnown")
+	}
+	if gssClone.mayRecover {
+		t.Fatal("GSS clone changed mayRecover")
+	}
+
+	scratchClone := original.cloneWithScratch(&scratch)
+	if !scratchClone.recoverabilityKnown {
+		t.Fatal("scratch clone lost recoverabilityKnown")
+	}
+	if scratchClone.mayRecover {
+		t.Fatal("scratch clone changed mayRecover")
+	}
+
+	original.mayRecover = true
+	recoveringClone := original.cloneWithScratch(&scratch)
+	if !recoveringClone.recoverabilityKnown || !recoveringClone.mayRecover {
+		t.Fatalf("recovering clone flags = known:%v may:%v, want true/true", recoveringClone.recoverabilityKnown, recoveringClone.mayRecover)
+	}
+}
+
+func TestGLRStackCloneWithScratchPreservesRecoverabilityFromEntries(t *testing.T) {
+	original := glrStack{
+		entries:             []stackEntry{{state: 1}, {state: 2}},
+		recoverabilityKnown: true,
+		mayRecover:          false,
+	}
+
+	var scratch gssScratch
+	gssClone := original.cloneWithScratch(&scratch)
+	if !gssClone.recoverabilityKnown {
+		t.Fatal("cloneWithScratch lost recoverabilityKnown")
+	}
+	if gssClone.mayRecover {
+		t.Fatal("cloneWithScratch changed mayRecover")
+	}
+
+	original.mayRecover = true
+	recoveringClone := original.cloneWithScratch(&scratch)
+	if !recoveringClone.recoverabilityKnown || !recoveringClone.mayRecover {
+		t.Fatalf("recovering clone flags = known:%v may:%v, want true/true", recoveringClone.recoverabilityKnown, recoveringClone.mayRecover)
+	}
+}
+
 func TestPendingChildEntryRoundTripsKindAndState(t *testing.T) {
 	arena := newNodeArena(arenaClassFull)
 	node := newLeafNodeInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
@@ -2384,6 +2451,130 @@ func TestNodeEquivCacheZeroVersionInvalidatesAfterBump(t *testing.T) {
 	nodeBumpEquivVersion(a)
 	if hit, ok := lookupNodeEquivCache(&scratch, a, b, 0); ok || hit {
 		t.Fatalf("lookup after version bump = (%v, %v), want (false, false)", hit, ok)
+	}
+}
+
+func TestGSSStackEquivCacheSymmetricAndEpochScoped(t *testing.T) {
+	var scratch glrMergeScratch
+	scratch.beginEquivEpoch()
+	var gss gssScratch
+	a := buildGSSStack([]stackEntry{{state: 1}, {state: 2}}, &gss)
+	b := buildGSSStack([]stackEntry{{state: 1}, {state: 2}}, &gss)
+
+	storeGSSStackEquivCache(&scratch, a.head, b.head, true)
+	if hit, ok := lookupGSSStackEquivCache(&scratch, b.head, a.head); !ok || !hit {
+		t.Fatalf("reversed lookup = (%v, %v), want (true, true)", hit, ok)
+	}
+
+	scratch.beginEquivEpoch()
+	if hit, ok := lookupGSSStackEquivCache(&scratch, a.head, b.head); ok || hit {
+		t.Fatalf("lookup after epoch bump = (%v, %v), want (false, false)", hit, ok)
+	}
+}
+
+func TestGSSStacksEqualStoresStackEquivCache(t *testing.T) {
+	var merge glrMergeScratch
+	merge.beginEquivEpoch()
+	var gss gssScratch
+	arena := newNodeArena(arenaClassFull)
+
+	aEntries := []stackEntry{{state: 1}}
+	bEntries := []stackEntry{{state: 1}}
+	for i := 0; i < 12; i++ {
+		aNode := newLeafNodeInArena(arena, Symbol(10+i), true, uint32(i), uint32(i+1), Point{Column: uint32(i)}, Point{Column: uint32(i + 1)})
+		bNode := newLeafNodeInArena(arena, Symbol(10+i), true, uint32(i), uint32(i+1), Point{Column: uint32(i)}, Point{Column: uint32(i + 1)})
+		aEntries = append(aEntries, newStackEntryNode(StateID(i+2), aNode))
+		bEntries = append(bEntries, newStackEntryNode(StateID(i+2), bNode))
+	}
+	a := buildGSSStack(aEntries, &gss)
+	b := buildGSSStack(bEntries, &gss)
+	if !gssStacksEqualForLanguageWithScratch(&merge, nil, a, b) {
+		t.Fatal("gssStacksEqualForLanguageWithScratch = false, want true")
+	}
+	if hit, ok := lookupGSSStackEquivCache(&merge, a.head, b.head); !ok || !hit {
+		t.Fatalf("cached stack equivalence = (%v, %v), want (true, true)", hit, ok)
+	}
+}
+
+func TestPerlFrontierMergeHashPreservesGenericEquivalentStacks(t *testing.T) {
+	var merge glrMergeScratch
+	merge.beginEquivEpoch()
+	merge.frontierMergeHash = true
+	lang := &Language{Name: "perl"}
+
+	a := perlFrontierHashTestStack(perlFrontierHashTestNode(30))
+	b := perlFrontierHashTestStack(perlFrontierHashTestNode(30))
+
+	hashA := stackHashForMerge(&merge, lang, a)
+	hashB := stackHashForMerge(&merge, lang, b)
+	if hashA != hashB {
+		t.Fatalf("Perl frontier merge hashes differ for equivalent stacks: %x != %x", hashA, hashB)
+	}
+	if !stackEquivalentForLanguageWithScratch(&merge, lang, a, b) {
+		t.Fatal("Perl frontier hash test stacks are not generically equivalent")
+	}
+}
+
+func TestPerlFrontierMergeHashRejectsDeepDivergentStacks(t *testing.T) {
+	var merge glrMergeScratch
+	merge.beginEquivEpoch()
+	merge.frontierMergeHash = true
+	lang := &Language{Name: "perl"}
+
+	a := perlFrontierHashTestStack(perlFrontierHashTestNode(30))
+	b := perlFrontierHashTestStack(perlFrontierHashTestNode(31))
+
+	if stackEquivalentForLanguageWithScratch(&merge, lang, a, b) {
+		t.Fatal("Perl frontier hash test stacks are unexpectedly equivalent")
+	}
+	hashA := stackHashForMerge(&merge, lang, a)
+	hashB := stackHashForMerge(&merge, lang, b)
+	if hashA == hashB {
+		t.Fatalf("Perl frontier merge hashes matched for divergent stacks: %x", hashA)
+	}
+	if _, ok := lookupStackFrontierHashCache(&merge, a.gss.head); !ok {
+		t.Fatal("Perl frontier hash for stack A was not cached")
+	}
+	if _, ok := lookupStackFrontierHashCache(&merge, b.gss.head); !ok {
+		t.Fatal("Perl frontier hash for stack B was not cached")
+	}
+}
+
+func perlFrontierHashTestStack(root *Node) glrStack {
+	var gss gssScratch
+	stack := glrStack{
+		gss:        buildGSSStack([]stackEntry{{state: 1}, newStackEntryNode(27, root)}, &gss),
+		byteOffset: root.endByte,
+	}
+	return stack
+}
+
+func perlFrontierHashTestNode(grandchild Symbol) *Node {
+	leaf := &Node{
+		symbol:       grandchild,
+		startByte:    2,
+		endByte:      3,
+		flags:        nodeFlagNamed,
+		parseState:   6,
+		productionID: 7,
+	}
+	child := &Node{
+		children:     []*Node{leaf},
+		symbol:       20,
+		startByte:    1,
+		endByte:      4,
+		flags:        nodeFlagNamed,
+		parseState:   4,
+		productionID: 5,
+	}
+	return &Node{
+		children:     []*Node{child},
+		symbol:       10,
+		startByte:    0,
+		endByte:      5,
+		flags:        nodeFlagNamed,
+		parseState:   2,
+		productionID: 3,
 	}
 }
 
