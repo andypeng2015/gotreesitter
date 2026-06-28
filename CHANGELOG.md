@@ -7,6 +7,19 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+### Fixed
+
+- Swift functions that iterate a `for…in` loop over a range (`0..<n`, `0...n`)
+  or a call expression (`stride(from:to:by:)`) no longer silently collapse to
+  `_modifierless_function_declaration_no_body` with the loop body spilled out as
+  file-level siblings. As with the `if`/`while` case, the loop body brace was
+  being consumed as a trailing closure of the iterable; recovery now re-parses
+  the affected `for…in` headers with synthetic parentheses around the iterable
+  and maps the result back to byte-faithful original coordinates. Because this
+  misparse produced no `ERROR` node, the recovery pass now runs whenever the
+  detection walk finds a collapsed header rather than only on errored trees
+  (#123).
+
 ## [0.20.5] - 2026-06-24
 
 ### Changed

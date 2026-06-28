@@ -1,18 +1,25 @@
 package gotreesitter
 
-// Swift control-flow conditions: trailing-closure ambiguity recovery (issue #118).
+// Swift control-flow trailing-closure ambiguity recovery (issues #118, #123).
 //
-// The Swift grammar misparses a binary/comparison operator in an if/while
-// condition, e.g. `if x > 0 { foo() }`. The body `{ foo() }` is greedily
-// consumed as a *trailing closure* of the last operand (`0 { foo() }` →
-// call_expression(0, lambda_literal{...})), so the control-flow statement loses
-// its body and the surrounding function/type collapses into ERROR nodes — no
-// function_declaration survives and symbol extraction yields nothing.
+// The Swift grammar misparses a control-flow header whose expression ends in a
+// value that can take a trailing closure, because the following statement body
+// brace is greedily consumed as that trailing closure:
 //
-// Swift's real grammar forbids trailing closures in a control-flow condition;
-// wrapping the condition in parentheses removes the ambiguity (`if (x > 0) {…}`
-// parses cleanly). This pass detects each affected condition, reparses the
-// source with synthetic parentheses around those conditions, then maps the
+//   - if/while condition with a comparison operator (#118): `if x > 0 { foo() }`
+//     parses as `... 0 { foo() }` → call_expression(0, lambda_literal{...}), so
+//     the body is lost and the function collapses into ERROR nodes.
+//   - for…in with a range or call iterable (#123): `for i in 0..<n { t += i }`
+//     parses as `0..<n { ... }` → range_expression(..., call_expression(n,
+//     lambda_literal{...})), so the loop body is swallowed and the enclosing
+//     function silently collapses to _modifierless_function_declaration_no_body
+//     with the body statements re-homed as siblings — and *without* an ERROR
+//     node, so it can't even be detected as a parse failure.
+//
+// Swift's real grammar forbids trailing closures in both positions; wrapping the
+// condition / iterable in parentheses removes the ambiguity (`if (x > 0) {…}`,
+// `for i in (0..<n) {…}` parse cleanly). This pass detects each affected header,
+// reparses the source with synthetic parentheses around it, then maps the
 // recovered tree back to the original byte coordinates — dropping the synthetic
 // parens and unwrapping the synthetic parenthesised expression so the result is
 // byte-faithful to the original source.
@@ -26,7 +33,10 @@ func normalizeSwiftRecoveredTrailingClosureConditions(root *Node, source []byte,
 	if root == nil || p == nil || p.skipRecoveryReparse || lang == nil || root.ownerArena == nil || len(source) == 0 {
 		return
 	}
-	if root.Type(lang) != "source_file" || !root.HasError() {
+	// Note: unlike the if/while case (#118), the for…in collapse (#123) leaves no
+	// ERROR node, so we cannot gate on root.HasError(). Instead we always run the
+	// (cheap) detection walk and bail when it finds nothing to rewrite.
+	if root.Type(lang) != "source_file" {
 		return
 	}
 	inserts := swiftCollectConditionParenInserts(root, source, lang)
@@ -79,30 +89,44 @@ func normalizeSwiftRecoveredTrailingClosureConditions(root *Node, source []byte,
 }
 
 // swiftCollectConditionParenInserts walks the (broken) tree with explicit parent
-// tracking and, for every `if`/`while` keyword token that failed to form its
-// statement, computes a `(`/`)` insertion pair around its condition. The body
-// brace is located by scanning the source forward to the first top-level `{`,
-// skipping comments, strings and bracketed/parenthesised groups.
+// tracking and, for every `if`/`while` keyword that failed to form its statement
+// (#118) and every `for` keyword whose loop failed to form a for_statement
+// (#123), computes a `(`/`)` insertion pair around the trailing-closure-ambiguous
+// expression (the condition, or the for…in iterable). The body brace is located
+// by scanning the source forward to the first top-level `{`, skipping comments,
+// strings and bracketed/parenthesised groups.
 func swiftCollectConditionParenInserts(root *Node, source []byte, lang *Language) []swiftParenInsert {
 	var inserts []swiftParenInsert
 	seen := make(map[uint32]bool)
+	add := func(lp, rp uint32, ok bool) {
+		if ok && !seen[lp] {
+			seen[lp] = true
+			inserts = append(inserts, swiftParenInsert{pos: lp, ch: '('})
+			inserts = append(inserts, swiftParenInsert{pos: rp, ch: ')'})
+		}
+	}
 	var walk func(n, parent *Node)
 	walk = func(n, parent *Node) {
 		if n == nil {
 			return
 		}
 		typ := n.Type(lang)
-		if (typ == "if" || typ == "while") && resultChildCount(n) == 0 {
-			parentType := ""
-			if parent != nil {
-				parentType = parent.Type(lang)
-			}
+		parentType := ""
+		if parent != nil {
+			parentType = parent.Type(lang)
+		}
+		switch {
+		case (typ == "if" || typ == "while") && resultChildCount(n) == 0:
 			if parentType != "if_statement" && parentType != "while_statement" {
-				if lp, rp, ok := swiftConditionParenPositions(source, n.endByte); ok && !seen[lp] {
-					seen[lp] = true
-					inserts = append(inserts, swiftParenInsert{pos: lp, ch: '('})
-					inserts = append(inserts, swiftParenInsert{pos: rp, ch: ')'})
-				}
+				lp, rp, ok := swiftConditionParenPositions(source, n.endByte)
+				add(lp, rp, ok)
+			}
+		case typ == "for" && resultChildCount(n) == 0:
+			// A well-formed loop nests the `for` token inside a for_statement;
+			// a collapsed one leaves it dangling under source_file/ERROR/etc.
+			if parentType != "for_statement" {
+				lp, rp, ok := swiftForIterableParenPositions(source, n.endByte)
+				add(lp, rp, ok)
 			}
 		}
 		for i := 0; i < resultChildCount(n); i++ {
@@ -111,6 +135,114 @@ func swiftCollectConditionParenInserts(root *Node, source []byte, lang *Language
 	}
 	walk(root, nil)
 	return inserts
+}
+
+// swiftForIterableParenPositions locates the `in` keyword that follows a `for`
+// keyword ending at forKeywordEnd, then reuses the condition logic to bracket the
+// iterable expression between `in` and the loop body brace.
+func swiftForIterableParenPositions(source []byte, forKeywordEnd uint32) (lParen, rParen uint32, ok bool) {
+	inEnd, found := swiftFindForInKeywordEnd(source, forKeywordEnd)
+	if !found {
+		return 0, 0, false
+	}
+	return swiftConditionParenPositions(source, inEnd)
+}
+
+// swiftFindForInKeywordEnd scans forward from start to the loop's `in` keyword at
+// bracket depth zero, skipping line/block comments, string literals and ()/[]
+// nesting (so a destructuring pattern like `for (a, b) in …` is handled). Returns
+// the byte offset just past `in`, or ok=false if a `{`/`}`/`;` at depth zero is
+// reached first (no `in` keyword → not a recoverable for…in header).
+func swiftFindForInKeywordEnd(source []byte, start uint32) (uint32, bool) {
+	depth := 0
+	i := start
+	n := uint32(len(source))
+	for i < n {
+		b := source[i]
+		// Comments.
+		if b == '/' && i+1 < n {
+			if source[i+1] == '/' {
+				i += 2
+				for i < n && source[i] != '\n' {
+					i++
+				}
+				continue
+			}
+			if source[i+1] == '*' {
+				i += 2
+				depthC := 1
+				for i+1 < n && depthC > 0 {
+					if source[i] == '/' && source[i+1] == '*' {
+						depthC++
+						i += 2
+					} else if source[i] == '*' && source[i+1] == '/' {
+						depthC--
+						i += 2
+					} else {
+						i++
+					}
+				}
+				continue
+			}
+		}
+		// Strings.
+		if b == '"' {
+			if i+2 < n && source[i+1] == '"' && source[i+2] == '"' {
+				i += 3
+				for i+2 < n && !(source[i] == '"' && source[i+1] == '"' && source[i+2] == '"') {
+					if source[i] == '\\' {
+						i++
+					}
+					i++
+				}
+				i += 3
+				continue
+			}
+			i++
+			for i < n && source[i] != '"' {
+				if source[i] == '\\' {
+					i++
+				}
+				i++
+			}
+			i++
+			continue
+		}
+		switch b {
+		case '(', '[':
+			depth++
+		case ')', ']':
+			if depth > 0 {
+				depth--
+			}
+		case '{', '}', ';':
+			if depth == 0 {
+				return 0, false
+			}
+		}
+		// The loop separator is the first word-boundaried `in` at depth zero.
+		// Skip a backtick-escaped identifier `` `in` ``, which is a loop variable
+		// name and not the keyword.
+		if depth == 0 && b == 'i' && i+1 < n && source[i+1] == 'n' {
+			backticked := i > 0 && source[i-1] == '`' && i+2 < n && source[i+2] == '`'
+			beforeOK := i == 0 || !isSwiftWordByte(source[i-1])
+			after := i + 2
+			afterOK := after >= n || !isSwiftWordByte(source[after])
+			if !backticked && beforeOK && afterOK {
+				return after, true
+			}
+		}
+		i++
+	}
+	return 0, false
+}
+
+// isSwiftWordByte reports whether b can be part of a Swift identifier. Any UTF-8
+// continuation/lead byte (>= 0x80) counts, since Swift identifiers admit Unicode
+// characters (e.g. Greek letters, emoji) — so `inπ`/`πin` is not mistaken for a
+// bare `in` keyword.
+func isSwiftWordByte(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b == '_' || b >= 0x80
 }
 
 // swiftConditionParenPositions returns the byte offsets at which to insert the
