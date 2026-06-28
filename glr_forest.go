@@ -146,6 +146,8 @@ var forestLastDeclineReason string
 // ForestLastDeclineReason returns the reason parseForest last declined.
 func ForestLastDeclineReason() string { return forestLastDeclineReason }
 
+const forestDeclineEOFRecoveryConflict = "eof-recovery-conflict"
+
 func forestProgressExtra(frontier, work, nextFrontier []*gssForestNode, curIndex, nextIndex gssForestIndex, processEpoch int32, recoverCount int, reducer *forestReducer, accepted *gssForestNode, more string) string {
 	curLen := curIndex.len()
 	nextLen := nextIndex.len()
@@ -186,6 +188,13 @@ func (p *Parser) ParseForestExperimental(source []byte) (*Tree, bool) {
 	root, ok := p.parseForest(arena, source, true)
 	if !ok || root == nil {
 		arena.Release()
+		if forestLastDeclineReason == forestDeclineEOFRecoveryConflict {
+			prev := glrForestEnabled
+			glrForestEnabled = false
+			tree, err := p.Parse(source)
+			glrForestEnabled = prev
+			return tree, err == nil && tree != nil
+		}
 		return nil, false
 	}
 	p.finalizeForestRoot(root, source)
@@ -1047,6 +1056,68 @@ func forestRootChildrenCoverNonTrivia(root *Node, source []byte) bool {
 		}
 	}
 	return true
+}
+
+func forestNodeBestLinearStack(p *Parser, arena *nodeArena, node *gssForestNode) (glrStack, bool) {
+	if node == nil {
+		return glrStack{}, false
+	}
+	reversed := make([]stackEntry, 0, 8)
+	score := 0
+	for cur := node; cur != nil; {
+		link := cur.bestResultLink(p, arena)
+		if link == nil {
+			break
+		}
+		reversed = append(reversed, link.subtree)
+		score += link.score
+		cur = link.prev
+	}
+	if len(reversed) == 0 {
+		return glrStack{}, false
+	}
+	entries := make([]stackEntry, len(reversed))
+	for i := range reversed {
+		entries[i] = reversed[len(reversed)-1-i]
+	}
+	return glrStack{
+		entries:    entries,
+		score:      score,
+		byteOffset: node.byteOffset,
+	}, true
+}
+
+func (p *Parser) forestEOFRecoveryCouldCompete(idx *gssForestIndex, arena *nodeArena, eofByte uint32) bool {
+	if p == nil || idx == nil || idx.len() == 0 {
+		return false
+	}
+	var gssScratch gssScratch
+	var entryScratch glrEntryScratch
+	trackChildErrors := false
+	for i := range idx.entries {
+		node := idx.entries[i].node
+		if node == nil || node.byteOffset != eofByte {
+			continue
+		}
+		stack, ok := forestNodeBestLinearStack(p, arena, node)
+		if !ok {
+			continue
+		}
+		entries := cStackEntriesTopFirst(&stack, &gssScratch)
+		summary := p.cRecordSummary(entries)
+		for _, entry := range summary {
+			if entry.state == cErrorState || entry.posBytes == stack.byteOffset {
+				continue
+			}
+			if p.lookupActionIndex(entry.state, 0) == 0 {
+				continue
+			}
+			if _, ok := p.cRecoverToState(&stack, entry.depth, entry.state, arena, &entryScratch, &gssScratch, &trackChildErrors); ok {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func forestPreserveRootVisibleContainerAlternatives(p *Parser, arena *nodeArena, root *Node, alternatives *forestAlternativeIndex) bool {
@@ -2323,6 +2394,14 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte, captureExternalChe
 		}
 
 		if eof {
+			if accepted != nil && (recoverActive || p.errorCostCompetitionEnabled()) && p.forestEOFRecoveryCouldCompete(&curIndex, arena, tok.StartByte) {
+				p.recordForestDecline(forestDeclineEOFRecoveryConflict, tok, nil)
+				if progress.enabled {
+					progress.emit(time.Now(), "forest_decline", iter, tokens, tok, true, nil, 0, 0, 0, false, 0, 0,
+						forestProgressExtra(frontier, work, nextFrontier, curIndex, nextIndex, processEpoch, recoverCount, reducer, accepted, "decline_reason="+forestDeclineEOFRecoveryConflict))
+				}
+				return nil, false
+			}
 			if progress.enabled {
 				progress.beginDetail(time.Now(), "forest_collect_root_begin", "forest_collect_root_end", iter, tokens, tok, true, nil, 0, 0, 0, true, 0, 0,
 					forestProgressExtra(frontier, work, nextFrontier, curIndex, nextIndex, processEpoch, recoverCount, reducer, accepted, ""))

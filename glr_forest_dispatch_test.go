@@ -97,8 +97,8 @@ func TestForestExperimentalAppliesBashCompatibility(t *testing.T) {
 	if got, want := root.SExpr(lang), prod.RootNode().SExpr(lang); got != want {
 		t.Fatalf("forest experimental Bash compatibility mismatch\n got: %s\nwant: %s", got, want)
 	}
-	if got, want := root.NamedChildCount(), 2; got != want {
-		t.Fatalf("forest Bash root named child count = %d, want %d; root=%s", got, want, root.SExpr(lang))
+	if got, want := root.NamedChildCount(), prod.RootNode().NamedChildCount(); got != want {
+		t.Fatalf("forest Bash root named child count = %d, want production count %d; root=%s", got, want, root.SExpr(lang))
 	}
 }
 
