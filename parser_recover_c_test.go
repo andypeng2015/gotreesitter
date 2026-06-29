@@ -156,6 +156,70 @@ func TestCStackPosRowUsesCompactEntryPoint(t *testing.T) {
 	}
 }
 
+func TestCAppendVisibleSpliceRecoverySplicesExtraErrorCarrier(t *testing.T) {
+	lang := &Language{
+		TokenCount:  1,
+		StateCount:  3,
+		SymbolCount: 5,
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "end", Visible: true, Named: true},
+			{Name: "brace", Visible: true, Named: true},
+			{Name: "match_arm_a", Visible: true, Named: true},
+			{Name: "match_arm_b", Visible: true, Named: true},
+			{Name: "match_block", Visible: true, Named: true},
+		},
+	}
+	parser := &Parser{language: lang, errorCostCompetition: true}
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	left := newLeafNodeInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	right := newLeafNodeInArena(arena, 1, true, 3, 4, Point{Column: 3}, Point{Column: 4})
+	armA := newLeafNodeInArena(arena, 2, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	armB := newLeafNodeInArena(arena, 3, true, 2, 3, Point{Column: 2}, Point{Column: 3})
+	armB.setHasError(true)
+	carrier := newParentNodeInArena(arena, errorSymbol, true, []*Node{armA, armB}, nil, 0)
+	carrier.setExtra(true)
+	carrier.setHasError(true)
+
+	got := parser.cAppendRecoveryVisibleSplice(nil, carrier)
+	if len(got) != 2 || got[0] != armA || got[1] != armB {
+		t.Fatalf("recovery splice = %#v, want match arms", got)
+	}
+	if !got[1].hasError() {
+		t.Fatal("spliced child hasError was cleared")
+	}
+
+	ordinary := newLeafNodeInArena(arena, errorSymbol, true, 4, 5, Point{Column: 4}, Point{Column: 5})
+	ordinary.setExtra(true)
+	ordinary.setHasError(true)
+	got = parser.cAppendRecoveryVisibleSplice(nil, ordinary)
+	if len(got) != 1 || got[0] != ordinary {
+		t.Fatalf("leaf ERROR splice = %#v, want preserved ERROR", got)
+	}
+
+	preserved := parser.cAppendVisibleSplice(nil, carrier)
+	if len(preserved) != 1 || preserved[0] != carrier {
+		t.Fatalf("ordinary visible splice = %#v, want ERROR carrier preserved", preserved)
+	}
+
+	entries := []stackEntry{
+		newStackEntryNode(1, left),
+		newStackEntryNode(1, carrier),
+		newStackEntryNode(1, right),
+	}
+	children, _, _ := parser.buildReduceChildren(entries, 0, len(entries), 2, 4, 0, arena)
+	if len(children) != 4 {
+		t.Fatalf("reduced child count = %d, want 4", len(children))
+	}
+	if children[0] != left || children[1] != armA || children[2] != armB || children[3] != right {
+		t.Fatalf("reduced children = %#v, want left/arms/right", children)
+	}
+	if !children[2].hasError() {
+		t.Fatal("reduced spliced child hasError was cleared")
+	}
+}
+
 func TestCRecoverStrategy1ElectionRetriesDuplicateEntryForNextMember(t *testing.T) {
 	parser := cRecoveryElectionTestParser()
 	arena := acquireNodeArena(arenaClassFull)

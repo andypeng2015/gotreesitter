@@ -1761,7 +1761,7 @@ func (p *Parser) cRecoverEOFAccept(v *glrStack, tok Token, nodeCount *int, arena
 			children = append(children, n.children...)
 			continue
 		}
-		children = p.cAppendVisibleSplice(children, n)
+		children = p.cAppendRecoveryVisibleSplice(children, n)
 	}
 	root := newParentNodeInArena(arena, errorSymbol, true, children, nil, 0)
 	if rawFirst != nil {
@@ -1823,6 +1823,34 @@ func (p *Parser) cAppendVisibleSplice(dst []*Node, n *Node) []*Node {
 		dst = p.cAppendVisibleSplice(dst, c)
 	}
 	return dst
+}
+
+func (p *Parser) cRecoveryVisibleSpliceChildren(n *Node) ([]*Node, bool) {
+	if !p.errorCostCompetitionEnabled() ||
+		n == nil ||
+		n.symbol != errorSymbol ||
+		!n.isExtra() ||
+		n.isMissing() ||
+		len(n.children) == 0 {
+		return nil, false
+	}
+	for _, child := range n.children {
+		if child == nil ||
+			child.symbol == errorSymbol ||
+			child.isExtra() ||
+			child.isMissing() ||
+			!p.cSymbolVisible(child.symbol) {
+			return nil, false
+		}
+	}
+	return n.children, true
+}
+
+func (p *Parser) cAppendRecoveryVisibleSplice(dst []*Node, n *Node) []*Node {
+	if children, ok := p.cRecoveryVisibleSpliceChildren(n); ok {
+		return append(dst, children...)
+	}
+	return p.cAppendVisibleSplice(dst, n)
 }
 
 // cSetNodeSpan pins a recovery node's span explicitly: C error regions span
@@ -1909,7 +1937,7 @@ func (p *Parser) cRecoverToState(v *glrStack, depth int, goal StateID, arena *no
 			children = append(children, n.children...)
 			continue
 		}
-		children = p.cAppendVisibleSplice(children, n)
+		children = p.cAppendRecoveryVisibleSplice(children, n)
 	}
 
 	fork := v.cloneWithScratch(gssScratch)

@@ -5799,13 +5799,19 @@ func (p *Parser) allocAllVisibleReduceChildren(arena *nodeArena, n int, aliasSeq
 	return arena.allocNodeSliceNoClear(n)
 }
 
-func (p *Parser) buildReduceChildrenAllVisible(entries []stackEntry, start, end, childCount int, aliasSeq []Symbol, rawFieldIDs []FieldID, rawInherited []bool, symbolMeta []SymbolMetadata, arena *nodeArena) ([]*Node, []FieldID, []uint8, bool) {
+func (p *Parser) buildReduceChildrenAllVisible(entries []stackEntry, start, end, childCount int, aliasSeq []Symbol, rawFieldIDs []FieldID, rawInherited []bool, parentVisible bool, symbolMeta []SymbolMetadata, arena *nodeArena) ([]*Node, []FieldID, []uint8, bool) {
 	visibleCount := 0
 	structuralChildIndex := 0
 	for i := start; i < end; i++ {
 		n := stackEntryNode(entries[i])
 		if n == nil {
 			continue
+		}
+		if parentVisible {
+			if children, ok := p.cRecoveryVisibleSpliceChildren(n); ok {
+				visibleCount += len(children)
+				continue
+			}
 		}
 		effectiveSymbol := n.symbol
 		if !n.isExtra() {
@@ -5848,6 +5854,12 @@ func (p *Parser) buildReduceChildrenAllVisible(entries []stackEntry, start, end,
 		if n == nil {
 			continue
 		}
+		if parentVisible {
+			if spliced, ok := p.cRecoveryVisibleSpliceChildren(n); ok {
+				out += copy(children[out:], spliced)
+				continue
+			}
+		}
 		var fid FieldID
 		inherited := false
 		if !n.isExtra() {
@@ -5887,6 +5899,7 @@ func (p *Parser) buildReduceChildren(entries []stackEntry, start, end, childCoun
 func (p *Parser) buildReduceChildrenWithPath(entries []stackEntry, start, end, childCount int, parentSymbol Symbol, productionID uint16, arena *nodeArena) ([]*Node, []FieldID, []uint8, reduceChildPath) {
 	lang := p.language
 	symbolMeta := lang.SymbolMetadata
+	parentVisible := cSymbolVisibleLang(lang, parentSymbol)
 
 	aliasSeq := p.reduceAliasSequence(productionID)
 	productionHasFields := p.reduceProductionHasEffectiveFields(childCount, productionID, arena)
@@ -5897,12 +5910,12 @@ func (p *Parser) buildReduceChildrenWithPath(entries []stackEntry, start, end, c
 	}
 
 	rawFieldIDs, rawInherited := p.buildFieldIDs(childCount, productionID, arena)
-	if children, fieldIDs, fieldSources, ok := p.buildReduceChildrenAllVisible(entries, start, end, childCount, aliasSeq, rawFieldIDs, rawInherited, symbolMeta, arena); ok {
+	if children, fieldIDs, fieldSources, ok := p.buildReduceChildrenAllVisible(entries, start, end, childCount, aliasSeq, rawFieldIDs, rawInherited, parentVisible, symbolMeta, arena); ok {
 		return children, fieldIDs, fieldSources, reduceChildPathForLen(len(children), reduceChildPathAllVisible)
 	}
 
 	scratch := p.newReduceBuildScratch(rawFieldIDs)
-	p.appendReduceChildrenToScratch(scratch, entries, start, end, aliasSeq, rawFieldIDs, rawInherited, symbolMeta, arena, lang)
+	p.appendReduceChildrenToScratch(scratch, entries, start, end, aliasSeq, rawFieldIDs, rawInherited, parentVisible, symbolMeta, arena, lang)
 	if scratch.trackFields {
 		p.suppressReducedChildFields(scratch.nodes, scratch.fieldIDs, scratch.fieldSources)
 	}
@@ -5940,6 +5953,12 @@ func (p *Parser) buildReduceChildrenNoAliasNoFieldsPlanned(entries []stackEntry,
 		if n == nil {
 			continue
 		}
+		if parentVisible {
+			if spliced, ok := p.cRecoveryVisibleSpliceChildren(n); ok {
+				visibleCount += len(spliced)
+				continue
+			}
+		}
 		visible := true
 		if idx := int(n.symbol); idx < len(symbolMeta) {
 			visible = symbolMeta[n.symbol].Visible
@@ -5968,6 +5987,12 @@ func (p *Parser) buildReduceChildrenNoAliasNoFieldsPlanned(entries []stackEntry,
 			if n == nil {
 				continue
 			}
+			if parentVisible {
+				if spliced, ok := p.cRecoveryVisibleSpliceChildren(n); ok {
+					out += copy(children[out:], spliced)
+					continue
+				}
+			}
 			children[out] = n
 			out++
 		}
@@ -5993,6 +6018,14 @@ func (p *Parser) buildReduceChildrenNoAliasNoFieldsPlanned(entries []stackEntry,
 		n := stackEntryNode(entries[i])
 		if n == nil {
 			continue
+		}
+		if parentVisible {
+			if spliced, ok := p.cRecoveryVisibleSpliceChildren(n); ok {
+				for _, child := range spliced {
+					scratch.appendNode(child)
+				}
+				continue
+			}
 		}
 		visible := true
 		if idx := int(n.symbol); idx < len(symbolMeta) {
@@ -6078,7 +6111,7 @@ func reduceChildBuildItemForEntry(entry stackEntry, structuralChildIndex int, al
 	return item, true
 }
 
-func (p *Parser) appendReduceChildrenToScratch(scratch *reduceBuildScratch, entries []stackEntry, start, end int, aliasSeq []Symbol, rawFieldIDs []FieldID, rawInherited []bool, symbolMeta []SymbolMetadata, arena *nodeArena, lang *Language) {
+func (p *Parser) appendReduceChildrenToScratch(scratch *reduceBuildScratch, entries []stackEntry, start, end int, aliasSeq []Symbol, rawFieldIDs []FieldID, rawInherited []bool, parentVisible bool, symbolMeta []SymbolMetadata, arena *nodeArena, lang *Language) {
 	structuralChildIndex := 0
 	var pendingPaddingStart uint32
 	var pendingPaddingPoint Point
@@ -6090,7 +6123,7 @@ func (p *Parser) appendReduceChildrenToScratch(scratch *reduceBuildScratch, entr
 			continue
 		}
 		structuralChildIndex = item.nextStructuralIndex
-		spanStart, spanEnd := p.appendReduceChildItemToScratch(scratch, item, rawFieldIDs, structuralChildIndex, symbolMeta, havePendingPadding, pendingPaddingStart, pendingPaddingPoint, pendingPaddingSource, arena)
+		spanStart, spanEnd := p.appendReduceChildItemToScratch(scratch, item, rawFieldIDs, structuralChildIndex, parentVisible, symbolMeta, havePendingPadding, pendingPaddingStart, pendingPaddingPoint, pendingPaddingSource, arena)
 		if !symbolVisibleForPending(item.node.symbol, symbolMeta) {
 			pendingPaddingStart, pendingPaddingPoint, havePendingPadding = flattenedHiddenEntryPadding(item.node, scratch.nodes, spanStart, spanEnd)
 			pendingPaddingSource = item.node
@@ -6100,8 +6133,17 @@ func (p *Parser) appendReduceChildrenToScratch(scratch *reduceBuildScratch, entr
 	}
 }
 
-func (p *Parser) appendReduceChildItemToScratch(scratch *reduceBuildScratch, item reduceChildBuildItem, rawFieldIDs []FieldID, nextStructuralChildIndex int, symbolMeta []SymbolMetadata, havePadding bool, paddingStartByte uint32, paddingStartPoint Point, paddingSource *Node, arena *nodeArena) (int, int) {
+func (p *Parser) appendReduceChildItemToScratch(scratch *reduceBuildScratch, item reduceChildBuildItem, rawFieldIDs []FieldID, nextStructuralChildIndex int, parentVisible bool, symbolMeta []SymbolMetadata, havePadding bool, paddingStartByte uint32, paddingStartPoint Point, paddingSource *Node, arena *nodeArena) (int, int) {
 	n := item.node
+	if parentVisible {
+		if children, ok := p.cRecoveryVisibleSpliceChildren(n); ok {
+			start := len(scratch.nodes)
+			for _, child := range children {
+				scratch.appendNode(child)
+			}
+			return start, len(scratch.nodes)
+		}
+	}
 	if symbolVisibleForPending(n.symbol, symbolMeta) {
 		if havePadding && flattenedHiddenSiblingPaddingTarget(n, paddingSource, symbolMeta) && paddingStartByte < n.startByte {
 			n = cloneNodeInArena(arena, n)
