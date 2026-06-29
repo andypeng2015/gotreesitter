@@ -56,7 +56,11 @@ func normalizeSwiftRecoveredTrailingClosureConditions(root *Node, source []byte,
 	// Apply only when removing the trailing-closure ambiguity makes the reparse
 	// fully clean. This keeps the rewrite trivially safe — a file with other,
 	// unrelated parse errors is left untouched rather than partially rewritten.
-	if tRoot.HasError() || tRoot.Type(lang) != "source_file" {
+	// The byte-faithfulness check is essential: an incompletely-bracketed chain
+	// still collapses to _modifierless_function_declaration_no_body and silently
+	// drops trailing statements *without* an ERROR node (#131), so HasError alone
+	// would accept a truncated, still-broken reparse.
+	if tRoot.HasError() || tRoot.Type(lang) != "source_file" || tRoot.endByte != uint32(len(transformed)) {
 		return
 	}
 	rm := &swiftRemap{
@@ -118,8 +122,12 @@ func swiftCollectConditionParenInserts(root *Node, source []byte, lang *Language
 		switch {
 		case (typ == "if" || typ == "while") && resultChildCount(n) == 0:
 			if parentType != "if_statement" && parentType != "while_statement" {
-				lp, rp, ok := swiftConditionParenPositions(source, n.endByte)
-				add(lp, rp, ok)
+				// Bracket this header's condition, then follow any `else if`
+				// continuation (#131): the chained `if` keyword is swallowed into
+				// an ERROR node, so it never surfaces as its own `if` token for the
+				// walk to find — we have to discover it by scanning the source from
+				// the body's matching close brace.
+				swiftCollectIfChainParens(source, n.endByte, add)
 			}
 		case typ == "for" && resultChildCount(n) == 0:
 			// A well-formed loop nests the `for` token inside a for_statement;
@@ -135,6 +143,201 @@ func swiftCollectConditionParenInserts(root *Node, source []byte, lang *Language
 	}
 	walk(root, nil)
 	return inserts
+}
+
+// swiftCollectIfChainParens brackets the condition of an `if`/`while` header that
+// begins right after a control-flow keyword ending at keywordEnd, then walks the
+// whole `if … else if …` chain bracketing each subsequent condition. The `else if`
+// continuation (#131) is found by source-scanning: when the chained `if`'s body
+// brace is greedily consumed as a trailing closure, the function collapses to
+// _modifierless_function_declaration_no_body and the chained `if` keyword is buried
+// in an ERROR node, so it never surfaces as its own token for the tree walk to find.
+// Anchoring on the first (surviving) `if` token and following the chain through the
+// source recovers every condition.
+func swiftCollectIfChainParens(source []byte, keywordEnd uint32, add func(lp, rp uint32, ok bool)) {
+	for {
+		condStart := swiftSkipHorizontalAndNewlineSpace(source, keywordEnd)
+		bodyOpen, found := swiftFindConditionBodyBrace(source, condStart)
+		if !found {
+			return
+		}
+		rp := bodyOpen
+		for rp > condStart {
+			switch source[rp-1] {
+			case ' ', '\t', '\n', '\r':
+				rp--
+				continue
+			}
+			break
+		}
+		// Skip the insertion when the span is empty or already parenthesised
+		// (`if (cond) {`); swiftConditionParenPositions applies the same guard.
+		if condStart < rp && !(source[condStart] == '(' && source[rp-1] == ')') {
+			add(condStart, rp, true)
+		}
+		// Follow an `else if` continuation: find the body's matching close brace,
+		// then look for `else if`. Anything else (a plain `else {` block, or the end
+		// of the chain) terminates the walk.
+		closeBrace, ok := swiftFindMatchingCloseBrace(source, bodyOpen)
+		if !ok {
+			return
+		}
+		nextKeywordEnd, isElseIf := swiftFindElseIfKeywordEnd(source, closeBrace+1)
+		if !isElseIf {
+			return
+		}
+		keywordEnd = nextKeywordEnd
+	}
+}
+
+// swiftFindMatchingCloseBrace scans forward from openPos (which must point at a
+// `{`) to its matching `}` at the same brace depth, skipping line/block comments,
+// string literals and ()/[] groups. Returns the index of the matching `}`, or
+// ok=false if none is found.
+func swiftFindMatchingCloseBrace(source []byte, openPos uint32) (uint32, bool) {
+	n := uint32(len(source))
+	if openPos >= n || source[openPos] != '{' {
+		return 0, false
+	}
+	depth := 0
+	i := openPos
+	for i < n {
+		b := source[i]
+		// Comments.
+		if b == '/' && i+1 < n {
+			if source[i+1] == '/' {
+				i += 2
+				for i < n && source[i] != '\n' {
+					i++
+				}
+				continue
+			}
+			if source[i+1] == '*' {
+				i += 2
+				depthC := 1
+				for i+1 < n && depthC > 0 {
+					if source[i] == '/' && source[i+1] == '*' {
+						depthC++
+						i += 2
+					} else if source[i] == '*' && source[i+1] == '/' {
+						depthC--
+						i += 2
+					} else {
+						i++
+					}
+				}
+				if depthC > 0 {
+					// Unclosed comment runs to EOF; don't treat its last byte as code.
+					i = n
+				}
+				continue
+			}
+		}
+		// Strings.
+		if b == '"' {
+			if i+2 < n && source[i+1] == '"' && source[i+2] == '"' {
+				i += 3
+				for i+2 < n && !(source[i] == '"' && source[i+1] == '"' && source[i+2] == '"') {
+					if source[i] == '\\' {
+						i++
+					}
+					i++
+				}
+				i += 3
+				continue
+			}
+			i++
+			for i < n && source[i] != '"' {
+				if source[i] == '\\' {
+					i++
+				}
+				i++
+			}
+			i++
+			continue
+		}
+		switch b {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return i, true
+			}
+		}
+		i++
+	}
+	return 0, false
+}
+
+// swiftFindElseIfKeywordEnd skips whitespace and comments from start and reports
+// whether an `else if` continuation begins there. On a match it returns the byte
+// offset just past the chained `if` keyword (the position swiftConditionParenPositions
+// expects). A plain `else {` block, or any other token, returns ok=false.
+func swiftFindElseIfKeywordEnd(source []byte, start uint32) (uint32, bool) {
+	i := swiftSkipSpaceAndComments(source, start)
+	n := uint32(len(source))
+	// Byte-by-byte keyword matching keeps this allocation-free on the recovery path.
+	if i+4 > n || source[i] != 'e' || source[i+1] != 'l' || source[i+2] != 's' || source[i+3] != 'e' {
+		return 0, false
+	}
+	after := i + 4
+	if after < n && isSwiftWordByte(source[after]) {
+		return 0, false // `elsewhere`, not the `else` keyword.
+	}
+	i = swiftSkipSpaceAndComments(source, after)
+	if i+2 > n || source[i] != 'i' || source[i+1] != 'f' {
+		return 0, false // plain `else { … }`, no further condition.
+	}
+	end := i + 2
+	if end < n && isSwiftWordByte(source[end]) {
+		return 0, false // `iffy`, not the `if` keyword.
+	}
+	return end, true
+}
+
+// swiftSkipSpaceAndComments advances past horizontal/newline whitespace and
+// line/block comments starting at i.
+func swiftSkipSpaceAndComments(source []byte, i uint32) uint32 {
+	n := uint32(len(source))
+	for i < n {
+		switch source[i] {
+		case ' ', '\t', '\n', '\r':
+			i++
+			continue
+		}
+		if source[i] == '/' && i+1 < n {
+			if source[i+1] == '/' {
+				i += 2
+				for i < n && source[i] != '\n' {
+					i++
+				}
+				continue
+			}
+			if source[i+1] == '*' {
+				i += 2
+				depthC := 1
+				for i+1 < n && depthC > 0 {
+					if source[i] == '/' && source[i+1] == '*' {
+						depthC++
+						i += 2
+					} else if source[i] == '*' && source[i+1] == '/' {
+						depthC--
+						i += 2
+					} else {
+						i++
+					}
+				}
+				if depthC > 0 {
+					// Unclosed comment runs to EOF.
+					i = n
+				}
+				continue
+			}
+		}
+		break
+	}
+	return i
 }
 
 // swiftForIterableParenPositions locates the `in` keyword that follows a `for`

@@ -322,3 +322,61 @@ func TestSwiftNormalTrailingClosureUnaffected(t *testing.T) {
 		t.Fatalf("expected exactly one lambda_literal: %s", root.SExpr(lang))
 	}
 }
+
+// issue #131: an `if … else if …` chain used to collapse the enclosing function
+// to _modifierless_function_declaration_no_body (with no ERROR node, like #123).
+// The trailing-closure ambiguity recovery only found the first `if` token — the
+// chained `if` keyword is swallowed into an ERROR node — so it bracketed only the
+// first condition, leaving the else-if's body brace absorbed as a trailing closure
+// and the function silently truncated. Following the chain through the source and
+// requiring a byte-faithful reparse recovers every condition.
+func TestSwiftElseIfChainRecoversFunction(t *testing.T) {
+	lang := SwiftLanguage()
+	cases := []struct {
+		name string
+		src  string
+	}{
+		{"else-if-trailing-return", "func f(_ x: Int) -> Int {\n    if x > 0 {\n        return 1\n    } else if x < 0 {\n        return 2\n    }\n    return 3\n}\n"},
+		{"else-if-else", "func f(_ x: Int) -> Int {\n    if x > 0 {\n        return 1\n    } else if x < 0 {\n        return 2\n    } else {\n        return 3\n    }\n}\n"},
+		{"three-way-chain", "func f(_ x: Int) -> Int {\n    if x > 0 {\n        return 1\n    } else if x < 0 {\n        return 2\n    } else if x == 5 {\n        return 5\n    } else {\n        return 3\n    }\n}\n"},
+		{"oneline-chain", "func f(_ x: Int) -> Int { if x > 0 { return 1 } else if x < 0 { return 2 } else { return 3 } }"},
+		{"else-if-no-return", "func f(_ x: Int) {\n    if x > 0 {\n        a()\n    } else if x < 0 {\n        b()\n    }\n}\n"},
+		{"class-method-chain", "class C {\n  func f(_ x: Int) -> Int {\n    if x > 0 { return 1 } else if x < 0 { return 2 }\n    return 3\n  }\n}"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			src := []byte(tc.src)
+			parser := gotreesitter.NewParser(lang)
+			tree, err := parser.Parse(src)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			defer tree.Release()
+			root := tree.RootNode()
+			if root.HasError() {
+				t.Fatalf("recovered tree still reports error: %s", root.SExpr(lang))
+			}
+			if got, want := root.EndByte(), uint32(len(src)); got != want {
+				t.Fatalf("root end = %d, want %d (span not byte-faithful): %s", got, want, root.SExpr(lang))
+			}
+			if got := countSwiftNodeType(lang, root, "function_declaration"); got < 1 {
+				t.Fatalf("function_declaration count = %d, want >= 1: %s", got, root.SExpr(lang))
+			}
+			if got := countSwiftNodeType(lang, root, "_modifierless_function_declaration_no_body"); got != 0 {
+				t.Fatalf("function collapsed to _modifierless_function_declaration_no_body: %s", root.SExpr(lang))
+			}
+			// Each `else if` continuation must form a nested if_statement, not be
+			// absorbed as a trailing-closure lambda_literal.
+			if got := countSwiftNodeType(lang, root, "if_statement"); got < 2 {
+				t.Fatalf("if_statement count = %d, want >= 2 (chain not nested): %s", got, root.SExpr(lang))
+			}
+			if got := countSwiftNodeType(lang, root, "lambda_literal"); got != 0 {
+				t.Fatalf("else-if body misparsed as trailing-closure lambda_literal: %s", root.SExpr(lang))
+			}
+			// The synthetic parens injected during recovery must be unwrapped.
+			if got := countSwiftNodeType(lang, root, "tuple_expression"); got != 0 {
+				t.Fatalf("synthetic parenthesis leaked as tuple_expression: %s", root.SExpr(lang))
+			}
+		})
+	}
+}
