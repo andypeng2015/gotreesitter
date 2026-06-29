@@ -51,6 +51,36 @@ func TestCRecoveryCostCompetitionDisabledInNoTreeModes(t *testing.T) {
 	}
 }
 
+func TestCRecoverSkipTailBetterVersionUsesErrorStatus(t *testing.T) {
+	parser := cRecoveryElectionTestParser()
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	group := &cRecGroup{}
+	absorbing := newGLRStack(1)
+	absorbing.pushEntry(stackEntry{state: cErrorState}, nil, nil)
+	absorbing.byteOffset = 10
+	absorbing.cRec = &cRecoverState{group: group}
+
+	cleanFork := newGLRStack(2)
+	errNode := newParentNodeInArena(arena, errorSymbol, true, nil, nil, 0)
+	cleanFork.pushEntry(newStackEntryNode(3, errNode), nil, nil)
+	cleanFork.byteOffset = absorbing.byteOffset
+
+	stacks := []glrStack{absorbing, cleanFork}
+	skipCost := parser.cStackErrorCost(&stacks[0]) + cErrCostPerSkippedTree
+	if got := parser.cStackErrorCost(&stacks[1]); got >= skipCost {
+		t.Fatalf("clean fork cost = %d, want less than skip candidate cost %d", got, skipCost)
+	}
+
+	if parser.cBetterVersionExists(stacks, 0, false, skipCost) {
+		t.Fatal("clean fork killed non-error skip candidate; want it to only prefer a non-mergeable clean candidate")
+	}
+	if !parser.cBetterVersionExists(stacks, 0, true, skipCost) {
+		t.Fatal("clean fork did not kill in-error skip candidate")
+	}
+}
+
 func TestCApplyMergedErrorGroupBaselineUsesMaxHeadNodeCount(t *testing.T) {
 	parser := cRecoveryElectionTestParser()
 	arena := acquireNodeArena(arenaClassFull)

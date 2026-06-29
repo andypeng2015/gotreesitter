@@ -1576,7 +1576,7 @@ func (p *Parser) cRecover(stacks *[]glrStack, v *glrStack, source []byte, tok To
 	}
 	newCost := p.cStackErrorCost(v) + cErrCostPerSkippedTree +
 		tokBytes*cErrCostPerSkippedChar + tokRows*cErrCostPerSkippedLine
-	if vIndex >= 0 && p.cBetterVersionExists(*stacks, vIndex, false, newCost) {
+	if vIndex >= 0 && p.cBetterVersionExists(*stacks, vIndex, true, newCost) {
 		v.dead = true
 		return cRecHalted, forked
 	}
