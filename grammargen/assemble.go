@@ -136,6 +136,7 @@ func assemble(
 
 	// Build field map tables.
 	buildFieldMaps(lang, ng)
+	buildProductionSignatures(lang, ng)
 
 	// Supertype symbols.
 	if len(ng.Supertypes) > 0 {
@@ -762,6 +763,44 @@ func buildParseTables(
 	lang.ProductionIDCount = uint32(maxProdID + 1)
 
 	return nil
+}
+
+// buildProductionSignatures records compact RHS shape metadata for generated grammars.
+func buildProductionSignatures(lang *gotreesitter.Language, ng *NormalizedGrammar) {
+	if lang == nil || ng == nil || len(ng.Productions) == 0 {
+		return
+	}
+	seen := make(map[string]struct{}, len(ng.Productions))
+	out := make([]gotreesitter.ProductionSignature, 0, len(ng.Productions))
+	for _, prod := range ng.Productions {
+		key := productionSignatureKey(prod)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		rhs := make([]gotreesitter.Symbol, len(prod.RHS))
+		for i, sym := range prod.RHS {
+			rhs[i] = gotreesitter.Symbol(sym)
+		}
+		out = append(out, gotreesitter.ProductionSignature{
+			LHS:          gotreesitter.Symbol(prod.LHS),
+			ProductionID: uint16(prod.ProductionID),
+			RHS:          rhs,
+		})
+	}
+	if len(out) > 0 {
+		lang.ProductionSignatures = out
+	}
+}
+
+func productionSignatureKey(prod Production) string {
+	buf := make([]byte, 0, 4+len(prod.RHS)*2)
+	buf = append(buf, byte(prod.LHS>>8), byte(prod.LHS))
+	buf = append(buf, byte(prod.ProductionID>>8), byte(prod.ProductionID))
+	for _, sym := range prod.RHS {
+		buf = append(buf, byte(sym>>8), byte(sym))
+	}
+	return string(buf)
 }
 
 // buildFieldMaps constructs FieldMapSlices and FieldMapEntries.
