@@ -55,9 +55,10 @@ const (
 
 const (
 	// C parser.c MAX_VERSION_COUNT / MAX_SUMMARY_DEPTH / MAX_COST_DIFFERENCE.
-	cRecoverMaxVersionCount   = 6
-	cRecoverMaxSummaryDepth   = 16
-	cRecoverMaxCostDifference = 18 * cErrCostPerSkippedTree
+	cRecoverMaxVersionCount     = 6
+	cRecoverMaxSummaryDepth     = 16
+	cRecoverMaxCostDifference   = 18 * cErrCostPerSkippedTree
+	cRecoverMaxReduceIterations = 1024
 	// cErrorState is the C ERROR_STATE: the generated tables' recover row.
 	cErrorState = StateID(0)
 )
@@ -1171,6 +1172,18 @@ func (p *Parser) cDoAllPotentialReductions(source []byte, start glrStack, lookah
 			// STACK_VERSION_NONE when the action only merges into an existing
 			// version or produces no surviving version.
 			lastReduction = actionReductionVersion
+		}
+		if anyLookahead && lastReduction >= 0 && iter < cRecoverMaxReduceIterations {
+			if hasShift {
+				canShift = true
+			}
+			// During handle_error's close-in-progress pass, continue chasing
+			// reduction results even when this state can shift some token. The
+			// shift is not necessarily the current lookahead, and retaining every
+			// intermediate shiftable version inflates the recovery summary depth.
+			versions[v] = versions[lastReduction]
+			versions = append(versions[:lastReduction], versions[lastReduction+1:]...)
+			continue
 		}
 		if hasShift {
 			canShift = true

@@ -454,6 +454,62 @@ func newCRecoverySyntheticReduceParser() *Parser {
 	return &Parser{language: lang, denseLimit: len(lang.ParseTable)}
 }
 
+func TestCDoAllPotentialReductionsChasesAnyLookaheadReductionsWithShift(t *testing.T) {
+	lang := &Language{
+		TokenCount:  2,
+		StateCount:  10,
+		SymbolCount: 5,
+		ParseTable: [][]uint16{
+			nil,
+			{0, 0, 0, 0, 2}, // goto parent(4) -> state 9.
+			nil,
+			{0, 1}, // token 1 has both reduce(parent) and shift.
+			nil,
+			nil,
+			nil,
+			nil,
+			nil,
+			nil,
+		},
+		ParseActions: []ParseActionEntry{
+			{},
+			{Actions: []ParseAction{
+				{Type: ParseActionReduce, Symbol: 4, ChildCount: 1},
+				{Type: ParseActionShift, State: 8},
+			}},
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 9}}},
+		},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "end", Visible: true, Named: true},
+			{Name: "tok", Visible: true, Named: true},
+			{Name: "leaf", Visible: true, Named: true},
+			{Name: "unused", Visible: true, Named: true},
+			{Name: "parent", Visible: true, Named: true},
+		},
+	}
+	parser := &Parser{language: lang, denseLimit: len(lang.ParseTable)}
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	leaf := newLeafNodeInArena(arena, 2, true, 0, 1, Point{}, Point{Column: 1})
+	start := newGLRStack(1)
+	start.pushEntry(newStackEntryNode(3, leaf), nil, nil)
+
+	nodeCount := 0
+	versions, canShift := parser.cDoAllPotentialReductions(nil, start, 0, true, Token{}, &nodeCount, arena, nil, nil, nil)
+	if !canShift {
+		t.Fatal("canShift = false, want true from the shiftable intermediate state")
+	}
+	if len(versions) != 1 {
+		t.Fatalf("version count = %d, want reduction chased in place", len(versions))
+	}
+	if got := versions[0].top().state; got != StateID(9) {
+		t.Fatalf("top state = %d, want reduced goto state 9", got)
+	}
+	if top := versions[0].top(); !stackEntryHasNode(top) || stackEntryNode(top).symbol != 4 {
+		t.Fatalf("top entry = %+v, want reduced parent symbol", top)
+	}
+}
 func TestCDoAllPotentialReductionsDistinguishesEOFFromAnyLookahead(t *testing.T) {
 	lang := &Language{
 		TokenCount:  2,
