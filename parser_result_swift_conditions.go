@@ -226,6 +226,10 @@ func swiftFindMatchingCloseBrace(source []byte, openPos uint32) (uint32, bool) {
 						i++
 					}
 				}
+				if depthC > 0 {
+					// Unclosed comment runs to EOF; don't treat its last byte as code.
+					i = n
+				}
 				continue
 			}
 		}
@@ -273,20 +277,19 @@ func swiftFindMatchingCloseBrace(source []byte, openPos uint32) (uint32, bool) {
 func swiftFindElseIfKeywordEnd(source []byte, start uint32) (uint32, bool) {
 	i := swiftSkipSpaceAndComments(source, start)
 	n := uint32(len(source))
-	const elseKw = "else"
-	if i+uint32(len(elseKw)) > n || string(source[i:i+uint32(len(elseKw))]) != elseKw {
+	// Byte-by-byte keyword matching keeps this allocation-free on the recovery path.
+	if i+4 > n || source[i] != 'e' || source[i+1] != 'l' || source[i+2] != 's' || source[i+3] != 'e' {
 		return 0, false
 	}
-	after := i + uint32(len(elseKw))
+	after := i + 4
 	if after < n && isSwiftWordByte(source[after]) {
 		return 0, false // `elsewhere`, not the `else` keyword.
 	}
 	i = swiftSkipSpaceAndComments(source, after)
-	const ifKw = "if"
-	if i+uint32(len(ifKw)) > n || string(source[i:i+uint32(len(ifKw))]) != ifKw {
+	if i+2 > n || source[i] != 'i' || source[i+1] != 'f' {
 		return 0, false // plain `else { … }`, no further condition.
 	}
-	end := i + uint32(len(ifKw))
+	end := i + 2
 	if end < n && isSwiftWordByte(source[end]) {
 		return 0, false // `iffy`, not the `if` keyword.
 	}
@@ -324,6 +327,10 @@ func swiftSkipSpaceAndComments(source []byte, i uint32) uint32 {
 					} else {
 						i++
 					}
+				}
+				if depthC > 0 {
+					// Unclosed comment runs to EOF.
+					i = n
 				}
 				continue
 			}
