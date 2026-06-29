@@ -86,6 +86,25 @@ func TestCApplyMergedErrorGroupBaselineUsesMaxHeadNodeCount(t *testing.T) {
 	}
 }
 
+func TestCRecordSummaryUsesCompactEntryPosition(t *testing.T) {
+	parser := &Parser{}
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	leaf := newCompactFullLeafInArena(arena, 1, true, 13, 21, Point{Row: 2, Column: 3}, Point{Row: 2, Column: 11})
+	entry := newStackEntryCompactFullLeaf(3, leaf)
+	summary := parser.cRecordSummary([]stackEntry{entry, {state: 2}})
+	if len(summary) == 0 {
+		t.Fatal("summary is empty")
+	}
+	if got := summary[0].posBytes; got != 21 {
+		t.Fatalf("compact summary posBytes = %d, want 21", got)
+	}
+	if got := summary[0].posRow; got != 2 {
+		t.Fatalf("compact summary posRow = %d, want 2", got)
+	}
+}
+
 func TestCRecoverStrategy1ElectionRetriesDuplicateEntryForNextMember(t *testing.T) {
 	parser := cRecoveryElectionTestParser()
 	arena := acquireNodeArena(arenaClassFull)
@@ -114,6 +133,32 @@ func TestCRecoverStrategy1ElectionRetriesDuplicateEntryForNextMember(t *testing.
 	}
 	if n := stackEntryNode(fork.top()); n == nil || n.symbol != errorSymbol {
 		t.Fatalf("recovered fork top node = %v, want ERROR node", n)
+	}
+}
+
+func TestCRecoverStrategy1ElectionIgnoresBetterVersionForNoActionEntry(t *testing.T) {
+	parser := cRecoveryElectionTestParser()
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	group := &cRecGroup{}
+	stacks := []glrStack{
+		cRecoveryElectionStack(arena, 2, 3, 2500, group, 0, []cStackSummaryEntry{
+			{depth: 0, state: 4, posBytes: 0},
+			{depth: 1, state: 2, posBytes: 2490},
+		}),
+		cRecoveryElectionPlainStack(arena, 4, 4, 2500),
+	}
+	nodeCount := 0
+	didRecover, forked := parser.cRecoverStrategy1Election(&stacks, group, Token{Symbol: 1}, &nodeCount, arena, nil, nil, nil)
+	if !didRecover || !forked {
+		t.Fatalf("strategy 1 election = didRecover %v forked %v, want true/true", didRecover, forked)
+	}
+	if len(stacks) != 3 {
+		t.Fatalf("stack count = %d, want recovered fork appended", len(stacks))
+	}
+	if got := stacks[2].top().state; got != StateID(2) {
+		t.Fatalf("recovered fork top state = %d, want 2", got)
 	}
 }
 

@@ -1041,9 +1041,9 @@ func (p *Parser) cRecordSummary(entries []stackEntry) []cStackSummaryEntry {
 	var pb uint32
 	var pr uint32
 	for i := len(entries) - 1; i >= 0; i-- {
-		if n := stackEntryNode(entries[i]); n != nil {
-			pb = n.endByte
-			pr = n.endPoint.Row
+		if stackEntryHasNode(entries[i]) {
+			pb = stackEntryNodeEndByte(entries[i])
+			pr = stackEntryNodeEndPoint(entries[i]).Row
 		}
 		posBytesAt[i] = pb
 		posRowAt[i] = pr
@@ -1673,6 +1673,9 @@ func (p *Parser) cRecoverStrategy1Election(stacks *[]glrStack, group *cRecGroup,
 				if wouldMerge {
 					continue
 				}
+				if p.lookupActionIndex(entry.state, tok.Symbol) == 0 {
+					continue
+				}
 				curCost := p.cStackErrorCost(&(*stacks)[mi])
 				curRow := cStackPosRow(&(*stacks)[mi])
 				newCost := curCost +
@@ -1681,9 +1684,6 @@ func (p *Parser) cRecoverStrategy1Election(stacks *[]glrStack, group *cRecGroup,
 					(curRow-entry.posRow)*cErrCostPerSkippedLine
 				if p.cBetterVersionExists(*stacks, mi, false, newCost) {
 					return false, false
-				}
-				if p.lookupActionIndex(entry.state, tok.Symbol) == 0 {
-					continue
 				}
 				if fork, ok := p.cRecoverToState(&(*stacks)[mi], depth, entry.state, arena, entryScratch, gssScratch, trackChildErrors); ok {
 					seen[key] = true
