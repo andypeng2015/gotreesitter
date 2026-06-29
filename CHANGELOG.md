@@ -7,15 +7,27 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+## [0.20.7] - 2026-06-29
+
+Patch release for parser timeout propagation and targeted language recovery
+scanner fixes merged after v0.20.6.
+
 ### Fixed
 
+- Parser timeout and cancellation budgets now flow through the parser loop,
+  recovery reparses, result compatibility/finalization, and Go normalization,
+  so strict parses stop consistently instead of continuing unbounded work after
+  the primary parse (#114, #128).
+- F# external-scanner keyword dedent fallback now guards empty indentation
+  stacks for `then`, `and`, `with`, `else`, `elif`, and `end`, preventing
+  scanner panics on malformed or edge-case indentation (#129, #130).
 - Swift `if … else if …` chains no longer collapse the enclosing function to
   `_modifierless_function_declaration_no_body` (#131). The trailing-closure
   ambiguity recovery now follows the whole if/else-if chain — the chained `if`
   keyword is swallowed into an ERROR node, so it is discovered by scanning from
   the body's matching close brace — and requires a byte-faithful reparse so a
   partially-bracketed chain (which silently truncates without an ERROR node) is
-  rejected rather than accepted.
+  rejected rather than accepted (#132).
 
 ## [0.20.6] - 2026-06-28
 
@@ -961,7 +973,8 @@ Warm-reuse throughput ~10 % higher. 206-grammar parity green under `GTS_PARITY_M
 - Initial standalone pure-Go runtime module.
 - External scanner VM foundation and base parser/lexer/tree infrastructure.
 
-[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.20.6...HEAD
+[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.20.7...HEAD
+[0.20.7]: https://github.com/odvcencio/gotreesitter/compare/v0.20.6...v0.20.7
 [0.20.6]: https://github.com/odvcencio/gotreesitter/compare/v0.20.5...v0.20.6
 [0.20.5]: https://github.com/odvcencio/gotreesitter/compare/v0.20.4...v0.20.5
 [0.20.4]: https://github.com/odvcencio/gotreesitter/compare/v0.20.3...v0.20.4
