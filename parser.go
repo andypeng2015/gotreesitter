@@ -751,7 +751,7 @@ func (p *Parser) stopFrontierSameHeaderSummary(stacks []glrStack) string {
 
 func cRecoveryRelevantStack(stacks []glrStack) bool {
 	for i := range stacks {
-		if stacks[i].cPaused || stacks[i].cRec != nil {
+		if stacks[i].cPaused || stacks[i].cRec != nil || stacks[i].cRecoverMissingGroup != nil {
 			return true
 		}
 	}
@@ -761,6 +761,7 @@ func cRecoveryRelevantStack(stacks []glrStack) bool {
 func stopCondenseGatingString(errorCostCompetitionEnabled, anyReduced, condenseRelevant, condenseRan, condenseResumed bool, stacks []glrStack) string {
 	hasPaused := false
 	hasCRec := false
+	hasMissingGroup := false
 	for i := range stacks {
 		if stacks[i].dead {
 			continue
@@ -771,13 +772,17 @@ func stopCondenseGatingString(errorCostCompetitionEnabled, anyReduced, condenseR
 		if stacks[i].cRec != nil {
 			hasCRec = true
 		}
+		if stacks[i].cRecoverMissingGroup != nil {
+			hasMissingGroup = true
+		}
 	}
 	return fmt.Sprintf(
-		"condense={errorCostCompetitionEnabled=%t anyReduced=%t hasPaused=%t hasCRec=%t condenseSkippedDueToAnyReduced=%t condenseRan=%t condenseResumed=%t}",
+		"condense={errorCostCompetitionEnabled=%t anyReduced=%t hasPaused=%t hasCRec=%t hasMissingGroup=%t condenseSkippedDueToAnyReduced=%t condenseRan=%t condenseResumed=%t}",
 		errorCostCompetitionEnabled,
 		anyReduced,
 		hasPaused,
 		hasCRec,
+		hasMissingGroup,
 		errorCostCompetitionEnabled && anyReduced && condenseRelevant && !condenseRan,
 		condenseRan,
 		condenseResumed,
@@ -5149,9 +5154,10 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		condenseAnyReduced := anyReduced
 		condenseRelevant := condenseErrorCostEnabled && cRecoveryRelevantStack(stacks)
 		condenseEOFRecovery := condenseRelevant && tok.Symbol == 0 && tok.StartByte == tok.EndByte && !tok.NoLookahead
+		condenseShiftedRecovery := condenseRelevant && anyReduced && !tok.NoLookahead && allLiveUnacceptedStacksShifted(stacks)
 		condenseRan := false
 		condenseResumed := false
-		if condenseErrorCostEnabled && (!anyReduced || condenseEOFRecovery) {
+		if condenseErrorCostEnabled && (!anyReduced || condenseEOFRecovery || condenseShiftedRecovery) {
 			var resumed bool
 			condenseRan = true
 			stacks, resumed = p.cCondenseAndResume(stacks, source, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors)

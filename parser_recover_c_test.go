@@ -680,3 +680,72 @@ func TestCResultSelectionPrefersLaterEqualErrorCostTree(t *testing.T) {
 		t.Fatalf("later equal-error candidate compare = %d, want preferred", got)
 	}
 }
+
+func makeCCondenseMissingGroupTestStack(topState StateID, nodes int, missingTop bool) glrStack {
+	if nodes < 1 {
+		nodes = 1
+	}
+	s := newGLRStack(1)
+	for i := 0; i < nodes; i++ {
+		start := uint32(i)
+		end := start + 1
+		n := NewLeafNode(1, true, start, end, Point{Column: start}, Point{Column: end})
+		if missingTop && i == nodes-1 {
+			n.startByte = start
+			n.endByte = start
+			n.startPoint = Point{Column: start}
+			n.endPoint = Point{Column: start}
+			n.setMissing(true)
+			n.setHasError(true)
+		}
+		state := StateID(2 + i)
+		if i == nodes-1 {
+			state = topState
+		}
+		s.push(state, n, nil, nil)
+	}
+	if missingTop {
+		s.byteOffset = uint32(nodes)
+	}
+	return s
+}
+
+func TestCRecoveryRelevantStackIncludesMissingGroup(t *testing.T) {
+	if cRecoveryRelevantStack([]glrStack{{cRecoverMissingGroup: &cRecGroup{}}}) != true {
+		t.Fatal("cRecoveryRelevantStack = false for missing recovery group")
+	}
+}
+
+func TestCCondenseAndResumeComparesMissingGroupStacks(t *testing.T) {
+	lang := &Language{
+		TokenCount:  2,
+		StateCount:  8,
+		SymbolCount: 2,
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "end", Visible: true, Named: true},
+			{Name: "item", Visible: true, Named: true},
+		},
+	}
+	parser := &Parser{language: lang, errorCostCompetition: true}
+	clean := makeCCondenseMissingGroupTestStack(7, 4, false)
+	missing := makeCCondenseMissingGroupTestStack(7, 4, true)
+	missing.cRecoverMissingGroup = &cRecGroup{}
+	if clean.top().state != missing.top().state || clean.byteOffset != missing.byteOffset {
+		t.Fatalf("test setup headers differ: clean=%d@%d missing=%d@%d", clean.top().state, clean.byteOffset, missing.top().state, missing.byteOffset)
+	}
+	if cleanCost, missingCost := parser.cStackErrorCost(&clean), parser.cStackErrorCost(&missing); cleanCost >= missingCost {
+		t.Fatalf("test setup costs clean=%d missing=%d, want clean lower", cleanCost, missingCost)
+	}
+
+	var nodeCount int
+	condensed, resumed := parser.cCondenseAndResume([]glrStack{missing, clean}, nil, Token{Symbol: 1}, &nodeCount, nil, nil, nil, nil)
+	if resumed {
+		t.Fatal("cCondenseAndResume resumed without paused/error-state versions")
+	}
+	if len(condensed) != 1 {
+		t.Fatalf("condensed len = %d, want 1", len(condensed))
+	}
+	if condensed[0].cRecoverMissingGroup != nil {
+		t.Fatal("condense kept missing-group stack; want lower-cost clean stack")
+	}
+}

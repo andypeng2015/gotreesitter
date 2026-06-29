@@ -2153,7 +2153,7 @@ func (p *Parser) isGraphQLRecoveryTripleQuote(sym Symbol) bool {
 func (p *Parser) cCondenseAndResume(stacks []glrStack, source []byte, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) ([]glrStack, bool) {
 	relevant := false
 	for i := range stacks {
-		if stacks[i].cPaused || stacks[i].cRec != nil {
+		if stacks[i].cPaused || stacks[i].cRec != nil || stacks[i].cRecoverMissingGroup != nil {
 			relevant = true
 			break
 		}
