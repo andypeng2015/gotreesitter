@@ -105,6 +105,27 @@ func TestCRecordSummaryUsesCompactEntryPosition(t *testing.T) {
 	}
 }
 
+func TestCStackPosRowUsesCompactEntryPoint(t *testing.T) {
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	leaf := newCompactFullLeafInArena(arena, 1, true, 13, 21, Point{Row: 4, Column: 3}, Point{Row: 4, Column: 11})
+	entry := newStackEntryCompactFullLeaf(3, leaf)
+
+	sliceStack := glrStack{entries: []stackEntry{{state: 1}, entry}}
+	if got := cStackPosRow(&sliceStack); got != 4 {
+		t.Fatalf("slice-backed compact stack row = %d, want 4", got)
+	}
+
+	var scratch gssScratch
+	base := scratch.allocNode(stackEntry{state: 1}, nil, 1)
+	head := scratch.allocNode(entry, base, 2)
+	gssStack := glrStack{gss: gssStack{head: head}}
+	if got := cStackPosRow(&gssStack); got != 4 {
+		t.Fatalf("GSS-backed compact stack row = %d, want 4", got)
+	}
+}
+
 func TestCRecoverStrategy1ElectionRetriesDuplicateEntryForNextMember(t *testing.T) {
 	parser := cRecoveryElectionTestParser()
 	arena := acquireNodeArena(arenaClassFull)

@@ -1781,15 +1781,15 @@ func cStackPosRow(s *glrStack) uint32 {
 	}
 	if len(s.entries) > 0 {
 		for i := len(s.entries) - 1; i >= 0; i-- {
-			if n := stackEntryNode(s.entries[i]); n != nil {
-				return n.endPoint.Row
+			if stackEntryHasNode(s.entries[i]) {
+				return stackEntryNodeEndPoint(s.entries[i]).Row
 			}
 		}
 		return 0
 	}
 	for gn := s.gss.head; gn != nil; gn = gn.prev {
-		if n := stackEntryNode(gn.entry); n != nil {
-			return n.endPoint.Row
+		if stackEntryHasNode(gn.entry) {
+			return stackEntryNodeEndPoint(gn.entry).Row
 		}
 	}
 	return 0
