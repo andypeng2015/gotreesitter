@@ -7,6 +7,16 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+### Fixed
+
+- Swift `if … else if …` chains no longer collapse the enclosing function to
+  `_modifierless_function_declaration_no_body` (#131). The trailing-closure
+  ambiguity recovery now follows the whole if/else-if chain — the chained `if`
+  keyword is swallowed into an ERROR node, so it is discovered by scanning from
+  the body's matching close brace — and requires a byte-faithful reparse so a
+  partially-bracketed chain (which silently truncates without an ERROR node) is
+  rejected rather than accepted.
+
 ## [0.20.6] - 2026-06-28
 
 Patch release for parser recovery correctness, grammargen parity, and the
