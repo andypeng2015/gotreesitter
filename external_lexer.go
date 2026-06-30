@@ -166,6 +166,25 @@ func (l *ExternalLexer) GetColumn() uint32 {
 	return l.Column()
 }
 
+// HasPreviousBytes reports whether the bytes immediately before the scanner
+// cursor match text. External scanners use this to guard context-sensitive
+// content tokens when merged parser states expose them too broadly.
+func (l *ExternalLexer) HasPreviousBytes(text string) bool {
+	if text == "" {
+		return true
+	}
+	start := l.pos - len(text)
+	if start < 0 {
+		return false
+	}
+	for i := 0; i < len(text); i++ {
+		if l.source[start+i] != text[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func (l *ExternalLexer) token() (Token, bool) {
 	if !l.hasResult {
 		return Token{}, false

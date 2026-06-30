@@ -385,6 +385,9 @@ func rustProcessFloatLiteral(lexer *gotreesitter.ExternalLexer, symbols *[rustTo
 // ---------------------------------------------------------------------------
 
 func rustProcessLineDocContent(lexer *gotreesitter.ExternalLexer, symbols *[rustTokenCount]gotreesitter.Symbol) bool {
+	if !lexer.HasPreviousBytes("///") && !lexer.HasPreviousBytes("//!") {
+		return false
+	}
 	lexer.SetResultSymbol(symbols[rustTokDocComment])
 	for {
 		if lexer.Lookahead() == 0 { // EOF
