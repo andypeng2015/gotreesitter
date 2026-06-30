@@ -182,7 +182,7 @@ func TestCAppendVisibleSpliceRecoverySplicesExtraErrorCarrier(t *testing.T) {
 	carrier.setExtra(true)
 	carrier.setHasError(true)
 
-	got := parser.cAppendRecoveryVisibleSplice(nil, carrier)
+	got := parser.cAppendRecoveryVisibleSplice(nil, carrier, arena)
 	if len(got) != 2 || got[0] != armA || got[1] != armB {
 		t.Fatalf("recovery splice = %#v, want match arms", got)
 	}
@@ -193,7 +193,7 @@ func TestCAppendVisibleSpliceRecoverySplicesExtraErrorCarrier(t *testing.T) {
 	ordinary := newLeafNodeInArena(arena, errorSymbol, true, 4, 5, Point{Column: 4}, Point{Column: 5})
 	ordinary.setExtra(true)
 	ordinary.setHasError(true)
-	got = parser.cAppendRecoveryVisibleSplice(nil, ordinary)
+	got = parser.cAppendRecoveryVisibleSplice(nil, ordinary, arena)
 	if len(got) != 1 || got[0] != ordinary {
 		t.Fatalf("leaf ERROR splice = %#v, want preserved ERROR", got)
 	}
@@ -218,8 +218,67 @@ func TestCAppendVisibleSpliceRecoverySplicesExtraErrorCarrier(t *testing.T) {
 	if !children[2].hasError() {
 		t.Fatal("reduced spliced child hasError was cleared")
 	}
-}
 
+	wrappedLang := *lang
+	wrappedLang.ProductionSignatures = []ProductionSignature{{
+		LHS:          4,
+		ProductionID: 7,
+		RHS:          []Symbol{2, 3},
+	}}
+	wrappedParser := &Parser{language: &wrappedLang, errorCostCompetition: true}
+	cleanA := newLeafNodeInArena(arena, 2, true, 10, 11, Point{Column: 10}, Point{Column: 11})
+	cleanB := newLeafNodeInArena(arena, 3, true, 11, 12, Point{Column: 11}, Point{Column: 12})
+	wrapCarrier := newParentNodeInArena(arena, errorSymbol, true, []*Node{cleanA, cleanB}, nil, 0)
+	wrapCarrier.setExtra(true)
+	wrapCarrier.setHasError(true)
+
+	if count, ok := wrappedParser.cRecoveryVisibleSpliceCount(wrapCarrier); !ok || count != 1 {
+		t.Fatalf("signature splice count = %d, %v, want 1, true", count, ok)
+	}
+	got = wrappedParser.cAppendRecoveryVisibleSplice(nil, wrapCarrier, arena)
+	if len(got) != 1 || got[0].symbol != 4 {
+		t.Fatalf("signature recovery splice = %#v, want match_block wrapper", got)
+	}
+	wrapper := got[0]
+	if wrapper.productionID != 7 {
+		t.Fatalf("wrapper productionID = %d, want 7", wrapper.productionID)
+	}
+	if len(wrapper.children) != 2 || wrapper.children[0] != cleanA || wrapper.children[1] != cleanB {
+		t.Fatalf("wrapper children = %#v, want cleanA/cleanB", wrapper.children)
+	}
+	if wrapper.hasError() {
+		t.Fatal("wrapper inherited carrier hasError; want child-only error propagation")
+	}
+
+	entries = []stackEntry{
+		newStackEntryNode(1, left),
+		newStackEntryNode(1, wrapCarrier),
+		newStackEntryNode(1, right),
+	}
+	children, _, _ = wrappedParser.buildReduceChildren(entries, 0, len(entries), 2, 4, 0, arena)
+	if len(children) != 3 || children[0] != left || children[1].symbol != 4 || children[2] != right {
+		t.Fatalf("signature reduced children = %#v, want left/wrapper/right", children)
+	}
+
+	ambiguousLang := *lang
+	ambiguousLang.ProductionSignatures = []ProductionSignature{
+		{LHS: 4, ProductionID: 7, RHS: []Symbol{2, 3}},
+		{LHS: 1, ProductionID: 8, RHS: []Symbol{2, 3}},
+	}
+	ambiguousParser := &Parser{language: &ambiguousLang, errorCostCompetition: true}
+	ambigA := newLeafNodeInArena(arena, 2, true, 20, 21, Point{Column: 20}, Point{Column: 21})
+	ambigB := newLeafNodeInArena(arena, 3, true, 21, 22, Point{Column: 21}, Point{Column: 22})
+	ambigCarrier := newParentNodeInArena(arena, errorSymbol, true, []*Node{ambigA, ambigB}, nil, 0)
+	ambigCarrier.setExtra(true)
+	ambigCarrier.setHasError(true)
+	if count, ok := ambiguousParser.cRecoveryVisibleSpliceCount(ambigCarrier); !ok || count != 2 {
+		t.Fatalf("ambiguous splice count = %d, %v, want 2, true", count, ok)
+	}
+	got = ambiguousParser.cAppendRecoveryVisibleSplice(nil, ambigCarrier, arena)
+	if len(got) != 2 || got[0] != ambigA || got[1] != ambigB {
+		t.Fatalf("ambiguous recovery splice = %#v, want flattened children", got)
+	}
+}
 func TestCRecoverStrategy1ElectionRetriesDuplicateEntryForNextMember(t *testing.T) {
 	parser := cRecoveryElectionTestParser()
 	arena := acquireNodeArena(arenaClassFull)

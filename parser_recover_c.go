@@ -1761,7 +1761,7 @@ func (p *Parser) cRecoverEOFAccept(v *glrStack, tok Token, nodeCount *int, arena
 			children = append(children, n.children...)
 			continue
 		}
-		children = p.cAppendRecoveryVisibleSplice(children, n)
+		children = p.cAppendRecoveryVisibleSplice(children, n, arena)
 	}
 	root := newParentNodeInArena(arena, errorSymbol, true, children, nil, 0)
 	if rawFirst != nil {
@@ -1825,14 +1825,14 @@ func (p *Parser) cAppendVisibleSplice(dst []*Node, n *Node) []*Node {
 	return dst
 }
 
-func (p *Parser) cRecoveryVisibleSpliceChildren(n *Node) ([]*Node, bool) {
+func (p *Parser) cRecoveryVisibleSpliceCandidate(n *Node) bool {
 	if !p.errorCostCompetitionEnabled() ||
 		n == nil ||
 		n.symbol != errorSymbol ||
 		!n.isExtra() ||
 		n.isMissing() ||
 		len(n.children) == 0 {
-		return nil, false
+		return false
 	}
 	for _, child := range n.children {
 		if child == nil ||
@@ -1840,14 +1840,88 @@ func (p *Parser) cRecoveryVisibleSpliceChildren(n *Node) ([]*Node, bool) {
 			child.isExtra() ||
 			child.isMissing() ||
 			!p.cSymbolVisible(child.symbol) {
-			return nil, false
+			return false
 		}
+	}
+	return true
+}
+
+func (p *Parser) cRecoveryVisibleSpliceSignature(n *Node) (ProductionSignature, bool) {
+	if p == nil || p.language == nil || len(p.language.ProductionSignatures) == 0 {
+		return ProductionSignature{}, false
+	}
+	match := -1
+	for i := range p.language.ProductionSignatures {
+		sig := p.language.ProductionSignatures[i]
+		if !p.cSymbolVisible(sig.LHS) || len(sig.RHS) != len(n.children) {
+			continue
+		}
+		matches := true
+		for j, rhs := range sig.RHS {
+			if rhs != n.children[j].symbol {
+				matches = false
+				break
+			}
+		}
+		if !matches {
+			continue
+		}
+		if match >= 0 {
+			return ProductionSignature{}, false
+		}
+		match = i
+	}
+	if match < 0 {
+		return ProductionSignature{}, false
+	}
+	return p.language.ProductionSignatures[match], true
+}
+
+func (p *Parser) cRecoveryVisibleSpliceCount(n *Node) (int, bool) {
+	if !p.cRecoveryVisibleSpliceCandidate(n) {
+		return 0, false
+	}
+	if _, ok := p.cRecoveryVisibleSpliceSignature(n); ok {
+		return 1, true
+	}
+	return len(n.children), true
+}
+
+func (p *Parser) cRecoveryVisibleSpliceSignatureNode(n *Node, arena *nodeArena) *Node {
+	if arena == nil {
+		return nil
+	}
+	sig, ok := p.cRecoveryVisibleSpliceSignature(n)
+	if !ok {
+		return nil
+	}
+	children := arena.allocNodeSliceNoClear(len(n.children))
+	copy(children, n.children)
+	parent := newParentNodeInArena(arena, sig.LHS, p.isNamedSymbol(sig.LHS), children, nil, sig.ProductionID)
+	parent.preGotoState = n.preGotoState
+	parent.parseState = n.parseState
+	if n.preGotoState != 0 {
+		if gotoState := p.lookupGoto(n.preGotoState, sig.LHS); gotoState != 0 {
+			parent.parseState = gotoState
+		}
+	}
+	parent.rawShape = captureRawShapeForNodeSlice(arena, sig.LHS, sig.ProductionID, children)
+	nodeBumpEquivVersion(parent)
+	return parent
+}
+
+func (p *Parser) cRecoveryVisibleSpliceChildren(n *Node, arena *nodeArena) ([]*Node, bool) {
+	if !p.cRecoveryVisibleSpliceCandidate(n) {
+		return nil, false
+	}
+	if wrapped := p.cRecoveryVisibleSpliceSignatureNode(n, arena); wrapped != nil {
+		return []*Node{wrapped}, true
 	}
 	return n.children, true
 }
 
-func (p *Parser) cAppendRecoveryVisibleSplice(dst []*Node, n *Node) []*Node {
-	if children, ok := p.cRecoveryVisibleSpliceChildren(n); ok {
+func (p *Parser) cAppendRecoveryVisibleSplice(dst []*Node, n *Node, arena *nodeArena) []*Node {
+	if children, ok := p.cRecoveryVisibleSpliceChildren(n, arena); ok {
 		return append(dst, children...)
 	}
 	return p.cAppendVisibleSplice(dst, n)
@@ -1937,7 +2011,7 @@ func (p *Parser) cRecoverToState(v *glrStack, depth int, goal StateID, arena *no
 			children = append(children, n.children...)
 			continue
 		}
-		children = p.cAppendRecoveryVisibleSplice(children, n)
+		children = p.cAppendRecoveryVisibleSplice(children, n, arena)
 	}
 
 	fork := v.cloneWithScratch(gssScratch)

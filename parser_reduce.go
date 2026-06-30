@@ -5808,8 +5808,8 @@ func (p *Parser) buildReduceChildrenAllVisible(entries []stackEntry, start, end,
 			continue
 		}
 		if parentVisible {
-			if children, ok := p.cRecoveryVisibleSpliceChildren(n); ok {
-				visibleCount += len(children)
+			if count, ok := p.cRecoveryVisibleSpliceCount(n); ok {
+				visibleCount += count
 				continue
 			}
 		}
@@ -5855,7 +5855,7 @@ func (p *Parser) buildReduceChildrenAllVisible(entries []stackEntry, start, end,
 			continue
 		}
 		if parentVisible {
-			if spliced, ok := p.cRecoveryVisibleSpliceChildren(n); ok {
+			if spliced, ok := p.cRecoveryVisibleSpliceChildren(n, arena); ok {
 				out += copy(children[out:], spliced)
 				continue
 			}
@@ -5954,8 +5954,8 @@ func (p *Parser) buildReduceChildrenNoAliasNoFieldsPlanned(entries []stackEntry,
 			continue
 		}
 		if parentVisible {
-			if spliced, ok := p.cRecoveryVisibleSpliceChildren(n); ok {
-				visibleCount += len(spliced)
+			if count, ok := p.cRecoveryVisibleSpliceCount(n); ok {
+				visibleCount += count
 				continue
 			}
 		}
@@ -5988,7 +5988,7 @@ func (p *Parser) buildReduceChildrenNoAliasNoFieldsPlanned(entries []stackEntry,
 				continue
 			}
 			if parentVisible {
-				if spliced, ok := p.cRecoveryVisibleSpliceChildren(n); ok {
+				if spliced, ok := p.cRecoveryVisibleSpliceChildren(n, arena); ok {
 					out += copy(children[out:], spliced)
 					continue
 				}
@@ -6020,7 +6020,7 @@ func (p *Parser) buildReduceChildrenNoAliasNoFieldsPlanned(entries []stackEntry,
 			continue
 		}
 		if parentVisible {
-			if spliced, ok := p.cRecoveryVisibleSpliceChildren(n); ok {
+			if spliced, ok := p.cRecoveryVisibleSpliceChildren(n, arena); ok {
 				for _, child := range spliced {
 					scratch.appendNode(child)
 				}
@@ -6136,7 +6136,7 @@ func (p *Parser) appendReduceChildrenToScratch(scratch *reduceBuildScratch, entr
 func (p *Parser) appendReduceChildItemToScratch(scratch *reduceBuildScratch, item reduceChildBuildItem, rawFieldIDs []FieldID, nextStructuralChildIndex int, parentVisible bool, symbolMeta []SymbolMetadata, havePadding bool, paddingStartByte uint32, paddingStartPoint Point, paddingSource *Node, arena *nodeArena) (int, int) {
 	n := item.node
 	if parentVisible {
-		if children, ok := p.cRecoveryVisibleSpliceChildren(n); ok {
+		if children, ok := p.cRecoveryVisibleSpliceChildren(n, arena); ok {
 			start := len(scratch.nodes)
 			for _, child := range children {
 				scratch.appendNode(child)
