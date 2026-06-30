@@ -102,7 +102,7 @@ func (b *nfaBuilder) buildEpsilon() nfaFragment {
 }
 
 func (b *nfaBuilder) buildString(s string) nfaFragment {
-	if len(s) == 0 {
+	if len(s) == 0 || s == "\x00" {
 		return b.buildEpsilon()
 	}
 	start := b.addState()
@@ -136,7 +136,7 @@ func terminalRuleCanMatchEmpty(r *Rule) bool {
 	case RuleBlank:
 		return true
 	case RuleString:
-		return r.Value == ""
+		return r.Value == "" || r.Value == "\x00"
 	case RulePattern:
 		node, err := parseRegex(r.Value)
 		return err == nil && regexCanMatchEmpty(node)
@@ -545,7 +545,7 @@ func buildCombinedNFA(patterns []TerminalPattern) (*nfa, error) {
 	}
 
 	for i, pat := range patterns {
-		if pat.Rule != nil && pat.Rule.Kind == RuleString && stringCounts[pat.Rule.Value] == 1 {
+		if pat.Rule != nil && pat.Rule.Kind == RuleString && pat.Rule.Value != "\x00" && stringCounts[pat.Rule.Value] == 1 {
 			addStringPattern(pat.Rule.Value, pat.SymbolID, pat.Priority, i)
 			continue
 		}

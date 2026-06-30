@@ -38,6 +38,8 @@ type dfaTokenSource struct {
 	hasExternalScanner          bool
 	hasExternalSymbols          bool
 	usesExternalCheckpoints     bool
+	zeroWidthSentinelSymbol     Symbol
+	hasZeroWidthSentinelSymbol  bool
 	isBash                      bool
 	isBashGenerated             bool
 	isComment                   bool
@@ -172,6 +174,7 @@ func initDFATokenSource(ts *dfaTokenSource, lexer *Lexer, language *Language, lo
 		setLexerErrorRunLexState(ts.lexer, language)
 	}
 	if language != nil {
+		ts.zeroWidthSentinelSymbol, ts.hasZeroWidthSentinelSymbol = languageGeneratedZeroWidthSentinel(language)
 		ts.hasExternalScanner = language.ExternalScanner != nil
 		ts.hasExternalSymbols = len(language.ExternalSymbols) > 0
 		ts.usesExternalCheckpoints = languageUsesExternalScannerCheckpoints(language)
@@ -261,6 +264,22 @@ func languageHasZeroWidthStartAccept(lang *Language) bool {
 		}
 	}
 	return false
+}
+
+func languageGeneratedZeroWidthSentinel(lang *Language) (Symbol, bool) {
+	if lang == nil || !lang.GeneratedByGrammargen {
+		return 0, false
+	}
+	limit := int(lang.TokenCount)
+	if limit > len(lang.SymbolNames) {
+		limit = len(lang.SymbolNames)
+	}
+	for i := 1; i < limit; i++ {
+		if lang.SymbolNames[i] == "\x00" {
+			return Symbol(i), true
+		}
+	}
+	return 0, false
 }
 
 func (d *dfaTokenSource) Reset(source []byte) {
@@ -1181,6 +1200,12 @@ func (d *dfaTokenSource) scanDFATokenForState(state StateID, lexState uint32) (T
 			return errTok, int(errTok.EndByte), errTok.EndPoint.Row, errTok.EndPoint.Column
 		}
 	}
+	if zeroTok, ok := d.preferGeneratedZeroWidthSentinelForState(state, tok, savedPos, savedRow, savedCol); ok {
+		tok = zeroTok
+		d.lexer.pos = savedPos
+		d.lexer.row = savedRow
+		d.lexer.col = savedCol
+	}
 	if tok.Symbol == errorSymbol {
 		// Unlexable-run error token from the lexer (mirrors C skipped-error
 		// lexing). Return it as-is: keyword promotion and DFA-token
@@ -1275,17 +1300,16 @@ func (d *dfaTokenSource) shouldPreferBaseLexStateToken(baseTok, afterTok Token) 
 }
 
 func (d *dfaTokenSource) shouldPreferZeroWidthBaseLexStateToken(baseTok, afterTok Token) bool {
-	if d == nil || d.language == nil || len(d.language.ZeroWidthTokens) == 0 {
+	if d == nil || d.language == nil {
 		return false
 	}
 	if baseTok.StartByte != afterTok.StartByte || baseTok.EndByte != baseTok.StartByte {
 		return false
 	}
-	sym := int(baseTok.Symbol)
-	if sym < 0 || sym >= len(d.language.ZeroWidthTokens) || !d.language.ZeroWidthTokens[sym] {
+	if !d.isZeroWidthSymbol(baseTok.Symbol) {
 		return false
 	}
-	return d.hasShiftActionForStateSymbol(d.state, baseTok.Symbol)
+	return d.hasActionForStateSymbol(d.state, baseTok.Symbol)
 }
 
 func (d *dfaTokenSource) preferZeroWidthStartAcceptForState(state StateID, lexState uint32, tok Token, startPos int, startRow, startCol uint32) (Token, bool) {
@@ -1299,7 +1323,7 @@ func (d *dfaTokenSource) preferZeroWidthStartAcceptForState(state StateID, lexSt
 	if startAccept == 0 || startAccept == tok.Symbol || !d.isZeroWidthSymbol(startAccept) {
 		return Token{}, false
 	}
-	if !d.hasShiftActionForStateSymbol(state, startAccept) {
+	if !d.hasActionForStateSymbol(state, startAccept) {
 		return Token{}, false
 	}
 	if tok.Symbol != 0 && d.symbolVisibleOrNamed(tok.Symbol) && !d.sameSymbolName(startAccept, tok.Symbol) {
@@ -1316,14 +1340,78 @@ func (d *dfaTokenSource) preferZeroWidthStartAcceptForState(state StateID, lexSt
 }
 
 func (d *dfaTokenSource) isZeroWidthSymbol(sym Symbol) bool {
-	if d == nil || d.language == nil || len(d.language.ZeroWidthTokens) == 0 {
+	if d == nil || d.language == nil {
 		return false
 	}
 	idx := int(sym)
-	return idx >= 0 && idx < len(d.language.ZeroWidthTokens) && d.language.ZeroWidthTokens[idx]
+	if idx >= 0 && idx < len(d.language.ZeroWidthTokens) && d.language.ZeroWidthTokens[idx] {
+		return true
+	}
+	return d.hasZeroWidthSentinelSymbol && sym == d.zeroWidthSentinelSymbol
+}
+
+func (d *dfaTokenSource) preferGeneratedZeroWidthSentinelForState(state StateID, tok Token, startPos int, startRow, startCol uint32) (Token, bool) {
+	if d == nil || d.language == nil || d.lexer == nil || !d.hasZeroWidthSentinelSymbol || d.zeroWidthSentinelSymbol == 0 {
+		return Token{}, false
+	}
+	if startPos < len(d.lexer.source) && d.lexer.source[startPos] == 0 {
+		return Token{}, false
+	}
+	if !d.atGeneratedZeroWidthSentinelBoundary(startPos) {
+		return Token{}, false
+	}
+	if tok.Symbol == d.zeroWidthSentinelSymbol {
+		return Token{}, false
+	}
+	if !d.hasActionForStateSymbol(state, d.zeroWidthSentinelSymbol) {
+		return Token{}, false
+	}
+	if tok.Symbol != 0 && tok.Symbol != errorSymbol && tok.StartByte == uint32(startPos) && d.hasActionForStateSymbol(state, tok.Symbol) {
+		return Token{}, false
+	}
+	pt := Point{Row: startRow, Column: startCol}
+	return Token{
+		Symbol:     d.zeroWidthSentinelSymbol,
+		StartByte:  uint32(startPos),
+		EndByte:    uint32(startPos),
+		StartPoint: pt,
+		EndPoint:   pt,
+	}, true
+}
+
+func (d *dfaTokenSource) atGeneratedZeroWidthSentinelBoundary(startPos int) bool {
+	if d == nil || d.lexer == nil {
+		return false
+	}
+	source := d.lexer.source
+	pos := startPos
+	for pos < len(source) {
+		switch source[pos] {
+		case ' ', '\t', '\f':
+			pos++
+		case ')', ']', '}':
+			return true
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func (d *dfaTokenSource) hasShiftActionForStateSymbol(state StateID, sym Symbol) bool {
+	if !d.hasActionForStateSymbol(state, sym) {
+		return false
+	}
+	idx := d.lookupActionIndex(state, sym)
+	for _, act := range d.language.ParseActions[idx].Actions {
+		if act.Type == ParseActionShift {
+			return true
+		}
+	}
+	return false
+}
+
+func (d *dfaTokenSource) hasActionForStateSymbol(state StateID, sym Symbol) bool {
 	if d == nil || d.language == nil || d.lookupActionIndex == nil || sym == 0 {
 		return false
 	}
@@ -1331,12 +1419,7 @@ func (d *dfaTokenSource) hasShiftActionForStateSymbol(state StateID, sym Symbol)
 	if idx == 0 || int(idx) >= len(d.language.ParseActions) {
 		return false
 	}
-	for _, act := range d.language.ParseActions[idx].Actions {
-		if act.Type == ParseActionShift {
-			return true
-		}
-	}
-	return false
+	return len(d.language.ParseActions[idx].Actions) > 0
 }
 
 func (d *dfaTokenSource) symbolVisibleOrNamed(sym Symbol) bool {

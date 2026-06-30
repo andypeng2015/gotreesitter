@@ -1031,3 +1031,102 @@ func TestNextDFATokenPrefersParserValidZeroWidthStartAccept(t *testing.T) {
 		t.Fatalf("token end = %d, want %d", got, want)
 	}
 }
+
+func TestNextDFATokenSynthesizesGeneratedNULSentinelLookahead(t *testing.T) {
+	lang := &Language{
+		GeneratedByGrammargen: true,
+		SymbolNames:           []string{"end", "\x00", "}"},
+		TokenCount:            3,
+		SymbolCount:           3,
+		LexStates: []LexState{
+			{
+				Default: -1,
+				EOF:     -1,
+				Transitions: []LexTransition{
+					{Lo: '}', Hi: '}', NextState: 1},
+				},
+			},
+			{
+				AcceptToken: 2,
+				Default:     -1,
+				EOF:         -1,
+			},
+		},
+		LexModes: []LexMode{
+			{LexState: 0},
+			{LexState: 0},
+		},
+		ParseActions: []ParseActionEntry{
+			{},
+			{Actions: []ParseAction{{Type: ParseActionReduce}}},
+		},
+	}
+	lookup := func(_ StateID, sym Symbol) uint16 {
+		if sym == 1 {
+			return 1
+		}
+		return 0
+	}
+	d := newDFATokenSourceDirect(NewLexer(lang.LexStates, []byte("}")), lang, lookup, nil, nil, nil)
+	d.SetParserState(1)
+
+	tok := d.nextDFAToken()
+	if got, want := tok.Symbol, Symbol(1); got != want {
+		t.Fatalf("token symbol = %d (%q), want %d (%q)", got, lang.SymbolNames[got], want, lang.SymbolNames[want])
+	}
+	if tok.StartByte != 0 || tok.EndByte != 0 {
+		t.Fatalf("token span = %d..%d, want zero-width at 0", tok.StartByte, tok.EndByte)
+	}
+}
+
+func TestNextDFATokenDoesNotSynthesizeGeneratedNULSentinelOverValidToken(t *testing.T) {
+	lang := &Language{
+		GeneratedByGrammargen: true,
+		SymbolNames:           []string{"end", "\x00", "}"},
+		TokenCount:            3,
+		SymbolCount:           3,
+		LexStates: []LexState{
+			{
+				Default: -1,
+				EOF:     -1,
+				Transitions: []LexTransition{
+					{Lo: '}', Hi: '}', NextState: 1},
+				},
+			},
+			{
+				AcceptToken: 2,
+				Default:     -1,
+				EOF:         -1,
+			},
+		},
+		LexModes: []LexMode{
+			{LexState: 0},
+			{LexState: 0},
+		},
+		ParseActions: []ParseActionEntry{
+			{},
+			{Actions: []ParseAction{{Type: ParseActionReduce}}},
+			{Actions: []ParseAction{{Type: ParseActionShift}}},
+		},
+	}
+	lookup := func(_ StateID, sym Symbol) uint16 {
+		switch sym {
+		case 1:
+			return 1
+		case 2:
+			return 2
+		default:
+			return 0
+		}
+	}
+	d := newDFATokenSourceDirect(NewLexer(lang.LexStates, []byte("}")), lang, lookup, nil, nil, nil)
+	d.SetParserState(1)
+
+	tok := d.nextDFAToken()
+	if got, want := tok.Symbol, Symbol(2); got != want {
+		t.Fatalf("token symbol = %d (%q), want %d (%q)", got, lang.SymbolNames[got], want, lang.SymbolNames[want])
+	}
+	if got, want := tok.Text, "}"; got != want {
+		t.Fatalf("token text = %q, want %q", got, want)
+	}
+}

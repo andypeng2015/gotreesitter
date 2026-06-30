@@ -30,6 +30,29 @@ func TestBuildSeqCoalescesAdjacentStrings(t *testing.T) {
 	}
 }
 
+func TestNULStringTerminalIsZeroWidth(t *testing.T) {
+	if !terminalRuleCanMatchEmpty(Str("\x00")) {
+		t.Fatal(`Str("\x00") should be treated as a zero-width terminal`)
+	}
+	n, err := buildCombinedNFA([]TerminalPattern{
+		{SymbolID: 1, Rule: Str("\x00"), Priority: 0},
+	})
+	if err != nil {
+		t.Fatalf("buildCombinedNFA: %v", err)
+	}
+	dfa, err := subsetConstruction(context.Background(), n)
+	if err != nil {
+		t.Fatalf("subsetConstruction: %v", err)
+	}
+	lexStates := convertDFAToLexStates(dfa, false)
+	if len(lexStates) == 0 {
+		t.Fatal("no lex states generated")
+	}
+	if got, want := lexStates[0].AcceptToken, gotreesitter.Symbol(1); got != want {
+		t.Fatalf("start accept = %d, want %d", got, want)
+	}
+}
+
 func TestBuildChoiceSharesStringPrefixes(t *testing.T) {
 	builder := newNFABuilder()
 	frag, err := builder.buildFromRule(Choice(Str("ab"), Str("ac")))

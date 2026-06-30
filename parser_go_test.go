@@ -101,6 +101,41 @@ func TestParseGoPackageOnly(t *testing.T) {
 	}
 }
 
+func TestParseGoFunctionDeclarationFields(t *testing.T) {
+	tree, lang := parseGo(t, "package main\nfunc Hello() string { return \"hello\" }\n")
+	fn := findNamedChild(lang, tree.RootNode(), "function_declaration")
+	if fn == nil {
+		t.Fatal("no function_declaration found")
+	}
+
+	fieldNames := make([]string, fn.ChildCount())
+	childTypes := make([]string, fn.ChildCount())
+	for i := 0; i < fn.ChildCount(); i++ {
+		fieldNames[i] = fn.FieldNameForChild(i, lang)
+		if child := fn.Child(i); child != nil {
+			childTypes[i] = child.Type(lang)
+		}
+	}
+
+	for _, tc := range []struct {
+		field string
+		typ   string
+	}{
+		{"name", "identifier"},
+		{"parameters", "parameter_list"},
+		{"result", "type_identifier"},
+		{"body", "block"},
+	} {
+		child := fn.ChildByFieldName(tc.field, lang)
+		if child == nil {
+			t.Fatalf("ChildByFieldName(%q) returned nil; child fields=%v child types=%v root=%s", tc.field, fieldNames, childTypes, tree.RootNode().SExpr(lang))
+		}
+		if got := child.Type(lang); got != tc.typ {
+			t.Fatalf("ChildByFieldName(%q).Type() = %q, want %q; child fields=%v child types=%v", tc.field, got, tc.typ, fieldNames, childTypes)
+		}
+	}
+}
+
 func TestParseGoRangeWithNestedFunctionLiteralBody(t *testing.T) {
 	src := `package p
 
@@ -141,13 +176,13 @@ func TestUnderSize(t *testing.T) {
 		t.Fatalf("root end = %d, want %d", got, want)
 	}
 	if findNamedChild(lang, root, "for_statement") == nil {
-		t.Fatal("missing for_statement")
+		t.Fatalf("missing for_statement:\n%s", root.SExpr(lang))
 	}
 	if findNamedChild(lang, root, "func_literal") == nil {
-		t.Fatal("missing nested func_literal")
+		t.Fatalf("missing nested func_literal:\n%s", root.SExpr(lang))
 	}
 	if findNamedChild(lang, root, "defer_statement") == nil {
-		t.Fatal("missing nested defer_statement")
+		t.Fatalf("missing nested defer_statement:\n%s", root.SExpr(lang))
 	}
 }
 
