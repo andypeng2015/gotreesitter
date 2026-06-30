@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/odvcencio/gotreesitter"
 	"github.com/odvcencio/gotreesitter/grammars"
 )
 
@@ -276,12 +277,18 @@ func TestRustGeneratedMatchArmDiagnostic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("import Rust grammar.json: %v", err)
 	}
+	ng, err := Normalize(gram)
+	if err != nil {
+		t.Fatalf("normalize Rust grammar.json: %v", err)
+	}
+	logRustMatchDiagnostic(t, ng, nil)
 	genLang, err := generateWithTimeout(gram, 90*time.Second)
 	if err != nil {
 		t.Fatalf("generate Rust language: %v", err)
 	}
 	refLang := grammars.RustLanguage()
 	adaptExternalScanner(refLang, genLang)
+	logRustMatchDiagnostic(t, ng, genLang)
 
 	cases := []string{
 		"match x {\n" +
@@ -296,6 +303,74 @@ func TestRustGeneratedMatchArmDiagnostic(t *testing.T) {
 		t.Run(sample, func(t *testing.T) {
 			assertGeneratedAndReferenceDeepParity(t, genLang, refLang, sample)
 		})
+	}
+}
+func logRustMatchDiagnostic(t *testing.T, ng *NormalizedGrammar, lang *gotreesitter.Language) {
+	t.Helper()
+	if ng != nil {
+		matchSym := -1
+		identifierSym := -1
+		for i, sym := range ng.Symbols {
+			switch sym.Name {
+			case "match":
+				if matchSym == -1 || sym.Kind == SymbolTerminal {
+					matchSym = i
+				}
+			case "identifier":
+				if identifierSym == -1 || sym.Kind == SymbolNamedToken {
+					identifierSym = i
+				}
+			}
+		}
+		matchKeyword := false
+		for _, symID := range ng.KeywordSymbols {
+			if symID == matchSym {
+				matchKeyword = true
+				break
+			}
+		}
+		t.Logf("rust match diag normalized: word=%d identifier=%d match=%d match_keyword=%v keywords=%d keyword_entries=%d terminals=%d productions=%d reserved_sets=%d",
+			ng.WordSymbolID, identifierSym, matchSym, matchKeyword, len(ng.KeywordSymbols), len(ng.KeywordEntries), len(ng.Terminals), len(ng.Productions), len(ng.ReservedWordSets))
+	}
+	if lang == nil {
+		return
+	}
+	matchSym := -1
+	identifierSym := -1
+	for i, name := range lang.SymbolNames {
+		switch name {
+		case "match":
+			if matchSym == -1 {
+				matchSym = i
+			}
+		case "identifier":
+			if identifierSym == -1 {
+				identifierSym = i
+			}
+		}
+	}
+	kwTok := gotreesitter.NewLexer(lang.KeywordLexStates, []byte("match")).Next(0)
+	kwName := ""
+	if int(kwTok.Symbol) < len(lang.SymbolNames) {
+		kwName = lang.SymbolNames[kwTok.Symbol]
+	}
+	t.Logf("rust match diag generated: initial_state=%d keyword_capture=%d keyword_states=%d token_count=%d state_count=%d match=%d identifier=%d keyword_lex_match=%d/%q",
+		lang.InitialState, lang.KeywordCaptureToken, len(lang.KeywordLexStates), lang.TokenCount, lang.StateCount, matchSym, identifierSym, kwTok.Symbol, kwName)
+	for _, state := range []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10} {
+		if state >= len(lang.LexModes) {
+			continue
+		}
+		matchAction := uint16(0)
+		identifierAction := uint16(0)
+		if matchSym >= 0 {
+			matchAction = lookupActionIndexForLanguage(lang, gotreesitter.StateID(state), gotreesitter.Symbol(matchSym))
+		}
+		if identifierSym >= 0 {
+			identifierAction = lookupActionIndexForLanguage(lang, gotreesitter.StateID(state), gotreesitter.Symbol(identifierSym))
+		}
+		mode := lang.LexModes[state]
+		t.Logf("rust match diag state=%d lex=%d after_ws=%d match_action=%d identifier_action=%d",
+			state, mode.LexStateIndex(), mode.AfterWhitespaceLexStateIndex(), matchAction, identifierAction)
 	}
 }
 func TestRustCorpusMatchLetGuardParity(t *testing.T) {
