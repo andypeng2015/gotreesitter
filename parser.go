@@ -3745,6 +3745,11 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	stopDiagRecoverActionAvailable := false
 	stopDiagFrontier := stopFrontierDiagnostics{}
 	stopDiagCondenseGating := ""
+	stopDiagCondenseErrorCostEnabled := false
+	stopDiagCondenseAnyReduced := false
+	stopDiagCondenseRelevant := false
+	stopDiagCondenseRan := false
+	stopDiagCondenseResumed := false
 	noteStopDiagnosticStack := func(s *glrStack) {
 		if s == nil || s.dead || s.accepted || s.depth() == 0 {
 			return
@@ -3763,13 +3768,21 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		stopDiagHaveToken = true
 		stopDiagToken = t
 	}
-	noteStopDiagnosticRecoverAction := func(s *glrStack, t Token) {
-		if s == nil || !stopDiagHaveToken {
-			return
+	computeStopDiagnosticRecoverAction := func() bool {
+		if stopDiagRecoverActionAvailable || !stopDiagHaveToken {
+			return stopDiagRecoverActionAvailable
 		}
-		if _, _, ok := p.findRecoverActionOnStack(s, t.Symbol, nil); ok {
-			stopDiagRecoverActionAvailable = true
+		for i := range stacks {
+			s := &stacks[i]
+			if s.accepted || s.depth() == 0 {
+				continue
+			}
+			if _, _, ok := p.findRecoverActionOnStack(s, stopDiagToken.Symbol, nil); ok {
+				stopDiagRecoverActionAvailable = true
+				break
+			}
 		}
+		return stopDiagRecoverActionAvailable
 	}
 	recordStopDiagnostic := func(reason ParseStopReason, tree *Tree) {
 		if reason != ParseStopNoStacksAlive && reason != ParseStopIterationLimit {
@@ -3780,7 +3793,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		if !parseRuntime.StopDiagnosticCRecoveryEnabled {
 			parseRuntime.StopDiagnosticCRecoveryGateReason = p.cRecoveryGateReason()
 		}
-		parseRuntime.StopDiagnosticRecoverActionAvailable = stopDiagRecoverActionAvailable
+		parseRuntime.StopDiagnosticRecoverActionAvailable = computeStopDiagnosticRecoverAction()
 		if stopDiagHaveStack {
 			parseRuntime.StopDiagnosticLastStackState = stopDiagLastStackState
 			parseRuntime.StopDiagnosticLastStackByte = stopDiagLastStackByte
@@ -3808,6 +3821,9 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		parseRuntime.StopDiagnosticFrontierStacks = stopDiagFrontier.stackTable
 		parseRuntime.StopDiagnosticFrontierActions = stopDiagFrontier.actions
 		parseRuntime.StopDiagnosticSameHeaderGroups = stopDiagFrontier.sameHeader
+		if stopDiagCondenseGating == "" {
+			stopDiagCondenseGating = stopCondenseGatingString(stopDiagCondenseErrorCostEnabled, stopDiagCondenseAnyReduced, stopDiagCondenseRelevant, stopDiagCondenseRan, stopDiagCondenseResumed, stacks)
+		}
 		parseRuntime.StopDiagnosticCondenseGating = stopDiagCondenseGating
 		if stopActionDiag.captured {
 			parseRuntime.StopDiagnosticActionCaptured = true
@@ -4484,7 +4500,6 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			}
 			currentState := s.top().state
 			noteStopDiagnosticStack(s)
-			noteStopDiagnosticRecoverAction(s, tok)
 		retryAction:
 			actionStart := time.Time{}
 			if phaseTiming {
@@ -5166,7 +5181,12 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				anyReduced = true
 			}
 		}
-		stopDiagCondenseGating = stopCondenseGatingString(condenseErrorCostEnabled, condenseAnyReduced, condenseRelevant, condenseRan, condenseResumed, stacks)
+		stopDiagCondenseErrorCostEnabled = condenseErrorCostEnabled
+		stopDiagCondenseAnyReduced = condenseAnyReduced
+		stopDiagCondenseRelevant = condenseRelevant
+		stopDiagCondenseRan = condenseRan
+		stopDiagCondenseResumed = condenseResumed
+		stopDiagCondenseGating = ""
 
 		postDispatchDefaultReduced := false
 		if anyReduced && !tok.NoLookahead && parseEagerDefaultReduceEnabled() && p.isExternalToken(tok.Symbol) {
@@ -5399,6 +5419,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					if stopDiagFrontier.survivors != "" {
 						extra += " " + stopDiagFrontier.survivors
 					}
+					stopDiagCondenseGating = stopCondenseGatingString(stopDiagCondenseErrorCostEnabled, stopDiagCondenseAnyReduced, stopDiagCondenseRelevant, stopDiagCondenseRan, stopDiagCondenseResumed, stacks)
 					if stopDiagCondenseGating != "" {
 						extra += " " + stopDiagCondenseGating
 					}

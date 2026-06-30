@@ -252,22 +252,16 @@ func (p *Parser) recordForestDecline(reason string, tok Token, states []StateID)
 // more than the dispatched third saves. Re-promote only if the dispatch rate
 // rises (e.g. the forest learns the constructs it currently parse_fails on).
 //
-// go joined 2026-06-03. forest-vs-production on the curated corpus is diverged=0
-// at 1.5x; forest-vs-C oracle is diverged=0 at ~0.88x C (near C-tier); and a
-// 250-file repo sweep is forest>=production on EVERY file (BETTER 25, equal 224,
-// WORSE 0) — the forest is in fact MORE correct than production on real .go (it
-// fixes a for-range composite-literal-vs-block mis-parse and parses ~6% of valid
-// files production error-recovers). Required three forest fixes:
-//   - keyword-leaf collapse (false/nil -> leaf), commit 03031c9b
-//   - generics `T[X]` dedup tie-break (taller subtree wins a coalesce score tie,
-//     under the shared `_expression` supertype), with cached node height; 880124ca
-//   - blank_identifier `import _` C-oracle-seeded gap collapse; adb1a0fd
-//
-// One pre-existing gotreesitter-vs-C span quirk (off-by-3 on a few files) is
-// SHARED with production (not a forest regression), so it does not block.
+// Go remains a strong forest canary but is intentionally held out of default
+// dispatch. The forest path is correct on curated Go corpora, but the current
+// benchmark contract is production-parser performance: default forest dispatch
+// makes Go full parse and incremental hot paths pay raw-shape/forest/result
+// selection cost that the ordinary path does not need. Keep Go exercised through
+// ParseForestExperimental and explicit corpus canaries until the forest path is
+// both parity-clean and perf-clean for default Go parsing.
 func languageWantsForest(name string) bool {
 	switch name {
-	case "bash", "erlang", "cmake", "css", "scss", "awk", "javascript", "c_sharp", "go":
+	case "bash", "erlang", "cmake", "css", "scss", "awk", "javascript", "c_sharp":
 		return true
 	case "gitignore", "nix", "squirrel", "prisma":
 		// Promoted 2026-06-08 after a full-corpus byte-range gate (forest vs

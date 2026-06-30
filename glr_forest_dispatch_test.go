@@ -72,6 +72,14 @@ func TestForestDispatchParity(t *testing.T) {
 	check("bash-dispatched", grm.BashLanguage(), "f() { echo a; }\n")
 	// Non-dispatched languages must be untouched even with the switch on.
 	check("go-untouched", grm.GoLanguage(), "package p\nfunc f() { return }\n")
+	goTree, err := gts.NewParser(grm.GoLanguage()).Parse([]byte("package p\nfunc f() { return }\n"))
+	if err != nil {
+		t.Fatalf("go default parse: %v", err)
+	}
+	defer goTree.Release()
+	if rt := goTree.ParseRuntime(); rt.ForestFastPath {
+		t.Fatalf("go default parse used forest fast path with global forest enabled: %s", rt.Summary())
+	}
 	check("rust-untouched", grm.RustLanguage(), "fn main() {}\n")
 	gts.SetGLRForestEnabled(true)
 }
