@@ -1406,16 +1406,31 @@ func flattenInvisibleRootChildren(root *Node, arena *nodeArena, lang *Language) 
 }
 
 func appendFlattenedInvisibleRootChild(out []*Node, child *Node, arena *nodeArena, symbolMeta []SymbolMetadata) []*Node {
+	return appendFlattenedInvisibleRootChildWalk(out, child, arena, symbolMeta, nil, 0)
+}
+
+func appendFlattenedInvisibleRootChildWalk(out []*Node, child *Node, arena *nodeArena, symbolMeta []SymbolMetadata, onPath map[*Node]struct{}, depth int) []*Node {
 	if child == nil {
 		return out
 	}
 	if !shouldFlattenInvisibleRootChild(child, symbolMeta) {
 		return append(out, child)
 	}
+	if depth > maxTreeWalkDepth {
+		return append(out, child)
+	}
+	if onPath == nil {
+		onPath = make(map[*Node]struct{}, 8)
+	}
+	if _, ancestor := onPath[child]; ancestor {
+		return out
+	}
+	onPath[child] = struct{}{}
 	childCount := resultChildCount(child)
 	for i := 0; i < childCount; i++ {
-		out = appendFlattenedInvisibleRootChild(out, resultChildAt(child, i), arena, symbolMeta)
+		out = appendFlattenedInvisibleRootChildWalk(out, resultChildAt(child, i), arena, symbolMeta, onPath, depth+1)
 	}
+	delete(onPath, child)
 	return out
 }
 
