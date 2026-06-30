@@ -1083,6 +1083,7 @@ type conflictResolutionCache struct {
 	firstSets                    [][]uint64
 	repeatStartLookaheadSets     [][]uint64
 	repeatStartLookaheadComputed bool
+	structuralRepeatHelperMemo   []int8
 
 	shiftReduceConflictGroupMemo map[string]bool
 	reduceLHSConflictGroupMemo   map[int]bool
@@ -1111,14 +1112,15 @@ func getConflictResolutionCache(ng *NormalizedGrammar) *conflictResolutionCache 
 	}
 
 	cache := &conflictResolutionCache{
-		groups:         make([][]int, len(ng.Conflicts)),
-		groupsBySymbol: make([][]int, len(ng.Symbols)),
-		prodsByLHS:     make([][]int, len(ng.Symbols)),
-		nullable:       make([]bool, len(ng.Symbols)),
-		rhsParents:     make([][]int, len(ng.Symbols)),
-		auxParents:     make([][]int, len(ng.Symbols)),
-		auxComputed:    make([]bool, len(ng.Symbols)),
-		auxVisiting:    make([]bool, len(ng.Symbols)),
+		groups:                     make([][]int, len(ng.Conflicts)),
+		groupsBySymbol:             make([][]int, len(ng.Symbols)),
+		prodsByLHS:                 make([][]int, len(ng.Symbols)),
+		nullable:                   make([]bool, len(ng.Symbols)),
+		rhsParents:                 make([][]int, len(ng.Symbols)),
+		auxParents:                 make([][]int, len(ng.Symbols)),
+		auxComputed:                make([]bool, len(ng.Symbols)),
+		auxVisiting:                make([]bool, len(ng.Symbols)),
+		structuralRepeatHelperMemo: make([]int8, len(ng.Symbols)),
 	}
 
 	for groupIdx, group := range ng.Conflicts {
@@ -4585,6 +4587,7 @@ func (cache *conflictResolutionCache) ensureRepeatStartLookaheadSets(ctx context
 	}
 	wordCount := bitsetWordCount(len(ng.Symbols))
 	repeatStart := make([][]uint64, len(ng.Symbols))
+	checks := 0
 	for elemLHS := range ng.Symbols {
 		if elemLHS&255 == 0 {
 			if err := checkConflictResolutionContext(ctx, "precomputing repeat start lookaheads"); err != nil {
@@ -4592,6 +4595,12 @@ func (cache *conflictResolutionCache) ensureRepeatStartLookaheadSets(ctx context
 			}
 		}
 		for _, repeatSym := range cache.rhsParents[elemLHS] {
+			checks++
+			if checks&1023 == 0 {
+				if err := checkConflictResolutionContext(ctx, "precomputing repeat start lookahead parents"); err != nil {
+					return err
+				}
+			}
 			if repeatSym < 0 || repeatSym >= len(cache.prodsByLHS) ||
 				!isStructurallyGeneratedRepeatHelper(repeatSym, ng, cache) {
 				continue
@@ -4914,6 +4923,26 @@ func isStructurallyGeneratedRepeatHelper(sym int, ng *NormalizedGrammar, cache *
 		ng.Symbols[sym].Kind != SymbolNonterminal {
 		return false
 	}
+	if sym < len(cache.structuralRepeatHelperMemo) {
+		switch cache.structuralRepeatHelperMemo[sym] {
+		case 1:
+			return true
+		case -1:
+			return false
+		}
+	}
+	result := computeStructurallyGeneratedRepeatHelper(sym, ng, cache)
+	if sym < len(cache.structuralRepeatHelperMemo) {
+		if result {
+			cache.structuralRepeatHelperMemo[sym] = 1
+		} else {
+			cache.structuralRepeatHelperMemo[sym] = -1
+		}
+	}
+	return result
+}
+
+func computeStructurallyGeneratedRepeatHelper(sym int, ng *NormalizedGrammar, cache *conflictResolutionCache) bool {
 	if ng.Symbols[sym].Visible || ng.Symbols[sym].Named {
 		return false
 	}
