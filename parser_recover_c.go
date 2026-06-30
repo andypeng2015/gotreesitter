@@ -1858,7 +1858,7 @@ func (p *Parser) cRecoveryVisibleSpliceSignature(n *Node) (ProductionSignature, 
 		}
 		matches := true
 		for j, rhs := range sig.RHS {
-			if rhs != n.children[j].symbol {
+			if !p.cRecoverySignatureChildMatches(rhs, n.children[j]) {
 				matches = false
 				break
 			}
@@ -1874,7 +1874,62 @@ func (p *Parser) cRecoveryVisibleSpliceSignature(n *Node) (ProductionSignature, 
 	if match < 0 {
 		return ProductionSignature{}, false
 	}
+	if !p.cRecoverySignatureProductionSafe(p.language.ProductionSignatures[match].ProductionID) {
+		return ProductionSignature{}, false
+	}
 	return p.language.ProductionSignatures[match], true
+}
+
+func (p *Parser) cRecoverySignatureChildMatches(rhs Symbol, child *Node) bool {
+	if p == nil || p.language == nil || child == nil {
+		return false
+	}
+	if p.cRecoverySignatureChildMatchesDirect(rhs, child.symbol) {
+		return true
+	}
+	if int(rhs) >= len(p.language.HiddenChoicePassthroughSymbols) ||
+		!p.language.HiddenChoicePassthroughSymbols[rhs] {
+		return false
+	}
+	for i := range p.language.ProductionSignatures {
+		sig := p.language.ProductionSignatures[i]
+		if sig.LHS != rhs || len(sig.RHS) != 1 {
+			continue
+		}
+		if p.cRecoverySignatureChildMatchesDirect(sig.RHS[0], child.symbol) {
+			return true
+		}
+	}
+	return false
+}
+
+func (p *Parser) cRecoverySignatureChildMatchesDirect(rhs, child Symbol) bool {
+	if rhs == child {
+		return true
+	}
+	if p == nil || p.language == nil {
+		return false
+	}
+	for _, subtype := range p.language.SupertypeChildren(rhs) {
+		if subtype == child {
+			return true
+		}
+	}
+	return false
+}
+
+func (p *Parser) cRecoverySignatureProductionSafe(productionID uint16) bool {
+	if p == nil || p.language == nil {
+		return false
+	}
+	idx := int(productionID)
+	if idx < len(p.language.FieldMapSlices) && p.language.FieldMapSlices[idx][1] != 0 {
+		return false
+	}
+	if idx < len(p.language.AliasSequences) && len(p.language.AliasSequences[idx]) != 0 {
+		return false
+	}
+	return true
 }
 
 func (p *Parser) cRecoveryVisibleSpliceCount(n *Node) (int, bool) {
