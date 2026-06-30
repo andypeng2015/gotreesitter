@@ -888,6 +888,9 @@ func (d *dfaTokenSource) nextTokenForLexState(lexState uint32) Token {
 		tok.NoLookahead = true
 		return tok
 	}
+	if !d.cRecoveryEnabled {
+		return d.lexer.Next(lexState)
+	}
 	return d.lexer.NextWithErrorRuns(lexState)
 }
 

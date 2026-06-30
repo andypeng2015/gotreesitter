@@ -842,7 +842,11 @@ func (p *Parser) Parse(source []byte) (*Tree, error) {
 	p.clearRecoveryParser()
 	defer p.clearRecoveryParser()
 	prevFactory := p.reparseFactory
-	p.reparseFactory = p.dfaReparseFactory()
+	if p.noResultCompatibilityBenchmarkOnly {
+		p.reparseFactory = nil
+	} else {
+		p.reparseFactory = p.dfaReparseFactory()
+	}
 	defer func() {
 		p.reparseFactory = prevFactory
 	}()

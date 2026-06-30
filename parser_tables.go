@@ -18,8 +18,10 @@ func buildSmallLookup(lang *Language, smallTokenLookup [][]uint16) [][]smallActi
 		pos++
 		total := 0
 		countPos := pos
-		denseTokenRow := smallIdx < len(smallTokenLookup) && len(smallTokenLookup[smallIdx]) > 0
-		tokenCount := int(lang.TokenCount)
+		denseLookupLimit := 0
+		if smallIdx < len(smallTokenLookup) {
+			denseLookupLimit = len(smallTokenLookup[smallIdx])
+		}
 		for i := uint16(0); i < groupCount; i++ {
 			if countPos+1 >= len(table) {
 				total = 0
@@ -27,7 +29,7 @@ func buildSmallLookup(lang *Language, smallTokenLookup [][]uint16) [][]smallActi
 			}
 			symbolCount := int(table[countPos+1])
 			countPos += 2
-			if !denseTokenRow {
+			if denseLookupLimit == 0 {
 				total += symbolCount
 				countPos += symbolCount
 				continue
@@ -37,7 +39,7 @@ func buildSmallLookup(lang *Language, smallTokenLookup [][]uint16) [][]smallActi
 					break
 				}
 				sym := int(table[countPos])
-				if sym >= tokenCount {
+				if sym >= denseLookupLimit {
 					total++
 				}
 				countPos++
@@ -60,7 +62,7 @@ func buildSmallLookup(lang *Language, smallTokenLookup [][]uint16) [][]smallActi
 					break
 				}
 				sym := table[pos]
-				if !denseTokenRow || int(sym) >= tokenCount {
+				if denseLookupLimit == 0 || int(sym) >= denseLookupLimit {
 					pairs = append(pairs, smallActionPair{sym: sym, val: val})
 				}
 				pos++
@@ -78,7 +80,10 @@ func buildSmallTokenLookup(lang *Language) [][]uint16 {
 	}
 	if !compactSmallTokenRows(lang) {
 		threshold := smallTokenDenseThreshold
-		if lang.Name == "typescript" {
+		switch lang.Name {
+		case "go":
+			threshold = 0
+		case "typescript":
 			threshold = typeScriptSmallTokenDenseThreshold
 		}
 		return buildSmallTokenLookupFullRows(lang, threshold)
@@ -152,10 +157,21 @@ func compactSmallTokenRows(lang *Language) bool {
 	return isCobolLanguage(lang)
 }
 
+func smallDenseLookupSymbolLimit(lang *Language) int {
+	if lang == nil {
+		return 0
+	}
+	limit := int(lang.TokenCount)
+	if lang.Name == "go" && lang.SymbolCount > lang.TokenCount {
+		limit = int(lang.SymbolCount)
+	}
+	return limit
+}
+
 func buildSmallTokenLookupFullRows(lang *Language, threshold int) [][]uint16 {
 	out := make([][]uint16, len(lang.SmallParseTableMap))
 	table := lang.SmallParseTable
-	tokenCount := int(lang.TokenCount)
+	symbolLimit := smallDenseLookupSymbolLimit(lang)
 	for smallIdx, offset := range lang.SmallParseTableMap {
 		pos := int(offset)
 		if pos >= len(table) {
@@ -163,7 +179,7 @@ func buildSmallTokenLookupFullRows(lang *Language, threshold int) [][]uint16 {
 		}
 		groupCount := table[pos]
 		pos++
-		row := make([]uint16, tokenCount)
+		row := make([]uint16, symbolLimit)
 		used := 0
 		for i := uint16(0); i < groupCount; i++ {
 			if pos+1 >= len(table) {
@@ -177,7 +193,7 @@ func buildSmallTokenLookupFullRows(lang *Language, threshold int) [][]uint16 {
 					break
 				}
 				sym := int(table[pos])
-				if sym >= 0 && sym < tokenCount {
+				if sym >= 0 && sym < symbolLimit {
 					if row[sym] == 0 {
 						used++
 					}
@@ -346,7 +362,7 @@ func (p *Parser) lookupActionIndexSmall(state StateID, sym Symbol) uint16 {
 	if smallIdx < 0 || smallIdx >= len(p.language.SmallParseTableMap) {
 		return 0
 	}
-	if uint32(sym) < p.language.TokenCount && smallIdx < len(p.smallTokenLookup) {
+	if smallIdx < len(p.smallTokenLookup) {
 		row := p.smallTokenLookup[smallIdx]
 		if int(sym) < len(row) {
 			return row[sym]

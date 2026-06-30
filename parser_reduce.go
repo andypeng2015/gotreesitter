@@ -7158,6 +7158,9 @@ func newNoTreeReduceNodeInArenaWithRawShape(arena *nodeArena, act ParseAction, n
 		n.dynamicPrecedence = int32(act.DynamicPrecedence)
 	}
 	n.flags = noTreeNodeInitialFlags(named)
+	if !captureRawShape {
+		return n
+	}
 	if reducedEnd > start {
 		firstRaw := entries[start]
 		lastRaw := entries[reducedEnd-1]

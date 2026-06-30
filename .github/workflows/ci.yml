@@ -37,8 +37,17 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      - name: Test Compile
+        run: go test ./... -run '^$' -count=1
+
       - name: Test
+        if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
         run: go test ./... -race -count=1
+
+      - name: Draft PR Focused Tests
+        if: github.event_name == 'pull_request' && github.event.pull_request.draft == true
+        run: |
+          go test . -run '^(TestLookupActionIndexSmallUsesDenseTokenRows|TestLookupActionIndexSmallUsesFullTokenRowsForOtherLanguages|TestLookupActionIndexSmallUsesFullSymbolRowsForGo|TestRawShapePropagatesThroughNoTreeAndCollapsedUnary|TestParseRuntimeReportsNoTreeNodeVolume|TestParseRuntimeReportsNoTreeCheckpointLeavesRemainNodes|TestParseNoTreeBenchmarkDropsRetainedExternalCheckpointCapacity|TestSetLexerErrorRunLexStateUsesCRecoveryGate|TestErrorCostCompetitionLanguageRequiresCapabilityByDefault)$' -count=1
 
       - name: Run Parity Report (External Blob Mode)
         run: |
