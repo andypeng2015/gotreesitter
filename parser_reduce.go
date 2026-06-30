@@ -2117,6 +2117,9 @@ func (p *Parser) chainSingleReduceActionsClassifiedHinted(source []byte, s *glrS
 }
 
 func (p *Parser) chainSingleReduceActionsClassifiedDefault(source []byte, s *glrStack, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, deferParentLinks bool, trackChildErrors *bool) bool {
+	if p.noResultCompatibilityBenchmarkOnly {
+		return p.chainSingleReduceActionsClassifiedBenchmarkOnly(source, s, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
+	}
 	const maxInlineReduceChain = 256
 	actions := p.classifiedActions
 	chainLen := 0
@@ -2151,6 +2154,46 @@ func (p *Parser) chainSingleReduceActionsClassifiedDefault(source []byte, s *glr
 			p.noteStopActionDiagnostic("reduce-chain", s, tok, next, 1, true, chainLen, repeatedSigCount, false)
 			p.applyReduceActionDispatch(source, s, next, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
 			p.noteStopActionResult(s)
+			if s.dead || s.accepted || s.shifted {
+				return false
+			}
+		case classifiedParseActionSingleShift:
+			if perfCountersEnabled {
+				perfRecordReduceChainBreakShift()
+			}
+			return false
+		case classifiedParseActionSingleAccept:
+			if perfCountersEnabled {
+				perfRecordReduceChainBreakAccept()
+			}
+			return false
+		default:
+			if perfCountersEnabled {
+				perfRecordReduceChainBreakMulti()
+			}
+			return false
+		}
+	}
+	return false
+}
+
+func (p *Parser) chainSingleReduceActionsClassifiedBenchmarkOnly(source []byte, s *glrStack, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, deferParentLinks bool, trackChildErrors *bool) bool {
+	const maxInlineReduceChain = 256
+	actions := p.classifiedActions
+	for chainLen := 0; chainLen < maxInlineReduceChain; {
+		actionIdx := p.lookupActionIndex(s.top().state, tok.Symbol)
+		if actionIdx == 0 || int(actionIdx) >= len(actions) {
+			return false
+		}
+
+		classified := &actions[actionIdx]
+		switch classified.class {
+		case classifiedParseActionSingleReduce:
+			chainLen++
+			if perfCountersEnabled {
+				perfRecordReduceChainStep(chainLen)
+			}
+			p.applyReduceActionDispatch(source, s, classified.action, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
 			if s.dead || s.accepted || s.shifted {
 				return false
 			}
