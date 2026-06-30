@@ -7152,7 +7152,11 @@ func newNoTreeReduceNodeInArenaWithRawShape(arena *nodeArena, act ParseAction, n
 	} else {
 		n.rawShape = 0
 	}
-	n.dynamicPrecedence = reduceWindowDynamicPrecedence(entries, start, reducedEnd, act)
+	if captureRawShape {
+		n.dynamicPrecedence = reduceWindowDynamicPrecedence(entries, start, reducedEnd, act)
+	} else {
+		n.dynamicPrecedence = int32(act.DynamicPrecedence)
+	}
 	n.flags = noTreeNodeInitialFlags(named)
 	if reducedEnd > start {
 		firstRaw := entries[start]

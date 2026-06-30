@@ -186,7 +186,9 @@ func initDFATokenSourceWithCRecovery(ts *dfaTokenSource, lexer *Lexer, language 
 		setLexerErrorRunLexStateEnabled(ts.lexer, language, cRecoveryEnabled)
 	}
 	if language != nil {
-		ts.zeroWidthSentinelSymbol, ts.hasZeroWidthSentinelSymbol = languageGeneratedZeroWidthSentinel(language)
+		zeroWidthInfo := languageZeroWidthInfoFor(language)
+		ts.zeroWidthSentinelSymbol = zeroWidthInfo.sentinelSymbol
+		ts.hasZeroWidthSentinelSymbol = zeroWidthInfo.hasZeroWidthSentinel
 		ts.hasExternalScanner = language.ExternalScanner != nil
 		ts.hasExternalSymbols = len(language.ExternalSymbols) > 0
 		ts.usesExternalCheckpoints = languageUsesExternalScannerCheckpoints(language)
@@ -196,8 +198,8 @@ func initDFATokenSourceWithCRecovery(ts *dfaTokenSource, lexer *Lexer, language 
 		ts.isFortran = language.Name == "fortran"
 		ts.isScheme = language.Name == "scheme"
 		ts.isSwift = language.Name == "swift"
-		ts.hasZeroWidthTokens = languageHasZeroWidthTokens(language)
-		ts.hasZeroWidthStartAccept = languageHasZeroWidthStartAccept(language)
+		ts.hasZeroWidthTokens = zeroWidthInfo.hasTokens
+		ts.hasZeroWidthStartAccept = zeroWidthInfo.hasStartAccept
 	}
 	if ts.hasExternalScanner {
 		ts.externalPayload = language.ExternalScanner.Create()

@@ -165,7 +165,7 @@ func (p *Parser) tryTokenInvariantReuseForDisabledOldTree(source []byte, oldTree
 		return nil, false
 	}
 	prevFactory := p.reparseFactory
-	p.reparseFactory = p.dfaReparseFactory()
+	p.reparseFactory = nil
 	defer func() {
 		p.reparseFactory = prevFactory
 	}()
@@ -349,9 +349,16 @@ func (p *Parser) dfaReparseFactory() TokenSourceFactory {
 		return nil
 	}
 	return func(source []byte) (TokenSource, error) {
-		lexer := NewLexer(p.language.LexStates, source)
-		return newDFATokenSourceDirectWithCRecovery(lexer, p.language, p.lookupActionIndex, p.hasKeywordState, p.externalValidByState, p.externalValidMaskByState, p.errorCostCompetitionEnabled()), nil
+		return p.newDFAReparseTokenSource(source), nil
 	}
+}
+
+func (p *Parser) newDFAReparseTokenSource(source []byte) TokenSource {
+	if p == nil || p.language == nil || len(p.language.LexStates) == 0 {
+		return nil
+	}
+	lexer := NewLexer(p.language.LexStates, source)
+	return newDFATokenSourceDirectWithCRecovery(lexer, p.language, p.lookupActionIndex, p.hasKeywordState, p.externalValidByState, p.externalValidMaskByState, p.errorCostCompetitionEnabled())
 }
 
 func (p *Parser) tokenSourceReparseFactory(ts TokenSource) TokenSourceFactory {
@@ -1055,7 +1062,7 @@ func (p *Parser) parseIncrementalChanged(source []byte, oldTree *Tree) (*Tree, e
 		return nil, err
 	}
 	prevFactory := p.reparseFactory
-	p.reparseFactory = p.dfaReparseFactory()
+	p.reparseFactory = nil
 	defer func() {
 		p.reparseFactory = prevFactory
 	}()
@@ -1194,7 +1201,7 @@ func (p *Parser) parseIncrementalChangedProfiled(source []byte, oldTree *Tree) (
 		return nil, IncrementalParseProfile{}, err
 	}
 	prevFactory := p.reparseFactory
-	p.reparseFactory = p.dfaReparseFactory()
+	p.reparseFactory = nil
 	defer func() {
 		p.reparseFactory = prevFactory
 	}()
