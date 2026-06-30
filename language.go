@@ -395,11 +395,21 @@ type Language struct {
 	lexModeStartOnce     sync.Once
 	keywordPrefilter     keywordLexPrefilter
 	keywordPrefilterOnce sync.Once
+	zeroWidthInfo        languageZeroWidthInfo
+	zeroWidthInfoOnce    sync.Once
 }
 
 type symbolNameNamedKey struct {
 	name  string
 	named bool
+}
+
+type languageZeroWidthInfo struct {
+	hasTokens              bool
+	hasStartAccept         bool
+	sentinelSymbol         Symbol
+	hasZeroWidthSentinel   bool
+	zeroWidthSentinelKnown bool
 }
 
 type keywordLexPrefilter struct {

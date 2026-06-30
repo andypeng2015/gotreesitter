@@ -3597,6 +3597,11 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	var actionLookupNanos int64
 	var glrMergeNanos int64
 	var glrCullNanos int64
+	type terminalFrontierAction struct {
+		index  int
+		action ParseAction
+	}
+	var terminalFrontierScratch [maxGLRStacks]terminalFrontierAction
 	prevMaterializationTiming := p.materializationTiming
 	prevReduceTiming := p.reduceTiming
 	p.materializationTiming = materializationTimingRef
@@ -5231,11 +5236,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		}
 
 		if anyReduced && !dispatchConsumedCurrentToken && !tok.NoLookahead && !(tok.Symbol == 0 && tok.StartByte == tok.EndByte) {
-			type terminalFrontierAction struct {
-				index  int
-				action ParseAction
-			}
-			var terminalFrontier []terminalFrontierAction
+			terminalFrontier := terminalFrontierScratch[:0]
 			terminalFrontierConsumes := false
 			terminalFrontierOK := true
 			for i := range stacks {

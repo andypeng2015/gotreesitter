@@ -74,23 +74,29 @@ func errorCostCompetitionLanguage(lang *Language) bool {
 	if lang == nil {
 		return false
 	}
-	runtimeCapable := languageSupportsCRecoveryCostCompetition(lang)
 	switch v := os.Getenv("GOT_C_RECOVERY"); v {
 	case "":
 	case "0":
 		return false
 	case "all", "1":
-		return runtimeCapable
+		return languageSupportsCRecoveryCostCompetition(lang)
 	default:
+		forced := false
 		for _, n := range strings.Split(v, ",") {
 			if strings.TrimSpace(n) == lang.Name {
-				return runtimeCapable
+				forced = true
+				break
 			}
 		}
+		if !forced {
+			return false
+		}
+		return languageSupportsCRecoveryCostCompetition(lang)
 	}
-	return lang.CRecoveryCostCompetitionCapable &&
-		lang.CRecoveryCostCompetitionEnabledByDefault &&
-		runtimeCapable
+	if !lang.CRecoveryCostCompetitionCapable || !lang.CRecoveryCostCompetitionEnabledByDefault {
+		return false
+	}
+	return languageSupportsCRecoveryCostCompetition(lang)
 }
 
 func cRecoveryGateReasonSlug(reason string) string {

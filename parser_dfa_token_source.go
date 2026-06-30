@@ -14,6 +14,9 @@ type dfaTokenSource struct {
 	lexer    *Lexer
 	language *Language
 	state    StateID
+	// Cached parser recovery gate. Parser-owned token sources pass this from
+	// Parser.errorCostCompetition so reset/reuse does not rescan grammar tables.
+	cRecoveryEnabled bool
 
 	lookupActionIndex           func(state StateID, sym Symbol) uint16
 	lexModeStarts               []lexModeStart
@@ -130,6 +133,10 @@ var dfaTokenSourcePool = sync.Pool{
 // (LexModes[0], the C ERROR_STATE mode) into the lexer so NextWithErrorRuns
 // can mirror C's skipped-error lexing for truly unlexable runs.
 func setLexerErrorRunLexState(l *Lexer, language *Language) {
+	setLexerErrorRunLexStateEnabled(l, language, errorCostCompetitionLanguage(language))
+}
+
+func setLexerErrorRunLexStateEnabled(l *Lexer, language *Language, cRecoveryEnabled bool) {
 	if l == nil {
 		return
 	}
@@ -144,7 +151,7 @@ func setLexerErrorRunLexState(l *Lexer, language *Language) {
 	// (returning real, often invisible tokens that recovery absorbs as hidden
 	// error-region leaves), then skipped-run errorSymbol tokens when even
 	// LexModes[0] fails.
-	if !errorCostCompetitionLanguage(language) {
+	if !cRecoveryEnabled {
 		return
 	}
 	ls := language.LexModes[0].LexStateIndex()
@@ -157,9 +164,14 @@ func setLexerErrorRunLexState(l *Lexer, language *Language) {
 }
 
 func initDFATokenSource(ts *dfaTokenSource, lexer *Lexer, language *Language, lookupActionIndex func(state StateID, sym Symbol) uint16, hasKeywordState []bool, externalValidByState [][]uint16, externalValidMaskByState []uint64) {
+	initDFATokenSourceWithCRecovery(ts, lexer, language, lookupActionIndex, hasKeywordState, externalValidByState, externalValidMaskByState, errorCostCompetitionLanguage(language))
+}
+
+func initDFATokenSourceWithCRecovery(ts *dfaTokenSource, lexer *Lexer, language *Language, lookupActionIndex func(state StateID, sym Symbol) uint16, hasKeywordState []bool, externalValidByState [][]uint16, externalValidMaskByState []uint64, cRecoveryEnabled bool) {
 	ts.lexer = lexer
 	ts.language = language
 	ts.state = 0
+	ts.cRecoveryEnabled = cRecoveryEnabled
 	ts.lookupActionIndex = lookupActionIndex
 	ts.lexModeStarts = nil
 	ts.hasKeywordState = hasKeywordState
@@ -171,7 +183,7 @@ func initDFATokenSource(ts *dfaTokenSource, lexer *Lexer, language *Language, lo
 		ts.lexer.zeroWidthTokens = language.ZeroWidthTokens
 		ts.lexer.asciiTable = language.LexAsciiTable()
 		ts.lexModeStarts = language.LexModeStarts()
-		setLexerErrorRunLexState(ts.lexer, language)
+		setLexerErrorRunLexStateEnabled(ts.lexer, language, cRecoveryEnabled)
 	}
 	if language != nil {
 		ts.zeroWidthSentinelSymbol, ts.hasZeroWidthSentinelSymbol = languageGeneratedZeroWidthSentinel(language)
@@ -193,9 +205,13 @@ func initDFATokenSource(ts *dfaTokenSource, lexer *Lexer, language *Language, lo
 }
 
 func acquireDFATokenSource(lexer *Lexer, language *Language, lookupActionIndex func(state StateID, sym Symbol) uint16, hasKeywordState []bool, externalValidByState [][]uint16, externalValidMaskByState []uint64) *dfaTokenSource {
+	return acquireDFATokenSourceWithCRecovery(lexer, language, lookupActionIndex, hasKeywordState, externalValidByState, externalValidMaskByState, errorCostCompetitionLanguage(language))
+}
+
+func acquireDFATokenSourceWithCRecovery(lexer *Lexer, language *Language, lookupActionIndex func(state StateID, sym Symbol) uint16, hasKeywordState []bool, externalValidByState [][]uint16, externalValidMaskByState []uint64, cRecoveryEnabled bool) *dfaTokenSource {
 	ts := dfaTokenSourcePool.Get().(*dfaTokenSource)
 	resetPooledDFATokenSource(ts)
-	initDFATokenSource(ts, lexer, language, lookupActionIndex, hasKeywordState, externalValidByState, externalValidMaskByState)
+	initDFATokenSourceWithCRecovery(ts, lexer, language, lookupActionIndex, hasKeywordState, externalValidByState, externalValidMaskByState, cRecoveryEnabled)
 	return ts
 }
 
@@ -231,13 +247,17 @@ func resetPooledDFATokenSource(ts *dfaTokenSource) {
 }
 
 func newDFATokenSourceDirect(lexer *Lexer, language *Language, lookupActionIndex func(state StateID, sym Symbol) uint16, hasKeywordState []bool, externalValidByState [][]uint16, externalValidMaskByState []uint64) *dfaTokenSource {
+	return newDFATokenSourceDirectWithCRecovery(lexer, language, lookupActionIndex, hasKeywordState, externalValidByState, externalValidMaskByState, errorCostCompetitionLanguage(language))
+}
+
+func newDFATokenSourceDirectWithCRecovery(lexer *Lexer, language *Language, lookupActionIndex func(state StateID, sym Symbol) uint16, hasKeywordState []bool, externalValidByState [][]uint16, externalValidMaskByState []uint64, cRecoveryEnabled bool) *dfaTokenSource {
 	ts := &dfaTokenSource{
 		extZeroPos:             -1,
 		zeroWidthPos:           -1,
 		bashArithmeticCachePos: -1,
 		noPool:                 true,
 	}
-	initDFATokenSource(ts, lexer, language, lookupActionIndex, hasKeywordState, externalValidByState, externalValidMaskByState)
+	initDFATokenSourceWithCRecovery(ts, lexer, language, lookupActionIndex, hasKeywordState, externalValidByState, externalValidMaskByState, cRecoveryEnabled)
 	return ts
 }
 
@@ -245,41 +265,69 @@ func languageHasZeroWidthTokens(lang *Language) bool {
 	if lang == nil {
 		return false
 	}
-	for _, ok := range lang.ZeroWidthTokens {
-		if ok {
-			return true
-		}
-	}
-	return false
+	return languageZeroWidthInfoFor(lang).hasTokens
 }
 
 func languageHasZeroWidthStartAccept(lang *Language) bool {
-	if lang == nil || len(lang.ZeroWidthTokens) == 0 {
+	if lang == nil {
 		return false
 	}
-	for _, state := range lang.LexStates {
-		sym := int(state.AcceptToken)
-		if sym >= 0 && sym < len(lang.ZeroWidthTokens) && lang.ZeroWidthTokens[sym] {
-			return true
-		}
-	}
-	return false
+	return languageZeroWidthInfoFor(lang).hasStartAccept
 }
 
 func languageGeneratedZeroWidthSentinel(lang *Language) (Symbol, bool) {
-	if lang == nil || !lang.GeneratedByGrammargen {
+	if lang == nil {
 		return 0, false
 	}
-	limit := int(lang.TokenCount)
-	if limit > len(lang.SymbolNames) {
-		limit = len(lang.SymbolNames)
+	info := languageZeroWidthInfoFor(lang)
+	return info.sentinelSymbol, info.hasZeroWidthSentinel
+}
+
+func languageZeroWidthInfoFor(lang *Language) languageZeroWidthInfo {
+	if lang == nil {
+		return languageZeroWidthInfo{}
 	}
-	for i := 1; i < limit; i++ {
-		if lang.SymbolNames[i] == "\x00" {
-			return Symbol(i), true
+	lang.zeroWidthInfoOnce.Do(func() {
+		lang.zeroWidthInfo = buildLanguageZeroWidthInfo(lang)
+	})
+	return lang.zeroWidthInfo
+}
+
+func buildLanguageZeroWidthInfo(lang *Language) languageZeroWidthInfo {
+	if lang == nil {
+		return languageZeroWidthInfo{}
+	}
+	info := languageZeroWidthInfo{}
+	for _, ok := range lang.ZeroWidthTokens {
+		if ok {
+			info.hasTokens = true
+			break
 		}
 	}
-	return 0, false
+	if len(lang.ZeroWidthTokens) > 0 {
+		for _, state := range lang.LexStates {
+			sym := int(state.AcceptToken)
+			if sym >= 0 && sym < len(lang.ZeroWidthTokens) && lang.ZeroWidthTokens[sym] {
+				info.hasStartAccept = true
+				break
+			}
+		}
+	}
+	if lang.GeneratedByGrammargen {
+		limit := int(lang.TokenCount)
+		if limit > len(lang.SymbolNames) {
+			limit = len(lang.SymbolNames)
+		}
+		for i := 1; i < limit; i++ {
+			if lang.SymbolNames[i] == "\x00" {
+				info.sentinelSymbol = Symbol(i)
+				info.hasZeroWidthSentinel = true
+				break
+			}
+		}
+	}
+	info.zeroWidthSentinelKnown = true
+	return info
 }
 
 func (d *dfaTokenSource) Reset(source []byte) {
@@ -298,7 +346,7 @@ func (d *dfaTokenSource) Reset(source []byte) {
 		d.lexer.immediateTokens = d.language.ImmediateTokens
 		d.lexer.zeroWidthTokens = d.language.ZeroWidthTokens
 		d.lexer.asciiTable = d.language.LexAsciiTable()
-		setLexerErrorRunLexState(d.lexer, d.language)
+		setLexerErrorRunLexStateEnabled(d.lexer, d.language, d.cRecoveryEnabled)
 	}
 	d.state = 0
 	d.glrStates = nil

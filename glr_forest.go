@@ -1945,7 +1945,7 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte, captureExternalChe
 	// selection, immediate tokens, external scanners and GLR-lexing all match
 	// the production parser. State is set per step from the frontier.
 	lexer := NewLexer(lang.LexStates, source)
-	ts := acquireDFATokenSource(lexer, lang, p.lookupActionIndex, p.hasKeywordState, p.externalValidByState, p.externalValidMaskByState)
+	ts := acquireDFATokenSourceWithCRecovery(lexer, lang, p.lookupActionIndex, p.hasKeywordState, p.externalValidByState, p.externalValidMaskByState, p.errorCostCompetitionEnabled())
 	ts.setExternalScannerCheckpointsEnabled(captureExternalCheckpoints)
 
 	// tree-sitter convention: state 0 is the error state, state 1 is the start.

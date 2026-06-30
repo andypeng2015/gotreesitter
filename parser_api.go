@@ -170,7 +170,7 @@ func (p *Parser) tryTokenInvariantReuseForDisabledOldTree(source []byte, oldTree
 		p.reparseFactory = prevFactory
 	}()
 	lexer := NewLexer(p.language.LexStates, source)
-	ts := acquireDFATokenSource(lexer, p.language, p.lookupActionIndex, p.hasKeywordState, p.externalValidByState, p.externalValidMaskByState)
+	ts := acquireDFATokenSourceWithCRecovery(lexer, p.language, p.lookupActionIndex, p.hasKeywordState, p.externalValidByState, p.externalValidMaskByState, p.errorCostCompetitionEnabled())
 	defer ts.Close()
 	tree, ok := p.tryTokenInvariantLeafEdit(source, oldTree, p.wrapIncludedRanges(ts), timing)
 	if !ok {
@@ -350,7 +350,7 @@ func (p *Parser) dfaReparseFactory() TokenSourceFactory {
 	}
 	return func(source []byte) (TokenSource, error) {
 		lexer := NewLexer(p.language.LexStates, source)
-		return newDFATokenSourceDirect(lexer, p.language, p.lookupActionIndex, p.hasKeywordState, p.externalValidByState, p.externalValidMaskByState), nil
+		return newDFATokenSourceDirectWithCRecovery(lexer, p.language, p.lookupActionIndex, p.hasKeywordState, p.externalValidByState, p.externalValidMaskByState, p.errorCostCompetitionEnabled()), nil
 	}
 }
 
@@ -843,7 +843,7 @@ func (p *Parser) Parse(source []byte) (*Tree, error) {
 		progress.emit(time.Now(), "token_source_setup_begin", 0, 0, Token{}, false, nil, 0, 0, 0, true, 0, 0, "")
 	}
 	lexer := NewLexer(p.language.LexStates, source)
-	ts := acquireDFATokenSource(lexer, p.language, p.lookupActionIndex, p.hasKeywordState, p.externalValidByState, p.externalValidMaskByState)
+	ts := acquireDFATokenSourceWithCRecovery(lexer, p.language, p.lookupActionIndex, p.hasKeywordState, p.externalValidByState, p.externalValidMaskByState, p.errorCostCompetitionEnabled())
 	if progress.enabled {
 		progress.emit(time.Now(), "token_source_setup_end", 0, 0, Token{}, false, nil, 0, 0, 0, true, 0, 0, "")
 	}
@@ -929,10 +929,16 @@ func (p *Parser) ParseNoResultCompatibilityBenchmarkOnly(source []byte) (*Tree, 
 	if p == nil {
 		return nil, ErrNoLanguage
 	}
-	prev := p.noResultCompatibilityBenchmarkOnly
+	prevNoResult := p.noResultCompatibilityBenchmarkOnly
+	prevNoTree := p.noTreeBenchmarkOnly
+	prevCheckpoints := p.noTreeCheckpointBenchmarkOnly
 	p.noResultCompatibilityBenchmarkOnly = true
+	p.noTreeBenchmarkOnly = true
+	p.noTreeCheckpointBenchmarkOnly = false
 	defer func() {
-		p.noResultCompatibilityBenchmarkOnly = prev
+		p.noResultCompatibilityBenchmarkOnly = prevNoResult
+		p.noTreeBenchmarkOnly = prevNoTree
+		p.noTreeCheckpointBenchmarkOnly = prevCheckpoints
 	}()
 	return p.Parse(source)
 }
@@ -1028,11 +1034,11 @@ func (p *Parser) ParseIncremental(source []byte, oldTree *Tree) (*Tree, error) {
 	if err := p.checkLanguageCompatible(); err != nil {
 		return nil, err
 	}
-	endBudget := p.beginParseOperationBudget()
-	defer endBudget()
 	if canReuseUnchangedTree(source, oldTree, p.language) {
 		return oldTree, nil
 	}
+	endBudget := p.beginParseOperationBudget()
+	defer endBudget()
 	return p.parseIncrementalChanged(source, oldTree)
 }
 
@@ -1054,7 +1060,7 @@ func (p *Parser) parseIncrementalChanged(source []byte, oldTree *Tree) (*Tree, e
 		p.reparseFactory = prevFactory
 	}()
 	lexer := NewLexer(p.language.LexStates, source)
-	ts := acquireDFATokenSource(lexer, p.language, p.lookupActionIndex, p.hasKeywordState, p.externalValidByState, p.externalValidMaskByState)
+	ts := acquireDFATokenSourceWithCRecovery(lexer, p.language, p.lookupActionIndex, p.hasKeywordState, p.externalValidByState, p.externalValidMaskByState, p.errorCostCompetitionEnabled())
 	defer ts.Close()
 	tree := p.parseIncrementalInternal(source, oldTree, p.wrapIncludedRanges(ts), nil)
 	p.normalizeReturnedIncrementalTree(tree, oldTree, source)
@@ -1164,11 +1170,11 @@ func (p *Parser) ParseIncrementalProfiled(source []byte, oldTree *Tree) (*Tree, 
 	if err := p.checkLanguageCompatible(); err != nil {
 		return nil, IncrementalParseProfile{}, err
 	}
-	endBudget := p.beginParseOperationBudget()
-	defer endBudget()
 	if canReuseUnchangedTree(source, oldTree, p.language) {
 		return oldTree, IncrementalParseProfile{}, nil
 	}
+	endBudget := p.beginParseOperationBudget()
+	defer endBudget()
 	return p.parseIncrementalChangedProfiled(source, oldTree)
 }
 
@@ -1193,7 +1199,7 @@ func (p *Parser) parseIncrementalChangedProfiled(source []byte, oldTree *Tree) (
 		p.reparseFactory = prevFactory
 	}()
 	lexer := NewLexer(p.language.LexStates, source)
-	ts := acquireDFATokenSource(lexer, p.language, p.lookupActionIndex, p.hasKeywordState, p.externalValidByState, p.externalValidMaskByState)
+	ts := acquireDFATokenSourceWithCRecovery(lexer, p.language, p.lookupActionIndex, p.hasKeywordState, p.externalValidByState, p.externalValidMaskByState, p.errorCostCompetitionEnabled())
 	defer ts.Close()
 	timing := &incrementalParseTiming{}
 	tree := p.parseIncrementalInternal(source, oldTree, p.wrapIncludedRanges(ts), timing)
