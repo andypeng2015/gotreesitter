@@ -263,6 +263,41 @@ func TestRustWeirdTopLevelParity(t *testing.T) {
 	assertGeneratedAndReferenceDeepParity(t, genLang, refLang, sample)
 }
 
+func TestRustGeneratedMatchArmDiagnostic(t *testing.T) {
+	if os.Getenv("GTS_RUST_GENERATED_MATCH_DIAGNOSTIC") == "" {
+		t.Skip("set GTS_RUST_GENERATED_MATCH_DIAGNOSTIC=1 to reproduce the generated Rust match_arm divergence")
+	}
+	jsonPath := rustGrammarJSONPathForTest(t)
+	source, err := os.ReadFile(jsonPath)
+	if err != nil {
+		t.Skipf("Rust grammar.json not available: %v", err)
+	}
+	gram, err := ImportGrammarJSON(source)
+	if err != nil {
+		t.Fatalf("import Rust grammar.json: %v", err)
+	}
+	genLang, err := generateWithTimeout(gram, 90*time.Second)
+	if err != nil {
+		t.Fatalf("generate Rust language: %v", err)
+	}
+	refLang := grammars.RustLanguage()
+	adaptExternalScanner(refLang, genLang)
+
+	cases := []string{
+		"match x {\n" +
+			"    1 => { \"one\" }\n" +
+			"}\n",
+		"match x {\n" +
+			"    1 => { \"one\" }\n" +
+			"    2 => \"two\",\n" +
+			"}\n",
+	}
+	for _, sample := range cases {
+		t.Run(sample, func(t *testing.T) {
+			assertGeneratedAndReferenceDeepParity(t, genLang, refLang, sample)
+		})
+	}
+}
 func TestRustCorpusMatchLetGuardParity(t *testing.T) {
 	jsonPath := rustGrammarJSONPathForTest(t)
 	source, err := os.ReadFile(jsonPath)

@@ -112,6 +112,20 @@ Classification: `grammargen-metadata` or `parser-machinery` in generated Rust
 match/let-guard handling. This is the next Rust evidence bucket; it is not a
 reason to add Rust-specific normalization.
 
+## Rust Minimal Match-Arm Diagnostic
+
+`TestRustGeneratedMatchArmDiagnostic` is a skipped-by-default witness for the
+same generated Rust failure family. Enable it only when diagnosing the Rust
+match-arm bucket:
+
+```sh
+GTS_RUST_GENERATED_MATCH_DIAGNOSTIC=1 go test ./grammargen -run '^TestRustGeneratedMatchArmDiagnostic$' -count=1 -v
+```
+
+The test narrows the canary toward the first `match x { ... }` block and
+compares generated Rust against the checked-in Rust reference. Normal test runs
+skip it so the branch can carry the witness without making CI red.
+
 ## Next Critical Path
 
 1. Keep the signature-backed recovery work moving through generated grammars.
