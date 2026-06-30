@@ -1,8 +1,10 @@
 package grammargen
 
 import (
+	"context"
 	"os"
 	"path/filepath"
+	"sort"
 	"testing"
 	"time"
 
@@ -303,6 +305,172 @@ func TestRustGeneratedMatchArmDiagnostic(t *testing.T) {
 		t.Run(sample, func(t *testing.T) {
 			assertGeneratedAndReferenceDeepParity(t, genLang, refLang, sample)
 		})
+	}
+}
+func TestRustIfBreakBlockDiagnostic(t *testing.T) {
+	if os.Getenv("GTS_RUST_IF_BREAK_DIAGNOSTIC") == "" {
+		t.Skip("set GTS_RUST_IF_BREAK_DIAGNOSTIC=1 to reproduce the generated Rust if-break block divergence")
+	}
+	jsonPath := rustGrammarJSONPathForTest(t)
+	source, err := os.ReadFile(jsonPath)
+	if err != nil {
+		t.Skipf("Rust grammar.json not available: %v", err)
+	}
+	gram, err := ImportGrammarJSON(source)
+	if err != nil {
+		t.Fatalf("import Rust grammar.json: %v", err)
+	}
+	ng, err := Normalize(gram)
+	if err != nil {
+		t.Fatalf("normalize Rust grammar.json: %v", err)
+	}
+	logRustIfBreakConflictDiagnostic(t, ng)
+
+	genLang, err := generateWithTimeout(gram, 90*time.Second)
+	if err != nil {
+		t.Fatalf("generate Rust language: %v", err)
+	}
+	refLang := grammars.RustLanguage()
+	adaptExternalScanner(refLang, genLang)
+
+	assertGeneratedAndReferenceDeepParity(t, genLang, refLang, "fn f() { loop { if break { } } }\n")
+}
+
+type rustLRActionKey struct {
+	state int
+	sym   int
+}
+
+func logRustIfBreakConflictDiagnostic(t *testing.T, ng *NormalizedGrammar) {
+	t.Helper()
+
+	tables, _, err := buildLRTablesWithProvenance(ng)
+	if err != nil {
+		t.Fatalf("build Rust LR tables: %v", err)
+	}
+	keys := logRustIfBreakActionEntries(t, "unresolved", tables, ng, nil)
+	stats, err := resolveConflicts(context.Background(), tables, ng)
+	if err != nil {
+		t.Fatalf("resolve Rust LR conflicts: %v", err)
+	}
+	t.Logf("rust if-break diag resolved conflicts: %+v", stats)
+	logRustIfBreakActionEntries(t, "resolved", tables, ng, keys)
+}
+
+func logRustIfBreakActionEntries(t *testing.T, label string, tables *LRTables, ng *NormalizedGrammar, keys map[rustLRActionKey]bool) map[rustLRActionKey]bool {
+	t.Helper()
+
+	selected := make(map[rustLRActionKey]bool)
+	states := make([]int, 0, len(tables.ActionTable))
+	for state := range tables.ActionTable {
+		states = append(states, state)
+	}
+	sort.Ints(states)
+
+	logged := 0
+	for _, state := range states {
+		syms := make([]int, 0, len(tables.ActionTable[state]))
+		for sym := range tables.ActionTable[state] {
+			syms = append(syms, sym)
+		}
+		sort.Ints(syms)
+		for _, sym := range syms {
+			key := rustLRActionKey{state: state, sym: sym}
+			actions := tables.ActionTable[state][sym]
+			if keys == nil {
+				if !rustIfBreakActionEntryRelevant(sym, actions, ng) {
+					continue
+				}
+				selected[key] = true
+			} else if !keys[key] {
+				continue
+			}
+			t.Logf("rust if-break diag %s state=%d lookahead=%d/%q actions=%d",
+				label, state, sym, rustSymbolName(ng, sym), len(actions))
+			for _, action := range actions {
+				logRustLRAction(t, "  "+label, action, ng)
+			}
+			logged++
+			if logged >= 12 {
+				t.Logf("rust if-break diag %s truncated after %d entries", label, logged)
+				return selected
+			}
+		}
+	}
+	if logged == 0 {
+		t.Logf("rust if-break diag %s found no { shift/break_expression reduce entries", label)
+	}
+	return selected
+}
+
+func rustIfBreakActionEntryRelevant(sym int, actions []lrAction, ng *NormalizedGrammar) bool {
+	if rustSymbolName(ng, sym) != "{" {
+		return false
+	}
+	hasBreakReduce := false
+	hasShift := false
+	for _, action := range actions {
+		switch action.kind {
+		case lrShift:
+			hasShift = true
+		case lrReduce:
+			if action.prodIdx >= 0 && action.prodIdx < len(ng.Productions) &&
+				rustSymbolName(ng, ng.Productions[action.prodIdx].LHS) == "break_expression" {
+				hasBreakReduce = true
+			}
+		}
+	}
+	return hasBreakReduce && hasShift
+}
+
+func logRustLRAction(t *testing.T, label string, action lrAction, ng *NormalizedGrammar) {
+	t.Helper()
+
+	switch action.kind {
+	case lrShift:
+		t.Logf("%s shift target=%d prec=%d hasPrec=%v assoc=%s lhs=%s lhsSyms=%v repeat=%v repeatLHS=%s repeatLHSSyms=%v",
+			label, action.state, action.prec, action.hasPrec, rustAssocName(action.assoc),
+			rustSymbolName(ng, action.lhsSym), rustSymbolNames(ng, action.lhsSyms),
+			action.repeat, rustSymbolName(ng, action.repeatLHS), rustSymbolNames(ng, action.repeatLHSSyms))
+	case lrReduce:
+		if action.prodIdx < 0 || action.prodIdx >= len(ng.Productions) {
+			t.Logf("%s reduce prod=%d", label, action.prodIdx)
+			return
+		}
+		prod := ng.Productions[action.prodIdx]
+		t.Logf("%s reduce prod=%d lhs=%s rhs=%v prec=%d hasPrec=%v assoc=%s dynPrec=%d",
+			label, action.prodIdx, rustSymbolName(ng, prod.LHS), rustSymbolNames(ng, prod.RHS),
+			prod.Prec, prod.HasExplicitPrec, rustAssocName(prod.Assoc), prod.DynPrec)
+	case lrAccept:
+		t.Logf("%s accept", label)
+	default:
+		t.Logf("%s action kind=%d", label, action.kind)
+	}
+}
+
+func rustSymbolNames(ng *NormalizedGrammar, syms []int) []string {
+	names := make([]string, 0, len(syms))
+	for _, sym := range syms {
+		names = append(names, rustSymbolName(ng, sym))
+	}
+	return names
+}
+
+func rustSymbolName(ng *NormalizedGrammar, sym int) string {
+	if ng == nil || sym < 0 || sym >= len(ng.Symbols) {
+		return ""
+	}
+	return ng.Symbols[sym].Name
+}
+
+func rustAssocName(assoc Assoc) string {
+	switch assoc {
+	case AssocLeft:
+		return "left"
+	case AssocRight:
+		return "right"
+	default:
+		return "none"
 	}
 }
 func logRustMatchDiagnostic(t *testing.T, ng *NormalizedGrammar, lang *gotreesitter.Language) {

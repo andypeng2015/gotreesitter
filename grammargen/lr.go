@@ -183,18 +183,26 @@ func sameSortedLR0CoreEntries(a, b []lr0CoreEntry) bool {
 
 // lrAction is a parse table action.
 type lrAction struct {
-	kind          lrActionKind
-	state         int   // shift target / goto target
-	prodIdx       int   // reduce production index
-	prec          int   // for shift: precedence of the item's production
-	hasPrec       bool  // production had an explicit compile-time precedence wrapper
-	assoc         Assoc // for shift: associativity of the item's production
-	lhsSym        int   // LHS nonterminal of the production (for conflict detection)
-	lhsSyms       []int // additional LHS symbols (when shifts from multiple rules merge)
-	isExtra       bool  // true if this action comes from a nonterminal extra production
-	repeat        bool  // true if this shift continues a recursive repeat wrapper
-	repeatLHS     int   // generated repeat-helper LHS continued by this shift, or 0 when unknown
-	repeatLHSSyms []int // additional generated repeat-helper LHS symbols for merged shifts
+	kind              lrActionKind
+	state             int   // shift target / goto target
+	prodIdx           int   // reduce production index
+	prec              int   // for shift: precedence of the item's production
+	hasPrec           bool  // production had an explicit compile-time precedence wrapper
+	assoc             Assoc // for shift: associativity of the item's production
+	lhsSym            int   // LHS nonterminal of the production (for conflict detection)
+	lhsSyms           []int // additional LHS symbols (when shifts from multiple rules merge)
+	shiftContributors []lrShiftContributor
+	isExtra           bool  // true if this action comes from a nonterminal extra production
+	repeat            bool  // true if this shift continues a recursive repeat wrapper
+	repeatLHS         int   // generated repeat-helper LHS continued by this shift, or 0 when unknown
+	repeatLHSSyms     []int // additional generated repeat-helper LHS symbols for merged shifts
+}
+
+type lrShiftContributor struct {
+	lhsSym  int
+	prec    int
+	hasPrec bool
+	assoc   Assoc
 }
 
 func (a *lrAction) addRepeatLHS(lhs int) {
@@ -240,6 +248,47 @@ func (a lrAction) hasRepeatLHS(lhs int) bool {
 		}
 	}
 	return false
+}
+
+func (a *lrAction) ensureShiftContributors() {
+	if a == nil || a.kind != lrShift {
+		return
+	}
+	if len(a.shiftContributors) > 0 {
+		return
+	}
+	a.addShiftContributor(a.lhsSym, a.prec, a.hasPrec, a.assoc)
+	for _, lhs := range a.lhsSyms {
+		a.addShiftContributor(lhs, a.prec, a.hasPrec, a.assoc)
+	}
+}
+
+func (a *lrAction) addShiftContributor(lhs, prec int, hasPrec bool, assoc Assoc) {
+	if a == nil || lhs <= 0 {
+		return
+	}
+	for _, existing := range a.shiftContributors {
+		if existing.lhsSym == lhs && existing.prec == prec && existing.hasPrec == hasPrec && existing.assoc == assoc {
+			return
+		}
+	}
+	a.shiftContributors = append(a.shiftContributors, lrShiftContributor{
+		lhsSym:  lhs,
+		prec:    prec,
+		hasPrec: hasPrec,
+		assoc:   assoc,
+	})
+}
+
+func (a *lrAction) mergeShiftContributors(other lrAction) {
+	if a == nil || a.kind != lrShift || other.kind != lrShift {
+		return
+	}
+	a.ensureShiftContributors()
+	other.ensureShiftContributors()
+	for _, contributor := range other.shiftContributors {
+		a.addShiftContributor(contributor.lhsSym, contributor.prec, contributor.hasPrec, contributor.assoc)
+	}
 }
 
 type lrActionKind int
@@ -850,12 +899,17 @@ func walkLeadingEdge(rhs []int, tokenCount int, ctx *lrContext, walk func(int)) 
 }
 
 func (t *LRTables) addAction(state, sym int, action lrAction) {
+	if action.kind == lrShift {
+		action.ensureShiftContributors()
+	}
 	existing := t.ActionTable[state][sym]
 	// Avoid duplicates.
 	for i, a := range existing {
 		if a.kind == action.kind && a.state == action.state {
 			if a.kind == lrShift {
-				// For shifts to the same target, keep the higher prec.
+				// For shifts to the same target, keep the higher scalar precedence
+				// for legacy callers, but retain per-LHS contributors so conflict
+				// resolution can compare the reduce against the local shift source.
 				if !a.isExtra && action.isExtra {
 					return // existing non-extra wins
 				}
@@ -863,9 +917,16 @@ func (t *LRTables) addAction(state, sym int, action lrAction) {
 					existing[i].isExtra = false
 				}
 				existing[i].addRepeatLHSFrom(action)
+				existing[i].mergeShiftContributors(action)
 				if action.prec > a.prec {
 					existing[i].prec = action.prec
+					existing[i].hasPrec = action.hasPrec
 					existing[i].assoc = action.assoc
+				} else if action.prec == a.prec && action.hasPrec && !existing[i].hasPrec {
+					existing[i].hasPrec = true
+					if existing[i].assoc == AssocNone {
+						existing[i].assoc = action.assoc
+					}
 				}
 				// Accumulate all contributing LHS symbols for conflict detection.
 				if action.lhsSym != a.lhsSym && action.lhsSym != 0 {
@@ -3610,6 +3671,8 @@ func resolveActionConflict(lookaheadSym int, actions []lrAction, ng *NormalizedG
 		shift := shifts[0]
 		reduce := reduces[0]
 		prod := &ng.Productions[reduce.prodIdx]
+		shiftMeta := shiftMetadataForReduce(shift, prod.LHS, ng, cache)
+		reduceMeta := reduceMetadataForShiftConflict(reduce, shift, ng, cache)
 
 		if isRepeatHelperReduce(reduce, ng, cache) &&
 			!repeatHelperReduceContinuesWithShift(lookaheadSym, reduce, shift, ng, cache) &&
@@ -3687,16 +3750,16 @@ func resolveActionConflict(lookaheadSym int, actions []lrAction, ng *NormalizedG
 			// represent genuine ambiguities declared by the grammar author.
 			sameLHS := shiftActionMatchesReduceLHSFamily(shift, prod.LHS, ng, cache)
 			if sameLHS {
-				shiftP := shift.prec
-				reduceP := prod.Prec
+				shiftP := shiftMeta.prec
+				reduceP := reduceMeta.prec
 				if (shiftP != 0 || reduceP != 0) && shiftP != reduceP {
 					if reduceP > shiftP {
 						return []lrAction{reduce}, nil
 					}
 					return []lrAction{shift}, nil
 				}
-				if shiftP == reduceP && prod.Assoc != AssocNone {
-					switch prod.Assoc {
+				if shiftP == reduceP && reduceMeta.assoc != AssocNone {
+					switch reduceMeta.assoc {
 					case AssocLeft:
 						return []lrAction{reduce}, nil
 					case AssocRight:
@@ -3718,8 +3781,8 @@ func resolveActionConflict(lookaheadSym int, actions []lrAction, ng *NormalizedG
 		// for grammars like Swift where many symbols appear in conflict
 		// groups but have unambiguous precedence relationships.
 		if reduceLHSInAnyConflictGroup(reduces, ng, cache) {
-			shiftP := shift.prec
-			reduceP := prod.Prec
+			shiftP := shiftMeta.prec
+			reduceP := reduceMeta.prec
 			// Consult precedences table for SYMBOL-level ordering before
 			// falling through to numeric prec comparison. This ensures
 			// that SYMBOL entries like update_expression can resolve
@@ -3773,8 +3836,8 @@ func resolveActionConflict(lookaheadSym int, actions []lrAction, ng *NormalizedG
 				}
 			}
 			// Same precedence or both zero — check associativity.
-			if shiftP == reduceP && prod.Assoc != AssocNone {
-				if prod.Assoc == AssocLeft {
+			if shiftP == reduceP && reduceMeta.assoc != AssocNone {
+				if reduceMeta.assoc == AssocLeft {
 					if preferred, ok := preferredSameLHSContinuationShift(shifts, reduces, ng, cache); ok {
 						return []lrAction{preferred}, nil
 					}
@@ -3782,7 +3845,7 @@ func resolveActionConflict(lookaheadSym int, actions []lrAction, ng *NormalizedG
 						return []lrAction{preferred}, nil
 					}
 				}
-				switch prod.Assoc {
+				switch reduceMeta.assoc {
 				case AssocLeft:
 					return []lrAction{reduce}, nil
 				case AssocRight:
@@ -3796,8 +3859,8 @@ func resolveActionConflict(lookaheadSym int, actions []lrAction, ng *NormalizedG
 			return actions, nil
 		}
 
-		shiftPrec := shift.prec
-		reducePrec := prod.Prec
+		shiftPrec := shiftMeta.prec
+		reducePrec := reduceMeta.prec
 		// Consult the precedences table for SYMBOL-level ordering.
 		// Only apply when:
 		// 1. The reduce production's LHS is a SYMBOL entry in the table
@@ -3828,7 +3891,7 @@ func resolveActionConflict(lookaheadSym int, actions []lrAction, ng *NormalizedG
 		}
 		// Apply precedence/associativity resolution when either side has a
 		// non-zero precedence OR the production declares explicit associativity.
-		if reducePrec != 0 || shiftPrec != 0 || prod.Assoc != AssocNone {
+		if reducePrec != 0 || shiftPrec != 0 || reduceMeta.assoc != AssocNone {
 			if preferred, ok := preferredLoweredRepeatContinuationShift(lookaheadSym, shifts, reduces, ng, cache); ok {
 				return []lrAction{preferred}, nil
 			}
@@ -3857,7 +3920,7 @@ func resolveActionConflict(lookaheadSym int, actions []lrAction, ng *NormalizedG
 					return []lrAction{reduce}, nil
 				}
 			}
-			switch prod.Assoc {
+			switch reduceMeta.assoc {
 			case AssocLeft:
 				if preferred, ok := preferredSameLHSContinuationShift(shifts, reduces, ng, cache); ok {
 					return []lrAction{preferred}, nil
@@ -5103,6 +5166,134 @@ func shiftContinuationTargets(shift lrAction, symbolCount int) map[int]bool {
 		}
 	}
 	return targets
+}
+
+type lrConflictMetadata struct {
+	prec    int
+	hasPrec bool
+	assoc   Assoc
+}
+
+func shiftMetadataForReduce(shift lrAction, reduceLHS int, ng *NormalizedGrammar, cache *conflictResolutionCache) lrConflictMetadata {
+	fallback := lrConflictMetadata{prec: shift.prec, hasPrec: shift.hasPrec, assoc: shift.assoc}
+	if shift.kind != lrShift || ng == nil || reduceLHS < 0 || reduceLHS >= len(ng.Symbols) {
+		return fallback
+	}
+	contributors := shift.shiftContributors
+	if len(contributors) == 0 {
+		contributors = append(contributors, lrShiftContributor{lhsSym: shift.lhsSym, prec: shift.prec, hasPrec: shift.hasPrec, assoc: shift.assoc})
+		for _, lhs := range shift.lhsSyms {
+			contributors = append(contributors, lrShiftContributor{lhsSym: lhs, prec: shift.prec, hasPrec: shift.hasPrec, assoc: shift.assoc})
+		}
+	}
+	var best lrConflictMetadata
+	found := false
+	for _, contributor := range contributors {
+		if !shiftContributorMatchesReduce(contributor.lhsSym, reduceLHS, ng, cache) {
+			continue
+		}
+		candidate := lrConflictMetadata{prec: contributor.prec, hasPrec: contributor.hasPrec, assoc: contributor.assoc}
+		if !found || compareConflictMetadata(candidate, best) > 0 {
+			best = candidate
+			found = true
+		}
+	}
+	if found {
+		return best
+	}
+	return fallback
+}
+
+func reduceMetadataForShiftConflict(reduce lrAction, shift lrAction, ng *NormalizedGrammar, cache *conflictResolutionCache) lrConflictMetadata {
+	if reduce.kind != lrReduce || reduce.prodIdx < 0 || reduce.prodIdx >= len(ng.Productions) {
+		return lrConflictMetadata{}
+	}
+	prod := &ng.Productions[reduce.prodIdx]
+	metadata := lrConflictMetadata{prec: prod.Prec, hasPrec: prod.HasExplicitPrec, assoc: prod.Assoc}
+	if metadata.prec != 0 || metadata.hasPrec || metadata.assoc != AssocNone || prod.DynPrec != 0 {
+		return metadata
+	}
+	if inferred, ok := inferOptionalPrefixReduceMetadata(prod, ng, cache); ok {
+		return inferred
+	}
+	return metadata
+}
+
+func inferOptionalPrefixReduceMetadata(prod *Production, ng *NormalizedGrammar, cache *conflictResolutionCache) (lrConflictMetadata, bool) {
+	if prod == nil || ng == nil || cache == nil || prod.LHS < 0 || prod.LHS >= len(cache.prodsByLHS) {
+		return lrConflictMetadata{}, false
+	}
+	var inferred lrConflictMetadata
+	found := false
+	for _, prodIdx := range cache.prodsByLHS[prod.LHS] {
+		if prodIdx < 0 || prodIdx >= len(ng.Productions) {
+			continue
+		}
+		candidate := &ng.Productions[prodIdx]
+		if candidate == prod || candidate.LHS != prod.LHS || len(candidate.RHS) <= len(prod.RHS) || !rhsHasPrefix(candidate.RHS, prod.RHS) {
+			continue
+		}
+		if !candidate.HasExplicitPrec || candidate.Assoc == AssocNone {
+			continue
+		}
+		metadata := lrConflictMetadata{prec: candidate.Prec, hasPrec: true, assoc: candidate.Assoc}
+		if found && metadata != inferred {
+			return lrConflictMetadata{}, false
+		}
+		inferred = metadata
+		found = true
+	}
+	return inferred, found
+}
+
+func shiftContributorMatchesReduce(lhs, reduceLHS int, ng *NormalizedGrammar, cache *conflictResolutionCache) bool {
+	if lhs <= 0 || reduceLHS <= 0 {
+		return false
+	}
+	if lhs == reduceLHS {
+		return true
+	}
+	if ng == nil || cache == nil {
+		return false
+	}
+	reduceFamily := make(map[int]bool)
+	reduceFamily[reduceLHS] = true
+	for _, parent := range resolveAuxToParents(reduceLHS, ng, cache) {
+		reduceFamily[parent] = true
+	}
+	if reduceFamily[lhs] {
+		return true
+	}
+	for _, parent := range resolveAuxToParents(lhs, ng, cache) {
+		if reduceFamily[parent] {
+			return true
+		}
+	}
+	return false
+}
+
+func compareConflictMetadata(a, b lrConflictMetadata) int {
+	if a.prec != b.prec {
+		if a.prec > b.prec {
+			return 1
+		}
+		return -1
+	}
+	if a.hasPrec != b.hasPrec {
+		if a.hasPrec {
+			return 1
+		}
+		return -1
+	}
+	if a.assoc != b.assoc {
+		if a.assoc != AssocNone && b.assoc == AssocNone {
+			return 1
+		}
+		if a.assoc == AssocNone && b.assoc != AssocNone {
+			return -1
+		}
+	}
+	return 0
 }
 
 func rhsHasPrefix(rhs, prefix []int) bool {

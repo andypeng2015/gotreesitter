@@ -1492,6 +1492,51 @@ func TestResolveShiftReduceHonorsExplicitZeroAssignmentAssociativity(t *testing.
 	}
 }
 
+func TestResolveShiftReduceUsesLocalShiftContributorPrecedence(t *testing.T) {
+	ng := &NormalizedGrammar{
+		Symbols: []SymbolInfo{
+			{Name: "{", Kind: SymbolTerminal},
+			{Name: "break", Kind: SymbolTerminal},
+			{Name: "block", Kind: SymbolNonterminal},
+			{Name: "_expression", Kind: SymbolNonterminal},
+			{Name: "break_expression", Kind: SymbolNonterminal},
+			{Name: "call_expression", Kind: SymbolNonterminal},
+		},
+		Productions: []Production{
+			{LHS: 4, RHS: []int{1}},
+			{LHS: 4, RHS: []int{1, 3}, HasExplicitPrec: true, Assoc: AssocLeft},
+			{LHS: 3, RHS: []int{2}},
+			{LHS: 3, RHS: []int{4}},
+			{LHS: 5, RHS: []int{3}, Prec: 15, HasExplicitPrec: true},
+		},
+	}
+	tables := &LRTables{ActionTable: map[int]map[int][]lrAction{0: {}}}
+	tables.addAction(0, 0, lrAction{kind: lrShift, state: 9, lhsSym: 2})
+	tables.addAction(0, 0, lrAction{kind: lrShift, state: 9, lhsSym: 4})
+	tables.addAction(0, 0, lrAction{kind: lrShift, state: 9, lhsSym: 5, prec: 15, hasPrec: true})
+
+	actions := tables.ActionTable[0][0]
+	if len(actions) != 1 || actions[0].prec != 15 {
+		t.Fatalf("merged shift actions = %+v, want one scalar high-precedence shift", actions)
+	}
+	cache := getConflictResolutionCache(ng)
+	if inferred, ok := inferOptionalPrefixReduceMetadata(&ng.Productions[0], ng, cache); !ok || inferred.assoc != AssocLeft {
+		t.Fatalf("optional-prefix metadata = %+v, %v; want left assoc", inferred, ok)
+	}
+	if meta := shiftMetadataForReduce(actions[0], 4, ng, cache); meta.prec != 0 || meta.assoc != AssocNone {
+		t.Fatalf("local shift metadata = %+v, want zero/no-assoc break contributor", meta)
+	}
+	got, err := resolveActionConflict(0, []lrAction{
+		actions[0],
+		{kind: lrReduce, prodIdx: 0, lhsSym: 4},
+	}, ng)
+	if err != nil {
+		t.Fatalf("resolveActionConflict: %v", err)
+	}
+	if len(got) != 1 || got[0].kind != lrReduce || got[0].prodIdx != 0 {
+		t.Fatalf("resolved actions = %+v, want local break_expression reduce", got)
+	}
+}
 func TestResolveShiftReducePrefersSameLHSContinuationShift(t *testing.T) {
 	ng := &NormalizedGrammar{
 		Symbols: []SymbolInfo{
