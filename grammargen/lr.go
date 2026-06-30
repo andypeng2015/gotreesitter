@@ -707,6 +707,7 @@ func buildLRTablesInternal(bgCtx context.Context, ng *NormalizedGrammar, trackPr
 		}
 	}
 	propagateEntryShiftMetadata(tables, itemSets, ctx, ng)
+	augmentSingleReduceLookaheadsForNonterminalExtraStarts(tables, ng, ctx)
 
 	return tables, ctx, nil
 }
@@ -976,9 +977,9 @@ type lrContext struct {
 	lalrNTTransitions      []ntTransition
 	// Retained DeRemer/Pennello LALR data for use by the LR(1) splitter.
 	// Only populated when trackProvenance is true.
-	lalrLookbacks      []lookbackEntry
-	lalrFollowSets     []bitset
-	lalrNTTransIndex   map[[2]int]int
+	lalrLookbacks    []lookbackEntry
+	lalrFollowSets   []bitset
+	lalrNTTransIndex map[[2]int]int
 
 	// Merge provenance tracking (diagnostic metadata, does not affect construction)
 	provenance                 *mergeProvenance
@@ -1818,6 +1819,115 @@ func terminalStartMatcherHasSingleRune(m terminalStartMatcher, want rune) bool {
 	}
 	_, ok := m.runes[want]
 	return ok
+}
+
+// augmentSingleReduceLookaheadsForNonterminalExtraStarts lets a completed
+// production close before a visible nonterminal extra begins. Tree-sitter extras
+// may appear between any two tokens; without this reduce lookahead, a state that
+// has just completed an item can shift the extra chain first and later recover
+// the completed item as ERROR. Keep this deliberately conservative: only states
+// with one non-extra reduce are augmented, and real structural shifts on the
+// extra starter still win.
+func realStartSymbol(ng *NormalizedGrammar) int {
+	if ng == nil || ng.AugmentProdID < 0 || ng.AugmentProdID >= len(ng.Productions) || len(ng.Productions[ng.AugmentProdID].RHS) == 0 {
+		return -1
+	}
+	return ng.Productions[ng.AugmentProdID].RHS[0]
+}
+func augmentSingleReduceLookaheadsForNonterminalExtraStarts(tables *LRTables, ng *NormalizedGrammar, ctx *lrContext) int {
+	if tables == nil || ng == nil || len(ng.ExtraSymbols) == 0 {
+		return 0
+	}
+	tokenCount := ng.TokenCount()
+	extraSymbolSet := make(map[int]struct{}, len(ng.ExtraSymbols))
+	for _, sym := range ng.ExtraSymbols {
+		extraSymbolSet[sym] = struct{}{}
+	}
+	extraStarts := make(map[int]struct{})
+	internalExtraStructuralStarts := make(map[int]struct{})
+	for i := range ng.Productions {
+		prod := &ng.Productions[i]
+		if !prod.IsExtra || len(prod.RHS) == 0 {
+			continue
+		}
+		if _, ok := extraSymbolSet[prod.LHS]; !ok {
+			continue
+		}
+		first := prod.RHS[0]
+		if first > 0 && first < tokenCount {
+			extraStarts[first] = struct{}{}
+		}
+		for pos := 1; pos < len(prod.RHS); pos++ {
+			sym := prod.RHS[pos]
+			if sym > 0 && sym < tokenCount {
+				internalExtraStructuralStarts[sym] = struct{}{}
+				continue
+			}
+			if ctx != nil && sym >= 0 && sym < len(ctx.firstSets) {
+				ctx.firstSets[sym].forEach(func(first int) {
+					if first > 0 && first < tokenCount {
+						internalExtraStructuralStarts[first] = struct{}{}
+					}
+				})
+			}
+		}
+	}
+	for start := range internalExtraStructuralStarts {
+		delete(extraStarts, start)
+	}
+	if len(extraStarts) == 0 {
+		return 0
+	}
+
+	added := 0
+	for state, bySym := range tables.ActionTable {
+		var reduce lrAction
+		reduceSet := false
+		ambiguous := false
+		for _, actions := range bySym {
+			for _, action := range actions {
+				if action.kind != lrReduce || action.isExtra {
+					continue
+				}
+				if !reduceSet {
+					reduce = action
+					reduceSet = true
+					continue
+				}
+				if action.prodIdx != reduce.prodIdx {
+					ambiguous = true
+					break
+				}
+			}
+			if ambiguous {
+				break
+			}
+		}
+		if !reduceSet || ambiguous {
+			continue
+		}
+		if reduce.prodIdx >= 0 && reduce.prodIdx < len(ng.Productions) && ng.Productions[reduce.prodIdx].LHS == realStartSymbol(ng) {
+			continue
+		}
+		for start := range extraStarts {
+			blocked := false
+			for _, action := range bySym[start] {
+				if action.kind == lrAccept || (action.kind == lrShift && !action.isExtra) {
+					blocked = true
+					break
+				}
+			}
+			if blocked {
+				continue
+			}
+			before := len(tables.ActionTable[state][start])
+			tables.addAction(state, start, reduce)
+			if len(tables.ActionTable[state][start]) > before {
+				added++
+			}
+		}
+	}
+	return added
 }
 
 // addNonterminalExtraChains creates dedicated parse state chains for nonterminal
