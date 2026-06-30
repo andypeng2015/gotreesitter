@@ -1301,11 +1301,51 @@ func computeLexModes(
 	externalSymbols []int,
 	wordSymbolID int,
 	keywordSymbols map[int]bool,
+	terminalPatternSyms map[int]bool,
+	followTokens func(state int) []int,
+	missingRecoveryTokens func(state int) []int,
+	suppressAfterWhitespaceSyms map[int]bool,
+) ([]lexModeSpec, []int, []afterWSModeEntry) {
+	modes, stateToMode, afterWSModeMap, _ := computeLexModesWithContext(
+		context.Background(),
+		stateCount,
+		tokenCount,
+		actionLookup,
+		stringPrefixExtensions,
+		extraSymbols,
+		extraChainStateStart,
+		immediateTokens,
+		externalSymbols,
+		wordSymbolID,
+		keywordSymbols,
+		terminalPatternSyms,
+		followTokens,
+		missingRecoveryTokens,
+		suppressAfterWhitespaceSyms,
+	)
+	return modes, stateToMode, afterWSModeMap
+}
+
+func computeLexModesWithContext(
+	ctx context.Context,
+	stateCount int,
+	tokenCount int,
+	actionLookup func(state, sym int) bool,
+	stringPrefixExtensions map[int][]int,
+	extraSymbols []int,
+	extraChainStateStart int,
+	immediateTokens map[int]bool,
+	externalSymbols []int,
+	wordSymbolID int,
+	keywordSymbols map[int]bool,
 	terminalPatternSyms map[int]bool, // symbols that have DFA terminal patterns
 	followTokens func(state int) []int, // additional tokens from reduce-follow expansion (may be nil)
 	missingRecoveryTokens func(state int) []int, // lookaheads needed for missing-token recovery (may be nil)
 	suppressAfterWhitespaceSyms map[int]bool,
-) ([]lexModeSpec, []int, []afterWSModeEntry) {
+) ([]lexModeSpec, []int, []afterWSModeEntry, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	extraSet := make(map[int]bool)
 	hasTerminalExtras := false
 	for _, e := range extraSymbols {
@@ -1335,6 +1375,11 @@ func computeLexModes(
 	var afterWSModeMap []afterWSModeEntry
 
 	for state := 0; state < stateCount; state++ {
+		if state&255 == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, nil, nil, err
+			}
+		}
 		isExtraChainState := extraChainStateStart >= 0 && state >= extraChainStateStart
 		// Collect valid terminal symbols for this state.
 		validSyms := make(map[int]bool)
@@ -1378,6 +1423,9 @@ func computeLexModes(
 				if sym > 0 && sym < tokenCount && !extSet[sym] {
 					directValid[sym] = true
 				}
+			}
+			if err := ctx.Err(); err != nil {
+				return nil, nil, nil, err
 			}
 		}
 
@@ -1495,7 +1543,7 @@ func computeLexModes(
 		}
 	}
 
-	return modes, stateToMode, afterWSModeMap
+	return modes, stateToMode, afterWSModeMap, nil
 }
 
 func containsAnySymbol(syms, needles map[int]bool) bool {

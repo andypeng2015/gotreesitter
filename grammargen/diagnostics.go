@@ -101,6 +101,13 @@ func buildFollowTokensFunc(tables *LRTables, tokenCount int) func(int) []int {
 // `library_name`, and then shifting `;`. If the lex mode excludes `;`, the
 // parser only sees EOF and cannot perform the same recovery.
 func buildMissingRecoveryTokensFunc(tables *LRTables, tokenCount int, terminalPatterns []TerminalPattern, skipExtras map[int]bool) func(int) []int {
+	return buildMissingRecoveryTokensFuncWithContext(context.Background(), tables, tokenCount, terminalPatterns, skipExtras)
+}
+
+func buildMissingRecoveryTokensFuncWithContext(ctx context.Context, tables *LRTables, tokenCount int, terminalPatterns []TerminalPattern, skipExtras map[int]bool) func(int) []int {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if tables == nil {
 		return nil
 	}
@@ -171,7 +178,7 @@ func buildMissingRecoveryTokensFunc(tables *LRTables, tokenCount int, terminalPa
 			key := preemptionKey{direct: direct, lookahead: lookahead}
 			preempts, ok := preemptionCache[key]
 			if !ok {
-				preempts = recoveryLookaheadPreemptsDirectTerminal(directPatterns, lookaheadPatterns, direct, lookahead)
+				preempts = recoveryLookaheadPreemptsDirectTerminal(ctx, directPatterns, lookaheadPatterns, direct, lookahead)
 				preemptionCache[key] = preempts
 			}
 			if preempts {
@@ -184,7 +191,7 @@ func buildMissingRecoveryTokensFunc(tables *LRTables, tokenCount int, terminalPa
 		if preemptsDirectTerminalShift(state, lookahead) {
 			return
 		}
-		if preemptsSkippedTerminalExtra(patternsBySymbol, skipExtras, lookahead) {
+		if preemptsSkippedTerminalExtra(ctx, patternsBySymbol, skipExtras, lookahead) {
 			return
 		}
 		seen[lookahead] = true
@@ -192,6 +199,9 @@ func buildMissingRecoveryTokensFunc(tables *LRTables, tokenCount int, terminalPa
 
 	cache := make(map[int][]int)
 	return func(state int) []int {
+		if ctx.Err() != nil {
+			return nil
+		}
 		if cached, ok := cache[state]; ok {
 			return cached
 		}
@@ -213,7 +223,12 @@ func buildMissingRecoveryTokensFunc(tables *LRTables, tokenCount int, terminalPa
 
 				queue := []int{shift.state}
 				visited := map[int]bool{shift.state: true}
+				steps := 0
 				for len(queue) > 0 {
+					steps++
+					if steps&255 == 0 && ctx.Err() != nil {
+						return nil
+					}
 					top := queue[0]
 					queue = queue[1:]
 					nextActs, ok := tables.ActionTable[top]
@@ -258,7 +273,7 @@ func buildMissingRecoveryTokensFunc(tables *LRTables, tokenCount int, terminalPa
 	}
 }
 
-func preemptsSkippedTerminalExtra(patternsBySymbol map[int][]TerminalPattern, skipExtras map[int]bool, lookahead int) bool {
+func preemptsSkippedTerminalExtra(ctx context.Context, patternsBySymbol map[int][]TerminalPattern, skipExtras map[int]bool, lookahead int) bool {
 	if len(patternsBySymbol) == 0 || len(skipExtras) == 0 {
 		return false
 	}
@@ -274,7 +289,7 @@ func preemptsSkippedTerminalExtra(patternsBySymbol map[int][]TerminalPattern, sk
 		if !ok {
 			continue
 		}
-		if recoveryLookaheadPreemptsDirectTerminal(extraPatterns, lookaheadPatterns, extra, lookahead) {
+		if recoveryLookaheadPreemptsDirectTerminal(ctx, extraPatterns, lookaheadPatterns, extra, lookahead) {
 			return true
 		}
 	}
@@ -292,7 +307,10 @@ func terminalPatternsBySymbol(patterns []TerminalPattern) map[int][]TerminalPatt
 	return bySym
 }
 
-func recoveryLookaheadPreemptsDirectTerminal(directPatterns, lookaheadPatterns []TerminalPattern, direct, lookahead int) bool {
+func recoveryLookaheadPreemptsDirectTerminal(ctx context.Context, directPatterns, lookaheadPatterns []TerminalPattern, direct, lookahead int) bool {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	witnesses := directTerminalLexingWitnesses(directPatterns, direct)
 	if len(witnesses) == 0 {
 		return false
@@ -302,7 +320,7 @@ func recoveryLookaheadPreemptsDirectTerminal(directPatterns, lookaheadPatterns [
 	patterns = append(patterns, directPatterns...)
 	patterns = append(patterns, lookaheadPatterns...)
 	valid := map[int]bool{direct: true, lookahead: true}
-	lexStates, offsets, err := buildLexDFA(context.Background(), patterns, nil, nil, []lexModeSpec{{
+	lexStates, offsets, err := buildLexDFA(ctx, patterns, nil, nil, []lexModeSpec{{
 		validSymbols: valid,
 	}})
 	if err != nil || len(offsets) == 0 {
@@ -1139,7 +1157,7 @@ func generateWithReportCtx(bgCtx context.Context, g *Grammar, opts reportBuildOp
 		lexModes = []lexModeSpec{{validSymbols: allSyms, skipWhitespace: true}}
 		stateToMode = make([]int, tables.StateCount)
 	} else {
-		lexModes, stateToMode, afterWSModes = computeLexModes(
+		lexModes, stateToMode, afterWSModes, err = computeLexModesWithContext(bgCtx,
 			tables.StateCount,
 			tokenCount,
 			func(state, sym int) bool {
@@ -1159,9 +1177,13 @@ func generateWithReportCtx(bgCtx context.Context, g *Grammar, opts reportBuildOp
 			keywordSet,
 			termPatSyms,
 			buildFollowTokensFunc(tables, tokenCount),
-			buildMissingRecoveryTokensFunc(tables, tokenCount, ng.Terminals, skipExtras),
+			buildMissingRecoveryTokensFuncWithContext(bgCtx, tables, tokenCount, ng.Terminals, skipExtras),
 			suppressAfterWhitespaceSymbols(g, ng),
 		)
+		if err != nil {
+			endPhase(map[string]any{"error": true})
+			return nil, fmt.Errorf("compute lex modes: %w", err)
+		}
 	}
 	endPhase(map[string]any{
 		"lex_modes":       len(lexModes),
