@@ -1,17 +1,25 @@
 package gotreesitter
 
 func normalizeHurlCompatibility(root *Node, lang *Language) {
-	if root == nil || lang == nil || lang.Name != "hurl" || root.Type(lang) != "ERROR" {
+	if root == nil || lang == nil || lang.Name != "hurl" {
 		return
 	}
-	if !hurlRootHasTrailingFileDelimiterError(root, lang) {
-		return
+	switch root.Type(lang) {
+	case "ERROR":
+		if !hurlRootHasTrailingFileDelimiterError(root, lang) {
+			return
+		}
+		sym, ok := symbolByName(lang, "hurl_file")
+		if !ok {
+			return
+		}
+		retagResultRootAndRefreshError(root, sym, symbolIsNamed(lang, sym))
+	case "hurl_file":
+		if !root.hasError() || hurlRootHasTrailingFileDelimiterError(root, lang) {
+			return
+		}
+		retagResultRootAndRefreshError(root, errorSymbol, true)
 	}
-	sym, ok := symbolByName(lang, "hurl_file")
-	if !ok {
-		return
-	}
-	retagResultRootAndRefreshError(root, sym, symbolIsNamed(lang, sym))
 }
 
 func hurlRootHasTrailingFileDelimiterError(root *Node, lang *Language) bool {

@@ -65,6 +65,9 @@ func (b *resultRootBuild) tryBuildExpectedRootFromSingleError(candidate *Node) *
 	if b == nil || candidate == nil || !b.hasExpectedRoot || candidate.symbol != errorSymbol || resultChildCount(candidate) == 0 {
 		return nil
 	}
+	if b.isLanguage("hurl") {
+		return nil
+	}
 	rootChildren := resultChildSliceForMutation(candidate)
 	rootChildren = filterZeroWidthExtras(rootChildren, b.arena)
 	rootChildren = b.repairPythonKeywordNodes(rootChildren)
@@ -159,9 +162,6 @@ func (b *resultRootBuild) syntheticRootSymbol(originalNodes, rootChildren []*Nod
 	if b.isLanguage("gomod") {
 		return b.expectedRootSymbol
 	}
-	if b.isLanguage("go") {
-		return b.expectedRootSymbol
-	}
 	if b.isLanguage("make") {
 		// tree-sitter make keeps `makefile` as the root and embeds ERROR nodes
 		// as children; keep that expected root while preserving HasError.
@@ -196,6 +196,9 @@ const syntheticRootReplayMaxGapTokens = 64
 
 func (b *resultRootBuild) expectedRootCanFrameRecoveredFragments(rootChildren []*Node) bool {
 	if b == nil || b.parser == nil || b.lang == nil || !b.hasExpectedRoot || len(rootChildren) == 0 {
+		return false
+	}
+	if b.isLanguage("hurl") {
 		return false
 	}
 	if b.lang.InitialState == 0 {
@@ -390,7 +393,7 @@ func (b *resultRootBuild) syntheticRootReplayLexGapToken(frame syntheticRootRepl
 		return Token{}, false
 	}
 	lexer := NewLexer(b.lang.LexStates, b.source)
-	ts := newDFATokenSourceDirect(lexer, b.lang, b.parser.lookupActionIndex, b.parser.hasKeywordState, b.parser.externalValidByState)
+	ts := newDFATokenSourceDirect(lexer, b.lang, b.parser.lookupActionIndex, b.parser.hasKeywordState, b.parser.externalValidByState, b.parser.externalValidMaskByState)
 	defer ts.Close()
 	ts.SetParserState(frame.states[len(frame.states)-1])
 	ts.SeekTokenFrontier(startByte, startPoint)
