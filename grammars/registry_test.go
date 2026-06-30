@@ -11,6 +11,27 @@ func isRegisteredLanguage(name string) bool {
 	return lookupByName(name) != nil
 }
 
+// TestGoBlobIsGrammargenGenerated pins the contract invariant that the shipping
+// go.bin is a grammargen-compiled blob (GeneratedByGrammargen == true). The
+// runtime relies on this flag to bypass every per-language conflict-resolution
+// hack: deterministicConflictChoiceForDispatch returns early on
+// GeneratedByGrammargen before reaching its switch p.language.Name block, so a
+// grammargen blob resolves conflicts purely via the general ConflictPolicies +
+// structural generated-repeat detection. If a future blob regeneration silently
+// flipped this flag to false, those general paths would be bypassed and retired
+// per-language resolvers could resurrect. This test is the tripwire — and the
+// template the contract guard for every future ts2go->grammargen migration
+// should follow.
+func TestGoBlobIsGrammargenGenerated(t *testing.T) {
+	lang := GoLanguage()
+	if lang == nil {
+		t.Fatal("GoLanguage() returned nil")
+	}
+	if !lang.GeneratedByGrammargen {
+		t.Fatal("go.bin GeneratedByGrammargen = false, want true; the shipping go blob must be grammargen-compiled so the runtime's per-language conflict hacks stay bypassed")
+	}
+}
+
 func TestDetectLanguageGo(t *testing.T) {
 	entry := DetectLanguage("main.go")
 	if entry == nil {

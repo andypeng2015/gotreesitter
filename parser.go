@@ -6324,13 +6324,6 @@ func repetitionShiftConflictChoice(actions []ParseAction) (ParseAction, bool) {
 	return shift, true
 }
 
-func goRepetitionShiftConflictChoice(maxStacksSeen int, currentState StateID, tok Token, actions []ParseAction) (ParseAction, bool) {
-	if glrFaithfulCapOneMerge || maxStacksSeen <= 1 || currentState != 3 || tok.Symbol != 15 {
-		return ParseAction{}, false
-	}
-	return repetitionShiftConflictChoice(actions)
-}
-
 func (p *Parser) javaSwitchArrowConflictChoice(s *glrStack, tok Token, actions []ParseAction) (ParseAction, bool) {
 	if p == nil || p.language == nil || p.language.Name != "java" || s == nil || !symbolHasName(p.language, tok.Symbol, "->") {
 		return ParseAction{}, false

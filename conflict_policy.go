@@ -123,8 +123,6 @@ func (p *Parser) deterministicConflictChoiceForDispatch(source []byte, s *glrSta
 		chosen, ok = javaRepetitionShiftConflictChoiceForDispatch(p.language, source, tok, currentState, actions)
 	case "c_sharp":
 		chosen, ok = csharpRepetitionShiftConflictChoice(p.language, tok, actions)
-	case "go":
-		chosen, ok = goRepetitionShiftConflictChoice(maxStacksSeen, currentState, tok, actions)
 	case "c":
 		chosen, ok = cRepetitionShiftConflictChoice(p.language, actions)
 	case "rust":
