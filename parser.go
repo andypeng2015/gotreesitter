@@ -3647,8 +3647,12 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		progress.emit(time.Now(), "start", 0, 0, Token{}, false, nil, 0, 0, 0, true, 0, 0, "")
 	}
 	var stopActionDiag parseStopActionDiagnostic
+	var stopActionDiagRef *parseStopActionDiagnostic
+	if !p.noResultCompatibilityBenchmarkOnly {
+		stopActionDiagRef = &stopActionDiag
+	}
 	prevStopActionDiag := p.stopActionDiag
-	p.stopActionDiag = &stopActionDiag
+	p.stopActionDiag = stopActionDiagRef
 	defer func() {
 		p.stopActionDiag = prevStopActionDiag
 	}()

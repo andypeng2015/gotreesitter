@@ -28,6 +28,10 @@ var (
 	parseReduceChainHints      bool
 	parseTSLazyCompatOnce      sync.Once
 	parseTSLazyCompat          bool
+	parseEagerDefaultOnce      sync.Once
+	parseEagerDefault          bool
+	parseEagerDefaultDebugOnce sync.Once
+	parseEagerDefaultDebug     bool
 )
 
 // ResetParseEnvConfigCacheForTests clears memoized parser env config.
@@ -55,6 +59,10 @@ func ResetParseEnvConfigCacheForTests() {
 	parseReduceChainHints = false
 	parseTSLazyCompatOnce = sync.Once{}
 	parseTSLazyCompat = false
+	parseEagerDefaultOnce = sync.Once{}
+	parseEagerDefault = false
+	parseEagerDefaultDebugOnce = sync.Once{}
+	parseEagerDefaultDebug = false
 	glrFaithfulCapOneMerge = os.Getenv("GOT_FAITHFUL_CONDENSE") == "1"
 }
 

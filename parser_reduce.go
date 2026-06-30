@@ -7084,7 +7084,7 @@ func (p *Parser) pushNoTreeReduceNode(s *glrStack, act ParseAction, tok Token, a
 		targetState = gotoState
 	}
 
-	parent := newNoTreeReduceNodeInArena(arena, act, p.isNamedSymbol(act.Symbol), entries, start, reducedEnd, tok, trackChildErrors)
+	parent := newNoTreeReduceNodeInArenaWithRawShape(arena, act, p.isNamedSymbol(act.Symbol), entries, start, reducedEnd, tok, trackChildErrors, !p.noResultCompatibilityBenchmarkOnly)
 	if tok.NoLookahead && targetState == topState {
 		parent.setExtra(true)
 	}
@@ -7130,6 +7130,10 @@ func (p *Parser) pushStackPendingParent(s *glrStack, state StateID, parent *pend
 }
 
 func newNoTreeReduceNodeInArena(arena *nodeArena, act ParseAction, named bool, entries []stackEntry, start, reducedEnd int, tok Token, trackChildErrors bool) *noTreeNode {
+	return newNoTreeReduceNodeInArenaWithRawShape(arena, act, named, entries, start, reducedEnd, tok, trackChildErrors, true)
+}
+
+func newNoTreeReduceNodeInArenaWithRawShape(arena *nodeArena, act ParseAction, named bool, entries []stackEntry, start, reducedEnd int, tok Token, trackChildErrors bool, captureRawShape bool) *noTreeNode {
 	var n *noTreeNode
 	if arena == nil {
 		n = &noTreeNode{}
@@ -7143,7 +7147,11 @@ func newNoTreeReduceNodeInArena(arena *nodeArena, act ParseAction, named bool, e
 	n.parseState = 0
 	n.preGotoState = 0
 	n.productionID = act.ProductionID
-	n.rawShape = captureRawShapeInArena(arena, act, entries, start, reducedEnd)
+	if captureRawShape {
+		n.rawShape = captureRawShapeInArena(arena, act, entries, start, reducedEnd)
+	} else {
+		n.rawShape = 0
+	}
 	n.dynamicPrecedence = reduceWindowDynamicPrecedence(entries, start, reducedEnd, act)
 	n.flags = noTreeNodeInitialFlags(named)
 	if reducedEnd > start {

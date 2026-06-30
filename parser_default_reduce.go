@@ -11,16 +11,22 @@ type eagerDefaultReduceAction struct {
 }
 
 func parseEagerDefaultReduceEnabled() bool {
-	switch os.Getenv("GOT_EAGER_DEFAULT_REDUCE") {
-	case "1", "true", "TRUE", "True":
-		return true
-	default:
-		return false
-	}
+	parseEagerDefaultOnce.Do(func() {
+		switch os.Getenv("GOT_EAGER_DEFAULT_REDUCE") {
+		case "1", "true", "TRUE", "True":
+			parseEagerDefault = true
+		default:
+			parseEagerDefault = false
+		}
+	})
+	return parseEagerDefault
 }
 
 func parseEagerDefaultReduceDebugEnabled() bool {
-	return os.Getenv("GOT_EAGER_DEFAULT_REDUCE_DEBUG") == "1"
+	parseEagerDefaultDebugOnce.Do(func() {
+		parseEagerDefaultDebug = os.Getenv("GOT_EAGER_DEFAULT_REDUCE_DEBUG") == "1"
+	})
+	return parseEagerDefaultDebug
 }
 
 func buildEagerDefaultReduceActions(p *Parser) []eagerDefaultReduceAction {
