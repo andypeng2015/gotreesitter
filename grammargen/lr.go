@@ -5186,17 +5186,24 @@ func shiftMetadataForReduce(shift lrAction, reduceLHS int, ng *NormalizedGrammar
 			contributors = append(contributors, lrShiftContributor{lhsSym: lhs, prec: shift.prec, hasPrec: shift.hasPrec, assoc: shift.assoc})
 		}
 	}
-	var best lrConflictMetadata
+	primary := fallback
+	for _, contributor := range contributors {
+		if contributor.lhsSym == shift.lhsSym {
+			primary = lrConflictMetadata{prec: contributor.prec, hasPrec: contributor.hasPrec, assoc: contributor.assoc}
+			break
+		}
+	}
+	best := primary
 	found := false
 	for _, contributor := range contributors {
 		if !shiftContributorMatchesReduce(contributor.lhsSym, reduceLHS, ng, cache) {
 			continue
 		}
 		candidate := lrConflictMetadata{prec: contributor.prec, hasPrec: contributor.hasPrec, assoc: contributor.assoc}
-		if !found || compareConflictMetadata(candidate, best) > 0 {
+		if compareConflictMetadata(candidate, best) > 0 {
 			best = candidate
-			found = true
 		}
+		found = true
 	}
 	if found {
 		return best

@@ -1492,6 +1492,39 @@ func TestResolveShiftReduceHonorsExplicitZeroAssignmentAssociativity(t *testing.
 	}
 }
 
+func TestResolveShiftReduceKeepsImmediateShiftOverLowerPrecedenceContributor(t *testing.T) {
+	ng := &NormalizedGrammar{
+		Symbols: []SymbolInfo{
+			{Name: "|", Kind: SymbolTerminal},
+			{Name: "identifier", Kind: SymbolTerminal},
+			{Name: "closure_parameters", Kind: SymbolNonterminal},
+			{Name: "_pattern", Kind: SymbolNonterminal},
+			{Name: "or_pattern", Kind: SymbolNonterminal},
+		},
+		Productions: []Production{
+			{LHS: 4, RHS: []int{0, 3}, Prec: -2, HasExplicitPrec: true, Assoc: AssocLeft},
+		},
+	}
+	tables := &LRTables{ActionTable: map[int]map[int][]lrAction{0: {}}}
+	tables.addAction(0, 0, lrAction{kind: lrShift, state: 9, lhsSym: 2})
+	tables.addAction(0, 0, lrAction{kind: lrShift, state: 9, lhsSym: 4, prec: -2, hasPrec: true, assoc: AssocLeft})
+
+	actions := tables.ActionTable[0][0]
+	cache := getConflictResolutionCache(ng)
+	if meta := shiftMetadataForReduce(actions[0], 4, ng, cache); meta.prec != 0 {
+		t.Fatalf("local shift metadata = %+v, want immediate closure-parameter shift precedence", meta)
+	}
+	got, err := resolveActionConflict(0, []lrAction{
+		actions[0],
+		{kind: lrReduce, prodIdx: 0, lhsSym: 4},
+	}, ng)
+	if err != nil {
+		t.Fatalf("resolveActionConflict: %v", err)
+	}
+	if len(got) != 1 || got[0].kind != lrShift || got[0].state != 9 {
+		t.Fatalf("resolved actions = %+v, want immediate closure-parameter shift", got)
+	}
+}
 func TestResolveShiftReduceUsesLocalShiftContributorPrecedence(t *testing.T) {
 	ng := &NormalizedGrammar{
 		Symbols: []SymbolInfo{
