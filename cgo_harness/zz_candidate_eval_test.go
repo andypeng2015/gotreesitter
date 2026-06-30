@@ -60,7 +60,7 @@ func TestCandidateGrammarEval(t *testing.T) {
 			Subdir:  parts[3],
 		}
 		label := fmt.Sprintf("%s@%s (%s)", entry.Name, entry.Commit[:12], entry.RepoURL)
-		ref, err := buildParityCRef(filepath.Join(tmpRoot, entry.Commit[:12]), entry)
+		ref, err := buildParityCRef(filepath.Join(tmpRoot, entry.Commit[:12]), "", entry)
 		if err != nil {
 			t.Logf("CAND %s: BUILD FAILED: %v", label, err)
 			continue

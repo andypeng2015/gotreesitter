@@ -1239,6 +1239,9 @@ func (a *nodeArena) allocRawShape() (rawShapeRef, *rawShape) {
 		a.rawShapeSlabCursor = 0
 	}
 	for i := a.rawShapeSlabCursor; ; i++ {
+		if i+1 >= 1<<(32-rawShapeRefIndexBits) {
+			return 0, nil
+		}
 		if i >= len(a.rawShapeSlabs) {
 			capacity := max(defaultRawShapeSlabCap(a.class), minArenaNodeCap)
 			a.rawShapeSlabs = append(a.rawShapeSlabs, rawShapeSlab{data: make([]rawShape, capacity)})
@@ -1249,11 +1252,11 @@ func (a *nodeArena) allocRawShape() (rawShapeRef, *rawShape) {
 			continue
 		}
 		idx := slab.used
-		slab.used++
-		a.rawShapeSlabCursor = i
-		if i+1 >= 1<<(32-rawShapeRefIndexBits) || idx >= 1<<rawShapeRefIndexBits {
+		if idx >= 1<<rawShapeRefIndexBits {
 			return 0, nil
 		}
+		slab.used++
+		a.rawShapeSlabCursor = i
 		ref := rawShapeRef((uint32(i+1) << rawShapeRefIndexBits) | uint32(idx))
 		return ref, &slab.data[idx]
 	}

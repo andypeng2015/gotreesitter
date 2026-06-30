@@ -1254,7 +1254,7 @@ func verifyRealCorpusIncrementalCandidate(b *testing.B, tc realCorpusBenchmarkCa
 	goIncrTree, ok := tryParseCompleteRealCorpusGoIncrementalWithPhase(b, realCorpusCaseWithSource(tc, edited), goParser, goOldTree, verifyPhase)
 	releaseGoTree(goOldTree)
 	if !ok {
-		return realCorpusIncrementalCase{}, false
+		return realCorpusIncrementalCase{}, "gotreesitter incremental incomplete parse", false
 	}
 	defer releaseGoTree(goIncrTree)
 	var goIncrErrs []string
@@ -1268,7 +1268,7 @@ func verifyRealCorpusIncrementalCandidate(b *testing.B, tc realCorpusBenchmarkCa
 	cIncrTree, ok := tryParseCompleteRealCorpusCIncremental(cParser, edited, cOldTree)
 	cOldTree.Close()
 	if !ok {
-		return realCorpusIncrementalCase{}, false
+		return realCorpusIncrementalCase{}, "C incremental incomplete parse", false
 	}
 	defer cIncrTree.Close()
 	var cIncrErrs []string

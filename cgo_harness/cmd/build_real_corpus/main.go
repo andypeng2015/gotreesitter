@@ -788,7 +788,7 @@ func collectCandidatesWithMatchersFromRoot(sourceRoot, walkRoot string, exts, na
 				return
 			}
 		}
-		if !pathMatched && !looksCorpusCandidatePath(rel, includeFixtures, nameSet) {
+		if !pathMatched && !looksCorpusCandidatePath(relSlash, includeFixtures, nameSet) {
 			return
 		}
 		if _, ok := seen[rel]; ok {

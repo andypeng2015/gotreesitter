@@ -170,6 +170,16 @@ func TestCAppendVisibleSpliceRecoverySplicesExtraErrorCarrier(t *testing.T) {
 		},
 	}
 	parser := &Parser{language: lang, errorCostCompetition: true}
+	langWithSignatures := func(signatures []ProductionSignature) *Language {
+		return &Language{
+			TokenCount:           lang.TokenCount,
+			StateCount:           lang.StateCount,
+			SymbolCount:          lang.SymbolCount,
+			SymbolMetadata:       lang.SymbolMetadata,
+			SymbolNames:          lang.SymbolNames,
+			ProductionSignatures: signatures,
+		}
+	}
 	arena := acquireNodeArena(arenaClassFull)
 	defer arena.Release()
 
@@ -219,13 +229,12 @@ func TestCAppendVisibleSpliceRecoverySplicesExtraErrorCarrier(t *testing.T) {
 		t.Fatal("reduced spliced child hasError was cleared")
 	}
 
-	wrappedLang := *lang
-	wrappedLang.ProductionSignatures = []ProductionSignature{{
+	wrappedLang := langWithSignatures([]ProductionSignature{{
 		LHS:          4,
 		ProductionID: 7,
 		RHS:          []Symbol{2, 3},
-	}}
-	wrappedParser := &Parser{language: &wrappedLang, errorCostCompetition: true}
+	}})
+	wrappedParser := &Parser{language: wrappedLang, errorCostCompetition: true}
 	cleanA := newLeafNodeInArena(arena, 2, true, 10, 11, Point{Column: 10}, Point{Column: 11})
 	cleanB := newLeafNodeInArena(arena, 3, true, 11, 12, Point{Column: 11}, Point{Column: 12})
 	wrapCarrier := newParentNodeInArena(arena, errorSymbol, true, []*Node{cleanA, cleanB}, nil, 0)
@@ -260,12 +269,11 @@ func TestCAppendVisibleSpliceRecoverySplicesExtraErrorCarrier(t *testing.T) {
 		t.Fatalf("signature reduced children = %#v, want left/wrapper/right", children)
 	}
 
-	ambiguousLang := *lang
-	ambiguousLang.ProductionSignatures = []ProductionSignature{
+	ambiguousLang := langWithSignatures([]ProductionSignature{
 		{LHS: 4, ProductionID: 7, RHS: []Symbol{2, 3}},
 		{LHS: 1, ProductionID: 8, RHS: []Symbol{2, 3}},
-	}
-	ambiguousParser := &Parser{language: &ambiguousLang, errorCostCompetition: true}
+	})
+	ambiguousParser := &Parser{language: ambiguousLang, errorCostCompetition: true}
 	ambigA := newLeafNodeInArena(arena, 2, true, 20, 21, Point{Column: 20}, Point{Column: 21})
 	ambigB := newLeafNodeInArena(arena, 3, true, 21, 22, Point{Column: 21}, Point{Column: 22})
 	ambigCarrier := newParentNodeInArena(arena, errorSymbol, true, []*Node{ambigA, ambigB}, nil, 0)
@@ -280,20 +288,22 @@ func TestCAppendVisibleSpliceRecoverySplicesExtraErrorCarrier(t *testing.T) {
 	}
 }
 func TestCRecoveryVisibleSpliceSignatureMatchesGeneratedMetadata(t *testing.T) {
-	baseLang := &Language{
-		TokenCount:  1,
-		StateCount:  3,
-		SymbolCount: 7,
-		SymbolMetadata: []SymbolMetadata{
-			{Name: "end", Visible: true, Named: true},
-			{Name: "brace", Visible: true, Named: true},
-			{Name: "expr", Visible: true, Named: true},
-			{Name: "tail", Visible: true, Named: true},
-			{Name: "parent", Visible: true, Named: true},
-			{Name: "_expression", Visible: false, Named: true, Supertype: true},
-			{Name: "_primary", Visible: false, Named: true},
-		},
-		SymbolNames: []string{"end", "brace", "expr", "tail", "parent", "_expression", "_primary"},
+	baseLang := func() *Language {
+		return &Language{
+			TokenCount:  1,
+			StateCount:  3,
+			SymbolCount: 7,
+			SymbolMetadata: []SymbolMetadata{
+				{Name: "end", Visible: true, Named: true},
+				{Name: "brace", Visible: true, Named: true},
+				{Name: "expr", Visible: true, Named: true},
+				{Name: "tail", Visible: true, Named: true},
+				{Name: "parent", Visible: true, Named: true},
+				{Name: "_expression", Visible: false, Named: true, Supertype: true},
+				{Name: "_primary", Visible: false, Named: true},
+			},
+			SymbolNames: []string{"end", "brace", "expr", "tail", "parent", "_expression", "_primary"},
+		}
 	}
 	parserFor := func(lang *Language) *Parser {
 		return &Parser{language: lang, errorCostCompetition: true}
@@ -310,7 +320,7 @@ func TestCRecoveryVisibleSpliceSignatureMatchesGeneratedMetadata(t *testing.T) {
 	t.Run("supertype RHS matches visible subtype", func(t *testing.T) {
 		arena := acquireNodeArena(arenaClassFull)
 		defer arena.Release()
-		lang := *baseLang
+		lang := baseLang()
 		lang.SupertypeSymbols = []Symbol{5}
 		lang.SupertypeMapSlices = make([][2]uint16, 7)
 		lang.SupertypeMapSlices[5] = [2]uint16{0, 1}
@@ -318,7 +328,7 @@ func TestCRecoveryVisibleSpliceSignatureMatchesGeneratedMetadata(t *testing.T) {
 		lang.ProductionSignatures = []ProductionSignature{{LHS: 4, ProductionID: 7, RHS: []Symbol{5, 3}}}
 		carrier, left, right := carrierFor(arena, 2, 3)
 
-		got := parserFor(&lang).cAppendRecoveryVisibleSplice(nil, carrier, arena)
+		got := parserFor(lang).cAppendRecoveryVisibleSplice(nil, carrier, arena)
 		if len(got) != 1 || got[0].symbol != 4 {
 			t.Fatalf("supertype recovery splice = %#v, want parent wrapper", got)
 		}
@@ -330,7 +340,7 @@ func TestCRecoveryVisibleSpliceSignatureMatchesGeneratedMetadata(t *testing.T) {
 	t.Run("ambiguous supertype signatures flatten", func(t *testing.T) {
 		arena := acquireNodeArena(arenaClassFull)
 		defer arena.Release()
-		lang := *baseLang
+		lang := baseLang()
 		lang.SupertypeSymbols = []Symbol{5}
 		lang.SupertypeMapSlices = make([][2]uint16, 7)
 		lang.SupertypeMapSlices[5] = [2]uint16{0, 1}
@@ -341,7 +351,7 @@ func TestCRecoveryVisibleSpliceSignatureMatchesGeneratedMetadata(t *testing.T) {
 		}
 		carrier, left, right := carrierFor(arena, 2, 3)
 
-		got := parserFor(&lang).cAppendRecoveryVisibleSplice(nil, carrier, arena)
+		got := parserFor(lang).cAppendRecoveryVisibleSplice(nil, carrier, arena)
 		if len(got) != 2 || got[0] != left || got[1] != right {
 			t.Fatalf("ambiguous supertype splice = %#v, want flattened children", got)
 		}
@@ -350,7 +360,7 @@ func TestCRecoveryVisibleSpliceSignatureMatchesGeneratedMetadata(t *testing.T) {
 	t.Run("hidden passthrough RHS matches visible child", func(t *testing.T) {
 		arena := acquireNodeArena(arenaClassFull)
 		defer arena.Release()
-		lang := *baseLang
+		lang := baseLang()
 		lang.HiddenChoicePassthroughSymbols = make([]bool, 7)
 		lang.HiddenChoicePassthroughSymbols[6] = true
 		lang.ProductionSignatures = []ProductionSignature{
@@ -359,7 +369,7 @@ func TestCRecoveryVisibleSpliceSignatureMatchesGeneratedMetadata(t *testing.T) {
 		}
 		carrier, _, _ := carrierFor(arena, 2, 3)
 
-		got := parserFor(&lang).cAppendRecoveryVisibleSplice(nil, carrier, arena)
+		got := parserFor(lang).cAppendRecoveryVisibleSplice(nil, carrier, arena)
 		if len(got) != 1 || got[0].symbol != 4 {
 			t.Fatalf("hidden passthrough splice = %#v, want parent wrapper", got)
 		}
@@ -368,14 +378,14 @@ func TestCRecoveryVisibleSpliceSignatureMatchesGeneratedMetadata(t *testing.T) {
 	t.Run("unmarked hidden RHS flattens", func(t *testing.T) {
 		arena := acquireNodeArena(arenaClassFull)
 		defer arena.Release()
-		lang := *baseLang
+		lang := baseLang()
 		lang.ProductionSignatures = []ProductionSignature{
 			{LHS: 6, ProductionID: 1, RHS: []Symbol{2}},
 			{LHS: 4, ProductionID: 7, RHS: []Symbol{6, 3}},
 		}
 		carrier, left, right := carrierFor(arena, 2, 3)
 
-		got := parserFor(&lang).cAppendRecoveryVisibleSplice(nil, carrier, arena)
+		got := parserFor(lang).cAppendRecoveryVisibleSplice(nil, carrier, arena)
 		if len(got) != 2 || got[0] != left || got[1] != right {
 			t.Fatalf("unmarked hidden splice = %#v, want flattened children", got)
 		}
@@ -384,14 +394,14 @@ func TestCRecoveryVisibleSpliceSignatureMatchesGeneratedMetadata(t *testing.T) {
 	t.Run("fielded signature flattens", func(t *testing.T) {
 		arena := acquireNodeArena(arenaClassFull)
 		defer arena.Release()
-		lang := *baseLang
+		lang := baseLang()
 		lang.FieldMapSlices = make([][2]uint16, 8)
 		lang.FieldMapSlices[7] = [2]uint16{0, 1}
 		lang.FieldMapEntries = []FieldMapEntry{{FieldID: 1, ChildIndex: 0}}
 		lang.ProductionSignatures = []ProductionSignature{{LHS: 4, ProductionID: 7, RHS: []Symbol{2, 3}}}
 		carrier, left, right := carrierFor(arena, 2, 3)
 
-		got := parserFor(&lang).cAppendRecoveryVisibleSplice(nil, carrier, arena)
+		got := parserFor(lang).cAppendRecoveryVisibleSplice(nil, carrier, arena)
 		if len(got) != 2 || got[0] != left || got[1] != right {
 			t.Fatalf("fielded signature splice = %#v, want flattened children", got)
 		}
@@ -400,13 +410,13 @@ func TestCRecoveryVisibleSpliceSignatureMatchesGeneratedMetadata(t *testing.T) {
 	t.Run("aliased signature flattens", func(t *testing.T) {
 		arena := acquireNodeArena(arenaClassFull)
 		defer arena.Release()
-		lang := *baseLang
+		lang := baseLang()
 		lang.AliasSequences = make([][]Symbol, 8)
 		lang.AliasSequences[7] = []Symbol{1, 0}
 		lang.ProductionSignatures = []ProductionSignature{{LHS: 4, ProductionID: 7, RHS: []Symbol{2, 3}}}
 		carrier, left, right := carrierFor(arena, 2, 3)
 
-		got := parserFor(&lang).cAppendRecoveryVisibleSplice(nil, carrier, arena)
+		got := parserFor(lang).cAppendRecoveryVisibleSplice(nil, carrier, arena)
 		if len(got) != 2 || got[0] != left || got[1] != right {
 			t.Fatalf("aliased signature splice = %#v, want flattened children", got)
 		}
