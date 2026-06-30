@@ -1015,19 +1015,22 @@ func (p reduceChildPath) valid() bool {
 // ArenaBreakdown captures optional arena/materialization attribution. It is
 // populated only when EnableArenaBreakdown(true) is set before parsing.
 type ArenaBreakdown struct {
-	NodeStructBytesAllocated        int64
-	NoTreeNodeBytesAllocated        int64
-	CompactFullLeafBytesAllocated   int64
-	PendingParentBytesAllocated     int64
-	PendingChildEntryBytesAllocated int64
-	FinalChildSidecarBytesAllocated int64
-	PendingChildEntriesAllocated    uint64
-	PendingChildEntryCapacity       uint64
-	PendingChildEntryWaste          uint64
-	ChildSliceBytesAllocated        int64
-	FieldIDBytesAllocated           int64
-	FieldSourceBytesAllocated       int64
-	MergeScratchBytesAllocated      int64
+	NodeStructBytesAllocated            int64
+	NoTreeNodeBytesAllocated            int64
+	CompactFullLeafBytesAllocated       int64
+	PendingParentBytesAllocated         int64
+	PendingChildEntryBytesAllocated     int64
+	RawShapeBytesAllocated              int64
+	RawShapeChildBytesAllocated         int64
+	FinalChildSidecarBytesAllocated     int64
+	CompactCheckpointLeafBytesAllocated int64
+	PendingChildEntriesAllocated        uint64
+	PendingChildEntryCapacity           uint64
+	PendingChildEntryWaste              uint64
+	ChildSliceBytesAllocated            int64
+	FieldIDBytesAllocated               int64
+	FieldSourceBytesAllocated           int64
+	MergeScratchBytesAllocated          int64
 
 	ArenaNodesConstructed uint64
 	// NodeLiveCount is arena allocation-slot usage, not root-reachable tree
