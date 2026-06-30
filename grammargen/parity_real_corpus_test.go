@@ -2,6 +2,7 @@ package grammargen
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -35,6 +36,7 @@ const (
 	realCorpusSkipEnv            = "GTS_GRAMMARGEN_REAL_CORPUS_SKIP"
 	realCorpusOnlyEnv            = "GTS_GRAMMARGEN_REAL_CORPUS_ONLY"
 	realCorpusDiagEnv            = "GTS_GRAMMARGEN_REAL_CORPUS_DIAG"
+	realCorpusParseTimeoutEnv    = "GTS_GRAMMARGEN_REAL_CORPUS_PARSE_TIMEOUT"
 	realCorpusGenerateTimeoutEnv = "GTS_GRAMMARGEN_REAL_CORPUS_GENERATE_TIMEOUT"
 	realCorpusFloorsFileVersion  = 3
 	maxRealCorpusWalkFiles       = 6000
@@ -112,6 +114,11 @@ func TestMultiGrammarImportRealCorpusParity(t *testing.T) {
 	maxSampleBytes := getenvInt(realCorpusMaxSampleBytesEnv, defaultMaxSampleBytesForProfile(profile))
 	candidateMult := getenvInt(realCorpusCandidateMultEnv, defaultCandidateMultiplierForProfile(profile))
 	maxSecsPerGrammar := getenvInt(realCorpusMaxSecsPerGramEnv, defaultMaxSecondsPerGrammar(profile))
+	parseTimeout, err := realCorpusParseTimeout(profile)
+	if err != nil {
+		t.Fatalf("parse real-corpus timeout: %v", err)
+	}
+	parseTimeoutMicros := realCorpusTimeoutMicros(parseTimeout)
 	maxGrammars := getenvInt(realCorpusMaxGrammarsEnv, 0)
 	requireParity := getenvBool(realCorpusRequireParityEnv)
 	updateRatchet := getenvBool(realCorpusRatchetUpdateEnv)
@@ -251,13 +258,21 @@ func TestMultiGrammarImportRealCorpusParity(t *testing.T) {
 				"symbols=%d states=%d tokens=%d externalSymbols=%d parseActions=%d",
 				refLang.SymbolCount, refLang.StateCount, refLang.TokenCount, len(refLang.ExternalSymbols), len(refLang.ParseActions))
 			adaptExternalScanner(refLang, genLang)
+			genRecoveryDiag := gotreesitter.DiagnoseCRecoveryGate(genLang)
+			refRecoveryDiag := gotreesitter.DiagnoseCRecoveryGate(refLang)
 			logRealCorpusDiag("after_adapt_scanner", g.name,
-				"genExternalScanner=%t refExternalScanner=%t",
-				genLang.ExternalScanner != nil, refLang.ExternalScanner != nil)
+				"genExternalScanner=%t refExternalScanner=%t genCRecoverySupported=%t genCRecoveryDefault=%t genCRecoveryReason=%q genExternalLexRows=%d refCRecoverySupported=%t refCRecoveryDefault=%t refCRecoveryReason=%q refExternalLexRows=%d",
+				genLang.ExternalScanner != nil, refLang.ExternalScanner != nil,
+				genRecoveryDiag.Supported, genLang.CRecoveryCostCompetitionEnabledByDefault, genRecoveryDiag.Reason, genRecoveryDiag.ExternalLexStateRows,
+				refRecoveryDiag.Supported, refLang.CRecoveryCostCompetitionEnabledByDefault, refRecoveryDiag.Reason, refRecoveryDiag.ExternalLexStateRows)
 
 			genParser := gotreesitter.NewParser(genLang)
 			refParser := gotreesitter.NewParser(refLang)
-			logRealCorpusDiag("after_parser_init", g.name, "candidates=%d", len(candidates))
+			if parseTimeoutMicros > 0 {
+				genParser.SetTimeoutMicros(parseTimeoutMicros)
+				refParser.SetTimeoutMicros(parseTimeoutMicros)
+			}
+			logRealCorpusDiag("after_parser_init", g.name, "candidates=%d parse_timeout=%s", len(candidates), parseTimeout)
 
 			// Log root symbol inference for diagnostics.
 			if genRootSym, genHasRoot := genParser.InferredRootSymbol(); genHasRoot {
@@ -293,8 +308,9 @@ func TestMultiGrammarImportRealCorpusParity(t *testing.T) {
 				seen++
 				stop := false
 				func() {
-					genTree, _ := genParser.Parse([]byte(cand.Text))
-					refTree, _ := refParser.Parse([]byte(cand.Text))
+					srcBytes := []byte(cand.Text)
+					genTree, genErr := genParser.ParseStrict(srcBytes)
+					refTree, refErr := refParser.ParseStrict(srcBytes)
 					if genTree != nil {
 						defer genTree.Release()
 					}
@@ -302,7 +318,31 @@ func TestMultiGrammarImportRealCorpusParity(t *testing.T) {
 						defer refTree.Release()
 					}
 
-					genRoot := genTree.RootNode()
+					refStop := realCorpusParseStopReason(refErr)
+					if realCorpusParseStopActive(refStop) {
+						if mismatchLogs < 25 {
+							mismatchLogs++
+							t.Logf("real-corpus: skipping sample %d (%s:%s) because reference parse stopped early: %s",
+								i, cand.Source, cand.Path, refStop)
+						}
+						return
+					}
+					if refErr != nil {
+						if mismatchLogs < 25 {
+							mismatchLogs++
+							t.Logf("real-corpus: skipping sample %d (%s:%s) because reference parse failed: %v",
+								i, cand.Source, cand.Path, refErr)
+						}
+						return
+					}
+					if refTree == nil || refTree.RootNode() == nil {
+						if mismatchLogs < 25 {
+							mismatchLogs++
+							t.Logf("real-corpus: skipping sample %d (%s:%s) because reference parse returned nil tree",
+								i, cand.Source, cand.Path)
+						}
+						return
+					}
 					refRoot := refTree.RootNode()
 
 					// Safety: skip samples with pathologically deep parse trees
@@ -325,6 +365,36 @@ func TestMultiGrammarImportRealCorpusParity(t *testing.T) {
 					}
 					metrics.Eligible++
 
+					genStop := realCorpusParseStopReason(genErr)
+					if realCorpusParseStopActive(genStop) {
+						if mismatchLogs < 25 {
+							mismatchLogs++
+							t.Logf("sample %d (%s:%s) generated parse stopped early on clean ref: %s",
+								i, cand.Source, cand.Path, genStop)
+							if genTree != nil && getenvBool(realCorpusDiagEnv) {
+								t.Logf("  gen-runtime: %s", genTree.ParseRuntime().Summary())
+							}
+						}
+						return
+					}
+					if genErr != nil {
+						if mismatchLogs < 25 {
+							mismatchLogs++
+							t.Logf("sample %d (%s:%s) generated parse failed on clean ref: %v",
+								i, cand.Source, cand.Path, genErr)
+						}
+						return
+					}
+					if genTree == nil || genTree.RootNode() == nil {
+						if mismatchLogs < 25 {
+							mismatchLogs++
+							t.Logf("sample %d (%s:%s) generated parse returned nil tree on clean ref",
+								i, cand.Source, cand.Path)
+						}
+						return
+					}
+					genRoot := genTree.RootNode()
+
 					genSexp := safeSExpr(genRoot, genLang, maxSafeDepth)
 					if genSexp == "" {
 						if requireParity {
@@ -343,9 +413,16 @@ func TestMultiGrammarImportRealCorpusParity(t *testing.T) {
 					if genHasError {
 						if mismatchLogs < 25 {
 							mismatchLogs++
+							genSexpLimit := 200
+							if getenvBool(realCorpusDiagEnv) {
+								genSexpLimit = 2000
+							}
 							t.Logf("sample %d (%s:%s) gen ERROR on clean ref: %s",
 								i, cand.Source, cand.Path,
-								genSexp[:min(len(genSexp), 200)])
+								genSexp[:min(len(genSexp), genSexpLimit)])
+							if getenvBool(realCorpusDiagEnv) {
+								t.Logf("  gen-runtime: %s", genTree.ParseRuntime().Summary())
+							}
 							// Dump source text for ERROR diagnosis (truncated).
 							srcDump := cand.Text
 							if len(srcDump) > 500 {
@@ -584,9 +661,9 @@ func TestMultiGrammarImportRealCorpusParity(t *testing.T) {
 		t.Logf("updated ratchet floor file: %s", floorsPath)
 	}
 
-	t.Logf("REAL CORPUS SUMMARY: profile=%s grammars=%d eligible=%d no-error=%d sexpr_parity=%d deep_parity=%d requireParity=%v ratchetUpdate=%v ratchetRebase=%v maxCases=%d maxSampleBytes=%d",
+	t.Logf("REAL CORPUS SUMMARY: profile=%s grammars=%d eligible=%d no-error=%d sexpr_parity=%d deep_parity=%d requireParity=%v ratchetUpdate=%v ratchetRebase=%v maxCases=%d maxSampleBytes=%d parseTimeout=%s",
 		profile, testedGrammars, totalEligible, totalNoError, totalSExprParity, totalDeepParity,
-		requireParity, updateRatchet, rebaseRatchet, maxCases, maxSampleBytes)
+		requireParity, updateRatchet, rebaseRatchet, maxCases, maxSampleBytes, parseTimeout)
 }
 
 func enforceRealCorpusRatchet(t *testing.T, floor, cur realCorpusMetrics) {
@@ -625,6 +702,56 @@ func realCorpusGenerateTimeout(grammarName string, base time.Duration) (time.Dur
 		return override, nil
 	}
 	return base, nil
+}
+
+func realCorpusParseTimeout(profile realCorpusProfile) (time.Duration, error) {
+	if raw := strings.TrimSpace(os.Getenv(realCorpusParseTimeoutEnv)); raw != "" {
+		override, err := time.ParseDuration(raw)
+		if err != nil {
+			return 0, fmt.Errorf("parse %s=%q: %w", realCorpusParseTimeoutEnv, raw, err)
+		}
+		return override, nil
+	}
+	return defaultRealCorpusParseTimeout(profile), nil
+}
+
+func defaultRealCorpusParseTimeout(profile realCorpusProfile) time.Duration {
+	switch profile {
+	case realCorpusProfileSmoke:
+		return 5 * time.Second
+	case realCorpusProfileBalanced:
+		return 15 * time.Second
+	default:
+		return 30 * time.Second
+	}
+}
+
+func realCorpusTimeoutMicros(timeout time.Duration) uint64 {
+	if timeout <= 0 {
+		return 0
+	}
+	micros := timeout / time.Microsecond
+	if micros <= 0 {
+		return 1
+	}
+	return uint64(micros)
+}
+
+func realCorpusParseStopReason(err error) gotreesitter.ParseStopReason {
+	var stopped *gotreesitter.ParseStoppedEarlyError
+	if errors.As(err, &stopped) {
+		return stopped.Reason
+	}
+	return gotreesitter.ParseStopNone
+}
+
+func realCorpusParseStopActive(reason gotreesitter.ParseStopReason) bool {
+	switch reason {
+	case gotreesitter.ParseStopTimeout, gotreesitter.ParseStopCancelled:
+		return true
+	default:
+		return false
+	}
 }
 
 func parseRealCorpusProfile(raw string) realCorpusProfile {

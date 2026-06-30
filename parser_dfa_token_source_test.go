@@ -1130,3 +1130,53 @@ func TestNextDFATokenDoesNotSynthesizeGeneratedNULSentinelOverValidToken(t *test
 		t.Fatalf("token text = %q, want %q", got, want)
 	}
 }
+
+func TestNextDFATokenDoesNotSynthesizeGeneratedNULSentinelBeforeIdentifier(t *testing.T) {
+	lang := &Language{
+		GeneratedByGrammargen: true,
+		SymbolNames:           []string{"end", "\x00", "identifier"},
+		TokenCount:            3,
+		SymbolCount:           3,
+		LexStates: []LexState{
+			{
+				Default: -1,
+				EOF:     -1,
+				Transitions: []LexTransition{
+					{Lo: 'a', Hi: 'z', NextState: 1},
+				},
+			},
+			{
+				AcceptToken: 2,
+				Default:     -1,
+				EOF:         -1,
+				Transitions: []LexTransition{
+					{Lo: 'a', Hi: 'z', NextState: 1},
+				},
+			},
+		},
+		LexModes: []LexMode{
+			{LexState: 0},
+			{LexState: 0},
+		},
+		ParseActions: []ParseActionEntry{
+			{},
+			{Actions: []ParseAction{{Type: ParseActionReduce}}},
+		},
+	}
+	lookup := func(_ StateID, sym Symbol) uint16 {
+		if sym == 1 {
+			return 1
+		}
+		return 0
+	}
+	d := newDFATokenSourceDirect(NewLexer(lang.LexStates, []byte("name")), lang, lookup, nil, nil, nil)
+	d.SetParserState(1)
+
+	tok := d.nextDFAToken()
+	if got, want := tok.Symbol, Symbol(2); got != want {
+		t.Fatalf("token symbol = %d (%q), want %d (%q)", got, lang.SymbolNames[got], want, lang.SymbolNames[want])
+	}
+	if got, want := tok.Text, "name"; got != want {
+		t.Fatalf("token text = %q, want %q", got, want)
+	}
+}

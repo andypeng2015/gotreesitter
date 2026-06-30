@@ -15,6 +15,68 @@ import (
 // This expands lex modes so that keywords like "AS" in dockerfile can be
 // recognized even when parsing inside a production like image_name where
 // "AS" isn't directly valid but becomes valid after reducing.
+
+func buildLexModeFollowTokensFunc(tables *LRTables, tokenCount int, ng *NormalizedGrammar, keywordSymbols map[int]bool) func(int) []int {
+	follow := buildFollowTokensFunc(tables, tokenCount)
+	if follow == nil {
+		return nil
+	}
+	allowed := lexModeFollowTokenSet(ng, tokenCount, keywordSymbols)
+	if len(allowed) == 0 {
+		return nil
+	}
+	cache := make(map[int][]int)
+	return func(state int) []int {
+		if cached, ok := cache[state]; ok {
+			return cached
+		}
+		raw := follow(state)
+		if len(raw) == 0 {
+			cache[state] = nil
+			return nil
+		}
+		out := make([]int, 0, len(raw))
+		for _, sym := range raw {
+			if allowed[sym] {
+				out = append(out, sym)
+			}
+		}
+		cache[state] = out
+		return out
+	}
+}
+
+func lexModeFollowTokenSet(ng *NormalizedGrammar, tokenCount int, keywordSymbols map[int]bool) map[int]bool {
+	allowed := make(map[int]bool, len(keywordSymbols)+8)
+	for sym := range keywordSymbols {
+		if sym > 0 && sym < tokenCount {
+			allowed[sym] = true
+		}
+	}
+	if ng == nil {
+		return allowed
+	}
+	limit := tokenCount
+	if limit > len(ng.Symbols) {
+		limit = len(ng.Symbols)
+	}
+	for sym := 1; sym < limit; sym++ {
+		if lexModeFollowTokenName(ng.Symbols[sym].Name) {
+			allowed[sym] = true
+		}
+	}
+	return allowed
+}
+
+func lexModeFollowTokenName(name string) bool {
+	switch name {
+	case ")", "]", "}", ";", ",":
+		return true
+	default:
+		return false
+	}
+}
+
 func buildFollowTokensFunc(tables *LRTables, tokenCount int) func(int) []int {
 	if tables == nil {
 		return nil
@@ -1176,7 +1238,7 @@ func generateWithReportCtx(bgCtx context.Context, g *Grammar, opts reportBuildOp
 			ng.WordSymbolID,
 			keywordSet,
 			termPatSyms,
-			buildFollowTokensFunc(tables, tokenCount),
+			buildLexModeFollowTokensFunc(tables, tokenCount, ng, keywordSet),
 			buildMissingRecoveryTokensFuncWithContext(bgCtx, tables, tokenCount, ng.Terminals, skipExtras),
 			suppressAfterWhitespaceSymbols(g, ng),
 		)
