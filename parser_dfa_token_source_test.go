@@ -1180,3 +1180,174 @@ func TestNextDFATokenDoesNotSynthesizeGeneratedNULSentinelBeforeIdentifier(t *te
 		t.Fatalf("token text = %q, want %q", got, want)
 	}
 }
+
+func generatedNULWhitespaceChoiceLanguage() *Language {
+	return &Language{
+		GeneratedByGrammargen: true,
+		SymbolNames:           []string{"end", "\x00", "{", "}"},
+		TokenCount:            4,
+		SymbolCount:           4,
+		ZeroWidthTokens:       []bool{false, true, false, false},
+		LexStates: []LexState{
+			{
+				AcceptToken: 1,
+				Default:     -1,
+				EOF:         -1,
+			},
+			{
+				Default: -1,
+				EOF:     -1,
+				Transitions: []LexTransition{
+					{Lo: ' ', Hi: ' ', NextState: 1, Skip: true},
+					{Lo: '{', Hi: '{', NextState: 2},
+					{Lo: '}', Hi: '}', NextState: 3},
+				},
+			},
+			{
+				AcceptToken: 2,
+				Default:     -1,
+				EOF:         -1,
+			},
+			{
+				AcceptToken: 3,
+				Default:     -1,
+				EOF:         -1,
+			},
+		},
+		LexModes: []LexMode{
+			{LexState: 0, AfterWhitespaceLexState: 1},
+			{LexState: 0, AfterWhitespaceLexState: 1},
+		},
+		ParseActions: []ParseActionEntry{
+			{},
+			{Actions: []ParseAction{{Type: ParseActionReduce}}},
+			{Actions: []ParseAction{{Type: ParseActionShift}}},
+			{Actions: []ParseAction{{Type: ParseActionShift}}},
+		},
+	}
+}
+
+func TestNextDFATokenDoesNotPreferGeneratedNULSentinelBeforeWhitespaceBrace(t *testing.T) {
+	lang := generatedNULWhitespaceChoiceLanguage()
+	lookup := func(_ StateID, sym Symbol) uint16 {
+		if sym >= 1 && sym <= 3 {
+			return uint16(sym)
+		}
+		return 0
+	}
+	d := newDFATokenSourceDirect(NewLexer(lang.LexStates, []byte(" {")), lang, lookup, nil, nil, nil)
+	d.SetParserState(1)
+
+	tok := d.nextDFAToken()
+	if got, want := tok.Symbol, Symbol(2); got != want {
+		t.Fatalf("token symbol = %d (%q), want %d (%q)", got, lang.SymbolNames[got], want, lang.SymbolNames[want])
+	}
+	if got, want := tok.Text, "{"; got != want {
+		t.Fatalf("token text = %q, want %q", got, want)
+	}
+	if tok.StartByte != 1 || tok.EndByte != 2 {
+		t.Fatalf("token span = %d..%d, want 1..2", tok.StartByte, tok.EndByte)
+	}
+}
+
+func TestNextDFATokenKeepsGeneratedNULSentinelBeforeWhitespaceCloser(t *testing.T) {
+	lang := generatedNULWhitespaceChoiceLanguage()
+	lookup := func(_ StateID, sym Symbol) uint16 {
+		if sym >= 1 && sym <= 3 {
+			return uint16(sym)
+		}
+		return 0
+	}
+	d := newDFATokenSourceDirect(NewLexer(lang.LexStates, []byte(" }")), lang, lookup, nil, nil, nil)
+	d.SetParserState(1)
+
+	tok := d.nextDFAToken()
+	if got, want := tok.Symbol, Symbol(1); got != want {
+		t.Fatalf("token symbol = %d (%q), want %d (%q)", got, lang.SymbolNames[got], want, lang.SymbolNames[want])
+	}
+	if tok.StartByte != 0 || tok.EndByte != 0 {
+		t.Fatalf("token span = %d..%d, want zero-width at 0", tok.StartByte, tok.EndByte)
+	}
+}
+
+func TestNextDFATokenKeepsGeneratedNULSentinelBeforeLineBreakToken(t *testing.T) {
+	lang := generatedNULWhitespaceChoiceLanguage()
+	lookup := func(_ StateID, sym Symbol) uint16 {
+		if sym >= 1 && sym <= 3 {
+			return uint16(sym)
+		}
+		return 0
+	}
+	d := newDFATokenSourceDirect(NewLexer(lang.LexStates, []byte("\n{")), lang, lookup, nil, nil, nil)
+	d.SetParserState(1)
+
+	tok := d.nextDFAToken()
+	if got, want := tok.Symbol, Symbol(1); got != want {
+		t.Fatalf("token symbol = %d (%q), want %d (%q)", got, lang.SymbolNames[got], want, lang.SymbolNames[want])
+	}
+	if tok.StartByte != 0 || tok.EndByte != 0 {
+		t.Fatalf("token span = %d..%d, want zero-width at 0", tok.StartByte, tok.EndByte)
+	}
+}
+
+func generatedNULSameLexWhitespaceLanguage() *Language {
+	return &Language{
+		GeneratedByGrammargen: true,
+		SymbolNames:           []string{"end", "\x00", "{", "}"},
+		TokenCount:            4,
+		SymbolCount:           4,
+		ZeroWidthTokens:       []bool{false, true, false, false},
+		LexStates: []LexState{
+			{
+				AcceptToken: 1,
+				Default:     -1,
+				EOF:         -1,
+				Transitions: []LexTransition{
+					{Lo: ' ', Hi: ' ', NextState: 0, Skip: true},
+					{Lo: '{', Hi: '{', NextState: 1},
+					{Lo: '}', Hi: '}', NextState: 2},
+				},
+			},
+			{
+				AcceptToken: 2,
+				Default:     -1,
+				EOF:         -1,
+			},
+			{
+				AcceptToken: 3,
+				Default:     -1,
+				EOF:         -1,
+			},
+		},
+		LexModes: []LexMode{{LexState: 0}, {LexState: 0}},
+		ParseActions: []ParseActionEntry{
+			{},
+			{Actions: []ParseAction{{Type: ParseActionReduce}}},
+			{Actions: []ParseAction{{Type: ParseActionShift}}},
+			{Actions: []ParseAction{{Type: ParseActionShift}}},
+		},
+	}
+}
+
+func TestNextDFATokenDoesNotPreferRawGeneratedNULSentinelBeforeWhitespaceBrace(t *testing.T) {
+	lang := generatedNULSameLexWhitespaceLanguage()
+	lookup := func(_ StateID, sym Symbol) uint16 {
+		if sym >= 1 && sym <= 3 {
+			return uint16(sym)
+		}
+		return 0
+	}
+	d := newDFATokenSourceDirect(NewLexer(lang.LexStates, []byte(" {")), lang, lookup, nil, nil, nil)
+	d.SetParserState(1)
+
+	tok := d.nextDFAToken()
+	if got, want := tok.Symbol, Symbol(2); got != want {
+		t.Fatalf("token symbol = %d (%q), want %d (%q)", got, lang.SymbolNames[got], want, lang.SymbolNames[want])
+	}
+	if got, want := tok.Text, "{"; got != want {
+		t.Fatalf("token text = %q, want %q", got, want)
+	}
+	if tok.StartByte != 1 || tok.EndByte != 2 {
+		t.Fatalf("token span = %d..%d, want 1..2", tok.StartByte, tok.EndByte)
+	}
+}

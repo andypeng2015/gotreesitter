@@ -1184,6 +1184,9 @@ func (d *dfaTokenSource) scanDFATokenForState(state StateID, lexState uint32) (T
 
 	d.state = state
 	tok := d.nextTokenForLexState(lexState)
+	if realTok, ok := d.preferSameLineTokenOverGeneratedZeroWidthSentinel(state, lexState, tok, savedPos, savedRow, savedCol); ok {
+		tok = realTok
+	}
 	if d.isScheme && !d.lexer.errorModeRetry {
 		// With the faithful C recovery port gated on, the lexer's error-mode
 		// retry replaces scheme's dedicated run heuristic: failed lexes
@@ -1286,6 +1289,55 @@ func (d *dfaTokenSource) scanRawDFATokenForLexState(lexState uint32) (Token, int
 	return tok, endPos, endRow, endCol
 }
 
+func (d *dfaTokenSource) preferSameLineTokenOverGeneratedZeroWidthSentinel(state StateID, lexState uint32, tok Token, startPos int, startRow, startCol uint32) (Token, bool) {
+	if d == nil || d.lexer == nil || !d.hasZeroWidthSentinelSymbol || tok.Symbol != d.zeroWidthSentinelSymbol {
+		return Token{}, false
+	}
+	if tok.StartByte != uint32(startPos) || tok.EndByte != tok.StartByte {
+		return Token{}, false
+	}
+	if d.atGeneratedZeroWidthSentinelBoundary(startPos) {
+		return Token{}, false
+	}
+	pos := startPos
+	row := startRow
+	col := startCol
+	for pos < len(d.lexer.source) {
+		switch d.lexer.source[pos] {
+		case ' ', '\t', '\f':
+			pos++
+			col++
+		case '\n', '\r':
+			return Token{}, false
+		default:
+			goto scanReal
+		}
+	}
+	return Token{}, false
+
+scanReal:
+	if pos == startPos {
+		return Token{}, false
+	}
+	d.lexer.pos = pos
+	d.lexer.row = row
+	d.lexer.col = col
+	realTok := d.nextTokenForLexState(lexState)
+	if realTok.Symbol == 0 || realTok.StartByte != uint32(pos) || realTok.EndByte <= realTok.StartByte {
+		d.lexer.pos = startPos
+		d.lexer.row = startRow
+		d.lexer.col = startCol
+		return Token{}, false
+	}
+	if !d.hasActionForStateSymbol(state, realTok.Symbol) {
+		d.lexer.pos = startPos
+		d.lexer.row = startRow
+		d.lexer.col = startCol
+		return Token{}, false
+	}
+	return realTok, true
+}
+
 func (d *dfaTokenSource) shouldPreferBaseLexStateToken(baseTok, afterTok Token) bool {
 	if baseTok.Symbol == 0 {
 		return false
@@ -1296,7 +1348,33 @@ func (d *dfaTokenSource) shouldPreferBaseLexStateToken(baseTok, afterTok Token) 
 	if d.hasZeroWidthTokens && d.shouldPreferZeroWidthBaseLexStateToken(baseTok, afterTok) {
 		return true
 	}
+	if d.isZeroWidthSymbol(baseTok.Symbol) && baseTok.EndByte == baseTok.StartByte && baseTok.StartByte < afterTok.StartByte {
+		return d.shouldPreferGeneratedZeroWidthSentinelAcrossWhitespace(baseTok, afterTok)
+	}
 	return baseTok.StartByte < afterTok.StartByte
+}
+
+func (d *dfaTokenSource) shouldPreferGeneratedZeroWidthSentinelAcrossWhitespace(baseTok, afterTok Token) bool {
+	if d == nil || d.lexer == nil || !d.hasZeroWidthSentinelSymbol || baseTok.Symbol != d.zeroWidthSentinelSymbol {
+		return false
+	}
+	if !d.hasActionForStateSymbol(d.state, baseTok.Symbol) {
+		return false
+	}
+	start := int(baseTok.StartByte)
+	if d.atGeneratedZeroWidthSentinelBoundary(start) {
+		return true
+	}
+	end := int(afterTok.StartByte)
+	if start < 0 || end < start || end > len(d.lexer.source) {
+		return false
+	}
+	for _, b := range d.lexer.source[start:end] {
+		if b == '\n' || b == '\r' {
+			return true
+		}
+	}
+	return false
 }
 
 func (d *dfaTokenSource) shouldPreferZeroWidthBaseLexStateToken(baseTok, afterTok Token) bool {
