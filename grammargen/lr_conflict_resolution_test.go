@@ -1492,6 +1492,56 @@ func TestResolveShiftReduceHonorsExplicitZeroAssignmentAssociativity(t *testing.
 	}
 }
 
+func TestResolveShiftReducePrefersVisibleSameLHSOptionalTailShift(t *testing.T) {
+	ng := &NormalizedGrammar{
+		Symbols: []SymbolInfo{
+			{Name: "'", Kind: SymbolTerminal},
+			{Name: "continue", Kind: SymbolTerminal},
+			{Name: "label", Kind: SymbolNonterminal, Visible: true, Named: true},
+			{Name: "continue_expression", Kind: SymbolNonterminal, Visible: true, Named: true},
+		},
+		Productions: []Production{
+			{LHS: 3, RHS: []int{1}},
+			{LHS: 3, RHS: []int{1, 2}, HasExplicitPrec: true, Assoc: AssocLeft},
+		},
+	}
+	got, err := resolveActionConflict(0, []lrAction{
+		{kind: lrShift, state: 7, lhsSym: 2, lhsSyms: []int{3}},
+		{kind: lrReduce, prodIdx: 0, lhsSym: 3},
+	}, ng)
+	if err != nil {
+		t.Fatalf("resolveActionConflict: %v", err)
+	}
+	if len(got) != 1 || got[0].kind != lrShift || got[0].state != 7 {
+		t.Fatalf("resolved actions = %+v, want visible optional-tail shift", got)
+	}
+}
+
+func TestResolveShiftReduceDoesNotPreferHiddenSameLHSOptionalTailShift(t *testing.T) {
+	ng := &NormalizedGrammar{
+		Symbols: []SymbolInfo{
+			{Name: "{", Kind: SymbolTerminal},
+			{Name: "break", Kind: SymbolTerminal},
+			{Name: "block", Kind: SymbolNonterminal, Visible: true, Named: true},
+			{Name: "_expression", Kind: SymbolNonterminal},
+			{Name: "break_expression", Kind: SymbolNonterminal, Visible: true, Named: true},
+		},
+		Productions: []Production{
+			{LHS: 4, RHS: []int{1}},
+			{LHS: 4, RHS: []int{1, 3}, HasExplicitPrec: true, Assoc: AssocLeft},
+		},
+	}
+	got, err := resolveActionConflict(0, []lrAction{
+		{kind: lrShift, state: 9, lhsSym: 2, lhsSyms: []int{3, 4}},
+		{kind: lrReduce, prodIdx: 0, lhsSym: 4},
+	}, ng)
+	if err != nil {
+		t.Fatalf("resolveActionConflict: %v", err)
+	}
+	if len(got) != 1 || got[0].kind != lrReduce || got[0].prodIdx != 0 {
+		t.Fatalf("resolved actions = %+v, want hidden optional-tail reduce", got)
+	}
+}
 func TestResolveShiftReduceKeepsImmediateShiftOverLowerPrecedenceContributor(t *testing.T) {
 	ng := &NormalizedGrammar{
 		Symbols: []SymbolInfo{

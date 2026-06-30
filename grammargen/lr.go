@@ -3991,7 +3991,8 @@ func preferredSameLHSContinuationShift(shifts, reduces []lrAction, ng *Normalize
 		if shift.kind != lrShift {
 			continue
 		}
-		if leftAssocReduceContinuesWithShift(reduces[0], shift, ng, cache) {
+		if leftAssocReduceContinuesWithShift(reduces[0], shift, ng, cache) ||
+			visibleSameLHSOptionalTailContinuesWithShift(reduces[0], shift, ng, cache) {
 			matched = append(matched, shift)
 		}
 	}
@@ -4001,6 +4002,40 @@ func preferredSameLHSContinuationShift(shifts, reduces []lrAction, ng *Normalize
 	return matched[0], true
 }
 
+func visibleSameLHSOptionalTailContinuesWithShift(reduce, shift lrAction, ng *NormalizedGrammar, cache *conflictResolutionCache) bool {
+	if reduce.kind != lrReduce || reduce.prodIdx < 0 || ng == nil || cache == nil || reduce.prodIdx >= len(ng.Productions) {
+		return false
+	}
+	prod := &ng.Productions[reduce.prodIdx]
+	if prod.LHS < 0 || prod.LHS >= len(cache.prodsByLHS) {
+		return false
+	}
+	targets := shiftContinuationTargets(shift, len(ng.Symbols))
+	if !targets[prod.LHS] {
+		return false
+	}
+	for _, prodIdx := range cache.prodsByLHS[prod.LHS] {
+		if prodIdx < 0 || prodIdx >= len(ng.Productions) {
+			continue
+		}
+		candidate := &ng.Productions[prodIdx]
+		if candidate.LHS != prod.LHS || len(candidate.RHS) <= len(prod.RHS) || !rhsHasPrefix(candidate.RHS, prod.RHS) {
+			continue
+		}
+		suffix := candidate.RHS[len(prod.RHS):]
+		if len(suffix) == 0 || suffix[0] < 0 || suffix[0] >= len(ng.Symbols) {
+			continue
+		}
+		suffixInfo := ng.Symbols[suffix[0]]
+		if suffixInfo.Kind != SymbolNonterminal || !suffixInfo.Visible {
+			continue
+		}
+		if rhsCanBeginWithAny(suffix, targets, cache, ng) {
+			return true
+		}
+	}
+	return false
+}
 func preferredVisibleSiblingAlternativeContinuationShift(lookaheadSym int, shifts, reduces []lrAction, ng *NormalizedGrammar, cache *conflictResolutionCache) (lrAction, bool) {
 	if ng == nil || cache == nil || len(shifts) != 1 || len(reduces) == 0 ||
 		lookaheadSym < 0 || lookaheadSym >= len(ng.Symbols) {
