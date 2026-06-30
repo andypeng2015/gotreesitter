@@ -795,7 +795,15 @@ func (d *dfaTokenSource) shouldForceEOFLookahead() bool {
 	if d == nil || d.language == nil {
 		return false
 	}
-	return d.lexStateForState(d.state) == noLookaheadLexState
+	if d.lexStateForState(d.state) == noLookaheadLexState {
+		return true
+	}
+	for _, st := range d.glrStates {
+		if st != d.state && d.lexStateForState(st) == noLookaheadLexState {
+			return true
+		}
+	}
+	return false
 }
 
 func (d *dfaTokenSource) syntheticEOFLookaheadToken() Token {
