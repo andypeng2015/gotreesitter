@@ -269,7 +269,11 @@ emits a shell-quote-safe progress row with `phase=comparison_diag` and
 `result=diverge`, independent of `REPRO_SIGNATURES`. This row carries the
 first-diff kind and path, Go/C node type/span/child-count, Go/C root
 type/span/child-count/error flags, Go/C `ERROR` and missing-node counts,
-`goStop`, and the Go parse runtime summary. The older `DIVERGE-SIG` line
+`goStop`, and the Go parse runtime summary. When Go is structurally
+different but has no `ERROR`/missing nodes while the C oracle does, the row also
+carries `oracle=go_clean_c_error` and the terminal `MEASURE-DTIER` line
+increments `oracleBetter`; this remains a non-parity result, but it is separated
+from ordinary Go parser failures for triage. The older `DIVERGE-SIG` line
 remains gated by `REPRO_SIGNATURES=1`; tools should prefer the structured
 `MEASURE-PROGRESS phase=comparison_diag` row for machine summaries.
 

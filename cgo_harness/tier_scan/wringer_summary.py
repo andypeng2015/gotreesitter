@@ -39,6 +39,7 @@ COMPARISON_DIAG_FIELDS = (
     "cErrors",
     "goMissing",
     "cMissing",
+    "oracle",
     "goStop",
     "runtime",
     "goRuntime",
@@ -251,6 +252,7 @@ def comparison_diag_row(item: dict[str, str], log_path: Path | None = None) -> d
         "cErrorCount": parse_int(item.get("cErrors")),
         "goMissingCount": parse_int(item.get("goMissing")),
         "cMissingCount": parse_int(item.get("cMissing")),
+        "oracle": item.get("oracle", ""),
         "goStop": item.get("goStop", ""),
         "runtime": runtime,
         "goRuntime": go_runtime,
@@ -268,9 +270,11 @@ def comparison_diag_evidence(progress: list[dict[str, str]], log_path: Path | No
         for item in progress
         if item.get("phase") == COMPARISON_DIAG_PHASE
     ]
+    oracle_relations = sorted({row["oracle"] for row in rows if row.get("oracle")})
     return {
         "count": len(rows),
         "diffs": sorted({row["diff"] for row in rows if row.get("diff")}),
+        "oracleRelations": oracle_relations,
         "rootPairs": sorted(
             {
                 f"{row.get('goRoot', '')}->{row.get('cRoot', '')}"

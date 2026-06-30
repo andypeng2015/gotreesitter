@@ -16,7 +16,7 @@ from typing import Any, Callable
 DTIER_PREFIX = "MEASURE-DTIER "
 PROGRESS_PREFIX = "MEASURE-PROGRESS "
 RATIO_FIELDS = ("aggRatio", "medianRatio")
-SIGNATURE_FIELDS = ("files", "diverge", "trunc", "errTree", "panics")
+SIGNATURE_FIELDS = ("files", "diverge", "oracleBetter", "trunc", "errTree", "panics")
 SLOW_RATIO_THRESHOLD = 8.0
 TERMINAL_LIFECYCLES = {"timeout", "fail", "failed", "panic", "panicked"}
 FRONTIER_STOP_REASONS = {"no_stacks_alive", "node_limit", "memory_budget"}
@@ -43,6 +43,7 @@ COMPARISON_DIAG_FIELDS = (
     "cErrors",
     "goMissing",
     "cMissing",
+    "oracle",
     "goStop",
     "runtime",
     "goRuntime",
@@ -417,6 +418,7 @@ def comparison_diag_row(log: Path, raw: str, kv: dict[str, str]) -> dict[str, An
         "cErrorCount": parse_int(kv.get("cErrors")),
         "goMissingCount": parse_int(kv.get("goMissing")),
         "cMissingCount": parse_int(kv.get("cMissing")),
+        "oracle": kv.get("oracle", ""),
         "goStop": kv.get("goStop", ""),
         "runtime": kv.get("runtime", ""),
         "goRuntime": kv.get("goRuntime", ""),
@@ -438,10 +440,12 @@ def comparison_diag_evidence(items: list[ProgressItem]) -> dict[str, Any]:
             if row.get("goRoot") or row.get("cRoot")
         }
     )
+    oracle_relations = sorted({row["oracle"] for row in rows if row.get("oracle")})
     return {
         "count": len(rows),
         "diffs": diffs,
         "rootPairs": root_pairs,
+        "oracleRelations": oracle_relations,
         "rows": rows[:5],
     }
 
@@ -636,6 +640,7 @@ def compact_measurement(item: dict[str, Any]) -> dict[str, Any]:
         "medianRatio": item.get("medianRatio", ""),
         "aggRatio": item.get("aggRatio", ""),
         "diverge": item.get("diverge", 0),
+        "oracleBetter": item.get("oracleBetter", 0),
         "trunc": item.get("trunc", 0),
         "errTree": item.get("errTree", 0),
         "panics": item.get("panics", 0),
@@ -652,6 +657,7 @@ def compact_measurement(item: dict[str, Any]) -> dict[str, Any]:
             "comparisonDiagnosticCount": (runtime.get("comparisonDiagnostic") or {}).get("count", 0),
             "comparisonDiagnosticDiffs": (runtime.get("comparisonDiagnostic") or {}).get("diffs", []),
             "comparisonDiagnosticRootPairs": (runtime.get("comparisonDiagnostic") or {}).get("rootPairs", []),
+            "comparisonDiagnosticOracleRelations": (runtime.get("comparisonDiagnostic") or {}).get("oracleRelations", []),
             "terminalStatuses": terminal.get("terminalStatuses", []),
             "terminalCount": terminal.get("terminalCount", 0),
             "lastPhase": terminal.get("lastPhase", ""),
@@ -752,9 +758,16 @@ def failure_families(
     def has_accepted_divergence_evidence(item: dict[str, Any]) -> bool:
         return int(runtime(item).get("acceptedDivergenceCount") or 0) > 0
 
+    def has_oracle_improvement(item: dict[str, Any]) -> bool:
+        if int(item.get("oracleBetter", 0) or 0) > 0:
+            return True
+        diag = (runtime(item).get("comparisonDiagnostic") or {})
+        return "go_clean_c_error" in diag.get("oracleRelations", [])
+
     def has_accepted_shape_evidence(item: dict[str, Any]) -> bool:
         return (
             int(item.get("diverge", 0)) > 0
+            and not has_oracle_improvement(item)
             and has_comparison_result(item)
             and has_accepted_divergence_evidence(item)
             and int(item.get("trunc", 0)) == 0
@@ -813,6 +826,13 @@ def failure_families(
             sort_ratio,
         ),
         failure_family_entry(
+            "oracle_improvement",
+            "Measured rows where Go produced a clean tree while the C oracle produced ERROR/MISSING nodes. These remain non-parity rows but are separated from ordinary Go parser failures so generalized triage can decide whether to preserve Go-superior behavior or add explicit C-compatibility policy.",
+            select(has_oracle_improvement),
+            top_n,
+            sort_ratio,
+        ),
+        failure_family_entry(
             "accepted_shape_materialization",
             "Measured rows with an actual comparison_result=diverge frame whose runtime stopReason is accepted, with no truncation, error-tree/root ERROR, token-accounting, or terminal timeout/fail evidence.",
             select(has_accepted_shape_evidence),
@@ -844,6 +864,7 @@ def failure_families(
                 and not has_terminal_timeout_or_fail(item)
                 and not has_runtime_frontier_stop(item)
                 and not has_token_accounting_evidence(item)
+                and not has_oracle_improvement(item)
                 and not has_accepted_shape_evidence(item)
                 and not has_accepted_divergence_cost(item)
             ),
@@ -1107,6 +1128,7 @@ def render_markdown(summary: dict[str, Any]) -> str:
                         "parity",
                         "files",
                         "diverge",
+                        "oracleBetter",
                         "trunc",
                         "errTree",
                         "panics",
@@ -1131,6 +1153,7 @@ def render_markdown(summary: dict[str, Any]) -> str:
                             item["parity"],
                             item["files"],
                             item["diverge"],
+                            item.get("oracleBetter", 0),
                             item["trunc"],
                             item["errTree"],
                             item["panics"],
@@ -1171,13 +1194,14 @@ def render_markdown(summary: dict[str, Any]) -> str:
             item["parity"],
             item["files"],
             item["diverge"],
+            item.get("oracleBetter", 0),
             item["trunc"],
             item["errTree"],
             item["panics"],
         ]
         for item in summary["topSlowMeasuredNonClean"]
     ]
-    lines.append(md_table(["grammar", "aggRatio", "medianRatio", "parity", "files", "diverge", "trunc", "errTree", "panics"], slow_rows))
+    lines.append(md_table(["grammar", "aggRatio", "medianRatio", "parity", "files", "diverge", "oracleBetter", "trunc", "errTree", "panics"], slow_rows))
     lines.extend(["## Unmeasured Evidence", ""])
     unmeasured_rows = []
     for item in summary["unmeasured"]:

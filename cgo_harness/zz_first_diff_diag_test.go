@@ -39,6 +39,7 @@ type fddSignature struct {
 	CErrorCount    int
 	GoMissingCount int
 	CMissingCount  int
+	OracleRelation string
 	GoStopReason   string
 	GoRuntime      string
 	GoType         string
@@ -87,6 +88,16 @@ func fddCountCIntegrity(n *sitter.Node) (errors, missing int) {
 		missing += childMissing
 	}
 	return errors, missing
+}
+
+func fddOracleRelation(goErrors, goMissing, cErrors, cMissing int) string {
+	if goErrors == 0 && goMissing == 0 && cErrors+cMissing > 0 {
+		return "go_clean_c_error"
+	}
+	if goErrors+goMissing > 0 && cErrors == 0 && cMissing == 0 {
+		return "go_error_c_clean"
+	}
+	return ""
 }
 
 func fddTxt(src []byte, s, e uint32) string {
@@ -208,6 +219,7 @@ func fddBuildSignature(file string, goRoot *gts.Node, lang *gts.Language, cRoot 
 	sig.CRootHasError = cRoot.HasError()
 	sig.GoErrorCount, sig.GoMissingCount = fddCountGoIntegrity(goRoot, lang)
 	sig.CErrorCount, sig.CMissingCount = fddCountCIntegrity(cRoot)
+	sig.OracleRelation = fddOracleRelation(sig.GoErrorCount, sig.GoMissingCount, sig.CErrorCount, sig.CMissingCount)
 	sig.GoStopReason = stopReason
 	sig.GoRuntime = goRuntime
 	sig.GoText = fddExcerpt(src, sig.GoStart, sig.GoEnd)
@@ -220,7 +232,7 @@ func fddQuote(s string) string {
 }
 
 func fddPrintSignature(lang string, sig *fddSignature) {
-	fmt.Printf("DIVERGE-SIG lang=%s file=%s base=%s goRoot=%s goRootSpan=%d:%d goRootCC=%d goRootErr=%v cRoot=%s cRootSpan=%d:%d cRootCC=%d cRootErr=%v goStop=%s goRuntime=%s path=%s diff=%s goType=%s cType=%s goSpan=%d:%d cSpan=%d:%d goCC=%d cCC=%d goText=%s cText=%s\n",
+	fmt.Printf("DIVERGE-SIG lang=%s file=%s base=%s goRoot=%s goRootSpan=%d:%d goRootCC=%d goRootErr=%v cRoot=%s cRootSpan=%d:%d cRootCC=%d cRootErr=%v oracle=%s goStop=%s goRuntime=%s path=%s diff=%s goType=%s cType=%s goSpan=%d:%d cSpan=%d:%d goCC=%d cCC=%d goText=%s cText=%s\n",
 		fddQuote(lang),
 		fddQuote(sig.File),
 		fddQuote(filepath.Base(sig.File)),
@@ -234,6 +246,7 @@ func fddPrintSignature(lang string, sig *fddSignature) {
 		sig.CRootEnd,
 		sig.CRootChildren,
 		sig.CRootHasError,
+		fddQuote(sig.OracleRelation),
 		fddQuote(sig.GoStopReason),
 		fddQuote(sig.GoRuntime),
 		fddQuote(sig.Path),
@@ -252,7 +265,7 @@ func fddPrintSignature(lang string, sig *fddSignature) {
 }
 
 func fddPrintProgress(lang string, sig *fddSignature, fileIndex, fileTotal, bytes int, elapsedMS int64) {
-	fmt.Printf("MEASURE-PROGRESS lang=%s file=%d/%d base=%s path=%s bytes=%d phase=comparison_diag result=diverge diff=%s firstDiffPath=%s goType=%s cType=%s goSpan=%d:%d cSpan=%d:%d goCC=%d cCC=%d goRoot=%s goRootSpan=%d:%d goRootCC=%d goRootErr=%v cRoot=%s cRootSpan=%d:%d cRootCC=%d cRootErr=%v goErrors=%d cErrors=%d goMissing=%d cMissing=%d goStop=%s runtime=%s goRuntime=%s elapsed_ms=%d\n",
+	fmt.Printf("MEASURE-PROGRESS lang=%s file=%d/%d base=%s path=%s bytes=%d phase=comparison_diag result=diverge diff=%s firstDiffPath=%s goType=%s cType=%s goSpan=%d:%d cSpan=%d:%d goCC=%d cCC=%d goRoot=%s goRootSpan=%d:%d goRootCC=%d goRootErr=%v cRoot=%s cRootSpan=%d:%d cRootCC=%d cRootErr=%v goErrors=%d cErrors=%d goMissing=%d cMissing=%d oracle=%s goStop=%s runtime=%s goRuntime=%s elapsed_ms=%d\n",
 		fddQuote(lang),
 		fileIndex,
 		fileTotal,
@@ -283,6 +296,7 @@ func fddPrintProgress(lang string, sig *fddSignature, fileIndex, fileTotal, byte
 		sig.CErrorCount,
 		sig.GoMissingCount,
 		sig.CMissingCount,
+		fddQuote(sig.OracleRelation),
 		fddQuote(sig.GoStopReason),
 		fddQuote(sig.GoRuntime),
 		fddQuote(sig.GoRuntime),

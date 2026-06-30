@@ -174,7 +174,7 @@ func TestMeasureDtierVsC(t *testing.T) {
 
 	var totGo, totC time.Duration
 	var ratios []float64
-	dispatched, matchC, divergeC, trunc, panics, errTree := 0, 0, 0, 0, 0, 0
+	dispatched, matchC, divergeC, trunc, panics, errTree, oracleBetter := 0, 0, 0, 0, 0, 0, 0
 	totalFiles := len(files)
 	for fileIndex, f := range files {
 		fileStart := time.Now()
@@ -270,8 +270,14 @@ func TestMeasureDtierVsC(t *testing.T) {
 					name, fileIndex+1, totalFiles, filepath.Base(f), f, len(src), time.Since(fileStart).Milliseconds())
 			} else {
 				divergeC++
-				progressf("lang=%s file=%d/%d base=%q path=%q bytes=%d phase=comparison_result result=diverge errors=%d runtime=%q elapsed_ms=%d",
-					name, fileIndex+1, totalFiles, filepath.Base(f), f, len(src), len(errs), compareRuntime, time.Since(fileStart).Milliseconds())
+				goErrors, goMissing := fddCountGoIntegrity(gtree.RootNode(), goLang)
+				cErrors, cMissing := fddCountCIntegrity(cTree.RootNode())
+				oracleRelation := fddOracleRelation(goErrors, goMissing, cErrors, cMissing)
+				if oracleRelation == "go_clean_c_error" {
+					oracleBetter++
+				}
+				progressf("lang=%s file=%d/%d base=%q path=%q bytes=%d phase=comparison_result result=diverge errors=%d oracle=%q runtime=%q elapsed_ms=%d",
+					name, fileIndex+1, totalFiles, filepath.Base(f), f, len(src), len(errs), oracleRelation, compareRuntime, time.Since(fileStart).Milliseconds())
 				if os.Getenv("REPRO_DUMP_DIVERGENCE") == "1" && divergeC <= 6 {
 					fmt.Printf("DIVERGE %s %s: %s\n", name, filepath.Base(f),
 						strings.Join(errs[:min(2, len(errs))], " || "))
@@ -316,6 +322,6 @@ func TestMeasureDtierVsC(t *testing.T) {
 	if dispatched > 0 {
 		parityPct = 100 * float64(matchC) / float64(dispatched)
 	}
-	fmt.Printf("MEASURE-DTIER %s mode=%s files=%d medianRatio=%.2fx aggRatio=%.2fx parityMatch=%d/%d(%.0f%%) diverge=%d trunc=%d errTree=%d panics=%d goNS=%d cNS=%d\n",
-		name, mode, dispatched, median, agg, matchC, dispatched, parityPct, divergeC, trunc, errTree, panics, totGo.Nanoseconds(), totC.Nanoseconds())
+	fmt.Printf("MEASURE-DTIER %s mode=%s files=%d medianRatio=%.2fx aggRatio=%.2fx parityMatch=%d/%d(%.0f%%) diverge=%d oracleBetter=%d trunc=%d errTree=%d panics=%d goNS=%d cNS=%d\n",
+		name, mode, dispatched, median, agg, matchC, dispatched, parityPct, divergeC, oracleBetter, trunc, errTree, panics, totGo.Nanoseconds(), totC.Nanoseconds())
 }
