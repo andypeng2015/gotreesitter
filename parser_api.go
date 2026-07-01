@@ -82,9 +82,6 @@ func normalizeReturnedTree(root *Node, source []byte, lang *Language) {
 		return
 	}
 	switch lang.Name {
-	case "go":
-		normalizeGoCompatibility(root, source, lang)
-		normalizeRootEOFNewlineSpan(root, source, lang)
 	case "scala":
 		normalizeScalaTemplateBodyObjectFragments(root, source, nil, lang)
 		normalizeScalaRecoveredObjectTemplateBodies(root, source, nil, lang)

@@ -23,18 +23,6 @@ type goCompatibilitySourceFlags struct {
 	trailingBoundary bool
 }
 
-func normalizeGoCompatibility(root *Node, source []byte, lang *Language) {
-	_ = normalizeGoCompatibilityInRanges(root, source, lang, nil)
-}
-
-func normalizeGoCompatibilityInRanges(root *Node, source []byte, lang *Language, incrementalRanges []Range) ParseStopReason {
-	return normalizeGoCompatibilityInRangesWithStop(root, source, lang, incrementalRanges, nil)
-}
-
-func normalizeGoCompatibilityWithStop(root *Node, source []byte, lang *Language, stopCheck parseStopCheck) ParseStopReason {
-	return normalizeGoCompatibilityInRangesWithStop(root, source, lang, nil, stopCheck)
-}
-
 func normalizeGoCompatibilityWithParser(root *Node, source []byte, lang *Language, p *Parser) ParseStopReason {
 	return normalizeGoCompatibilityInRangesWithParser(root, source, lang, nil, p)
 }
@@ -87,14 +75,6 @@ func goSourceMayNeedSiblingBoundaryCompatibility(source []byte) bool {
 func goSourceMayNeedTrailingBoundaryCompatibility(source []byte) bool {
 	return bytes.Contains(source, []byte("//")) ||
 		bytes.Contains(source, []byte("/*"))
-}
-
-func normalizeGoDotLeafChildren(root *Node, source []byte, lang *Language) {
-	_ = normalizeGoDotLeafChildrenWithStop(root, source, lang, nil)
-}
-
-func normalizeGoDotLeafChildrenWithParser(root *Node, source []byte, lang *Language, p *Parser) ParseStopReason {
-	return normalizeGoDotLeafChildrenWithStop(root, source, lang, &parseStopPoller{check: p.activeParseStopCheck()})
 }
 
 func normalizeGoDotLeafChildrenWithStop(root *Node, source []byte, lang *Language, poller *parseStopPoller) ParseStopReason {
@@ -235,10 +215,6 @@ func (s goCompatibilitySymbols) isCase(sym Symbol) bool {
 
 func (s goCompatibilitySymbols) isStatementList(sym Symbol) bool {
 	return (s.statementList != 0 && sym == s.statementList) || (s.statementListTail != 0 && sym == s.statementListTail)
-}
-
-func normalizeGoCompatibilitySubtree(n *Node, source []byte, syms goCompatibilitySymbols, flags goCompatibilitySourceFlags, incrementalRanges []Range) {
-	_ = normalizeGoCompatibilitySubtreeWithStop(n, source, syms, flags, incrementalRanges, nil)
 }
 
 func normalizeGoCompatibilitySubtreeWithStop(n *Node, source []byte, syms goCompatibilitySymbols, flags goCompatibilitySourceFlags, incrementalRanges []Range, poller *parseStopPoller) ParseStopReason {
