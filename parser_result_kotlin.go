@@ -183,9 +183,24 @@ func normalizeKotlinGenericCallTypeArguments(root *Node, source []byte, lang *La
 }
 
 func kotlinNormalizeRecoveredGenericCallSuffix(n *Node, lang *Language, callSuffixSym Symbol, callSuffixNamed bool, navigationSym Symbol, navigationNamed bool) bool {
-	if n == nil || n.Type(lang) != "call_expression" || resultChildCount(n) != 3 {
+	if n == nil || n.Type(lang) != "call_expression" {
 		return false
 	}
+	switch resultChildCount(n) {
+	case 3:
+		return kotlinNormalizeRecoveredGenericCallSuffixErrorShape(n, lang, callSuffixSym, callSuffixNamed, navigationSym, navigationNamed)
+	case 4:
+		return kotlinNormalizeRecoveredGenericCallSuffixFlatShape(n, lang, callSuffixSym, callSuffixNamed, navigationSym, navigationNamed)
+	default:
+		return false
+	}
+}
+
+// kotlinNormalizeRecoveredGenericCallSuffixErrorShape handles the C-recovery
+// shape where the navigation suffix and/or generic type arguments following a
+// call's base expression were absorbed into a single ERROR carrier: base,
+// ERROR(navigation_suffix?, type_arguments), call_suffix.
+func kotlinNormalizeRecoveredGenericCallSuffixErrorShape(n *Node, lang *Language, callSuffixSym Symbol, callSuffixNamed bool, navigationSym Symbol, navigationNamed bool) bool {
 	base, errNode, suffix := resultChildAt(n, 0), resultChildAt(n, 1), resultChildAt(n, 2)
 	if base == nil || errNode == nil || suffix == nil {
 		return false
@@ -222,6 +237,43 @@ func kotlinNormalizeRecoveredGenericCallSuffix(n *Node, lang *Language, callSuff
 	}
 
 	arena := n.ownerArena
+	suffixChildren := make([]*Node, 0, resultChildCount(suffix)+1)
+	suffixChildren = append(suffixChildren, typeArgs)
+	for i := 0; i < resultChildCount(suffix); i++ {
+		if child := resultChildAt(suffix, i); child != nil {
+			suffixChildren = append(suffixChildren, child)
+		}
+	}
+	newSuffix := newParentNodeInArena(arena, callSuffixSym, callSuffixNamed, cloneNodeSliceInArena(arena, suffixChildren), nil, 0)
+	replaceNodeChildrenUnfielded(n, cloneNodeSliceInArena(arena, []*Node{callBase, newSuffix}))
+	return true
+}
+
+// kotlinNormalizeRecoveredGenericCallSuffixFlatShape handles the same
+// navigation-suffix + generic-type-arguments merge, but for a clean (no
+// ERROR) C-recovery result that leaves the navigation suffix and type
+// arguments as direct call_expression children instead of nesting them under
+// navigation_expression/call_suffix: base, navigation_suffix, type_arguments,
+// call_suffix. This is the error-free counterpart of the ERROR-carrier shape
+// above (same recovered construct, but the faithful C-recovery election
+// resolved it without needing to record an error span).
+func kotlinNormalizeRecoveredGenericCallSuffixFlatShape(n *Node, lang *Language, callSuffixSym Symbol, callSuffixNamed bool, navigationSym Symbol, navigationNamed bool) bool {
+	base, navSuffix, typeArgs, suffix := resultChildAt(n, 0), resultChildAt(n, 1), resultChildAt(n, 2), resultChildAt(n, 3)
+	if base == nil || navSuffix == nil || typeArgs == nil || suffix == nil {
+		return false
+	}
+	if navSuffix.Type(lang) != "navigation_suffix" || typeArgs.Type(lang) != "type_arguments" || suffix.Type(lang) != "call_suffix" {
+		return false
+	}
+	if navSuffix.HasError() || typeArgs.HasError() || suffix.HasError() {
+		return false
+	}
+	if base.endByte != navSuffix.startByte || navSuffix.endByte != typeArgs.startByte || typeArgs.endByte != suffix.startByte {
+		return false
+	}
+
+	arena := n.ownerArena
+	callBase := newParentNodeInArena(arena, navigationSym, navigationNamed, cloneNodeSliceInArena(arena, []*Node{base, navSuffix}), nil, 0)
 	suffixChildren := make([]*Node, 0, resultChildCount(suffix)+1)
 	suffixChildren = append(suffixChildren, typeArgs)
 	for i := 0; i < resultChildCount(suffix); i++ {

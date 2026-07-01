@@ -2367,6 +2367,24 @@ func (p *Parser) cCondenseAndResume(stacks []glrStack, source []byte, tok Token,
 	}
 
 	// Resume the best paused version; remove the rest (C condense tail).
+	//
+	// C's single dispatch loop keeps every version at the same token position,
+	// so at most one paused version ever reaches condense out of sync with its
+	// siblings. This engine's per-token settle step can occasionally let two
+	// versions arrive at condense both paused (e.g. a reduce-only version that
+	// still needs to recheck a not-yet-advanced token alongside a sibling that
+	// already shifted past it and paused one token later). When that
+	// happens, the higher-priority (post-sort index 0) candidate can be
+	// "stale": its position no longer matches the current token, so
+	// guardRealTokenAttachmentGap halts it immediately. Faithfully resuming
+	// only that one and dropping every other paused version (as plain
+	// ts_parser__condense_stack does when it only ever sees one paused
+	// version) then discards a still-viable sibling and the parse dies with
+	// no recovery at all. Fall through to the next paused candidate whenever
+	// a resume halts, instead of unconditionally dropping the remaining
+	// paused versions after the first attempt — this only ever recovers
+	// MORE input (a halt previously meant giving up outright), so it cannot
+	// regress an already-successful single-candidate resume.
 	needsRedispatch := false
 	hasUnpaused := false
 	for i := 0; i < len(stacks); i++ {
@@ -2384,6 +2402,10 @@ func (p *Parser) cCondenseAndResume(stacks []glrStack, source []byte, tok Token,
 			}
 			if outcome == cRecHalted {
 				stacks[i].dead = true
+				// Keep hasUnpaused false: give the next still-paused
+				// candidate (if any) a chance to resume instead of dropping
+				// it unattempted.
+				continue
 			}
 			hasUnpaused = true
 			continue

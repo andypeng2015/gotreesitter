@@ -4689,7 +4689,23 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 						goto retryAction
 					}
 				}
-				if len(stacks) == 1 && !p.resyncTopLevelLanguage() {
+				// Languages gated into the faithful C error-recovery cost
+				// competition (parser_recover_c.go) own single-stack no-action
+				// dead ends themselves: pausing + condense + ts_parser__recover
+				// resumes locally, matching tree-sitter C. The opportunistic
+				// top-level resync below is a heuristic for languages WITHOUT
+				// that port; letting it fire first for a C-recovery-gated
+				// language can unwind the whole stack back to the grammar's
+				// initial state (wrapping a huge, otherwise-locally-recoverable
+				// span in one ERROR, or replaying it error-free) instead of the
+				// narrow, tested local recovery the C-recovery gate would have
+				// produced. Known tradeoff: this also removes the opportunistic
+				// resync's ERROR-wrap safety net for the (currently small) set
+				// of C-recovery-gated languages that relied on it to flag a
+				// nested declaration-start construct as an error rather than
+				// silently accepting it — see
+				// TestOpportunisticTopLevelResyncDoesNotLiftNestedDeclarationStarts/java_import_inside_malformed_method.
+				if len(stacks) == 1 && !p.resyncTopLevelLanguage() && !p.errorCostCompetitionEnabled() {
 					switch p.tryOpportunisticTopLevelResyncRecovery(source, s, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors) {
 					case resyncRetry:
 						currentState = s.top().state
