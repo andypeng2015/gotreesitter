@@ -82,7 +82,6 @@ func normalizeElixirNestedCallTargetFields(root *Node, lang *Language) {
 }
 
 func normalizeElixirCollapsedLiteralChildren(root *Node, source []byte, lang *Language) {
-	normalizeCollapsedNamedLeafChildrenBySource(root, source, lang, "boolean", "true", "false")
 	normalizeCollapsedNamedLeafChildrenBySource(root, source, lang, "nil", "nil")
 }
 

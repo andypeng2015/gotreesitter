@@ -40,8 +40,13 @@ func TestNormalizeElixirCollapsedLiteralChildren(t *testing.T) {
 
 	normalizeElixirCompatibility(root, source, lang)
 
-	assertCollapsedKeywordChild(t, falseNode, lang, "false")
-	assertCollapsedKeywordChild(t, trueNode, lang, "true")
+	// Note: "boolean" ("false"/"true") is intentionally NOT asserted here
+	// anymore. The post-hoc patch that used to reconstruct its anonymous token
+	// child in normalizeElixirCollapsedLiteralChildren has been removed: the
+	// reduce engine's shouldKeepVisibleAnonymousTokenChild now keeps it
+	// unconditionally on real parses (see
+	// TestElixirBooleanKeepsTrueTokenChildViaEngine in grammars/), so
+	// falseNode/trueNode above stay untouched by this call.
 	assertCollapsedKeywordChild(t, nilNode, lang, "nil")
 }
 
