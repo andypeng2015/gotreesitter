@@ -1514,7 +1514,7 @@ func forestErrorRootBetter(p *Parser, arena *nodeArena, a, b *gssForestNode) boo
 // inlines these to named leaves (ChildCount 0); the production reduce collapses
 // them too. Two gates make it forest-safe where the production predicate is not:
 //
-//   - sameSymbolName only (NOT the broader isSingleTokenWrapperSymbol path that
+//   - sameSymbolName only (NOT the broader different-named-child keep path that
 //     collapsibleRawUnarySelfReduction also takes): production gates that path on
 //     child.parent != nil, but the forest connects nodes via gssLink and never
 //     sets node.parent, so it would over-collapse rules C keeps as cc=1 (css

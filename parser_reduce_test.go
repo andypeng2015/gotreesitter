@@ -1163,35 +1163,6 @@ func TestReduceChainHintForUsesStateIndex(t *testing.T) {
 	}
 }
 
-func TestBuildSingleTokenWrapperSymbols(t *testing.T) {
-	lang := &Language{
-		SymbolMetadata: []SymbolMetadata{
-			{Name: "EOF"},
-			{Name: "single_wrapper", Visible: true, Named: true},
-			{Name: "multi_wrapper", Visible: true, Named: true},
-			{Name: "statement", Visible: true, Named: true},
-		},
-		ParseActions: []ParseActionEntry{
-			{Actions: []ParseAction{{Type: ParseActionReduce, Symbol: 1, ChildCount: 1, ProductionID: 10}}},
-			{Actions: []ParseAction{{Type: ParseActionReduce, Symbol: 2, ChildCount: 1, ProductionID: 11}}},
-			{Actions: []ParseAction{{Type: ParseActionReduce, Symbol: 2, ChildCount: 1, ProductionID: 12}}},
-			{Actions: []ParseAction{{Type: ParseActionReduce, Symbol: 3, ChildCount: 2, ProductionID: 13}}},
-			{Actions: []ParseAction{{Type: ParseActionShift, State: 1}}},
-		},
-	}
-
-	got := buildSingleTokenWrapperSymbols(lang)
-	if !got[1] {
-		t.Fatal("expected single_wrapper to be marked as a single-token wrapper")
-	}
-	if got[2] {
-		t.Fatal("did not expect multi_wrapper to be marked as a single-token wrapper")
-	}
-	if got[3] {
-		t.Fatal("did not expect statement to be marked as a single-token wrapper")
-	}
-}
-
 func TestCanCollapseNamedLeafWrapperSingleAnonymousToken(t *testing.T) {
 	p := &Parser{
 		language: &Language{
@@ -1268,8 +1239,7 @@ func TestCollapsibleUnarySelfReductionKeepsStarlarkContinueTokenChild(t *testing
 		},
 	}
 	p := &Parser{
-		language:                 lang,
-		singleTokenWrapperSymbol: []bool{false, true, false},
+		language: lang,
 	}
 	arena := newNodeArena(arenaClassFull)
 	child := newLeafNodeInArena(arena, 2, false, 2209, 2217, Point{Row: 73, Column: 16}, Point{Row: 73, Column: 24})
@@ -1290,8 +1260,7 @@ func TestCollapsibleRawUnarySelfReductionKeepsStarlarkContinueTokenChild(t *test
 		},
 	}
 	p := &Parser{
-		language:                 lang,
-		singleTokenWrapperSymbol: []bool{false, true, false},
+		language: lang,
 	}
 	arena := newNodeArena(arenaClassFull)
 	child := newLeafNodeInArena(arena, 2, false, 2209, 2217, Point{Row: 73, Column: 16}, Point{Row: 73, Column: 24})
@@ -1312,8 +1281,7 @@ func TestCollapsibleUnarySelfReductionKeepsSingleTokenWrapperDifferentAnonChild(
 		},
 	}
 	p := &Parser{
-		language:                 lang,
-		singleTokenWrapperSymbol: []bool{false, true, false},
+		language: lang,
 	}
 	arena := newNodeArena(arenaClassFull)
 	child := newLeafNodeInArena(arena, 2, false, 4, 5, Point{Column: 4}, Point{Column: 5})
@@ -1334,8 +1302,7 @@ func TestCollapsibleRawUnarySelfReductionKeepsSingleTokenWrapperDifferentAnonChi
 		},
 	}
 	p := &Parser{
-		language:                 lang,
-		singleTokenWrapperSymbol: []bool{false, true, false},
+		language: lang,
 	}
 	arena := newNodeArena(arenaClassFull)
 	child := newLeafNodeInArena(arena, 2, false, 4, 5, Point{Column: 4}, Point{Column: 5})
@@ -1356,8 +1323,7 @@ func TestCollapsibleUnarySelfReductionCollapsesSameNamedInlinedTokenChild(t *tes
 		},
 	}
 	p := &Parser{
-		language:                 lang,
-		singleTokenWrapperSymbol: []bool{false, true, false},
+		language: lang,
 	}
 	arena := newNodeArena(arenaClassFull)
 	child := newLeafNodeInArena(arena, 2, false, 4, 7, Point{Column: 4}, Point{Column: 7})
@@ -1391,8 +1357,7 @@ func TestCollapsibleRawUnarySelfReductionCollapsesSameNamedInlinedTokenChild(t *
 		},
 	}
 	p := &Parser{
-		language:                 lang,
-		singleTokenWrapperSymbol: []bool{false, true, false},
+		language: lang,
 	}
 	arena := newNodeArena(arenaClassFull)
 	child := newLeafNodeInArena(arena, 2, false, 4, 7, Point{Column: 4}, Point{Column: 7})
@@ -1427,7 +1392,6 @@ func TestCollapsibleUnarySelfReductionKeepsSharedSingleTokenWrapperAnonChild(t *
 	}
 	p := &Parser{
 		language:                   lang,
-		singleTokenWrapperSymbol:   []bool{false, true, false},
 		sharedAnonymousTokenSymbol: []bool{false, false, true},
 	}
 	arena := newNodeArena(arenaClassFull)
@@ -1450,7 +1414,6 @@ func TestCollapsibleRawUnarySelfReductionKeepsSharedSingleTokenWrapperAnonChild(
 	}
 	p := &Parser{
 		language:                   lang,
-		singleTokenWrapperSymbol:   []bool{false, true, false},
 		sharedAnonymousTokenSymbol: []bool{false, false, true},
 	}
 	arena := newNodeArena(arenaClassFull)
@@ -1514,8 +1477,7 @@ func TestCollapsibleRawUnarySelfReductionRejectsInvisibleChild(t *testing.T) {
 		},
 	}
 	p := &Parser{
-		language:                 lang,
-		singleTokenWrapperSymbol: []bool{false, true, false},
+		language: lang,
 	}
 	arena := newNodeArena(arenaClassFull)
 	child := newLeafNodeInArena(arena, 2, false, 1, 3, Point{Column: 1}, Point{Column: 3})
