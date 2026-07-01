@@ -16,7 +16,6 @@ func normalizeDartCollapsedLeafChildren(root *Node, source []byte, lang *Languag
 	}
 	normalizeCollapsedNamedLeafChildrenBySource(root, source, lang, "final_builtin", "final")
 	normalizeCollapsedNamedLeafChildrenBySource(root, source, lang, "super", "super")
-	normalizeCollapsedNamedLeafChildrenBySource(root, source, lang, "base", "base")
 	normalizeCollapsedNamedLeafChildrenBySource(root, source, lang, "this", "this")
 	normalizeCollapsedNamedLeafChildrenBySource(root, source, lang, "negation_operator", "!")
 	normalizeCollapsedNamedLeafChildrenBySource(root, source, lang, "relational_operator", "<", ">", "<=", ">=", "==", "is", "as")

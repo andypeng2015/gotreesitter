@@ -7578,11 +7578,20 @@ func (p *Parser) wrapsSameNamedAnonymousToken(parentSym, childSym Symbol) bool {
 	if int(parentSym) < len(p.keepSameNamedAnonChildSymbol) && p.keepSameNamedAnonChildSymbol[parentSym] {
 		return true
 	}
-	// llvm fallback: a few llvm rules (unnamed_addr, thread_local) keep their
-	// same-named anon token child even though it shifts into only one state. These
-	// are byte-identical to go's collapse cases in the loaded Language, so they
-	// can only be separated by a per-language opt-in verified against the C oracle.
-	return p.language.Name == "llvm"
+	// Per-language fallback: a few rules keep their same-named anon token child
+	// even though it shifts into only one state — grammar-level multi-site sharing
+	// is collapsed onto a single parse state by LR state merging, defeating the
+	// >=2-distinct-shift-targets proxy above. These are byte-identical to go's
+	// collapse cases in the loaded Language, so they can only be separated by a
+	// per-language opt-in verified against the C oracle.
+	//   - llvm: unnamed_addr, thread_local, dso_local, ...
+	//   - dart: `base` class modifier (its 3 grammar call sites merge to one state)
+	if p.language.Name == "llvm" {
+		return true
+	}
+	return p.language.Name == "dart" &&
+		int(parentSym) < len(p.language.SymbolNames) &&
+		p.language.SymbolNames[parentSym] == "base"
 }
 
 func (p *Parser) isVisibleSymbol(sym Symbol) bool {

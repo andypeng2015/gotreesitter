@@ -65,7 +65,10 @@ func TestNormalizeDartCollapsedLeafChildrenRestoresDartWrappers(t *testing.T) {
 
 	assertCollapsedKeywordChild(t, finalNode, lang, "final")
 	assertCollapsedKeywordChild(t, superNode, lang, "super")
-	assertCollapsedKeywordChild(t, baseNode, lang, "base")
+	// Note: "base" is intentionally NOT asserted here anymore. It is no longer
+	// collapsed by the parser (see wrapsSameNamedAnonymousToken's dart carve-out
+	// in parser_reduce.go), so the post-hoc patch in normalizeDartCollapsedLeafChildren
+	// no longer processes it; baseNode above stays untouched by this call.
 	assertCollapsedKeywordChild(t, thisNode, lang, "this")
 	assertCollapsedKeywordChild(t, negationNode, lang, "!")
 	assertCollapsedKeywordChild(t, relOpNode, lang, "<")

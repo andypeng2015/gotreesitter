@@ -546,3 +546,54 @@ class Parser {
 		t.Fatalf("null child type/named = %q/%v, want null/false; node=%s", nullChild.Type(lang), nullChild.IsNamed(), nullLiteral.SExpr(lang))
 	}
 }
+
+// TestDartBaseModifierKeepsAnonymousChildViaEngine proves that the dart `base`
+// class modifier keeps its same-named anonymous token child at the engine
+// layer (Parser.wrapsSameNamedAnonymousToken's per-language carve-out), not
+// via a post-hoc AST patch. `base`'s anon token shifts into only one parse
+// state in the generated grammar tables (its 3 grammar call sites merge onto
+// a single LR state), so without the carve-out it would collapse to a
+// childless named leaf, same as go's `nil`/`true`/`false`/`iota`.
+func TestDartBaseModifierKeepsAnonymousChildViaEngine(t *testing.T) {
+	lang := DartLanguage()
+	parser := ts.NewParser(lang)
+	src := []byte("base class Foo {}\n")
+	tree, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	root := tree.RootNode()
+	if root == nil {
+		t.Fatal("missing root node")
+	}
+	if tree.ParseStopReason() != ts.ParseStopAccepted {
+		t.Fatalf("stop=%s runtime=%s", tree.ParseStopReason(), tree.ParseRuntime().Summary())
+	}
+	if root.HasError() {
+		t.Fatalf("expected base class modifier to parse cleanly, got %s", root.SExpr(lang))
+	}
+	classDef := root.NamedChild(0)
+	if classDef == nil || classDef.Type(lang) != "class_definition" {
+		t.Fatalf("first named child = %v, want class_definition; tree=%s", classDef, root.SExpr(lang))
+	}
+	baseNode := classDef.Child(0)
+	if baseNode == nil || baseNode.Type(lang) != "base" {
+		t.Fatalf("first child = %v, want base; tree=%s", baseNode, root.SExpr(lang))
+	}
+	if !baseNode.IsNamed() {
+		t.Fatalf("base node should be named; tree=%s", root.SExpr(lang))
+	}
+	if got := baseNode.ChildCount(); got != 1 {
+		t.Fatalf("base child count = %d, want 1; tree=%s", got, root.SExpr(lang))
+	}
+	child := baseNode.Child(0)
+	if child == nil {
+		t.Fatalf("base node missing anonymous token child; node=%s", baseNode.SExpr(lang))
+	}
+	if child.Type(lang) != "base" || child.IsNamed() {
+		t.Fatalf("base child type/named = %q/%v, want base/false; node=%s", child.Type(lang), child.IsNamed(), baseNode.SExpr(lang))
+	}
+	if child.StartByte() != baseNode.StartByte() || child.EndByte() != baseNode.EndByte() {
+		t.Fatalf("base child byte range = [%d,%d), want [%d,%d) to match parent", child.StartByte(), child.EndByte(), baseNode.StartByte(), baseNode.EndByte())
+	}
+}
