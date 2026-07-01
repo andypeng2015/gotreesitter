@@ -3,7 +3,6 @@ package gotreesitter
 func normalizeCPONCompatibility(root *Node, source []byte, lang *Language) {
 	normalizeCPONDocumentLeadingTriviaStart(root, source, lang)
 	normalizeCPONNullLeafChildren(root, source, lang)
-	normalizeCollapsedNamedLeafChildrenBySource(root, source, lang, "boolean", "true", "false")
 }
 
 func normalizeCPONDocumentLeadingTriviaStart(root *Node, source []byte, lang *Language) {

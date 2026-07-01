@@ -145,10 +145,6 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 		normalizeFIDLCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "go":
 		return resultCompatibilityResult{stopReason: normalizeGoReturnedTreeCompatibility(ctx.root, ctx.source, ctx.parser, ctx.lang)}
-	case "graphql":
-		normalizeGraphQLCompatibility(ctx.root, ctx.source, ctx.lang)
-	case "git_rebase":
-		normalizeGitRebaseCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "gitcommit":
 		normalizeGitcommitCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "hack":
@@ -189,8 +185,6 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 		normalizeLuauCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "make":
 		normalizeMakeConditionalConsequenceFields(ctx.root, ctx.lang)
-	case "nickel":
-		normalizeNickelCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "objc":
 		normalizeObjcCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "nginx":

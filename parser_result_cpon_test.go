@@ -55,46 +55,6 @@ func TestNormalizeCPONDocumentLeadingTriviaStartRejectsNonTrivia(t *testing.T) {
 	}
 }
 
-func TestNormalizeCPONBooleanLiteralsRestoreTokenChildren(t *testing.T) {
-	lang := &Language{
-		Name:        "cpon",
-		SymbolNames: []string{"EOF", "document", "boolean", "true", "false"},
-		SymbolMetadata: []SymbolMetadata{
-			{Name: "EOF"},
-			{Name: "document", Visible: true, Named: true},
-			{Name: "boolean", Visible: true, Named: true},
-			{Name: "true", Visible: true, Named: false},
-			{Name: "false", Visible: true, Named: false},
-		},
-	}
-	source := []byte("true false")
-	arena := newNodeArena(arenaClassFull)
-	trueNode := newLeafNodeInArena(arena, 2, true, 0, 4, Point{}, Point{Column: 4})
-	falseNode := newLeafNodeInArena(arena, 2, true, 5, 10, Point{Column: 5}, Point{Column: 10})
-	root := newParentNodeInArena(arena, 1, true, []*Node{trueNode, falseNode}, nil, 0)
-
-	normalizeCPONCompatibility(root, source, lang)
-
-	for _, tc := range []struct {
-		node      *Node
-		childType string
-	}{
-		{node: trueNode, childType: "true"},
-		{node: falseNode, childType: "false"},
-	} {
-		if got, want := tc.node.ChildCount(), 1; got != want {
-			t.Fatalf("%s child count = %d, want %d", tc.childType, got, want)
-		}
-		child := tc.node.Child(0)
-		if got, want := child.Type(lang), tc.childType; got != want {
-			t.Fatalf("boolean child type = %q, want %q", got, want)
-		}
-		if child.IsNamed() {
-			t.Fatalf("%s token child should be anonymous", tc.childType)
-		}
-	}
-}
-
 func TestNormalizeCPONNullLiteralCollapsesTokenChild(t *testing.T) {
 	lang := &Language{
 		Name:        "cpon",
