@@ -80,10 +80,11 @@ func buildSmallTokenLookup(lang *Language) [][]uint16 {
 	}
 	if !compactSmallTokenRows(lang) {
 		threshold := smallTokenDenseThreshold
-		switch lang.Name {
-		case "go":
+		// grammargen-compiled blobs (today only go) use dense small-token rows;
+		// keyed on the general GeneratedByGrammargen flag, not the language name.
+		if lang.GeneratedByGrammargen {
 			threshold = 0
-		case "typescript":
+		} else if lang.Name == "typescript" {
 			threshold = typeScriptSmallTokenDenseThreshold
 		}
 		return buildSmallTokenLookupFullRows(lang, threshold)
@@ -162,7 +163,7 @@ func smallDenseLookupSymbolLimit(lang *Language) int {
 		return 0
 	}
 	limit := int(lang.TokenCount)
-	if lang.Name == "go" && lang.SymbolCount > lang.TokenCount {
+	if lang.GeneratedByGrammargen && lang.SymbolCount > lang.TokenCount {
 		limit = int(lang.SymbolCount)
 	}
 	return limit
