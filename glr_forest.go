@@ -36,10 +36,11 @@ import (
 //	         dynamic_precedence-then-first-match selection for byte-identical out.
 
 // glrForestEnabled is the master switch for the GSS-forest fast path. ON by
-// default: the byte-range-verified languages in languageWantsForest dispatch to
-// the forest automatically (with production fallback). Set GOT_GLR_FOREST=0 to
-// disable globally; tests/benchmarks toggle via SetGLRForestEnabled. Languages
-// NOT in the allowlist always use production regardless of this switch.
+// default: the byte-range-verified languages in builtinForestDefaults (plus any
+// Language with WantsForest set, see parserWantsForest) dispatch to the forest
+// automatically (with production fallback). Set GOT_GLR_FOREST=0 to disable
+// globally; tests/benchmarks toggle via SetGLRForestEnabled. Languages that
+// want neither always use production regardless of this switch.
 var glrForestEnabled = os.Getenv("GOT_GLR_FOREST") != "0"
 
 // SetGLRForestEnabled toggles the GSS-forest path at runtime (tests/benchmarks).
@@ -218,20 +219,20 @@ func (p *Parser) recordForestDecline(reason string, tok Token, states []StateID)
 	forestLastDeclineReason = reason
 }
 
-// languageWantsForest reports whether a language dispatches to the GSS-forest
-// GLR fast path by default. Restricted to languages whose production GLR parse
-// suffers the super-linear deep-stack-equivalence blowup AND that are verified
-// byte-identical to production on their real corpus by TestForestCorpusParity
-// (which compares full node BYTE RANGES, not just s-expressions — an s-expr-only
-// gate hid systematic span bugs). Measured byte-range-clean production-vs-forest
-// speedups on the real corpus: bash 803x, erlang 664x, cmake 166x, awk 202x,
-// javascript 36x, css 5x, scss 3x, c_sharp 3x. GraphQL is clean against
-// production here too, but stays out until the production tree is C-oracle-clean
-// on the ring matrix. The forest has no error recovery, so tryForestFastPath
-// falls back to production on any decline (failure / error / truncation); that
-// fallback means a language can never regress the cases it declines, but does
-// NOT catch a clean-but-different tree — so a language joins this list only
-// once its byte-range gate is green.
+// builtinForestDefaults is the curated set of built-in languages that dispatch
+// to the GSS-forest GLR fast path by default. Restricted to languages whose
+// production GLR parse suffers the super-linear deep-stack-equivalence blowup
+// AND that are verified byte-identical to production on their real corpus by
+// TestForestCorpusParity (which compares full node BYTE RANGES, not just
+// s-expressions — an s-expr-only gate hid systematic span bugs). Measured
+// byte-range-clean production-vs-forest speedups on the real corpus: bash
+// 803x, erlang 664x, cmake 166x, awk 202x, javascript 36x, css 5x, scss 3x,
+// c_sharp 3x. GraphQL is clean against production here too, but stays out
+// until the production tree is C-oracle-clean on the ring matrix. The forest
+// has no error recovery, so tryForestFastPath falls back to production on any
+// decline (failure / error / truncation); that fallback means a language can
+// never regress the cases it declines, but does NOT catch a clean-but-different
+// tree — so a language joins this list only once its byte-range gate is green.
 //
 // Verified NOT forest-amenable (2026-06-02 sweep — do NOT re-add as "divergent",
 // the older note was stale): python is forest byte-CLEAN (diverged=0) but ~0.8x
@@ -258,56 +259,94 @@ func (p *Parser) recordForestDecline(reason string, tok Token, states []StateID)
 // makes Go full parse and incremental hot paths pay raw-shape/forest/result
 // selection cost that the ordinary path does not need. Keep Go exercised through
 // ParseForestExperimental and explicit corpus canaries until the forest path is
-// both parity-clean and perf-clean for default Go parsing.
-func languageWantsForest(name string) bool {
-	switch name {
-	case "bash", "erlang", "cmake", "css", "scss", "awk", "javascript", "c_sharp":
-		return true
-	case "gitignore", "nix", "squirrel", "prisma":
-		// Promoted 2026-06-08 after a full-corpus byte-range gate (forest vs
-		// production, lock-filtered real corpus): ZERO divergence on every
-		// dispatched file (gitignore 33/44, nix 635/703, squirrel 18/18,
-		// prisma 78/78; the rest decline safely to production), AND a net-wall
-		// WIN on the corpus (byte-identical trees). All carry the glr_merge
-		// deep-stack blowup and their blowup files dispatch cleanly; squirrel and
-		// prisma are parity-clean vs C (production ~5.9x), a clean forest speedup.
-		//
-		// NOT make: it is byte-range clean (19/20, 0 divergence) but net-wall
-		// NEUTRAL (1.0x) — its expensive blowup files are precisely the ones that
-		// decline (no-shift-death) and fall back to slow production, so the forest
-		// only dispatches make's already-cheap files. make promotes once forest
-		// error recovery lands (Gate 2 in docs/reports/forest-solution-design.md).
-		return true
-	case "agda", "org", "ledger", "yuck", "json5", "commonlisp", "vimdoc":
-		// Phase 2 promotions 2026-06-08: forest+recovery, introduced=0 vs C, large
-		// net-wall win (agda 0.95x/prod28x, org 1.70x/25x, ledger 2.27x/345x,
-		// yuck 1.28x/14x, json5 1.81x/50x). See languageWantsForestRecover.
-		return true
-	case "bibtex", "faust", "arduino", "authzed", "make", "csv", "fish", "racket", "tlaplus", "beancount":
-		// Promoted 2026-06-08 via the forest-vs-C sweep (TestForestVsCSources):
-		// the forest introduces ZERO C-divergences (every divergence is inherited
-		// from production) and is a net-wall WIN — bibtex 109.8x, faust 34.5x,
-		// arduino 1.3x. faust/arduino also FIX production: the forest matches C on
-		// files where the culled production parser does not (faust 108/120,
-		// arduino 10/19 production-mismatches that are the forest being C-correct).
-		// Held: make (forest=C-clean but net-wall NEUTRAL 1.0x — no lift) and
-		// commonlisp (net-wall unverified; rich corpus times out — revisit).
-		return true
-	case "gitattributes":
-		// Promoted 2026-06-08 against the C ORACLE, not production. gitattributes
-		// is parity-blocked (production diverges from C), but the forest matches
-		// tree-sitter-C byte-for-byte on every dispatched real-corpus file (10/10
-		// via TestForestVsCSources) and is 34.7x faster — so this is a correctness
-		// lift (parity-blocked -> parity-clean) AND a speed lift. Production is the
-		// wrong promotion baseline for parity-blocked glr-merge grammars.
-		//
-		// ron/yuck/dtd are ALSO forest=C-clean but held: ron is net-wall NEGATIVE
-		// (0.7x on its 3-file corpus), yuck/dtd corpora are too thin (2 and 1
-		// dispatched) for a confident promotion. Promote when their corpora grow.
-		return true
-	default:
-		return false
-	}
+// both parity-clean and perf-clean for default Go parsing (commit 6894fc9f;
+// that decision stands).
+//
+// Non-built-in languages opt in per-Language via Language.WantsForest (see
+// parserWantsForest) instead of joining this map — e.g. a grammargen consumer
+// generating its own grammar (a Pawn grammar, say) sets WantsForest directly
+// (or grammargen.Grammar.WantsForest, plumbed through assemble) without
+// forking this file. That path bypasses the byte-range parity certification
+// this curated set underwent; the decline->production fallback still prevents
+// hard failures, but a clean-but-different tree is the consumer's
+// responsibility.
+var builtinForestDefaults = map[string]bool{
+	"bash":       true,
+	"erlang":     true,
+	"cmake":      true,
+	"css":        true,
+	"scss":       true,
+	"awk":        true,
+	"javascript": true,
+	"c_sharp":    true,
+
+	// Promoted 2026-06-08 after a full-corpus byte-range gate (forest vs
+	// production, lock-filtered real corpus): ZERO divergence on every
+	// dispatched file (gitignore 33/44, nix 635/703, squirrel 18/18,
+	// prisma 78/78; the rest decline safely to production), AND a net-wall
+	// WIN on the corpus (byte-identical trees). All carry the glr_merge
+	// deep-stack blowup and their blowup files dispatch cleanly; squirrel and
+	// prisma are parity-clean vs C (production ~5.9x), a clean forest speedup.
+	//
+	// NOT make: it is byte-range clean (19/20, 0 divergence) but net-wall
+	// NEUTRAL (1.0x) — its expensive blowup files are precisely the ones that
+	// decline (no-shift-death) and fall back to slow production, so the forest
+	// only dispatches make's already-cheap files. make promotes once forest
+	// error recovery lands (Gate 2 in docs/reports/forest-solution-design.md).
+	"gitignore": true,
+	"nix":       true,
+	"squirrel":  true,
+	"prisma":    true,
+
+	// Phase 2 promotions 2026-06-08: forest+recovery, introduced=0 vs C, large
+	// net-wall win (agda 0.95x/prod28x, org 1.70x/25x, ledger 2.27x/345x,
+	// yuck 1.28x/14x, json5 1.81x/50x). See languageWantsForestRecover.
+	"agda":       true,
+	"org":        true,
+	"ledger":     true,
+	"yuck":       true,
+	"json5":      true,
+	"commonlisp": true,
+	"vimdoc":     true,
+
+	// Promoted 2026-06-08 via the forest-vs-C sweep (TestForestVsCSources):
+	// the forest introduces ZERO C-divergences (every divergence is inherited
+	// from production) and is a net-wall WIN — bibtex 109.8x, faust 34.5x,
+	// arduino 1.3x. faust/arduino also FIX production: the forest matches C on
+	// files where the culled production parser does not (faust 108/120,
+	// arduino 10/19 production-mismatches that are the forest being C-correct).
+	// Held: make (forest=C-clean but net-wall NEUTRAL 1.0x — no lift) and
+	// commonlisp (net-wall unverified; rich corpus times out — revisit).
+	"bibtex":    true,
+	"faust":     true,
+	"arduino":   true,
+	"authzed":   true,
+	"make":      true,
+	"csv":       true,
+	"fish":      true,
+	"racket":    true,
+	"tlaplus":   true,
+	"beancount": true,
+
+	// Promoted 2026-06-08 against the C ORACLE, not production. gitattributes
+	// is parity-blocked (production diverges from C), but the forest matches
+	// tree-sitter-C byte-for-byte on every dispatched real-corpus file (10/10
+	// via TestForestVsCSources) and is 34.7x faster — so this is a correctness
+	// lift (parity-blocked -> parity-clean) AND a speed lift. Production is the
+	// wrong promotion baseline for parity-blocked glr-merge grammars.
+	//
+	// ron/yuck/dtd are ALSO forest=C-clean but held: ron is net-wall NEGATIVE
+	// (0.7x on its 3-file corpus), yuck/dtd corpora are too thin (2 and 1
+	// dispatched) for a confident promotion. Promote when their corpora grow.
+	"gitattributes": true,
+}
+
+// parserWantsForest reports whether p's language dispatches to the GSS-forest
+// GLR fast path: either the Language opted in directly (WantsForest, set by a
+// grammargen consumer) or it is one of the curated built-ins in
+// builtinForestDefaults.
+func parserWantsForest(p *Parser) bool {
+	return p != nil && p.language != nil && (p.language.WantsForest || builtinForestDefaults[p.language.Name])
 }
 
 // tryForestFastPath attempts a full parse via the GSS-forest path and returns a
@@ -318,7 +357,7 @@ func languageWantsForest(name string) bool {
 // off by default so the production path is unchanged until per-language corpus
 // parity is verified and the gate is lifted.
 func (p *Parser) tryForestFastPath(source []byte) *Tree {
-	if !glrForestEnabled || p == nil || p.language == nil || !languageWantsForest(p.language.Name) {
+	if !glrForestEnabled || !parserWantsForest(p) {
 		return nil
 	}
 	if len(p.included) > 0 {

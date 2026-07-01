@@ -16,6 +16,24 @@ for tags and release notes while still in `0.x`.
   (`GTS_TIERS_REQUIRE_ZERO_IV=1` makes the release scan block on any
   non-parity-clean grammar).
 
+## [0.20.8] - 2026-07-01
+
+Adds consumer-controllable forest parsing.
+
+### Added
+
+- Downstream consumers that generate a parser table with grammargen can opt
+  their own grammar into the GSS-forest GLR fast path without forking, via three
+  surfaces: the `Language.WantsForest` field (gob-serialized into blobs), the
+  `grammargen.Grammar.WantsForest` flag, and a declarative
+  `"gotreesitter": { "wantsForest": true }` object in `grammar.json` (read by
+  `ImportGrammarJSON`, mirrored back by `ExportGrammarJSON` only when set, so
+  standard grammars' output is unchanged). Built-in languages keep their curated,
+  byte-range parity-certified forest defaults; consumer opt-in is at the
+  consumer's responsibility, with the forest's decline→production fallback still
+  preventing hard failures on declined inputs. `ExtendGrammar` inherits the flag
+  from its base grammar (#134).
+
 ## [0.20.7] - 2026-06-29
 
 Patch release for parser timeout propagation and targeted language recovery
@@ -982,7 +1000,8 @@ Warm-reuse throughput ~10 % higher. 206-grammar parity green under `GTS_PARITY_M
 - Initial standalone pure-Go runtime module.
 - External scanner VM foundation and base parser/lexer/tree infrastructure.
 
-[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.20.7...HEAD
+[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.20.8...HEAD
+[0.20.8]: https://github.com/odvcencio/gotreesitter/compare/v0.20.7...v0.20.8
 [0.20.7]: https://github.com/odvcencio/gotreesitter/compare/v0.20.6...v0.20.7
 [0.20.6]: https://github.com/odvcencio/gotreesitter/compare/v0.20.5...v0.20.6
 [0.20.5]: https://github.com/odvcencio/gotreesitter/compare/v0.20.4...v0.20.5
