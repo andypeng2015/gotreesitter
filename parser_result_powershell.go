@@ -218,34 +218,6 @@ func normalizePowerShellAssignmentOperatorTokens(root *Node, source []byte, lang
 	if root == nil || lang == nil || lang.Name != "powershell" {
 		return
 	}
-	normalizeCollapsedNamedLeafChildrenBySource(root, source, lang, "command_argument_sep", " ", ":")
-	normalizeCollapsedNamedLeafChildrenBySource(
-		root,
-		source,
-		lang,
-		"comparison_operator",
-		"-contains",
-		"-eq",
-		"-ge",
-		"-gt",
-		"-in",
-		"-is",
-		"-join",
-		"-like",
-		"-lt",
-		"-match",
-		"-ne",
-		"-notcontains",
-		"-notin",
-		"-notlike",
-		"-notmatch",
-		"-replace",
-		"-split",
-	)
-	normalizeCollapsedNamedLeafChildrenBySource(root, source, lang, "format_operator", "-f")
-	normalizeCollapsedNamedLeafChildrenBySource(root, source, lang, "file_redirection_operator", ">")
-	normalizeCollapsedNamedLeafChildrenBySource(root, source, lang, "merging_redirection_operator", "2>&1")
-	normalizeCollapsedNamedLeafChildrenBySource(root, source, lang, "command_invokation_operator", "&", ".")
 	var walk func(*Node)
 	walk = func(n *Node) {
 		if n == nil {

@@ -208,8 +208,6 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 		normalizePowerShellAssignmentOperatorTokens(ctx.root, ctx.source, ctx.lang)
 		normalizePowerShellPathCommandNameVariables(ctx.root, ctx.source, ctx.lang)
 		normalizePowerShellEnumStatementKeywordSpans(ctx.root, ctx.source, ctx.lang)
-	case "proto":
-		normalizeProtoCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "pug":
 		normalizeTopLevelTrailingLineBreakSpan(ctx.root, ctx.source, ctx.lang)
 	case "ql":
