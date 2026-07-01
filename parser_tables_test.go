@@ -92,11 +92,12 @@ func TestLookupActionIndexSmallUsesFullTokenRowsForOtherLanguages(t *testing.T) 
 
 func TestLookupActionIndexSmallUsesFullSymbolRowsForGo(t *testing.T) {
 	lang := &Language{
-		Name:               "go",
-		TokenCount:         8,
-		SymbolCount:        16,
-		LargeStateCount:    1,
-		SmallParseTableMap: []uint32{0},
+		Name:                  "go",
+		GeneratedByGrammargen: true,
+		TokenCount:            8,
+		SymbolCount:           16,
+		LargeStateCount:       1,
+		SmallParseTableMap:    []uint32{0},
 		// groupCount=3
 		// action 11 for token symbols 1..2
 		// action 17 for nonterminal symbol 12
