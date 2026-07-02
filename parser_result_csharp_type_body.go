@@ -5,7 +5,100 @@ import (
 	"strings"
 )
 
-func csharpRecoverSourceTopLevelTypeDeclarationFromRange(source []byte, start, end uint32, p *Parser, arena *nodeArena) (*Node, bool) {
+// csharpTypeDeclarationModifierKeywords lists the C# modifier keywords that
+// can precede a class/record declaration (e.g. "public partial class Foo").
+// Used by csharpRecoverSourceTopLevelTypeDeclarationFromRange's short-term
+// #136 relief so a real-world top-level type (almost always modifier-
+// prefixed) is recognized instead of only a bare "class"/"record" keyword.
+var csharpTypeDeclarationModifierKeywords = []string{
+	"public", "private", "protected", "internal",
+	"static", "sealed", "abstract", "partial",
+	"unsafe", "new", "file", "readonly",
+}
+
+// csharpScanTypeDeclarationModifiers scans zero or more modifier keywords
+// starting at start (skipping whitespace/comments between them) and returns
+// their byte spans plus the position right after the last one recognized.
+func csharpScanTypeDeclarationModifiers(source []byte, start, end uint32) ([][2]uint32, uint32) {
+	var mods [][2]uint32
+	cursor := start
+	for {
+		next := csharpSkipSpaceBytes(source, cursor)
+		matched := false
+		for _, kw := range csharpTypeDeclarationModifierKeywords {
+			if !csharpHasKeywordAt(source, next, kw) {
+				continue
+			}
+			kwEnd := next + uint32(len(kw))
+			if kwEnd < end && csharpIdentifierContinueByte(source[kwEnd]) {
+				continue
+			}
+			mods = append(mods, [2]uint32{next, kwEnd})
+			cursor = kwEnd
+			matched = true
+			break
+		}
+		if !matched {
+			return mods, cursor
+		}
+	}
+}
+
+// csharpSkipLeadingPreprocDirectiveLines skips whitespace, standalone
+// preprocessor directive lines (#endif/#region/#endregion/#if/#else/#elif/
+// etc), and comments — in any interleaving — at the start of [start, end),
+// returning the position of the first non-trivia byte. Heuristic, not full
+// lexing — SHORT-TERM RELIEF for issue #136 (reviewer follow-up): a
+// top-level chunk recovered from a whole-file GLR failure can start with a
+// DANGLING directive left over from an unbalanced #if/#region elsewhere in
+// the same file, optionally followed by the declaration's own leading doc
+// comment (e.g. XmlNodeConverter.cs has "...#endif\n#endregion\n\n    ///
+// <summary>\n    /// Converts XML to and from JSON.\n    /// </summary>\n
+// public class XmlNodeConverter..." — the class itself is balanced, but a
+// PRIOR class's own #if block was left open across an intervening
+// #endregion), which would otherwise make
+// csharpRecoverSourceTopLevelTypeDeclarationFromRange's modifier/keyword
+// scan fail to recognize the real declaration that follows. The skipped
+// leading comments are not reattached as children (consistent with how
+// csharpRecoverTopLevelChunkNodesFromRange's caller already treats a
+// chunk's own leading comments as separate, unattached sibling nodes in
+// the common case).
+func csharpSkipLeadingPreprocDirectiveLines(source []byte, start, end uint32) uint32 {
+	cursor := start
+	for {
+		next := csharpSkipSpaceBytes(source, cursor)
+		if next >= end {
+			return next
+		}
+		if source[next] == '#' {
+			lineEnd := next
+			for lineEnd < end && source[lineEnd] != '\n' {
+				lineEnd++
+			}
+			cursor = lineEnd
+			continue
+		}
+		if next+1 < end && source[next] == '/' && source[next+1] == '/' {
+			lineEnd := next + 2
+			for lineEnd < end && source[lineEnd] != '\n' {
+				lineEnd++
+			}
+			cursor = lineEnd
+			continue
+		}
+		if next+1 < end && source[next] == '/' && source[next+1] == '*' {
+			commentEnd := csharpFindBlockCommentEnd(source, next+2, end)
+			if commentEnd <= next+1 {
+				return next
+			}
+			cursor = commentEnd
+			continue
+		}
+		return next
+	}
+}
+
+func csharpRecoverSourceTopLevelTypeDeclarationFromRange(source []byte, start, end uint32, p *Parser, arena *nodeArena, lenient bool) (*Node, bool) {
 	if p == nil || p.language == nil || arena == nil || start >= end || int(end) > len(source) {
 		return nil, false
 	}
@@ -13,20 +106,59 @@ func csharpRecoverSourceTopLevelTypeDeclarationFromRange(source []byte, start, e
 	if start >= end {
 		return nil, false
 	}
+	modifierSearchStart := csharpSkipLeadingPreprocDirectiveLines(source, start, end)
+	modifierSpans, afterModifiers := csharpScanTypeDeclarationModifiers(source, modifierSearchStart, end)
+	declStart := csharpSkipSpaceBytes(source, afterModifiers)
 	keyword := ""
 	declName := ""
 	switch {
-	case csharpHasKeywordAt(source, start, "class"):
+	case csharpHasKeywordAt(source, declStart, "class"):
 		keyword = "class"
 		declName = "class_declaration"
-	case csharpHasKeywordAt(source, start, "record"):
+	case csharpHasKeywordAt(source, declStart, "record"):
 		keyword = "record"
 		declName = "record_declaration"
+	// SHORT-TERM RELIEF for issue #136 (reviewer follow-up): interface/struct
+	// bodies use the exact same member-declaration syntax as a class body
+	// (a bodyless "void M();" signature is syntactically valid inside a
+	// "class __Q { ... }" reparse wrapper too — tree-sitter doesn't enforce
+	// the C# semantic rule that a body-less method must live in an
+	// interface/abstract/partial/extern context), so
+	// csharpRecoverSourceTypeMembersFromRange below needs no changes to
+	// handle them. Without this, a real-world interface/struct block (e.g.
+	// XmlNodeConverter.cs's "internal interface IXmlNode { ... }") is an
+	// unrecognized top-level chunk that either falls through to the
+	// generic whole-chunk reparse fallback (fine when small) or, if
+	// oversized, is skipped outright — losing every method_declaration
+	// inside it.
+	case csharpHasKeywordAt(source, declStart, "interface"):
+		keyword = "interface"
+		declName = "interface_declaration"
+	case csharpHasKeywordAt(source, declStart, "struct"):
+		keyword = "struct"
+		declName = "struct_declaration"
+	case csharpHasKeywordAt(source, declStart, "enum"):
+		// enum_member_declaration_list is comma-separated, not ";"/"}"
+		// terminated, so it doesn't fit csharpRecoverSourceTypeMembersFromRange's
+		// chunk-splitting model the way class/struct/interface bodies do.
+		// Recover it as a single bounded whole-span reparse instead (enums
+		// contribute no method_declarations, so there is no per-member
+		// recovery to preserve here — either the whole enum parses cleanly
+		// or, in lenient mode, it is skipped).
+		return csharpRecoverEnumDeclarationFromRange(source, start, end, p, arena, lenient)
 	default:
 		return nil, false
 	}
 	lang := p.language
-	keywordEnd := start + uint32(len(keyword))
+	var modifiers []*Node
+	for _, span := range modifierSpans {
+		modNode, ok := csharpBuildModifierNodeFromSource(arena, source, lang, span[0], span[1])
+		if !ok {
+			return nil, false
+		}
+		modifiers = append(modifiers, modNode)
+	}
+	keywordEnd := declStart + uint32(len(keyword))
 	nameStart, nameEnd, ok := csharpScanIdentifierAt(source, csharpSkipSpaceBytes(source, keywordEnd))
 	if !ok {
 		return nil, false
@@ -77,7 +209,7 @@ func csharpRecoverSourceTopLevelTypeDeclarationFromRange(source []byte, start, e
 	comments := csharpBuildCommentNodesBetween(source, commentStart, headerEnd, lang, arena)
 	var declarationList *Node
 	if bodyStart < bodyEnd {
-		members, ok := csharpRecoverSourceTypeMembersFromRange(source, bodyStart+1, bodyEnd, p, arena)
+		members, ok := csharpRecoverSourceTypeMembersFromRange(source, bodyStart+1, bodyEnd, p, arena, lenient)
 		if !ok {
 			return nil, false
 		}
@@ -90,7 +222,7 @@ func csharpRecoverSourceTopLevelTypeDeclarationFromRange(source []byte, start, e
 	if !ok {
 		return nil, false
 	}
-	keywordTok, ok := csharpBuildLeafNodeByName(arena, source, lang, keyword, start, keywordEnd)
+	keywordTok, ok := csharpBuildLeafNodeByName(arena, source, lang, keyword, declStart, keywordEnd)
 	if !ok {
 		return nil, false
 	}
@@ -98,7 +230,9 @@ func csharpRecoverSourceTopLevelTypeDeclarationFromRange(source []byte, start, e
 	if !ok {
 		return nil, false
 	}
-	children := []*Node{keywordTok, nameNode}
+	children := make([]*Node, 0, len(modifiers)+2)
+	children = append(children, modifiers...)
+	children = append(children, keywordTok, nameNode)
 	if parameterList != nil {
 		children = append(children, parameterList)
 	}
@@ -121,6 +255,47 @@ func csharpRecoverSourceTopLevelTypeDeclarationFromRange(source []byte, start, e
 	extendNodeEndTo(decl, end, source)
 	decl.setHasError(false)
 	return decl, true
+}
+
+// csharpRecoverEnumDeclarationFromRange recovers a "[modifiers] enum Name
+// [: base] { members }" declaration by reparsing the whole span as a
+// standalone snippet through the real grammar tables, rather than
+// hand-building an enum_member_declaration_list the way
+// csharpRecoverSourceTypeMembersFromRange does for class/struct/interface
+// bodies. Short-term relief for issue #136 (reviewer follow-up): bounded in
+// lenient mode by csharpMaxTopLevelChunkRecoverySourceBytes, matching the
+// per-chunk bound csharpRecoverTopLevelChunkNodesFromRange already applies
+// to its own unrecognized-chunk fallback, so a single oversized enum cannot
+// trigger an unbounded reparse.
+func csharpRecoverEnumDeclarationFromRange(source []byte, start, end uint32, p *Parser, arena *nodeArena, lenient bool) (*Node, bool) {
+	if p == nil || p.language == nil || arena == nil || start >= end || int(end) > len(source) {
+		return nil, false
+	}
+	start = csharpSkipLeadingPreprocDirectiveLines(source, start, end)
+	if start >= end {
+		return nil, false
+	}
+	if lenient && end-start > csharpMaxTopLevelChunkRecoverySourceBytes {
+		return nil, false
+	}
+	tree, err := p.parseForRecovery(source[start:end])
+	if err != nil || tree == nil || tree.RootNode() == nil {
+		if tree != nil {
+			tree.Release()
+		}
+		return nil, false
+	}
+	defer tree.Release()
+	startPoint := advancePointByBytes(Point{}, source[:start])
+	offsetRoot := tree.RootNodeWithOffset(start, startPoint)
+	if offsetRoot == nil || offsetRoot.HasError() {
+		return nil, false
+	}
+	enumDecl := csharpFindFirstNamedDescendantOfType(offsetRoot, p.language, "enum_declaration")
+	if enumDecl == nil || enumDecl.endByte != end {
+		return nil, false
+	}
+	return cloneTreeNodesIntoArena(enumDecl, arena), true
 }
 
 func csharpFindTopLevelByte(source []byte, start, end uint32, want byte) uint32 {
@@ -227,7 +402,23 @@ func csharpBuildCommentNodesBetween(source []byte, start, end uint32, lang *Lang
 	return comments
 }
 
-func csharpRecoverSourceTypeMembersFromRange(source []byte, start, end uint32, p *Parser, arena *nodeArena) ([]*Node, bool) {
+// csharpRecoverSourceTypeMembersFromRange recovers the members of a
+// class/struct/record body directly from source (independent of whatever the
+// earlier GLR sub-parse produced). Historically this was only ever reached
+// through csharpRecoverTopLevelChunks, which gates on the WHOLE FILE being
+// <= csharpMaxTopLevelChunkRecoverySourceBytes — so start/end were always a
+// small span and any single member failing to recover could safely abort the
+// whole type (strict, lenient=false).
+//
+// lenient=true is SHORT-TERM RELIEF for issue #136 (see
+// csharpMaxTypeBodyRecoveryMembers): it is used when this is reached via a
+// body-scoped caller (csharpRecoverNamespaceBodyMembersFromSource) that is
+// NOT gated by the enclosing file's size, so start/end can span an entire
+// real-world class body. In that mode an unrecoverable or oversized member is
+// skipped instead of failing the whole type, so the declarations that do
+// recover still surface — the same skip-don't-abort philosophy #116 already
+// established for csharpRecoverTypeDeclarationBodyMembers.
+func csharpRecoverSourceTypeMembersFromRange(source []byte, start, end uint32, p *Parser, arena *nodeArena, lenient bool) ([]*Node, bool) {
 	if p == nil || p.language == nil || arena == nil || start > end || int(end) > len(source) {
 		return nil, false
 	}
@@ -235,6 +426,9 @@ func csharpRecoverSourceTypeMembersFromRange(source []byte, start, end uint32, p
 		return nil, true
 	}
 	relSpans := csharpTopLevelChunkSpans(source[start:end])
+	if lenient && len(relSpans) > csharpMaxTypeBodyRecoveryMembers {
+		return nil, false
+	}
 	out := make([]*Node, 0, len(relSpans))
 	for _, rel := range relSpans {
 		spanStart := start + rel[0]
@@ -244,14 +438,25 @@ func csharpRecoverSourceTypeMembersFromRange(source []byte, start, end uint32, p
 				out = append(out, comment)
 				continue
 			}
-			method, ok := csharpRecoverClassMethodDeclarationFromRange(source, part[0], part[1], p, arena)
+			if lenient && part[1]-part[0] > csharpMaxTopLevelChunkRecoverySourceBytes {
+				// Bounded: skip an oversized single member instead of an
+				// unbounded reparse (issue #136 short-term relief).
+				continue
+			}
+			member, ok := csharpRecoverClassMethodDeclarationFromRange(source, part[0], part[1], p, arena)
 			if !ok {
+				member, ok = csharpRecoverClassMemberDeclarationFromRange(source, part[0], part[1], p, p.language, arena)
+			}
+			if !ok {
+				if lenient {
+					continue
+				}
 				return nil, false
 			}
-			out = append(out, method)
+			out = append(out, member)
 		}
 	}
-	return out, true
+	return out, len(out) > 0 || !lenient
 }
 
 func csharpRecoverClassMethodDeclarationFromRange(source []byte, start, end uint32, p *Parser, arena *nodeArena) (*Node, bool) {
@@ -309,6 +514,70 @@ func csharpRecoverClassMethodDeclarationFromRange(source []byte, start, end uint
 	}
 	recomputeNodePointsFromBytes(method, source)
 	return method, true
+}
+
+// csharpRecoverClassMemberDeclarationFromRange is a generic, source-based
+// recovery for a single class/struct/record member that csharpRecoverClass
+// MethodDeclarationFromRange does not handle (it requires a "{...}" body): a
+// field, auto-property, event field, or other ";"-terminated member. It
+// wraps the member's raw source in a throwaway "class __Q { <member> }" and
+// reparses just that snippet, then extracts whichever recognized type-body
+// member node results (see csharpRecoverTypeDeclarationBodyChild for the
+// accepted node types). Short-term relief for issue #136: callers bound the
+// span size before calling this (csharpMaxTopLevelChunkRecoverySourceBytes
+// per member in lenient mode), so worst-case reparse cost per member is
+// predictable.
+func csharpRecoverClassMemberDeclarationFromRange(source []byte, start, end uint32, p *Parser, lang *Language, arena *nodeArena) (*Node, bool) {
+	if p == nil || lang == nil || arena == nil || start >= end || int(end) > len(source) {
+		return nil, false
+	}
+	start, end = csharpTrimSpaceBounds(source, start, end)
+	if start >= end {
+		return nil, false
+	}
+	const prefix = "class __Q { "
+	const suffix = "\n}\n"
+	wrapped := make([]byte, 0, len(prefix)+int(end-start)+len(suffix))
+	wrapped = append(wrapped, prefix...)
+	wrapped = append(wrapped, source[start:end]...)
+	wrapped = append(wrapped, suffix...)
+	tree, err := p.parseForRecovery(wrapped)
+	if err != nil || tree == nil || tree.RootNode() == nil {
+		if tree != nil {
+			tree.Release()
+		}
+		return nil, false
+	}
+	defer tree.Release()
+	classDecl := csharpFindFirstNamedDescendantOfType(tree.RootNode(), lang, "class_declaration")
+	if classDecl == nil {
+		return nil, false
+	}
+	declList := csharpFindFirstNamedDescendantOfType(classDecl, lang, "declaration_list")
+	if declList == nil {
+		return nil, false
+	}
+	var member *Node
+	for _, child := range declList.children {
+		if child == nil {
+			continue
+		}
+		if child.HasError() {
+			continue
+		}
+		if candidate, ok := csharpRecoverTypeDeclarationBodyChild(child, lang, arena); ok {
+			member = candidate
+			break
+		}
+	}
+	if member == nil {
+		return nil, false
+	}
+	if !shiftNodeBytes(member, int64(start)-int64(len(prefix))) {
+		return nil, false
+	}
+	recomputeNodePointsFromBytes(member, source)
+	return member, true
 }
 
 func csharpBuildSourceDeclarationListNode(source []byte, openBrace, closeBrace uint32, members []*Node, lang *Language, arena *nodeArena) (*Node, bool) {

@@ -415,7 +415,17 @@ func csharpBuildQualifiedNameNode(source []byte, start, end uint32, lang *Langua
 	}
 	cursor := segEnd
 	for {
-		cursor = csharpSkipSpaceBytes(source, cursor)
+		// Bounded: csharpSkipSpaceBytes skips whitespace against the whole
+		// source, ignoring end, so if the caller already trimmed end to
+		// exclude the trailing whitespace right after this segment (e.g. the
+		// "\n" between a namespace name and its opening "{"), it would
+		// otherwise walk past end into whatever non-whitespace content
+		// follows and the cursor!=end check below would spuriously fail.
+		if skipped := csharpSkipSpaceBytes(source, cursor); skipped <= end {
+			cursor = skipped
+		} else {
+			cursor = end
+		}
 		if cursor >= end {
 			break
 		}

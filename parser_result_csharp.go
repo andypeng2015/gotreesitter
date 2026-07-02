@@ -16,6 +16,36 @@ const (
 	// or many nested partial classes) the recovery loop can be triggered
 	// dozens of times per file, multiplying parse time/memory.
 	csharpMaxNamespaceRecoveries = 32
+
+	// csharpMaxTypeBodyRecoveryMembers bounds how many top-level members a
+	// LENIENT, source-based type/namespace-body reconstruction will attempt
+	// to recover (csharpRecoverNamespaceBodyMembersFromSource,
+	// csharpRecoverSourceTypeMembersFromRange with lenient=true). This is
+	// SHORT-TERM RELIEF for issue #136: large real-world files where the GLR
+	// sub-parse dies partway through a type body, so the existing
+	// children-based namespace/type recovery from #115/#116
+	// (csharpRecoverNamespaceBodyMembersFromErrorRoot) only covers the
+	// prefix that happened to parse before the failure. Unlike
+	// csharpMaxTopLevelChunkRecoverySourceBytes (applied per FILE at the
+	// csharpRecoverTopLevelChunks entry point — see its doc comment), this
+	// bound is applied per BODY, so a namespace/class with a realistic
+	// number of members is eligible regardless of the enclosing file's total
+	// size. Each individual member is still capped at
+	// csharpMaxTopLevelChunkRecoverySourceBytes bytes (skipped, not
+	// reparsed, if larger). Worst case nests ONE level, not a single flat
+	// bound: a namespace body can have up to csharpMaxTypeBodyRecoveryMembers
+	// top-level members (csharpRecoverNamespaceBodyMembersFromSource), and
+	// each of those that is itself a class/struct/interface body can in turn
+	// have up to csharpMaxTypeBodyRecoveryMembers members
+	// (csharpRecoverSourceTypeMembersFromRange) — so the worst-case bound is
+	// csharpMaxTypeBodyRecoveryMembers^2 (65536) snippet reparses, each at
+	// most csharpMaxTopLevelChunkRecoverySourceBytes bytes. Recursion stops
+	// there: a type body's own members (fields/methods/properties) are leaf
+	// reparses, not further namespace-body-scale recursions. Remove this
+	// lenient path once the GLR engine gains real mid-parse error recovery
+	// (see #136) and these files parse mostly clean without needing
+	// source reconstruction.
+	csharpMaxTypeBodyRecoveryMembers = 256
 )
 
 func normalizeCSharpCompatibility(root *Node, source []byte, p *Parser, lang *Language) {
@@ -758,7 +788,7 @@ func csharpRecoverTopLevelChunks(source []byte, p *Parser, arena *nodeArena) ([]
 	out := make([]*Node, 0, len(spans))
 	for _, span := range spans {
 		for _, part := range csharpSplitLeadingTopLevelCommentSpans(source, span[0], span[1]) {
-			nodes, ok := csharpRecoverTopLevelChunkNodesFromRange(source, part[0], part[1], p, arena)
+			nodes, ok := csharpRecoverTopLevelChunkNodesFromRange(source, part[0], part[1], p, arena, false)
 			if !ok || len(nodes) == 0 {
 				return nil, false
 			}
@@ -933,7 +963,7 @@ func csharpSplitLeadingTopLevelCommentSpans(source []byte, start, end uint32) []
 	return spans
 }
 
-func csharpRecoverTopLevelChunkNodesFromRange(source []byte, start, end uint32, p *Parser, arena *nodeArena) ([]*Node, bool) {
+func csharpRecoverTopLevelChunkNodesFromRange(source []byte, start, end uint32, p *Parser, arena *nodeArena, lenient bool) ([]*Node, bool) {
 	if p == nil || p.language == nil || start >= end || int(end) > len(source) {
 		return nil, false
 	}
@@ -946,13 +976,41 @@ func csharpRecoverTopLevelChunkNodesFromRange(source []byte, start, end uint32, 
 	}
 	if source[start] == '[' {
 		if attributeLists, declStart, ok := csharpBuildLeadingAttributeListsFromSource(source, start, end, p.language, arena); ok && declStart < end {
-			if recovered, ok := csharpRecoverAttributedTopLevelTypeDeclarationFromRange(source, declStart, end, attributeLists, p, p.language, arena); ok {
+			// Bounded (issue #136): csharpRecoverAttributedTopLevelTypeDeclarationFromRange
+			// reparses source[declStart:end] as ONE unbounded whole-span GLR
+			// parse with no size cap — safe under the strict (non-lenient)
+			// caller (csharpRecoverTopLevelChunks gates the whole FILE at
+			// csharpMaxTopLevelChunkRecoverySourceBytes, so declStart:end is
+			// always small there), but namespace-body-scale lenient recovery
+			// can hand this an attributed real-world class spanning tens of
+			// KB (e.g. "[RequiresDynamicCode(...)] public sealed class Foo {
+			// ...100 methods... }"), which must NOT get an unbounded reparse.
+			// Route those through the per-member-bounded source declaration
+			// path instead, prepending the already-recovered attribute lists.
+			if lenient && end-declStart > csharpMaxTopLevelChunkRecoverySourceBytes {
+				if recovered, ok := csharpRecoverSourceTopLevelTypeDeclarationFromRange(source, declStart, end, p, arena, lenient); ok {
+					return []*Node{csharpPrependAttributeListsToDeclaration(recovered, attributeLists, arena)}, true
+				}
+			} else if recovered, ok := csharpRecoverAttributedTopLevelTypeDeclarationFromRange(source, declStart, end, attributeLists, p, p.language, arena); ok {
 				return []*Node{recovered}, true
 			}
 		}
 	}
-	if recovered, ok := csharpRecoverSourceTopLevelTypeDeclarationFromRange(source, start, end, p, arena); ok {
+	if recovered, ok := csharpRecoverSourceTopLevelTypeDeclarationFromRange(source, start, end, p, arena, lenient); ok {
 		return []*Node{recovered}, true
+	}
+	// Bounded (issue #136): in lenient mode (namespace-body-scale recovery,
+	// see csharpRecoverNamespaceBodyMembersFromSource), a single top-level
+	// chunk can legitimately be as large as an entire real-world class body
+	// — csharpRecoverSourceTopLevelTypeDeclarationFromRange above already
+	// bounds THAT cost per-member (csharpMaxTypeBodyRecoveryMembers /
+	// csharpMaxTopLevelChunkRecoverySourceBytes). But if the chunk was NOT
+	// recognized as a class/record declaration (e.g. an enum straddling an
+	// unbalanced #if/#endif), don't fall through to an unbounded whole-chunk
+	// reparse here — skip it instead, so a single oversized, unrecognized
+	// chunk cannot blow up worst-case recovery cost.
+	if lenient && end-start > csharpMaxTopLevelChunkRecoverySourceBytes {
+		return nil, false
 	}
 	chunk := source[start:end]
 	tree, err := p.parseForRecovery(chunk)
@@ -1119,8 +1177,33 @@ func csharpRecoverNamespaceFromChildren(children []*Node, startIdx int, source [
 		return nil, startIdx, false
 	}
 	nsStart := csharpSkipSpaceBytes(source, startNode.startByte)
+	// SHORT-TERM RELIEF for issue #136: for a large real-world file the
+	// leading boilerplate (copyright header comments, #region/#endregion,
+	// using directives) can collapse into the SAME opaque ERROR span as the
+	// namespace keyword itself, so "namespace" is not at this child's own
+	// start byte even though it does appear within its span. Search forward
+	// within the ERROR span for the namespace keyword instead of giving up
+	// outright — but skip csharpRecoverNamespaceNodeFromRange's initial
+	// full-body reparse in that case (foundViaSearch below): that reparse
+	// re-runs the GLR parser over the SAME content that just failed to
+	// produce this child in the first place, so it is both unlikely to help
+	// (the reparse dies at essentially the same relative point — verified on
+	// the #136 repro files) and, on some file shapes, catastrophically
+	// slower than the bounded, purely source-based recovery in
+	// csharpBuildRecoveredNamespaceDeclarationFromErrorRoot. Go straight to
+	// that (with startNode itself as the best-effort "already parsed
+	// fragment" source, since it may still have some usable children).
+	foundViaSearch := false
 	if int(nsStart)+len("namespace") > len(source) || !bytes.HasPrefix(source[nsStart:], []byte("namespace")) {
-		return nil, startIdx, false
+		if startNode.Type(lang) != "ERROR" {
+			return nil, startIdx, false
+		}
+		found, ok := csharpFindTopLevelNamespaceKeyword(source, startNode.startByte, startNode.endByte)
+		if !ok {
+			return nil, startIdx, false
+		}
+		nsStart = found
+		foundViaSearch = true
 	}
 	openRel := bytes.IndexByte(source[nsStart:], '{')
 	if openRel < 0 {
@@ -1132,7 +1215,13 @@ func csharpRecoverNamespaceFromChildren(children []*Node, startIdx int, source [
 		return nil, startIdx, false
 	}
 	nsEnd := uint32(closeBrace + 1)
-	recovered, ok := csharpRecoverNamespaceNodeFromRange(source, nsStart, nsEnd, p, lang, arena)
+	var recovered *Node
+	var ok bool
+	if foundViaSearch {
+		recovered, ok = csharpBuildRecoveredNamespaceDeclarationFromErrorRoot(startNode, source, nsStart, nsEnd, p, lang, arena)
+	} else {
+		recovered, ok = csharpRecoverNamespaceNodeFromRange(source, nsStart, nsEnd, p, lang, arena)
+	}
 	if !ok {
 		return nil, startIdx, false
 	}
