@@ -886,8 +886,8 @@ func f(s []int) int {
 //     interpreted_string_literal_content node beside the real string.
 //
 // Regenerating go.bin from the current grammargen source (same `emit go
-// -lr-split -bin` invocation documented in grammargen/README.md) fixes both;
-// this test guards against the blob going stale again.
+// -bin` invocation documented in grammargen/README.md) fixes both; this test
+// guards against the blob going stale again.
 func TestGoInterpretedStringFalseErrors(t *testing.T) {
 	tests := []struct {
 		name string
@@ -919,8 +919,18 @@ func TestGoInterpretedStringFalseErrors(t *testing.T) {
 			// ddmin-minimized repro from the investigation's residual bucket:
 			// two adjacent top-level functions where the first ends in a
 			// call taking a func-literal argument and the second is a
-			// simple `if a.hash() != b.hash() {}`. Falls out of the same
-			// stale-blob root cause as bugA/bugB above.
+			// simple `if a.hash() != b.hash() {}`. Originally fell out of the
+			// same stale-blob root cause as bugA/bugB above; later became the
+			// regression pin for the `_automatic_semicolon` external-scanner
+			// ASI fix (grammars/go_scanner.go): routing the terminator
+			// through an external token restructures the LALR table enough
+			// that the pre-existing, upstream-intentional dynamic-precedence
+			// tie between index_expression and generic_type(composite_literal)
+			// (both prec.dynamic(1, ...), see grammargen/go_grammar.go) needs
+			// a wider merge-per-key survivor budget at its merge point on
+			// `identifier[identifier] != identifier[identifier] {` shapes —
+			// see goFullParseNeedsBracketComparisonMergeWidth in
+			// parser_retry.go for the targeted (not global) fix.
 			name: "residual_adjacent_funcs_call_then_if_ne",
 			src: "package grammargen\n" +
 				"func TestBitsetForEach(t *testing.T) {\n" +

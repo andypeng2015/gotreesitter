@@ -21,6 +21,14 @@ const (
 	javaFullParseRetryMaxGLRStacks   = 64
 	javaFullParseRetryMaxMergePerKey = 16
 	javaTightMergeCapSourceLen       = 256 * 1024
+	// goBracketComparisonMergePerKey widens Go's steady-state merge-per-key
+	// cap (3) only for sources matching goSourceHasBracketIndexComparison; 5
+	// is the observed minimum that keeps the index_expression branch alive
+	// at that merge point. Kept at the minimum (rather than +1 margin) because
+	// this codebase's own comparison-heavy files (parser_reduce.go, lr.go)
+	// trip the heuristic and cost noticeably more per extra survivor (~2x
+	// jump from 5->6 on real files in this repo).
+	goBracketComparisonMergePerKey = 5
 	// Retry node-limit full parses with a bounded larger node budget instead of
 	// globally raising the default cap for every parse.
 	fullParseRetryNodeLimitScale = 2
@@ -923,6 +931,96 @@ func typeScriptSourceHasDestructuredArrowReturnType(source []byte) bool {
 		}
 		offset = arrow + len("=>")
 	}
+}
+
+// goFullParseNeedsBracketComparisonMergeWidth reports whether a Go full parse
+// should widen the merge-per-key survivor budget beyond the steady-state
+// default of 3 (see the "go" case in effectiveParseMergePerKeyCap).
+//
+// Background: routing the grammar's `terminator` rule through the
+// `_automatic_semicolon` external scanner (grammars/go_scanner.go) — the fix
+// for the shared-DFA zero-width/`\n` tie-break bug — restructures enough of
+// the LALR table that Go's pre-existing, upstream-intentional dynamic-
+// precedence tie between `index_expression` and `generic_type` (both
+// `prec.dynamic(1, ...)`, matching tree-sitter-go's grammar.js) needs one
+// more surviving GLR candidate at its merge point to keep the correct,
+// error-free `index_expression` branch alive on sources shaped like
+// `a[b] != c[d] {` (e.g. `if got[i] != want[i] {` inside a larger function).
+// At the steady-state cap of 3 that branch can be pruned, leaving only the
+// `generic_type`-as-composite-literal branch, which then fails later in the
+// file and surfaces as a false ERROR.
+//
+// Raising the steady-state cap globally fixes it but costs roughly 3-13x on
+// large, non-ambiguous real files (this repo's own 285KB parser.go went from
+// ~1.5s to ~5-20s) for no benefit, since files without this specific shape
+// never needed the extra survivor. Instead, gate the wider cap on a cheap,
+// narrow source scan for the trigger shape itself — bare
+// `identifier[identifier]` on both sides of `!=`/`==` — mirroring how
+// javaFullParseNeedsAnnotationDeclarationMergeWidth and the TypeScript arrow-
+// parameter checks above gate their own merge-width overrides on a source
+// content probe rather than a language-wide default change. A sampled walk
+// of the Go standard library corpus matches this shape in under 1% of files.
+func goFullParseNeedsBracketComparisonMergeWidth(lang *Language, source []byte, reuse *reuseCursor) bool {
+	return lang != nil &&
+		lang.Name == "go" &&
+		reuse == nil &&
+		!parseMaxMergePerKeyEnvConfigured() &&
+		goSourceHasBracketIndexComparison(source)
+}
+
+// goSourceHasBracketIndexComparison scans for `identifier[identifier]`
+// immediately (modulo horizontal whitespace) followed by `!=` or `==`
+// followed by another `identifier[identifier]`. This is a narrow, cheap
+// linear proxy for the index_expression-vs-generic_type ambiguity trigger
+// shape described on goFullParseNeedsBracketComparisonMergeWidth; it is
+// intentionally conservative about false negatives (any single-sided or
+// mismatched-shape occurrence is skipped) since the caller only uses this to
+// opt into a wider, slower merge-survivor budget, not for correctness itself.
+func goSourceHasBracketIndexComparison(source []byte) bool {
+	n := len(source)
+	for i := 0; i < n; i++ {
+		if source[i] != '[' || i == 0 || !isGoIdentByte(source[i-1]) {
+			continue
+		}
+		j := i + 1
+		for j < n && isGoIdentByte(source[j]) {
+			j++
+		}
+		if j == i+1 || j >= n || source[j] != ']' {
+			continue
+		}
+		k := j + 1
+		for k < n && (source[k] == ' ' || source[k] == '\t') {
+			k++
+		}
+		if k+1 >= n || source[k+1] != '=' || (source[k] != '!' && source[k] != '=') {
+			continue
+		}
+		k += 2
+		for k < n && (source[k] == ' ' || source[k] == '\t') {
+			k++
+		}
+		start := k
+		for k < n && isGoIdentByte(source[k]) {
+			k++
+		}
+		if k == start || k >= n || source[k] != '[' {
+			continue
+		}
+		m := k + 1
+		for m < n && isGoIdentByte(source[m]) {
+			m++
+		}
+		if m == k+1 || m >= n || source[m] != ']' {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+func isGoIdentByte(b byte) bool {
+	return b == '_' || (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9')
 }
 
 func fullParseUsesDeterministicExternalConflicts(lang *Language) bool {

@@ -122,6 +122,7 @@ func init() {
 		"caddy":           CaddyExternalScanner{},
 		"javascript":      JavaScriptExternalScanner{},
 		"typescript":      TypeScriptExternalScanner{},
+		"go":              GoExternalScanner{},
 		"rust":            RustExternalScanner{},
 		"hcl":             HclExternalScanner{},
 		"rescript":        RescriptExternalScanner{},
