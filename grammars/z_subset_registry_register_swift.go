@@ -7,7 +7,7 @@ func init() {
 		Name:          "swift",
 		Extensions:    []string{".swift"},
 		Language:      SwiftLanguage,
-		GrammarSource: GrammarSourceTS2GoBlob,
+		GrammarSource: GrammarSourceGrammargenBlob,
 		HighlightQuery: `
 ["." ";" ":" ","] @punctuation.delimiter
 ["(" ")" "[" "]" "{" "}"] @punctuation.bracket
