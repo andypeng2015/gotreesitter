@@ -166,6 +166,7 @@ func TestBuildLexDFADistinguishesModePreferredSymbols(t *testing.T) {
 		},
 		nil,
 		map[int]bool{1: true, 2: true}, // both symbols are pattern-based ([a-z]+); a genuine same-length tie
+		nil,
 	)
 	if got, want := len(lexModes), 2; got != want {
 		t.Fatalf("lex mode count = %d, want %d", got, want)
@@ -251,12 +252,87 @@ func TestLexModePreferredSymbolsIgnoredWithoutPatternTerminals(t *testing.T) {
 		nil,
 		nil,
 		nil, // no pattern-based terminals: symA/symB are both fixed strings
+		nil, // no zero-width terminals either
 	)
 	if got, want := len(lexModes), 1; got != want {
 		t.Fatalf("lex mode count = %d, want %d (fixed-string-only states must share a mode)", got, want)
 	}
 	if stateToMode[0] != stateToMode[1] {
 		t.Fatalf("states with different preferred symbols but no pattern terminals should share lex mode: got %d and %d", stateToMode[0], stateToMode[1])
+	}
+}
+
+// TestLexModePreferredSymbolsKeptForZeroWidthTerminal is the regression test
+// for generator defect #6 (grammargen/dfa.go hasPatternSym gate): a state
+// whose valid symbols are ALL fixed strings does NOT automatically qualify
+// for the "no tie possible, drop preferredSyms" fast path from
+// TestLexModePreferredSymbolsIgnoredWithoutPatternTerminals above when one of
+// those fixed strings is zero-width (its rule can match the empty string,
+// e.g. the "\x00" EOF-sentinel terminal tree-sitter-go's statement
+// terminator alternative uses, or Pat(`\n`) after expandRegexToRule collapses
+// it to a fixed-string RuleString terminal). A zero-width terminal's accept
+// requires consuming nothing, so it trivially ties with every other terminal
+// valid in the state — the tie is genuine and preferredSyms must survive to
+// resolve it, or the zero-width terminal wins over a real, longer token
+// everywhere the terminator production is reachable (observed as go.bin's
+// statement_list/block spans landing one byte short of every closing `}`).
+func TestLexModePreferredSymbolsKeptForZeroWidthTerminal(t *testing.T) {
+	const (
+		tokenCount = 3
+		symA       = 1 // e.g. "\n" (a fixed string after literal-regex collapse)
+		symB       = 2 // e.g. "\x00" (the zero-width EOF-sentinel string terminal)
+	)
+	// Same shape as TestBuildLexDFADistinguishesModePreferredSymbols: two
+	// states, each directly shifting a DIFFERENT fixed-string terminal, but
+	// each also widened (via missing-token-recovery lookahead, which is
+	// applied AFTER the preferredSyms snapshot — see computeLexModesWithContext)
+	// to admit the OTHER terminal too. Both states end up with identical
+	// validSyms={symA,symB} but preferredSyms stays limited to each state's
+	// own direct action (state 0: {symA}, state 1: {symB}). The only
+	// difference from TestLexModePreferredSymbolsIgnoredWithoutPatternTerminals
+	// is symB is now marked zero-width instead of neither symbol being
+	// pattern-based.
+	lexModes, stateToMode, _ := computeLexModes(
+		2,
+		tokenCount,
+		func(state, sym int) bool {
+			switch state {
+			case 0:
+				return sym == symA
+			case 1:
+				return sym == symB
+			default:
+				return false
+			}
+		},
+		nil,
+		nil,
+		-1,
+		nil,
+		nil,
+		0,
+		nil,
+		map[int]bool{symA: true, symB: true},
+		nil,
+		func(state int) []int {
+			switch state {
+			case 0:
+				return []int{symB}
+			case 1:
+				return []int{symA}
+			default:
+				return nil
+			}
+		},
+		nil,
+		nil,                      // no pattern-based terminals: symA/symB are both fixed strings
+		map[int]bool{symB: true}, // symB can match the empty string
+	)
+	if got, want := len(lexModes), 2; got != want {
+		t.Fatalf("lex mode count = %d, want %d (a zero-width symbol makes the tie genuine, so states must NOT share a mode)", got, want)
+	}
+	if stateToMode[0] == stateToMode[1] {
+		t.Fatalf("states with different preferred symbols sharing a zero-width tie-risk symbol must not share lex mode %d", stateToMode[0])
 	}
 }
 

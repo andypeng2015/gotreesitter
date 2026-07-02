@@ -289,6 +289,7 @@ func TestMissingRecoveryLexModeWideningStillAppliesToMainStates(t *testing.T) {
 		},
 		nil,
 		nil,
+		nil,
 	)
 
 	mode := lexModes[stateToMode[0]]
@@ -346,6 +347,7 @@ func TestMissingRecoveryLexModeWideningSkippedForStrictImmediateStates(t *testin
 		},
 		nil,
 		nil,
+		nil,
 	)
 
 	mode := lexModes[stateToMode[0]]
@@ -393,6 +395,7 @@ func TestMissingRecoveryLexModeWideningStillAppliesToMixedImmediateStates(t *tes
 			}
 			return nil
 		},
+		nil,
 		nil,
 		nil,
 	)

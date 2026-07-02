@@ -1298,10 +1298,38 @@ func terminalPatternSymSet(ng *NormalizedGrammar) map[int]bool {
 // identical span — so states whose valid symbols are entirely fixed strings
 // don't need (and must not carry) preference-based mode splitting. See
 // computeLexModesWithContext.
+//
+// The "two distinct fixed strings can never tie" half of that invariant does
+// NOT extend to zero-width terminals (a rule that can match the empty
+// string, e.g. the "\x00" EOF-sentinel string terminal some grammars use as
+// a choice alternative, or an explicit blank/optional rule collapsed to a
+// fixed string by expandRegexToRule). A zero-width terminal's accept is a
+// genuine tie with EVERY other terminal valid in that state — including
+// other fixed strings — so it must widen the gate the same way a real
+// pattern symbol does. zeroWidthTerminalSymSet covers that half; callers
+// must treat a state as tie-risky when it contains a symbol from EITHER set.
 func patternTerminalSymSet(ng *NormalizedGrammar) map[int]bool {
 	m := make(map[int]bool, len(ng.Terminals))
 	for _, t := range ng.Terminals {
 		if !isStringOnlyRule(t.Rule) {
+			m[t.SymbolID] = true
+		}
+	}
+	return m
+}
+
+// zeroWidthTerminalSymSet returns the set of symbol IDs whose terminal rule
+// can match the empty string (see terminalRuleCanMatchEmpty — the same
+// predicate assemble.go uses to populate gotreesitter.Language.ZeroWidthTokens).
+// A zero-width terminal trivially ties with any other terminal valid in the
+// same lex-mode state (its accept requires consuming zero characters), so
+// its presence must keep that state's preferredSyms even when every symbol
+// in the state is otherwise classified as a plain fixed string by
+// patternTerminalSymSet. See computeLexModesWithContext.
+func zeroWidthTerminalSymSet(ng *NormalizedGrammar) map[int]bool {
+	m := make(map[int]bool, len(ng.Terminals))
+	for _, t := range ng.Terminals {
+		if terminalRuleCanMatchEmpty(t.Rule) {
 			m[t.SymbolID] = true
 		}
 	}
@@ -1324,6 +1352,7 @@ func computeLexModes(
 	missingRecoveryTokens func(state int) []int,
 	suppressAfterWhitespaceSyms map[int]bool,
 	patternTerminals map[int]bool,
+	zeroWidthTerminals map[int]bool,
 ) ([]lexModeSpec, []int, []afterWSModeEntry) {
 	modes, stateToMode, afterWSModeMap, _ := computeLexModesWithContext(
 		context.Background(),
@@ -1342,6 +1371,7 @@ func computeLexModes(
 		missingRecoveryTokens,
 		suppressAfterWhitespaceSyms,
 		patternTerminals,
+		zeroWidthTerminals,
 	)
 	return modes, stateToMode, afterWSModeMap
 }
@@ -1363,6 +1393,7 @@ func computeLexModesWithContext(
 	missingRecoveryTokens func(state int) []int, // lookaheads needed for missing-token recovery (may be nil)
 	suppressAfterWhitespaceSyms map[int]bool,
 	patternTerminals map[int]bool, // symbols whose rule is NOT a pure fixed string (regex/pattern-shaped terminals); may be nil
+	zeroWidthTerminals map[int]bool, // symbols whose rule can match the empty string (see zeroWidthTerminalSymSet); may be nil
 ) ([]lexModeSpec, []int, []afterWSModeEntry, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -1538,9 +1569,13 @@ func computeLexModesWithContext(
 		// ever matches its own exact text, so nothing else can accept the
 		// identical span unless at least one competing terminal is
 		// pattern-based (a keyword-shaped identifier alias, a numeric
-		// literal, etc.). When this state's valid symbols are ALL fixed
-		// strings, preferredSyms therefore cannot affect DFA behavior at
-		// all, so it must not be allowed to affect mode identity either.
+		// literal, etc.) OR zero-width (a rule that can match the empty
+		// string, e.g. an EOF-sentinel "\x00" string terminal — its accept
+		// requires consuming nothing, so it trivially ties with every other
+		// valid symbol in the state, fixed-string or not). When this
+		// state's valid symbols are ALL fixed strings AND none of them can
+		// match empty, preferredSyms therefore cannot affect DFA behavior
+		// at all, so it must not be allowed to affect mode identity either.
 		// Folding it into the mode key unconditionally (as introduced for
 		// the genuine pattern-vs-pattern tie case) makes every state's own
 		// unwidened direct-action set part of the key — and since that set
@@ -1549,19 +1584,20 @@ func computeLexModesWithContext(
 		// (most of whose states only ever expect punctuation/keyword
 		// strings next), multiplying the lex-mode count and, downstream,
 		// the compiled DFA state count. Gate preferredSyms on the presence
-		// of at least one real pattern-based symbol so the tie-break stays
-		// fully correct while states that only ever differ in which fixed
-		// strings they directly accept — a case where preference never
-		// mattered — go back to sharing lex modes.
+		// of at least one real pattern-based symbol OR a zero-width symbol
+		// so the tie-break stays fully correct while states that only ever
+		// differ in which non-zero-width fixed strings they directly
+		// accept — a case where preference never mattered — go back to
+		// sharing lex modes.
 		if len(preferredSyms) > 0 {
-			hasPatternSym := false
+			hasTieRiskSym := false
 			for sym := range validSyms {
-				if patternTerminals[sym] {
-					hasPatternSym = true
+				if patternTerminals[sym] || zeroWidthTerminals[sym] {
+					hasTieRiskSym = true
 					break
 				}
 			}
-			if !hasPatternSym {
+			if !hasTieRiskSym {
 				preferredSyms = nil
 			}
 		}

@@ -1261,6 +1261,7 @@ func generateWithReportCtx(bgCtx context.Context, g *Grammar, opts reportBuildOp
 	stringPrefixExtensions := computeStringPrefixExtensions(ng.Terminals)
 	termPatSyms := terminalPatternSymSet(ng)
 	patternSyms := patternTerminalSymSet(ng)
+	zeroWidthSyms := zeroWidthTerminalSymSet(ng)
 	skipExtras := computeSkipExtras(ng)
 
 	var lexModes []lexModeSpec
@@ -1306,6 +1307,7 @@ func generateWithReportCtx(bgCtx context.Context, g *Grammar, opts reportBuildOp
 			buildLexModeMissingRecoveryTokensFunc(bgCtx, tables, tokenCount, ng.Terminals, skipExtras, ng, keywordSet),
 			suppressAfterWhitespaceSymbols(g, ng),
 			patternSyms,
+			zeroWidthSyms,
 		)
 		if err != nil {
 			endPhase(map[string]any{"error": true})
