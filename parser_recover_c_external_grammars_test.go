@@ -19,6 +19,20 @@ func TestCRecoveryAllEnablesExternalScannerGrammarsWithLexStates(t *testing.T) {
 		{name: "caddy", load: grammars.CaddyLanguage},
 		{name: "cooklang", load: grammars.CooklangLanguage},
 		{name: "kconfig", load: grammars.KconfigLanguage},
+		// Restored curated-12: hand-written scanners that regained their
+		// ExternalLexStates tables (see grammars/*_external_lex_states_gen.go).
+		{name: "awk", load: grammars.AwkLanguage},
+		{name: "bicep", load: grammars.BicepLanguage},
+		{name: "bitbake", load: grammars.BitbakeLanguage},
+		{name: "css", load: grammars.CssLanguage},
+		{name: "cue", load: grammars.CueLanguage},
+		{name: "dtd", load: grammars.DtdLanguage},
+		{name: "hack", load: grammars.HackLanguage},
+		{name: "hlsl", load: grammars.HlslLanguage},
+		{name: "jsdoc", load: grammars.JsdocLanguage},
+		{name: "just", load: grammars.JustLanguage},
+		{name: "luau", load: grammars.LuauLanguage},
+		{name: "svelte", load: grammars.SvelteLanguage},
 	}
 
 	for _, tt := range tests {

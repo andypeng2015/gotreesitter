@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 func main() {
@@ -18,12 +19,25 @@ func main() {
 	manifest := flag.String("manifest", "", "batch mode: path to manifest file")
 	outdir := flag.String("outdir", "", "batch mode: output directory for generated files")
 	compact := flag.Bool("compact", true, "compact and intern repeated tables before encoding")
+	lexStatesOnly := flag.Bool("lexstates-only", false, "batch mode: only (re)generate *_external_lex_states_gen.go sidecars; never touch blobs, register stubs, or the embedded loader aggregate")
+	only := flag.String("only", "", "-lexstates-only mode: comma-separated list of manifest language names to restrict to (ignored by plain batch mode, which always processes every manifest entry)")
 	flag.Parse()
 
 	if *manifest != "" {
 		if *outdir == "" {
 			fmt.Fprintln(os.Stderr, "batch mode requires -outdir")
 			os.Exit(1)
+		}
+		if *lexStatesOnly {
+			var names []string
+			if *only != "" {
+				names = strings.Split(*only, ",")
+			}
+			if err := RunLexStatesOnlyManifest(*manifest, *outdir, *pkg, names); err != nil {
+				fmt.Fprintf(os.Stderr, "lexstates-only: %v\n", err)
+				os.Exit(1)
+			}
+			return
 		}
 		if err := RunBatchManifest(*manifest, *outdir, *pkg, *compact); err != nil {
 			fmt.Fprintf(os.Stderr, "batch: %v\n", err)
