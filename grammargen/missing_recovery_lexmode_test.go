@@ -303,6 +303,109 @@ func TestMissingRecoveryLexModeWideningStillAppliesToMainStates(t *testing.T) {
 	}
 }
 
+// TestMissingRecoveryLexModeWideningSkippedForStrictImmediateStates guards the
+// strictImmediateState carve-out added to computeLexModesWithContext: a state
+// whose only real (non-widened) action is a token.immediate() terminal must
+// not have missing-token-recovery lookahead widening (or terminal extras)
+// injected into its lex mode. Passing actual immediate tokens here (unlike
+// the sibling TestMissingRecoveryLexModeWideningStillAppliesToMainStates
+// above, which passes immediateTokens=nil and so never exercises this path)
+// is what actually exercises strictImmediateState — see the false-ERROR
+// class this fixed: grammargen/dfa.go unconditionally widened every lex mode
+// with reduce-follow/missing-recovery lookaheads and terminal extras, which
+// corrupted the immediate-vs-non-immediate tie-break used when generating
+// the DFA for token.immediate() runs (e.g. mid interpreted_string_literal).
+func TestMissingRecoveryLexModeWideningSkippedForStrictImmediateStates(t *testing.T) {
+	const (
+		tokenCount   = 3
+		immediateTok = 1
+		semicolon    = 2
+	)
+
+	lexModes, stateToMode, _ := computeLexModes(
+		1,
+		tokenCount,
+		func(state, sym int) bool {
+			// State 0's only real action is on the immediate token.
+			return state == 0 && sym == immediateTok
+		},
+		nil,
+		nil,
+		-1,
+		map[int]bool{immediateTok: true},
+		nil,
+		0,
+		nil,
+		map[int]bool{immediateTok: true, semicolon: true},
+		nil,
+		func(state int) []int {
+			if state == 0 {
+				return []int{semicolon}
+			}
+			return nil
+		},
+		nil,
+		nil,
+	)
+
+	mode := lexModes[stateToMode[0]]
+	if !mode.validSymbols[immediateTok] {
+		t.Fatal("strict-immediate state lost its direct token")
+	}
+	if mode.validSymbols[semicolon] {
+		t.Fatal("missing-recovery widening leaked into a strict-immediate state's lex mode")
+	}
+}
+
+// TestMissingRecoveryLexModeWideningStillAppliesToMixedImmediateStates is the
+// counterpart to the strict-immediate carve-out above: a state with BOTH an
+// immediate action and a non-immediate (ordinary) action is not "strict
+// immediate" and must keep the existing missing-token-recovery widening
+// behavior.
+func TestMissingRecoveryLexModeWideningStillAppliesToMixedImmediateStates(t *testing.T) {
+	const (
+		tokenCount   = 4
+		immediateTok = 1
+		ordinaryTok  = 2
+		semicolon    = 3
+	)
+
+	lexModes, stateToMode, _ := computeLexModes(
+		1,
+		tokenCount,
+		func(state, sym int) bool {
+			// State 0 has both an immediate action and an ordinary
+			// (non-immediate) action — a mixed state.
+			return state == 0 && (sym == immediateTok || sym == ordinaryTok)
+		},
+		nil,
+		nil,
+		-1,
+		map[int]bool{immediateTok: true},
+		nil,
+		0,
+		nil,
+		map[int]bool{immediateTok: true, ordinaryTok: true, semicolon: true},
+		nil,
+		func(state int) []int {
+			if state == 0 {
+				return []int{semicolon}
+			}
+			return nil
+		},
+		nil,
+		nil,
+	)
+
+	mode := lexModes[stateToMode[0]]
+	if !mode.validSymbols[immediateTok] || !mode.validSymbols[ordinaryTok] {
+		t.Fatal("mixed state lost one of its direct tokens")
+	}
+	if !mode.validSymbols[semicolon] {
+		t.Fatal("mixed state must still receive missing-recovery lookahead widening")
+	}
+}
+
 func TestMissingRecoveryTokensStillAddSameFirstRuneNonPreemptingLookahead(t *testing.T) {
 	const (
 		tokenCount = 3

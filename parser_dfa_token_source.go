@@ -1142,11 +1142,44 @@ func (d *dfaTokenSource) nextGLRUnionDFAToken() (Token, bool) {
 			originActionCount = len(d.language.ParseActions[idx].Actions)
 		}
 
+		if DebugDFA.Load() {
+			fmt.Printf("  GLRUNION cand state=%d tok=%s(%d)[%d-%d] score=%d\n", st, d.symbolName(candTok.Symbol), candTok.Symbol, candTok.StartByte, candTok.EndByte, score)
+		}
 		if score <= 0 {
 			continue
 		}
 
 		candVisible := int(candTok.Symbol) < len(d.language.SymbolMetadata) && d.language.SymbolMetadata[candTok.Symbol].Visible
+
+		// A generated zero-width sentinel (e.g. Go's implicit `\0` statement
+		// terminator) matched by ONE live GLR stack's own lex mode should not
+		// automatically beat a genuine, later-starting token matched by a
+		// DIFFERENT live stack's lex mode purely because it "starts earlier"
+		// — it always trivially starts earlier by virtue of being
+		// zero-width, not because it reflects real content the other
+		// candidate misses. These are two independent, mutually exclusive
+		// interpretations resolving their own state correctly; picking the
+		// sentinel here silently discards a cross-stack-supported real
+		// continuation on the very same source line. See
+		// realTokenBeatsZeroWidthSentinelAcrossStacks for the narrow
+		// same-line / non-boundary scope this override applies within.
+		if bestFound {
+			if d.realTokenBeatsZeroWidthSentinelAcrossStacks(bestTok, candTok, score) {
+				bestFound = true
+				bestScore = score
+				bestTok = candTok
+				bestEndPos = candEndPos
+				bestEndRow = candEndRow
+				bestEndCol = candEndCol
+				bestVisible = candVisible
+				bestOriginActions = originActionCount
+				continue
+			}
+			if d.realTokenBeatsZeroWidthSentinelAcrossStacks(candTok, bestTok, bestScore) {
+				continue
+			}
+		}
+
 		splitPreference := 0
 		if candTok.StartByte == bestTok.StartByte {
 			splitPreference = d.compareAngleTokenPreference(candTok, bestTok)
@@ -1184,6 +1217,63 @@ func (d *dfaTokenSource) nextGLRUnionDFAToken() (Token, bool) {
 	d.lexer.row = bestEndRow
 	d.lexer.col = bestEndCol
 	return bestTok, true
+}
+
+// realTokenBeatsZeroWidthSentinelAcrossStacks reports whether real (a
+// genuine, non-zero-width token matched by one live GLR stack's lex mode)
+// should be preferred over zero (this language's generated zero-width
+// sentinel terminal, e.g. Go's implicit `\0` statement terminator, matched
+// by a DIFFERENT live stack's own lex mode) when nextGLRUnionDFAToken picks
+// the single token shared by all live stacks this round.
+//
+// The union scan's ordinary tie-break prefers whichever candidate starts
+// earliest, which is sound when comparing two real tokens — an earlier
+// start reflects a genuine difference in what the source contains at that
+// position. It is unsound when one candidate is a zero-width sentinel:
+// being zero-width means it always starts at or before any real match
+// found by continuing the scan, regardless of whether real content
+// actually follows. Two different, mutually exclusive parses (two live GLR
+// stacks) can each correctly resolve their OWN lex mode at this exact
+// position — one finding the sentinel because ITS state accepts it there,
+// the other finding a real, later-starting token because ITS state expects
+// one — and blindly preferring the shorter match discards the
+// cross-stack-supported real continuation.
+//
+// Scope is deliberately narrow: real must be separated from zero only by
+// horizontal whitespace on the same source line (a real newline is exactly
+// what the terminator is supposed to detect, so crossing one leaves the
+// sentinel's win untouched), zero must not sit at a genuine
+// atGeneratedZeroWidthSentinelBoundary (a closing bracket or EOF — the
+// sentinel's own deliberate, pre-existing trigger), and real must carry
+// positive cross-stack support (realScore, the same score already computed
+// by the caller) so an unsupported stray match can't win.
+func (d *dfaTokenSource) realTokenBeatsZeroWidthSentinelAcrossStacks(zero, real Token, realScore int) bool {
+	if d == nil || d.lexer == nil || !d.hasZeroWidthSentinelSymbol {
+		return false
+	}
+	if zero.Symbol != d.zeroWidthSentinelSymbol || zero.EndByte != zero.StartByte {
+		return false
+	}
+	if real.Symbol == 0 || real.Symbol == d.zeroWidthSentinelSymbol || realScore <= 0 {
+		return false
+	}
+	if real.StartByte <= zero.StartByte {
+		return false
+	}
+	if d.atGeneratedZeroWidthSentinelBoundary(int(zero.StartByte)) {
+		return false
+	}
+	start := int(zero.StartByte)
+	end := int(real.StartByte)
+	if start < 0 || end < start || end > len(d.lexer.source) {
+		return false
+	}
+	for _, b := range d.lexer.source[start:end] {
+		if b == '\n' || b == '\r' {
+			return false
+		}
+	}
+	return true
 }
 
 func (d *dfaTokenSource) dedupeGLRUnionScoreStates() bool {
@@ -1382,6 +1472,16 @@ scanReal:
 		d.lexer.col = startCol
 		return Token{}, false
 	}
+	// The raw DFA scan classifies word-shaped text (identifiers) without
+	// keyword promotion — reserved words like "else" come back as a plain
+	// "identifier" token here, exactly like every other name. Promote it
+	// before checking whether the current state can actually consume it,
+	// or a same-line keyword continuation (e.g. `if x {...} else {...}`)
+	// always fails this check on its un-promoted "identifier" symbol and
+	// falls through to the zero-width sentinel, letting the parser close
+	// off the enclosing construct (if_statement) one token too early and
+	// treat the keyword text as a bare identifier from then on.
+	realTok = d.promoteActiveLiteralForCurrentState(realTok, pos, row, col)
 	if !d.hasActionForStateSymbol(state, realTok.Symbol) {
 		d.lexer.pos = startPos
 		d.lexer.row = startRow
