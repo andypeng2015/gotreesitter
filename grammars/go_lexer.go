@@ -724,6 +724,48 @@ func (ts *GoTokenSource) buildMaps() error {
 		}
 		return syms[idx]
 	}
+	// aliasedTerminalSym resolves a named token that a grammargen-compiled
+	// blob may represent as a tree-sitter `alias()` display name rather than
+	// a real shiftable terminal. In that shape, TokenSymbolsByName(name)
+	// comes back empty because the grammar table's actual shift/lex symbol
+	// is a distinct, hidden, auto-generated terminal (e.g.
+	// "_raw_string_literal_token1") — the parser relabels that hidden
+	// terminal's leaf to the alias's symbol at reduce time via
+	// Language.AliasSequences, purely for tree display. GoTokenSource must
+	// feed the parser the hidden terminal id (what the DFA lexer would also
+	// shift), not the alias id, or the parse table has no action for it.
+	// Falls back to the ts2go-style direct lookup first for backward
+	// compatibility with older blobs where the name IS the real terminal.
+	aliasedTerminalSym := func(name string) gotreesitter.Symbol {
+		if syms := ts.lang.TokenSymbolsByName(name); len(syms) > 0 {
+			return syms[0]
+		}
+		aliasSym, ok := ts.lang.SymbolByName(name)
+		if !ok {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("go lexer: token symbol %q not found", name)
+			}
+			return 0
+		}
+		for _, ps := range ts.lang.ProductionSignatures {
+			if int(ps.ProductionID) >= len(ts.lang.AliasSequences) {
+				continue
+			}
+			aliasSeq := ts.lang.AliasSequences[ps.ProductionID]
+			for idx, rhsSym := range ps.RHS {
+				if idx >= len(aliasSeq) || aliasSeq[idx] != aliasSym {
+					continue
+				}
+				if uint32(rhsSym) < ts.lang.TokenCount {
+					return rhsSym
+				}
+			}
+		}
+		if firstErr == nil {
+			firstErr = fmt.Errorf("go lexer: token symbol %q not found", name)
+		}
+		return 0
+	}
 
 	ts.eofSymbol = 0
 	if eof, ok := ts.lang.SymbolByName("end"); ok {
@@ -773,10 +815,10 @@ func (ts *GoTokenSource) buildMaps() error {
 	ts.imaginaryLiteralSymbol = tokenSym("imaginary_literal")
 
 	ts.rawStringQuoteSymbol = tokenSym("`")
-	ts.rawStringContentSymbol = tokenSym("raw_string_literal_content")
+	ts.rawStringContentSymbol = aliasedTerminalSym("raw_string_literal_content")
 	ts.interpretedStringOpenQuoteSymbol = tokenSymAt("\"", 0)
 	ts.interpretedStringCloseQuoteSymbol = tokenSymAt("\"", 1)
-	ts.interpretedStringContentSymbol = tokenSym("interpreted_string_literal_content")
+	ts.interpretedStringContentSymbol = aliasedTerminalSym("interpreted_string_literal_content")
 	ts.escapeSequenceSymbol = tokenSym("escape_sequence")
 
 	symbolMap := map[token.Token]gotreesitter.Symbol{
