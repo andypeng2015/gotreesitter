@@ -21,6 +21,40 @@ const (
 	javaFullParseRetryMaxGLRStacks   = 64
 	javaFullParseRetryMaxMergePerKey = 16
 	javaTightMergeCapSourceLen       = 256 * 1024
+	// goAcceptedErrorMergePerKeyRetry widens Go's merge-per-key survivor
+	// budget only on the retry rung, when a fresh full parse at the
+	// steady-state cap (3, see the "go" case in effectiveParseMergePerKeyCap)
+	// accepts with an error. See fullParseRetryMergePerKeyOverride's "go"
+	// case for the full rationale: this keeps clean files (the overwhelming
+	// majority, including this repo's own parser.go/parser_reduce.go and
+	// grammargen/lr.go, and grammargen/normalize.go) on the cheap cap=3 path
+	// with no retry at all, while files that need more survivors to keep the
+	// correct index_expression branch alive (the ASI-fix regression files)
+	// pay a second parse at this cap instead of a permanently widened budget.
+	//
+	// 16, not 8: a genuinely fresh parse (no prior failed attempt on the same
+	// Parser) reaches a clean result for every regression file at cap=8, but
+	// the SAME cap value reached via this retry rung (i.e. after a discarded
+	// cap=3 attempt on the same Parser) was insufficient for one of them —
+	// stdlib's sort/sort_slices_benchmark_test.go stayed HasError=true
+	// through an 8-cap retry and only came back clean at 16. The two paths
+	// are not computationally equivalent even though they request the same
+	// mergePerKeyCap value: something about having already run a cap=3
+	// attempt on the same Parser instance (arena/GSS pooling, or some other
+	// carried-over state — not resolveParseMaxStacks's retryPass flag, ruled
+	// out directly: it is already true on the very first cap=3 attempt too,
+	// since go's tuned initial stack budget of 32 always exceeds
+	// maxGLRStacks=8 regardless of merge-per-key) biases the GLR merge
+	// selection differently than an independent fresh parse at the same cap.
+	// This is the same class of engine nondeterminism as the cap-value
+	// non-monotonicity noted on effectiveParseMergePerKeyCap's "go" case
+	// (grammargen/normalize.go: clean at cap=3, erroring at every fixed cap
+	// from 8 through 16 when that cap is the STEADY STATE) — both point at
+	// the GLR merge-selection engine being sensitive to more than just the
+	// final cap value, which is real RCA seed material for a proper
+	// investigation, not something this rung's cap choice can fully paper
+	// over. 16 is empirically sufficient for every case found so far.
+	goAcceptedErrorMergePerKeyRetry = 16
 	// Retry node-limit full parses with a bounded larger node budget instead of
 	// globally raising the default cap for every parse.
 	fullParseRetryNodeLimitScale = 2
@@ -563,67 +597,88 @@ func effectiveParseMergePerKeyCap(lang *Language, mergePerKeyCap int, incrementa
 		}
 	case "go":
 		// Go's full-tree path is false-equivalence heavy around expression/type
-		// ambiguity. Raised from 3 to 8 alongside the `_automatic_semicolon`
-		// external-scanner ASI fix (grammars/go_scanner.go): routing the
-		// terminator through an external token restructures the LALR table
-		// enough that Go's pre-existing, upstream-intentional dynamic-
-		// precedence tie between index_expression and
-		// generic_type(composite_literal) (both PrecDynamic(1, ...), see
-		// grammargen/go_grammar.go) needs more surviving GLR candidates at
-		// its merge point on real-world files than the old cap=3 provides.
-		// A narrower, source-content-gated widen (only for
-		// `identifier[identifier] (!=|==) identifier[identifier]` shapes) was
-		// tried first and shipped in d6d5e5b7, but review found it missed
-		// non-bracket-shaped triggers entirely: cursor_test.go,
-		// language_forest_optin_test.go, query_kotlin_regression_test.go
-		// (this repo) and sort_slices_benchmark_test.go (stdlib) all parsed
-		// clean pre-ASI-fix and clean under the C oracle, but flipped to
-		// ERROR under the gated cap=5 widen. cap=8 (measured minimum was
-		// lower per-file, but 8 is what review verified fixes all four plus
-		// TestParseGoRangeWithNestedFunctionLiteralBody, a pre-existing
-		// misparse) is applied unconditionally for go instead of gated on
-		// content — see the perf ledger in the commit introducing this
-		// comment for the measured cost on large real files (this repo's own
-		// parser.go, parser_reduce.go, grammargen/lr.go) versus the
-		// pre-ASI-fix and gated-cap=5 baselines. Without faithful condense,
-		// eight same-key survivors are needed; cap=2 prunes a required
-		// branch. With faithful cap-one condense, tied same-key readings are
+		// ambiguity. Three same-key survivors preserve the current parse,
+		// highlight, and query gates, while cap=2 prunes a required branch.
+		// With faithful cap-one condense, tied same-key readings are
 		// preserved through multi-link GSS nodes, so the steady-state
 		// full-parse cap can tighten. Explicit diagnostic overrides and
 		// incremental reparses stay wide.
 		//
-		// KNOWN GAP (found after cap=8 landed, not yet fixed): cap=8 does
-		// NOT achieve zero clean-parses-flip-to-ERROR on this repo's own
-		// corpus. grammargen/normalize.go — clean at both the pre-ASI-fix
-		// baseline and the gated-cap=5 attempt — still parses with a false
-		// ERROR at cap=8. Minimal repro (same index_expression/generic_type
-		// ambiguity family, different shape: a bracket-index expression used
-		// bare as an if-condition, inside a for-range loop, with a nested
-		// bracket-in-bracket assignment in the body):
+		// This steady-state cap does NOT widen for the
+		// `_automatic_semicolon` external-scanner ASI fix's fallout
+		// (grammars/go_scanner.go; the fix itself restructures the LALR
+		// table enough that Go's pre-existing, upstream-intentional
+		// dynamic-precedence tie between index_expression and
+		// generic_type(composite_literal), both PrecDynamic(1, ...), needs
+		// more merge-per-key survivors on some real files than cap=3
+		// provides). Two things were tried and reverted before landing on
+		// the retry-rung design actually used (fullParseRetryMergePerKeyOverride's
+		// "go" case, goAcceptedErrorMergePerKeyRetry): (1) a source-content
+		// gate for `identifier[identifier] (!=|==) identifier[identifier]`
+		// shapes only (shipped in d6d5e5b7) missed non-bracket-shaped
+		// triggers entirely — cursor_test.go, language_forest_optin_test.go,
+		// query_kotlin_regression_test.go (this repo) and
+		// sort_slices_benchmark_test.go (stdlib) all parsed clean pre-ASI-fix
+		// and clean under the C oracle, but flipped to ERROR under that gate.
+		// (2) An unconditional steady-state raise to cap=8 (shipped in
+		// a03cdff0) fixed those four plus a pre-existing misparse
+		// (TestParseGoRangeWithNestedFunctionLiteralBody) but cost 4-6x on
+		// large real files that never needed the wider budget (this repo's
+		// own parser.go, parser_reduce.go, grammargen/lr.go — all clean at
+		// cap=3) AND was itself non-monotonic in the cap value:
+		// grammargen/normalize.go parsed clean at cap=3 but produced a false
+		// ERROR at every fixed steady-state cap from 8 through 16 tested (a
+		// from-scratch full parse at a fixed, elevated cap can select a
+		// WORSE merge winner than one that started at cap=3 — a genuine GLR
+		// merge-selection engine finding, not specific to Go). That
+		// non-monotonicity is why this steady-state cap stays at 3 rather
+		// than being raised again: there is no single fixed value that is
+		// safe for every file.
 		//
-		//	for value, names := range candidatesByValue {
-		//		if anonymousSources[value] {
-		//			out[names[0]] = true
+		// The retry rung sidesteps both problems for free: it only fires
+		// when the cap=3 parse itself reports HasError (ParseStopAccepted +
+		// retryTreeHasError), so clean files (the overwhelming majority,
+		// including all of parser.go/parser_reduce.go/grammargen/lr.go/
+		// grammargen/normalize.go) never retry and never risk the
+		// non-monotonic misselection above; only files already broken at
+		// cap=3 (the four regression files, residual_adjacent_funcs_call_then_if_ne,
+		// and TestParseGoRangeWithNestedFunctionLiteralBody) pay a second
+		// parse to get fixed. See goAcceptedErrorMergePerKeyRetry's doc
+		// comment for why that second parse uses cap=16, not cap=8: a
+		// genuinely fresh parse reaches clean at cap=8 for every one of
+		// those files, but sort_slices_benchmark_test.go specifically did
+		// not reach clean through an 8-cap *retry* (same target cap, worse
+		// result than a fresh parse at that cap) — a second, distinct
+		// instance of the same engine-level path-dependence.
+		//
+		// RCA seed for a real engine investigation (not this fix): the
+		// underlying PrecDynamic-tie merge-selection nondeterminism — both
+		// the cap-value non-monotonicity (grammargen/normalize.go) and the
+		// retry-vs-fresh-parse discrepancy at an identical cap
+		// (sort_slices_benchmark_test.go) — is real and not Go-specific; the
+		// same PrecDynamic-tie family shows up in tsx/typescript's `a<b>(c)`
+		// ambiguity (see the "typescript"/"tsx" case in
+		// fullParseRetryMergePerKeyOverride). Minimal 153-byte repro that is
+		// clean at cap=3 but errors at every fixed steady-state cap from 8
+		// through 16 (this one IS fixed by the retry rung, since the rung
+		// never fires for it — it is seed material for the underlying engine
+		// behavior, not an open regression):
+		//
+		//	package p
+		//	func f() {
+		//		for value, names := range candidatesByValue {
+		//			if anonymousSources[value] {
+		//				out[names[0]] = true
+		//			}
 		//		}
 		//	}
-		//
-		// Raising the cap further does not fix it either (tested 8, 10, 12,
-		// 16 via GOT_GLR_MAX_MERGE_PER_KEY — all HasError=true), unlike the
-		// four files above that cap=8 does fix. That rules out "needs an
-		// even wider survivor budget" as the explanation for this specific
-		// shape and points at a different or deeper mechanism. Follow-up
-		// needed before this can be called a complete fix for the
-		// `_automatic_semicolon` external-scanner ASI change's fallout.
 		if !parseMaxMergePerKeyEnvConfigured() {
 			if glrFaithfulCapOneMerge && mergePerKeyCap > 1 {
 				return 1
 			}
-			// Unlike every other case in this switch, go's target (8) sits
-			// above the global default (maxStacksPerMergeKey = 6, see
-			// glr.go), so this must widen, not just tighten a higher input
-			// down — a `mergePerKeyCap > 8` guard would silently leave the
-			// default 6 in place instead of reaching 8.
-			return 8
+			if mergePerKeyCap > 3 {
+				return 3
+			}
 		}
 	case "c":
 		// C's declaration/expression recovery can keep many redundant
@@ -1060,6 +1115,32 @@ func fullParseRetryMergePerKeyOverride(tree *Tree, sourceLen int, initialMaxStac
 	if tree.language != nil && tree.language.Name == "java" && rt.StopReason == ParseStopAccepted && retryTreeHasError(tree) {
 		return javaFullParseRetryMaxMergePerKey
 	}
+	if tree.language != nil && tree.language.Name == "go" && rt.StopReason == ParseStopAccepted && retryTreeHasError(tree) {
+		// See goAcceptedErrorMergePerKeyRetry's doc comment and the "go" case
+		// in effectiveParseMergePerKeyCap for the full account. TL;DR: the
+		// `_automatic_semicolon` external-scanner ASI fix (grammars/go_scanner.go)
+		// restructured enough of the LALR table that Go's pre-existing,
+		// upstream-intentional dynamic-precedence tie between
+		// index_expression and generic_type(composite_literal) (both
+		// PrecDynamic(1, ...)) needs more merge-per-key survivors than the
+		// steady-state cap=3 on some real files — but ONLY those files, so
+		// this is scoped to the retry rung (fires on an accepted-but-erroring
+		// fresh parse) rather than a permanent language-wide cap raise, which
+		// cost 4-6x on large real files that never needed it (this repo's
+		// own parser.go, parser_reduce.go, grammargen/lr.go — all clean at
+		// cap=3, never retry, never pay the wider budget) and was itself
+		// non-monotonic in the cap value: grammargen/normalize.go parsed
+		// clean at cap=3 but produced a false ERROR at every cap from 8
+		// through 16 tested (a from-scratch full parse at a fixed, elevated
+		// cap can select a WORSE merge winner than one that started at
+		// cap=3), so a blanket raise cannot safely replace this rung. Scoped
+		// to lang.Name=="go" for now (this retry mechanism is not otherwise
+		// language-aware beyond a per-language switch); the same
+		// PrecDynamic-tie family shows up in tsx/typescript
+		// (`a<b>(c)`-shaped ambiguity, see the "typescript"/"tsx" case just
+		// below) and may want the same treatment later.
+		return goAcceptedErrorMergePerKeyRetry
+	}
 	if tree.language != nil && (tree.language.Name == "typescript" || tree.language.Name == "tsx") &&
 		rt.StopReason == ParseStopAccepted && retryTreeHasError(tree) && sourceLen > 64*1024 {
 		// Large TypeScript-family files keep the wider steady-state cap, but
@@ -1146,6 +1227,17 @@ func (p *Parser) retryFullParse(source []byte, initialMaxStacks int, tree *Tree,
 		// sane default wall-clock budget, or isolate why this specific large,
 		// already-imperfect-parsing file drives the retry cascade past any
 		// of its per-stage caps without a timeout to fall back on.
+		//
+		// Related, separately discovered finding: this repo's own
+		// grammars/markdown_scanner.go was already HasError=true at the
+		// pre-ASI-fix baseline (StopReason accepted, reaches EOF) but is
+		// HasError=true differently now (StopReason no_stacks_alive,
+		// Truncated=true, stops at byte ~20860 of 37144) — not a
+		// clean-to-error flip, but a worse failure shape on an
+		// already-broken file, surfaced by the same repo-corpus walk used to
+		// validate this fix. Not root-caused in the time available; flagging
+		// alongside the parity_test.go gap above rather than leaving it
+		// silently undiscovered.
 		if p == nil || p.timeoutMicros == 0 {
 			return false
 		}

@@ -1186,9 +1186,12 @@ func TestGoIfElseSameLineKeywordPromotion(t *testing.T) {
 // shape it targeted. The other two (cursor_test.go, this repo;
 // sort_slices_benchmark_test.go, Go standard library) are exercised by ad
 // hoc corpus walks rather than pinned here. See the "go" case in
-// effectiveParseMergePerKeyCap (parser_retry.go) for the full account and
-// why the fix ended up as an unconditional steady-state cap raise (3 -> 8)
-// instead of a narrower probe.
+// effectiveParseMergePerKeyCap and fullParseRetryMergePerKeyOverride's "go"
+// case (parser_retry.go) for the full account: the fix landed as a
+// steady-state cap=3 (unchanged from pre-ASI-fix) plus a retry rung that
+// fires only when a fresh cap=3 parse reports HasError, re-parsing once at
+// cap=16 — these two files' cap=3 parses report HasError=true, so this test
+// exercises the retry rung internally without asserting on it directly.
 func TestGoMergePerKeyCapRegressionFiles(t *testing.T) {
 	for _, name := range []string{
 		"language_forest_optin_test.go",
@@ -1207,4 +1210,49 @@ func TestGoMergePerKeyCapRegressionFiles(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestGoMergePerKeyCapNormalizeGoStaysCleanAtSteadyState pins the other half
+// of the merge-per-key cap story: grammargen/normalize.go (and the 153-byte
+// repro of its trigger shape below) parses clean at the steady-state cap=3
+// — the retry rung in fullParseRetryMergePerKeyOverride's "go" case must
+// never fire for it. This matters because an earlier, since-reverted attempt
+// at this fix (an unconditional steady-state raise to cap=8, commit
+// a03cdff0) broke this exact file: the same construct parses clean at cap=3
+// but produces a false ERROR at every fixed steady-state cap from 8 through
+// 16 tested — the GLR merge-selection engine is not monotonic in the cap
+// value, so a from-scratch parse at a fixed, elevated cap can select a worse
+// merge winner than one that started narrow. The retry-rung design sidesteps
+// this by construction (clean-at-cap=3 files never retry), but this test
+// guards against a future change reintroducing a steady-state raise, or
+// otherwise causing this file/shape to see a wider cap on its first pass.
+func TestGoMergePerKeyCapNormalizeGoStaysCleanAtSteadyState(t *testing.T) {
+	t.Run("grammargen/normalize.go", func(t *testing.T) {
+		src, err := os.ReadFile("grammargen/normalize.go")
+		if err != nil {
+			t.Fatalf("read grammargen/normalize.go: %v", err)
+		}
+		tree, lang := parseGo(t, string(src))
+		root := tree.RootNode()
+		defer tree.Release()
+		if root.HasError() {
+			t.Fatalf("root has error for grammargen/normalize.go:\n%s", root.SExpr(lang))
+		}
+	})
+	t.Run("minimal_repro", func(t *testing.T) {
+		src := "package p\n" +
+			"func f() {\n" +
+			"\tfor value, names := range candidatesByValue {\n" +
+			"\t\tif anonymousSources[value] {\n" +
+			"\t\t\tout[names[0]] = true\n" +
+			"\t\t}\n" +
+			"\t}\n" +
+			"}\n"
+		tree, lang := parseGo(t, src)
+		root := tree.RootNode()
+		defer tree.Release()
+		if root.HasError() {
+			t.Fatalf("root has error for minimal_repro:\n%s", root.SExpr(lang))
+		}
+	})
 }
