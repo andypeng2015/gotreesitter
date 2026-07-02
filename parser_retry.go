@@ -21,14 +21,6 @@ const (
 	javaFullParseRetryMaxGLRStacks   = 64
 	javaFullParseRetryMaxMergePerKey = 16
 	javaTightMergeCapSourceLen       = 256 * 1024
-	// goBracketComparisonMergePerKey widens Go's steady-state merge-per-key
-	// cap (3) only for sources matching goSourceHasBracketIndexComparison; 5
-	// is the observed minimum that keeps the index_expression branch alive
-	// at that merge point. Kept at the minimum (rather than +1 margin) because
-	// this codebase's own comparison-heavy files (parser_reduce.go, lr.go)
-	// trip the heuristic and cost noticeably more per extra survivor (~2x
-	// jump from 5->6 on real files in this repo).
-	goBracketComparisonMergePerKey = 5
 	// Retry node-limit full parses with a bounded larger node budget instead of
 	// globally raising the default cap for every parse.
 	fullParseRetryNodeLimitScale = 2
@@ -571,19 +563,67 @@ func effectiveParseMergePerKeyCap(lang *Language, mergePerKeyCap int, incrementa
 		}
 	case "go":
 		// Go's full-tree path is false-equivalence heavy around expression/type
-		// ambiguity. Without faithful condense, three same-key survivors
-		// preserve the current parse, highlight, and query gates, while cap=2
-		// prunes a required branch. With faithful cap-one condense, tied
-		// same-key readings are preserved through multi-link GSS nodes, so the
-		// steady-state full-parse cap can tighten. Explicit diagnostic
-		// overrides and incremental reparses stay wide.
+		// ambiguity. Raised from 3 to 8 alongside the `_automatic_semicolon`
+		// external-scanner ASI fix (grammars/go_scanner.go): routing the
+		// terminator through an external token restructures the LALR table
+		// enough that Go's pre-existing, upstream-intentional dynamic-
+		// precedence tie between index_expression and
+		// generic_type(composite_literal) (both PrecDynamic(1, ...), see
+		// grammargen/go_grammar.go) needs more surviving GLR candidates at
+		// its merge point on real-world files than the old cap=3 provides.
+		// A narrower, source-content-gated widen (only for
+		// `identifier[identifier] (!=|==) identifier[identifier]` shapes) was
+		// tried first and shipped in d6d5e5b7, but review found it missed
+		// non-bracket-shaped triggers entirely: cursor_test.go,
+		// language_forest_optin_test.go, query_kotlin_regression_test.go
+		// (this repo) and sort_slices_benchmark_test.go (stdlib) all parsed
+		// clean pre-ASI-fix and clean under the C oracle, but flipped to
+		// ERROR under the gated cap=5 widen. cap=8 (measured minimum was
+		// lower per-file, but 8 is what review verified fixes all four plus
+		// TestParseGoRangeWithNestedFunctionLiteralBody, a pre-existing
+		// misparse) is applied unconditionally for go instead of gated on
+		// content — see the perf ledger in the commit introducing this
+		// comment for the measured cost on large real files (this repo's own
+		// parser.go, parser_reduce.go, grammargen/lr.go) versus the
+		// pre-ASI-fix and gated-cap=5 baselines. Without faithful condense,
+		// eight same-key survivors are needed; cap=2 prunes a required
+		// branch. With faithful cap-one condense, tied same-key readings are
+		// preserved through multi-link GSS nodes, so the steady-state
+		// full-parse cap can tighten. Explicit diagnostic overrides and
+		// incremental reparses stay wide.
+		//
+		// KNOWN GAP (found after cap=8 landed, not yet fixed): cap=8 does
+		// NOT achieve zero clean-parses-flip-to-ERROR on this repo's own
+		// corpus. grammargen/normalize.go — clean at both the pre-ASI-fix
+		// baseline and the gated-cap=5 attempt — still parses with a false
+		// ERROR at cap=8. Minimal repro (same index_expression/generic_type
+		// ambiguity family, different shape: a bracket-index expression used
+		// bare as an if-condition, inside a for-range loop, with a nested
+		// bracket-in-bracket assignment in the body):
+		//
+		//	for value, names := range candidatesByValue {
+		//		if anonymousSources[value] {
+		//			out[names[0]] = true
+		//		}
+		//	}
+		//
+		// Raising the cap further does not fix it either (tested 8, 10, 12,
+		// 16 via GOT_GLR_MAX_MERGE_PER_KEY — all HasError=true), unlike the
+		// four files above that cap=8 does fix. That rules out "needs an
+		// even wider survivor budget" as the explanation for this specific
+		// shape and points at a different or deeper mechanism. Follow-up
+		// needed before this can be called a complete fix for the
+		// `_automatic_semicolon` external-scanner ASI change's fallout.
 		if !parseMaxMergePerKeyEnvConfigured() {
 			if glrFaithfulCapOneMerge && mergePerKeyCap > 1 {
 				return 1
 			}
-			if mergePerKeyCap > 3 {
-				return 3
-			}
+			// Unlike every other case in this switch, go's target (8) sits
+			// above the global default (maxStacksPerMergeKey = 6, see
+			// glr.go), so this must widen, not just tighten a higher input
+			// down — a `mergePerKeyCap > 8` guard would silently leave the
+			// default 6 in place instead of reaching 8.
+			return 8
 		}
 	case "c":
 		// C's declaration/expression recovery can keep many redundant
@@ -933,95 +973,6 @@ func typeScriptSourceHasDestructuredArrowReturnType(source []byte) bool {
 	}
 }
 
-// goFullParseNeedsBracketComparisonMergeWidth reports whether a Go full parse
-// should widen the merge-per-key survivor budget beyond the steady-state
-// default of 3 (see the "go" case in effectiveParseMergePerKeyCap).
-//
-// Background: routing the grammar's `terminator` rule through the
-// `_automatic_semicolon` external scanner (grammars/go_scanner.go) — the fix
-// for the shared-DFA zero-width/`\n` tie-break bug — restructures enough of
-// the LALR table that Go's pre-existing, upstream-intentional dynamic-
-// precedence tie between `index_expression` and `generic_type` (both
-// `prec.dynamic(1, ...)`, matching tree-sitter-go's grammar.js) needs one
-// more surviving GLR candidate at its merge point to keep the correct,
-// error-free `index_expression` branch alive on sources shaped like
-// `a[b] != c[d] {` (e.g. `if got[i] != want[i] {` inside a larger function).
-// At the steady-state cap of 3 that branch can be pruned, leaving only the
-// `generic_type`-as-composite-literal branch, which then fails later in the
-// file and surfaces as a false ERROR.
-//
-// Raising the steady-state cap globally fixes it but costs roughly 3-13x on
-// large, non-ambiguous real files (this repo's own 285KB parser.go went from
-// ~1.5s to ~5-20s) for no benefit, since files without this specific shape
-// never needed the extra survivor. Instead, gate the wider cap on a cheap,
-// narrow source scan for the trigger shape itself — bare
-// `identifier[identifier]` on both sides of `!=`/`==` — mirroring how
-// javaFullParseNeedsAnnotationDeclarationMergeWidth and the TypeScript arrow-
-// parameter checks above gate their own merge-width overrides on a source
-// content probe rather than a language-wide default change. A sampled walk
-// of the Go standard library corpus matches this shape in under 1% of files.
-func goFullParseNeedsBracketComparisonMergeWidth(lang *Language, source []byte, reuse *reuseCursor) bool {
-	return lang != nil &&
-		lang.Name == "go" &&
-		reuse == nil &&
-		!parseMaxMergePerKeyEnvConfigured() &&
-		goSourceHasBracketIndexComparison(source)
-}
-
-// goSourceHasBracketIndexComparison scans for `identifier[identifier]`
-// immediately (modulo horizontal whitespace) followed by `!=` or `==`
-// followed by another `identifier[identifier]`. This is a narrow, cheap
-// linear proxy for the index_expression-vs-generic_type ambiguity trigger
-// shape described on goFullParseNeedsBracketComparisonMergeWidth; it is
-// intentionally conservative about false negatives (any single-sided or
-// mismatched-shape occurrence is skipped) since the caller only uses this to
-// opt into a wider, slower merge-survivor budget, not for correctness itself.
-func goSourceHasBracketIndexComparison(source []byte) bool {
-	n := len(source)
-	for i := 0; i < n; i++ {
-		if source[i] != '[' || i == 0 || !isGoIdentByte(source[i-1]) {
-			continue
-		}
-		j := i + 1
-		for j < n && isGoIdentByte(source[j]) {
-			j++
-		}
-		if j == i+1 || j >= n || source[j] != ']' {
-			continue
-		}
-		k := j + 1
-		for k < n && (source[k] == ' ' || source[k] == '\t') {
-			k++
-		}
-		if k+1 >= n || source[k+1] != '=' || (source[k] != '!' && source[k] != '=') {
-			continue
-		}
-		k += 2
-		for k < n && (source[k] == ' ' || source[k] == '\t') {
-			k++
-		}
-		start := k
-		for k < n && isGoIdentByte(source[k]) {
-			k++
-		}
-		if k == start || k >= n || source[k] != '[' {
-			continue
-		}
-		m := k + 1
-		for m < n && isGoIdentByte(source[m]) {
-			m++
-		}
-		if m == k+1 || m >= n || source[m] != ']' {
-			continue
-		}
-		return true
-	}
-	return false
-}
-
-func isGoIdentByte(b byte) bool {
-	return b == '_' || (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9')
-}
 
 func fullParseUsesDeterministicExternalConflicts(lang *Language) bool {
 	return lang != nil &&
@@ -1175,6 +1126,26 @@ func (p *Parser) retryFullParse(source []byte, initialMaxStacks int, tree *Tree,
 		if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
 			return true
 		}
+		// KNOWN GAP (tracked, not fixed here): when the caller never
+		// configures a timeout (p.timeoutMicros == 0, the default for a
+		// freshly constructed Parser and for every test/benchmark helper in
+		// this repo that just calls Parser.Parse), this whole deadline check
+		// is a no-op and the retry cascade below has no wall-clock ceiling —
+		// only the fixed per-stage caps (fullParseRetryMaxGLRStacks,
+		// fullParseRetryMaxMergePerKey, the node-limit scale factors). On
+		// most inputs that is fine because each stage still resolves
+		// quickly even at its widened cap. But grammargen/parity_test.go (a
+		// 110KB file in this repo that already carried a small, pre-existing
+		// parse error under the old Go blob) runs past 90s under the current
+		// Go blob without a caller-supplied timeout — root cause not
+		// isolated: it is not the merge-per-key/stack-cap mechanism itself
+		// (widening or narrowing both via GOT_GLR_MAX_MERGE_PER_KEY /
+		// GOT_GLR_MAX_STACKS made no difference), and ASCII-substituting the
+		// Unicode box-drawing characters near the pre-existing baseline
+		// error ruled those out too. Follow-up: either give Parser.Parse a
+		// sane default wall-clock budget, or isolate why this specific large,
+		// already-imperfect-parsing file drives the retry cascade past any
+		// of its per-stage caps without a timeout to fall back on.
 		if p == nil || p.timeoutMicros == 0 {
 			return false
 		}

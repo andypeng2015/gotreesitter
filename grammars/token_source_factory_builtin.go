@@ -32,15 +32,20 @@ func init() {
 	// mirroring JavaScriptExternalScanner's `_automatic_semicolon` handling,
 	// so the DFA lexer's shared-state tie-break never has to arbitrate
 	// between the real newline and the zero-width EOF sentinel. This
-	// required a matching, narrow fix in parser_retry.go
-	// (goFullParseNeedsBracketComparisonMergeWidth): restructuring the
-	// grammar's terminator rule shifts enough of the LALR table that Go's
-	// pre-existing, upstream-intentional dynamic-precedence tie between
-	// index_expression and generic_type(composite_literal) needed one more
-	// merge-per-key survivor on `identifier[identifier] != identifier[identifier] {`
-	// shapes; that fix is gated on a cheap source-content probe rather than
-	// a global cap change to avoid the >10x parse-time cost widening the cap
-	// unconditionally would add on large, unrelated real files.
+	// required a matching fix to Go's steady-state merge-per-key survivor
+	// cap in parser_retry.go's effectiveParseMergePerKeyCap (raised 3 -> 8):
+	// restructuring the grammar's terminator rule shifts enough of the LALR
+	// table that Go's pre-existing, upstream-intentional dynamic-precedence
+	// tie between index_expression and generic_type(composite_literal) needs
+	// more merge-per-key survivors to keep the correct branch alive. An
+	// earlier, narrower fix gated the widen on a cheap source-content probe
+	// (bracket-index comparison shapes only) instead of a global cap change,
+	// but review found real-world files that need the wider cap without
+	// matching that shape (cursor_test.go, language_forest_optin_test.go,
+	// query_kotlin_regression_test.go in this repo; stdlib's
+	// sort_slices_benchmark_test.go) — see the "go" case comment in
+	// parser_retry.go for the full ledger and the measured perf cost of the
+	// unconditional cap=8 on large real files.
 	registerTokenSourceFactory("java", NewJavaTokenSourceOrEOF)
 	registerTokenSourceFactory("json", NewJSONTokenSourceOrEOF)
 	// Lua now parses via the blob's DFA lexer plus LuaExternalScanner (a

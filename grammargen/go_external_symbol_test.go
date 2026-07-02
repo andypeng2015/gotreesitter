@@ -5,13 +5,14 @@ import "testing"
 // TestGoGrammarAutomaticSemicolonExternalSymbol pins the external-symbol
 // surface that grammars/go_scanner.go depends on: exactly one external
 // token, named "_automatic_semicolon", assigned symbol ID 94. If this test
-// fails after a grammar edit, regenerate grammars/grammar_blobs/go.bin (see
-// grammargen/README.md's "emit go -lr-split -bin" invocation) and update the
+// fails after a grammar edit, regenerate grammars/grammar_blobs/go.bin via
+// `go run ./cmd/grammargen emit go -bin grammars/grammar_blobs/go.bin` (NOT
+// -lr-split — see grammargen/README.md: -lr-split hangs on ordinary Go
+// inputs once the grammar has an external symbol) and update the
 // goSymAutoSemicolon constant in grammars/go_scanner.go to match the new ID
 // reported here, rather than leaving the scanner silently mis-lexing.
 func TestGoGrammarAutomaticSemicolonExternalSymbol(t *testing.T) {
 	g := GoGrammar()
-	g.EnableLRSplitting = true
 	lang, err := GenerateLanguage(g)
 	if err != nil {
 		t.Fatalf("GenerateLanguage failed: %v", err)

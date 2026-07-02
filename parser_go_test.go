@@ -2,6 +2,7 @@ package gotreesitter_test
 
 import (
 	"bytes"
+	"os"
 	"testing"
 
 	"github.com/odvcencio/gotreesitter"
@@ -927,10 +928,11 @@ func TestGoInterpretedStringFalseErrors(t *testing.T) {
 			// that the pre-existing, upstream-intentional dynamic-precedence
 			// tie between index_expression and generic_type(composite_literal)
 			// (both prec.dynamic(1, ...), see grammargen/go_grammar.go) needs
-			// a wider merge-per-key survivor budget at its merge point on
-			// `identifier[identifier] != identifier[identifier] {` shapes —
-			// see goFullParseNeedsBracketComparisonMergeWidth in
-			// parser_retry.go for the targeted (not global) fix.
+			// a wider merge-per-key survivor budget at its merge point — see
+			// the "go" case in effectiveParseMergePerKeyCap in parser_retry.go
+			// (steady-state cap raised from 3 to 8; an earlier, narrower
+			// content-gated widen missed non-bracket-shaped triggers, see that
+			// comment for the regression files that caught it).
 			name: "residual_adjacent_funcs_call_then_if_ne",
 			src: "package grammargen\n" +
 				"func TestBitsetForEach(t *testing.T) {\n" +
@@ -1166,6 +1168,42 @@ func TestGoIfElseSameLineKeywordPromotion(t *testing.T) {
 			}
 			if ifStmt.ChildByFieldName("alternative", lang) == nil {
 				t.Fatalf("if_statement lost its else alternative for %q:\n%s", tc.name, root.SExpr(lang))
+			}
+		})
+	}
+}
+
+// TestGoMergePerKeyCapRegressionFiles pins the two smallest of four real
+// files a review pass found clean at the pre-ASI-fix baseline and under the
+// C oracle, but that flipped to a false ERROR under the first (content-gated,
+// cap=5) attempt at fixing the merge-per-key survivor budget needed by the
+// `_automatic_semicolon` external-scanner ASI fix (grammars/go_scanner.go).
+// query_kotlin_regression_test.go is notable: its `got[i] != want[i]` /
+// `imports[i] != wantImports[i]` shapes actually matched the old gate's
+// bracket-index-comparison content probe (grep for the shape) and still
+// needed more survivors than that gate's cap=5 provided — cap=5 was
+// calibrated to the single original pin case, not to every occurrence of the
+// shape it targeted. The other two (cursor_test.go, this repo;
+// sort_slices_benchmark_test.go, Go standard library) are exercised by ad
+// hoc corpus walks rather than pinned here. See the "go" case in
+// effectiveParseMergePerKeyCap (parser_retry.go) for the full account and
+// why the fix ended up as an unconditional steady-state cap raise (3 -> 8)
+// instead of a narrower probe.
+func TestGoMergePerKeyCapRegressionFiles(t *testing.T) {
+	for _, name := range []string{
+		"language_forest_optin_test.go",
+		"query_kotlin_regression_test.go",
+	} {
+		t.Run(name, func(t *testing.T) {
+			src, err := os.ReadFile(name)
+			if err != nil {
+				t.Fatalf("read %s: %v", name, err)
+			}
+			tree, lang := parseGo(t, string(src))
+			root := tree.RootNode()
+			defer tree.Release()
+			if root.HasError() {
+				t.Fatalf("root has error for %s:\n%s", name, root.SExpr(lang))
 			}
 		})
 	}

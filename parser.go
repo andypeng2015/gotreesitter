@@ -5732,9 +5732,6 @@ func (p *Parser) configureParseCaps(source []byte, reuse *reuseCursor, arenaClas
 	if javaFullParseNeedsAnnotationDeclarationMergeWidth(p.language, source, reuse) && mergePerKeyCap < javaFullParseRetryMaxMergePerKey {
 		mergePerKeyCap = javaFullParseRetryMaxMergePerKey
 	}
-	if goFullParseNeedsBracketComparisonMergeWidth(p.language, source, reuse) && mergePerKeyCap < goBracketComparisonMergePerKey {
-		mergePerKeyCap = goBracketComparisonMergePerKey
-	}
 	if maxMergePerKeyOverride < 0 {
 		mergePerKeyCap = -maxMergePerKeyOverride
 	} else if maxMergePerKeyOverride > mergePerKeyCap {
