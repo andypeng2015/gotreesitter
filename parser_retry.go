@@ -254,7 +254,8 @@ func preferRetryTree(p *Parser, candidate, incumbent *Tree) bool {
 		return !candErr
 	}
 	if p != nil && p.errorCostCompetitionEnabled() {
-		// Faithful C recovery port (recovery-cost-competition.md issue 4):
+		// Faithful C recovery port (recovery-cost-competition.md issue 4,
+		// moved to gotreesitter-specs (external)):
 		// the retry full-parse must not replace a first-pass tree the C
 		// error-cost competition already prefers. C selects trees by
 		// ts_subtree_error_cost; with the gate on, a retry tree wins only

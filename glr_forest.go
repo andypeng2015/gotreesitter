@@ -292,7 +292,8 @@ var builtinForestDefaults = map[string]bool{
 	// NEUTRAL (1.0x) — its expensive blowup files are precisely the ones that
 	// decline (no-shift-death) and fall back to slow production, so the forest
 	// only dispatches make's already-cheap files. make promotes once forest
-	// error recovery lands (Gate 2 in docs/reports/forest-solution-design.md).
+	// error recovery lands (Gate 2 in forest-solution-design.md, moved to
+	// gotreesitter-specs (external)).
 	"gitignore": true,
 	"nix":       true,
 	"squirrel":  true,

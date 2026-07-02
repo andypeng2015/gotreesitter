@@ -4,7 +4,8 @@ package gotreesitter_test
 // recovery (ts_parser__recover) — gated to the `requirements` grammar via
 // errorCostCompetitionLanguage.
 //
-// The minimal reproducer from cgo_harness/tier_scan/recovery-cost-competition.md:
+// The minimal reproducer from recovery-cost-competition.md (moved to
+// gotreesitter-specs (external)):
 // a trailing comment after an environment marker is unparseable in BOTH
 // parsers, but C completes the in-progress `requirement` production via
 // do_all_potential_reductions before wrapping only the failed suffix:

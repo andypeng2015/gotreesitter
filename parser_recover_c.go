@@ -44,7 +44,8 @@ import (
 //     incremental if wider grammars need it.
 
 // C error_costs.h. NOTE: ERROR_COST_PER_SKIPPED_LINE is 30 in the C header
-// (the recovery-cost-competition.md table said 2; the header wins).
+// (the recovery-cost-competition.md table said 2; the header wins;
+// that doc moved to gotreesitter-specs (external)).
 const (
 	cErrCostPerRecovery    = 500
 	cErrCostPerMissingTree = 110

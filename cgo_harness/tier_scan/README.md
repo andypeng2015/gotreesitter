@@ -21,7 +21,8 @@ tier-eligible.
 
 ## Tier taxonomy
 
-One tier scale for the whole program (canonical: `docs/reports/tier-ratchet.md`).
+One tier scale for the whole program (canonical: `tier-ratchet.md`, moved to
+gotreesitter-specs (external); the taxonomy table below is the in-repo summary).
 **Parity vs C is the hard gate; performance is the sub-rank.** A grammar that
 is not byte-clean against the C oracle is **tier IV, full stop** — a fast
 wrong parser is worthless. Tiers I–III are reserved for parity-clean grammars,
@@ -40,7 +41,7 @@ Every tier-IV grammar carries a named, assessed sub-cause:
 
 | sub-cause | meaning | fix recipe |
 | --- | --- | --- |
-| `IV-recovery` | both parsers see errors, but C contains damage locally where Go fragments / roots ERROR | faithful C error-cost version competition (see `recovery-cost-competition.md`) |
+| `IV-recovery` | both parsers see errors, but C contains damage locally where Go fragments / roots ERROR | faithful C error-cost version competition (see `recovery-cost-competition.md`, moved to gotreesitter-specs (external)) |
 | `IV-shape` | tree-shape divergence without error nodes | per-grammar diagnosis (`TestFirstDiffDiag`) |
 | `IV-scanner` | Go external-scanner port diverges from C (over/under-permissive, token boundaries) | re-port `grammars/<g>_scanner.go` from pinned upstream `src/scanner.c` |
 | `IV-version` | most corpus files error in BOTH parsers — corpus uses syntax newer than the embedded grammar | bump the embedded grammar version |

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Per-release tier publication: generate docs/reports/tiers.{md,json}.
 
-One tier scale (canonical: tier-ratchet.md / cgo_harness/tier_scan/README.md):
+One tier scale (canonical: tier-ratchet.md, moved to gotreesitter-specs
+(external) / cgo_harness/tier_scan/README.md):
 parity vs the C oracle is the HARD GATE, performance is the sub-rank.
 
   I    parity-clean and fast    (<=1.5x C full-parse, cold <=5ms, blob <=150KB)

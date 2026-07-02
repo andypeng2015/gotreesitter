@@ -21,7 +21,7 @@ per grammar). The gate exits non-zero if any grammar's current tier is BELOW
 its floor. ``--bump`` ratchets the floor up to the current tiers (use only
 after a verified, published lift).
 
-Canonical: ``docs/reports/tier-ratchet.md`` and
+Canonical: ``tier-ratchet.md`` (moved to gotreesitter-specs (external)) and
 ``cgo_harness/tier_scan/README.md``.
 """
 import json, os, sys
