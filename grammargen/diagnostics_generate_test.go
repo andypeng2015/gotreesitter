@@ -50,6 +50,7 @@ func TestComputeLexModesWithContextHonorsCanceledContext(t *testing.T) {
 		nil,
 		nil,
 		nil,
+		nil,
 	)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("computeLexModesWithContext error = %v, want context.Canceled", err)

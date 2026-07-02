@@ -288,6 +288,7 @@ func TestMissingRecoveryLexModeWideningStillAppliesToMainStates(t *testing.T) {
 			return nil
 		},
 		nil,
+		nil,
 	)
 
 	mode := lexModes[stateToMode[0]]

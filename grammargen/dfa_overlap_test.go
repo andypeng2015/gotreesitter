@@ -165,6 +165,7 @@ func TestBuildLexDFADistinguishesModePreferredSymbols(t *testing.T) {
 			}
 		},
 		nil,
+		map[int]bool{1: true, 2: true}, // both symbols are pattern-based ([a-z]+); a genuine same-length tie
 	)
 	if got, want := len(lexModes), 2; got != want {
 		t.Fatalf("lex mode count = %d, want %d", got, want)
@@ -192,6 +193,70 @@ func TestBuildLexDFADistinguishesModePreferredSymbols(t *testing.T) {
 		if tok.Symbol != want {
 			t.Fatalf("state %d token symbol = %d, want %d", state, tok.Symbol, want)
 		}
+	}
+}
+
+// TestLexModePreferredSymbolsIgnoredWithoutPatternTerminals is the
+// regression test for the swift.bin / go.bin lex-mode explosion: two
+// DIFFERENT fixed-string terminals can never tie on a same-length DFA
+// accept, so states whose valid symbols are entirely fixed strings must
+// share a lex mode regardless of which of those strings is their own
+// (pre-widening) direct action — preferredSymbols only matters once a real
+// pattern-based terminal is present to conflict with. Without the
+// patternTerminals gate, every state's near-unique direct-action set leaks
+// into the mode key unconditionally, multiplying lex modes (and therefore
+// compiled DFA states) roughly 1:1 with parser state count.
+func TestLexModePreferredSymbolsIgnoredWithoutPatternTerminals(t *testing.T) {
+	const (
+		tokenCount = 3
+		symA       = 1
+		symB       = 2
+	)
+	// Two states, each directly shifting a DIFFERENT fixed-string terminal,
+	// but each also widened (e.g. via follow-token expansion) to admit the
+	// OTHER terminal too — so both states end up with the identical
+	// validSyms={symA,symB} but different preferredSyms (state 0 prefers
+	// symA, state 1 prefers symB).
+	lexModes, stateToMode, _ := computeLexModes(
+		2,
+		tokenCount,
+		func(state, sym int) bool {
+			switch state {
+			case 0:
+				return sym == symA
+			case 1:
+				return sym == symB
+			default:
+				return false
+			}
+		},
+		nil,
+		nil,
+		-1,
+		nil,
+		nil,
+		0,
+		nil,
+		map[int]bool{symA: true, symB: true},
+		func(state int) []int {
+			switch state {
+			case 0:
+				return []int{symB}
+			case 1:
+				return []int{symA}
+			default:
+				return nil
+			}
+		},
+		nil,
+		nil,
+		nil, // no pattern-based terminals: symA/symB are both fixed strings
+	)
+	if got, want := len(lexModes), 1; got != want {
+		t.Fatalf("lex mode count = %d, want %d (fixed-string-only states must share a mode)", got, want)
+	}
+	if stateToMode[0] != stateToMode[1] {
+		t.Fatalf("states with different preferred symbols but no pattern terminals should share lex mode: got %d and %d", stateToMode[0], stateToMode[1])
 	}
 }
 

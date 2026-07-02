@@ -77,6 +77,77 @@ func lexModeFollowTokenName(name string) bool {
 	}
 }
 
+// buildLexModeMissingRecoveryTokensFunc wraps
+// buildMissingRecoveryTokensFuncWithContext's raw (unrestricted) recovery
+// lookaheads with the same narrow "safe to widen with" allowlist already
+// used for reduce-follow widening (see buildLexModeFollowTokensFunc):
+// closing/terminator punctuation and keywords. Missing-token recovery's own
+// BFS over reachable reduce-chains is, by construction, close to unique per
+// LR state (every state's reachable-reduce graph differs), so admitting its
+// FULL raw result into every state's lex mode multiplies the number of
+// distinct (validSyms) combinations — and therefore the compiled DFA state
+// count — roughly in proportion to parser state count on large grammars.
+// The overwhelming majority of real "missing token" typo/incomplete-code
+// scenarios are exactly the punctuation/keyword categories already deemed
+// safe for follow-token widening, so restricting recovery widening to the
+// same allowlist keeps the common, valuable cases (the lexer can still see
+// a stray ")"/"]"/"}"/ ";"/","/keyword that would let recovery insert the
+// missing token) while dropping the long tail of rarely-useful, highly
+// state-specific pattern/identifier-shaped lookaheads that were driving
+// lex-mode (and DFA state) proliferation without a matching recovery
+// benefit.
+//
+// KNOWN GAP: because the allowlist admits only closing/terminator
+// punctuation and keywords, missing-token recovery can no longer see
+// expression-start lookaheads (identifiers, literals, prefix operators) that
+// the raw BFS would otherwise have surfaced. An incomplete-expression tail
+// with NO trailing closing punctuation at all is therefore not flagged as an
+// error: `let x = ` (EOF right after the assignment), `1 + ` followed by
+// EOF, or a `[1: ]`-style container literal missing its value all parse
+// clean today, because inserting the missing identifier/literal requires an
+// identifier/literal lookahead that this allowlist drops. Incomplete
+// expressions that DO retain trailing closing punctuation are unaffected and
+// still flag correctly — e.g. `(1 + )` and `obj.` immediately followed by a
+// `)`/`}`/`;` recover via the missing-token insertion exactly as before,
+// since that punctuation lookahead is in the allowlist.
+//
+// Follow-up (not done here): widen the allowlist with a bounded
+// expression-start first-set (a small, capped set of identifier/literal-
+// shaped lookaheads, NOT the full raw BFS result) to close this gap without
+// reintroducing the per-state lex-mode proliferation this narrowing fixed.
+// Evaluate this as a dedicated experiment in the blob-consolidation round —
+// both swift and go consume this function, so any change here re-triggers a
+// full regen+reverify of both blobs.
+func buildLexModeMissingRecoveryTokensFunc(ctx context.Context, tables *LRTables, tokenCount int, terminalPatterns []TerminalPattern, skipExtras map[int]bool, ng *NormalizedGrammar, keywordSymbols map[int]bool) func(int) []int {
+	raw := buildMissingRecoveryTokensFuncWithContext(ctx, tables, tokenCount, terminalPatterns, skipExtras)
+	if raw == nil {
+		return nil
+	}
+	allowed := lexModeFollowTokenSet(ng, tokenCount, keywordSymbols)
+	if len(allowed) == 0 {
+		return raw
+	}
+	cache := make(map[int][]int)
+	return func(state int) []int {
+		if cached, ok := cache[state]; ok {
+			return cached
+		}
+		rawTokens := raw(state)
+		if len(rawTokens) == 0 {
+			cache[state] = nil
+			return nil
+		}
+		out := make([]int, 0, len(rawTokens))
+		for _, sym := range rawTokens {
+			if allowed[sym] {
+				out = append(out, sym)
+			}
+		}
+		cache[state] = out
+		return out
+	}
+}
+
 func buildFollowTokensFunc(tables *LRTables, tokenCount int) func(int) []int {
 	if tables == nil {
 		return nil
@@ -1189,6 +1260,7 @@ func generateWithReportCtx(bgCtx context.Context, g *Grammar, opts reportBuildOp
 	}
 	stringPrefixExtensions := computeStringPrefixExtensions(ng.Terminals)
 	termPatSyms := terminalPatternSymSet(ng)
+	patternSyms := patternTerminalSymSet(ng)
 	skipExtras := computeSkipExtras(ng)
 
 	var lexModes []lexModeSpec
@@ -1231,8 +1303,9 @@ func generateWithReportCtx(bgCtx context.Context, g *Grammar, opts reportBuildOp
 			keywordSet,
 			termPatSyms,
 			buildLexModeFollowTokensFunc(tables, tokenCount, ng, keywordSet),
-			buildMissingRecoveryTokensFuncWithContext(bgCtx, tables, tokenCount, ng.Terminals, skipExtras),
+			buildLexModeMissingRecoveryTokensFunc(bgCtx, tables, tokenCount, ng.Terminals, skipExtras, ng, keywordSet),
 			suppressAfterWhitespaceSymbols(g, ng),
+			patternSyms,
 		)
 		if err != nil {
 			endPhase(map[string]any{"error": true})

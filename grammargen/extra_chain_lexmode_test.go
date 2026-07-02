@@ -79,6 +79,7 @@ func TestNonterminalExtraChainLexModesDoNotInheritTerminalExtras(t *testing.T) {
 		nil,
 		nil,
 		nil,
+		patternTerminalSymSet(ng),
 	)
 
 	initialMode := lexModes[stateToMode[0]]
@@ -145,6 +146,7 @@ func TestExtraChainLexModesSkipMainStateLookaheadWidening(t *testing.T) {
 			missingCalls[state]++
 			return []int{widenedToken}
 		},
+		nil,
 		nil,
 	)
 
