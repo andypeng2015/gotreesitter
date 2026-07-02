@@ -8,11 +8,11 @@
 
 # Build artifacts
 .canopy/
-scannertest
-ts2go
-tsquery
-parity_report
-benchgate
+/scannertest
+/ts2go
+/tsquery
+/parity_report
+/benchgate
 cgo_harness/real_corpus_bench_report
 
 # Local benchmark run data
