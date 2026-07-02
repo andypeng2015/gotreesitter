@@ -46,6 +46,19 @@ const (
 	// (see #136) and these files parse mostly clean without needing
 	// source reconstruction.
 	csharpMaxTypeBodyRecoveryMembers = 256
+
+	// Bounds for the alternate lenient source-based member recovery driver in
+	// parser_result_csharp_method_recovery.go (#136, upstream #138). This is a
+	// second, independently-bounded pass used as a per-declaration fallback when
+	// it recovers strictly more method_declaration nodes than the primary
+	// csharpRecoverNamespaceBodyMembersFromSource pass above (see
+	// csharpChooseRecoveredNamespaceMembers). Like the bounds above, these are
+	// PER declaration, so the anti-OOM guarantees from #64/#98/#106 still hold.
+	// csharpMaxMemberRecoverySourceBytes caps the size of a single member snippet
+	// that will be reparsed; csharpMaxTypeMemberRecoveries caps how many members
+	// one type recovery will reparse.
+	csharpMaxMemberRecoverySourceBytes = 32768
+	csharpMaxTypeMemberRecoveries      = 4096
 )
 
 func normalizeCSharpCompatibility(root *Node, source []byte, p *Parser, lang *Language) {

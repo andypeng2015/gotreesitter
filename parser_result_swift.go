@@ -17,6 +17,7 @@ func normalizeSwiftCompatibility(root *Node, source []byte, p *Parser, lang *Lan
 		return
 	}
 	normalizeSwiftRecoveredTrailingClosureConditions(root, source, p, lang)
+	normalizeSwiftRecoveredTernaryExpressions(root, source, p, lang)
 	normalizeSwiftRecoveredTopLevelDeclarations(root, source, p, lang)
 	// `return <expr>` case: existing children present but the keyword leaf is
 	// missing as the first child and the span starts at the result expression.

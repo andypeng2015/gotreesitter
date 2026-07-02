@@ -41,30 +41,28 @@ func csharpBuildRecoveredNamespaceDeclarationFromErrorRoot(errRoot *Node, source
 		return nil, false
 	}
 	members, ok := csharpRecoverNamespaceBodyMembersFromErrorRoot(errRoot, source, openBrace, uint32(closeBrace), p, lang, arena)
-	// SHORT-TERM RELIEF for issue #136: the children-based recovery above
-	// only sees whatever the namespace sub-parse (offsetRoot) itself managed
-	// to produce before it died, which for large real-world files can be a
-	// small prefix of the body (or nothing at all — a pure GLR dead end
-	// leaves no children to recover from downstream of that point). Try a
-	// purely source-based, bounded reconstruction of the whole body too
-	// (csharpMaxTypeBodyRecoveryMembers, independent of the file's size) and
-	// prefer whichever recovers more members. Remove this fallback once the
-	// GLR engine gains real mid-parse error recovery (see #136).
+	// SHORT-TERM RELIEF for issue #136: the children-based recovery above only
+	// sees whatever the namespace sub-parse (offsetRoot) itself managed to
+	// produce before it died, which for large real-world files can be a small
+	// prefix of the body (or nothing at all — a pure GLR dead end leaves no
+	// children to recover from downstream of that point). Try two purely
+	// source-based, bounded reconstructions of the whole body too — the primary
+	// driver (csharpRecoverNamespaceBodyMembersFromSource, which additionally
+	// covers struct/interface/enum shells and preprocessor-skipped spans) and
+	// the Alt driver (csharpRecoverNamespaceBodyMembersFromSourceAlt, upstream
+	// #138, whose per-member wrapped reparse recovers strictly more methods on
+	// some real-world files) — and keep whichever of all three candidates
+	// recovers the most (csharpChooseRecoveredNamespaceMembers). Remove these
+	// fallbacks once the GLR engine gains real mid-parse error recovery (see
+	// #136).
 	sourceMembers, sourceOK := csharpRecoverNamespaceBodyMembersFromSource(source, openBrace, uint32(closeBrace), p, lang, arena)
-	// Compare by recursive declaration stats, not top-level slice length:
-	// the source-based result is usually a single class_declaration with
-	// dozens of methods nested inside it (len==1), while the children-based
-	// result can be a flat list of whatever loose fragments the (also
-	// usually incomplete) sub-parse happened to produce before it died — a
-	// top-level-length comparison would wrongly prefer the flatter, less
-	// structured result. csharpPreferRecoveredDeclarations prioritizes
-	// method_declaration count over total declaration count, since methods
-	// are the concrete goal (see its doc comment).
-	if sourceOK && csharpPreferRecoveredDeclarations(
-		csharpCountRecoveredDeclarationNodes(sourceMembers, lang),
-		csharpCountRecoveredDeclarationNodes(members, lang),
-	) {
-		members, ok = sourceMembers, true
+	altMembers, altOK := csharpRecoverNamespaceBodyMembersFromSourceAlt(source, openBrace, uint32(closeBrace), p, arena)
+	if best, bestOK := csharpChooseRecoveredNamespaceMembers(lang,
+		csharpRecoveredMembersCandidate{members: members, ok: ok},
+		csharpRecoveredMembersCandidate{members: sourceMembers, ok: sourceOK},
+		csharpRecoveredMembersCandidate{members: altMembers, ok: altOK},
+	); bestOK {
+		members, ok = best, true
 	}
 	if !ok || len(members) == 0 {
 		return nil, false
@@ -324,4 +322,35 @@ func csharpPreferRecoveredDeclarations(a, b csharpRecoveredDeclarationStats) boo
 		return a.methods > b.methods
 	}
 	return a.total > b.total
+}
+
+// csharpRecoveredMembersCandidate pairs a candidate namespace-body member
+// recovery with whether it succeeded, for csharpChooseRecoveredNamespaceMembers.
+type csharpRecoveredMembersCandidate struct {
+	members []*Node
+	ok      bool
+}
+
+// csharpChooseRecoveredNamespaceMembers picks the best of several candidate
+// namespace-body member recoveries — the children-based (#115/#116) pass and
+// one or more independently-bounded source-based (#136) passes, such as
+// csharpRecoverNamespaceBodyMembersFromSource and its Alt driver
+// csharpRecoverNamespaceBodyMembersFromSourceAlt (upstream #138) — using
+// csharpPreferRecoveredDeclarations (method_declaration count first, then
+// total declaration count) as the ranking. Candidates with ok=false or no
+// members are skipped. Returns ok=false if no candidate succeeded.
+func csharpChooseRecoveredNamespaceMembers(lang *Language, candidates ...csharpRecoveredMembersCandidate) ([]*Node, bool) {
+	var best []*Node
+	var bestStats csharpRecoveredDeclarationStats
+	found := false
+	for _, c := range candidates {
+		if !c.ok || len(c.members) == 0 {
+			continue
+		}
+		stats := csharpCountRecoveredDeclarationNodes(c.members, lang)
+		if !found || csharpPreferRecoveredDeclarations(stats, bestStats) {
+			best, bestStats, found = c.members, stats, true
+		}
+	}
+	return best, found
 }
