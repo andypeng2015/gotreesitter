@@ -21,6 +21,18 @@ func normalizeResultTerminalLeafNodes(root *Node, lang *Language) normalizationP
 		if !resultCanCollapseTerminalLeafChild(child, lang, aliasTargets) {
 			return
 		}
+		if !resultSymbolIsVisibleTerminal(lang, n.symbol) && !resultSymbolNamesEqual(lang, n.symbol, child.symbol) {
+			// n only qualified via the alias-target set, which just records
+			// "this symbol is SOME production's alias somewhere in the
+			// grammar" -- it is not scoped to this specific reduction. A
+			// same-named anonymous child (e.g. an aliased "]" wrapping a "]"
+			// token) is the genuine inlined-terminal case C tree-sitter
+			// collapses to a bare leaf. A DIFFERENT-named child (e.g. ruby's
+			// splat_parameter wrapping a bare "*" token) is a real, distinct
+			// production whose child C tree-sitter keeps as a visible node --
+			// collapsing it here would silently drop a real AST child.
+			return
+		}
 		n.startByte = child.startByte
 		n.endByte = child.endByte
 		n.startPoint = child.startPoint
@@ -84,6 +96,26 @@ func resultVisibleAliasTargetSet(lang *Language) []bool {
 		}
 	}
 	return aliasTargets
+}
+
+// resultSymbolNamesEqual mirrors Parser.sameSymbolName for callers (like this
+// file's normalization pass) that only have a *Language, not a *Parser.
+func resultSymbolNamesEqual(lang *Language, a, b Symbol) bool {
+	if lang == nil {
+		return false
+	}
+	meta := lang.SymbolMetadata
+	if int(a) < len(meta) && int(b) < len(meta) {
+		an, bn := meta[a].Name, meta[b].Name
+		if an != "" && bn != "" {
+			return an == bn
+		}
+	}
+	names := lang.SymbolNames
+	if int(a) >= len(names) || int(b) >= len(names) {
+		return false
+	}
+	return names[a] == names[b]
 }
 
 func resultNodeHasChildFields(n *Node) bool {
