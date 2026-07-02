@@ -301,6 +301,18 @@ func normalizeGoSemicolonContainer(n *Node, source []byte, syms goCompatibilityS
 	if !goHasDroppableSemicolonChild(n, source, syms) {
 		return
 	}
+	// Capture the container's span before dropping. The DFA lexer's auto-semi
+	// alternatives (`\n`/`\x00`) are zero-width matches, so dropping them here
+	// never loses real source coverage. A token-source-driven lexer (e.g.
+	// GoTokenSource) can instead emit a non-zero-width auto-semicolon token
+	// that consumes the actual newline byte; populateParentNode (invoked by
+	// replaceNodeChildrenUnfielded below) recomputes the container's span
+	// from the surviving children only, which would silently shrink past
+	// those consumed bytes and leave a gap uncovered by any node. Re-extend
+	// back to the pre-drop span (a no-op when nothing was actually
+	// consumed) to keep the dropped separator's bytes attributed to the
+	// container, matching the C reference's hidden-separator span.
+	origEnd := n.endByte
 	children := resultChildSliceForMutation(n)
 	kept := make([]*Node, 0, len(children))
 	for _, child := range children {
@@ -310,6 +322,9 @@ func normalizeGoSemicolonContainer(n *Node, source []byte, syms goCompatibilityS
 		kept = append(kept, child)
 	}
 	replaceNodeChildrenUnfielded(n, cloneNodeSliceIfArena(n.ownerArena, kept))
+	if n.endByte < origEnd {
+		extendNodeEndTo(n, origEnd, source)
+	}
 }
 
 func normalizeGoSemicolonFinalRefs(view resultMutableChildView, source []byte, syms goCompatibilitySymbols) {
