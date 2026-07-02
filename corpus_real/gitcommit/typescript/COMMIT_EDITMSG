@@ -1,3 +1,0 @@
-Fix JSDoc grammar typo: 'returns a undefined' → 'returns undefined' (#63525)
-
-Co-authored-by: Tech-Savvy Builder <tech@crypto-nite.com>

@@ -1,3 +1,0 @@
-Merge pull request #57616 from 55728/fix-decimal-type-arbitrary-doc
-
-Fix `ActiveModel::Type::Decimal` doc for a non-numeric cast [ci skip]

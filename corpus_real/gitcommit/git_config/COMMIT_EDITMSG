@@ -1,7 +1,0 @@
-fix(http): Rejects non-HTTP(S) URLs in JSONP requests
-
-Prevents JSONP requests from using URLs with unsupported protocols
-for improved security.
-
-Fixes #68832
-
