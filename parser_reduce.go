@@ -1,6 +1,7 @@
 package gotreesitter
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
 	"time"
@@ -1168,7 +1169,7 @@ func (p *Parser) tryResyncErrorRecoveryMode(source []byte, s *glrStack, tok Toke
 		}
 		poppedNodes = append(poppedNodes, node)
 	}
-	if !languageScoped && opportunisticRetryOnly && opportunisticRetryAllowed && p.tryReplayTopLevelRecovery(s, tok, recoverState, poppedNodes, entryScratch, gssScratch) {
+	if !languageScoped && opportunisticRetryOnly && opportunisticRetryAllowed && p.tryReplayTopLevelRecovery(source, s, tok, recoverState, poppedNodes, entryScratch, gssScratch) {
 		if p.glrTrace {
 			fmt.Printf("      -> LEGAL-REPLAY-RESYNC tok=%d recover_state=%d popped=%d depth=%d\n",
 				tok.Symbol, recoverState, len(poppedNodes), s.depth())
@@ -1537,7 +1538,7 @@ func (p *Parser) sameAliasTokenShape(a, b Symbol) bool {
 	return am.Visible && bm.Visible && am.Named == bm.Named && uint32(ai) < p.language.TokenCount && uint32(bi) < p.language.TokenCount
 }
 
-func (p *Parser) tryReplayTopLevelRecovery(s *glrStack, tok Token, recoverState StateID, poppedNodes []*Node, entryScratch *glrEntryScratch, gssScratch *gssScratch) bool {
+func (p *Parser) tryReplayTopLevelRecovery(source []byte, s *glrStack, tok Token, recoverState StateID, poppedNodes []*Node, entryScratch *glrEntryScratch, gssScratch *gssScratch) bool {
 	if p == nil || s == nil || p.language == nil || len(poppedNodes) == 0 {
 		return false
 	}
@@ -1546,7 +1547,7 @@ func (p *Parser) tryReplayTopLevelRecovery(s *glrStack, tok Token, recoverState 
 			return false
 		}
 	}
-	split, targets, ok := p.findTopLevelReplaySplit(recoverState, poppedNodes, tok.Symbol)
+	split, targets, ok := p.findTopLevelReplaySplit(source, recoverState, poppedNodes, tok.Symbol)
 	if !ok {
 		return false
 	}
@@ -1574,8 +1575,64 @@ func (p *Parser) tryReplayTopLevelRecovery(s *glrStack, tok Token, recoverState 
 	return true
 }
 
-func (p *Parser) findTopLevelReplaySplit(recoverState StateID, poppedNodes []*Node, lookahead Symbol) (int, []StateID, bool) {
+func (p *Parser) findTopLevelReplaySplit(source []byte, recoverState StateID, poppedNodes []*Node, lookahead Symbol) (int, []StateID, bool) {
+	// The fully degenerate split (split == len(poppedNodes), i.e. a
+	// zero-length suffix) leaves EVERY popped node unchased: none of them
+	// are validated by walking the automaton, they are simply re-attached
+	// as unvalidated "extra" top-level siblings (see tryReplayTopLevelRecovery).
+	// That trivially succeeds whenever the lookahead can merely START a new
+	// top-level construct (already checked by the caller), regardless of
+	// whether the popped fragments ever combined into anything grammatically
+	// complete — which silently discards a real parse failure (e.g. a class
+	// body missing its terminating ';') instead of wrapping it in an ERROR.
+	//
+	// Every OTHER split (< len(poppedNodes)) requires its suffix to walk a
+	// real GOTO/SHIFT chain through the automaton and land in a state that
+	// accepts the lookahead — that is itself a meaningful validity check, so
+	// it stays unrestricted; it is what correctly rescues legitimate GLR
+	// ambiguity-resolution dead ends (e.g. constructor-name-vs-declaration
+	// forks that transiently merge into a state that can't see the next
+	// token, such as `extern std::string foo();`) without ever touching an
+	// ERROR node.
+	//
+	// We only gate the fully degenerate case, and only on AFFIRMATIVE
+	// evidence of truncation: the popped span's source text contains a
+	// brace ('{' or '}'). This closes the brace-carrying subclass of
+	// truncation only — a class/struct/function body that closed cleanly
+	// but whose enclosing declaration never reached a legal end (e.g. a
+	// missing ';' after `class C { ... }`). It is NOT a general truncation
+	// detector: brace-free top-level truncations (a bodyless
+	// `class C : public D` missing its ';', a truncated `using X = int`,
+	// an un-terminated template forward declaration, etc.) carry no brace
+	// in the popped span, so the degenerate split is still accepted and
+	// those cases still false-clean — identical, not worse than, base
+	// behavior before this change; not fixed by it either. Empirically
+	// (LLVM + tree-sitter-cpp corpus walk), legitimate GLR-rescue popped
+	// spans (e.g. a constructor-name-vs-declaration fork that transiently
+	// dead-ends, `extern std::string foo();`) are brace-free, so this
+	// narrower check leaves that rescue path intact.
+	//
+	// The scan is a raw byte search, not token-aware: a '{'/'}' inside a
+	// string or comment literal within the popped span would also count as
+	// "evidence" and could in principle cause an over-eager rejection of a
+	// degenerate split that was otherwise legal. In practice this has not
+	// been observed to cause a false rejection on valid code (~20 adversarial
+	// brace-in-string/comment probes against the corpus produced zero
+	// flips): whenever the popped span is genuinely valid, a smaller,
+	// non-degenerate split with a real GOTO/SHIFT-validated suffix chain
+	// almost always exists and is tried first (the loop below tries
+	// split=0..len(poppedNodes) in order), so the degenerate case is only
+	// ever reached — and only ever needs gating — when it is the sole
+	// candidate. A pathological grammar/input combination where the ONLY
+	// viable split is the degenerate one AND the popped span's only brace
+	// is inside a string/comment remains a theoretical false-rejection
+	// gap; it has not been demonstrated in practice.
+	degenerate := len(poppedNodes)
+	rejectDegenerate := poppedSpanHasBraceEvidence(source, poppedNodes)
 	for split := 0; split <= len(poppedNodes); split++ {
+		if split == degenerate && rejectDegenerate {
+			continue
+		}
 		state := recoverState
 		targets := make([]StateID, 0, len(poppedNodes)-split)
 		ok := true
@@ -1593,6 +1650,27 @@ func (p *Parser) findTopLevelReplaySplit(recoverState StateID, poppedNodes []*No
 		}
 	}
 	return 0, nil, false
+}
+
+// poppedSpanHasBraceEvidence reports whether any popped node's source span
+// contains a '{' or '}' byte. See findTopLevelReplaySplit for why this is
+// used as affirmative evidence that a degenerate (fully unvalidated) replay
+// would silently swallow a genuine truncation rather than rescue a spurious
+// GLR dead end.
+func poppedSpanHasBraceEvidence(source []byte, poppedNodes []*Node) bool {
+	for _, n := range poppedNodes {
+		if n == nil {
+			continue
+		}
+		s, e := n.startByte, n.endByte
+		if e > uint32(len(source)) || s >= e {
+			continue
+		}
+		if bytes.IndexByte(source[s:e], '{') >= 0 || bytes.IndexByte(source[s:e], '}') >= 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func (p *Parser) replayTopLevelNodeTarget(state StateID, n *Node) (StateID, bool) {
