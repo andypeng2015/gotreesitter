@@ -921,6 +921,21 @@ func (p *Parser) cVersionStatus(s *glrStack) cErrorStatus {
 	}
 }
 
+// A condense-step drop of a recovery-owning version in favor of a marker-free
+// sibling was evaluated as a second trigger for cRecoveryUnvalidatedMarker
+// (tagging the surviving stack) but rejected: measured against this repo's
+// own valid, compiling Go source, cCondenseAndResume's cost competition
+// drops/re-forks recovery-owning-vs-clean candidates as routine, frequent
+// (thousands of times per large file) GLR disambiguation on the Go grammar's
+// LALR table, not evidence of a real syntax error — a "surviving stack"
+// tag propagates through every subsequent clone() of that (winning, and
+// therefore usually eventually-selected) lineage for the rest of the parse,
+// so it cannot be scoped away by the same-position sibling check the way
+// cRecoverToState's single-stack-gated marker can (see below). Only
+// cRecoverToState marks cRecoveryUnvalidatedMarker; see its doc comment for
+// why that one narrower trigger is sufficient for the confirmed defect class
+// (java/php/gomod) without this one.
+
 // cCompareVersions is a literal port of ts_parser__compare_versions.
 func cCompareVersions(a, b cErrorStatus) cErrorComparison {
 	if !a.isInError && b.isInError {
@@ -1396,6 +1411,34 @@ func (p *Parser) cTerminalNextState(state StateID, sym Symbol) (StateID, ParseAc
 func (p *Parser) cHandleError(stacks *[]glrStack, si int, source []byte, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) (cRecoverOutcome, bool) {
 	s := &(*stacks)[si]
 	s.cPaused = false
+	// cHandleError running is NOT proof the input is malformed — LALR table
+	// limitations routinely drive well-formed input into a momentary
+	// no-action point that step 1 below (cDoAllPotentialReductions) resolves
+	// losslessly. Recording that we ran here only lets
+	// resolveCRecoverySwallowedError use this as a cheap pre-filter; the
+	// actual suspicion signal is cRecoveryDroppedErrorForClean, scoped to the
+	// selected result's own lineage in buildResultFromGLR.
+	p.crecoveryEnteredErrorState = true
+	// s is re-entering recovery, so whatever marker content it may already
+	// carry from an earlier cRecoverToState fork or condense-drop win (see
+	// cRecoveryUnvalidatedMarker) is about to be re-accounted for by this
+	// call's own cost bookkeeping (and, if it competes again,
+	// by cCondenseAndResume's comparison loop). Clear the "unvalidated" flag
+	// so a lineage that keeps recovering normally doesn't look suspicious at
+	// ACCEPT — only a lineage that creates/inherits a marker and then reaches
+	// ACCEPT WITHOUT ever coming back through here does.
+	s.cRecoveryUnvalidatedMarker = false
+	// The swallowed-error defect class (see cRecoveryUnvalidatedMarker) is
+	// specifically about a single-stack no-action dead end — the exact
+	// scenario the parser.go ~4708 gate is about. Highly ambiguous grammars
+	// (kotlin's generic-vs-comparison forks, for example) can drive multiple
+	// unrelated GLR candidates into cHandleError while genuinely disambiguating
+	// valid input; recovery forks born there routinely settle back to a
+	// legitimately clean tree without ever being "re-validated", so they must
+	// not be treated as suspicious. Track this per call so cRecoverToState
+	// only marks a fork unvalidated when recovery owned the whole parse at
+	// that moment.
+	p.crecoveryHandleErrorSingleStack = len(*stacks) == 1
 
 	// 1. Close in-progress productions: reductions reachable on any symbol.
 	versions, _ := p.cDoAllPotentialReductions(source, s.clone(), 0, true, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
@@ -2110,6 +2153,33 @@ func (p *Parser) cRecoverToState(v *glrStack, depth int, goal StateID, arena *no
 		}
 		if trackChildErrors != nil {
 			*trackChildErrors = true
+		}
+		// This fork now genuinely carries an ERROR node (real C's
+		// recover_to_state always wraps something). If it reaches ACCEPT
+		// without ever cycling back through cHandleError to be
+		// re-validated by another cost competition, cStackErrorCost cannot
+		// legitimately have dropped to zero — see the ACCEPT-time check in
+		// buildResultFromGLR. Track this only for:
+		//   - single-stack dead ends (see crecoveryHandleErrorSingleStack): a
+		//     fork born while several unrelated GLR ambiguity candidates were
+		//     already live is normal disambiguation, not the swallowed-error
+		//     defect class (e.g. kotlin's generic-vs-comparison forks).
+		//   - a small absolute recovered span (see
+		//     crecoverySwallowedErrorMaxFallbackErrorBytes, reused here for
+		//     the same "local, not whole-construct, recovery" rationale): an
+		//     adversarial review found cRecoverToState firing on ordinary,
+		//     syntactically valid Go source — a real repo file's own
+		//     composite-literal/statement disambiguation can drive a
+		//     hundreds-of-bytes single-stack strategy-1 recovery that the
+		//     rest of the (entirely valid) parse absorbs losslessly, the
+		//     same "LALR table gap resolved without a real error" pattern as
+		//     eds's legitimate empty-value production. The confirmed
+		//     defect-class fixtures recover a single malformed token or
+		//     directive (java 6 bytes, gomod 5 bytes) — nowhere near that
+		//     scale.
+		if p.crecoveryHandleErrorSingleStack &&
+			errNode.endByte-errNode.startByte <= crecoverySwallowedErrorMaxFallbackErrorBytes {
+			fork.cRecoveryUnvalidatedMarker = true
 		}
 		p.pushStackNode(&fork, goal, errNode, entryScratch, gssScratch)
 	}

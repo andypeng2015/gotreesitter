@@ -62,6 +62,38 @@ type glrStack struct {
 	// cumulative visible-node count when the error discontinuity was last
 	// pushed. Zero for stacks that never entered the C error state.
 	cNodeBaseline int
+	// cRecoveryUnvalidatedMarker is set on this lineage in exactly one place:
+	// cRecoverToState (parser_recover_c.go), the moment it creates a real
+	// ERROR node wrapping popped content (strategy 1 of ts_parser__recover),
+	// AND only when the recovered span is small (see
+	// crecoverySwallowedErrorMaxFallbackErrorBytes) and this dead end owned
+	// the whole parse (crecoveryHandleErrorSingleStack). NOTE:
+	// cAbsorbTokenIntoError (strategy 2) does NOT set it — a version
+	// absorbing into an open error region already carries cRec != nil, which
+	// cCondenseAndResume's own cost bookkeeping (cVersionStatus) already
+	// accounts for without help from this field.
+	//
+	// A second trigger — tagging the surviving side of an ordinary
+	// condense-step drop against a recovery-owning sibling, regardless of
+	// span or stack count — was tried and rejected: an adversarial review's
+	// corpus walk showed it firing thousands of times per large,
+	// syntactically valid Go file (routine GLR disambiguation on the Go
+	// grammar's LALR table), and because the tag propagates through every
+	// subsequent clone() of the (usually eventually-selected) winning
+	// lineage, the same-position sibling check below could not scope it back
+	// down. The single-stack + small-span cRecoverToState trigger alone is
+	// sufficient for the confirmed defect class (java/php/gomod).
+	//
+	// The marker is cleared as soon as the lineage re-enters cHandleError (at
+	// which point cCondenseAndResume's cost competition properly accounts for
+	// whatever content it carries, win or lose). If a lineage carries the
+	// marker all the way to ACCEPT and is actually selected without ever
+	// being re-validated by another competition, cStackErrorCost cannot have
+	// legitimately dropped back to zero for it — see the check in
+	// buildResultFromGLR (parser_result.go) that sets
+	// Parser.crecoveryDroppedErrorForClean from this field, scoped to the
+	// selected stack only, with a same-position sibling check.
+	cRecoveryUnvalidatedMarker bool
 }
 
 const (
@@ -278,46 +310,49 @@ func (s *glrStack) clone() glrStack {
 		entries := make([]stackEntry, len(s.entries))
 		copy(entries, s.entries)
 		return glrStack{
-			entries:              entries,
-			cacheEntries:         s.cacheEntries,
-			byteOffset:           s.byteOffset,
-			score:                s.score,
-			recoverabilityKnown:  s.recoverabilityKnown,
-			mayRecover:           s.mayRecover,
-			branchOrder:          s.branchOrder,
-			cRec:                 s.cRec.clone(),
-			cRecoverMissingGroup: s.cRecoverMissingGroup,
-			cNodeBaseline:        s.cNodeBaseline,
+			entries:                    entries,
+			cacheEntries:               s.cacheEntries,
+			byteOffset:                 s.byteOffset,
+			score:                      s.score,
+			recoverabilityKnown:        s.recoverabilityKnown,
+			mayRecover:                 s.mayRecover,
+			branchOrder:                s.branchOrder,
+			cRec:                       s.cRec.clone(),
+			cRecoverMissingGroup:       s.cRecoverMissingGroup,
+			cNodeBaseline:              s.cNodeBaseline,
+			cRecoveryUnvalidatedMarker: s.cRecoveryUnvalidatedMarker,
 		}
 	}
 	s.ensureGSS(nil)
 	return glrStack{
-		gss:                  s.gss.clone(),
-		cacheEntries:         s.cacheEntries,
-		byteOffset:           s.byteOffset,
-		score:                s.score,
-		recoverabilityKnown:  s.recoverabilityKnown,
-		mayRecover:           s.mayRecover,
-		branchOrder:          s.branchOrder,
-		cRec:                 s.cRec.clone(),
-		cRecoverMissingGroup: s.cRecoverMissingGroup,
-		cNodeBaseline:        s.cNodeBaseline,
+		gss:                        s.gss.clone(),
+		cacheEntries:               s.cacheEntries,
+		byteOffset:                 s.byteOffset,
+		score:                      s.score,
+		recoverabilityKnown:        s.recoverabilityKnown,
+		mayRecover:                 s.mayRecover,
+		branchOrder:                s.branchOrder,
+		cRec:                       s.cRec.clone(),
+		cRecoverMissingGroup:       s.cRecoverMissingGroup,
+		cNodeBaseline:              s.cNodeBaseline,
+		cRecoveryUnvalidatedMarker: s.cRecoveryUnvalidatedMarker,
 	}
 }
 
 func (s *glrStack) cloneWithScratch(scratch *gssScratch) glrStack {
 	s.ensureGSS(scratch)
 	return glrStack{
-		gss:                  s.gss.clone(),
-		cacheEntries:         false,
-		byteOffset:           s.byteOffset,
-		score:                s.score,
-		recoverabilityKnown:  s.recoverabilityKnown,
-		mayRecover:           s.mayRecover,
-		branchOrder:          s.branchOrder,
-		cRec:                 s.cRec.clone(),
-		cRecoverMissingGroup: s.cRecoverMissingGroup,
-		cNodeBaseline:        s.cNodeBaseline,
+		gss:                        s.gss.clone(),
+		cacheEntries:               false,
+		byteOffset:                 s.byteOffset,
+		score:                      s.score,
+		recoverabilityKnown:        s.recoverabilityKnown,
+		mayRecover:                 s.mayRecover,
+		branchOrder:                s.branchOrder,
+		cRec:                       s.cRec.clone(),
+		cRecoverMissingGroup:       s.cRecoverMissingGroup,
+		cNodeBaseline:              s.cNodeBaseline,
+		cRecoveryUnvalidatedMarker: s.cRecoveryUnvalidatedMarker,
 	}
 }
 

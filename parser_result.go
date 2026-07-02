@@ -101,6 +101,33 @@ func (p *Parser) currentMaterializationTiming() *parseMaterializationTiming {
 	return p.materializationTiming
 }
 
+// hasCleanSiblingAtSamePosition reports whether some other live (non-dead)
+// stack in stacks, besides self, reaches the same final byte position as
+// stacks[self] without itself carrying an unvalidated C-recovery marker. Used
+// by buildResultFromGLR as an extra safety check before trusting
+// cRecoveryUnvalidatedMarker on the selected stack: if an independent,
+// unflagged derivation also completed at the same position, the flagged
+// stack's clean result is corroborated by a genuinely separate parse rather
+// than being the sole survivor of a recovery-owning competitor's elimination.
+func hasCleanSiblingAtSamePosition(stacks []glrStack, self int) bool {
+	if self < 0 || self >= len(stacks) {
+		return false
+	}
+	pos := stacks[self].byteOffset
+	for i := range stacks {
+		if i == self || stacks[i].dead {
+			continue
+		}
+		if stacks[i].byteOffset != pos {
+			continue
+		}
+		if !stacks[i].cRecoveryUnvalidatedMarker {
+			return true
+		}
+	}
+	return false
+}
+
 // buildResultFromGLR picks the best stack and constructs the final tree.
 // Prefers accepted stacks, then highest score, then most entries. When
 // accepted stacks are otherwise tied, prefer the tree that retains an
@@ -143,6 +170,26 @@ func (p *Parser) buildResultFromGLR(stacks []glrStack, source []byte, arena *nod
 		materializationTiming.resultSelectionNanos += time.Since(selectionStart).Nanoseconds()
 	}
 	selected := stacks[best]
+	// crecoveryDroppedErrorForClean is set ONLY here, and only for the stack
+	// that is actually about to become the returned tree — never for a drop
+	// or fork that happened on some other, discarded lineage elsewhere in the
+	// parse. cRecoveryUnvalidatedMarker is carried on selected because it
+	// itself created a real ERROR node via cRecoverToState (for a
+	// single-stack dead end with a small recovered span — see
+	// cRecoveryUnvalidatedMarker's doc comment in glr.go for why this is the
+	// only trigger) and never cycled back through cHandleError to be
+	// re-validated by another cost competition — cStackErrorCost cannot
+	// legitimately have fallen back to zero in that case. The same-position
+	// sibling check below is an additional guard: if another live, non-dead
+	// stack reaches this exact position with no unvalidated marker of its
+	// own, a genuinely independent clean derivation also completed here, so
+	// the flagged lineage's clean result is corroborated rather than
+	// suspicious, and resolveCRecoverySwallowedError is not worth the
+	// discarded-reparse cost of double-checking it.
+	if p.errorCostCompetitionEnabled() && selected.cRecoveryUnvalidatedMarker &&
+		!hasCleanSiblingAtSamePosition(stacks, best) {
+		p.crecoveryDroppedErrorForClean = true
+	}
 	if p.glrTrace && p.errorCostCompetitionEnabled() {
 		p.traceCResultSelectionSelected(best, &selected, arena)
 	}

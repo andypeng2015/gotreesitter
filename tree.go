@@ -656,8 +656,49 @@ type ParseEquivStateRuntime struct {
 
 // ParseRuntime captures parser-loop diagnostics for a completed tree.
 type ParseRuntime struct {
-	StopReason                                    ParseStopReason
-	ForestFastPath                                bool
+	StopReason     ParseStopReason
+	ForestFastPath bool
+	// CRecoveryEnteredErrorState is true when the faithful C error-recovery
+	// port (parser_recover_c.go) actually ran ts_parser__handle_error at
+	// least once while producing this specific tree — i.e. some no-action
+	// point was hit for the current lookahead. This is NOT proof the input is
+	// malformed: LALR table limitations routinely drive well-formed,
+	// compiling input into a momentary no-action point that C-recovery
+	// resolves losslessly (ordinary GLR disambiguation). It is only a cheap
+	// pre-filter for Parse()'s post-parse swallowed-error safety net
+	// (resolveCRecoverySwallowedError) — see CRecoveryDroppedErrorForClean
+	// for the actual, precise suspicion signal. It is captured per finalized
+	// tree (not read from a raw Parser field) so a discarded retry attempt
+	// can never leave a stale value on the tree that is actually returned.
+	CRecoveryEnteredErrorState bool
+	// CRecoveryDroppedErrorForClean is true when the stack SELECTED as this
+	// tree's parse result (buildResultFromGLR, parser_result.go) carried an
+	// unvalidated C-recovery marker (see glrStack.cRecoveryUnvalidatedMarker)
+	// with no unflagged sibling reaching the same final position — i.e. the
+	// selected lineage itself created a real ERROR node via cRecoverToState
+	// (for a single-stack dead end with a small recovered span) and was
+	// never re-validated by another cost competition. This is the precise
+	// signature of the swallowed-error defect class (see
+	// resolveCRecoverySwallowedError): unlike an ordinary clean recovery (no
+	// unvalidated marker, or a corroborating clean sibling, at the same
+	// position), this means the specific result being returned lost real
+	// ERROR content somewhere along its own lineage. Deliberately scoped to
+	// the selected result only — NOT set for drops/forks on discarded
+	// lineages elsewhere in the parse, nor for large/multi-stack recoveries;
+	// both were tried and found to fire on ordinary GLR disambiguation for a
+	// measurable fraction of valid, compiling source in a real repo-file
+	// walk (the discarded-lineage version: thousands of times per large Go
+	// file) and were the cause of a prior, over-broad version of this
+	// signal's false-fire rate.
+	CRecoveryDroppedErrorForClean bool
+	// CRecoverySwallowedErrorFallbackAttempted is true when
+	// resolveCRecoverySwallowedError actually re-parsed the source with the
+	// C-recovery gate disabled to double-check a suspicious clean result (see
+	// CRecoveryDroppedErrorForClean). Diagnostic only — lets callers measure
+	// the fallback's false-fire rate (extra latency from a re-parse that is
+	// usually discarded) against their own corpora, e.g. by walking a tree of
+	// known-valid source files and counting how often this is true.
+	CRecoverySwallowedErrorFallbackAttempted      bool
 	SourceLen                                     uint32
 	ExpectedEOFByte                               uint32
 	RootEndByte                                   uint32

@@ -882,8 +882,192 @@ func (p *Parser) Parse(source []byte) (*Tree, error) {
 			progress.emit(time.Now(), "retry_end", 0, 0, Token{}, false, nil, 0, 0, 0, false, 0, 0, "")
 		}
 		p.normalizeReturnedTreeForParse(tree, source)
+		tree = p.resolveCRecoverySwallowedError(source, tree)
 	}
 	return tree, nil
+}
+
+// resolveCRecoverySwallowedError is a language-agnostic safety net for a
+// defect class in the faithful C error-recovery port (parser_recover_c.go):
+// for a confirmed set of inputs (java/php/gomod malformed-input regressions;
+// see parser_resync_recovery_test.go and
+// grammars/php_parse_regression_test.go,
+// grammars/gomod_parse_regression_test.go) the GLR engine's condense-step
+// cost competition (ts_parser__compare_versions) can select a final result
+// whose lineage discarded C-recovery-owned content in favor of a marker-free
+// sibling, or that itself created a real ERROR node and was never
+// re-validated by another cost competition — see cRecoveryDroppedErrorForClean
+// and cRecoveryUnvalidatedMarker. The real tree-sitter C oracle (verified
+// against the exact pinned grammar commits in grammars/languages.lock) never
+// produces such a marker-free result from a version that needed recovery:
+// every path out of ts_parser__handle_error/ts_parser__recover
+// (recover_to_state, skip_token, recover_eof, missing-token insertion) wraps
+// something in ERROR or MISSING. When that happens and it is the last thing
+// standing between the parse and a clean result, HasError() silently goes
+// false for genuinely malformed input.
+//
+// The check is deliberately narrow and cannot invent new errors or regress
+// existing passing results:
+//   - It fires only when the SELECTED result's own lineage carries the
+//     signal (CRecoveryDroppedErrorForClean, set exclusively in
+//     buildResultFromGLR for the stack that is actually returned — never for
+//     a drop or fork that happened on some other, discarded lineage
+//     elsewhere in the parse) AND the resulting tree is nonetheless
+//     completely clean. Ordinary "recovered cleanly, nothing left over"
+//     results (eds, ledger, authzed, dart, ...) never carry the signal.
+//   - Even then, it only adopts the resync-based fallback's verdict if the
+//     fallback itself completed normally (no timeout/cancellation/truncation)
+//     and its own disagreement stays small in absolute byte size — see
+//     crecoverySwallowedErrorMaxFallbackErrorBytes.
+//
+// In that specific combination this re-parses with the C-recovery gate
+// disabled for this Parser instance (matching GOT_C_RECOVERY=0, i.e. the
+// resync-based engine path that predates the C-recovery default-enablement)
+// and adopts that result only if it actually reports an error; otherwise the
+// original, C-recovery-produced tree is kept unchanged.
+//
+// Scope note: this guarantees HasError() correctness only, not tree shape.
+// The adopted resync fallback can be structurally coarser than what a true,
+// local C-recovery fix would have produced (e.g. the java fixture's adopted
+// tree unwinds much of the method body into top-level ERROR nodes, where the
+// real tree-sitter C oracle produces a narrow (ERROR (type_identifier))) —
+// resync's whole-span ERROR-wrap heuristic (tryOpportunisticTopLevelResyncRecovery)
+// is coarser than C-recovery's local cost competition by design. Fixing that
+// shape gap would require a true local fix inside the C-recovery port itself,
+// which this safety net does not attempt.
+func (p *Parser) resolveCRecoverySwallowedError(source []byte, tree *Tree) *Tree {
+	if p == nil || tree == nil {
+		return tree
+	}
+	if !p.errorCostCompetitionEnabled() {
+		return tree
+	}
+	if p.crecoverySwallowedErrorCheckActive {
+		return tree
+	}
+	if tree.ParseStoppedEarly() {
+		return tree
+	}
+	// Read the signal from the tree's OWN captured ParseRuntime, not the live
+	// p.crecoveryEnteredErrorState/p.crecoveryDroppedErrorForClean parser
+	// fields: parseInternal can run more than once per Parse() call (DFA
+	// retries — see retryFullParseWithDFA), and a discarded retry attempt
+	// would otherwise leak its recovery history into this check even though
+	// it has nothing to do with the tree actually being returned.
+	rt := tree.ParseRuntime()
+	if !rt.CRecoveryEnteredErrorState || !rt.CRecoveryDroppedErrorForClean {
+		// Either this tree never itself hit ts_parser__handle_error, or
+		// recovery resolved cleanly without the selected lineage ever
+		// discarding recovery-owned content for a marker-free sibling.
+		// Nothing to double-check.
+		return tree
+	}
+	root := tree.RootNode()
+	if root == nil || root.HasError() {
+		return tree
+	}
+
+	// defer (not a plain post-call restore) so a panic inside the fallback
+	// Parse call can never leave this Parser instance permanently stuck with
+	// C-recovery disabled.
+	prevGate := p.errorCostCompetition
+	prevCheckActive := p.crecoverySwallowedErrorCheckActive
+	defer func() {
+		p.errorCostCompetition = prevGate
+		p.crecoverySwallowedErrorCheckActive = prevCheckActive
+	}()
+	p.errorCostCompetition = false
+	p.crecoverySwallowedErrorCheckActive = true
+	fallback, err := p.Parse(source)
+	if err != nil || fallback == nil {
+		return tree
+	}
+	markCRecoverySwallowedErrorFallbackAttempted(tree)
+	// A caller-shared timeout/cancellation can trip while the (slower)
+	// resync fallback is running. Adopting a truncated fallback tree with
+	// err == nil would be worse than the swallowed-error bug this safety net
+	// exists to fix, so reject it outright and keep the original result.
+	if fallback.ParseStoppedEarly() || parseStopReasonIsActive(p.activeParseStopReason()) {
+		fallback.Release()
+		return tree
+	}
+	fallbackRoot := fallback.RootNode()
+	if fallbackRoot == nil || !fallbackRoot.HasError() {
+		// The resync-based path agrees the input is clean (or itself
+		// couldn't build a root); keep the original C-recovery result.
+		fallback.Release()
+		return tree
+	}
+	// The resync-based path disagrees, but resync is a coarser, whole-span
+	// ERROR-wrap heuristic (see tryOpportunisticTopLevelResyncRecovery) that
+	// is known to sometimes unwind a large, otherwise-locally-recoverable
+	// span into one ERROR instead of the narrow local recovery C-recovery's
+	// cost competition would have produced — exactly why C-recovery owns
+	// these dead ends by default for highly ambiguous grammars (kotlin's
+	// generic-vs-comparison forks are the confirmed example: resync there
+	// also disagrees, but by unwinding hundreds of bytes of a legitimately
+	// valid, deeply nested lambda expression). Only trust resync's verdict
+	// when its own ERROR/MISSING content stays small in absolute size: the
+	// confirmed defect-class fixtures (java/php/gomod) all fit within a few
+	// dozen bytes — a single malformed token or directive — while resync's
+	// destructive whole-span unwinds run into the hundreds of bytes. A
+	// fraction-of-source threshold does not separate these (java's own
+	// malformed method body is itself a large fraction of its short test
+	// source), so this is deliberately an absolute bound.
+	if errorByteCoverage(fallbackRoot) > crecoverySwallowedErrorMaxFallbackErrorBytes {
+		fallback.Release()
+		return tree
+	}
+	markCRecoverySwallowedErrorFallbackAttempted(fallback)
+	tree.Release()
+	return fallback
+}
+
+// markCRecoverySwallowedErrorFallbackAttempted stamps t's ParseRuntime with
+// CRecoverySwallowedErrorFallbackAttempted=true. Diagnostic bookkeeping only;
+// see the field doc comment in tree.go.
+func markCRecoverySwallowedErrorFallbackAttempted(t *Tree) {
+	if t == nil {
+		return
+	}
+	rt := t.ParseRuntime()
+	rt.CRecoverySwallowedErrorFallbackAttempted = true
+	t.setParseRuntime(rt)
+}
+
+// crecoverySwallowedErrorMaxFallbackErrorBytes bounds how many source bytes
+// the resync fallback's own ERROR/MISSING content may cover before
+// resolveCRecoverySwallowedError distrusts it as too coarse to adopt. Tuned
+// against the confirmed defect-class fixtures — java 44 bytes, gomod 5 bytes,
+// php 1 byte (a zero-width MISSING plus its immediate span) — versus the
+// confirmed destructive resync unwind on ambiguous kotlin input (285 bytes on
+// a 371-byte source). Kept well below that gap.
+const crecoverySwallowedErrorMaxFallbackErrorBytes = 128
+
+// errorByteCoverage returns the number of source bytes covered by the
+// outermost ERROR/MISSING nodes under root (children of an ERROR/MISSING
+// node are not double-counted; their span is already included).
+func errorByteCoverage(root *Node) uint32 {
+	if root == nil {
+		return 0
+	}
+	var covered uint32
+	var walk func(n *Node)
+	walk = func(n *Node) {
+		if n == nil {
+			return
+		}
+		if n.IsError() || n.IsMissing() {
+			span := n.EndByte() - n.StartByte()
+			covered += span
+			return
+		}
+		for i := 0; i < n.ChildCount(); i++ {
+			walk(n.Child(i))
+		}
+	}
+	walk(root)
+	return covered
 }
 
 // ParseStrict is like Parse, but returns ErrParseStoppedEarly when parsing

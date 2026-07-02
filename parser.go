@@ -74,6 +74,70 @@ type Parser struct {
 	// errorCostCompetition enables the faithful C error-recovery port
 	// (parser_recover_c.go) for this grammar; see errorCostCompetitionLanguage.
 	errorCostCompetition bool
+	// crecoveryEnteredErrorState is set once per Parse() call the first time
+	// cHandleError actually runs (a no-action point was hit for the current
+	// lookahead in some parser state). It is reset at the start of
+	// parseInternal.
+	//
+	// IMPORTANT: cHandleError is NOT proof that the input is malformed.
+	// LALR table limitations routinely drive well-formed, compiling input
+	// into a momentary no-action dead end that cDoAllPotentialReductions
+	// (step 1 of cHandleError) resolves losslessly via ordinary reduce
+	// closure — this is exactly the same "ordinary GLR disambiguation"
+	// mechanism eds's legitimate empty-value grammar production and a
+	// measurable fraction (~2% in a real repo-file walk) of syntactically
+	// valid Go source both exercise. So this field is only a cheap
+	// pre-filter ("recovery machinery ran at all") for
+	// resolveCRecoverySwallowedError, never the actual suspicion signal —
+	// see crecoveryDroppedErrorForClean, which is scoped to the selected
+	// result's own lineage and is what the fallback check actually keys on.
+	crecoveryEnteredErrorState bool
+	// crecoverySwallowedErrorCheckActive guards resolveCRecoverySwallowedError
+	// against recursing into itself when it temporarily disables the C
+	// recovery gate and re-invokes Parse for the fallback comparison parse.
+	crecoverySwallowedErrorCheckActive bool
+	// crecoveryDroppedErrorForClean is set exclusively in buildResultFromGLR
+	// (parser_result.go), for the stack actually selected as the parse
+	// result, when that stack carries cRecoveryUnvalidatedMarker (see
+	// glr.go) and no unflagged sibling reaches the same final position (see
+	// hasCleanSiblingAtSamePosition). That marker means the selected
+	// lineage itself created a real ERROR node via cRecoverToState — for a
+	// single-stack dead end, with a small recovered span — and was never
+	// re-validated by another cost competition before reaching ACCEPT. Real
+	// tree-sitter C's ts_parser__handle_error/ts_parser__recover never
+	// produce a zero-marker result from a version that needed recovery
+	// (recover_to_state, skip_token, and recover_eof all wrap something in
+	// ERROR or MISSING) — this is the precise, narrow signature of the
+	// C-recovery cost model swallowing an error signal that resync-based
+	// recovery would have kept.
+	//
+	// This field is deliberately NOT set from "a drop happened somewhere in
+	// the parse": an earlier version of this signal fired for any
+	// recovery-owning-vs-clean condense drop anywhere, including on stacks
+	// that never influenced the final result, and a later version tagged the
+	// surviving side of such a drop regardless of stack count or span — both
+	// versions triggered the (expensive, always-discarded) fallback re-parse
+	// broadly on valid, compiling Go source in a real repo-file walk (the
+	// condense-drop trigger specifically: thousands of times per large file,
+	// ordinary LALR-table disambiguation, not error recovery). Scoping the
+	// signal to cRecoverToState's single-stack, small-span trigger only, plus
+	// the same-position sibling check, eliminated that false-fire rate while
+	// keeping the confirmed defect-class fixes (java/php/gomod) working. It
+	// also deliberately does NOT fire for ordinary "recovered cleanly, no
+	// leftover error" resolutions (e.g. eds/ledger), whose selected lineage
+	// never carries the marker.
+	crecoveryDroppedErrorForClean bool
+	// crecoveryHandleErrorSingleStack records whether the GLR engine had
+	// exactly one live stack the moment the current cHandleError call began —
+	// i.e. whether C-recovery currently owns the whole parse, as opposed to
+	// being one of several unrelated ambiguity forks. Read by
+	// cRecoverToState when deciding whether a freshly created ERROR node
+	// makes its fork worth tracking via cRecoveryUnvalidatedMarker: a fork
+	// born while a highly ambiguous grammar (e.g. kotlin's
+	// generic-vs-comparison forks) was exploring several unrelated GLR
+	// candidates routinely settles back to a legitimately clean tree without
+	// ever being "re-validated", so it must not be treated as suspicious.
+	crecoveryHandleErrorSingleStack bool
 	// cNodeMemo caches per-subtree error cost and visible node count for the
 	// gated recovery, keyed on (node pointer, equivVersion) — the engine
 	// analogue of C's SubtreeHeapData.error_cost/visible_descendant_count
@@ -3546,6 +3610,8 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		} else {
 			clear(p.cNodeMemo)
 		}
+		p.crecoveryEnteredErrorState = false
+		p.crecoveryDroppedErrorForClean = false
 	}
 	trackChildErrors := !deferParentLinks
 
@@ -3947,6 +4013,8 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		captureArenaStats()
 		captureScratchStats()
 		parseRuntime.StopReason = parseStopReasonWithTokenSourceEOF(stopReason, tokenSourceEOFEarly)
+		parseRuntime.CRecoveryEnteredErrorState = p.crecoveryEnteredErrorState
+		parseRuntime.CRecoveryDroppedErrorForClean = p.crecoveryDroppedErrorForClean
 		recordParseRuntimeLoopStats(&parseRuntime, scratch, iterationsUsed, nodeCount, peakStackDepth, maxStacksSeen, singleStackIterations, multiStackIterations, singleStackTokens, multiStackTokens)
 		recordParseRuntimePhaseTiming(&parseRuntime, materializationTimingRef, parseStart, parserLoopNanos, tokenNextNanos, actionDispatchNanos, actionLookupNanos, glrMergeNanos, glrCullNanos)
 		recordParseRuntimeMaterializationTiming(&parseRuntime, materializationTimingRef, materializationTiming)
