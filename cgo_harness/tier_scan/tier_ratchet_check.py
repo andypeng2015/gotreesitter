@@ -10,7 +10,7 @@ Current state is read from the canonical published artifacts, NOT a perf rerun:
   * floor   — ``cgo_harness/tier_scan/clean_grammars.txt`` is the parity-clean
     ratchet/floor. It can make a current ``IV-*`` row a regression, but it does
     not make that row contradictory.
-  * tier    — ``docs/reports/tiers.json`` (the published per-release tier
+  * tier    — ``cgo_harness/tier_scan/tiers.json`` (the published per-release tier
     table). The current performance tier of a CLEAN grammar is tiers.json's
     tier for ``g`` (``unranked`` if absent or not ranked). The current tier of
     any assessed ``IV-*`` grammar is forced to ``IV`` regardless of what

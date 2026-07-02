@@ -61,7 +61,8 @@
 #                         set 1 to write deterministic manifests/control
 #                         artifacts without running parser measure frames
 #   GTS_TIER_SCAN_SKIP_TIER_PUBLISH
-#                         set 1 to skip docs/reports/tiers.{md,json} rewrite
+#                         set 1 to skip cgo_harness/tier_scan/tiers.{md,json}
+#                         rewrite
 #   GOT_PARSE_PROGRESS    when set by a caller, threads parser-loop progress
 #                         into measure children and replay commands
 #   GOT_PARSE_PROGRESS_INTERVAL_MS
@@ -1732,21 +1733,21 @@ if [ -f "$CLASS_TSV" ]; then
   fi
 fi
 
-# Per-release tier publication: regenerate docs/reports/tiers.{md,json} from
-# the committed ratchet + classification (+ local perf evidence when present)
-# and commit the refreshed artifact in the release PR. With
+# Per-release tier publication: regenerate cgo_harness/tier_scan/tiers.{md,json}
+# from the committed ratchet + classification (+ local perf evidence when
+# present) and commit the refreshed artifact in the release PR. With
 # GTS_TIERS_REQUIRE_ZERO_IV=1 any tier-IV grammar is release-blocking — the
 # first tier-publishing release and every one after it requires IV=0.
 console_line
 if [ "${GTS_TIER_SCAN_SKIP_TIER_PUBLISH:-0}" = "1" ]; then
   console_line "=== tier publication skipped (GTS_TIER_SCAN_SKIP_TIER_PUBLISH=1)"
 else
-  console_line "=== tier publication (docs/reports/tiers.md)"
+  console_line "=== tier publication (cgo_harness/tier_scan/tiers.md)"
   TIERS_FLAGS=""
   if [ "${GTS_TIERS_REQUIRE_ZERO_IV:-0}" = "1" ]; then
     TIERS_FLAGS="--require-zero-iv"
   fi
-  if ! python3 "$REPO_ROOT/docs/reports/gen_tiers.py" \
+  if ! python3 "$REPO_ROOT/cgo_harness/tier_scan/gen_tiers.py" \
       --version "${GTS_RELEASE_VERSION:-unreleased}" $TIERS_FLAGS; then
     status=1
   fi

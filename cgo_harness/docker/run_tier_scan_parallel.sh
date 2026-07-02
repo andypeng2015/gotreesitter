@@ -44,7 +44,8 @@ Important env forwarded to workers:
   GOT_GLR_MAX_STACKS.
 
 Workers default GTS_TIER_SCAN_SKIP_TIER_PUBLISH=1 so parallel runs do not
-race while rewriting docs/reports/tiers.{md,json}. Explicit 0 is rejected.
+race while rewriting cgo_harness/tier_scan/tiers.{md,json}. Explicit 0 is
+rejected.
 EOF
 }
 

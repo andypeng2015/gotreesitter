@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Per-release tier publication: generate docs/reports/tiers.{md,json}.
+"""Per-release tier publication: generate cgo_harness/tier_scan/tiers.{md,json}.
 
 One tier scale (canonical: tier-ratchet.md, moved to gotreesitter-specs
 (external) / cgo_harness/tier_scan/README.md):
