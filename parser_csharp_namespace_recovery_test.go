@@ -182,6 +182,20 @@ func TestCSharpCleanNamespaceUnaffected(t *testing.T) {
 // the source-based method reconstruction was gated off above 4096 bytes. The
 // per-member bounded source recovery should now surface the methods.
 func TestCSharpLargeShreddedNamespaceRecoversMethods(t *testing.T) {
+	if raceEnabled {
+		// The per-member bounded recovery in csharpRecoverNamespaceBodyMembersFromSource
+		// (parser_result_csharp_method_recovery.go) reparses each class member as its
+		// own small GLR parse; on this ~12KB real-world fixture that's fast enough to
+		// finish well inside the parser's SetTimeoutMicros budget normally (~1.1s), but
+		// the race detector's per-access instrumentation slows the same work enough
+		// (5s+) to trip the parser's own internal timeout, which is a wall-clock
+		// checkpoint and therefore inherently race/CPU-speed sensitive. Skip under
+		// -race; non-race coverage keeps the full recovery assertions. Mirrors
+		// TestScalaPathResolverRecoversTopLevelObjectAndClass in
+		// parser_result_test/parser_result_scala_realworld_test.go, which skips its
+		// own heavyweight realworld recovery parse under -race for the same reason.
+		t.Skip("skip heavyweight C# JsonTextReader realworld recovery parse under -race: race instrumentation overhead trips the parser's internal wall-clock timeout; non-race coverage keeps the full recovery assertions")
+	}
 	lang := grammars.CSharpLanguage()
 	src, err := os.ReadFile("testdata/parser_result/csharp/jsontextreader_excerpt.cs")
 	if err != nil {
