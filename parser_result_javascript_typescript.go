@@ -829,28 +829,6 @@ func insertJavaScriptStatementBlockComment(parent *Node, childIdx int, comment *
 	populateParentNode(parent, parent.children)
 }
 
-func normalizeJavaScriptTypeScriptCallPrecedence(root *Node, lang *Language) {
-	if root == nil || lang == nil {
-		return
-	}
-	switch lang.Name {
-	case "javascript", "typescript", "tsx":
-	default:
-		return
-	}
-	callSym, ok := symbolByName(lang, "call_expression")
-	if !ok {
-		return
-	}
-	if lang.Name == "javascript" {
-		_ = normalizeJavaScriptTypeScriptCallPrecedenceFullWalk(root, lang, callSym)
-		return
-	}
-
-	index := buildJavaScriptTypeScriptCallPrecedenceIndex(root, callSym)
-	rewriteJavaScriptTypeScriptCallPrecedenceCandidates(index.candidates, lang, callSym)
-}
-
 func normalizeJavaScriptTypeScriptCallPrecedenceWithStats(root *Node, lang *Language) normalizationPassCounters {
 	return normalizeJavaScriptTypeScriptCallPrecedenceWithDetailedStats(root, lang).normalizationPassCounters
 }

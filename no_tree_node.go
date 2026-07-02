@@ -45,15 +45,9 @@ type compactFullLeafSlab struct {
 type compactFullLeafMaterializeReason = materializeReason
 
 const (
-	compactFullLeafMaterializeForParentReduce      compactFullLeafMaterializeReason = materializeForParentReduce
-	compactFullLeafMaterializeForFinalTree         compactFullLeafMaterializeReason = materializeForFinalTree
-	compactFullLeafMaterializeForNormalization     compactFullLeafMaterializeReason = materializeForNormalization
-	compactFullLeafMaterializeForRecovery          compactFullLeafMaterializeReason = materializeForRecovery
-	compactFullLeafMaterializeForQuery             compactFullLeafMaterializeReason = materializeForQuery
-	compactFullLeafMaterializeForCursor            compactFullLeafMaterializeReason = materializeForCursor
-	compactFullLeafMaterializeForParentAPI         compactFullLeafMaterializeReason = materializeForParentAPI
-	compactFullLeafMaterializeForEdit              compactFullLeafMaterializeReason = materializeForEdit
-	compactFullLeafMaterializeForCheckpointRebuild compactFullLeafMaterializeReason = materializeForCheckpointRebuild
+	compactFullLeafMaterializeForParentReduce  compactFullLeafMaterializeReason = materializeForParentReduce
+	compactFullLeafMaterializeForFinalTree     compactFullLeafMaterializeReason = materializeForFinalTree
+	compactFullLeafMaterializeForNormalization compactFullLeafMaterializeReason = materializeForNormalization
 )
 
 const (

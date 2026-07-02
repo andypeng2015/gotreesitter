@@ -510,14 +510,6 @@ func representativeTransitions(nfa *nfa, states []int) []nfaTransition {
 	return out
 }
 
-func representativeRuneForRange(lo, hi rune) (rune, bool) {
-	rs := representativeRunesForRange(lo, hi)
-	if len(rs) == 0 {
-		return 0, false
-	}
-	return rs[0], true
-}
-
 func representativeRunesForRange(lo, hi rune) []rune {
 	if hi < lo {
 		return nil

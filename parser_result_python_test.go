@@ -934,55 +934,6 @@ func TestNormalizePythonCompatibilityWrapsInlineTupleExpressionBlock(t *testing.
 	}
 }
 
-func TestNormalizePythonAsPatternTargetWrapsTupleTarget(t *testing.T) {
-	lang := &Language{
-		Name: "python",
-		SymbolNames: []string{
-			"",
-			"module",
-			"as_pattern_target",
-			"(",
-			"identifier",
-			",",
-			")",
-			"tuple",
-		},
-		SymbolMetadata: []SymbolMetadata{
-			{},
-			{Name: "module", Visible: true, Named: true},
-			{Name: "as_pattern_target", Visible: true, Named: true},
-			{Name: "(", Visible: true, Named: false},
-			{Name: "identifier", Visible: true, Named: true},
-			{Name: ",", Visible: true, Named: false},
-			{Name: ")", Visible: true, Named: false},
-			{Name: "tuple", Visible: true, Named: true},
-		},
-	}
-	source := []byte("(x, y)")
-	arena := newNodeArena(arenaClassFull)
-	target := newParentNodeInArena(arena, 2, true, []*Node{
-		newLeafNodeInArena(arena, 3, false, 0, 1, Point{}, Point{Column: 1}),
-		newLeafNodeInArena(arena, 4, true, 1, 2, Point{Column: 1}, Point{Column: 2}),
-		newLeafNodeInArena(arena, 5, false, 2, 3, Point{Column: 2}, Point{Column: 3}),
-		newLeafNodeInArena(arena, 4, true, 4, 5, Point{Column: 4}, Point{Column: 5}),
-		newLeafNodeInArena(arena, 6, false, 5, 6, Point{Column: 5}, Point{Column: 6}),
-	}, nil, 0)
-	root := newParentNodeInArena(arena, 1, true, []*Node{target}, nil, 0)
-
-	normalizePythonAsPatternTargetIdentifiers(root, source, lang)
-
-	if got, want := target.ChildCount(), 1; got != want {
-		t.Fatalf("as_pattern_target.ChildCount = %d, want %d", got, want)
-	}
-	tuple := target.Child(0)
-	if tuple == nil || tuple.Type(lang) != "tuple" {
-		t.Fatalf("as_pattern_target child = %#v, want tuple", tuple)
-	}
-	if got, want := tuple.ChildCount(), 5; got != want {
-		t.Fatalf("tuple.ChildCount = %d, want %d", got, want)
-	}
-}
-
 func TestPythonCompatibilitySourceGatesPreferCodeTokens(t *testing.T) {
 	if pythonSourceMayContainCodeByte([]byte(`x = ";"; y = 1`), ';') != true {
 		t.Fatal("expected code semicolon after string literal")

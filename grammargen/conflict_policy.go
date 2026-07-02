@@ -140,21 +140,6 @@ func singleGeneratedRepeatWrapperHelper(prod *Production, ng *NormalizedGrammar,
 	return repeatLHS, true
 }
 
-func repeatHelperContinuesWithShift(repeatLHS, lookahead int, shift lrAction, ng *NormalizedGrammar, cache *conflictResolutionCache) bool {
-	if repeatLHS < 0 || repeatLHS >= len(cache.prodsByLHS) ||
-		lookahead < 0 || lookahead >= ng.TokenCount() ||
-		!shift.hasRepeatLHS(repeatLHS) ||
-		!isStructurallyGeneratedRepeatHelper(repeatLHS, ng, cache) {
-		return false
-	}
-	lookaheadTargets := map[int]bool{lookahead: true}
-	shiftTargets := shiftContinuationTargets(shift, len(ng.Symbols))
-	if len(shiftTargets) == 0 {
-		return false
-	}
-	return repeatHelperCanContinueWithAny(repeatLHS, lookaheadTargets, shiftTargets, ng, cache)
-}
-
 func repeatHelperWrapperContinuesWithShift(repeatLHS, lookahead int, shift lrAction, ng *NormalizedGrammar, cache *conflictResolutionCache) bool {
 	if repeatLHS < 0 || repeatLHS >= len(cache.prodsByLHS) ||
 		lookahead < 0 || lookahead >= ng.TokenCount() ||

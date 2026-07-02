@@ -284,34 +284,6 @@ func collectTypeScriptCompatibilityNodeCandidate(candidates *typeScriptCompatibi
 	}
 }
 
-func collectTypeScriptCompatibilityChildCandidate(candidates *typeScriptCompatibilityCandidates, parent *Node, childIndex int, child *Node, ctx *typeScriptNormalizationContext) {
-	if candidates == nil || parent == nil || child == nil || ctx == nil {
-		return
-	}
-	candidates.built = true
-	if !typeScriptCompatibilityChildMightRewrite(child, ctx) {
-		return
-	}
-	candidates.append(typeScriptCompatibilityCandidate{
-		kind: typeScriptCompatibilityCandidateChild,
-		child: javaScriptTypeScriptPrecedenceCandidate{
-			parent:     parent,
-			childIndex: childIndex,
-		},
-	})
-}
-
-func typeScriptCompatibilityIsMemberModifierCandidate(node *Node, ctx *typeScriptNormalizationContext) bool {
-	if node == nil || ctx == nil || ctx.accessibilityModSym == 0 {
-		return false
-	}
-	return (ctx.methodDefinitionSym != 0 && node.symbol == ctx.methodDefinitionSym) ||
-		(ctx.methodSignatureSym != 0 && node.symbol == ctx.methodSignatureSym) ||
-		(ctx.abstractMethodSignatureSym != 0 && node.symbol == ctx.abstractMethodSignatureSym) ||
-		(ctx.propertySignatureSym != 0 && node.symbol == ctx.propertySignatureSym) ||
-		(ctx.publicFieldDefinitionSym != 0 && node.symbol == ctx.publicFieldDefinitionSym)
-}
-
 func typeScriptIdentifierKeywordAliasCandidate(node *Node, ctx *typeScriptNormalizationContext) bool {
 	if node == nil || ctx == nil || ctx.identifierSym == 0 || node.symbol != ctx.identifierSym || len(node.children) != 1 {
 		return false
@@ -331,27 +303,6 @@ func typeScriptImportKeywordNamednessWouldChange(node *Node, ctx *typeScriptNorm
 		return false
 	}
 	return node.isNamed() != (typeScriptNextNonspaceByte(ctx.source, node.endByte) == '(')
-}
-
-func typeScriptCompatibilityChildMightRewrite(child *Node, ctx *typeScriptNormalizationContext) bool {
-	if child == nil || ctx == nil {
-		return false
-	}
-	switch child.symbol {
-	case ctx.binaryExpressionSym:
-		return (ctx.canRewriteGenericCalls && typeScriptBinaryOperatorCouldBeGenericCall(child, ctx)) ||
-			(ctx.canRewriteAsExpressions && typeScriptBinaryOperatorCouldBeAsTypeChain(child, ctx))
-	case ctx.callSym:
-		return ctx.canRewriteInstantiatedCalls && typeScriptCallCouldBeInstantiated(child, ctx)
-	case ctx.asExpressionSym:
-		return ctx.canRewriteAsExpressions && typeScriptAsAssignmentOrTernaryCandidate(child, ctx)
-	case ctx.typeAssertionSym:
-		return ctx.canRewriteGenericArrows && typeScriptGenericArrowTypeAssertionCandidate(child, ctx)
-	case ctx.expressionStatementSym:
-		return ctx.canRewriteClassDeclarations && typeScriptClassExpressionStatementCandidate(child, ctx)
-	default:
-		return false
-	}
 }
 
 func typeScriptAsAssignmentOrTernaryCandidate(node *Node, ctx *typeScriptNormalizationContext) bool {

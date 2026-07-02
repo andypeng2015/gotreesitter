@@ -284,14 +284,6 @@ func iniReusableChildrenByStart(section *Node) map[uint32]*Node {
 	return reusable
 }
 
-func iniContinuationLinesAfter(source []byte, firstStart uint32) []iniSourceLine {
-	lines := iniContinuationLinesFrom(source, firstStart)
-	if len(lines) <= 1 {
-		return nil
-	}
-	return lines[1:]
-}
-
 func iniContinuationLinesFrom(source []byte, firstStart uint32) []iniSourceLine {
 	var lines []iniSourceLine
 	inBlock := false
