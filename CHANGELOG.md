@@ -23,6 +23,16 @@ for tags and release notes while still in `0.x`.
   parser timeout, so the anti-OOM guarantees from #64/#98/#106 are preserved and
   the whole-file 4096-byte gate is unchanged. `JsonTextReader.cs` now recovers 68
   methods (was 0) and `JsonReader.cs` 41 (was 0) (#136).
+- Swift ternary/conditional operator (`cond ? a : b`) now recovers instead of
+  dropping `? a : b` into an `ERROR` node in every position. The runtime Swift
+  blob never fired the `ternary_expression` reduction, so any function containing
+  a ternary lost its whole parse (collapsing to
+  `_modifierless_function_declaration_no_body`). A post-parse recovery pass
+  reconstructs the `ternary_expression` — reparsing the source with each
+  `? if_true : if_false` tail blanked so the condition parses in place, then
+  splicing a synthesised node with the upstream `condition`/`if_true`/`if_false`
+  layout. The rewrite is accepted only when the result is error-free and
+  byte-faithful, so non-ternary code is never affected (#135).
 
 ## [0.20.8] - 2026-07-01
 
