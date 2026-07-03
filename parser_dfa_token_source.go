@@ -4099,7 +4099,43 @@ func (d *dfaTokenSource) shouldDemoteSwiftMemberKeyword(tok Token) bool {
 	if text == "" {
 		text = bytesToStringNoCopy(d.lexer.source[start:end])
 	}
-	return d.symbolName(tok.Symbol) == text
+	if d.symbolName(tok.Symbol) != text {
+		return false
+	}
+	// symbolName(tok.Symbol) == text is trivially satisfied by ANY anonymous
+	// literal token (its symbol name in tree-sitter is its own spelling), not
+	// just genuine reserved keywords like "self"/"default"/"class". Without
+	// this guard, punctuation tokens (e.g. the closing '"' of a string
+	// literal) get misclassified as identifiers whenever they happen to
+	// immediately follow a raw '.' byte in the source -- including a '.'
+	// that is itself just the last character of the preceding string's
+	// content (isAfterSwiftMemberDot has no lexical-context awareness).
+	// Swift's compiled grammar doesn't route these reserved words through
+	// the generic KeywordLexStates/KeywordCaptureToken promotion table (it's
+	// empty for swift), so require the spelling itself to be word-shaped
+	// (identifier-like) instead: real Swift keywords ("self", "default",
+	// "class", ...) are always alphabetic words, never punctuation.
+	return swiftTextIsWordShaped(text)
+}
+
+// swiftTextIsWordShaped reports whether text looks like an identifier/keyword
+// spelling (starts with a letter or underscore, contains only
+// letters/digits/underscores) as opposed to punctuation or an operator.
+func swiftTextIsWordShaped(text string) bool {
+	if text == "" {
+		return false
+	}
+	for i, r := range text {
+		if r == '_' || unicode.IsLetter(r) {
+			continue
+		}
+		if i > 0 && unicode.IsDigit(r) {
+			continue
+		}
+		return false
+	}
+	first := rune(text[0])
+	return first == '_' || unicode.IsLetter(first)
 }
 
 func (d *dfaTokenSource) swiftSimpleIdentifierSymbol() (Symbol, bool) {

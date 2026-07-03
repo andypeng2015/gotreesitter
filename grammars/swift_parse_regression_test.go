@@ -66,6 +66,42 @@ func TestSwiftMemberKeywordSelfAfterDotStaysNavigable(t *testing.T) {
 	}
 }
 
+// TestSwiftStringLiteralEndingInDotDoesNotCorruptFollowingToken guards against
+// a regression in shouldDemoteSwiftMemberKeyword/isAfterSwiftMemberDot: a
+// string literal whose last content character is '.' immediately before the
+// closing quote used to trick the "keyword used as a member name after a
+// dot" demotion into firing on the closing-quote token itself (any anonymous
+// literal's symbol name trivially equals its own spelling, so the old check
+// couldn't tell a real keyword like "self" apart from punctuation). That
+// corrupted the closing quote into a bogus identifier token, forcing an
+// ERROR/recovery cascade that (among other symptoms) misclassified an
+// unrelated later call expression as a constructor_expression.
+func TestSwiftStringLiteralEndingInDotDoesNotCorruptFollowingToken(t *testing.T) {
+	lang := SwiftLanguage()
+	src := []byte("let s = \"An element inside an array literal.\"\nlet y = foo(\"x.\")\n")
+	parser := gotreesitter.NewParser(lang)
+	tree, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse swift trailing-dot string: %v", err)
+	}
+	defer tree.Release()
+
+	root := tree.RootNode()
+	if root.HasError() {
+		t.Fatalf("swift trailing-dot string fixture has parse errors: %s", root.SExpr(lang))
+	}
+	sexpr := root.SExpr(lang)
+	if !strings.Contains(sexpr, "line_string_literal") {
+		t.Fatalf("expected a line_string_literal node; tree: %s", sexpr)
+	}
+	if strings.Contains(sexpr, "constructor_expression") {
+		t.Fatalf("foo(\"x.\") must parse as call_expression, not constructor_expression; tree: %s", sexpr)
+	}
+	if !strings.Contains(sexpr, "call_expression") {
+		t.Fatalf("expected foo(\"x.\") to parse as call_expression; tree: %s", sexpr)
+	}
+}
+
 func TestSwiftImportThenClassParsesAsTopLevelDeclarations(t *testing.T) {
 	lang := SwiftLanguage()
 	src := []byte("import Foundation\nclass Foo {}\n")
