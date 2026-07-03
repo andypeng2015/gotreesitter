@@ -35,7 +35,13 @@ func TestNodeLayoutSizeBudget(t *testing.T) {
 		unsafe.Offsetof(n.flags),
 		unsafe.Offsetof(n.dirtyFlag),
 	)
-	const budget = 144
+	// Ratchet: e70dd873 ("Add raw shape tracking, GLR recovery flags, and
+	// refactor parser APIs") intentionally added rawShape (rawShapeRef,
+	// 4 bytes) and dynamicPrecedence (int32, 4 bytes) to Node to support
+	// precedence tracking and shape propagation used by the GLR
+	// merge/equivalence logic (061b67f9). This budget was never bumped to
+	// match; 152 is the correct current size, not a loosened check.
+	const budget = 152
 	if got > budget {
 		t.Fatalf("Node size = %d, want <= %d", got, budget)
 	}

@@ -12,14 +12,23 @@ func TestStackEntrySizeBudget(t *testing.T) {
 }
 
 func TestNoTreeNodeSizeBudget(t *testing.T) {
-	if got := unsafe.Sizeof(noTreeNode{}); got != 24 {
-		t.Fatalf("noTreeNode size = %d, want 24", got)
+	// Ratchet: e70dd873 ("Add raw shape tracking, GLR recovery flags, and
+	// refactor parser APIs") intentionally added rawShape (rawShapeRef,
+	// 4 bytes) and dynamicPrecedence (int32, 4 bytes) to noTreeNode to
+	// support precedence tracking and shape propagation used by the GLR
+	// merge/equivalence logic (061b67f9). This budget was never bumped to
+	// match; 32 is the correct current size, not a loosened check.
+	if got := unsafe.Sizeof(noTreeNode{}); got != 32 {
+		t.Fatalf("noTreeNode size = %d, want 32", got)
 	}
 }
 
 func TestCompactFullLeafSizeBudget(t *testing.T) {
-	if got := unsafe.Sizeof(compactFullLeaf{}); got != 60 {
-		t.Fatalf("compactFullLeaf size = %d, want 60", got)
+	// Ratchet: compactFullLeaf embeds noTreeNode, so it grew by the same
+	// 8 bytes as TestNoTreeNodeSizeBudget (see comment there); 68 is the
+	// correct current size.
+	if got := unsafe.Sizeof(compactFullLeaf{}); got != 68 {
+		t.Fatalf("compactFullLeaf size = %d, want 68", got)
 	}
 }
 
