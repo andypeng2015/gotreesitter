@@ -4460,7 +4460,18 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		anyReduced := false
 		forceAdvanceAfterReduce := false
 		dispatchConsumedCurrentToken := false
-		consumeCurrentToken := func() {
+		// consumeCurrentToken marks a stack as fully done processing the
+		// current token, whether it got there via a real terminal shift or
+		// via an error/recovery/extra-token placeholder path — all of these
+		// are equally "this stack will not revisit tok again" signals. The
+		// caller passes the stack it just finished dispatching so
+		// allLiveUnacceptedStacksShifted (used below to gate whether it's
+		// safe to advance to the next token) sees it as settled instead of
+		// mistaking it for a still-mid-reduce-chain stack.
+		consumeCurrentToken := func(s *glrStack) {
+			if s != nil {
+				s.shifted = true
+			}
 			dispatchConsumedCurrentToken = true
 			needToken = true
 		}
@@ -4616,7 +4627,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				p.applyExtraShiftAction(s, currentState, actions[0], tok, arena, scratch)
 				nodeCount++
 				traceAfterPrimary(si, s)
-				consumeCurrentToken()
+				consumeCurrentToken(s)
 				if actionTiming != nil {
 					ns := time.Since(actionKindStart).Nanoseconds()
 					actionTiming.actionExtraShiftNanos += ns
@@ -4666,7 +4677,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 						continue
 					}
 					p.pushLexErrorRunLeaf(s, currentState, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors)
-					consumeCurrentToken()
+					consumeCurrentToken(s)
 					if actionTiming != nil {
 						ns := recordNoActionTiming()
 						actionTiming.actionNoActionErrorNanos += ns
@@ -4686,7 +4697,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 						}
 					}
 					if tok.StartByte != tok.EndByte {
-						consumeCurrentToken()
+						consumeCurrentToken(s)
 						if actionTiming != nil {
 							recordNoActionTiming()
 						}
@@ -4731,7 +4742,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					continue
 				}
 				if tok.StartByte == tok.EndByte {
-					consumeCurrentToken()
+					consumeCurrentToken(s)
 					if actionTiming != nil {
 						recordNoActionTiming()
 					}
@@ -4784,7 +4795,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 						}
 						goto retryAction
 					case resyncAdvance:
-						consumeCurrentToken()
+						consumeCurrentToken(s)
 						if actionTiming != nil {
 							ns := recordNoActionTiming()
 							actionTiming.actionNoActionRecoverNanos += ns
@@ -4854,7 +4865,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					p.applyAction(source, s, recoverAct, tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
 					p.noteStopActionResult(s)
 					drainPendingForkStacks()
-					consumeCurrentToken()
+					consumeCurrentToken(s)
 					if actionTiming != nil {
 						ns := recordNoActionTiming()
 						actionTiming.actionNoActionRecoverNanos += ns
@@ -4902,7 +4913,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					}
 					goto retryAction
 				case resyncAdvance:
-					consumeCurrentToken()
+					consumeCurrentToken(s)
 					if actionTiming != nil {
 						ns := recordNoActionTiming()
 						actionTiming.actionNoActionRecoverNanos += ns
@@ -4913,7 +4924,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					continue
 				}
 				p.pushOrExtendErrorNode(s, currentState, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors)
-				consumeCurrentToken()
+				consumeCurrentToken(s)
 				if actionTiming != nil {
 					ns := recordNoActionTiming()
 					actionTiming.actionNoActionErrorNanos += ns
@@ -5149,7 +5160,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					p.applyShiftAction(s, act, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors)
 					p.noteStopActionResult(s)
 					traceAfterPrimary(si, s)
-					consumeCurrentToken()
+					consumeCurrentToken(s)
 					if actionTiming != nil {
 						ns := time.Since(actionKindStart).Nanoseconds()
 						actionTiming.actionSingleShiftNanos += ns
@@ -5180,7 +5191,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					p.applyRecoverAction(s, act, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors)
 					p.noteStopActionResult(s)
 					traceAfterPrimary(si, s)
-					consumeCurrentToken()
+					consumeCurrentToken(s)
 					if actionTiming != nil {
 						ns := time.Since(actionKindStart).Nanoseconds()
 						actionTiming.actionSingleRecoverNanos += ns
@@ -5238,7 +5249,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					p.applyAction(source, &stacks[0], recoverAct, tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
 					p.noteStopActionResult(&stacks[0])
 					drainPendingForkStacks()
-					consumeCurrentToken()
+					consumeCurrentToken(&stacks[0])
 				} else {
 					stacks[0].dead = true
 				}
@@ -5247,7 +5258,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					continue
 				}
 				p.pushOrExtendErrorNode(&stacks[0], currentState, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors)
-				consumeCurrentToken()
+				consumeCurrentToken(&stacks[0])
 			}
 		}
 
@@ -5419,7 +5430,23 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		// the current lookahead). Otherwise, advance to next token.
 		if anyReduced {
 			needToken = tok.NoLookahead || forceAdvanceAfterReduce
-			if dispatchConsumedCurrentToken {
+			// dispatchConsumedCurrentToken is set as soon as ANY single stack
+			// performs a terminal action (shift/recover/accept/error) for the
+			// current token via consumeCurrentToken(). In a multi-stack GLR
+			// dispatch pass, other live stacks may have only reduced this
+			// pass (their new top state still needs to be re-checked against
+			// the SAME lookahead before it's safe to advance). Advancing the
+			// token here would strand those stacks mid-reduce-chain: the next
+			// pass would probe their post-reduce state against the WRONG
+			// (already-advanced) token instead of the one they were still
+			// waiting to shift, killing an otherwise-viable parse (see e.g.
+			// TypeScript's `foo<Bar>()` instantiation-expression vs.
+			// binary_expression ambiguity: the type_arguments fork reduces
+			// into a state that still needs to shift "(", but a sibling
+			// fork's shift of "(" would force the token forward under it).
+			// Only treat the token as fully consumed once every live,
+			// unaccepted stack has actually shifted it.
+			if dispatchConsumedCurrentToken && allLiveUnacceptedStacksShifted(stacks) {
 				needToken = true
 				lastReduceDepth = -1
 				consecutiveReduces = 0
