@@ -500,7 +500,16 @@ func TestParseTypeScriptNestedDestructuringArrayPattern(t *testing.T) {
 }
 
 func TestParseTypeScriptDestructuringRefreshPreservesMissingError(t *testing.T) {
-	src := "const { value: [dirPath, { dirName, options, fileNames }] } = result;\nconst broken = ;\n"
+	// The second statement is a genuine missing-token recovery (switch case
+	// with no expression before ':') confirmed against the C tree-sitter
+	// oracle to synthesize a MISSING identifier node. An earlier revision of
+	// this fixture used "const broken = ;" expecting a missing node there,
+	// but the C oracle recovers that shape via a plain ERROR wrapper with no
+	// MISSING node at all, so it could never exercise the HasError-refresh
+	// invariant this test guards (that normalizing the unrelated
+	// destructuring pattern in the first statement must not clear the
+	// HasError bit on a real missing node elsewhere in the tree).
+	src := "const { value: [dirPath, { dirName, options, fileNames }] } = result;\nswitch (x) { case: }\n"
 	lang := grammars.TypescriptLanguage()
 	parser := gotreesitter.NewParser(lang)
 	tree, err := parser.Parse([]byte(src))

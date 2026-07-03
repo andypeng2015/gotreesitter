@@ -29,7 +29,7 @@ func normalizeTypeScriptTreeCompatibilityWithParser(root *Node, source []byte, p
 		normalizeTypeScriptRecoveredNamespaceRoot(root, source, lang)
 		normalizeJavaScriptTopLevelDeclarationBounds(root, lang)
 		if syntaxStats.typeScriptCompatibility.built {
-			normalizeTypeScriptCompatibilityCandidates(syntaxStats.typeScriptCompatibility, source, lang)
+			normalizeTypeScriptCompatibilityCandidates(syntaxStats.typeScriptCompatibility, root, source, lang)
 		} else {
 			normalizeTypeScriptCompatibility(root, source, lang)
 		}
@@ -101,7 +101,7 @@ func normalizeTypeScriptTreeCompatibilityWithParser(root *Node, source []byte, p
 	run("ts_type_compatibility", func() normalizationPassCounters {
 		var stats typeScriptCompatibilityStats
 		if haveSyntaxStats && syntaxStats.typeScriptCompatibility.built {
-			stats = normalizeTypeScriptCompatibilityCandidatesWithStats(syntaxStats.typeScriptCompatibility, source, lang)
+			stats = normalizeTypeScriptCompatibilityCandidatesWithStats(syntaxStats.typeScriptCompatibility, root, source, lang)
 		} else {
 			stats = normalizeTypeScriptCompatibilityWithStats(root, source, lang)
 		}
@@ -1110,7 +1110,8 @@ func rewriteJavaScriptTypeScriptStatementKeywordsCallPrecedenceAndBuildUnaryBina
 			typeScriptCtx.canRewriteInstantiatedCalls ||
 			typeScriptCtx.canRewriteAsExpressions ||
 			typeScriptCtx.canRewriteGenericArrows ||
-			typeScriptCtx.canRewriteClassDeclarations)
+			typeScriptCtx.canRewriteClassDeclarations ||
+			typeScriptCtx.canRewriteDestructuring)
 	var walk func(*Node)
 	walk = func(n *Node) {
 		if n == nil {
@@ -1249,6 +1250,16 @@ func rewriteJavaScriptTypeScriptStatementKeywordsCallPrecedenceAndBuildUnaryBina
 					}
 				case typeScriptCtx.expressionStatementSym:
 					if typeScriptCtx.canRewriteClassDeclarations && typeScriptClassExpressionStatementCandidate(child, typeScriptCtx) {
+						index.typeScriptCompatibility.append(typeScriptCompatibilityCandidate{
+							kind: typeScriptCompatibilityCandidateChild,
+							child: javaScriptTypeScriptPrecedenceCandidate{
+								parent:     n,
+								childIndex: i,
+							},
+						})
+					}
+				case typeScriptCtx.nonNullExpressionSym:
+					if typeScriptCtx.canRewriteDestructuring {
 						index.typeScriptCompatibility.append(typeScriptCompatibilityCandidate{
 							kind: typeScriptCompatibilityCandidateChild,
 							child: javaScriptTypeScriptPrecedenceCandidate{

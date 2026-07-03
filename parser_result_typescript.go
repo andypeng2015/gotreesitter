@@ -376,7 +376,7 @@ func typeScriptClassExpressionStatementCandidate(node *Node, ctx *typeScriptNorm
 	return classNode != nil && typeScriptClassExpressionHasName(classNode, ctx)
 }
 
-func normalizeTypeScriptCompatibilityCandidates(candidates typeScriptCompatibilityCandidates, source []byte, lang *Language) {
+func normalizeTypeScriptCompatibilityCandidates(candidates typeScriptCompatibilityCandidates, root *Node, source []byte, lang *Language) {
 	if candidates.len() == 0 {
 		return
 	}
@@ -384,6 +384,7 @@ func normalizeTypeScriptCompatibilityCandidates(candidates typeScriptCompatibili
 	if !ok {
 		return
 	}
+	destructuringErrorRefresh := false
 	candidates.forEach(func(candidate typeScriptCompatibilityCandidate) {
 		switch candidate.kind {
 		case typeScriptCompatibilityCandidateIdentifierAlias:
@@ -397,23 +398,40 @@ func normalizeTypeScriptCompatibilityCandidates(candidates typeScriptCompatibili
 		case typeScriptCompatibilityCandidateEnumBody:
 			normalizeTypeScriptEnumBodyCompatibility(candidate.node, &ctx)
 		case typeScriptCompatibilityCandidateChild:
-			normalizeTypeScriptCompatibilityChildCandidate(candidate.child, &ctx)
+			if normalizeTypeScriptCompatibilityChildCandidate(candidate.child, &ctx) {
+				destructuringErrorRefresh = true
+			}
 		}
 	})
+	if destructuringErrorRefresh {
+		refreshTypeScriptCompatibilityHasErrorSubtree(root)
+	}
 }
 
-func normalizeTypeScriptCompatibilityChildCandidate(candidate javaScriptTypeScriptPrecedenceCandidate, ctx *typeScriptNormalizationContext) {
+// normalizeTypeScriptCompatibilityChildCandidate rewrites a single indexed
+// child candidate in place, looping to handle chained rewrites (e.g. a
+// binary_expression rewritten into a generic call whose own children then
+// become candidates). It reports whether a rewrite requires a HasError
+// refresh to propagate up to ancestors (currently only true for the
+// non_null_expression -> *_pattern destructuring rewrite, which discards a
+// synthetic missing node).
+func normalizeTypeScriptCompatibilityChildCandidate(candidate javaScriptTypeScriptPrecedenceCandidate, ctx *typeScriptNormalizationContext) bool {
+	needsErrorRefresh := false
 	for {
 		child := javaScriptTypeScriptPrecedenceCandidateNode(candidate)
 		if !typeScriptCompatibilityChildCanRewrite(child, ctx) {
-			return
+			return needsErrorRefresh
 		}
+		refreshErrors := typeScriptCompatibilityChildNeedsErrorRefresh(child, ctx)
 		rewritten := rewriteTypeScriptCompatibilityChild(candidate.parent, child, ctx)
 		if rewritten == nil {
-			return
+			return needsErrorRefresh
 		}
 		if !replaceJavaScriptTypeScriptPrecedenceCandidate(candidate, rewritten) {
-			return
+			return needsErrorRefresh
+		}
+		if refreshErrors {
+			needsErrorRefresh = true
 		}
 	}
 }
@@ -437,7 +455,7 @@ type typeScriptCompatibilityStats struct {
 	destructuringPatterns       normalizationPassCounters
 }
 
-func normalizeTypeScriptCompatibilityCandidatesWithStats(candidates typeScriptCompatibilityCandidates, source []byte, lang *Language) typeScriptCompatibilityStats {
+func normalizeTypeScriptCompatibilityCandidatesWithStats(candidates typeScriptCompatibilityCandidates, root *Node, source []byte, lang *Language) typeScriptCompatibilityStats {
 	var stats typeScriptCompatibilityStats
 	if candidates.len() == 0 {
 		return stats
@@ -446,6 +464,7 @@ func normalizeTypeScriptCompatibilityCandidatesWithStats(candidates typeScriptCo
 	if !ok {
 		return stats
 	}
+	destructuringErrorRefresh := false
 	candidates.forEach(func(candidate typeScriptCompatibilityCandidate) {
 		stats.total.nodesVisited++
 		switch candidate.kind {
@@ -491,18 +510,24 @@ func normalizeTypeScriptCompatibilityCandidatesWithStats(candidates typeScriptCo
 				stats.total.nodesRewritten++
 			}
 		case typeScriptCompatibilityCandidateChild:
-			normalizeTypeScriptCompatibilityChildCandidateWithStats(candidate.child, &ctx, &stats)
+			if normalizeTypeScriptCompatibilityChildCandidateWithStats(candidate.child, &ctx, &stats) {
+				destructuringErrorRefresh = true
+			}
 		}
 	})
+	if destructuringErrorRefresh {
+		refreshTypeScriptCompatibilityHasErrorSubtree(root)
+	}
 	return stats
 }
 
-func normalizeTypeScriptCompatibilityChildCandidateWithStats(candidate javaScriptTypeScriptPrecedenceCandidate, ctx *typeScriptNormalizationContext, stats *typeScriptCompatibilityStats) {
+func normalizeTypeScriptCompatibilityChildCandidateWithStats(candidate javaScriptTypeScriptPrecedenceCandidate, ctx *typeScriptNormalizationContext, stats *typeScriptCompatibilityStats) bool {
+	needsErrorRefresh := false
 	for {
 		child := javaScriptTypeScriptPrecedenceCandidateNode(candidate)
 		bucket := typeScriptCompatibilityChildStatsBucket(child, ctx, stats)
 		if bucket == nil {
-			return
+			return needsErrorRefresh
 		}
 		binaryGenericCandidate := false
 		binaryAsTypeCandidate := false
@@ -528,13 +553,14 @@ func normalizeTypeScriptCompatibilityChildCandidateWithStats(candidate javaScrip
 				stats.callFastSkipped.nodesVisited++
 			}
 		}
+		refreshErrors := typeScriptCompatibilityChildNeedsErrorRefresh(child, ctx)
 		bucket.nodesVisited++
 		rewritten := rewriteTypeScriptCompatibilityChild(candidate.parent, child, ctx)
 		if rewritten == nil {
-			return
+			return needsErrorRefresh
 		}
 		if !replaceJavaScriptTypeScriptPrecedenceCandidate(candidate, rewritten) {
-			return
+			return needsErrorRefresh
 		}
 		bucket.nodesRewritten++
 		if binaryGenericCandidate {
@@ -544,6 +570,9 @@ func normalizeTypeScriptCompatibilityChildCandidateWithStats(candidate javaScrip
 		}
 		if callInstantiatedCandidate {
 			stats.callInstantiatedChildren.nodesRewritten++
+		}
+		if refreshErrors {
+			needsErrorRefresh = true
 		}
 		stats.total.nodesRewritten++
 	}

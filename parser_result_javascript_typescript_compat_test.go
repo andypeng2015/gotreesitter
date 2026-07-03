@@ -430,7 +430,7 @@ func TestNormalizeTypeScriptCompatibilityCandidatesApplyIndexedDirectRewrites(t 
 		t.Fatalf("candidate event count = %d, want 2", got)
 	}
 
-	normalizeTypeScriptCompatibilityCandidates(stats.typeScriptCompatibility, source, lang)
+	normalizeTypeScriptCompatibilityCandidates(stats.typeScriptCompatibility, root, source, lang)
 
 	if got := identifier.ChildCount(); got != 0 {
 		t.Fatalf("identifier child count after candidate compatibility = %d, want 0", got)
