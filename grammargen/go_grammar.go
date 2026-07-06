@@ -12,17 +12,15 @@ func GoGrammar() *Grammar {
 					Seq(
 						Sym("_statement"),
 						Choice(
-							Pat(`\n`),
+							Sym("_automatic_semicolon"),
 							Str(";"),
-							Str("\x00"),
 						),
 					),
 					Seq(
 						Sym("_top_level_declaration"),
 						Choice(
-							Pat(`\n`),
+							Sym("_automatic_semicolon"),
 							Str(";"),
-							Str("\x00"),
 						),
 					),
 				),
@@ -88,18 +86,16 @@ func GoGrammar() *Grammar {
 					Repeat(
 						Seq(
 							Choice(
-								Pat(`\n`),
+								Sym("_automatic_semicolon"),
 								Str(";"),
-								Str("\x00"),
 							),
 							Sym("import_spec"),
 						),
 					),
 					Choice(
 						Choice(
-							Pat(`\n`),
+							Sym("_automatic_semicolon"),
 							Str(";"),
-							Str("\x00"),
 						),
 						Blank(),
 					),
@@ -127,9 +123,8 @@ func GoGrammar() *Grammar {
 						Seq(
 							Sym("const_spec"),
 							Choice(
-								Pat(`\n`),
+								Sym("_automatic_semicolon"),
 								Str(";"),
-								Str("\x00"),
 							),
 						),
 					),
@@ -225,9 +220,8 @@ func GoGrammar() *Grammar {
 				Seq(
 					Sym("var_spec"),
 					Choice(
-						Pat(`\n`),
+						Sym("_automatic_semicolon"),
 						Str(";"),
-						Str("\x00"),
 					),
 				),
 			),
@@ -445,9 +439,8 @@ func GoGrammar() *Grammar {
 							Repeat(
 								Seq(
 									Choice(
-										Pat(`\n`),
+										Sym("_automatic_semicolon"),
 										Str(";"),
-										Str("\x00"),
 									),
 									Choice(
 										Sym("type_spec"),
@@ -457,9 +450,8 @@ func GoGrammar() *Grammar {
 							),
 							Choice(
 								Choice(
-									Pat(`\n`),
+									Sym("_automatic_semicolon"),
 									Str(";"),
-									Str("\x00"),
 								),
 								Blank(),
 							),
@@ -645,18 +637,16 @@ func GoGrammar() *Grammar {
 					Repeat(
 						Seq(
 							Choice(
-								Pat(`\n`),
+								Sym("_automatic_semicolon"),
 								Str(";"),
-								Str("\x00"),
 							),
 							Sym("field_declaration"),
 						),
 					),
 					Choice(
 						Choice(
-							Pat(`\n`),
+							Sym("_automatic_semicolon"),
 							Str(";"),
-							Str("\x00"),
 						),
 						Blank(),
 					),
@@ -719,18 +709,16 @@ func GoGrammar() *Grammar {
 					Repeat(
 						Seq(
 							Choice(
-								Pat(`\n`),
+								Sym("_automatic_semicolon"),
 								Str(";"),
-								Str("\x00"),
 							),
 							Sym("_interface_elem"),
 						),
 					),
 					Choice(
 						Choice(
-							Pat(`\n`),
+							Sym("_automatic_semicolon"),
 							Str(";"),
-							Str("\x00"),
 						),
 						Blank(),
 					),
@@ -855,9 +843,8 @@ func GoGrammar() *Grammar {
 				Repeat(
 					Seq(
 						Choice(
-							Pat(`\n`),
+							Sym("_automatic_semicolon"),
 							Str(";"),
-							Str("\x00"),
 						),
 						Sym("_statement"),
 					),
@@ -865,9 +852,8 @@ func GoGrammar() *Grammar {
 				Choice(
 					Seq(
 						Choice(
-							Pat(`\n`),
+							Sym("_automatic_semicolon"),
 							Str(";"),
-							Str("\x00"),
 						),
 						Choice(
 							Alias(
@@ -2692,6 +2678,10 @@ func GoGrammar() *Grammar {
 		[]string{"type_parameter_declaration", "_simple_type", "_expression"},
 		[]string{"type_parameter_declaration", "_expression"},
 		[]string{"type_parameter_declaration", "_simple_type", "generic_type", "_expression"},
+	)
+
+	g.SetExternals(
+		Sym("_automatic_semicolon"),
 	)
 
 	g.SetInline("_type", "_type_identifier", "_field_identifier", "_package_identifier", "_top_level_declaration", "_string_literal", "_interface_elem")

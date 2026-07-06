@@ -182,3 +182,26 @@ func TestExternalLexerResetClearsScannerState(t *testing.T) {
 		t.Fatalf("EndByte=%d want=%d", got, want)
 	}
 }
+
+func TestExternalLexerHasPreviousBytes(t *testing.T) {
+	lexer := newExternalLexer([]byte("abc///doc"), 6, 0, 6)
+
+	cases := []struct {
+		name string
+		text string
+		want bool
+	}{
+		{name: "empty", text: "", want: true},
+		{name: "exact preceding bytes", text: "///", want: true},
+		{name: "longer suffix", text: "bc///", want: true},
+		{name: "wrong bytes", text: "//!", want: false},
+		{name: "past start", text: "zabc///", want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := lexer.HasPreviousBytes(tc.text); got != tc.want {
+				t.Fatalf("HasPreviousBytes(%q) = %v, want %v", tc.text, got, tc.want)
+			}
+		})
+	}
+}

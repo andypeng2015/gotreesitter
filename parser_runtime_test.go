@@ -2,6 +2,7 @@ package gotreesitter
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -85,6 +86,868 @@ func TestParseRuntimeReportsAcceptedOnCompleteParse(t *testing.T) {
 	}
 	if got, want := breakdown.ParentConstructedNoLinks+breakdown.ParentConstructedWithLinks, rt.ParentNodesConstructed; got != want {
 		t.Fatalf("parent link attribution = %d, want %d", got, want)
+	}
+}
+
+func TestAcceptedPrefixWithRealTailDoesNotReturnCleanParse(t *testing.T) {
+	lang := buildPrefixAcceptLanguage()
+	parser := NewParser(lang)
+
+	tree := mustParse(t, parser, []byte("ab"))
+	defer tree.Release()
+	root := tree.RootNode()
+	if root == nil {
+		t.Fatal("parse returned nil root")
+	}
+	rt := tree.ParseRuntime()
+
+	if got, want := rt.StopReason, ParseStopAccepted; got != want {
+		t.Fatalf("StopReason = %q, want %q; runtime=%s root=%s", got, want, rt.Summary(), root.SExpr(lang))
+	}
+	if rt.Truncated {
+		t.Fatalf("Truncated = true, want false; runtime=%s root=%s", rt.Summary(), root.SExpr(lang))
+	}
+	if root.HasError() {
+		t.Fatalf("root has error, want clean full parse; runtime=%s root=%s", rt.Summary(), root.SExpr(lang))
+	}
+	if got, want := root.EndByte(), uint32(2); got != want {
+		t.Fatalf("root end = %d, want %d; runtime=%s root=%s", got, want, rt.Summary(), root.SExpr(lang))
+	}
+	if got, want := root.Text(tree.Source()), "ab"; got != want {
+		t.Fatalf("root text = %q, want %q; root=%s", got, want, root.SExpr(lang))
+	}
+}
+
+func TestAcceptedPrefixOnlyBeforeRealTailDemotesToError(t *testing.T) {
+	lang := buildPrefixAcceptLanguage()
+	parser := NewParser(lang)
+
+	tree := mustParse(t, parser, []byte("abb"))
+	defer tree.Release()
+	root := tree.RootNode()
+	if root == nil {
+		t.Fatal("parse returned nil root")
+	}
+	rt := tree.ParseRuntime()
+
+	if rt.StopReason == ParseStopAccepted && !rt.Truncated && !root.HasError() {
+		t.Fatalf("clean accepted prefix returned before real tail; runtime=%s root=%s", rt.Summary(), root.SExpr(lang))
+	}
+	if root.EndByte() >= uint32(len(tree.Source())) && !root.HasError() {
+		t.Fatalf("real tail was reported as cleanly consumed; runtime=%s root=%s", rt.Summary(), root.SExpr(lang))
+	}
+}
+
+func TestAcceptedPrefixWithPaddingTailRemainsClean(t *testing.T) {
+	lang := buildPrefixAcceptLanguage()
+	parser := NewParser(lang)
+
+	tree := mustParse(t, parser, []byte("a \n\t"))
+	defer tree.Release()
+	root := tree.RootNode()
+	if root == nil {
+		t.Fatal("parse returned nil root")
+	}
+	rt := tree.ParseRuntime()
+
+	if got, want := rt.StopReason, ParseStopAccepted; got != want {
+		t.Fatalf("StopReason = %q, want %q; runtime=%s root=%s", got, want, rt.Summary(), root.SExpr(lang))
+	}
+	if rt.Truncated {
+		t.Fatalf("Truncated = true, want false for parser-padding tail; runtime=%s root=%s", rt.Summary(), root.SExpr(lang))
+	}
+	if root.HasError() {
+		t.Fatalf("root has error, want clean padding-tail parse; runtime=%s root=%s", rt.Summary(), root.SExpr(lang))
+	}
+	if got, want := root.EndByte(), uint32(len(tree.Source())); got != want {
+		t.Fatalf("root end = %d, want %d for padding-tail parse; runtime=%s root=%s", got, want, rt.Summary(), root.SExpr(lang))
+	}
+}
+
+func TestAcceptedPrefixWithIncludedRangePaddingTailRemainsClean(t *testing.T) {
+	lang := buildPrefixAcceptLanguage()
+	parser := NewParser(lang)
+	source := []byte("aXXX \t")
+	parser.SetIncludedRanges([]Range{
+		{StartByte: 0, EndByte: 1},
+		{StartByte: 4, EndByte: uint32(len(source))},
+	})
+
+	tree := mustParse(t, parser, source)
+	defer tree.Release()
+	root := tree.RootNode()
+	if root == nil {
+		t.Fatal("parse returned nil root")
+	}
+	rt := tree.ParseRuntime()
+
+	if got, want := rt.StopReason, ParseStopAccepted; got != want {
+		t.Fatalf("StopReason = %q, want %q; runtime=%s root=%s", got, want, rt.Summary(), root.SExpr(lang))
+	}
+	if rt.Truncated {
+		t.Fatalf("Truncated = true, want false for included padding tail; runtime=%s root=%s", rt.Summary(), root.SExpr(lang))
+	}
+	if root.HasError() {
+		t.Fatalf("root has error, want clean included padding-tail parse; runtime=%s root=%s", rt.Summary(), root.SExpr(lang))
+	}
+	if !retryTreeCoversExpectedEOF(tree) {
+		t.Fatalf("retryTreeCoversExpectedEOF = false for included padding tail; runtime=%s root=%s", rt.Summary(), root.SExpr(lang))
+	}
+}
+
+func buildConflictReduceFrontierLanguage(postReduceBAction uint16, frontierActions []ParseAction) *Language {
+	return &Language{
+		Name:              "conflict_reduce_frontier",
+		SymbolCount:       4,
+		TokenCount:        3,
+		StateCount:        4,
+		InitialState:      0,
+		ProductionIDCount: 4,
+		SymbolNames:       []string{"end", "a", "b", "source"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "end", Visible: false},
+			{Name: "a", Visible: true},
+			{Name: "b", Visible: true},
+			{Name: "source", Visible: true, Named: true},
+		},
+		ParseActions: []ParseActionEntry{
+			{},
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 1}}},
+			{Actions: []ParseAction{{Type: ParseActionReduce, Symbol: 3, ChildCount: 1}}},
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 2}}},
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 3}}},
+			{Actions: []ParseAction{{Type: ParseActionAccept}}},
+			{Actions: frontierActions},
+		},
+		ParseTable: [][]uint16{
+			{0, 1, 0, 3},
+			{2, 0, 6, 0},
+			{0, 0, postReduceBAction, 0},
+			{5, 0, 0, 0},
+		},
+	}
+}
+
+func newConflictReduceFrontierStackForTest(parser *Parser, arena *nodeArena, entries *glrEntryScratch, gss *gssScratch) glrStack {
+	a := newLeafNodeInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	a.parseState = 1
+	stack := newGLRStack(0)
+	parser.pushStackNode(&stack, 1, a, entries, gss)
+	return stack
+}
+
+func applyConflictFrontierReduceForTest(parser *Parser, stack *glrStack, reduce ParseAction, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entries *glrEntryScratch, gss *gssScratch, tmp *[]stackEntry, trackChildErrors *bool) conflictReduceFrontierSeed {
+	beforeState, beforeByte, beforeDepth := stackTraceState(stack)
+	parser.applyAction(nil, stack, reduce, tok, anyReduced, nodeCount, arena, entries, gss, tmp, false, trackChildErrors)
+	afterState, afterByte, afterDepth := stackTraceState(stack)
+	return conflictReduceFrontierSeed{
+		action:      reduce,
+		beforeState: beforeState,
+		beforeByte:  beforeByte,
+		beforeDepth: beforeDepth,
+		afterState:  afterState,
+		afterByte:   afterByte,
+		afterDepth:  afterDepth,
+	}
+}
+
+func TestConflictReduceFrontierCompletesSingleShift(t *testing.T) {
+	lang := buildConflictReduceFrontierLanguage(4, []ParseAction{
+		{Type: ParseActionReduce, Symbol: 3, ChildCount: 1},
+		{Type: ParseActionShift, State: 3},
+	})
+	parser := NewParser(lang)
+	arena := newNodeArena(arenaClassFull)
+	var entries glrEntryScratch
+	var gss gssScratch
+	var tmp []stackEntry
+	nodeCount := 0
+	anyReduced := false
+	trackChildErrors := false
+
+	stack := newConflictReduceFrontierStackForTest(parser, arena, &entries, &gss)
+	tok := Token{Symbol: 2, StartByte: 1, EndByte: 2, StartPoint: Point{Column: 1}, EndPoint: Point{Column: 2}}
+	reduce := lang.ParseActions[6].Actions[0]
+
+	seed := applyConflictFrontierReduceForTest(parser, &stack, reduce, tok, &anyReduced, &nodeCount, arena, &entries, &gss, &tmp, &trackChildErrors)
+	if !anyReduced {
+		t.Fatal("conflict reduce did not mark anyReduced")
+	}
+	if stack.dead || stack.shifted || stack.accepted {
+		t.Fatalf("after reduce: dead=%t shifted=%t accepted=%t", stack.dead, stack.shifted, stack.accepted)
+	}
+	if got, want := stack.top().state, StateID(2); got != want {
+		t.Fatalf("after reduce state = %d, want %d", got, want)
+	}
+
+	nextBranchOrder := uint64(99)
+	parser.completeConflictReduceFrontier(nil, &stack, tok, seed, func() uint64 {
+		order := nextBranchOrder
+		nextBranchOrder++
+		return order
+	}, &anyReduced, &nodeCount, arena, &entries, &gss, &tmp, false, &trackChildErrors)
+	if stack.dead {
+		t.Fatal("frontier completion killed stack")
+	}
+	if !stack.shifted {
+		t.Fatal("frontier completion did not shift same-lookahead token")
+	}
+	if got, want := stack.top().state, StateID(3); got != want {
+		t.Fatalf("after frontier completion state = %d, want %d", got, want)
+	}
+	if got, want := stack.byteOffset, uint32(2); got != want {
+		t.Fatalf("after frontier completion byte offset = %d, want %d", got, want)
+	}
+}
+
+func TestConflictReduceFrontierDegenerateSameReduceShiftCompletes(t *testing.T) {
+	lang := buildConflictReduceFrontierLanguage(6, []ParseAction{
+		{Type: ParseActionReduce, Symbol: 3, ChildCount: 1},
+		{Type: ParseActionShift, State: 3},
+	})
+	parser := NewParser(lang)
+	parser.stopActionDiag = &parseStopActionDiagnostic{
+		lastReduceCaptured:          true,
+		lastReduceSymbol:            99,
+		lastReduceChildCount:        7,
+		lastReduceProductionID:      11,
+		lastReduceDynamicPrecedence: 13,
+		lookaheadSymbol:             99,
+		lookaheadStartByte:          99,
+		lookaheadEndByte:            100,
+		lookaheadNoLookahead:        true,
+	}
+	arena := newNodeArena(arenaClassFull)
+	var entries glrEntryScratch
+	var gss gssScratch
+	var tmp []stackEntry
+	nodeCount := 0
+	anyReduced := false
+	trackChildErrors := false
+
+	stack := newConflictReduceFrontierStackForTest(parser, arena, &entries, &gss)
+	tok := Token{Symbol: 2, StartByte: 1, EndByte: 2, StartPoint: Point{Column: 1}, EndPoint: Point{Column: 2}}
+	reduce := lang.ParseActions[6].Actions[0]
+	seed := applyConflictFrontierReduceForTest(parser, &stack, reduce, tok, &anyReduced, &nodeCount, arena, &entries, &gss, &tmp, &trackChildErrors)
+
+	nextBranchOrder := uint64(99)
+	parser.completeConflictReduceFrontier(nil, &stack, tok, seed, func() uint64 {
+		order := nextBranchOrder
+		nextBranchOrder++
+		return order
+	}, &anyReduced, &nodeCount, arena, &entries, &gss, &tmp, false, &trackChildErrors)
+	if !stack.dead {
+		t.Fatal("degenerate same-reduce cycle left original branch live")
+	}
+	if got, want := len(parser.pendingFrontierForkStacks), 1; got != want {
+		t.Fatalf("pending frontier forks = %d, want %d", got, want)
+	}
+	fork := parser.pendingFrontierForkStacks[0]
+	if !fork.shifted {
+		t.Fatal("terminal frontier fork did not shift")
+	}
+	if got, want := fork.top().state, StateID(3); got != want {
+		t.Fatalf("terminal frontier fork state = %d, want %d", got, want)
+	}
+	if got, want := fork.branchOrder, uint64(99); got != want {
+		t.Fatalf("terminal frontier fork branchOrder = %d, want %d", got, want)
+	}
+	if got, want := nextBranchOrder, uint64(100); got != want {
+		t.Fatalf("next branch order = %d, want %d", got, want)
+	}
+}
+
+func TestConflictReduceFrontierSameHeaderFirstReduceStaysLive(t *testing.T) {
+	lang := &Language{
+		Name:              "conflict_reduce_frontier_same_header_first",
+		SymbolCount:       4,
+		TokenCount:        3,
+		StateCount:        4,
+		InitialState:      0,
+		ProductionIDCount: 3,
+		SymbolNames:       []string{"end", "a", "b", "wrapper"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "end", Visible: false},
+			{Name: "a", Visible: true},
+			{Name: "b", Visible: true},
+			{Name: "wrapper", Visible: true, Named: true},
+		},
+		ParseActions: []ParseActionEntry{
+			{},
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 1}}},
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 2}}},
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 3}}},
+			{},
+			{},
+			{Actions: []ParseAction{
+				{Type: ParseActionReduce, Symbol: 3, ChildCount: 1, ProductionID: 1},
+				{Type: ParseActionShift, State: 3},
+			}},
+		},
+		ParseTable: [][]uint16{
+			{0, 1, 0, 0},
+			{0, 0, 0, 2},
+			{0, 0, 6, 0},
+			{0, 0, 0, 0},
+		},
+	}
+	parser := NewParser(lang)
+	arena := newNodeArena(arenaClassFull)
+	var entries glrEntryScratch
+	var gss gssScratch
+	var tmp []stackEntry
+	nodeCount := 0
+	anyReduced := false
+	trackChildErrors := false
+
+	stack := newGLRStack(0)
+	a := newLeafNodeInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	a.parseState = 1
+	parser.pushStackNode(&stack, 1, a, &entries, &gss)
+	wrapper := newParentNodeInArena(arena, 3, true, []*Node{a}, nil, 0)
+	wrapper.parseState = 2
+	wrapper.endByte = 1
+	wrapper.endPoint = Point{Column: 1}
+	parser.pushStackNode(&stack, 2, wrapper, &entries, &gss)
+
+	tok := Token{Symbol: 2, StartByte: 2, EndByte: 3, StartPoint: Point{Column: 2}, EndPoint: Point{Column: 3}}
+	seed := conflictReduceFrontierSeed{
+		action:      ParseAction{Type: ParseActionReduce, Symbol: 3, ChildCount: 1, ProductionID: 0},
+		beforeState: 1,
+		beforeByte:  1,
+		beforeDepth: 2,
+		afterState:  2,
+		afterByte:   1,
+		afterDepth:  2,
+	}
+
+	parser.completeConflictReduceFrontier([]byte("xxb"), &stack, tok, seed, nil, &anyReduced, &nodeCount, arena, &entries, &gss, &tmp, false, &trackChildErrors)
+	if stack.dead {
+		t.Fatal("same-header first reduce killed original branch")
+	}
+	if stack.shifted {
+		t.Fatal("same-header first reduce shifted original branch")
+	}
+	if got, want := stack.top().state, StateID(2); got != want {
+		t.Fatalf("same-header reduce state = %d, want %d", got, want)
+	}
+	if got, want := stack.byteOffset, uint32(1); got != want {
+		t.Fatalf("same-header reduce byte = %d, want %d", got, want)
+	}
+	if got := len(parser.pendingFrontierForkStacks); got != 0 {
+		t.Fatalf("pending frontier forks = %d, want 0 after guarded terminal gap", got)
+	}
+}
+
+func TestConflictReduceFrontierDepthChangingSameReduceDoesNotFakeDuplicate(t *testing.T) {
+	lang := &Language{
+		Name:              "conflict_reduce_frontier_depth",
+		SymbolCount:       6,
+		TokenCount:        3,
+		StateCount:        7,
+		InitialState:      0,
+		ProductionIDCount: 2,
+		SymbolNames:       []string{"end", "a", "b", "unused", "pair", "source"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "end", Visible: false},
+			{Name: "a", Visible: true},
+			{Name: "b", Visible: true},
+			{Name: "unused", Visible: true, Named: true},
+			{Name: "pair", Visible: true, Named: true},
+			{Name: "source", Visible: true, Named: true},
+		},
+		ParseActions: []ParseActionEntry{
+			{},
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 1}}},
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 2}}},
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 6}}},
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 4}}},
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 3}}},
+			{Actions: []ParseAction{
+				{Type: ParseActionReduce, Symbol: 4, ChildCount: 2, ProductionID: 1},
+				{Type: ParseActionShift, State: 5},
+			}},
+		},
+		ParseTable: [][]uint16{
+			{0, 1, 0, 0, 4, 0},
+			{0, 2, 0, 0, 5, 0},
+			{0, 3, 0, 0, 0, 0},
+			{0, 0, 6, 0, 0, 0},
+			{0, 0, 0, 0, 0, 0},
+			{0, 0, 0, 0, 0, 0},
+			{0, 0, 6, 0, 0, 0},
+		},
+	}
+	parser := NewParser(lang)
+	arena := newNodeArena(arenaClassFull)
+	var entries glrEntryScratch
+	var gss gssScratch
+	var tmp []stackEntry
+	nodeCount := 0
+	anyReduced := false
+	trackChildErrors := false
+
+	stack := newGLRStack(0)
+	for i, state := range []StateID{1, 2, 6} {
+		start := uint32(i)
+		end := start + 1
+		a := newLeafNodeInArena(arena, 1, true, start, end, Point{Column: start}, Point{Column: end})
+		a.parseState = state
+		parser.pushStackNode(&stack, state, a, &entries, &gss)
+	}
+	tok := Token{Symbol: 2, StartByte: 3, EndByte: 4, StartPoint: Point{Column: 3}, EndPoint: Point{Column: 4}}
+	reduce := lang.ParseActions[6].Actions[0]
+	seed := applyConflictFrontierReduceForTest(parser, &stack, reduce, tok, &anyReduced, &nodeCount, arena, &entries, &gss, &tmp, &trackChildErrors)
+	if got, want := stack.depth(), 3; got != want {
+		t.Fatalf("after seed reduce depth = %d, want %d", got, want)
+	}
+	if got, want := stack.top().state, StateID(3); got != want {
+		t.Fatalf("after seed reduce state = %d, want %d", got, want)
+	}
+
+	parser.completeConflictReduceFrontier(nil, &stack, tok, seed, nil, &anyReduced, &nodeCount, arena, &entries, &gss, &tmp, false, &trackChildErrors)
+	if stack.dead {
+		t.Fatal("depth-changing frontier reduce killed stack")
+	}
+	if stack.shifted {
+		t.Fatal("depth-changing frontier shifted original instead of preserving reduce branch")
+	}
+	if got, want := stack.depth(), 2; got != want {
+		t.Fatalf("after frontier reduce depth = %d, want %d", got, want)
+	}
+	if got, want := stack.top().state, StateID(4); got != want {
+		t.Fatalf("after frontier reduce state = %d, want %d", got, want)
+	}
+	if got, want := len(parser.pendingFrontierForkStacks), 1; got != want {
+		t.Fatalf("pending frontier forks = %d, want %d", got, want)
+	}
+	fork := parser.pendingFrontierForkStacks[0]
+	if !fork.shifted {
+		t.Fatal("terminal frontier fork did not shift")
+	}
+	if got, want := fork.top().state, StateID(5); got != want {
+		t.Fatalf("terminal frontier fork state = %d, want %d", got, want)
+	}
+}
+
+func TestConflictReduceFrontierRuntimeReduceTerminalPreservesReduceBranch(t *testing.T) {
+	lang := &Language{
+		Name:              "conflict_reduce_frontier_runtime",
+		SymbolCount:       6,
+		TokenCount:        3,
+		StateCount:        9,
+		InitialState:      0,
+		ProductionIDCount: 3,
+		SymbolNames:       []string{"end", "a", "b", "unused", "pair", "source"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "end", Visible: false},
+			{Name: "a", Visible: true},
+			{Name: "b", Visible: true},
+			{Name: "unused", Visible: true, Named: true},
+			{Name: "pair", Visible: true, Named: true},
+			{Name: "source", Visible: true, Named: true},
+		},
+		ParseActions: []ParseActionEntry{
+			{},
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 1}}},
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 2}}},
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 6}}},
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 4}}},
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 3}}},
+			{Actions: []ParseAction{
+				{Type: ParseActionReduce, Symbol: 4, ChildCount: 2, ProductionID: 1},
+				{Type: ParseActionShift, State: 5},
+			}},
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 7}}},
+			{Actions: []ParseAction{{Type: ParseActionReduce, Symbol: 5, ChildCount: 2, ProductionID: 2}}},
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 8}}},
+			{Actions: []ParseAction{{Type: ParseActionAccept}}},
+		},
+		ParseTable: [][]uint16{
+			{0, 1, 0, 0, 4, 9},
+			{0, 2, 0, 0, 5, 0},
+			{0, 3, 0, 0, 0, 0},
+			{0, 0, 6, 0, 0, 0},
+			{0, 0, 7, 0, 0, 0},
+			{0, 0, 0, 0, 0, 0},
+			{0, 0, 6, 0, 0, 0},
+			{8, 0, 0, 0, 0, 0},
+			{10, 0, 0, 0, 0, 0},
+		},
+	}
+	parser := NewParser(lang)
+	source := []byte("aaab")
+	tree, err := parser.ParseWithTokenSource(source, &slowArithmeticTokenSource{
+		tokens: []Token{
+			{Symbol: 1, StartByte: 0, EndByte: 1, EndPoint: Point{Column: 1}},
+			{Symbol: 1, StartByte: 1, EndByte: 2, StartPoint: Point{Column: 1}, EndPoint: Point{Column: 2}},
+			{Symbol: 1, StartByte: 2, EndByte: 3, StartPoint: Point{Column: 2}, EndPoint: Point{Column: 3}},
+			{Symbol: 2, StartByte: 3, EndByte: 4, StartPoint: Point{Column: 3}, EndPoint: Point{Column: 4}},
+			{Symbol: 0, StartByte: 4, EndByte: 4, StartPoint: Point{Column: 4}, EndPoint: Point{Column: 4}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ParseWithTokenSource() error = %v", err)
+	}
+	defer tree.Release()
+	rt := tree.ParseRuntime()
+	if got, want := rt.StopReason, ParseStopAccepted; got != want {
+		t.Fatalf("StopReason = %q, want %q; runtime=%s", got, want, rt.Summary())
+	}
+	root := tree.RootNode()
+	if root == nil {
+		t.Fatal("parse returned nil root")
+	}
+	sexpr := root.SExpr(lang)
+	if !strings.Contains(sexpr, "pair") {
+		t.Fatalf("root = %s, want reduce branch pair; runtime=%s", sexpr, rt.Summary())
+	}
+	if got, want := root.EndByte(), uint32(len(source)); got != want {
+		t.Fatalf("root end = %d, want %d; runtime=%s tree=%s", got, want, rt.Summary(), sexpr)
+	}
+}
+
+func TestConflictReduceFrontierDoesNotCollapseOtherReduceShift(t *testing.T) {
+	lang := buildConflictReduceFrontierLanguage(6, []ParseAction{
+		{Type: ParseActionReduce, Symbol: 3, ChildCount: 1, ProductionID: 0},
+		{Type: ParseActionReduce, Symbol: 3, ChildCount: 1, ProductionID: 1, DynamicPrecedence: 1},
+		{Type: ParseActionShift, State: 3},
+	})
+	parser := NewParser(lang)
+	arena := newNodeArena(arenaClassFull)
+	var entries glrEntryScratch
+	var gss gssScratch
+	var tmp []stackEntry
+	nodeCount := 0
+	anyReduced := false
+	trackChildErrors := false
+
+	stack := newConflictReduceFrontierStackForTest(parser, arena, &entries, &gss)
+	tok := Token{Symbol: 2, StartByte: 1, EndByte: 2, StartPoint: Point{Column: 1}, EndPoint: Point{Column: 2}}
+	reduce := lang.ParseActions[6].Actions[0]
+	seed := applyConflictFrontierReduceForTest(parser, &stack, reduce, tok, &anyReduced, &nodeCount, arena, &entries, &gss, &tmp, &trackChildErrors)
+
+	parser.completeConflictReduceFrontier(nil, &stack, tok, seed, nil, &anyReduced, &nodeCount, arena, &entries, &gss, &tmp, false, &trackChildErrors)
+	if stack.dead {
+		t.Fatal("frontier completion killed stack")
+	}
+	if stack.shifted {
+		t.Fatal("non-degenerate same-reduce+other-reduce+shift frontier was collapsed")
+	}
+	if got, want := stack.top().state, StateID(2); got != want {
+		t.Fatalf("after non-degenerate frontier state = %d, want %d", got, want)
+	}
+}
+
+func TestConflictReduceFrontierRecoverMarksTokenConsumed(t *testing.T) {
+	lang := buildConflictReduceFrontierLanguage(6, []ParseAction{
+		{Type: ParseActionReduce, Symbol: 3, ChildCount: 1},
+		{Type: ParseActionRecover, State: 3},
+	})
+	parser := NewParser(lang)
+	arena := newNodeArena(arenaClassFull)
+	var entries glrEntryScratch
+	var gss gssScratch
+	var tmp []stackEntry
+	nodeCount := 0
+	anyReduced := false
+	trackChildErrors := false
+
+	stack := newConflictReduceFrontierStackForTest(parser, arena, &entries, &gss)
+	tok := Token{Symbol: 2, StartByte: 1, EndByte: 2, StartPoint: Point{Column: 1}, EndPoint: Point{Column: 2}}
+	reduce := lang.ParseActions[6].Actions[0]
+	seed := applyConflictFrontierReduceForTest(parser, &stack, reduce, tok, &anyReduced, &nodeCount, arena, &entries, &gss, &tmp, &trackChildErrors)
+
+	parser.completeConflictReduceFrontier(nil, &stack, tok, seed, nil, &anyReduced, &nodeCount, arena, &entries, &gss, &tmp, false, &trackChildErrors)
+	if !stack.dead {
+		t.Fatal("frontier recover same-reduce cycle left original branch live")
+	}
+	if got, want := len(parser.pendingFrontierForkStacks), 1; got != want {
+		t.Fatalf("pending frontier forks = %d, want %d", got, want)
+	}
+	fork := parser.pendingFrontierForkStacks[0]
+	if !fork.shifted {
+		t.Fatal("frontier recover fork left token reusable")
+	}
+	if got, want := fork.byteOffset, uint32(2); got != want {
+		t.Fatalf("after frontier recover byte offset = %d, want %d", got, want)
+	}
+}
+
+func TestConflictReduceFrontierShiftDoesNotAdvanceSiblingLookahead(t *testing.T) {
+	lang := &Language{
+		Name:              "conflict_reduce_frontier_sibling_lookahead",
+		SymbolCount:       7,
+		TokenCount:        3,
+		StateCount:        7,
+		InitialState:      0,
+		ProductionIDCount: 4,
+		SymbolNames:       []string{"end", "a", "b", "low_prefix", "high_prefix", "junk", "source"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "end", Visible: false},
+			{Name: "a", Visible: true},
+			{Name: "b", Visible: true},
+			{Name: "low_prefix", Visible: true, Named: true},
+			{Name: "high_prefix", Visible: true, Named: true},
+			{Name: "junk", Visible: true, Named: true},
+			{Name: "source", Visible: true, Named: true},
+		},
+		ParseActions: []ParseActionEntry{
+			{},
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 1}}},
+			{},
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 2}}},
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 3}}},
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 6}}},
+			{Actions: []ParseAction{
+				{Type: ParseActionReduce, Symbol: 3, ChildCount: 1, ProductionID: 0},
+				{Type: ParseActionReduce, Symbol: 4, ChildCount: 1, ProductionID: 1, DynamicPrecedence: 5},
+			}},
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 4}}},
+			{Actions: []ParseAction{
+				{Type: ParseActionShift, State: 5},
+				{Type: ParseActionReduce, Symbol: 5, ChildCount: 1, ProductionID: 2},
+			}},
+			{Actions: []ParseAction{{Type: ParseActionReduce, Symbol: 6, ChildCount: 2, ProductionID: 3}}},
+			{Actions: []ParseAction{{Type: ParseActionAccept}}},
+		},
+		ParseTable: [][]uint16{
+			{0, 1, 0, 3, 4, 0, 5},
+			{0, 0, 6, 0, 0, 0, 0},
+			{0, 0, 7, 0, 0, 0, 0},
+			{0, 0, 8, 0, 0, 0, 0},
+			{9, 0, 0, 0, 0, 0, 0},
+			{9, 0, 0, 0, 0, 0, 0},
+			{10, 0, 0, 0, 0, 0, 0},
+		},
+	}
+	parser := NewParser(lang)
+	source := []byte("ab")
+	tree, err := parser.ParseWithTokenSource(source, &slowArithmeticTokenSource{
+		tokens: []Token{
+			{Symbol: 1, StartByte: 0, EndByte: 1, EndPoint: Point{Column: 1}},
+			{Symbol: 2, StartByte: 1, EndByte: 2, StartPoint: Point{Column: 1}, EndPoint: Point{Column: 2}},
+			{Symbol: 0, StartByte: 2, EndByte: 2, StartPoint: Point{Column: 2}, EndPoint: Point{Column: 2}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ParseWithTokenSource() error = %v", err)
+	}
+	defer tree.Release()
+	rt := tree.ParseRuntime()
+	if got, want := rt.StopReason, ParseStopAccepted; got != want {
+		t.Fatalf("StopReason = %q, want %q; runtime=%s", got, want, rt.Summary())
+	}
+	root := tree.RootNode()
+	if root == nil {
+		t.Fatal("parse returned nil root")
+	}
+	sexpr := root.SExpr(lang)
+	if !strings.Contains(sexpr, "high_prefix") {
+		t.Fatalf("root = %s, want high-precedence sibling that reused the b lookahead; runtime=%s", sexpr, rt.Summary())
+	}
+	if strings.Contains(sexpr, "low_prefix") {
+		t.Fatalf("root = %s, got low branch selected after frontier shift; runtime=%s", sexpr, rt.Summary())
+	}
+}
+
+func TestConflictReduceFrontierAllShiftedAdvancesLookahead(t *testing.T) {
+	lang := &Language{
+		Name:              "conflict_reduce_frontier_all_shifted",
+		SymbolCount:       6,
+		TokenCount:        3,
+		StateCount:        8,
+		InitialState:      0,
+		ProductionIDCount: 4,
+		SymbolNames:       []string{"end", "a", "b", "low_prefix", "high_prefix", "source"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "end", Visible: false},
+			{Name: "a", Visible: true},
+			{Name: "b", Visible: true},
+			{Name: "low_prefix", Visible: true, Named: true},
+			{Name: "high_prefix", Visible: true, Named: true},
+			{Name: "source", Visible: true, Named: true},
+		},
+		ParseActions: []ParseActionEntry{
+			{},
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 1}}},
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 2}}},
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 3}}},
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 4}}},
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 5}}},
+			{Actions: []ParseAction{
+				{Type: ParseActionReduce, Symbol: 3, ChildCount: 1, ProductionID: 0},
+				{Type: ParseActionReduce, Symbol: 4, ChildCount: 1, ProductionID: 1, DynamicPrecedence: 5},
+			}},
+			{Actions: []ParseAction{{Type: ParseActionReduce, Symbol: 5, ChildCount: 2, ProductionID: 2}}},
+			{Actions: []ParseAction{{Type: ParseActionReduce, Symbol: 5, ChildCount: 2, ProductionID: 3, DynamicPrecedence: 5}}},
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 7}}},
+			{Actions: []ParseAction{{Type: ParseActionAccept}}},
+			{Actions: []ParseAction{
+				{Type: ParseActionReduce, Symbol: 4, ChildCount: 1, ProductionID: 1, DynamicPrecedence: 5},
+				{Type: ParseActionShift, State: 5},
+			}},
+		},
+		ParseTable: [][]uint16{
+			{0, 1, 0, 2, 3, 9},
+			{0, 0, 6, 0, 0, 0},
+			{0, 0, 4, 0, 0, 0},
+			{0, 0, 11, 0, 0, 0},
+			{7, 0, 0, 0, 0, 0},
+			{8, 0, 0, 0, 0, 0},
+			{0, 0, 0, 0, 0, 0},
+			{10, 0, 0, 0, 0, 0},
+		},
+	}
+	parser := NewParser(lang)
+	source := []byte("ab")
+	tree, err := parser.ParseWithTokenSource(source, &slowArithmeticTokenSource{
+		tokens: []Token{
+			{Symbol: 1, StartByte: 0, EndByte: 1, EndPoint: Point{Column: 1}},
+			{Symbol: 2, StartByte: 1, EndByte: 2, StartPoint: Point{Column: 1}, EndPoint: Point{Column: 2}},
+			{Symbol: 0, StartByte: 2, EndByte: 2, StartPoint: Point{Column: 2}, EndPoint: Point{Column: 2}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ParseWithTokenSource() error = %v", err)
+	}
+	defer tree.Release()
+	rt := tree.ParseRuntime()
+	if got, want := rt.StopReason, ParseStopAccepted; got != want {
+		t.Fatalf("StopReason = %q, want %q; runtime=%s", got, want, rt.Summary())
+	}
+	root := tree.RootNode()
+	if root == nil {
+		t.Fatal("parse returned nil root")
+	}
+	if got, want := root.EndByte(), uint32(len(source)); got != want {
+		t.Fatalf("root end = %d, want %d; runtime=%s tree=%s", got, want, rt.Summary(), root.SExpr(lang))
+	}
+}
+
+func TestParseRuntimeStopDiagnosticSummary(t *testing.T) {
+	rt := ParseRuntime{
+		StopReason:                           ParseStopNoStacksAlive,
+		StopDiagnosticCaptured:               true,
+		StopDiagnosticCRecoveryEnabled:       true,
+		StopDiagnosticCRecoveryGateReason:    "runtime_supported",
+		StopDiagnosticRecoverActionAvailable: true,
+		StopDiagnosticLastStackState:         7,
+		StopDiagnosticLastStackByte:          11,
+		StopDiagnosticLastStackDepth:         3,
+		StopDiagnosticTokenSymbol:            5,
+		StopDiagnosticTokenStartByte:         11,
+		StopDiagnosticTokenEndByte:           12,
+		StopDiagnosticRootType:               "source",
+		StopDiagnosticRootStartByte:          0,
+		StopDiagnosticRootEndByte:            11,
+		StopDiagnosticRootHasError:           true,
+		StopDiagnosticFirstErrorFound:        true,
+		StopDiagnosticFirstErrorStartByte:    4,
+		StopDiagnosticFirstErrorEndByte:      8,
+		StopDiagnosticFrontierStacks:         "stacks={total=2 live=2 limit=16 rows=[0:7@11/d3 sh=false dead=false acc=false pause=false rec=false score=0 br=0 snap=true]}",
+		StopDiagnosticFrontierActions:        "post_dispatch_unshifted_actionable=1 post_dispatch_snapshot_actionable=1 post_dispatch_appended_actionable=0",
+		StopDiagnosticSameHeaderGroups:       "sameHeader={groups=1 max=2 pairs=1 deepReject=1 costDiff=0 externalScannerDiffKnown=false gssEligible=0 gssAttemptable=0 gssWouldMerge=0 pairBudgetHit=false}",
+		StopDiagnosticCondenseGating:         "condense={errorCostCompetitionEnabled=true anyReduced=true hasPaused=true hasCRec=false condenseSkippedDueToAnyReduced=true condenseRan=false condenseResumed=false}",
+	}
+	summary := rt.Summary()
+	for _, want := range []string{
+		"stopDiag={",
+		"cRecovery=true",
+		"cRecoveryGateReason=runtime_supported",
+		"recoverAction=true",
+		"stackState=7",
+		"token=5[11:12]",
+		"root=\"source\"[0:11]",
+		"firstError=true[4:8]",
+		"stacks={total=2 live=2",
+		"post_dispatch_snapshot_actionable=1",
+		"sameHeader={groups=1 max=2 pairs=1 deepReject=1",
+		"condenseSkippedDueToAnyReduced=true",
+	} {
+		if !strings.Contains(summary, want) {
+			t.Fatalf("Summary() missing %q: %s", want, summary)
+		}
+	}
+}
+
+func TestParseRuntimeStopDiagnosticCRecoveryGateReasonSummary(t *testing.T) {
+	rt := ParseRuntime{
+		StopReason:                        ParseStopNoStacksAlive,
+		StopDiagnosticCaptured:            true,
+		StopDiagnosticCRecoveryEnabled:    false,
+		StopDiagnosticCRecoveryGateReason: "external_scanner_requires_precise_externallexstates",
+	}
+	summary := rt.Summary()
+	for _, want := range []string{
+		"cRecovery=false",
+		"cRecoveryGateReason=external_scanner_requires_precise_externallexstates",
+	} {
+		if !strings.Contains(summary, want) {
+			t.Fatalf("Summary() missing %q: %s", want, summary)
+		}
+	}
+	if strings.Contains(summary, "precise ExternalLexStates") {
+		t.Fatalf("Summary() included spaced human reason in machine field: %s", summary)
+	}
+}
+
+func TestParseRuntimeStopDiagnosticRecordsCRecoveryGateReason(t *testing.T) {
+	t.Setenv("GOT_C_RECOVERY", "")
+	lang := buildPrefixAcceptLanguage()
+	parser := NewParser(lang)
+
+	tree := mustParse(t, parser, []byte("abb"))
+	defer tree.Release()
+	rt := tree.ParseRuntime()
+
+	if got, want := rt.StopReason, ParseStopNoStacksAlive; got != want {
+		t.Fatalf("StopReason = %q, want %q; runtime=%s", got, want, rt.Summary())
+	}
+	if !rt.StopDiagnosticCaptured {
+		t.Fatalf("StopDiagnosticCaptured = false; runtime=%s", rt.Summary())
+	}
+	if rt.StopDiagnosticCRecoveryEnabled {
+		t.Fatalf("StopDiagnosticCRecoveryEnabled = true, want false; runtime=%s", rt.Summary())
+	}
+	if got, want := rt.StopDiagnosticCRecoveryGateReason, "initial_state_is_not_1"; got != want {
+		t.Fatalf("StopDiagnosticCRecoveryGateReason = %q, want %q; runtime=%s", got, want, rt.Summary())
+	}
+	if !strings.Contains(rt.Summary(), "cRecoveryGateReason=initial_state_is_not_1") {
+		t.Fatalf("Summary() missing cRecoveryGateReason: %s", rt.Summary())
+	}
+}
+
+func TestCRecoveryGateReasonSlugs(t *testing.T) {
+	t.Setenv("GOT_C_RECOVERY", "all")
+	lang := cRecoveryGateLanguage()
+	lang.ExternalScanner = cRecoveryGateScanner{}
+	lang.ExternalSymbols = []Symbol{1}
+	lang.ExternalTokenCount = 1
+	if got, want := cRecoveryGateReason(lang), "external_scanner_requires_precise_externallexstates"; got != want {
+		t.Fatalf("cRecoveryGateReason(runtime unsupported) = %q, want %q", got, want)
+	}
+
+	t.Setenv("GOT_C_RECOVERY", "0")
+	if got, want := cRecoveryGateReason(lang), "disabled_by_got_c_recovery_0"; got != want {
+		t.Fatalf("cRecoveryGateReason(env disabled unsupported) = %q, want %q", got, want)
+	}
+
+	lang = cRecoveryGateLanguage()
+	if got, want := cRecoveryGateReason(lang), "disabled_by_got_c_recovery_0"; got != want {
+		t.Fatalf("cRecoveryGateReason(env disabled) = %q, want %q", got, want)
+	}
+
+	t.Setenv("GOT_C_RECOVERY", "")
+	lang = cRecoveryGateLanguage()
+	lang.CRecoveryCostCompetitionEnabledByDefault = false
+	if got, want := cRecoveryGateReason(lang), "not_enabled_by_default"; got != want {
+		t.Fatalf("cRecoveryGateReason(default disabled) = %q, want %q", got, want)
+	}
+
+	lang.CRecoveryCostCompetitionCapable = false
+	if got, want := cRecoveryGateReason(lang), "not_c_recovery_capable"; got != want {
+		t.Fatalf("cRecoveryGateReason(not capable) = %q, want %q", got, want)
 	}
 }
 
@@ -172,6 +1035,37 @@ func TestParseRuntimeReportsNoTreeCheckpointLeavesRemainNodes(t *testing.T) {
 	}
 }
 
+func TestParseNoTreeBenchmarkDropsRetainedExternalCheckpointCapacity(t *testing.T) {
+	lang := buildArithmeticLanguage()
+	lang.Name = "python"
+	lang.ExternalScanner = byteStateExternalScanner{}
+
+	fullParser := NewParser(lang)
+	fullTree, err := fullParser.Parse([]byte("1+2"))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	fullRuntime := fullTree.ParseRuntime()
+	fullTree.Release()
+	if fullRuntime.ExternalScannerCheckpointBytesAllocated == 0 {
+		t.Fatalf("full checkpoint bytes = 0, want > 0; runtime=%s", fullRuntime.Summary())
+	}
+
+	noTreeParser := NewParser(lang)
+	noTree, err := noTreeParser.ParseNoTreeBenchmarkOnly([]byte("1+2"))
+	if err != nil {
+		t.Fatalf("ParseNoTreeBenchmarkOnly() error = %v", err)
+	}
+	defer noTree.Release()
+	noTreeRuntime := noTree.ParseRuntime()
+	if noTreeRuntime.ExternalScannerCheckpointRecords != 0 {
+		t.Fatalf("no-tree checkpoint records = %d, want 0; runtime=%s", noTreeRuntime.ExternalScannerCheckpointRecords, noTreeRuntime.Summary())
+	}
+	if noTreeRuntime.ExternalScannerCheckpointBytesAllocated != 0 {
+		t.Fatalf("no-tree checkpoint bytes = %d, want 0; runtime=%s", noTreeRuntime.ExternalScannerCheckpointBytesAllocated, noTreeRuntime.Summary())
+	}
+}
+
 func TestFinalTreeMaterializationStatsClassifiesHiddenParentsAndCheckpointLeaves(t *testing.T) {
 	arena := acquireNodeArena(arenaClassFull)
 	defer arena.Release()
@@ -212,7 +1106,10 @@ func assertParseRuntimeArenaBreakdown(t *testing.T, tree *Tree, rt ParseRuntime)
 		arenaBreakdown.CompactFullLeafBytesAllocated +
 		arenaBreakdown.PendingParentBytesAllocated +
 		arenaBreakdown.PendingChildEntryBytesAllocated +
+		arenaBreakdown.RawShapeBytesAllocated +
+		arenaBreakdown.RawShapeChildBytesAllocated +
 		arenaBreakdown.FinalChildSidecarBytesAllocated +
+		arenaBreakdown.CompactCheckpointLeafBytesAllocated +
 		arenaBreakdown.ChildSliceBytesAllocated +
 		arenaBreakdown.FieldIDBytesAllocated +
 		arenaBreakdown.FieldSourceBytesAllocated +
@@ -266,6 +1163,55 @@ func (s *slowArithmeticTokenSource) Next() Token {
 	tok := s.tokens[s.idx]
 	s.idx++
 	return tok
+}
+
+func TestEOFDrainKeepsLiveReducedBranchAfterEarlyAccept(t *testing.T) {
+	lang := &Language{
+		Name:         "eof_drain_regression",
+		SymbolCount:  4,
+		TokenCount:   2,
+		StateCount:   5,
+		InitialState: 1,
+		SymbolNames:  []string{"end", "x", "low_root", "high_root"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "end", Visible: false},
+			{Name: "x", Visible: true},
+			{Name: "low_root", Visible: true, Named: true},
+			{Name: "high_root", Visible: true, Named: true},
+		},
+		ParseActions: []ParseActionEntry{
+			{},
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 3}}},
+			{Actions: []ParseAction{{Type: ParseActionReduce, Symbol: 2, ChildCount: 1}}},
+			{Actions: []ParseAction{
+				{Type: ParseActionAccept},
+				{Type: ParseActionReduce, Symbol: 3, ChildCount: 1, DynamicPrecedence: 1},
+			}},
+			{Actions: []ParseAction{{Type: ParseActionAccept}}},
+		},
+		ParseTable: [][]uint16{
+			make([]uint16, 4),
+			{0, 1, 2, 4},
+			{3, 0, 0, 0},
+			{2, 0, 0, 0},
+			{4, 0, 0, 0},
+		},
+	}
+	parser := NewParser(lang)
+	parser.hasRootSymbol = false
+	source := []byte("x")
+	tree, err := parser.ParseWithTokenSource(source, &slowArithmeticTokenSource{
+		tokens: []Token{
+			{Symbol: 1, StartByte: 0, EndByte: 1, EndPoint: Point{Column: 1}},
+			{Symbol: 0, StartByte: 1, EndByte: 1, StartPoint: Point{Column: 1}, EndPoint: Point{Column: 1}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ParseWithTokenSource() error = %v", err)
+	}
+	if got, want := tree.RootNode().Type(lang), "high_root"; got != want {
+		t.Fatalf("root type = %q, want %q; tree=%s", got, want, tree.RootNode().SExpr(lang))
+	}
 }
 
 func TestParseRuntimeReportsTokenSourceEOFEarly(t *testing.T) {

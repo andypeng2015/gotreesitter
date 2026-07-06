@@ -17,10 +17,43 @@ const (
 	// dozens of times per file, multiplying parse time/memory.
 	csharpMaxNamespaceRecoveries = 32
 
-	// Bounds for the lenient source-based type/member recovery (#136). Unlike the
-	// whole-file gate above, these are PER declaration: a large real file is
-	// recovered as many small, independently-bounded member reparses rather than
-	// one giant reparse, so the anti-OOM guarantees from #64/#98/#106 still hold.
+	// csharpMaxTypeBodyRecoveryMembers bounds how many top-level members a
+	// LENIENT, source-based type/namespace-body reconstruction will attempt
+	// to recover (csharpRecoverNamespaceBodyMembersFromSource,
+	// csharpRecoverSourceTypeMembersFromRange with lenient=true). This is
+	// SHORT-TERM RELIEF for issue #136: large real-world files where the GLR
+	// sub-parse dies partway through a type body, so the existing
+	// children-based namespace/type recovery from #115/#116
+	// (csharpRecoverNamespaceBodyMembersFromErrorRoot) only covers the
+	// prefix that happened to parse before the failure. Unlike
+	// csharpMaxTopLevelChunkRecoverySourceBytes (applied per FILE at the
+	// csharpRecoverTopLevelChunks entry point — see its doc comment), this
+	// bound is applied per BODY, so a namespace/class with a realistic
+	// number of members is eligible regardless of the enclosing file's total
+	// size. Each individual member is still capped at
+	// csharpMaxTopLevelChunkRecoverySourceBytes bytes (skipped, not
+	// reparsed, if larger). Worst case nests ONE level, not a single flat
+	// bound: a namespace body can have up to csharpMaxTypeBodyRecoveryMembers
+	// top-level members (csharpRecoverNamespaceBodyMembersFromSource), and
+	// each of those that is itself a class/struct/interface body can in turn
+	// have up to csharpMaxTypeBodyRecoveryMembers members
+	// (csharpRecoverSourceTypeMembersFromRange) — so the worst-case bound is
+	// csharpMaxTypeBodyRecoveryMembers^2 (65536) snippet reparses, each at
+	// most csharpMaxTopLevelChunkRecoverySourceBytes bytes. Recursion stops
+	// there: a type body's own members (fields/methods/properties) are leaf
+	// reparses, not further namespace-body-scale recursions. Remove this
+	// lenient path once the GLR engine gains real mid-parse error recovery
+	// (see #136) and these files parse mostly clean without needing
+	// source reconstruction.
+	csharpMaxTypeBodyRecoveryMembers = 256
+
+	// Bounds for the alternate lenient source-based member recovery driver in
+	// parser_result_csharp_method_recovery.go (#136, upstream #138). This is a
+	// second, independently-bounded pass used as a per-declaration fallback when
+	// it recovers strictly more method_declaration nodes than the primary
+	// csharpRecoverNamespaceBodyMembersFromSource pass above (see
+	// csharpChooseRecoveredNamespaceMembers). Like the bounds above, these are
+	// PER declaration, so the anti-OOM guarantees from #64/#98/#106 still hold.
 	// csharpMaxMemberRecoverySourceBytes caps the size of a single member snippet
 	// that will be reparsed; csharpMaxTypeMemberRecoveries caps how many members
 	// one type recovery will reparse.
@@ -38,7 +71,14 @@ func normalizeCSharpCompatibility(root *Node, source []byte, p *Parser, lang *La
 		normalizeCSharpInvocationStatements(root, source, lang)
 		normalizeCSharpDereferenceLogicalAndCasts(root, source, lang)
 		normalizeCSharpConditionalIsPatternInitializers(root, source, lang)
-		normalizeCSharpConditionalIsPatternExpressions(root, lang)
+		normalizeCSharpConditionalIsPatternExpressions(root, source, lang)
+		normalizeCSharpIdentifierIsPatternExpressions(root, source, lang)
+		normalizeCSharpConditionalExpressionTokens(root, source, lang)
+		normalizeCSharpNullLiteralIdentifiers(root, source, lang)
+		normalizeCSharpScopedRefTypes(root, source, lang)
+		normalizeCSharpImplicitVarTypes(root, source, lang)
+		normalizeCSharpParenthesizedVarPatterns(root, source, lang)
+		normalizeCSharpGenericBaseLists(root, lang)
 		normalizeCSharpTypeConstraintKeywords(root, lang)
 		normalizeCSharpSwitchTupleCasePatterns(root, lang)
 		return
@@ -57,7 +97,14 @@ func normalizeCSharpCompatibility(root *Node, source []byte, p *Parser, lang *La
 	normalizeCSharpInvocationStatements(root, source, lang)
 	normalizeCSharpDereferenceLogicalAndCasts(root, source, lang)
 	normalizeCSharpConditionalIsPatternInitializers(root, source, lang)
-	normalizeCSharpConditionalIsPatternExpressions(root, lang)
+	normalizeCSharpConditionalIsPatternExpressions(root, source, lang)
+	normalizeCSharpIdentifierIsPatternExpressions(root, source, lang)
+	normalizeCSharpConditionalExpressionTokens(root, source, lang)
+	normalizeCSharpNullLiteralIdentifiers(root, source, lang)
+	normalizeCSharpScopedRefTypes(root, source, lang)
+	normalizeCSharpImplicitVarTypes(root, source, lang)
+	normalizeCSharpParenthesizedVarPatterns(root, source, lang)
+	normalizeCSharpGenericBaseLists(root, lang)
 	normalizeCSharpTypeConstraintKeywords(root, lang)
 	normalizeCSharpSwitchTupleCasePatterns(root, lang)
 }
@@ -70,6 +117,7 @@ func normalizeCSharpSurfaceCompatibility(root *Node, source []byte, lang *Langua
 	modifierSym, hasModifier := symbolByName(lang, "modifier")
 	aliasSym, hasAlias := symbolByName(lang, "alias_qualified_name")
 	identifierSym, hasIdentifier := symbolByName(lang, "identifier")
+	nullSym, hasNull := symbolByName(lang, "null_literal")
 	globalSym, hasGlobal := symbolByName(lang, "global")
 	lambdaSym, ok := symbolByName(lang, "lambda_expression")
 	hasLambda := ok
@@ -77,6 +125,7 @@ func normalizeCSharpSurfaceCompatibility(root *Node, source []byte, lang *Langua
 	stringLiteralSym, hasStringLiteral := symbolByName(lang, "string_literal")
 	globalNamed := symbolIsNamed(lang, globalSym)
 	modifierNamed := symbolIsNamed(lang, modifierSym)
+	nullNamed := symbolIsNamed(lang, nullSym)
 	walkResultTree(root, func(n *Node) {
 		if n == nil {
 			return
@@ -95,6 +144,13 @@ func normalizeCSharpSurfaceCompatibility(root *Node, source []byte, lang *Langua
 				}
 				return
 			}
+		}
+		if hasIdentifier && hasNull && n.Type(lang) == "identifier" &&
+			n.startByte < n.endByte && int(n.endByte) <= len(source) &&
+			string(source[n.startByte:n.endByte]) == "null" {
+			retagResultRoot(n, nullSym, nullNamed)
+			replaceNodeChildrenUnfielded(n, nil)
+			return
 		}
 		if hasAlias && hasIdentifier && hasGlobal && n.symbol == aliasSym && childCount > 0 {
 			first := resultChildAt(n, 0)
@@ -130,6 +186,410 @@ func normalizeCSharpSurfaceCompatibility(root *Node, source []byte, lang *Langua
 			return
 		}
 	})
+}
+
+func normalizeCSharpNullLiteralIdentifiers(root *Node, source []byte, lang *Language) {
+	if root == nil || lang == nil || lang.Name != "c_sharp" || len(source) == 0 {
+		return
+	}
+	nullSym, ok := symbolByName(lang, "null_literal")
+	if !ok {
+		return
+	}
+	nullNamed := symbolIsNamed(lang, nullSym)
+	walkResultTree(root, func(n *Node) {
+		if n == nil || n.Type(lang) != "identifier" || n.startByte >= n.endByte || int(n.endByte) > len(source) {
+			return
+		}
+		if string(source[n.startByte:n.endByte]) != "null" {
+			return
+		}
+		retagResultRoot(n, nullSym, nullNamed)
+		replaceNodeChildrenUnfielded(n, nil)
+	})
+}
+
+func normalizeCSharpImplicitVarTypes(root *Node, source []byte, lang *Language) {
+	if root == nil || lang == nil || lang.Name != "c_sharp" || len(source) == 0 {
+		return
+	}
+	implicitTypeSym, ok := symbolByName(lang, "implicit_type")
+	if !ok {
+		return
+	}
+	implicitTypeNamed := symbolIsNamed(lang, implicitTypeSym)
+	walkResultTree(root, func(n *Node) {
+		if n == nil || n.ownerArena == nil || !csharpNodeCanContainImplicitVarType(n, lang) {
+			return
+		}
+		for i, child := range n.children {
+			if child == nil || child.Type(lang) != "identifier" || child.startByte >= child.endByte || int(child.endByte) > len(source) {
+				continue
+			}
+			if string(source[child.startByte:child.endByte]) != "var" {
+				continue
+			}
+			varTok, ok := csharpBuildLeafNodeByName(n.ownerArena, source, lang, "var", child.startByte, child.endByte)
+			if !ok {
+				continue
+			}
+			n.children[i] = newParentNodeInArena(n.ownerArena, implicitTypeSym, implicitTypeNamed, []*Node{varTok}, nil, 0)
+		}
+	})
+}
+
+func csharpNodeCanContainImplicitVarType(n *Node, lang *Language) bool {
+	switch n.Type(lang) {
+	case "variable_declaration", "object_creation_expression", "declaration_pattern":
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizeCSharpScopedRefTypes(root *Node, source []byte, lang *Language) {
+	if root == nil || lang == nil || lang.Name != "c_sharp" || len(source) == 0 {
+		return
+	}
+	walkResultTree(root, func(n *Node) {
+		switch n.Type(lang) {
+		case "parameter":
+			csharpRewriteScopedRefParameter(n, source, lang)
+		case "variable_declaration":
+			csharpRewriteScopedRefVariableDeclaration(n, source, lang)
+		}
+	})
+}
+
+func csharpRewriteScopedRefParameter(param *Node, source []byte, lang *Language) bool {
+	if param == nil || param.ownerArena == nil || resultChildCount(param) < 2 {
+		return false
+	}
+	first := resultChildAt(param, 0)
+	second := resultChildAt(param, 1)
+	if !csharpNodeTextIs(source, first, "scoped") || !csharpNodeTextIs(source, second, "ref") {
+		return false
+	}
+	typeStart := csharpSkipSpaceBytes(source, second.endByte)
+	typeNameStart, typeNameEnd, ok := csharpScanIdentifierAt(source, typeStart)
+	if !ok || typeNameStart != typeStart {
+		return false
+	}
+	nameStart, nameEnd, ok := csharpScanIdentifierAt(source, csharpSkipSpaceBytes(source, typeNameEnd))
+	if !ok {
+		return false
+	}
+	if int(nameEnd) > len(source) {
+		return false
+	}
+	trailing := csharpSkipSpaceBytes(source, nameEnd)
+	if trailing >= uint32(len(source)) || source[trailing] != ')' && source[trailing] != ',' {
+		return false
+	}
+	scopedMod, ok := csharpBuildModifierNodeFromSource(param.ownerArena, source, lang, first.startByte, first.endByte)
+	if !ok {
+		return false
+	}
+	refMod, ok := csharpBuildModifierNodeFromSource(param.ownerArena, source, lang, second.startByte, second.endByte)
+	if !ok {
+		return false
+	}
+	typeNode, ok := csharpBuildTypeNameNodeFromSource(param.ownerArena, source, lang, typeNameStart, typeNameEnd)
+	if !ok {
+		return false
+	}
+	nameNode, ok := csharpBuildIdentifierNodeFromSource(source, nameStart, nameEnd, lang, param.ownerArena)
+	if !ok {
+		return false
+	}
+	children := cloneNodeSliceIfArena(param.ownerArena, []*Node{scopedMod, refMod, typeNode, nameNode})
+	replaceNodeChildrenUnfielded(param, children)
+	param.startByte = first.startByte
+	param.endByte = nameEnd
+	recomputeNodePointsFromBytes(param, source)
+	param.productionID = 0
+	param.setHasError(false)
+	return true
+}
+
+func csharpRewriteScopedRefVariableDeclaration(decl *Node, source []byte, lang *Language) bool {
+	if decl == nil || decl.ownerArena == nil || resultChildCount(decl) != 2 {
+		return false
+	}
+	typeCandidate := resultChildAt(decl, 0)
+	declarator := resultChildAt(decl, 1)
+	if !csharpNodeTextIs(source, typeCandidate, "scoped") || declarator == nil || declarator.Type(lang) != "variable_declarator" {
+		return false
+	}
+	refStart := csharpSkipSpaceBytes(source, typeCandidate.endByte)
+	if !csharpHasKeywordAt(source, refStart, "ref") {
+		return false
+	}
+	typeStart := csharpSkipSpaceBytes(source, refStart+uint32(len("ref")))
+	typeNameStart, typeNameEnd, ok := csharpScanIdentifierAt(source, typeStart)
+	if !ok || typeNameStart != typeStart {
+		return false
+	}
+	nameStart, nameEnd, ok := csharpScanIdentifierAt(source, csharpSkipSpaceBytes(source, typeNameEnd))
+	if !ok {
+		return false
+	}
+	eqPos := csharpSkipSpaceBytes(source, nameEnd)
+	if eqPos >= uint32(len(source)) || source[eqPos] != '=' {
+		return false
+	}
+	value := csharpVariableDeclaratorInitializerValue(declarator, lang)
+	if value == nil {
+		return false
+	}
+	scopedType, ok := csharpBuildScopedRefTypeNode(decl.ownerArena, source, lang, typeCandidate.startByte, refStart, typeNameStart, typeNameEnd)
+	if !ok {
+		return false
+	}
+	newDeclarator, ok := csharpBuildVariableDeclaratorNode(source, lang, decl.ownerArena, nameStart, nameEnd, eqPos, value)
+	if !ok {
+		return false
+	}
+	typeID, _ := lang.FieldByName("type")
+	children := cloneNodeSliceIfArena(decl.ownerArena, []*Node{scopedType, newDeclarator})
+	fields := cloneFieldIDSliceInArena(decl.ownerArena, []FieldID{typeID, 0})
+	decl.children = children
+	decl.fieldIDs = fields
+	decl.fieldSources = defaultFieldSourcesInArena(decl.ownerArena, fields)
+	decl.startByte = typeCandidate.startByte
+	decl.endByte = newDeclarator.endByte
+	recomputeNodePointsFromBytes(decl, source)
+	decl.productionID = 0
+	decl.setHasError(false)
+	populateParentNode(decl, decl.children)
+	return true
+}
+
+func csharpVariableDeclaratorInitializerValue(declarator *Node, lang *Language) *Node {
+	if declarator == nil || lang == nil {
+		return nil
+	}
+	for i := resultChildCount(declarator) - 1; i >= 0; i-- {
+		child := resultChildAt(declarator, i)
+		if child != nil && child.IsNamed() && child.Type(lang) != "identifier" {
+			return child
+		}
+	}
+	return nil
+}
+
+func csharpBuildModifierNodeFromSource(arena *nodeArena, source []byte, lang *Language, start, end uint32) (*Node, bool) {
+	if arena == nil || lang == nil || start >= end || int(end) > len(source) {
+		return nil, false
+	}
+	modifierSym, ok := symbolByName(lang, "modifier")
+	if !ok {
+		return nil, false
+	}
+	return newLeafNodeInArena(arena, modifierSym, symbolIsNamed(lang, modifierSym), start, end, advancePointByBytes(Point{}, source[:start]), advancePointByBytes(Point{}, source[:end])), true
+}
+
+func csharpBuildScopedRefTypeNode(arena *nodeArena, source []byte, lang *Language, scopedStart, refStart, typeStart, typeEnd uint32) (*Node, bool) {
+	if arena == nil || lang == nil || scopedStart >= refStart || typeStart >= typeEnd || int(typeEnd) > len(source) {
+		return nil, false
+	}
+	scopedTypeSym, ok := symbolByName(lang, "scoped_type")
+	if !ok {
+		return nil, false
+	}
+	refTypeSym, ok := symbolByName(lang, "ref_type")
+	if !ok {
+		return nil, false
+	}
+	refTok, ok := csharpBuildLeafNodeByName(arena, source, lang, "ref", refStart, refStart+uint32(len("ref")))
+	if !ok {
+		return nil, false
+	}
+	typeNode, ok := csharpBuildTypeNameNodeFromSource(arena, source, lang, typeStart, typeEnd)
+	if !ok {
+		return nil, false
+	}
+	refType := newParentNodeInArena(arena, refTypeSym, symbolIsNamed(lang, refTypeSym), cloneNodeSliceIfArena(arena, []*Node{refTok, typeNode}), nil, 0)
+	refType.setHasError(false)
+	scopedType := newParentNodeInArena(arena, scopedTypeSym, symbolIsNamed(lang, scopedTypeSym), cloneNodeSliceIfArena(arena, []*Node{refType}), nil, 0)
+	scopedType.startByte = scopedStart
+	scopedType.endByte = typeNode.endByte
+	scopedType.startPoint = advancePointByBytes(Point{}, source[:scopedStart])
+	scopedType.endPoint = typeNode.endPoint
+	scopedType.setHasError(false)
+	return scopedType, true
+}
+
+func csharpNodeTextIs(source []byte, n *Node, text string) bool {
+	if n == nil || n.startByte >= n.endByte || int(n.endByte) > len(source) {
+		return false
+	}
+	return string(source[n.startByte:n.endByte]) == text
+}
+
+func normalizeCSharpParenthesizedVarPatterns(root *Node, source []byte, lang *Language) {
+	if root == nil || lang == nil || lang.Name != "c_sharp" || len(source) == 0 {
+		return
+	}
+	parenthesizedPatternSym, ok := symbolByName(lang, "parenthesized_pattern")
+	if !ok {
+		return
+	}
+	parenthesizedPatternNamed := symbolIsNamed(lang, parenthesizedPatternSym)
+	walkResultTree(root, func(n *Node) {
+		if n == nil || n.ownerArena == nil || n.Type(lang) != "recursive_pattern" || resultChildCount(n) != 1 {
+			return
+		}
+		if n.startByte >= n.endByte || int(n.endByte) > len(source) || source[n.startByte] != '(' || source[n.endByte-1] != ')' {
+			return
+		}
+		decl := csharpFindResultDescendantOfType(n, lang, "declaration_pattern")
+		if decl == nil || decl.Type(lang) != "declaration_pattern" || resultChildCount(decl) != 2 {
+			return
+		}
+		typeNode := resultChildAt(decl, 0)
+		if typeNode == nil || typeNode.Type(lang) != "implicit_type" {
+			return
+		}
+		openTok, ok := csharpBuildLeafNodeByName(n.ownerArena, source, lang, "(", n.startByte, n.startByte+1)
+		if !ok {
+			return
+		}
+		closeTok, ok := csharpBuildLeafNodeByName(n.ownerArena, source, lang, ")", n.endByte-1, n.endByte)
+		if !ok {
+			return
+		}
+		retagResultRoot(n, parenthesizedPatternSym, parenthesizedPatternNamed)
+		replaceNodeChildrenUnfielded(n, []*Node{openTok, decl, closeTok})
+	})
+}
+
+func csharpFindResultDescendantOfType(root *Node, lang *Language, want string) *Node {
+	if root == nil || lang == nil {
+		return nil
+	}
+	for i := 0; i < resultChildCount(root); i++ {
+		child := resultChildAt(root, i)
+		if child == nil {
+			continue
+		}
+		if child.Type(lang) == want {
+			return child
+		}
+		if got := csharpFindResultDescendantOfType(child, lang, want); got != nil {
+			return got
+		}
+	}
+	return nil
+}
+
+func normalizeCSharpGenericBaseLists(root *Node, lang *Language) {
+	if root == nil || lang == nil || lang.Name != "c_sharp" {
+		return
+	}
+	genericNameSym, hasGenericName := symbolByName(lang, "generic_name")
+	typeArgumentListSym, hasTypeArgumentList := symbolByName(lang, "type_argument_list")
+	if !hasGenericName || !hasTypeArgumentList {
+		return
+	}
+	genericNameNamed := symbolIsNamed(lang, genericNameSym)
+	typeArgumentListNamed := symbolIsNamed(lang, typeArgumentListSym)
+	walkResultTree(root, func(n *Node) {
+		if n == nil || n.Type(lang) != "class_declaration" || resultChildCount(n) < 5 {
+			return
+		}
+		csharpMergeClassGenericBaseList(n, lang, genericNameSym, genericNameNamed, typeArgumentListSym, typeArgumentListNamed)
+	})
+}
+
+func csharpMergeClassGenericBaseList(classNode *Node, lang *Language, genericNameSym Symbol, genericNameNamed bool, typeArgumentListSym Symbol, typeArgumentListNamed bool) bool {
+	childCount := resultChildCount(classNode)
+	for i := 0; i+1 < childCount; i++ {
+		baseList := resultChildAt(classNode, i)
+		typeParams := resultChildAt(classNode, i+1)
+		if baseList == nil || typeParams == nil || baseList.Type(lang) != "base_list" || typeParams.Type(lang) != "type_parameter_list" {
+			continue
+		}
+		if baseList.endByte != typeParams.startByte || resultChildCount(baseList) != 2 {
+			continue
+		}
+		colon := resultChildAt(baseList, 0)
+		baseName := resultChildAt(baseList, 1)
+		if colon == nil || baseName == nil || colon.Type(lang) != ":" || baseName.Type(lang) != "identifier" {
+			continue
+		}
+		retagResultRoot(typeParams, typeArgumentListSym, typeArgumentListNamed)
+		csharpUnwrapTypeArgumentListParameters(typeParams, lang)
+		genericChildren := cloneNodeSliceIfArena(classNode.ownerArena, []*Node{baseName, typeParams})
+		genericName := newParentNodeInArena(classNode.ownerArena, genericNameSym, genericNameNamed, genericChildren, nil, 0)
+		genericName.startByte = baseName.startByte
+		genericName.endByte = typeParams.endByte
+		genericName.startPoint = baseName.startPoint
+		genericName.endPoint = typeParams.endPoint
+		genericName.setHasError(false)
+		baseChildren := cloneNodeSliceIfArena(classNode.ownerArena, []*Node{colon, genericName})
+		baseList.children = baseChildren
+		baseList.fieldIDs = nil
+		baseList.fieldSources = nil
+		if baseList.ownerArena != nil {
+			baseList.ownerArena.clearFinalChildRefs(baseList)
+		}
+		baseList.endByte = typeParams.endByte
+		baseList.endPoint = typeParams.endPoint
+		baseList.setHasError(false)
+		populateParentNode(baseList, baseList.children)
+
+		classChildren := resultChildSliceForMutation(classNode)
+		if len(classChildren) != childCount {
+			return false
+		}
+		rebuilt := make([]*Node, 0, childCount-1)
+		rebuilt = append(rebuilt, classChildren[:i+1]...)
+		rebuilt = append(rebuilt, classChildren[i+2:]...)
+		classNode.children = cloneNodeSliceIfArena(classNode.ownerArena, rebuilt)
+		if classNode.ownerArena != nil {
+			classNode.ownerArena.clearFinalChildRefs(classNode)
+		}
+		classNode.fieldIDs = nil
+		classNode.fieldSources = nil
+		classNode.setHasError(false)
+		populateParentNode(classNode, classNode.children)
+		return true
+	}
+	return false
+}
+
+func csharpUnwrapTypeArgumentListParameters(typeArgs *Node, lang *Language) bool {
+	if typeArgs == nil || lang == nil || resultChildCount(typeArgs) == 0 {
+		return false
+	}
+	changed := false
+	children := resultChildSliceForMutation(typeArgs)
+	if len(children) == 0 {
+		return false
+	}
+	for i, child := range children {
+		if child == nil || child.Type(lang) != "type_parameter" || resultChildCount(child) != 1 {
+			continue
+		}
+		inner := resultChildAt(child, 0)
+		if inner == nil || inner.Type(lang) != "identifier" {
+			continue
+		}
+		children[i] = inner
+		changed = true
+	}
+	if !changed {
+		return false
+	}
+	typeArgs.children = cloneNodeSliceIfArena(typeArgs.ownerArena, children)
+	typeArgs.fieldIDs = nil
+	typeArgs.fieldSources = nil
+	if typeArgs.ownerArena != nil {
+		typeArgs.ownerArena.clearFinalChildRefs(typeArgs)
+	}
+	populateParentNode(typeArgs, typeArgs.children)
+	return true
 }
 
 func csharpCollapsedBooleanTokenSymbol(lang *Language, source []byte, n *Node) (Symbol, bool) {
@@ -341,7 +801,7 @@ func csharpRecoverTopLevelChunks(source []byte, p *Parser, arena *nodeArena) ([]
 	out := make([]*Node, 0, len(spans))
 	for _, span := range spans {
 		for _, part := range csharpSplitLeadingTopLevelCommentSpans(source, span[0], span[1]) {
-			nodes, ok := csharpRecoverTopLevelChunkNodesFromRange(source, part[0], part[1], p, arena)
+			nodes, ok := csharpRecoverTopLevelChunkNodesFromRange(source, part[0], part[1], p, arena, false)
 			if !ok || len(nodes) == 0 {
 				return nil, false
 			}
@@ -516,7 +976,7 @@ func csharpSplitLeadingTopLevelCommentSpans(source []byte, start, end uint32) []
 	return spans
 }
 
-func csharpRecoverTopLevelChunkNodesFromRange(source []byte, start, end uint32, p *Parser, arena *nodeArena) ([]*Node, bool) {
+func csharpRecoverTopLevelChunkNodesFromRange(source []byte, start, end uint32, p *Parser, arena *nodeArena, lenient bool) ([]*Node, bool) {
 	if p == nil || p.language == nil || start >= end || int(end) > len(source) {
 		return nil, false
 	}
@@ -529,13 +989,41 @@ func csharpRecoverTopLevelChunkNodesFromRange(source []byte, start, end uint32, 
 	}
 	if source[start] == '[' {
 		if attributeLists, declStart, ok := csharpBuildLeadingAttributeListsFromSource(source, start, end, p.language, arena); ok && declStart < end {
-			if recovered, ok := csharpRecoverAttributedTopLevelTypeDeclarationFromRange(source, declStart, end, attributeLists, p.language, arena); ok {
+			// Bounded (issue #136): csharpRecoverAttributedTopLevelTypeDeclarationFromRange
+			// reparses source[declStart:end] as ONE unbounded whole-span GLR
+			// parse with no size cap — safe under the strict (non-lenient)
+			// caller (csharpRecoverTopLevelChunks gates the whole FILE at
+			// csharpMaxTopLevelChunkRecoverySourceBytes, so declStart:end is
+			// always small there), but namespace-body-scale lenient recovery
+			// can hand this an attributed real-world class spanning tens of
+			// KB (e.g. "[RequiresDynamicCode(...)] public sealed class Foo {
+			// ...100 methods... }"), which must NOT get an unbounded reparse.
+			// Route those through the per-member-bounded source declaration
+			// path instead, prepending the already-recovered attribute lists.
+			if lenient && end-declStart > csharpMaxTopLevelChunkRecoverySourceBytes {
+				if recovered, ok := csharpRecoverSourceTopLevelTypeDeclarationFromRange(source, declStart, end, p, arena, lenient); ok {
+					return []*Node{csharpPrependAttributeListsToDeclaration(recovered, attributeLists, arena)}, true
+				}
+			} else if recovered, ok := csharpRecoverAttributedTopLevelTypeDeclarationFromRange(source, declStart, end, attributeLists, p, p.language, arena); ok {
 				return []*Node{recovered}, true
 			}
 		}
 	}
-	if recovered, ok := csharpRecoverSourceTopLevelTypeDeclarationFromRange(source, start, end, p, arena); ok {
+	if recovered, ok := csharpRecoverSourceTopLevelTypeDeclarationFromRange(source, start, end, p, arena, lenient); ok {
 		return []*Node{recovered}, true
+	}
+	// Bounded (issue #136): in lenient mode (namespace-body-scale recovery,
+	// see csharpRecoverNamespaceBodyMembersFromSource), a single top-level
+	// chunk can legitimately be as large as an entire real-world class body
+	// — csharpRecoverSourceTopLevelTypeDeclarationFromRange above already
+	// bounds THAT cost per-member (csharpMaxTypeBodyRecoveryMembers /
+	// csharpMaxTopLevelChunkRecoverySourceBytes). But if the chunk was NOT
+	// recognized as a class/record declaration (e.g. an enum straddling an
+	// unbalanced #if/#endif), don't fall through to an unbounded whole-chunk
+	// reparse here — skip it instead, so a single oversized, unrecognized
+	// chunk cannot blow up worst-case recovery cost.
+	if lenient && end-start > csharpMaxTopLevelChunkRecoverySourceBytes {
+		return nil, false
 	}
 	chunk := source[start:end]
 	tree, err := p.parseForRecovery(chunk)
@@ -702,8 +1190,33 @@ func csharpRecoverNamespaceFromChildren(children []*Node, startIdx int, source [
 		return nil, startIdx, false
 	}
 	nsStart := csharpSkipSpaceBytes(source, startNode.startByte)
+	// SHORT-TERM RELIEF for issue #136: for a large real-world file the
+	// leading boilerplate (copyright header comments, #region/#endregion,
+	// using directives) can collapse into the SAME opaque ERROR span as the
+	// namespace keyword itself, so "namespace" is not at this child's own
+	// start byte even though it does appear within its span. Search forward
+	// within the ERROR span for the namespace keyword instead of giving up
+	// outright — but skip csharpRecoverNamespaceNodeFromRange's initial
+	// full-body reparse in that case (foundViaSearch below): that reparse
+	// re-runs the GLR parser over the SAME content that just failed to
+	// produce this child in the first place, so it is both unlikely to help
+	// (the reparse dies at essentially the same relative point — verified on
+	// the #136 repro files) and, on some file shapes, catastrophically
+	// slower than the bounded, purely source-based recovery in
+	// csharpBuildRecoveredNamespaceDeclarationFromErrorRoot. Go straight to
+	// that (with startNode itself as the best-effort "already parsed
+	// fragment" source, since it may still have some usable children).
+	foundViaSearch := false
 	if int(nsStart)+len("namespace") > len(source) || !bytes.HasPrefix(source[nsStart:], []byte("namespace")) {
-		return nil, startIdx, false
+		if startNode.Type(lang) != "ERROR" {
+			return nil, startIdx, false
+		}
+		found, ok := csharpFindTopLevelNamespaceKeyword(source, startNode.startByte, startNode.endByte)
+		if !ok {
+			return nil, startIdx, false
+		}
+		nsStart = found
+		foundViaSearch = true
 	}
 	openRel := bytes.IndexByte(source[nsStart:], '{')
 	if openRel < 0 {
@@ -715,7 +1228,13 @@ func csharpRecoverNamespaceFromChildren(children []*Node, startIdx int, source [
 		return nil, startIdx, false
 	}
 	nsEnd := uint32(closeBrace + 1)
-	recovered, ok := csharpRecoverNamespaceNodeFromRange(source, nsStart, nsEnd, p, lang, arena)
+	var recovered *Node
+	var ok bool
+	if foundViaSearch {
+		recovered, ok = csharpBuildRecoveredNamespaceDeclarationFromErrorRoot(startNode, source, nsStart, nsEnd, p, lang, arena)
+	} else {
+		recovered, ok = csharpRecoverNamespaceNodeFromRange(source, nsStart, nsEnd, p, lang, arena)
+	}
 	if !ok {
 		return nil, startIdx, false
 	}
@@ -890,7 +1409,7 @@ func normalizeCSharpRecoveredTypeDeclarations(root *Node, source []byte, p *Pars
 			i++
 			continue
 		}
-		if recovered, next, ok := csharpRecoverAttributedTopLevelTypeDeclarationFromChildren(root.children, i, source, lang, root.ownerArena); ok {
+		if recovered, next, ok := csharpRecoverAttributedTopLevelTypeDeclarationFromChildren(root.children, i, source, p, lang, root.ownerArena); ok {
 			recoveredChildren = append(recoveredChildren, recovered)
 			i = next
 			continue
@@ -905,7 +1424,7 @@ func normalizeCSharpRecoveredTypeDeclarations(root *Node, source []byte, p *Pars
 			i++
 			continue
 		}
-		attributed, ok := csharpRecoverAttributedTopLevelTypeDeclarationFromError(child, source, lang, root.ownerArena)
+		attributed, ok := csharpRecoverAttributedTopLevelTypeDeclarationFromError(child, source, p, lang, root.ownerArena)
 		if ok {
 			recoveredChildren = append(recoveredChildren, attributed)
 			i++

@@ -46,17 +46,6 @@ func normalizePythonCompatibilityWithParser(root *Node, source []byte, parser *P
 	}, func() normalizationPassCounters {
 		return normalizePythonStringContinuationEscapes(root, source, lang)
 	})
-	// Post-repair: adjust block startBytes to match C tree-sitter behavior.
-	// C includes the newline+indentation between ":" and the first statement;
-	// Go's repair drops it.  This pass catches blocks inside match_statement,
-	// while_statement, for_statement, etc. that repairPythonNode doesn't reach.
-	// NOTE: no source flag gate — ":" is ubiquitous in Python (function defs,
-	// class defs, if/while/for/match), so a pre-scan would almost never skip.
-	parser.runNormalizationPass(func() bool {
-		return true
-	}, func() normalizationPassCounters {
-		return normalizePythonBlockStartBytes(root, lang)
-	})
 }
 
 // pythonCollapsedKeywordSetup holds the resolved symbols for one collapsed-
@@ -649,50 +638,6 @@ func pythonCompatibilitySourceFlagsFor(source []byte) pythonCompatibilitySourceF
 	return flags
 }
 
-func normalizePythonStarCollapsedChildrenWithStats(root *Node, source []byte, lang *Language) normalizationPassCounters {
-	var counters normalizationPassCounters
-	if root == nil || lang == nil || len(source) == 0 {
-		return counters
-	}
-	wildcardSym, hasWildcard := lang.symbolByNameAndNamed("wildcard_import", true)
-	if !hasWildcard {
-		wildcardSym, hasWildcard = symbolByName(lang, "wildcard_import")
-	}
-	keywordSeparatorSym, hasKeywordSeparator := lang.symbolByNameAndNamed("keyword_separator", true)
-	if !hasKeywordSeparator {
-		keywordSeparatorSym, hasKeywordSeparator = symbolByName(lang, "keyword_separator")
-	}
-	if !hasWildcard && !hasKeywordSeparator {
-		return counters
-	}
-	starSym, ok := lang.symbolByNameAndNamed("*", false)
-	if !ok {
-		starSym, ok = symbolByName(lang, "*")
-	}
-	if !ok {
-		return counters
-	}
-	starNamed := symbolIsNamed(lang, starSym)
-	walkResultTree(root, func(n *Node) {
-		counters.nodesVisited++
-		if n == nil || resultChildCount(n) != 0 || n.startByte >= n.endByte || int(n.endByte) > len(source) {
-			return
-		}
-		if (!hasWildcard || n.symbol != wildcardSym) && (!hasKeywordSeparator || n.symbol != keywordSeparatorSym) {
-			return
-		}
-		if n.endByte-n.startByte != 1 || source[n.startByte] != '*' {
-			return
-		}
-		child := newLeafNodeInArena(n.ownerArena, starSym, starNamed, n.startByte, n.endByte, n.startPoint, n.endPoint)
-		child.parent = n
-		child.childIndex = 0
-		n.children = cloneNodeSliceInArena(n.ownerArena, []*Node{child})
-		counters.nodesRewritten++
-	})
-	return counters
-}
-
 func normalizePythonAssignmentRightExpressionListsWithStats(root *Node, lang *Language) normalizationPassCounters {
 	var counters normalizationPassCounters
 	if root == nil || lang == nil {
@@ -728,155 +673,6 @@ func normalizePythonAssignmentRightExpressionListsWithStats(root *Node, lang *La
 			}
 		}
 	})
-	return counters
-}
-
-func normalizePythonAsPatternTargetIdentifiers(root *Node, source []byte, lang *Language) normalizationPassCounters {
-	var counters normalizationPassCounters
-	if root == nil || lang == nil || len(source) == 0 {
-		return counters
-	}
-	parentSym, ok := symbolByName(lang, "as_pattern_target")
-	if !ok {
-		return counters
-	}
-	identifierSym, ok := symbolByName(lang, "identifier")
-	if !ok {
-		return counters
-	}
-	tupleSym, hasTuple := symbolByName(lang, "tuple")
-	tupleNamed := hasTuple && symbolIsNamed(lang, tupleSym)
-	identifierNamed := false
-	if int(identifierSym) < len(lang.SymbolMetadata) {
-		identifierNamed = lang.SymbolMetadata[identifierSym].Named
-	}
-	var walk func(*Node)
-	walk = func(n *Node) {
-		if n == nil {
-			return
-		}
-		counters.nodesVisited++
-		childCount := resultChildCount(n)
-		if n.symbol == parentSym {
-			switch {
-			case childCount == 0 && pythonSourceRangeIsIdentifier(source, n.startByte, n.endByte):
-				child := newLeafNodeInArena(n.ownerArena, identifierSym, identifierNamed, n.startByte, n.endByte, n.startPoint, n.endPoint)
-				n.children = cloneNodeSliceInArena(n.ownerArena, []*Node{child})
-				counters.nodesRewritten++
-				childCount = 1
-			case hasTuple && pythonAsPatternTargetLooksLikeTuple(n, lang, childCount):
-				children := resultChildSliceForMutation(n)
-				tupleChildren := cloneNodeSliceInArena(n.ownerArena, children)
-				tuple := newParentNodeInArena(n.ownerArena, tupleSym, tupleNamed, tupleChildren, nil, 0)
-				tuple.startByte = children[0].startByte
-				tuple.endByte = children[len(children)-1].endByte
-				tuple.startPoint = children[0].startPoint
-				tuple.endPoint = children[len(children)-1].endPoint
-				tuple.parent = n
-				tuple.childIndex = 0
-				n.children = cloneNodeSliceInArena(n.ownerArena, []*Node{tuple})
-				counters.nodesRewritten++
-				childCount = 1
-			}
-		}
-		for i := 0; i < childCount; i++ {
-			walk(resultChildAt(n, i))
-		}
-	}
-	walk(root)
-	return counters
-}
-
-// normalizePythonPatternTargetIdentifiers handles both as_pattern_target and
-// case_pattern collapsed leaves in a single tree walk. For as_pattern_target
-// nodes with 0 children, adds an identifier child. For case_pattern nodes with
-// 0 children and wildcard `_` source text, adds an anonymous `_` child to
-// match C tree-sitter's structure.
-func normalizePythonPatternTargetIdentifiers(root *Node, source []byte, lang *Language) normalizationPassCounters {
-	var counters normalizationPassCounters
-	if root == nil || lang == nil || len(source) == 0 {
-		return counters
-	}
-
-	// Resolve as_pattern_target symbols (same as normalizePythonAsPatternTargetIdentifiers).
-	parentSym, hasParent := symbolByName(lang, "as_pattern_target")
-	identifierSym, hasIdentifier := symbolByName(lang, "identifier")
-	tupleSym, hasTuple := symbolByName(lang, "tuple")
-	tupleNamed := hasTuple && symbolIsNamed(lang, tupleSym)
-	identifierNamed := false
-	if hasIdentifier && int(identifierSym) < len(lang.SymbolMetadata) {
-		identifierNamed = lang.SymbolMetadata[identifierSym].Named
-	}
-
-	// Resolve case_pattern symbols.
-	casePatternSym, hasCasePattern := symbolByName(lang, "case_pattern")
-	// The wildcard `_` in `case _:` uses the anonymous `_` symbol in C
-	// tree-sitter, not `identifier`. SymbolByName("_") always returns
-	// Symbol(0) as a wildcard special case, so we must scan SymbolNames
-	// directly to find the actual anonymous `_` token.
-	var underscoreSym Symbol
-	underscoreFound := false
-	if hasCasePattern {
-		for i, name := range lang.SymbolNames {
-			if name == "_" && i < len(lang.SymbolMetadata) && !lang.SymbolMetadata[i].Named {
-				underscoreSym = Symbol(i)
-				underscoreFound = true
-				break
-			}
-		}
-	}
-
-	if !hasParent && !hasCasePattern {
-		return counters
-	}
-
-	var walk func(*Node)
-	walk = func(n *Node) {
-		if n == nil {
-			return
-		}
-		counters.nodesVisited++
-		childCount := resultChildCount(n)
-
-		// Handle as_pattern_target (same logic as normalizePythonAsPatternTargetIdentifiers).
-		if hasParent && hasIdentifier && n.symbol == parentSym {
-			switch {
-			case childCount == 0 && pythonSourceRangeIsIdentifier(source, n.startByte, n.endByte):
-				child := newLeafNodeInArena(n.ownerArena, identifierSym, identifierNamed, n.startByte, n.endByte, n.startPoint, n.endPoint)
-				n.children = cloneNodeSliceInArena(n.ownerArena, []*Node{child})
-				counters.nodesRewritten++
-				childCount = 1
-			case hasTuple && pythonAsPatternTargetLooksLikeTuple(n, lang, childCount):
-				children := resultChildSliceForMutation(n)
-				tupleChildren := cloneNodeSliceInArena(n.ownerArena, children)
-				tuple := newParentNodeInArena(n.ownerArena, tupleSym, tupleNamed, tupleChildren, nil, 0)
-				tuple.startByte = children[0].startByte
-				tuple.endByte = children[len(children)-1].endByte
-				tuple.startPoint = children[0].startPoint
-				tuple.endPoint = children[len(children)-1].endPoint
-				tuple.parent = n
-				tuple.childIndex = 0
-				n.children = cloneNodeSliceInArena(n.ownerArena, []*Node{tuple})
-				counters.nodesRewritten++
-				childCount = 1
-			}
-		}
-
-		// Handle case_pattern wildcard `_`.
-		if hasCasePattern && underscoreFound && n.symbol == casePatternSym && childCount == 0 {
-			if n.endByte > n.startByte && int(n.endByte) <= len(source) && bytes.Equal(source[n.startByte:n.endByte], []byte("_")) {
-				child := newLeafNodeInArena(n.ownerArena, underscoreSym, false, n.startByte, n.endByte, n.startPoint, n.endPoint)
-				n.children = cloneNodeSliceInArena(n.ownerArena, []*Node{child})
-				counters.nodesRewritten++
-				childCount = 1
-			}
-		}
-
-		for i := 0; i < childCount; i++ {
-			walk(resultChildAt(n, i))
-		}
-	}
-	walk(root)
 	return counters
 }
 
@@ -2348,53 +2144,6 @@ func pythonBlockStartAnchor(children []*Node, lang *Language) *Node {
 	return nil
 }
 
-// normalizePythonBlockStartBytes walks all nodes and adjusts their block
-// children's startByte to match C tree-sitter behavior: the block should
-// start at the preceding ":"'s endByte (including newline + indentation),
-// not at the first statement.  This must NOT access node.parent — parent
-// links are not yet wired when this pass runs.
-func normalizePythonBlockStartBytes(root *Node, lang *Language) normalizationPassCounters {
-	var counters normalizationPassCounters
-	blockSym, ok := symbolByName(lang, "block")
-	if !ok {
-		return counters
-	}
-	colonSym, hasColon := symbolByName(lang, ":")
-	if !hasColon {
-		return counters
-	}
-	walkResultTreeDenseFirst(root, func(n *Node) {
-		// Look for nodes that have a ":" child followed by a "block" child.
-		cc := resultChildCount(n)
-		if cc < 2 {
-			return
-		}
-		var lastColonEndByte uint32
-		var lastColonEndPoint Point
-		for i := 0; i < cc; i++ {
-			child := resultChildAt(n, i)
-			if child == nil {
-				continue
-			}
-			if child.symbol == colonSym {
-				lastColonEndByte = child.endByte
-				lastColonEndPoint = child.endPoint
-			} else if child.symbol == blockSym && lastColonEndByte > 0 {
-				counters.nodesVisited++
-				if lastColonEndByte < child.startByte {
-					child.startByte = lastColonEndByte
-					child.startPoint = lastColonEndPoint
-					counters.nodesRewritten++
-				}
-				lastColonEndByte = 0 // reset after use
-			} else {
-				lastColonEndByte = 0 // reset on non-colon, non-block
-			}
-		}
-	})
-	return counters
-}
-
 func pythonBlockStartAnchorNode(node *Node, lang *Language) *Node {
 	childCount := resultChildCount(node)
 	for i := 0; i < childCount; i++ {
@@ -2655,11 +2404,11 @@ func normalizePythonStringContinuationEscapes(root *Node, source []byte, lang *L
 	if len(continuationOffsets) == 0 {
 		return counters
 	}
-	normalizePythonStringContinuationEscapesWalk(root, source, stringContentSym, escapeSym, continuationOffsets, &counters)
+	normalizePythonStringContinuationEscapesWalk(root, source, lang, stringContentSym, escapeSym, continuationOffsets, false, &counters)
 	return counters
 }
 
-func normalizePythonStringContinuationEscapesWalk(n *Node, source []byte, stringContentSym, escapeSym Symbol, continuationOffsets []uint32, counters *normalizationPassCounters) {
+func normalizePythonStringContinuationEscapesWalk(n *Node, source []byte, lang *Language, stringContentSym, escapeSym Symbol, continuationOffsets []uint32, rawString bool, counters *normalizationPassCounters) {
 	if n == nil {
 		return
 	}
@@ -2667,17 +2416,56 @@ func normalizePythonStringContinuationEscapesWalk(n *Node, source []byte, string
 		return
 	}
 	counters.nodesVisited++
-	if n.symbol == stringContentSym && n.startByte < n.endByte && int(n.endByte) <= len(source) {
-		children, changed := addPythonContinuationEscapes(n, source, escapeSym)
-		if changed {
-			n.children = children
-			counters.nodesRewritten++
+	if n.Type(lang) == "string" {
+		// Raw strings (r"...", rb"...", R"...", etc.) do not treat
+		// backslashes as escapes — including backslash-newline line
+		// continuations. C tree-sitter leaves their string_content as a
+		// plain leaf, so skip escape insertion for the descendants.
+		rawString = pythonStringIsRaw(n, source, lang)
+	}
+	if n.symbol == stringContentSym {
+		if !rawString && n.startByte < n.endByte && int(n.endByte) <= len(source) {
+			children, changed := addPythonContinuationEscapes(n, source, escapeSym)
+			if changed {
+				n.children = children
+				counters.nodesRewritten++
+			}
 		}
 		return
 	}
 	for i := 0; i < resultChildCount(n); i++ {
-		normalizePythonStringContinuationEscapesWalk(resultChildAt(n, i), source, stringContentSym, escapeSym, continuationOffsets, counters)
+		normalizePythonStringContinuationEscapesWalk(resultChildAt(n, i), source, lang, stringContentSym, escapeSym, continuationOffsets, rawString, counters)
 	}
+}
+
+// pythonStringIsRaw reports whether a Python string node is a raw string by
+// inspecting the prefix in its string_start child (e.g. r"...", rb"...",
+// R"...", br"..."). A raw prefix contains an 'r' or 'R'.
+func pythonStringIsRaw(stringNode *Node, source []byte, lang *Language) bool {
+	if stringNode == nil {
+		return false
+	}
+	childCount := resultChildCount(stringNode)
+	for i := 0; i < childCount; i++ {
+		child := resultChildAt(stringNode, i)
+		if child == nil || child.Type(lang) != "string_start" {
+			continue
+		}
+		if int(child.startByte) >= int(child.endByte) || int(child.endByte) > len(source) {
+			return false
+		}
+		prefix := source[child.startByte:child.endByte]
+		for _, b := range prefix {
+			if b == '"' || b == '\'' {
+				break
+			}
+			if b == 'r' || b == 'R' {
+				return true
+			}
+		}
+		return false
+	}
+	return false
 }
 
 func addPythonContinuationEscapes(node *Node, source []byte, escapeSym Symbol) ([]*Node, bool) {

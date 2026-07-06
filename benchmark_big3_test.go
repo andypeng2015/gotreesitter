@@ -110,6 +110,7 @@ func benchmarkParseFullDFA(b *testing.B, spec dfaBenchmarkSpec) {
 			"STATS_PERF merge_calls=%d merge_dead_pruned=%d merge_perkey_overflow=%d merge_replacements=%d stackeq_calls=%d stackeq_true=%d stackeq_hash_miss_skips=%d stackcmp_calls=%d forks=%d first_conflict_token=%d max_stacks=%d lex_bytes=%d lex_tokens=%d\n",
 			p.MergeCalls, p.MergeDeadPruned, p.MergePerKeyOverflow, p.MergeReplacements, p.StackEquivalentCalls, p.StackEquivalentTrue, p.StackEqHashMissSkips, p.StackCompareCalls, p.ForkCount, p.FirstConflictToken, p.MaxConcurrentStacks, p.LexBytes, p.LexTokens,
 		)
+		reportReduceForkPerfCounters(p)
 		fmt.Printf(
 			"STATS_PARSE nodes_new=%d children_ptrs=%d extras=%d errors=%d reuse_bytes=%d max_stacks=%d\n",
 			lastRuntime.NodesAllocated, p.ParentChildPointers, p.ExtraNodes, p.ErrorNodes, p.ReuseNonLeafBytes, lastRuntime.MaxStacksSeen,
@@ -259,28 +260,16 @@ func benchmarkParseIncrementalSingleByteEditDFA(b *testing.B, spec dfaBenchmarkS
 			"STATS_PERF merge_calls=%d merge_dead_pruned=%d merge_perkey_overflow=%d merge_replacements=%d stackeq_calls=%d stackeq_true=%d stackeq_hash_miss_skips=%d stackcmp_calls=%d forks=%d first_conflict_token=%d max_stacks=%d lex_bytes=%d lex_tokens=%d reuse_nodes_visited=%d reuse_nodes_pushed=%d reuse_nodes_popped=%d reuse_candidates=%d reuse_successes=%d reuse_leaf_successes=%d reuse_nonleaf_checks=%d reuse_nonleaf_successes=%d reuse_nonleaf_bytes=%d reuse_nonleaf_nogoto=%d reuse_nonleaf_nogoto_term=%d reuse_nonleaf_nogoto_nonterm=%d reuse_nonleaf_statemiss=%d reuse_nonleaf_statezero=%d\n",
 			p.MergeCalls, p.MergeDeadPruned, p.MergePerKeyOverflow, p.MergeReplacements, p.StackEquivalentCalls, p.StackEquivalentTrue, p.StackEqHashMissSkips, p.StackCompareCalls, p.ForkCount, p.FirstConflictToken, p.MaxConcurrentStacks, p.LexBytes, p.LexTokens, p.ReuseNodesVisited, p.ReuseNodesPushed, p.ReuseNodesPopped, p.ReuseCandidatesChecked, p.ReuseSuccesses, p.ReuseLeafSuccesses, p.ReuseNonLeafChecks, p.ReuseNonLeafSuccesses, p.ReuseNonLeafBytes, p.ReuseNonLeafNoGoto, p.ReuseNonLeafNoGotoTerm, p.ReuseNonLeafNoGotoNt, p.ReuseNonLeafStateMiss, p.ReuseNonLeafStateZero,
 		)
-	}
-	if statsEnabled {
-		a := gotreesitter.ArenaProfileSnapshot()
-		p := gotreesitter.PerfCountersSnapshot()
-		fmt.Printf(
-			"STATS_LANG name=%s glr_max_stacks=%d reuse_unsupported=%t reuse_reason=%q\n",
-			spec.name, effectiveGLRMaxStacksForStats(), reuseUnsupported, reuseUnsupportedReason,
-		)
-		fmt.Printf(
-			"STATS edits=%d edit_ns=%d reuse_ns=%d parse_ns=%d reused_subtrees=%d reused_bytes=%d new_nodes=%d recover_searches=%d recover_state_checks=%d recover_state_skips=%d recover_symbol_skips=%d recover_lookups=%d recover_hits=%d max_stacks=%d scratch_peak_entries=%d\n",
-			b.N, editTotalNS, reuseTotalNS, parseTotalNS, reusedSubtrees, reusedBytes, newNodesAllocated, recoverSearches, recoverStateChecks, recoverStateSkips, recoverSymbolSkips, recoverLookups, recoverHits, maxStacksSeen, entryScratchPeak,
-		)
-		fmt.Printf(
-			"STATS arena_full_acquire=%d arena_full_new=%d arena_inc_acquire=%d arena_inc_new=%d\n",
-			a.FullAcquire, a.FullNew, a.IncrementalAcquire, a.IncrementalNew,
-		)
-		fmt.Printf(
-			"STATS_PERF merge_calls=%d merge_dead_pruned=%d merge_perkey_overflow=%d merge_replacements=%d stackeq_calls=%d stackeq_true=%d stackeq_hash_miss_skips=%d stackcmp_calls=%d forks=%d first_conflict_token=%d max_stacks=%d lex_bytes=%d lex_tokens=%d reuse_nodes_visited=%d reuse_nodes_pushed=%d reuse_nodes_popped=%d reuse_candidates=%d reuse_successes=%d reuse_leaf_successes=%d reuse_nonleaf_checks=%d reuse_nonleaf_successes=%d reuse_nonleaf_bytes=%d reuse_nonleaf_nogoto=%d reuse_nonleaf_nogoto_term=%d reuse_nonleaf_nogoto_nonterm=%d reuse_nonleaf_statemiss=%d reuse_nonleaf_statezero=%d\n",
-			p.MergeCalls, p.MergeDeadPruned, p.MergePerKeyOverflow, p.MergeReplacements, p.StackEquivalentCalls, p.StackEquivalentTrue, p.StackEqHashMissSkips, p.StackCompareCalls, p.ForkCount, p.FirstConflictToken, p.MaxConcurrentStacks, p.LexBytes, p.LexTokens, p.ReuseNodesVisited, p.ReuseNodesPushed, p.ReuseNodesPopped, p.ReuseCandidatesChecked, p.ReuseSuccesses, p.ReuseLeafSuccesses, p.ReuseNonLeafChecks, p.ReuseNonLeafSuccesses, p.ReuseNonLeafBytes, p.ReuseNonLeafNoGoto, p.ReuseNonLeafNoGotoTerm, p.ReuseNonLeafNoGotoNt, p.ReuseNonLeafStateMiss, p.ReuseNonLeafStateZero,
-		)
+		reportReduceForkPerfCounters(p)
 	}
 	tree.Release()
+}
+
+func reportReduceForkPerfCounters(p gotreesitter.PerfCounters) {
+	fmt.Printf(
+		"STATS_PERF reduce_fork_calls=%d reduce_fork_windows=%d reduce_fork_max_windows=%d post_reduce_merge_attempts=%d post_reduce_merge_primary_successes=%d post_reduce_merge_pending_successes=%d post_reduce_merge_disabled_skips=%d post_reduce_merge_finalization_risk_skips=%d pending_fork_stack_appends=%d pending_fork_stacks_max_len=%d\n",
+		p.ReduceForkCalls, p.ReduceForkWindows, p.ReduceForkMaxWindows, p.PostReduceMergeAttempts, p.PostReduceMergePrimarySuccesses, p.PostReduceMergePendingSuccesses, p.PostReduceMergeDisabledSkips, p.PostReduceMergeFinalizationRiskSkips, p.PendingForkStackAppends, p.PendingForkStacksMaxLen,
+	)
 }
 
 func benchmarkParseIncrementalNoEditDFA(b *testing.B, spec dfaBenchmarkSpec) {
@@ -294,6 +283,11 @@ func benchmarkParseIncrementalNoEditDFA(b *testing.B, spec dfaBenchmarkSpec) {
 	}
 	if tree.RootNode() == nil {
 		b.Fatal("initial parse returned nil root")
+	}
+
+	statsEnabled := strings.TrimSpace(os.Getenv("GOT_STATS")) != ""
+	if statsEnabled {
+		gotreesitter.ResetPerfCounters()
 	}
 
 	b.ReportAllocs()
@@ -312,6 +306,9 @@ func benchmarkParseIncrementalNoEditDFA(b *testing.B, spec dfaBenchmarkSpec) {
 		if old != tree {
 			old.Release()
 		}
+	}
+	if statsEnabled {
+		reportReduceForkPerfCounters(gotreesitter.PerfCountersSnapshot())
 	}
 	tree.Release()
 }

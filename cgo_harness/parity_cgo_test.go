@@ -39,7 +39,6 @@ var paritySkips = map[string]parityMeta{
 var knownDegradedStructural = map[string]string{
 	"agda": "named wrapper/runtime alias shape still diverges from C reference",
 	"apex": "named wrapper/runtime alias shape still diverges from C reference",
-	"cue":  "named wrapper/runtime alias shape still diverges from C reference",
 	"hare": "fresh parse structural parity still diverges from C reference",
 	"rst":  "fresh parse structural parity still diverges from C reference",
 }
@@ -299,7 +298,7 @@ type nodeSnapshot struct {
 
 func snapshotGo(n *gotreesitter.Node, lang *gotreesitter.Language) nodeSnapshot {
 	return nodeSnapshot{
-		Type:       n.Type(lang),
+		Type:       dumpV1GoType(n, lang),
 		StartByte:  n.StartByte(),
 		EndByte:    n.EndByte(),
 		IsNamed:    n.IsNamed(),

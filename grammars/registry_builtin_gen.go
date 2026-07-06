@@ -574,7 +574,7 @@ func registerBuiltinLanguages() {
 		Name:           "go",
 		Extensions:     []string{".go"},
 		Language:       GoLanguage,
-		GrammarSource:  GrammarSourceTS2GoBlob,
+		GrammarSource:  GrammarSourceGrammargenBlob,
 		HighlightQuery: "; Function calls\n\n(call_expression\n  function: (identifier) @function)\n\n(call_expression\n  function: (identifier) @function.builtin\n  (#match? @function.builtin \"^(append|cap|close|complex|copy|delete|imag|len|make|new|panic|print|println|real|recover)$\"))\n\n(call_expression\n  function: (selector_expression\n    field: (field_identifier) @function.method))\n\n; Function definitions\n\n(function_declaration\n  name: (identifier) @function)\n\n(method_declaration\n  name: (field_identifier) @function.method)\n\n; Identifiers\n\n(type_identifier) @type\n(field_identifier) @property\n(identifier) @variable\n\n; Operators\n\n[\n  \"--\"\n  \"-\"\n  \"-=\"\n  \":=\"\n  \"!\"\n  \"!=\"\n  \"...\"\n  \"*\"\n  \"*\"\n  \"*=\"\n  \"/\"\n  \"/=\"\n  \"&\"\n  \"&&\"\n  \"&=\"\n  \"%\"\n  \"%=\"\n  \"^\"\n  \"^=\"\n  \"+\"\n  \"++\"\n  \"+=\"\n  \"<-\"\n  \"<\"\n  \"<<\"\n  \"<<=\"\n  \"<=\"\n  \"=\"\n  \"==\"\n  \">\"\n  \">=\"\n  \">>\"\n  \">>=\"\n  \"|\"\n  \"|=\"\n  \"||\"\n  \"~\"\n] @operator\n\n; Keywords\n\n[\n  \"break\"\n  \"case\"\n  \"chan\"\n  \"const\"\n  \"continue\"\n  \"default\"\n  \"defer\"\n  \"else\"\n  \"fallthrough\"\n  \"for\"\n  \"func\"\n  \"go\"\n  \"goto\"\n  \"if\"\n  \"import\"\n  \"interface\"\n  \"map\"\n  \"package\"\n  \"range\"\n  \"return\"\n  \"select\"\n  \"struct\"\n  \"switch\"\n  \"type\"\n  \"var\"\n] @keyword\n\n; Literals\n\n[\n  (interpreted_string_literal)\n  (raw_string_literal)\n  (rune_literal)\n] @string\n\n(escape_sequence) @escape\n\n[\n  (int_literal)\n  (float_literal)\n  (imaginary_literal)\n] @number\n\n[\n  (true)\n  (false)\n  (nil)\n  (iota)\n] @constant.builtin\n\n(comment) @comment\n",
 	})
 	Register(LangEntry{
@@ -885,7 +885,7 @@ func registerBuiltinLanguages() {
 		Extensions:     []string{".move"},
 		Language:       MoveLanguage,
 		GrammarSource:  GrammarSourceTS2GoBlob,
-		HighlightQuery: "\"module\" @keyword\n(hex_address) @number\n(identifier) @type\n",
+		HighlightQuery: "\"module\" @keyword\n(num_literal) @number\n(address_literal) @number\n(line_comment) @comment\n(block_comment) @comment\n(identifier) @type\n",
 	})
 	Register(LangEntry{
 		Name:           "nginx",
@@ -1093,7 +1093,7 @@ func registerBuiltinLanguages() {
 		Name:           "regex",
 		Extensions:     []string{".regex"},
 		Language:       RegexLanguage,
-		GrammarSource:  GrammarSourceTS2GoBlob,
+		GrammarSource:  GrammarSourceGrammargenBlob,
 		HighlightQuery: "[\n  \"(\"\n  \")\"\n  \"(?\"\n  \"(?:\"\n  \"(?<\"\n  \"(?P<\"\n  \"(?P=\"\n  \">\"\n  \"[\"\n  \"]\"\n  \"{\"\n  \"}\"\n  \"[:\"\n  \":]\"\n] @punctuation.bracket\n\n(group_name) @property\n\n[\n  (identity_escape)\n  (control_letter_escape)\n  (character_class_escape)\n  (control_escape)\n  (start_assertion)\n  (end_assertion)\n  (boundary_assertion)\n  (non_boundary_assertion)\n] @escape\n\n[\n  \"*\"\n  \"+\"\n  \"?\"\n  \"|\"\n  \"=\"\n  \"!\"\n] @operator\n\n(count_quantifier\n  [\n    (decimal_digits) @number\n    \",\" @punctuation.delimiter\n  ])\n\n(inline_flags_group\n  \"-\"? @operator\n  \":\"? @punctuation.delimiter)\n\n(flags) @character.special\n\n(character_class\n  [\n    \"^\" @operator\n    (class_range \"-\" @operator)\n  ])\n\n[\n  (class_character)\n  (posix_class_name)\n] @constant.character\n\n(pattern_character) @string\n",
 	})
 	Register(LangEntry{
@@ -1231,7 +1231,7 @@ func registerBuiltinLanguages() {
 		Name:          "swift",
 		Extensions:    []string{".swift"},
 		Language:      SwiftLanguage,
-		GrammarSource: GrammarSourceTS2GoBlob,
+		GrammarSource: GrammarSourceGrammargenBlob,
 		HighlightQuery: `
 ["." ";" ":" ","] @punctuation.delimiter
 ["(" ")" "[" "]" "{" "}"] @punctuation.bracket

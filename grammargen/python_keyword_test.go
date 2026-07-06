@@ -2,7 +2,11 @@ package grammargen
 
 import (
 	"os"
+	"strings"
 	"testing"
+
+	"github.com/odvcencio/gotreesitter"
+	"github.com/odvcencio/gotreesitter/grammars"
 )
 
 func TestPythonKeywordIdentificationIncludesSoftKeywords(t *testing.T) {
@@ -30,6 +34,31 @@ func TestPythonKeywordIdentificationIncludesSoftKeywords(t *testing.T) {
 		if !found {
 			t.Fatalf("keyword %q missing from normalized keyword set", name)
 		}
+	}
+}
+
+func TestPythonGeneratedSoftKeywordCallParsesAsCall(t *testing.T) {
+	gram := loadPythonGrammarJSONForTest(t)
+	lang, err := GenerateLanguage(gram)
+	if err != nil {
+		t.Fatalf("GenerateLanguage failed: %v", err)
+	}
+	adaptExternalScanner(grammars.PythonLanguage(), lang)
+
+	source := []byte("match(r1, r2, r3)\n")
+	tree, err := gotreesitter.NewParser(lang).Parse(source)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	defer tree.Release()
+
+	root := tree.RootNode()
+	sexpr := root.SExpr(lang)
+	if root.HasError() {
+		t.Fatalf("parse has error: %s", sexpr)
+	}
+	if !strings.Contains(sexpr, "(call ") {
+		t.Fatalf("parse did not produce a call: %s", sexpr)
 	}
 }
 
@@ -120,6 +149,80 @@ func TestPythonGenerateLanguageEmitsReservedWords(t *testing.T) {
 	if nonZeroSetIDs == 0 {
 		t.Fatal("generated language has no lex modes with reserved word sets")
 	}
+}
+
+func TestPythonGeneratedLanguageEnablesCRecoveryCostCompetitionByDefault(t *testing.T) {
+	gram := loadPythonGrammarJSONForTest(t)
+	lang, err := GenerateLanguage(gram)
+	if err != nil {
+		t.Fatalf("GenerateLanguage failed: %v", err)
+	}
+	if !lang.CRecoveryCostCompetitionCapable {
+		t.Fatal("generated Python language did not mark C recovery capability")
+	}
+	if lang.CRecoveryCostCompetitionEnabledByDefault {
+		t.Fatal("generated Python language default-certified before scanner lex-state attachment")
+	}
+	adaptExternalScanner(grammars.PythonLanguage(), lang)
+	if !lang.CRecoveryCostCompetitionEnabledByDefault {
+		t.Fatal("generated Python language was not default-certified after scanner lex-state attachment")
+	}
+	if !parserCRecoveryEnabledForTest(gotreesitter.NewParser(lang)) {
+		t.Fatal("generated Python language did not enable C recovery in parser")
+	}
+}
+
+func TestPythonGeneratedLanguageMarksImportedRepeatAux(t *testing.T) {
+	gram := loadPythonGrammarJSONForTest(t)
+
+	lang, err := GenerateLanguage(gram)
+	if err != nil {
+		t.Fatalf("GenerateLanguage failed: %v", err)
+	}
+	sym, ok := lang.SymbolByName("module_repeat1")
+	if !ok {
+		t.Fatal("generated Python language missing module_repeat1")
+	}
+	if int(sym) >= len(lang.SymbolMetadata) {
+		t.Fatalf("module_repeat1 symbol %d outside metadata len %d", sym, len(lang.SymbolMetadata))
+	}
+	if !lang.SymbolMetadata[sym].GeneratedRepeatAux {
+		t.Fatal("module_repeat1 GeneratedRepeatAux = false, want true")
+	}
+	if !hasGeneratedRepeatBoundaryConflictForTest(lang) {
+		t.Fatal("generated Python language has no generated repeat boundary conflict")
+	}
+}
+
+func hasGeneratedRepeatBoundaryConflictForTest(lang *gotreesitter.Language) bool {
+	if lang == nil {
+		return false
+	}
+	for _, entry := range lang.ParseActions {
+		shiftFound := false
+		reduceFound := false
+		ok := len(entry.Actions) >= 2
+		for _, act := range entry.Actions {
+			switch act.Type {
+			case gotreesitter.ParseActionShift:
+				if !act.Repetition || act.Extra || shiftFound {
+					ok = false
+				}
+				shiftFound = true
+			case gotreesitter.ParseActionReduce:
+				if int(act.Symbol) >= len(lang.SymbolMetadata) || !lang.SymbolMetadata[act.Symbol].GeneratedRepeatAux {
+					ok = false
+				}
+				reduceFound = true
+			default:
+				ok = false
+			}
+		}
+		if ok && shiftFound && reduceFound {
+			return true
+		}
+	}
+	return false
 }
 
 func loadPythonGrammarJSONForTest(t *testing.T) *Grammar {

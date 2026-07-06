@@ -23,14 +23,13 @@ func normalizeTypeScriptTreeCompatibility(root *Node, source []byte, lang *Langu
 func normalizeTypeScriptTreeCompatibilityWithParser(root *Node, source []byte, parser *Parser, lang *Language) {
 	recordPasses := parser != nil && parser.currentMaterializationTiming() != nil
 	if !recordPasses {
-		// OptionalChainLeaves was fused into the statement-keyword walk; one less
-		// tree traversal per file containing "?." (most modern JS/TS).
+		// Statement keyword and precedence normalizers share one indexed walk.
 		syntaxStats := normalizeJavaScriptTypeScriptStatementKeywordsAndPrecedenceWithDetailedStats(root, source, lang)
 		normalizeTypeScriptRecoveredTernaryGenericCallRoot(root, source, lang)
 		normalizeTypeScriptRecoveredNamespaceRoot(root, source, lang)
 		normalizeJavaScriptTopLevelDeclarationBounds(root, lang)
 		if syntaxStats.typeScriptCompatibility.built {
-			normalizeTypeScriptCompatibilityCandidates(syntaxStats.typeScriptCompatibility, source, lang)
+			normalizeTypeScriptCompatibilityCandidates(syntaxStats.typeScriptCompatibility, root, source, lang)
 		} else {
 			normalizeTypeScriptCompatibility(root, source, lang)
 		}
@@ -102,7 +101,7 @@ func normalizeTypeScriptTreeCompatibilityWithParser(root *Node, source []byte, p
 	run("ts_type_compatibility", func() normalizationPassCounters {
 		var stats typeScriptCompatibilityStats
 		if haveSyntaxStats && syntaxStats.typeScriptCompatibility.built {
-			stats = normalizeTypeScriptCompatibilityCandidatesWithStats(syntaxStats.typeScriptCompatibility, source, lang)
+			stats = normalizeTypeScriptCompatibilityCandidatesWithStats(syntaxStats.typeScriptCompatibility, root, source, lang)
 		} else {
 			stats = normalizeTypeScriptCompatibilityWithStats(root, source, lang)
 		}
@@ -120,6 +119,7 @@ func normalizeTypeScriptTreeCompatibilityWithParser(root *Node, source []byte, p
 		parser.recordNormalizationMetric("ts_type_as_child_candidates", 1, 1, stats.asChildren.nodesVisited, stats.asChildren.nodesRewritten)
 		parser.recordNormalizationMetric("ts_type_assertion_child_candidates", 1, 1, stats.typeAssertionChildren.nodesVisited, stats.typeAssertionChildren.nodesRewritten)
 		parser.recordNormalizationMetric("ts_type_expression_statement_child_candidates", 1, 1, stats.expressionStatementChildren.nodesVisited, stats.expressionStatementChildren.nodesRewritten)
+		parser.recordNormalizationMetric("ts_type_destructuring_pattern_candidates", 1, 1, stats.destructuringPatterns.nodesVisited, stats.destructuringPatterns.nodesRewritten)
 		return stats.total
 	})
 	runVoid("ts_top_level_expression_bounds", func() {
@@ -829,43 +829,6 @@ func insertJavaScriptStatementBlockComment(parent *Node, childIdx int, comment *
 	populateParentNode(parent, parent.children)
 }
 
-func normalizeJavaScriptTypeScriptOptionalChainLeaves(root *Node, source []byte, lang *Language) {
-	if root == nil || lang == nil || !bytes.Contains(source, []byte("?.")) {
-		return
-	}
-	switch lang.Name {
-	case "javascript", "typescript", "tsx":
-	default:
-		return
-	}
-	optionalChainSym, ok := symbolByName(lang, "optional_chain")
-	if !ok {
-		return
-	}
-
-	walkResultTreeDenseFirst(root, func(n *Node) {
-		if n.symbol != optionalChainSym || len(n.children) != 1 {
-			return
-		}
-		// The C reference parser emits optional_chain as a 0-child leaf.
-		// The Go parser sometimes materializes a "?." anonymous token as
-		// a child. Strip it to match C's structure.
-		child := n.children[0]
-		if child == nil {
-			return
-		}
-		if child.endByte <= child.startByte || int(child.endByte) > len(source) || !bytes.Equal(source[child.startByte:child.endByte], []byte("?.")) {
-			return
-		}
-		n.children = nil
-		n.fieldIDs = nil
-		n.fieldSources = nil
-		if n.ownerArena != nil {
-			n.ownerArena.clearFinalChildRefs(n)
-		}
-	})
-}
-
 func normalizeJavaScriptTypeScriptCallPrecedenceWithStats(root *Node, lang *Language) normalizationPassCounters {
 	return normalizeJavaScriptTypeScriptCallPrecedenceWithDetailedStats(root, lang).normalizationPassCounters
 }
@@ -1127,7 +1090,7 @@ func rewriteJavaScriptTypeScriptStatementKeywordsCallPrecedenceAndBuildUnaryBina
 	// other compat passes.
 	if !hasCallSym && !hasUnarySym && !hasBinarySym &&
 		!hasEmptyStatement && !hasExistentialType &&
-		!hasIfStmt && !hasWhileStmt && !enableOptionalChain && !enableDynamicImport &&
+		!hasIfStmt && !hasWhileStmt && !enableDynamicImport &&
 		typeScriptCtx == nil {
 		return index
 	}
@@ -1135,12 +1098,20 @@ func rewriteJavaScriptTypeScriptStatementKeywordsCallPrecedenceAndBuildUnaryBina
 	if typeScriptCtx != nil {
 		index.typeScriptCompatibility.built = true
 	}
+	// optional_chain intentionally retains its visible "?." anonymous-token
+	// child: C tree-sitter emits (optional_chain (?.)) with childCount==1.
+	// The parser already builds that child; no normalization is applied here.
+	_ = enableOptionalChain
+	_ = optionalChainSym
+	_ = optionalChainTokenSym
+	_ = optionalChainTokenNamed
 	enableTypeScriptChildCompatibility := typeScriptCtx != nil &&
 		(typeScriptCtx.canRewriteGenericCalls ||
 			typeScriptCtx.canRewriteInstantiatedCalls ||
 			typeScriptCtx.canRewriteAsExpressions ||
 			typeScriptCtx.canRewriteGenericArrows ||
-			typeScriptCtx.canRewriteClassDeclarations)
+			typeScriptCtx.canRewriteClassDeclarations ||
+			typeScriptCtx.canRewriteDestructuring)
 	var walk func(*Node)
 	walk = func(n *Node) {
 		if n == nil {
@@ -1174,21 +1145,6 @@ func rewriteJavaScriptTypeScriptStatementKeywordsCallPrecedenceAndBuildUnaryBina
 				index.statementKeyword.nodesVisited++
 				if normalizeJavaScriptTypeScriptStatementKeywordLeafWithSymbolChanged(n, source, "while", whileSym, whileNamed, closeBraceSym, hasCloseBrace) {
 					index.statementKeyword.nodesRewritten++
-				}
-			}
-		case optionalChainSym:
-			if enableOptionalChain && len(n.children) == 1 {
-				// The C reference parser emits optional_chain as a 0-child leaf.
-				// Strip the materialized "?." child to match C.
-				child := n.children[0]
-				if child == nil || child.endByte <= child.startByte || int(child.endByte) > len(source) || !bytes.Equal(source[child.startByte:child.endByte], []byte("?.")) {
-					break
-				}
-				n.children = nil
-				n.fieldIDs = nil
-				n.fieldSources = nil
-				if n.ownerArena != nil {
-					n.ownerArena.clearFinalChildRefs(n)
 				}
 			}
 		case dynamicImportSym:
@@ -1294,6 +1250,16 @@ func rewriteJavaScriptTypeScriptStatementKeywordsCallPrecedenceAndBuildUnaryBina
 					}
 				case typeScriptCtx.expressionStatementSym:
 					if typeScriptCtx.canRewriteClassDeclarations && typeScriptClassExpressionStatementCandidate(child, typeScriptCtx) {
+						index.typeScriptCompatibility.append(typeScriptCompatibilityCandidate{
+							kind: typeScriptCompatibilityCandidateChild,
+							child: javaScriptTypeScriptPrecedenceCandidate{
+								parent:     n,
+								childIndex: i,
+							},
+						})
+					}
+				case typeScriptCtx.nonNullExpressionSym:
+					if typeScriptCtx.canRewriteDestructuring {
 						index.typeScriptCompatibility.append(typeScriptCompatibilityCandidate{
 							kind: typeScriptCompatibilityCandidateChild,
 							child: javaScriptTypeScriptPrecedenceCandidate{

@@ -304,6 +304,16 @@ type runtimeStats struct {
 	ReduceChildrenScratch                 uint64        `json:"reduce_children_scratch,omitempty"`
 	ReduceScratchNoAlias                  uint64        `json:"reduce_scratch_no_alias,omitempty"`
 	ReduceScratchGeneral                  uint64        `json:"reduce_scratch_general,omitempty"`
+	ReduceForkCalls                       uint64        `json:"reduce_fork_calls,omitempty"`
+	ReduceForkWindows                     uint64        `json:"reduce_fork_windows,omitempty"`
+	ReduceForkMaxWindows                  uint64        `json:"reduce_fork_max_windows,omitempty"`
+	PostReduceMergeAttempts               uint64        `json:"post_reduce_merge_attempts,omitempty"`
+	PostReduceMergePrimarySuccesses       uint64        `json:"post_reduce_merge_primary_successes,omitempty"`
+	PostReduceMergePendingSuccesses       uint64        `json:"post_reduce_merge_pending_successes,omitempty"`
+	PostReduceMergeDisabledSkips          uint64        `json:"post_reduce_merge_disabled_skips,omitempty"`
+	PostReduceMergeFinalizationRiskSkips  uint64        `json:"post_reduce_merge_finalization_risk_skips,omitempty"`
+	PendingForkStackAppends               uint64        `json:"pending_fork_stack_appends,omitempty"`
+	PendingForkStacksMaxLen               uint64        `json:"pending_fork_stacks_max_len,omitempty"`
 	ForestReduceCalls                     uint64        `json:"forest_reduce_calls,omitempty"`
 	ForestReduceZero                      uint64        `json:"forest_reduce_zero,omitempty"`
 	ForestReduceLinearNoExtras            uint64        `json:"forest_reduce_linear_no_extras,omitempty"`
@@ -1171,6 +1181,16 @@ func statsFromGoTree(r *runner, tree *gotreesitter.Tree, queryCaptures, cursorNo
 	stats.ReduceChildrenScratch = perf.ReduceChildrenScratch
 	stats.ReduceScratchNoAlias = perf.ReduceScratchNoAlias
 	stats.ReduceScratchGeneral = perf.ReduceScratchGeneral
+	stats.ReduceForkCalls = perf.ReduceForkCalls
+	stats.ReduceForkWindows = perf.ReduceForkWindows
+	stats.ReduceForkMaxWindows = perf.ReduceForkMaxWindows
+	stats.PostReduceMergeAttempts = perf.PostReduceMergeAttempts
+	stats.PostReduceMergePrimarySuccesses = perf.PostReduceMergePrimarySuccesses
+	stats.PostReduceMergePendingSuccesses = perf.PostReduceMergePendingSuccesses
+	stats.PostReduceMergeDisabledSkips = perf.PostReduceMergeDisabledSkips
+	stats.PostReduceMergeFinalizationRiskSkips = perf.PostReduceMergeFinalizationRiskSkips
+	stats.PendingForkStackAppends = perf.PendingForkStackAppends
+	stats.PendingForkStacksMaxLen = perf.PendingForkStacksMaxLen
 	stats.ForestReduceCalls = perf.ForestReduceCalls
 	stats.ForestReduceZero = perf.ForestReduceZero
 	stats.ForestReduceLinearNoExtras = perf.ForestReduceLinearNoExtras

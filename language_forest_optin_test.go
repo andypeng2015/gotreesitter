@@ -34,10 +34,19 @@ func TestParserWantsForestFieldDrivesDispatch(t *testing.T) {
 // TestBuiltinForestDefaultsCuratedSet is a regression test asserting the
 // curated built-in forest allowlist (migrated from the former
 // languageWantsForest name switch) still contains exactly the languages
-// validated by TestForestCorpusParity / TestForestVsCOracleParity, including
-// "go" (promoted 2026-06-03; see the builtinForestDefaults doc comment).
+// validated by TestForestCorpusParity / TestForestVsCOracleParity. "go" is
+// deliberately EXCLUDED (commit 6894fc9f): the forest path is correct on
+// curated Go corpora, but default dispatch would make Go's full-parse and
+// incremental hot paths pay raw-shape/forest/result selection cost the
+// ordinary path does not need; see the builtinForestDefaults doc comment.
 func TestBuiltinForestDefaultsCuratedSet(t *testing.T) {
-	want := []string{"bash", "erlang", "cmake", "css", "scss", "awk", "javascript", "c_sharp", "go"}
+	want := []string{
+		"bash", "erlang", "cmake", "css", "scss", "awk", "javascript", "c_sharp",
+		"gitignore", "nix", "squirrel", "prisma",
+		"agda", "org", "ledger", "yuck", "json5", "commonlisp", "vimdoc",
+		"bibtex", "faust", "arduino", "authzed", "make", "csv", "fish", "racket", "tlaplus", "beancount",
+		"gitattributes",
+	}
 	if len(builtinForestDefaults) != len(want) {
 		t.Fatalf("builtinForestDefaults has %d entries, want %d: %v", len(builtinForestDefaults), len(want), builtinForestDefaults)
 	}
@@ -47,8 +56,9 @@ func TestBuiltinForestDefaultsCuratedSet(t *testing.T) {
 		}
 	}
 	// A handful of explicitly-NOT-forest-amenable languages (see the doc
-	// comment) must stay out of the curated set.
-	notWanted := []string{"python", "rust", "dart", "ruby", "haskell", "php"}
+	// comment) must stay out of the curated set. "go" is intentionally held
+	// out of default dispatch (commit 6894fc9f) even though it is forest-clean.
+	notWanted := []string{"python", "rust", "dart", "ruby", "haskell", "php", "go"}
 	for _, name := range notWanted {
 		if builtinForestDefaults[name] {
 			t.Errorf("builtinForestDefaults unexpectedly contains %q", name)

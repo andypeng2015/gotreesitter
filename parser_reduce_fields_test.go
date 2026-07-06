@@ -430,7 +430,7 @@ func TestBuildReduceChildrenInheritedFieldYieldsToDirectTargetOnHiddenSpan(t *te
 	children := arena.allocNodeSlice(5)
 	fieldIDs := arena.allocFieldIDSlice(5)
 	fieldSources := make([]uint8, 5)
-	if got, want := appendFlattenedHiddenChildrenWithFields(children, fieldIDs, fieldSources, 0, hidden, lang.SymbolMetadata), 5; got != want {
+	if got, want := appendFlattenedHiddenChildrenWithFields(children, fieldIDs, fieldSources, 0, hidden, lang.SymbolMetadata, nil), 5; got != want {
 		t.Fatalf("appendFlattenedHiddenChildrenWithFields() = %d, want %d", got, want)
 	}
 	if got := fieldIDs[0]; got != 0 {
@@ -509,7 +509,7 @@ func TestAppendFlattenedHiddenChildrenRepeatedDirectFieldSkipsCommaSeparator(t *
 	children := arena.allocNodeSlice(3)
 	fieldIDs := arena.allocFieldIDSlice(3)
 	fieldSources := make([]uint8, 3)
-	if got, want := appendFlattenedHiddenChildrenWithFields(children, fieldIDs, fieldSources, 0, hidden, lang.SymbolMetadata), 3; got != want {
+	if got, want := appendFlattenedHiddenChildrenWithFields(children, fieldIDs, fieldSources, 0, hidden, lang.SymbolMetadata, nil), 3; got != want {
 		t.Fatalf("appendFlattenedHiddenChildrenWithFields() = %d, want %d", got, want)
 	}
 	if got, want := fieldIDs[0], FieldID(1); got != want {
@@ -1024,10 +1024,10 @@ func TestPendingNoFieldChildCountRejectsHiddenFields(t *testing.T) {
 	hidden := newParentNodeInArena(arena, 1, false, []*Node{child}, []FieldID{1}, 0)
 	entry := newStackEntryNode(0, hidden)
 
-	if _, _, _, ok := pendingNoFieldChildCount(entry, arena, true, lang.SymbolMetadata); ok {
+	if _, _, _, ok := pendingNoFieldChildCount(entry, arena, true, lang.SymbolMetadata, nil); ok {
 		t.Fatal("pendingNoFieldChildCount accepted hidden field-bearing child; want reject")
 	}
-	if count, _, _, ok := pendingNoFieldChildCount(entry, arena, false, lang.SymbolMetadata); !ok || count != 1 {
+	if count, _, _, ok := pendingNoFieldChildCount(entry, arena, false, lang.SymbolMetadata, nil); !ok || count != 1 {
 		t.Fatalf("hidden child under hidden parent count/ok = %d/%t, want 1/true", count, ok)
 	}
 }
@@ -1118,6 +1118,79 @@ func TestBuildResultFromGLRWithGSSOnlyStack(t *testing.T) {
 	}
 	if got := tree.RootNode().Text(tree.Source()); got != "1" {
 		t.Fatalf("root text = %q, want %q", got, "1")
+	}
+	tree.Release()
+}
+
+func TestBuildResultFromGLRExpandsPackedGSSAlternateForFinalChoice(t *testing.T) {
+	lang := &Language{
+		Name:        "packed-result",
+		SymbolNames: []string{"EOF", "root"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF"},
+			{Name: "root", Visible: true, Named: true},
+		},
+	}
+	parser := &Parser{language: lang, hasRootSymbol: true, rootSymbol: 1}
+	source := []byte("x")
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	inlineErr := newLeafNodeInArena(arena, errorSymbol, true, 0, 1, Point{}, Point{Column: 1})
+	good := newLeafNodeInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+
+	var scratch gssScratch
+	base := scratch.allocNode(stackEntry{state: 1}, nil, 1)
+	head := scratch.allocNode(newStackEntryNode(2, inlineErr), base, 2)
+	head.extraLinks = append(head.extraLinks, gssMainLink{
+		prev:  base,
+		entry: newStackEntryNode(2, good),
+	})
+	stack := glrStack{accepted: true, gss: gssStack{head: head}, byteOffset: 1}
+
+	tree := parser.buildResultFromGLR([]glrStack{stack}, source, arena, nil, nil, nil, nil, nil, false, nil)
+	if tree == nil || tree.RootNode() == nil {
+		t.Fatal("buildResultFromGLR returned nil tree/root")
+	}
+	if tree.RootNode() != good {
+		t.Fatalf("root = %p (%s), want packed alternate %p", tree.RootNode(), tree.RootNode().Type(lang), good)
+	}
+	tree.Release()
+}
+
+func TestBuildResultFromGLRExpandsNestedPackedGSSAlternate(t *testing.T) {
+	lang := &Language{
+		Name:        "packed-result",
+		SymbolNames: []string{"EOF", "root"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF"},
+			{Name: "root", Visible: true, Named: true},
+		},
+	}
+	parser := &Parser{language: lang, hasRootSymbol: true, rootSymbol: 1}
+	source := []byte("x")
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	inlineErr := newLeafNodeInArena(arena, errorSymbol, true, 0, 1, Point{}, Point{Column: 1})
+	good := newLeafNodeInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+
+	var scratch gssScratch
+	base := scratch.allocNode(stackEntry{state: 1}, nil, 1)
+	packedBelowHead := scratch.allocNode(newStackEntryNode(2, inlineErr), base, 2)
+	packedBelowHead.extraLinks = append(packedBelowHead.extraLinks, gssMainLink{
+		prev:  base,
+		entry: newStackEntryNode(2, good),
+	})
+	commonHead := scratch.allocNode(stackEntry{state: 3}, packedBelowHead, 3)
+	stack := glrStack{accepted: true, gss: gssStack{head: commonHead}, byteOffset: 1}
+
+	tree := parser.buildResultFromGLR([]glrStack{stack}, source, arena, nil, nil, nil, nil, nil, false, nil)
+	if tree == nil || tree.RootNode() == nil {
+		t.Fatal("buildResultFromGLR returned nil tree/root")
+	}
+	if tree.RootNode() != good {
+		t.Fatalf("root = %p (%s), want nested packed alternate %p", tree.RootNode(), tree.RootNode().Type(lang), good)
 	}
 	tree.Release()
 }
@@ -1392,6 +1465,62 @@ func TestBuildResultFromGLRScoreBeatsAliasTargetPreference(t *testing.T) {
 	}
 	if got, want := root.Child(0).Type(lang), "identifier"; got != want {
 		t.Fatalf("child type = %q, want %q", got, want)
+	}
+	tree.Release()
+}
+
+func TestBuildResultFromGLRDoesNotSpliceVisibleNamedPrefixWrapper(t *testing.T) {
+	lang := &Language{
+		SymbolCount: 6,
+		TokenCount:  1,
+		SymbolNames: []string{"EOF", "identifier", "selector", "operator", "semantic_group", "root"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF"},
+			{Name: "identifier", Visible: true, Named: true},
+			{Name: "selector", Visible: true, Named: true},
+			{Name: "operator", Visible: true, Named: false},
+			{Name: "semantic_group", Visible: true, Named: true},
+			{Name: "root", Visible: true, Named: true},
+		},
+	}
+	parser := NewParser(lang)
+	source := []byte("receiver.call")
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	groupID := newLeafNodeInArena(arena, 1, true, 0, 8, Point{}, Point{Column: 8})
+	groupQualifier := newLeafNodeInArena(arena, 2, true, 8, 10, Point{Column: 8}, Point{Column: 10})
+	groupOp := newLeafNodeInArena(arena, 3, false, 10, 11, Point{Column: 10}, Point{Column: 11})
+	groupArg := newLeafNodeInArena(arena, 1, true, 11, 13, Point{Column: 11}, Point{Column: 13})
+	group := newParentNodeInArena(arena, 4, true, []*Node{groupID, groupQualifier, groupOp, groupArg}, nil, 0)
+	groupRoot := newParentNodeInArena(arena, 5, true, []*Node{group}, nil, 0)
+
+	flatID := newLeafNodeInArena(arena, 1, true, 0, 8, Point{}, Point{Column: 8})
+	flatQualifier := newLeafNodeInArena(arena, 2, true, 8, 10, Point{Column: 8}, Point{Column: 10})
+	flatCall := newLeafNodeInArena(arena, 2, true, 10, 13, Point{Column: 10}, Point{Column: 13})
+	flatRoot := newParentNodeInArena(arena, 5, true, []*Node{flatID, flatQualifier, flatCall}, nil, 0)
+
+	stacks := []glrStack{
+		{
+			accepted:    true,
+			byteOffset:  13,
+			branchOrder: 0,
+			entries:     []stackEntry{newStackEntryNode(1, groupRoot)},
+		},
+		{
+			accepted:    true,
+			byteOffset:  13,
+			branchOrder: 1,
+			entries:     []stackEntry{newStackEntryNode(1, flatRoot)},
+		},
+	}
+
+	tree := parser.buildResultFromGLR(stacks, source, arena, nil, nil, nil, nil, nil, false, nil)
+	if tree == nil || tree.RootNode() == nil {
+		t.Fatal("buildResultFromGLR returned nil tree/root")
+	}
+	if tree.RootNode() != groupRoot {
+		t.Fatalf("root = %p, want visible-wrapper-preserving winner %p", tree.RootNode(), groupRoot)
 	}
 	tree.Release()
 }

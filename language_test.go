@@ -108,6 +108,48 @@ func TestLexAsciiTableFillsRangesPreservingFirstMatch(t *testing.T) {
 	}
 }
 
+func TestInferGeneratedRepeatAuxMetadata(t *testing.T) {
+	lang := &Language{
+		TokenCount: 2,
+		SymbolNames: []string{
+			"end",
+			"token_repeat1",
+			"module_repeat1",
+			"visible_repeat2",
+			"named_repeat3",
+			"not_repeat",
+			"item_repeatx",
+			"_statement_repeat12",
+			"super_repeat4",
+		},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "end"},
+			{},
+			{},
+			{Visible: true},
+			{Named: true},
+			{},
+			{},
+			{Name: "_statement_repeat12"},
+			{Supertype: true},
+		},
+	}
+
+	InferGeneratedRepeatAuxMetadata(lang)
+
+	if !lang.SymbolMetadata[2].GeneratedRepeatAux {
+		t.Fatal("invisible anonymous module_repeat1 was not marked GeneratedRepeatAux")
+	}
+	if !lang.SymbolMetadata[7].GeneratedRepeatAux {
+		t.Fatal("invisible anonymous _statement_repeat12 was not marked GeneratedRepeatAux")
+	}
+	for _, idx := range []int{1, 3, 4, 5, 6, 8} {
+		if lang.SymbolMetadata[idx].GeneratedRepeatAux {
+			t.Fatalf("SymbolMetadata[%d] GeneratedRepeatAux = true, want false", idx)
+		}
+	}
+}
+
 // TestMinimalLanguage constructs a minimal 3-symbol, 2-state grammar
 // and verifies that all fields are correctly defined and accessible.
 func TestMinimalLanguage(t *testing.T) {

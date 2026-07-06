@@ -6,6 +6,7 @@ const goSemicolonContainerSymbolCount = 11
 
 type goCompatibilitySymbols struct {
 	semicolon         Symbol
+	semicolonSentinel Symbol
 	expressionCase    Symbol
 	defaultCase       Symbol
 	typeCase          Symbol
@@ -22,16 +23,12 @@ type goCompatibilitySourceFlags struct {
 	trailingBoundary bool
 }
 
-func normalizeGoCompatibility(root *Node, source []byte, lang *Language) {
-	_ = normalizeGoCompatibilityInRanges(root, source, lang, nil)
+func normalizeGoCompatibilityWithParser(root *Node, source []byte, lang *Language, p *Parser) ParseStopReason {
+	return normalizeGoCompatibilityInRangesWithParser(root, source, lang, nil, p)
 }
 
-func normalizeGoCompatibilityInRanges(root *Node, source []byte, lang *Language, incrementalRanges []Range) ParseStopReason {
-	return normalizeGoCompatibilityInRangesWithStop(root, source, lang, incrementalRanges, nil)
-}
-
-func normalizeGoCompatibilityWithStop(root *Node, source []byte, lang *Language, stopCheck parseStopCheck) ParseStopReason {
-	return normalizeGoCompatibilityInRangesWithStop(root, source, lang, nil, stopCheck)
+func normalizeGoCompatibilityInRangesWithParser(root *Node, source []byte, lang *Language, incrementalRanges []Range, p *Parser) ParseStopReason {
+	return normalizeGoCompatibilityInRangesWithStop(root, source, lang, incrementalRanges, p.activeParseStopCheck())
 }
 
 func normalizeGoCompatibilityInRangesWithStop(root *Node, source []byte, lang *Language, incrementalRanges []Range, stopCheck parseStopCheck) ParseStopReason {
@@ -78,10 +75,6 @@ func goSourceMayNeedSiblingBoundaryCompatibility(source []byte) bool {
 func goSourceMayNeedTrailingBoundaryCompatibility(source []byte) bool {
 	return bytes.Contains(source, []byte("//")) ||
 		bytes.Contains(source, []byte("/*"))
-}
-
-func normalizeGoDotLeafChildren(root *Node, source []byte, lang *Language) {
-	_ = normalizeGoDotLeafChildrenWithStop(root, source, lang, nil)
 }
 
 func normalizeGoDotLeafChildrenWithStop(root *Node, source []byte, lang *Language, poller *parseStopPoller) ParseStopReason {
@@ -169,6 +162,7 @@ func normalizeGoDotLeafNode(n *Node, source []byte, childSym Symbol, childNamed 
 func goCompatibilitySymbolsForLanguage(lang *Language) (goCompatibilitySymbols, bool) {
 	var syms goCompatibilitySymbols
 	syms.semicolon, _ = symbolByName(lang, ";")
+	syms.semicolonSentinel, _ = symbolByName(lang, "\x00")
 	syms.expressionCase, _ = symbolByName(lang, "expression_case")
 	syms.defaultCase, _ = symbolByName(lang, "default_case")
 	syms.typeCase, _ = symbolByName(lang, "type_case")
@@ -223,54 +217,64 @@ func (s goCompatibilitySymbols) isStatementList(sym Symbol) bool {
 	return (s.statementList != 0 && sym == s.statementList) || (s.statementListTail != 0 && sym == s.statementListTail)
 }
 
-func normalizeGoCompatibilitySubtree(n *Node, source []byte, syms goCompatibilitySymbols, flags goCompatibilitySourceFlags, incrementalRanges []Range) {
-	_ = normalizeGoCompatibilitySubtreeWithStop(n, source, syms, flags, incrementalRanges, nil)
-}
-
 func normalizeGoCompatibilitySubtreeWithStop(n *Node, source []byte, syms goCompatibilitySymbols, flags goCompatibilitySourceFlags, incrementalRanges []Range, poller *parseStopPoller) ParseStopReason {
-	if reason := poller.poll(); parseStopReasonIsActive(reason) {
-		return reason
+	type frame struct {
+		node *Node
+		exit bool
 	}
-	if n == nil || !goNodeOverlapsAnyRange(n, incrementalRanges) {
+	if n == nil {
 		return ParseStopNone
 	}
-	childCount := resultChildCount(n)
-	if childCount > 0 {
-		normalizeGoSemicolonContainer(n, source, syms)
-		if flags.siblingBoundary {
-			normalizeGoAdjacentSiblingBoundaries(n, source, syms)
+	stack := []frame{{node: n}}
+	for len(stack) > 0 {
+		if reason := poller.poll(); parseStopReasonIsActive(reason) {
+			return reason
 		}
-	}
-	if n.ownerArena == nil || n.childIndex > finalChildSidecarIndexBase {
-		for _, child := range n.children {
-			if reason := normalizeGoCompatibilitySubtreeWithStop(child, source, syms, flags, incrementalRanges, poller); parseStopReasonIsActive(reason) {
-				return reason
+		top := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		n := top.node
+		if n == nil {
+			continue
+		}
+		if top.exit {
+			if flags.trailingBoundary {
+				normalizeGoStatementListTrailingExtras(n, source, syms)
+			}
+			continue
+		}
+		if !goNodeOverlapsAnyRange(n, incrementalRanges) {
+			continue
+		}
+		childCount := resultChildCount(n)
+		if childCount > 0 {
+			normalizeGoSemicolonContainer(n, source, syms)
+			if flags.siblingBoundary {
+				normalizeGoAdjacentSiblingBoundaries(n, source, syms)
 			}
 		}
-	} else {
+		stack = append(stack, frame{node: n, exit: true})
+		if n.ownerArena == nil || n.childIndex > finalChildSidecarIndexBase {
+			for i := len(n.children) - 1; i >= 0; i-- {
+				stack = append(stack, frame{node: n.children[i]})
+			}
+			continue
+		}
 		view := resultMutableChildrenForMutation(n)
 		if view.hasFinalChildRefs() {
-			for i := 0; i < view.Len(); i++ {
+			for i := view.Len() - 1; i >= 0; i-- {
 				entry, ok := view.Entry(i)
 				if !ok || stackEntryNodeChildCount(entry) == 0 {
 					continue
 				}
-				if reason := normalizeGoCompatibilitySubtreeWithStop(resultChildAt(n, i), source, syms, flags, incrementalRanges, poller); parseStopReasonIsActive(reason) {
-					return reason
-				}
+				stack = append(stack, frame{node: resultChildAt(n, i)})
 			}
 		} else {
-			for i := 0; i < childCount; i++ {
-				if reason := normalizeGoCompatibilitySubtreeWithStop(resultChildAt(n, i), source, syms, flags, incrementalRanges, poller); parseStopReasonIsActive(reason) {
-					return reason
-				}
+			for i := childCount - 1; i >= 0; i-- {
+				stack = append(stack, frame{node: resultChildAt(n, i)})
 			}
 		}
 	}
-	if flags.trailingBoundary {
-		normalizeGoStatementListTrailingExtras(n, source, syms)
-	}
-	return ParseStopNone
+	return poller.pollNow()
 }
 
 func goNodeOverlapsAnyRange(n *Node, ranges []Range) bool {
@@ -286,72 +290,92 @@ func goNodeOverlapsAnyRange(n *Node, ranges []Range) bool {
 }
 
 func normalizeGoSemicolonContainer(n *Node, source []byte, syms goCompatibilitySymbols) {
-	if syms.semicolon == 0 || !syms.isSemicolonContainer(n.symbol) {
+	if (syms.semicolon == 0 && syms.semicolonSentinel == 0) || !syms.isSemicolonContainer(n.symbol) {
 		return
 	}
 	view := resultMutableChildrenForMutation(n)
 	if view.hasFinalChildRefs() {
-		normalizeGoSemicolonFinalRefs(view, source, syms.semicolon)
+		normalizeGoSemicolonFinalRefs(view, source, syms)
 		return
 	}
-	if !goHasDroppableSemicolonChild(n, source, syms.semicolon) {
+	if !goHasDroppableSemicolonChild(n, source, syms) {
 		return
 	}
+	// Capture the container's span before dropping. The DFA lexer's auto-semi
+	// alternatives (`\n`/`\x00`) are zero-width matches, so dropping them here
+	// never loses real source coverage. A token-source-driven lexer (e.g.
+	// GoTokenSource) can instead emit a non-zero-width auto-semicolon token
+	// that consumes the actual newline byte; populateParentNode (invoked by
+	// replaceNodeChildrenUnfielded below) recomputes the container's span
+	// from the surviving children only, which would silently shrink past
+	// those consumed bytes and leave a gap uncovered by any node. Re-extend
+	// back to the pre-drop span (a no-op when nothing was actually
+	// consumed) to keep the dropped separator's bytes attributed to the
+	// container, matching the C reference's hidden-separator span.
+	origEnd := n.endByte
 	children := resultChildSliceForMutation(n)
 	kept := make([]*Node, 0, len(children))
 	for _, child := range children {
-		if goIsDroppableSemicolonNode(child, source, syms.semicolon) {
+		if goIsDroppableSemicolonNode(child, source, syms) {
 			continue
 		}
 		kept = append(kept, child)
 	}
 	replaceNodeChildrenUnfielded(n, cloneNodeSliceIfArena(n.ownerArena, kept))
+	if n.endByte < origEnd {
+		extendNodeEndTo(n, origEnd, source)
+	}
 }
 
-func normalizeGoSemicolonFinalRefs(view resultMutableChildView, source []byte, semicolon Symbol) {
-	if !goHasDroppableSemicolonFinalRef(view, source, semicolon) {
+func normalizeGoSemicolonFinalRefs(view resultMutableChildView, source []byte, syms goCompatibilitySymbols) {
+	if !goHasDroppableSemicolonFinalRef(view, source, syms) {
 		return
 	}
 	view.FilterFinalRefs(func(_ int, entry stackEntry) bool {
-		return !goIsDroppableSemicolonEntry(entry, source, semicolon)
+		return !goIsDroppableSemicolonEntry(entry, source, syms)
 	})
 }
 
-func goHasDroppableSemicolonFinalRef(view resultMutableChildView, source []byte, semicolon Symbol) bool {
+func goHasDroppableSemicolonFinalRef(view resultMutableChildView, source []byte, syms goCompatibilitySymbols) bool {
 	for i := 0; i < view.Len(); i++ {
 		entry, ok := view.Entry(i)
-		if ok && goIsDroppableSemicolonEntry(entry, source, semicolon) {
+		if ok && goIsDroppableSemicolonEntry(entry, source, syms) {
 			return true
 		}
 	}
 	return false
 }
 
-func goHasDroppableSemicolonChild(n *Node, source []byte, semicolon Symbol) bool {
+func goHasDroppableSemicolonChild(n *Node, source []byte, syms goCompatibilitySymbols) bool {
 	if n != nil && (n.ownerArena == nil || n.childIndex > finalChildSidecarIndexBase) {
 		for _, child := range n.children {
-			if goIsDroppableSemicolonNode(child, source, semicolon) {
+			if goIsDroppableSemicolonNode(child, source, syms) {
 				return true
 			}
 		}
 		return false
 	}
 	for i := 0; i < resultChildCount(n); i++ {
-		if goIsDroppableSemicolonNode(resultChildAt(n, i), source, semicolon) {
+		if goIsDroppableSemicolonNode(resultChildAt(n, i), source, syms) {
 			return true
 		}
 	}
 	return false
 }
 
-func goIsDroppableSemicolonNode(n *Node, source []byte, semicolon Symbol) bool {
-	return n != nil && n.symbol == semicolon && goShouldDropSemicolonSpan(n.startByte, n.endByte, source)
+func goIsDroppableSemicolonNode(n *Node, source []byte, syms goCompatibilitySymbols) bool {
+	return n != nil && goIsDroppableSemicolonSymbol(n.symbol, syms) && goShouldDropSemicolonSpan(n.startByte, n.endByte, source)
 }
 
-func goIsDroppableSemicolonEntry(entry stackEntry, source []byte, semicolon Symbol) bool {
+func goIsDroppableSemicolonEntry(entry stackEntry, source []byte, syms goCompatibilitySymbols) bool {
 	return stackEntryHasNode(entry) &&
-		stackEntryNodeSymbol(entry) == semicolon &&
+		goIsDroppableSemicolonSymbol(stackEntryNodeSymbol(entry), syms) &&
 		goShouldDropSemicolonSpan(stackEntryNodeStartByte(entry), stackEntryNodeEndByte(entry), source)
+}
+
+func goIsDroppableSemicolonSymbol(sym Symbol, syms goCompatibilitySymbols) bool {
+	return (syms.semicolon != 0 && sym == syms.semicolon) ||
+		(syms.semicolonSentinel != 0 && sym == syms.semicolonSentinel)
 }
 
 func goShouldDropSemicolonSpan(startByte, endByte uint32, source []byte) bool {

@@ -1,8 +1,10 @@
 package gotreesitter
 
 import (
+	"fmt"
 	"os"
 	"sync"
+	"time"
 	"unsafe"
 )
 
@@ -86,16 +88,126 @@ func forestDedupTieReplace(entry, existing stackEntry) bool {
 	return stackEntrySubtreeHeight(entry) > stackEntrySubtreeHeight(existing)
 }
 
+// glrForestRecover enables EXPERIMENTAL error recovery in the forest parse loop.
+// Default OFF — the forest declines (production fallback) on any parse death, so
+// this is opt-in for prototyping/measurement only. When on, a token with no valid
+// action at any frontier node is absorbed into an error region (the frontier stays
+// in its states and advances past the token), instead of declining. The aim is to
+// reproduce the production parser's error tree fast; until it is byte-verified
+// against production it must stay OFF in any default path.
+var glrForestRecover = os.Getenv("GOT_GLR_FOREST_RECOVER") == "1"
+
+// SetGLRForestRecover toggles experimental forest error recovery (tests).
+func SetGLRForestRecover(on bool) { glrForestRecover = on }
+
+// languageWantsForestRecover reports whether a forest-dispatched language enables
+// the recover-action error_cost recovery path by default (so error-bearing files
+// dispatch to the forest instead of declining to production). Restricted to
+// languages whose recovered error trees are byte-verified against production.
+//   - authzed: 25/25 lock-filtered .zed files (incl. 17 production-error files)
+//     produce byte-IDENTICAL trees to production with recovery on.
+func languageWantsForestRecover(name string) bool {
+	switch name {
+	case "authzed", "make", "csv", "fish", "racket", "tlaplus", "beancount":
+		// Recovery promoted 2026-06-08 via forest-vs-C (TestForestVsCSources,
+		// REPRO_RECOVER=1): with recovery, dispatch is FULL (authzed 40/40, make
+		// 20/20, 0 fellback) and introduced=0 — the forest is never worse than
+		// production vs C (forest-vs-production "mismatches" are all inherited
+		// production C-bugs, not regressions). make's expensive blowup file now
+		// dispatches to the forest instead of declining to slow production.
+		return true
+	case "agda", "org", "ledger", "yuck", "json5", "commonlisp", "vimdoc":
+		// Phase 2 recovery promotions 2026-06-08 (tier III->II/I). Production is
+		// 14x-609x C (parity-blocked); forest+recovery is 0.95x-2.27x C with
+		// introduced=0 vs C on every dispatched real-corpus file (forest-vs-C with
+		// REPRO_RECOVER=1: agda 24/30, org 27/30, ledger 4/4, yuck 2/2, json5 30/30;
+		// all divergences inherited from production). Recovery is required because
+		// these carry error nodes the no-recovery path declines. yuck/json5 are
+		// additionally parity-CLEAN vs C (a correctness lift too).
+		return true
+	}
+	// Other grammars: recovery stays opt-in. The recover-action +
+	// EOF-error-root recovery (GOT_GLR_FOREST_RECOVER) reproduces production's
+	// error tree on the MAJORITY of files (authzed 81/110 byte-identical) but is
+	// not yet production-exact across a full corpus (authzed 29/110 diverge), so
+	// it stays opt-in until the error-node-placement refinements close that gap.
+	_ = name
+	return false
+}
+
+// forestRecoverCap bounds total error-skip recoveries per parse so a pathological
+// file cannot spin (each recovery still advances by one token, so this is a
+// belt-and-suspenders guard, not the progress mechanism).
+const forestRecoverCap = 1 << 20
+
+// forestLastDeclineReason records why parseForest last declined (diagnostic only,
+// not thread-safe; for single-threaded prototyping/measurement).
+var forestLastDeclineReason string
+
+// ForestLastDeclineReason returns the reason parseForest last declined.
+func ForestLastDeclineReason() string { return forestLastDeclineReason }
+
+const forestDeclineEOFRecoveryConflict = "eof-recovery-conflict"
+
+func forestProgressExtra(frontier, work, nextFrontier []*gssForestNode, curIndex, nextIndex gssForestIndex, processEpoch int32, recoverCount int, reducer *forestReducer, accepted *gssForestNode, more string) string {
+	curLen := curIndex.len()
+	nextLen := nextIndex.len()
+	reducerCapped := false
+	reducerSteps := 0
+	reducerVisits := 0
+	if reducer != nil {
+		reducerCapped = reducer.capped
+		reducerSteps = reducer.steps
+		reducerVisits = reducer.visitCount
+	}
+	extra := fmt.Sprintf("frontier_len=%d work_len=%d next_frontier_len=%d cur_index_len=%d next_index_len=%d process_epoch=%d recover_count=%d reducer_capped=%t reducer_steps=%d reducer_visits=%d accepted_present=%t",
+		len(frontier),
+		len(work),
+		len(nextFrontier),
+		curLen,
+		nextLen,
+		processEpoch,
+		recoverCount,
+		reducerCapped,
+		reducerSteps,
+		reducerVisits,
+		accepted != nil,
+	)
+	if more != "" {
+		extra += " " + more
+	}
+	return extra
+}
+
 // ParseForestExperimental parses source with the experimental GSS-forest GLR
 // path and returns a releasable tree (or nil,false if the parse dies — the
 // forest path has no error recovery yet). Exported so out-of-tree benchmarks
 // and validation in packages that attach external scanners (e.g. grammars) can
 // drive it; not part of the stable API.
 func (p *Parser) ParseForestExperimental(source []byte) (*Tree, bool) {
+	// Every other public parse entry point (parser_api.go: Parse,
+	// ParseWithTokenSource, ParseIncremental...) establishes the
+	// timeout/cancellation deadline via enterParseBudget before doing any
+	// work. This is a standalone entry point (out-of-tree benchmarks/
+	// validation call it directly, not just via the internal tryForestFastPath
+	// dispatch which already runs inside a caller's budget), so without this
+	// call SetTimeoutMicros/cancellation would never even compute a deadline
+	// for a bare ParseForestExperimental call. Safe to nest: enterParseBudget
+	// only (re)computes the deadline at depth 0, so calling this from within
+	// an already-budgeted Parse() (were that ever wired up) would not reset it.
+	endBudget := p.enterParseBudget()
+	defer endBudget()
 	arena := acquireNodeArena(arenaClassFull)
 	root, ok := p.parseForest(arena, source, true)
 	if !ok || root == nil {
 		arena.Release()
+		if forestLastDeclineReason == forestDeclineEOFRecoveryConflict {
+			prev := glrForestEnabled
+			glrForestEnabled = false
+			tree, err := p.Parse(source)
+			glrForestEnabled = prev
+			return tree, err == nil && tree != nil
+		}
 		return nil, false
 	}
 	p.finalizeForestRoot(root, source)
@@ -116,6 +228,7 @@ func (p *Parser) recordForestDecline(reason string, tok Token, states []StateID)
 	p.forestDeclineSym = tok.Symbol
 	p.forestDeclineReason = reason
 	p.forestDeclineStates = append(p.forestDeclineStates[:0], states...)
+	forestLastDeclineReason = reason
 }
 
 // builtinForestDefaults is the curated set of built-in languages that dispatch
@@ -152,19 +265,14 @@ func (p *Parser) recordForestDecline(reason string, tok Token, states []StateID)
 // more than the dispatched third saves. Re-promote only if the dispatch rate
 // rises (e.g. the forest learns the constructs it currently parse_fails on).
 //
-// go joined 2026-06-03. forest-vs-production on the curated corpus is diverged=0
-// at 1.5x; forest-vs-C oracle is diverged=0 at ~0.88x C (near C-tier); and a
-// 250-file repo sweep is forest>=production on EVERY file (BETTER 25, equal 224,
-// WORSE 0) — the forest is in fact MORE correct than production on real .go (it
-// fixes a for-range composite-literal-vs-block mis-parse and parses ~6% of valid
-// files production error-recovers). Required three forest fixes:
-//   - keyword-leaf collapse (false/nil -> leaf), commit 03031c9b
-//   - generics `T[X]` dedup tie-break (taller subtree wins a coalesce score tie,
-//     under the shared `_expression` supertype), with cached node height; 880124ca
-//   - blank_identifier `import _` C-oracle-seeded gap collapse; adb1a0fd
-//
-// One pre-existing gotreesitter-vs-C span quirk (off-by-3 on a few files) is
-// SHARED with production (not a forest regression), so it does not block.
+// Go remains a strong forest canary but is intentionally held out of default
+// dispatch. The forest path is correct on curated Go corpora, but the current
+// benchmark contract is production-parser performance: default forest dispatch
+// makes Go full parse and incremental hot paths pay raw-shape/forest/result
+// selection cost that the ordinary path does not need. Keep Go exercised through
+// ParseForestExperimental and explicit corpus canaries until the forest path is
+// both parity-clean and perf-clean for default Go parsing (commit 6894fc9f;
+// that decision stands).
 //
 // Non-built-in languages opt in per-Language via Language.WantsForest (see
 // parserWantsForest) instead of joining this map — e.g. a grammargen consumer
@@ -183,7 +291,67 @@ var builtinForestDefaults = map[string]bool{
 	"awk":        true,
 	"javascript": true,
 	"c_sharp":    true,
-	"go":         true,
+
+	// Promoted 2026-06-08 after a full-corpus byte-range gate (forest vs
+	// production, lock-filtered real corpus): ZERO divergence on every
+	// dispatched file (gitignore 33/44, nix 635/703, squirrel 18/18,
+	// prisma 78/78; the rest decline safely to production), AND a net-wall
+	// WIN on the corpus (byte-identical trees). All carry the glr_merge
+	// deep-stack blowup and their blowup files dispatch cleanly; squirrel and
+	// prisma are parity-clean vs C (production ~5.9x), a clean forest speedup.
+	//
+	// NOT make: it is byte-range clean (19/20, 0 divergence) but net-wall
+	// NEUTRAL (1.0x) — its expensive blowup files are precisely the ones that
+	// decline (no-shift-death) and fall back to slow production, so the forest
+	// only dispatches make's already-cheap files. make promotes once forest
+	// error recovery lands (Gate 2 in forest-solution-design.md, moved to
+	// gotreesitter-specs (external)).
+	"gitignore": true,
+	"nix":       true,
+	"squirrel":  true,
+	"prisma":    true,
+
+	// Phase 2 promotions 2026-06-08: forest+recovery, introduced=0 vs C, large
+	// net-wall win (agda 0.95x/prod28x, org 1.70x/25x, ledger 2.27x/345x,
+	// yuck 1.28x/14x, json5 1.81x/50x). See languageWantsForestRecover.
+	"agda":       true,
+	"org":        true,
+	"ledger":     true,
+	"yuck":       true,
+	"json5":      true,
+	"commonlisp": true,
+	"vimdoc":     true,
+
+	// Promoted 2026-06-08 via the forest-vs-C sweep (TestForestVsCSources):
+	// the forest introduces ZERO C-divergences (every divergence is inherited
+	// from production) and is a net-wall WIN — bibtex 109.8x, faust 34.5x,
+	// arduino 1.3x. faust/arduino also FIX production: the forest matches C on
+	// files where the culled production parser does not (faust 108/120,
+	// arduino 10/19 production-mismatches that are the forest being C-correct).
+	// Held: make (forest=C-clean but net-wall NEUTRAL 1.0x — no lift) and
+	// commonlisp (net-wall unverified; rich corpus times out — revisit).
+	"bibtex":    true,
+	"faust":     true,
+	"arduino":   true,
+	"authzed":   true,
+	"make":      true,
+	"csv":       true,
+	"fish":      true,
+	"racket":    true,
+	"tlaplus":   true,
+	"beancount": true,
+
+	// Promoted 2026-06-08 against the C ORACLE, not production. gitattributes
+	// is parity-blocked (production diverges from C), but the forest matches
+	// tree-sitter-C byte-for-byte on every dispatched real-corpus file (10/10
+	// via TestForestVsCSources) and is 34.7x faster — so this is a correctness
+	// lift (parity-blocked -> parity-clean) AND a speed lift. Production is the
+	// wrong promotion baseline for parity-blocked glr-merge grammars.
+	//
+	// ron/yuck/dtd are ALSO forest=C-clean but held: ron is net-wall NEGATIVE
+	// (0.7x on its 3-file corpus), yuck/dtd corpora are too thin (2 and 1
+	// dispatched) for a confident promotion. Promote when their corpora grow.
+	"gitattributes": true,
 }
 
 // parserWantsForest reports whether p's language dispatches to the GSS-forest
@@ -205,12 +373,48 @@ func (p *Parser) tryForestFastPath(source []byte) *Tree {
 	if !glrForestEnabled || !parserWantsForest(p) {
 		return nil
 	}
+	if len(p.included) > 0 {
+		progress := newParseProgressTelemetry(p, len(source), uint32(len(source)), time.Now())
+		if progress.enabled {
+			progress.emit(time.Now(), "forest_try_decline", 0, 0, Token{}, false, nil, 0, 0, 0, false, 0, 0, fmt.Sprintf("reason=included_ranges count=%d", len(p.included)))
+		}
+		return nil
+	}
+	progress := newParseProgressTelemetry(p, len(source), uint32(len(source)), time.Now())
+	if progress.enabled {
+		progress.emit(time.Now(), "forest_try_begin", 0, 0, Token{}, false, nil, 0, 0, 0, true, 0, 0, "")
+		progress.beginDetail(time.Now(), "forest_arena_acquire_begin", "forest_arena_acquire_end", 0, 0, Token{}, false, nil, 0, 0, 0, true, 0, 0, "")
+	}
 	arena := acquireNodeArena(arenaClassFull)
 	allowIncremental := languageAllowsForestIncrementalPath(p.language.Name)
+	if progress.enabled {
+		progress.endDetail(time.Now(), "forest_arena_acquire_end", 0, 0, Token{}, false, nil, 0, 0, 0, true, 0, 0, "")
+		progress.beginDetail(time.Now(), "forest_parse_call_begin", "forest_parse_call_end", 0, 0, Token{}, false, nil, 0, 0, 0, true, 0, 0, "")
+	}
 	root, ok := p.parseForest(arena, source, allowIncremental)
-	if !ok || root == nil || root.HasError() {
+	if progress.enabled {
+		progress.endDetail(time.Now(), "forest_parse_call_end", 0, 0, Token{}, false, nil, 0, 0, 0, true, 0, 0, fmt.Sprintf("ok=%t root_present=%t decline_reason=%s", ok, root != nil, forestLastDeclineReason))
+	}
+	if !ok || root == nil {
+		if progress.enabled {
+			progress.emit(time.Now(), "forest_try_decline", 0, 0, Token{}, false, nil, 0, 0, 0, true, 0, 0, fmt.Sprintf("reason=parse_forest_failed ok=%t root_present=%t decline_reason=%s", ok, root != nil, forestLastDeclineReason))
+		}
 		arena.Release()
-		return nil // production fallback handles failures and error recovery
+		return nil
+	}
+	if forestRootMustDecline(root) {
+		if progress.enabled {
+			progress.emit(time.Now(), "forest_try_decline", 0, 0, Token{}, false, nil, 0, 0, 0, true, 0, 0, "reason=error_root")
+		}
+		arena.Release()
+		return nil
+	}
+	if root.HasError() && !languageWantsForestRecover(p.language.Name) {
+		if progress.enabled {
+			progress.emit(time.Now(), "forest_try_decline", 0, 0, Token{}, false, nil, 0, 0, 0, true, 0, 0, "reason=root_has_error")
+		}
+		arena.Release()
+		return nil // non-recover langs fall back to production on any error
 	}
 	// Guard against an early-EOF token source: the root must reach the last
 	// non-whitespace byte. Trailing whitespace/newlines are extras and may sit
@@ -225,22 +429,43 @@ func (p *Parser) tryForestFastPath(source []byte) *Tree {
 		break
 	}
 	if root.EndByte() < uint32(end) {
+		if progress.enabled {
+			progress.emit(time.Now(), "forest_try_decline", 0, 0, Token{}, false, nil, 0, 0, 0, true, 0, 0, fmt.Sprintf("reason=incomplete_root root_end=%d expected_non_trivia_end=%d", root.EndByte(), end))
+		}
 		arena.Release()
 		return nil // did not consume the whole input; let production recover it
 	}
+	if progress.enabled {
+		progress.beginDetail(time.Now(), "forest_finalize_begin", "forest_finalize_end", 0, 0, Token{}, false, nil, 0, 0, 0, true, 0, 0, fmt.Sprintf("root_end=%d", root.EndByte()))
+	}
 	p.finalizeForestRoot(root, source)
+	if progress.enabled {
+		progress.endDetail(time.Now(), "forest_finalize_end", 0, 0, Token{}, false, nil, 0, 0, 0, true, 0, 0, fmt.Sprintf("root_end=%d", root.EndByte()))
+	}
 	tree := newTreeWithArenas(root, source, p.language, arena, nil)
 	tree.setParseRuntime(forestAcceptedRuntime(root, source))
 	tree.forestFastPath = true
 	if !allowIncremental {
 		tree.incrementalReuseDisabled = true
 	}
-	p.normalizeReturnedParseTree(tree, source)
+	if progress.enabled {
+		progress.beginDetail(time.Now(), "forest_normalize_begin", "forest_normalize_end", 0, 0, Token{}, false, nil, 0, 0, 0, true, 0, 0, "")
+	}
+	p.normalizeReturnedTreeForParse(tree, source)
+	if progress.enabled {
+		progress.endDetail(time.Now(), "forest_normalize_end", 0, 0, Token{}, false, nil, 0, 0, 0, false, 0, 0, fmt.Sprintf("root_end=%d", root.EndByte()))
+		progress.emit(time.Now(), "forest_try_success", 0, 0, Token{}, false, nil, 0, 0, 0, false, 0, 0, fmt.Sprintf("root_end=%d", root.EndByte()))
+	}
 	return tree
+}
+
+func forestRootMustDecline(root *Node) bool {
+	return root != nil && root.IsError()
 }
 
 func (p *Parser) finalizeForestRoot(root *Node, source []byte) {
 	p.finalizeResultRoot(root, source, nil, false, false)
+	extendRootToAcceptedCleanTail(root, source, uint32(len(source)), nil)
 }
 
 func forestAcceptedRuntime(root *Node, source []byte) ParseRuntime {
@@ -303,6 +528,10 @@ type gssLink struct {
 	// one (state, position), the highest-score subtree wins, matching
 	// tree-sitter's dynamic_precedence selection.
 	score int
+	// errorCost is the recovery cost of this specific path. The coalesced node
+	// keeps the minimum for queue ordering, but final result selection needs the
+	// link-local value so lower-error alternatives beat higher-precedence ones.
+	errorCost int
 }
 
 func forestNodeDirty(node *gssForestNode) int32 {
@@ -378,6 +607,70 @@ type gssForestNode struct {
 	processedEpoch int32
 	processedDirty int32
 	noExtraDepth   uint8
+	// dupBucket*/worst* memoize the two residents-vs-residents scans
+	// forestCapReplacementIndex runs when a capped node's links have no
+	// candidate-matching bucket: forestWorstDuplicateRawBucketLink (is any
+	// existing link an exact raw-shape duplicate of another) and the
+	// residents-only "current worst link" search. Neither depends on the
+	// incoming candidate — both are pure functions of node.links' current
+	// content — so they are valid until dirty next advances (see the dirty
+	// field's doc comment: links only change when dirty advances). Without
+	// this, a capped node that keeps losing to new candidates (never
+	// replacing a link, so dirty never moves) reruns both O(cap) / O(cap^2)
+	// scans on every single insertion attempt; on shapes with many
+	// raw-distinct alternatives competing for one slot (e.g. C#
+	// designer-style repeated-statement blocks), attempt volume can be much
+	// larger than actual replacement volume.
+	dupBucketValid bool
+	dupBucketDirty int32
+	dupBucketIdx   int8
+	worstValid     bool
+	worstDirty     int32
+	worstIdx       int8
+}
+
+// cachedDuplicateBucketLink returns forestWorstDuplicateRawBucketLink's result
+// for node's current link content, computing and caching it on first use (or
+// after node.dirty has advanced since the last cached computation).
+func (node *gssForestNode) cachedDuplicateBucketLink(p *Parser, arena *nodeArena) (int, bool) {
+	if node == nil {
+		return 0, false
+	}
+	if node.dupBucketValid && node.dupBucketDirty == node.dirty {
+		if node.dupBucketIdx < 0 {
+			return 0, false
+		}
+		return int(node.dupBucketIdx), true
+	}
+	idx, ok := forestWorstDuplicateRawBucketLink(p, arena, node)
+	node.dupBucketDirty = node.dirty
+	node.dupBucketValid = true
+	if ok {
+		node.dupBucketIdx = int8(idx)
+	} else {
+		node.dupBucketIdx = -1
+	}
+	return idx, ok
+}
+
+// cachedWorstResidentLink returns the index of the current worst link among
+// node's residents (ignoring any incoming candidate), computing and caching
+// it on first use (or after node.dirty has advanced since the last cached
+// computation). Requires len(node.links) > 0.
+func (node *gssForestNode) cachedWorstResidentLink(p *Parser, arena *nodeArena) int {
+	if node.worstValid && node.worstDirty == node.dirty {
+		return int(node.worstIdx)
+	}
+	worst := 0
+	for i := 1; i < len(node.links); i++ {
+		if forestResultLinkCompare(p, arena, node, &node.links[i], i, &node.links[worst], worst) < 0 {
+			worst = i
+		}
+	}
+	node.worstDirty = node.dirty
+	node.worstValid = true
+	node.worstIdx = int8(worst)
+	return worst
 }
 
 // coalesceForest merges a parse reaching (state, byteOffset) with subtree `entry`
@@ -388,7 +681,123 @@ type gssForestNode struct {
 //
 // Stage 1 scaffold: builds the DAG. Correct trees require Stage 2 (reduce walks
 // every link); until then this is exercised only under the flag + parity gate.
-func coalesceForest(index *gssForestIndex, slab *gssForestNodeSlab, state StateID, byteOffset uint32, prev *gssForestNode, entry stackEntry, score, errorCost int, linkCap int) *gssForestNode {
+func coalesceForest(index *gssForestIndex, slab *gssForestNodeSlab, state StateID, byteOffset uint32, prev *gssForestNode, entry stackEntry, score, errorCost int, linkCapOpt ...int) *gssForestNode {
+	linkCap := forestMaxLinksPerNode
+	if len(linkCapOpt) > 0 {
+		linkCap = linkCapOpt[0]
+	}
+	return coalesceForestWithRawAndAlternatives(nil, nil, index, slab, state, byteOffset, prev, entry, score, errorCost, linkCap, nil)
+}
+
+func coalesceForestWithRaw(p *Parser, arena *nodeArena, index *gssForestIndex, slab *gssForestNodeSlab, state StateID, byteOffset uint32, prev *gssForestNode, entry stackEntry, score, errorCost int) *gssForestNode {
+	return coalesceForestWithRawAndAlternatives(p, arena, index, slab, state, byteOffset, prev, entry, score, errorCost, forestMaxLinksPerNode, nil)
+}
+
+type forestAlternativeIndex struct {
+	nodes map[*Node]*gssForestNode
+	slots map[forestAlternativeSlotKey]forestAlternativeSlot
+}
+
+type forestAlternativeSlotKey struct {
+	parent     *Node
+	childIndex int
+}
+
+type forestAlternativeSlot struct {
+	node *gssForestNode
+	prev *gssForestNode
+}
+
+// forestAlternativeIndexCapacityForSource sizes the alternative-index maps'
+// initial capacity from the source length instead of a fixed guess: a fixed
+// 1024 undersizes larger, ambiguity-heavy inputs (e.g. C# designer-style
+// blocks of hundreds of near-identical statements record one nodes/slots
+// entry per direct-reduce child touched), forcing several map-growth/rehash
+// cycles over the parse. One entry per ~8 source bytes is a rough, cheap
+// upper-bound estimate (grammars with denser ambiguity still just cost a few
+// extra rehashes, not a correctness issue either way — this is a capacity
+// hint, not a limit).
+func forestAlternativeIndexCapacityForSource(sourceLen int) int {
+	const minCapacity = 1024
+	const maxCapacity = 1 << 20
+	capacity := sourceLen / 8
+	if capacity < minCapacity {
+		return minCapacity
+	}
+	if capacity > maxCapacity {
+		return maxCapacity
+	}
+	return capacity
+}
+
+func newForestAlternativeIndex(capacity int) *forestAlternativeIndex {
+	return &forestAlternativeIndex{
+		nodes: make(map[*Node]*gssForestNode, capacity),
+		slots: make(map[forestAlternativeSlotKey]forestAlternativeSlot, capacity),
+	}
+}
+
+func forestRecordAlternative(alternatives *forestAlternativeIndex, entry stackEntry, node *gssForestNode) {
+	if alternatives == nil || node == nil {
+		return
+	}
+	if n := stackEntryNode(entry); n != nil {
+		alternatives.nodes[n] = node
+	}
+}
+
+func forestRecordParentChildAlternatives(alternatives *forestAlternativeIndex, parent *Node, children []*Node, rawEntries []stackEntry) {
+	if alternatives == nil || parent == nil || len(children) == 0 || len(rawEntries) == 0 {
+		return
+	}
+	for i, child := range children {
+		if child == nil || forestDirectReduceChildIndex(child, rawEntries) < 0 {
+			continue
+		}
+		forestNode := alternatives.nodes[child]
+		if forestNode == nil {
+			continue
+		}
+		prev, ok := forestUniquePrevForSubtreeNode(forestNode, child)
+		if !ok {
+			continue
+		}
+		alternatives.slots[forestAlternativeSlotKey{parent: parent, childIndex: i}] = forestAlternativeSlot{
+			node: forestNode,
+			prev: prev,
+		}
+	}
+}
+
+func forestDirectReduceChildIndex(child *Node, rawEntries []stackEntry) int {
+	for i := range rawEntries {
+		if stackEntryNode(rawEntries[i]) == child {
+			return i
+		}
+	}
+	return -1
+}
+
+func forestUniquePrevForSubtreeNode(node *gssForestNode, child *Node) (*gssForestNode, bool) {
+	if node == nil || child == nil {
+		return nil, false
+	}
+	var prev *gssForestNode
+	found := false
+	for i := range node.links {
+		if stackEntryNode(node.links[i].subtree) != child {
+			continue
+		}
+		if found && prev != node.links[i].prev {
+			return nil, false
+		}
+		prev = node.links[i].prev
+		found = true
+	}
+	return prev, found
+}
+
+func coalesceForestWithRawAndAlternatives(p *Parser, arena *nodeArena, index *gssForestIndex, slab *gssForestNodeSlab, state StateID, byteOffset uint32, prev *gssForestNode, entry stackEntry, score, errorCost int, linkCap int, alternatives *forestAlternativeIndex) *gssForestNode {
 	if perfCountersEnabled {
 		perfRecordForestCoalesceCall()
 	}
@@ -412,6 +821,63 @@ func coalesceForest(index *gssForestIndex, slab *gssForestNodeSlab, state StateI
 	// symbol+span, so the dedup applies to node entries only.
 	if entry.kind == stackEntryKindNode && entry.node != nil {
 		esym, estart, eend := entrySymSpan(entry)
+		// A HIDDEN symbol (SymbolMetadata.Visible == false: generated repeat/seq
+		// auxiliaries like `array_repeat1`/`_string_content`, and hidden
+		// supertypes like `_value`) never itself appears in the final tree —
+		// tree-sitter always splices its children into the enclosing visible
+		// parent in place of the hidden node. Two candidates that share the
+		// same predecessor AND the same (symbol, span) therefore cover the
+		// exact same already-shifted token run and MUST flatten to the exact
+		// same sequence of visible descendants, no matter how that run's
+		// internal reduces happened to bracket it (e.g. the binary
+		// `X_repeat1 -> X_repeat1 X_repeat1 | ...` grouping ambiguity, or a
+		// supertype rebuilt over a not-yet-stable child). Their raw shapes can
+		// still legitimately differ (different internal nesting), but that
+		// difference can never surface, so skip the exact raw-shape gate for
+		// them below. Without this, every internal regrouping mints a "new"
+		// link at the SAME (prev, symbol, span) slot (since
+		// forestRawStackEntriesExactEqual correctly reports them as
+		// raw-different), burning the small per-node link cap on redundant
+		// duplicates instead of the genuinely distinct (different start, i.e.
+		// different coverage) alternatives a later reduce needs to complete
+		// the parse — silently forcing an otherwise-valid parse into a dead
+		// end once a repeat/string long enough to re-trigger the ambiguity a
+		// few times fills the cap with copies of itself (json arrays of 3+
+		// items whose last element is a multi-escape string, forest_test
+		// dead_end at the closing `]`).
+		// Only relax the gate when visibility is actually KNOWN (a real
+		// Language with SymbolMetadata) and says hidden — symbolIsVisible
+		// returns false for an unknown/nil language too, which must NOT be
+		// read as "hidden": that would apply this relaxation to every symbol
+		// whenever language metadata is unavailable (e.g. unit tests that
+		// coalesce raw *Node fixtures directly against a bare *Parser{}),
+		// collapsing genuinely raw-distinct alternatives the caller expected
+		// to keep as separate links.
+		//
+		// Proven premise / what this does NOT cover: "shape never surfaces"
+		// is exact for the case actually handled here — two links already tied
+		// on (prev, symbol, span), where prev identity means both cover the
+		// SAME already-shifted token run, so tree-sitter's hidden-node splice
+		// recovers the identical flattened visible-descendant sequence
+		// regardless of internal bracketing. It is NOT a general claim that
+		// every hidden symbol is safe to collapse across different prev/score/
+		// errorCost — only the exact-tie case here relies on it, and the
+		// scoring paths above/below this branch (forestResultLinkCompare,
+		// forestDedupTieReplace) are left untouched for every other case.
+		// Verified empirically (2026-07, local corpus + cgo tree-sitter-C
+		// oracle, TestForestCorpusParity/TestForestVsCOracleParity): the
+		// languages/files this widens dispatch for (cmake, css, scss, c_sharp,
+		// javascript, bash) that showed forest-vs-production divergence all
+		// matched the C oracle byte-for-byte (0 errs) — the divergence was
+		// production silently truncating, not this gate picking a wrong
+		// alternative. The one genuine forest-vs-C divergence found in the
+		// sweep (python `not in`/`is not` compound-token leaf span, off by the
+		// leading space) reproduces identically with this whole hunk reverted
+		// to the original HEAD (pre-existing, unrelated to hidden-symbol
+		// dedup — see forest_gap_rejection_test.go / the cap-eviction tiebreak
+		// in forestCapReplacementIndex below for the mechanism that made this
+		// specific python file reachable enough to expose it).
+		hiddenSym := p != nil && p.language != nil && !symbolIsVisible(p.language, esym)
 		for i := range node.links {
 			l := &node.links[i]
 			if l.prev != prev || l.subtree.kind != stackEntryKindNode {
@@ -421,20 +887,66 @@ func coalesceForest(index *gssForestIndex, slab *gssForestNodeSlab, state StateI
 			if lsym != esym || lstart != estart || lend != eend {
 				continue
 			}
+			rawEqual := true
+			if !hiddenSym && p != nil && arena != nil {
+				switch forestRawStackEntriesExactEqual(arena, entry, l.subtree) {
+				case forestRawEqual:
+					rawEqual = true
+				case forestRawDifferent, forestRawUnknown:
+					rawEqual = false
+				}
+			}
+			if !rawEqual {
+				continue
+			}
 			// Competing reduction reaching the same (prev, symbol, span): keep the
-			// strictly higher dynamic precedence. A replacement marks the node
-			// dirty so the reductions that already consumed the losing subtree
-			// re-run and rebuild their parents from the winner.
+			// result-preferred alternative. A replacement marks the node dirty so
+			// the reductions that already consumed the losing subtree re-run and
+			// rebuild their parents from the winner.
 			replaced := false
-			if score > l.score {
+			candidate := gssLink{prev: prev, prevDirty: forestNodeDirty(prev), subtree: entry, score: score, errorCost: errorCost}
+			switch {
+			case hiddenSym:
+				// forestResultLinkCompare and forestDedupTieReplace both fall
+				// back to raw-shape/subtree-height comparisons to break exact
+				// score+errorCost ties — a meaningful tiebreak for a VISIBLE
+				// node's competing shapes, but for a hidden node any shape is
+				// equally correct (it never surfaces), so that fallback just
+				// picks arbitrarily between this arrival and the resident.
+				// Every re-derivation of the same (prev, symbol, span) is a
+				// FRESH Node (never raw-equal to the last one per the gate
+				// above), so an arbitrary tiebreak swaps in place on every
+				// single re-derivation, marking the node dirty and forcing
+				// every consumer that already built from the resident to
+				// rebuild — which can itself re-derive this same slot again,
+				// live-locking the reduce worklist (C#'s wider/more ambiguous
+				// GLR dispatch blew forestReduceVisitCap on a 16-class
+				// benchmark once this path started firing for its hidden
+				// declaration-list aux symbols). Comparing on score/errorCost
+				// ALONE and treating an exact tie as a no-op keeps a settled
+				// hidden link stable across repeated re-derivations instead of
+				// thrashing; a real improvement (lower error cost, or higher
+				// score at equal cost) still replaces it.
+				if errorCost < l.errorCost || (errorCost == l.errorCost && score > l.score) {
+					oldScore := l.score
+					*l = candidate
+					forestRecordAlternative(alternatives, entry, node)
+					if oldScore == node.minLinkScore {
+						forestRefreshMinLinkScore(node)
+					}
+					node.dirty++
+					replaced = true
+				}
+			case forestResultLinkCompare(p, arena, node, &candidate, len(node.links), l, i) > 0:
 				oldScore := l.score
-				l.subtree, l.score = entry, score
+				*l = candidate
+				forestRecordAlternative(alternatives, entry, node)
 				if oldScore == node.minLinkScore {
 					forestRefreshMinLinkScore(node)
 				}
 				node.dirty++
 				replaced = true
-			} else if score == l.score && forestDedupTieReplace(entry, l.subtree) {
+			case score == l.score && forestDedupTieReplace(entry, l.subtree):
 				l.subtree = entry
 				node.dirty++
 				replaced = true
@@ -451,32 +963,32 @@ func coalesceForest(index *gssForestIndex, slab *gssForestNodeSlab, state StateI
 	}
 	// Bound the link fan-out per node (tree-sitter caps active versions). Without
 	// a cap, a repeated/ambiguous structure accumulates O(n) links on one node and
-	// reduceOverForest enumerates O(n^childCount) paths. Keep the best-score links;
-	// replace the weakest when full.
+	// reduceOverForest enumerates O(n^childCount) paths. Keep structural diversity
+	// first: a lower-ranked raw-shape-distinct branch can be the only branch that
+	// lets an enclosing reduction match C. Pure result rank is still the fallback
+	// once the capped set has no duplicate raw-shape bucket to evict.
+	linkNoExtraDepth := forestLinkNoExtraDepth(prev, entry)
 	if len(node.links) >= linkCap {
-		worst := 0
-		for i := 1; i < len(node.links); i++ {
-			if node.links[i].score < node.links[worst].score {
-				worst = i
-			}
-		}
-		if score > node.links[worst].score {
-			node.links[worst] = gssLink{prev: prev, prevDirty: forestNodeDirty(prev), subtree: entry, score: score}
+		candidate := gssLink{prev: prev, prevDirty: forestNodeDirty(prev), subtree: entry, score: score, errorCost: errorCost}
+		if replace, ok := forestCapReplacementIndex(p, arena, node, &candidate, len(node.links)); ok {
+			node.links[replace] = candidate
+			forestRecordAlternative(alternatives, entry, node)
 			forestRefreshMinLinkScore(node)
-			linkNoExtraDepth := forestLinkNoExtraDepth(prev, entry)
 			forestRecordNoExtraDepth(node, false, linkNoExtraDepth)
 			node.dirty++
 			if perfCountersEnabled {
 				perfRecordForestCoalesceCap(true)
 			}
-		} else if perfCountersEnabled {
-			perfRecordForestCoalesceCap(false)
+		} else {
+			if perfCountersEnabled {
+				perfRecordForestCoalesceCap(false)
+			}
 		}
 		return node
 	}
 	firstLink := len(node.links) == 0
-	linkNoExtraDepth := forestLinkNoExtraDepth(prev, entry)
-	node.links = append(node.links, gssLink{prev: prev, prevDirty: forestNodeDirty(prev), subtree: entry, score: score})
+	node.links = append(node.links, gssLink{prev: prev, prevDirty: forestNodeDirty(prev), subtree: entry, score: score, errorCost: errorCost})
+	forestRecordAlternative(alternatives, entry, node)
 	forestRecordMinLinkScore(node, firstLink, score)
 	forestRecordNoExtraDepth(node, firstLink, linkNoExtraDepth)
 	if perfCountersEnabled {
@@ -484,6 +996,215 @@ func coalesceForest(index *gssForestIndex, slab *gssForestNodeSlab, state StateI
 	}
 	node.dirty++
 	return node
+}
+
+func forestCapReplacementIndex(p *Parser, arena *nodeArena, node *gssForestNode, candidate *gssLink, candidateOrder int) (int, bool) {
+	if node == nil || candidate == nil || len(node.links) == 0 {
+		return 0, false
+	}
+	// A hidden symbol's shape never surfaces in the final tree (see the
+	// same-span dedup branch above), so when a candidate ties a resident on
+	// BOTH errorCost and score, there is no principled winner between them —
+	// falling through to forestResultLinkCompare's raw-shape/height/order
+	// tiebreak just picks arbitrarily, and since forestCapReplacementIndex is
+	// consulted on every subsequent re-derivation of the same capped slot,
+	// "arbitrary" becomes "alternates forever": each swap dirties node,
+	// forcing every consumer that already built from the loser to re-derive,
+	// which can regenerate an equally-tied candidate and swap back. Observed
+	// hitting forestReduceVisitCap on python's module_repeat1 (two DIFFERENT
+	// spans tied at score=0/errorCost=0 fighting for the same capped slot for
+	// 500+ reduce events, 47 tokens in). Treating the tie as a stable
+	// no-op (keep the incumbent) removes the oscillation the same way the
+	// dedup branch's tie-as-no-op does; a real difference in errorCost or
+	// score still replaces normally.
+	//
+	// Weaker premise than the dedup branch above, by design: this function is
+	// also consulted for candidates with a DIFFERENT (start,end) span than the
+	// resident (forestWorstSameRawBucketLink/forestWorstDuplicateRawBucketLink
+	// and the "worst" search below both scan every existing link regardless of
+	// span), so "same already-shifted token run" is not guaranteed here the
+	// way prev-identity guarantees it above — two different partitions of a
+	// repeat, tied in score, are not provably interchangeable in the general
+	// case, only empirically so on every corpus file this was checked against
+	// (see the dedup branch's comment for the validation run: corpus parity +
+	// cgo tree-sitter-C oracle across cmake/css/scss/c_sharp/bash/awk/erlang/
+	// javascript/python, plus TestForestGapRejection 3/3 under both
+	// GOT_C_RECOVERY modes). If a future corpus expansion surfaces a
+	// genuine divergence traceable to this specific tie-no-op (unlike the
+	// python compound-keyword-span one already ruled out as pre-existing and
+	// unrelated), narrow it to the exact bucket the caller already found via
+	// forestWorstSameRawBucketLink (same raw shape) rather than the plain
+	// same-symbol/tied-score condition used here.
+	hiddenSym := false
+	if p != nil && p.language != nil && candidate.subtree.kind == stackEntryKindNode && candidate.subtree.node != nil {
+		esym, _, _ := entrySymSpan(candidate.subtree)
+		hiddenSym = !symbolIsVisible(p.language, esym)
+	}
+	if p != nil && arena != nil {
+		if same, idx := forestWorstSameRawBucketLink(p, arena, node, candidate); same {
+			if hiddenSym && candidate.errorCost == node.links[idx].errorCost && candidate.score == node.links[idx].score {
+				return idx, false
+			}
+			return idx, forestResultLinkCompare(p, arena, node, candidate, candidateOrder, &node.links[idx], idx) > 0
+		}
+		// forestWorstDuplicateRawBucketLink depends only on node.links' own
+		// content (no candidate parameter) — cache it per gssForestNode.dirty
+		// so repeated losing candidates at an already-saturated node don't
+		// re-scan all O(cap^2) resident pairs each time (see cachedDuplicate
+		// BucketLink's doc comment).
+		if idx, ok := node.cachedDuplicateBucketLink(p, arena); ok {
+			return idx, true
+		}
+	}
+	// The residents-only "current worst link" search is likewise independent
+	// of candidate — cache it the same way (see cachedWorstResidentLink).
+	worst := node.cachedWorstResidentLink(p, arena)
+	if hiddenSym && candidate.errorCost == node.links[worst].errorCost && candidate.score == node.links[worst].score {
+		return worst, false
+	}
+	return worst, forestResultLinkCompare(p, arena, node, candidate, candidateOrder, &node.links[worst], worst) > 0
+}
+
+func forestWorstSameRawBucketLink(p *Parser, arena *nodeArena, node *gssForestNode, candidate *gssLink) (bool, int) {
+	found := false
+	worst := -1
+	for i := range node.links {
+		if forestRawStackEntriesExactEqual(arena, candidate.subtree, node.links[i].subtree) != forestRawEqual {
+			continue
+		}
+		if !found || forestResultLinkCompare(p, arena, node, &node.links[i], i, &node.links[worst], worst) < 0 {
+			found = true
+			worst = i
+		}
+	}
+	return found, worst
+}
+
+func forestWorstDuplicateRawBucketLink(p *Parser, arena *nodeArena, node *gssForestNode) (int, bool) {
+	worst := -1
+	for i := range node.links {
+		if !forestRawBucketHasPeer(arena, node, i) {
+			continue
+		}
+		if worst < 0 || forestResultLinkCompare(p, arena, node, &node.links[i], i, &node.links[worst], worst) < 0 {
+			worst = i
+		}
+	}
+	if worst < 0 {
+		return 0, false
+	}
+	return worst, true
+}
+
+func forestRawBucketHasPeer(arena *nodeArena, node *gssForestNode, idx int) bool {
+	for i := range node.links {
+		if i == idx {
+			continue
+		}
+		if forestRawStackEntriesExactEqual(arena, node.links[idx].subtree, node.links[i].subtree) == forestRawEqual {
+			return true
+		}
+	}
+	return false
+}
+
+type forestRawEquality uint8
+
+const (
+	forestRawUnknown forestRawEquality = iota
+	forestRawDifferent
+	forestRawEqual
+)
+
+func forestRawStackEntriesExactEqual(arena *nodeArena, a, b stackEntry) forestRawEquality {
+	return forestRawStackEntriesExactEqualRec(arena, a, b, 0)
+}
+
+func forestRawStackEntriesExactEqualRec(arena *nodeArena, a, b stackEntry, depth int) forestRawEquality {
+	if arena == nil || depth > maxTreeWalkDepth {
+		return forestRawUnknown
+	}
+	if stackEntryHasNode(a) != stackEntryHasNode(b) {
+		return forestRawDifferent
+	}
+	if !stackEntryHasNode(a) {
+		return forestRawEqual
+	}
+	aShape, aHasShape := rawShapeForStackEntry(arena, a)
+	bShape, bHasShape := rawShapeForStackEntry(arena, b)
+	if aHasShape != bHasShape {
+		return forestRawUnknown
+	}
+	if aHasShape {
+		return forestRawShapesExactEqualRec(arena, aShape, bShape, depth+1)
+	}
+	if stackEntryNodeSymbol(a) != stackEntryNodeSymbol(b) ||
+		stackEntryNodeStartByte(a) != stackEntryNodeStartByte(b) ||
+		stackEntryNodeEndByte(a) != stackEntryNodeEndByte(b) {
+		return forestRawDifferent
+	}
+	if stackEntryNodeChildCount(a) != 0 || stackEntryNodeChildCount(b) != 0 {
+		return forestRawUnknown
+	}
+	return forestRawEqual
+}
+
+func forestRawShapesExactEqualRec(arena *nodeArena, a, b *rawShape, depth int) forestRawEquality {
+	if arena == nil || a == nil || b == nil || depth > maxTreeWalkDepth {
+		return forestRawUnknown
+	}
+	if a.symbol != b.symbol || a.productionID != b.productionID || a.childCount != b.childCount {
+		return forestRawDifferent
+	}
+	if a.contentHash != b.contentHash {
+		// contentHash folds in strictly more than this function inspects
+		// (symbol, productionID, childCount, and every descendant's symbol,
+		// span and contentHash — see rawShapeComputeContentHash), so a
+		// mismatch proves the subtrees differ somewhere without descending.
+		// This is the fast path on shapes with many raw-distinct alternatives
+		// (the common case here): only a genuine hash MATCH falls through to
+		// the walk below, which still runs unchanged as the exact,
+		// collision-proof source of truth.
+		return forestRawDifferent
+	}
+	aChildren := arena.rawShapeChildren(a)
+	bChildren := arena.rawShapeChildren(b)
+	if len(aChildren) != int(a.childCount) || len(bChildren) != int(b.childCount) || len(aChildren) != len(bChildren) {
+		return forestRawUnknown
+	}
+	for i := range aChildren {
+		ae, be := aChildren[i].entry, bChildren[i].entry
+		if stackEntryHasNode(ae) != stackEntryHasNode(be) {
+			return forestRawDifferent
+		}
+		if !stackEntryHasNode(ae) {
+			continue
+		}
+		if stackEntryNodeSymbol(ae) != stackEntryNodeSymbol(be) ||
+			stackEntryNodeStartByte(ae) != stackEntryNodeStartByte(be) ||
+			stackEntryNodeEndByte(ae) != stackEntryNodeEndByte(be) {
+			return forestRawDifferent
+		}
+		aRef, bRef := aChildren[i].shapeRef, bChildren[i].shapeRef
+		if aRef == 0 || bRef == 0 {
+			if aRef != bRef {
+				return forestRawUnknown
+			}
+			if stackEntryNodeChildCount(ae) != 0 || stackEntryNodeChildCount(be) != 0 {
+				return forestRawUnknown
+			}
+			continue
+		}
+		aChild, aOK := arena.rawShapeForRef(aRef)
+		bChild, bOK := arena.rawShapeForRef(bRef)
+		if !aOK || !bOK {
+			return forestRawUnknown
+		}
+		if eq := forestRawShapesExactEqualRec(arena, aChild, bChild, depth+1); eq != forestRawEqual {
+			return eq
+		}
+	}
+	return forestRawEqual
 }
 
 const forestGotoCacheSize = 8
@@ -510,17 +1231,12 @@ func (c *forestGotoCache) lookup(p *Parser, state StateID, sym Symbol) StateID {
 }
 
 func forestCoalesceWouldDropForCap(index *gssForestIndex, state StateID, byteOffset uint32, score, errorCost int, linkCap int) bool {
-	if index == nil {
-		return false
-	}
-	node := index.lookup(gssForestKey{state: state, byteOffset: byteOffset})
-	if node == nil || len(node.links) < linkCap {
-		return false
-	}
-	if errorCost < node.errorCost {
-		return false
-	}
-	return score <= node.minLinkScore
+	// This guard runs before the parent node and raw shape are materialized. The
+	// cap policy must preserve raw-distinct lower-score branches, so a pre-shape
+	// decision cannot prove that a candidate is safe to drop. Always defer to
+	// forestCapReplacementIndex after raw shape capture.
+	_, _, _, _, _, _ = index, state, byteOffset, score, errorCost, linkCap
+	return false
 }
 
 // forestMaxLinksPerNode caps the alternative fan-out coalesced at one
@@ -541,12 +1257,12 @@ func entrySymSpan(e stackEntry) (Symbol, uint32, uint32) {
 	return n.symbol, n.startByte, n.endByte
 }
 
-// collectForestRootAndExtras walks the winning (bestLink) path down from the
+// collectForestRootAndExtras walks the winning accepted path down from the
 // accept node to locate the start-symbol root and gather the root-level extras
 // that surround it: extras stacked above it are trailing, extras below it are
 // leading. Each group is returned in source order; foldResultRootExtras splits
 // them back into leading/trailing by position.
-func collectForestRootAndExtras(accepted *gssForestNode) (*Node, []*Node) {
+func collectForestRootAndExtras(p *Parser, arena *nodeArena, accepted *gssForestNode, alternatives *forestAlternativeIndex) (*Node, []*Node) {
 	if accepted == nil {
 		return nil, nil
 	}
@@ -554,7 +1270,7 @@ func collectForestRootAndExtras(accepted *gssForestNode) (*Node, []*Node) {
 	var root *Node
 	below := (*gssForestNode)(nil)
 	for cur := accepted; cur != nil; {
-		link := cur.bestLink()
+		link := cur.bestAcceptedRootResultLink(p, arena)
 		if link == nil {
 			return nil, nil
 		}
@@ -570,9 +1286,11 @@ func collectForestRootAndExtras(accepted *gssForestNode) (*Node, []*Node) {
 	if root == nil {
 		return nil, nil
 	}
+	resolveForestChildAlternatives(p, arena, root, alternatives, nil, 0)
+	forestPreserveRootVisibleContainerAlternatives(p, arena, root, alternatives)
 	var belowExtras []*Node // leading extras, collected latest-first
 	for cur := below; cur != nil; {
-		link := cur.bestLink()
+		link := cur.bestResultLink(p, arena)
 		if link == nil {
 			break
 		}
@@ -629,6 +1347,510 @@ func forestRootChildrenCoverNonTrivia(root *Node, source []byte) bool {
 	return true
 }
 
+func forestNodeBestLinearStack(p *Parser, arena *nodeArena, node *gssForestNode) (glrStack, bool) {
+	if node == nil {
+		return glrStack{}, false
+	}
+	reversed := make([]stackEntry, 0, 8)
+	score := 0
+	for cur := node; cur != nil; {
+		link := cur.bestResultLink(p, arena)
+		if link == nil {
+			break
+		}
+		reversed = append(reversed, link.subtree)
+		score += link.score
+		cur = link.prev
+	}
+	if len(reversed) == 0 {
+		return glrStack{}, false
+	}
+	entries := make([]stackEntry, len(reversed))
+	for i := range reversed {
+		entries[i] = reversed[len(reversed)-1-i]
+	}
+	return glrStack{
+		entries:    entries,
+		score:      score,
+		byteOffset: node.byteOffset,
+	}, true
+}
+
+// forestEOFRecoveryCouldCompete decides whether the forest's accepted path at
+// EOF has a competing recovery interpretation nearby that production's cost
+// competition might prefer instead. relaxForCleanAcceptLanguages should be the
+// SAME (recoverActive || errorCostCompetitionEnabled()) test the caller
+// already gates this call on, narrowed to exclude recoverActive: it is true
+// only when this parse's dispatch reason is the errorCostCompetitionEnabled()
+// half of that OR (bash and friends — languages where the forest only ever
+// dispatches a CLEAN, error-free accept; tryForestFastPath rejects any
+// root.HasError() result outright for non-recover languages). The
+// unvalidated-marker bypass below is verified (TestForestDispatchReportsAcceptedRuntime,
+// TestExternalScannerTokenInvariantLeafReuse/bash_number, byte-range parity
+// sweeps) ONLY for that clean-accept case. For recoverActive languages
+// (languageWantsForestRecover: authzed/make/csv/fish/racket/tlaplus/
+// beancount/agda/org/ledger/yuck/json5/commonlisp/vimdoc) the forest's OWN
+// accepted path can itself already be an error-bearing recovery, and the
+// question this probe answers shifts from "does any recovery beat a clean
+// accept" (which the marker's swallowed-error premise covers) to "does a
+// DIFFERENT recovery beat OUR recovery" — a genuinely different comparison
+// the marker was never validated against, and local corpus coverage for
+// those languages (only `make`, 1 file) is too thin to validate empirically.
+// So for those languages this keeps the original, unconditionally-conservative
+// behavior (any structurally-reachable pop-back declines the forest).
+func (p *Parser) forestEOFRecoveryCouldCompete(idx *gssForestIndex, arena *nodeArena, eofByte uint32, relaxForCleanAcceptLanguages bool) bool {
+	if p == nil || idx == nil || idx.len() == 0 {
+		return false
+	}
+	var gssScratch gssScratch
+	var entryScratch glrEntryScratch
+	trackChildErrors := false
+	// cRecoverToState (parser_recover_c.go) tags a freshly-recovered fork with
+	// cRecoveryUnvalidatedMarker exactly when (a) p.crecoveryHandleErrorSingleStack
+	// is set and (b) the popped/recovered span is small (<=
+	// crecoverySwallowedErrorMaxFallbackErrorBytes) — production's own signal
+	// for "this pop-back is the confirmed swallowed-error pattern: reachable
+	// by construction, but never actually beats a clean accept" (see
+	// buildResultFromGLR/hasCleanSiblingAtSamePosition in parser_result.go:
+	// the marker only ever feeds a diagnostic counter, never the actual
+	// stack-selection result — cStackErrorCost-based comparison still always
+	// prefers the clean, error-free accept). p.crecoveryHandleErrorSingleStack
+	// is only ever set from production's real cHandleError dispatch
+	// (len(*stacks)==1), which this forest-only probe never runs, so it
+	// defaults to false and the marker never fires here — every reachable
+	// pop-back reads as a genuine competitor, declining the forest fast path
+	// for ordinary, syntactically valid input purely because SOME
+	// structurally-reachable recovery exists (true of most non-trivial
+	// parses; a fresh GLR table almost always has a nearby recover-capable
+	// state). The forest has no independent []glrStack of its own — every
+	// candidate it checks here is, by construction, "the whole probe" in the
+	// same sense production's single-stack case is — so prime the flag for
+	// the duration of this probe (restored after, so it never leaks into the
+	// real production dispatch this same *Parser runs on ParseForestExperimental's
+	// fallback) and trust the span-size half of the gate to keep this narrow:
+	// a small recovered span behaves exactly like the confirmed swallowed-error
+	// class production already treats as non-competing, while a large one
+	// still returns true below and declines as before. Only do this priming
+	// for the validated clean-accept case; recoverActive languages keep
+	// p.crecoveryHandleErrorSingleStack (and hence the marker) untouched, so
+	// it stays false and every reachable pop-back still declines as before.
+	if relaxForCleanAcceptLanguages {
+		prevSingleStack := p.crecoveryHandleErrorSingleStack
+		p.crecoveryHandleErrorSingleStack = true
+		defer func() { p.crecoveryHandleErrorSingleStack = prevSingleStack }()
+	}
+	for i := range idx.entries {
+		node := idx.entries[i].node
+		if node == nil || node.byteOffset != eofByte {
+			continue
+		}
+		stack, ok := forestNodeBestLinearStack(p, arena, node)
+		if !ok {
+			continue
+		}
+		entries := cStackEntriesTopFirst(&stack, &gssScratch)
+		summary := p.cRecordSummary(entries)
+		for _, entry := range summary {
+			if entry.state == cErrorState || entry.posBytes == stack.byteOffset {
+				continue
+			}
+			if p.lookupActionIndex(entry.state, 0) == 0 {
+				continue
+			}
+			fork, ok := p.cRecoverToState(&stack, entry.depth, entry.state, arena, &entryScratch, &gssScratch, &trackChildErrors)
+			if !ok {
+				continue
+			}
+			if relaxForCleanAcceptLanguages && fork.cRecoveryUnvalidatedMarker {
+				continue
+			}
+			return true
+		}
+	}
+	return false
+}
+
+func forestPreserveRootVisibleContainerAlternatives(p *Parser, arena *nodeArena, root *Node, alternatives *forestAlternativeIndex) bool {
+	if p == nil || p.language == nil || root == nil || alternatives == nil || resultChildCount(root) == 0 {
+		return false
+	}
+	childCount := resultChildCount(root)
+	out := make([]*Node, 0, childCount)
+	changed := false
+	for i := 0; i < childCount; {
+		if candidate, end, ok := forestRootVisibleContainerAlternativeForSlice(p, arena, root, alternatives, i); ok {
+			out = append(out, candidate)
+			i = end
+			changed = true
+			continue
+		}
+		out = append(out, resultChildAt(root, i))
+		i++
+	}
+	if !changed {
+		return false
+	}
+	if arena != nil {
+		buf := arena.allocNodeSlice(len(out))
+		copy(buf, out)
+		out = buf
+	}
+	replaceNodeChildrenUnfielded(root, out)
+	return true
+}
+
+func forestRootVisibleContainerAlternativeForSlice(p *Parser, arena *nodeArena, root *Node, alternatives *forestAlternativeIndex, start int) (*Node, int, bool) {
+	first := resultChildAt(root, start)
+	if first == nil {
+		return nil, 0, false
+	}
+	childCount := resultChildCount(root)
+	var best *Node
+	bestEnd := 0
+	for candidate := range alternatives.nodes {
+		if !forestVisibleNamedStructuralContainer(p, candidate) || candidate.isExtra() || candidate.isMissing() {
+			continue
+		}
+		if candidate.startByte != first.startByte {
+			continue
+		}
+		for end := childCount; end > start; end-- {
+			last := resultChildAt(root, end-1)
+			if last == nil || last.endByte != candidate.endByte {
+				continue
+			}
+			if !forestRootSliceMatchesVisibleContainer(p, arena, root, start, end, candidate) {
+				continue
+			}
+			if best == nil || end > bestEnd || (end == bestEnd && resultChildCount(candidate) > resultChildCount(best)) {
+				best = candidate
+				bestEnd = end
+			}
+			break
+		}
+	}
+	if best == nil {
+		return nil, 0, false
+	}
+	return best, bestEnd, true
+}
+
+func forestRootSliceMatchesVisibleContainer(p *Parser, arena *nodeArena, root *Node, start, end int, candidate *Node) bool {
+	if start < 0 || end <= start || candidate == nil {
+		return false
+	}
+	sawFlattenable := false
+	flattened := make([]*Node, 0, end-start)
+	for i := start; i < end; i++ {
+		child := resultChildAt(root, i)
+		if child == nil {
+			return false
+		}
+		if child == candidate {
+			return false
+		}
+		if shouldFlattenInvisibleRootChild(child, p.language.SymbolMetadata) {
+			sawFlattenable = true
+		}
+		flattened = appendFlattenedInvisibleRootChild(flattened, child, arena, p.language.SymbolMetadata)
+	}
+	if !sawFlattenable || len(flattened) != resultChildCount(candidate) {
+		return false
+	}
+	for i := range flattened {
+		if !forestNodesHaveSameTreeOrderEnvelope(flattened[i], resultChildAt(candidate, i)) {
+			return false
+		}
+	}
+	return true
+}
+
+func forestNodesHaveSameTreeOrderEnvelope(a, b *Node) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	return a.symbol == b.symbol &&
+		a.startByte == b.startByte &&
+		a.endByte == b.endByte &&
+		a.isExtra() == b.isExtra() &&
+		a.isMissing() == b.isMissing() &&
+		a.hasError() == b.hasError()
+}
+
+func forestAcceptedNodeCompare(p *Parser, arena *nodeArena, a *gssForestNode, aOrder int, b *gssForestNode, bOrder int) int {
+	if a == nil || b == nil {
+		if a != nil {
+			return 1
+		}
+		if b != nil {
+			return -1
+		}
+		return 0
+	}
+	aStack, aOK := forestAcceptedNodeResultStack(p, arena, a, aOrder)
+	bStack, bOK := forestAcceptedNodeResultStack(p, arena, b, bOrder)
+	if aOK && bOK {
+		// Root collection intentionally ignores raw-shape ordering for the
+		// accepted node's root link. Preserve that same finalization semantic when
+		// choosing between accepted forest nodes; local child alternatives still
+		// use raw-shape selection below the root.
+		if cmp := stackCompareForResultSelectionWithRawShape(p, arena, &aStack, &bStack, false, false); cmp != 0 {
+			return cmp
+		}
+	}
+	if aOK != bOK {
+		if aOK {
+			return 1
+		}
+		return -1
+	}
+	if aOrder < bOrder {
+		return 1
+	}
+	if aOrder > bOrder {
+		return -1
+	}
+	return 0
+}
+
+func forestAcceptedNodeResultStack(p *Parser, arena *nodeArena, accepted *gssForestNode, order int) (glrStack, bool) {
+	if accepted == nil {
+		return glrStack{}, false
+	}
+	var reversed []stackEntry
+	totalScore := 0
+	cur := accepted
+	foundRoot := false
+	for cur != nil {
+		link := cur.bestAcceptedRootResultLink(p, arena)
+		if link == nil {
+			return glrStack{}, false
+		}
+		reversed = append(reversed, link.subtree)
+		totalScore += link.score
+		if n := stackEntryNode(link.subtree); n != nil && !n.isExtra() {
+			cur = link.prev
+			foundRoot = true
+			break
+		}
+		cur = link.prev
+	}
+	if !foundRoot {
+		return glrStack{}, false
+	}
+	for cur != nil {
+		link := cur.bestResultLink(p, arena)
+		if link == nil {
+			break
+		}
+		n := stackEntryNode(link.subtree)
+		if n == nil || !n.isExtra() {
+			break
+		}
+		reversed = append(reversed, link.subtree)
+		totalScore += link.score
+		cur = link.prev
+	}
+	entries := make([]stackEntry, len(reversed))
+	for i := range reversed {
+		entries[i] = reversed[len(reversed)-1-i]
+	}
+	return glrStack{
+		accepted:    true,
+		entries:     entries,
+		score:       totalScore,
+		byteOffset:  accepted.byteOffset,
+		branchOrder: uint64(order),
+	}, true
+}
+
+func resolveForestChildAlternatives(p *Parser, arena *nodeArena, parent *Node, alternatives *forestAlternativeIndex, seen map[*Node]struct{}, depth int) {
+	if parent == nil || alternatives == nil || depth > maxTreeWalkDepth {
+		return
+	}
+	if seen == nil {
+		seen = make(map[*Node]struct{}, 16)
+	}
+	if _, ok := seen[parent]; ok {
+		return
+	}
+	seen[parent] = struct{}{}
+	defer delete(seen, parent)
+
+	for i := range parent.children {
+		child := parent.children[i]
+		if child == nil {
+			continue
+		}
+		chosen := child
+		if slot, ok := alternatives.slots[forestAlternativeSlotKey{parent: parent, childIndex: i}]; ok {
+			if best := slot.node.bestResultLinkForPrev(p, arena, slot.prev); best != nil {
+				if bestNode := stackEntryNode(best.subtree); bestNode != nil && forestAlternativeFitsChildSlot(p, child, bestNode) {
+					chosen = bestNode
+				}
+			}
+		}
+		for {
+			direct := forestRecordedUnaryDirectChildAlternative(p, arena, alternatives, chosen, depth+1)
+			if direct == nil {
+				break
+			}
+			chosen = direct
+		}
+		resolveForestChildAlternatives(p, arena, chosen, alternatives, seen, depth+1)
+		if chosen != child {
+			parent.children[i] = chosen
+			chosen.parent = parent
+			chosen.childIndex = int32(i)
+			replaceRawShapeChildEntry(arena, parent, child, chosen)
+			nodeBumpEquivVersion(parent)
+		}
+	}
+}
+
+func forestRecordedUnaryDirectChildAlternative(p *Parser, arena *nodeArena, alternatives *forestAlternativeIndex, wrapper *Node, depth int) *Node {
+	if p == nil || arena == nil || alternatives == nil || wrapper == nil || depth > maxTreeWalkDepth {
+		return nil
+	}
+	if len(wrapper.children) != 1 || alternatives.nodes[wrapper] == nil {
+		return nil
+	}
+	direct := wrapper.children[0]
+	if direct == nil || len(direct.children) <= 1 || alternatives.nodes[direct] == nil {
+		return nil
+	}
+	if !stackEntryUnaryWrapperContains(p, arena, newStackEntryNode(wrapper.parseState, wrapper), newStackEntryNode(direct.parseState, direct), depth+1) {
+		return nil
+	}
+	return direct
+}
+
+func forestAlternativeFitsChildSlot(p *Parser, original, candidate *Node) bool {
+	if original == nil || candidate == nil {
+		return false
+	}
+	if original.startByte != candidate.startByte ||
+		original.endByte != candidate.endByte ||
+		original.isExtra() != candidate.isExtra() ||
+		original.isMissing() != candidate.isMissing() {
+		return false
+	}
+	if forestVisibleNamedStructuralContainer(p, original) && !forestVisibleNamedStructuralContainer(p, candidate) {
+		return false
+	}
+	return true
+}
+
+func forestVisibleNamedStructuralContainer(p *Parser, node *Node) bool {
+	if node == nil || resultChildCount(node) == 0 {
+		return false
+	}
+	if p != nil && p.language != nil {
+		if idx := int(node.symbol); idx >= 0 && idx < len(p.language.SymbolMetadata) {
+			meta := p.language.SymbolMetadata[idx]
+			return meta.Visible || meta.Named
+		}
+	}
+	return node.isNamed()
+}
+
+func replaceRawShapeChildEntry(arena *nodeArena, parent, oldChild, newChild *Node) {
+	if arena == nil || parent == nil || oldChild == nil || newChild == nil || parent.rawShape == 0 {
+		return
+	}
+	shape, ok := arena.rawShapeForRef(parent.rawShape)
+	if !ok {
+		return
+	}
+	children := arena.rawShapeChildren(shape)
+	for i := range children {
+		if stackEntryNode(children[i].entry) != oldChild {
+			continue
+		}
+		children[i].entry = newStackEntryNode(newChild.parseState, newChild)
+		children[i].shapeRef = newChild.rawShape
+	}
+}
+
+// collectForestErrorRoot builds a synthetic error root from the best partial
+// parse in idx when EOF was reached without an accept (error recovery). It
+// mirrors production's buildSyntheticRootTree: pick the surviving actor that
+// consumed the most input at the lowest error cost, materialize its top-level
+// fragment list (the result-link chain down to the start), and wrap it in the
+// grammar's expected root symbol — retagged to errorSymbol when a fragment
+// carries an error (production's synthetic-root rule). Recovery-only.
+func (p *Parser) collectForestErrorRoot(idx *gssForestIndex, arena *nodeArena) *Node {
+	if idx == nil || len(idx.entries) == 0 {
+		return nil
+	}
+	var best *gssForestNode
+	for i := range idx.entries {
+		n := idx.entries[i].node
+		if n == nil {
+			continue
+		}
+		if best == nil || forestErrorRootBetter(p, arena, n, best) {
+			best = n
+		}
+	}
+	if best == nil {
+		return nil
+	}
+	// Walk the result-preferred chain down to the start, collecting top-level
+	// fragments latest-first, then reverse to source order.
+	var frags []*Node
+	for cur := best; cur != nil; {
+		link := cur.bestResultLink(p, arena)
+		if link == nil {
+			break
+		}
+		frags = append(frags, (*Node)(link.subtree.node))
+		cur = link.prev
+	}
+	if len(frags) == 0 {
+		return nil
+	}
+	for i, j := 0, len(frags)-1; i < j; i, j = i+1, j-1 {
+		frags[i], frags[j] = frags[j], frags[i]
+	}
+	hasErr := false
+	for _, f := range frags {
+		if f != nil && (f.symbol == errorSymbol || f.HasError()) {
+			hasErr = true
+			break
+		}
+	}
+	rootSym := p.rootSymbol
+	if hasErr {
+		// Forest EOF recovery does not run the result-root parser-table replay
+		// policy yet. Keep this path fail-closed on errored fragments until the
+		// forest materializer can share that framing check without changing
+		// forest recovery selection.
+		rootSym = errorSymbol
+	}
+	root := newParentNodeInArena(arena, rootSym, true, frags, nil, 0)
+	if hasErr {
+		root.setHasError(true)
+	}
+	return root
+}
+
+// forestErrorRootBetter ranks partial-parse actors for the synthetic error root:
+// consumed more input first, then lower error cost, then result-link ordering.
+func forestErrorRootBetter(p *Parser, arena *nodeArena, a, b *gssForestNode) bool {
+	if a.byteOffset != b.byteOffset {
+		return a.byteOffset > b.byteOffset
+	}
+	if a.errorCost != b.errorCost {
+		return a.errorCost < b.errorCost
+	}
+	la, lb := a.bestResultLink(p, arena), b.bestResultLink(p, arena)
+	if la != nil || lb != nil {
+		return forestResultLinkCompare(p, arena, a, la, 0, lb, 0) > 0
+	}
+	return false
+}
+
 // bestLink returns the link whose subtree wins tree-sitter's selection:
 // highest score (dynamic precedence), then earliest (production order).
 // forestCollapsibleNamedKeywordLeaf returns the collapsed LEAF for a unary reduce
@@ -637,7 +1859,7 @@ func forestRootChildrenCoverNonTrivia(root *Node, source []byte) bool {
 // inlines these to named leaves (ChildCount 0); the production reduce collapses
 // them too. Two gates make it forest-safe where the production predicate is not:
 //
-//   - sameSymbolName only (NOT the broader isSingleTokenWrapperSymbol path that
+//   - sameSymbolName only (NOT the broader different-named-child keep path that
 //     collapsibleRawUnarySelfReduction also takes): production gates that path on
 //     child.parent != nil, but the forest connects nodes via gssLink and never
 //     sets node.parent, so it would over-collapse rules C keeps as cc=1 (css
@@ -721,6 +1943,104 @@ func (n *gssForestNode) bestLink() *gssLink {
 		}
 	}
 	return best
+}
+
+func (n *gssForestNode) bestResultLink(p *Parser, arena *nodeArena) *gssLink {
+	return n.bestResultLinkWithRawShape(p, arena, true)
+}
+
+func (n *gssForestNode) bestResultLinkForPrev(p *Parser, arena *nodeArena, prev *gssForestNode) *gssLink {
+	if n == nil || len(n.links) == 0 {
+		return nil
+	}
+	best := -1
+	for i := range n.links {
+		if n.links[i].prev != prev {
+			continue
+		}
+		if best < 0 || forestResultLinkCompare(p, arena, n, &n.links[i], i, &n.links[best], best) > 0 {
+			best = i
+		}
+	}
+	if best < 0 {
+		return nil
+	}
+	return &n.links[best]
+}
+
+func (n *gssForestNode) bestAcceptedRootResultLink(p *Parser, arena *nodeArena) *gssLink {
+	return n.bestResultLinkWithRawShape(p, arena, false)
+}
+
+func (n *gssForestNode) bestResultLinkWithRawShape(p *Parser, arena *nodeArena, useRawShape bool) *gssLink {
+	if n == nil || len(n.links) == 0 {
+		return nil
+	}
+	best := 0
+	for i := 1; i < len(n.links); i++ {
+		if forestResultLinkCompareWithRawShape(p, arena, n, &n.links[i], i, &n.links[best], best, useRawShape) > 0 {
+			best = i
+		}
+	}
+	return &n.links[best]
+}
+
+func forestResultLinkCompare(p *Parser, arena *nodeArena, node *gssForestNode, a *gssLink, aOrder int, b *gssLink, bOrder int) int {
+	return forestResultLinkCompareWithRawShape(p, arena, node, a, aOrder, b, bOrder, true)
+}
+
+func forestResultLinkCompareWithRawShape(p *Parser, arena *nodeArena, node *gssForestNode, a *gssLink, aOrder int, b *gssLink, bOrder int, useRawShape bool) int {
+	if a == nil || b == nil {
+		if a != nil {
+			return 1
+		}
+		if b != nil {
+			return -1
+		}
+		return 0
+	}
+	if a.errorCost != b.errorCost {
+		if a.errorCost < b.errorCost {
+			return 1
+		}
+		return -1
+	}
+	// The forest link score is the cumulative dynamic precedence for this
+	// path. It can be higher than the materialized subtree node's own dynamic
+	// precedence when hidden/supertype reductions are flattened to their
+	// visible child, so apply it before stack/raw-shape tie-breaks.
+	if a.score != b.score {
+		if a.score > b.score {
+			return 1
+		}
+		return -1
+	}
+	if p != nil && arena != nil {
+		aStack := glrStack{
+			entries:     []stackEntry{a.subtree},
+			accepted:    true,
+			score:       a.score,
+			byteOffset:  node.byteOffset,
+			branchOrder: uint64(aOrder),
+		}
+		bStack := glrStack{
+			entries:     []stackEntry{b.subtree},
+			accepted:    true,
+			score:       b.score,
+			byteOffset:  node.byteOffset,
+			branchOrder: uint64(bOrder),
+		}
+		if cmp := stackCompareForResultSelectionWithRawShape(p, arena, &aStack, &bStack, false, useRawShape); cmp != 0 {
+			return cmp
+		}
+	}
+	if aOrder < bOrder {
+		return 1
+	}
+	if aOrder > bOrder {
+		return -1
+	}
+	return 0
 }
 
 type gssForestKey struct {
@@ -878,6 +2198,19 @@ func (s *gssForestNodeSlab) alloc(state StateID, byteOffset uint32, _ int, error
 	n.processedEpoch = 0
 	n.processedDirty = 0
 	n.noExtraDepth = 0
+	// dupBucket*/worst* are pure caches keyed off n.dirty (see their doc
+	// comment above): resetForRelease's clear() currently zeroes these too,
+	// so this is defense-in-depth, not a behavior change today. Reset them
+	// explicitly here so a future resetForRelease optimization (e.g. skipping
+	// clear() for slots known not to need it) can't reintroduce a stale
+	// dupBucketValid/worstValid hit against a different parse's dirty
+	// sequence (cross-parse ABA on a pooled, reused gssForestNode).
+	n.dupBucketValid = false
+	n.dupBucketDirty = 0
+	n.dupBucketIdx = 0
+	n.worstValid = false
+	n.worstDirty = 0
+	n.worstIdx = 0
 	return n
 }
 
@@ -950,6 +2283,11 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte, captureExternalChe
 	p.forestDeclineReason = ""
 	p.forestDeclineByte, p.forestDeclineSym = 0, 0
 	p.forestDeclineStates = p.forestDeclineStates[:0]
+	forestLastDeclineReason = ""
+	progress := newParseProgressTelemetry(p, len(source), uint32(len(source)), time.Now())
+	if progress.enabled {
+		progress.emit(time.Now(), "forest_parse_begin", 0, 0, Token{}, false, nil, 0, 0, 0, true, 0, 0, "")
+	}
 
 	// Reuse ONE child-builder scratch for every reduce in this parse (like the
 	// production loop). buildReduceChildrenWithPath calls newReduceBuildScratch,
@@ -965,7 +2303,7 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte, captureExternalChe
 	// selection, immediate tokens, external scanners and GLR-lexing all match
 	// the production parser. State is set per step from the frontier.
 	lexer := NewLexer(lang.LexStates, source)
-	ts := acquireDFATokenSource(lexer, lang, p.lookupActionIndex, p.hasKeywordState, p.externalValidByState, p.externalValidMaskByState)
+	ts := acquireDFATokenSourceWithCRecovery(lexer, lang, p.lookupActionIndexFunc(), p.hasKeywordState, p.externalValidByState, p.externalValidMaskByState, p.errorCostCompetitionEnabled())
 	ts.setExternalScannerCheckpointsEnabled(captureExternalCheckpoints)
 
 	// tree-sitter convention: state 0 is the error state, state 1 is the start.
@@ -983,26 +2321,94 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte, captureExternalChe
 	// false) and the production parser re-runs and reports ParseStopMemoryBudget.
 	arena.setBudget(parseMemoryBudgetForParser(p, len(source)))
 
+	// Honor the same caller-configured timeout/cancellation the production
+	// loop enforces (parser.go's `for iter := ...` checks p.parseStopReasonNow()
+	// every iteration). Until this, the forest had NO deadline/cancellation
+	// awareness at all — SetTimeoutMicros/cancellation were silently
+	// unenforceable for any forest-dispatched language, and the forest's only
+	// safety valves (forestReduceStepCap/forestReduceVisitCap/
+	// forestWorklistVisitCap) do not bound wall-clock time: a pathological
+	// shape (e.g. a wide/deeply-ambiguous C# designer-generated block) can sit
+	// reprocessing the same token position for many seconds on only a few
+	// hundred reduce-visits, never tripping those caps. stopPoller mirrors
+	// parseStopPoller: pollNow() (unmasked) once per TOKEN below, cheap enough
+	// at that frequency; poll() (masked to every 1024 calls, parser_timeout.go)
+	// inside the reduce/coalesce worklist loop, which can iterate far more
+	// often than once per token on an ambiguous shape. Declining here (rather
+	// than fabricating a forest-side timeout tree) means the two forest entry
+	// points behave differently on a timeout/cancellation decline, matching
+	// what each already does for every OTHER decline reason: tryForestFastPath
+	// (the real p.Parse() dispatch, parser_api.go) just returns nil to its
+	// caller, which falls through to the normal production loop — that loop's
+	// own enterParseBudget-established deadline is the SAME one (nesting, not
+	// reset), so its very first p.parseStopReasonNow() check fires immediately
+	// and returns a proper ParseStopTimeout/ParseStopCancelled tree cheaply.
+	// ParseForestExperimental's fallback, by contrast, only re-runs production
+	// internally for forestDeclineEOFRecoveryConflict specifically (see below);
+	// a timeout/cancellation decline reason does not match that string, so it
+	// takes the plain `return nil, false` path with no internal fallback
+	// attempt at all — callers of that standalone entry point get a bare
+	// failure on timeout, not a production retry.
+	stopPoller := parseStopPoller{check: p.activeParseStopCheck()}
+
 	// Per-step scratch reused across every token (cleared, not reallocated): the
 	// allocation/GC of fresh maps+slices each step dominated the profile.
 	curIndex := newGSSForestIndex(16)
 	nextIndex := newGSSForestIndex(16)
 	var work, nextFrontier, relex []*gssForestNode
+	alternatives := newForestAlternativeIndex(forestAlternativeIndexCapacityForSource(len(source)))
 	processEpoch := int32(0)
 	noLookaheadSteps := 0
+	recoverCount := 0
+	recoverActive := glrForestRecover || languageWantsForestRecover(lang.Name)
+	if progress.enabled {
+		progress.emit(time.Now(), "forest_setup_end", 0, 0, Token{}, false, nil, 0, 0, 0, true, 0, 0,
+			forestProgressExtra(frontier, work, nextFrontier, curIndex, nextIndex, processEpoch, recoverCount, reducer, nil, fmt.Sprintf("recover_active=%t", recoverActive)))
+	}
+	iter := 0
+	var tokens uint64
 
 	for {
+		iter++
 		processEpoch++
+		if progress.enabled {
+			progress.beginDetail(time.Now(), "forest_step_begin", "", iter, tokens, Token{}, false, nil, 0, 0, 0, true, 0, 0,
+				forestProgressExtra(frontier, work, nextFrontier, curIndex, nextIndex, processEpoch, recoverCount, reducer, nil, ""))
+		}
 		if arena.budgetExhausted() {
 			// Memory budget hit; decline so the production parser re-runs and
 			// reports ParseStopMemoryBudget (the forest has no partial-tree path).
 			p.recordForestDecline("budget", Token{StartByte: frontier[len(frontier)-1].byteOffset}, nil)
+			if progress.enabled {
+				progress.emit(time.Now(), "forest_decline", iter, tokens, Token{}, false, nil, 0, 0, 0, false, 0, 0,
+					forestProgressExtra(frontier, work, nextFrontier, curIndex, nextIndex, processEpoch, recoverCount, reducer, nil, "decline_reason=budget"))
+			}
+			return nil, false
+		}
+		if reason := stopPoller.pollNow(); parseStopReasonIsTerminal(reason) {
+			// Timeout/cancellation: decline so the caller's already-established
+			// deadline is honored by whichever path re-checks it next (the
+			// ParseForestExperimental fallback's p.Parse(source), or the
+			// production loop this same *Parser is already inside when
+			// dispatched via tryForestFastPath) instead of the forest silently
+			// running unbounded.
+			p.recordForestDecline(string(reason), Token{StartByte: frontier[len(frontier)-1].byteOffset}, nil)
+			if progress.enabled {
+				progress.emit(time.Now(), "forest_decline", iter, tokens, Token{}, false, nil, 0, 0, 0, false, 0, 0,
+					forestProgressExtra(frontier, work, nextFrontier, curIndex, nextIndex, processEpoch, recoverCount, reducer, nil, "decline_reason="+string(reason)))
+			}
 			return nil, false
 		}
 		if reducer.capped {
-			// A forest reduce exceeded forestReduceStepCap (high-ambiguity
-			// blowup); decline so the caller falls back to the production parser.
-			p.recordForestDecline("reducer_capped", Token{StartByte: frontier[len(frontier)-1].byteOffset}, nil)
+			reason := reducer.capReason
+			if reason == "" {
+				reason = "reducer_capped"
+			}
+			p.recordForestDecline(reason, Token{StartByte: frontier[len(frontier)-1].byteOffset}, nil)
+			if progress.enabled {
+				progress.emit(time.Now(), "forest_decline", iter, tokens, Token{}, false, nil, 0, 0, 0, false, 0, 0,
+					forestProgressExtra(frontier, work, nextFrontier, curIndex, nextIndex, processEpoch, recoverCount, reducer, nil, "decline_reason="+reason))
+			}
 			return nil, false
 		}
 		// GLR-lex over the union of frontier states; lead = the most-advanced.
@@ -1012,7 +2418,12 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte, captureExternalChe
 		}
 		ts.SetGLRStates(glrStates)
 		ts.SetParserState(frontier[len(frontier)-1].state)
+		if progress.enabled {
+			progress.beginDetail(time.Now(), "forest_token_next_begin", "forest_token_next_end", iter, tokens, Token{}, false, nil, 0, 0, 0, true, 0, 0,
+				forestProgressExtra(frontier, work, nextFrontier, curIndex, nextIndex, processEpoch, recoverCount, reducer, nil, fmt.Sprintf("glr_state_count=%d parser_state=%d", len(glrStates), frontier[len(frontier)-1].state)))
+		}
 		tok := ts.Next()
+		tokens++
 		p.updateCurrentExternalTokenCheckpoint(ts, tok)
 		// A NoLookahead token is a SYNTHETIC EOF the token source emits to force
 		// the no-lookahead-state reduction (e.g. completing a multi-token comment
@@ -1020,6 +2431,10 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte, captureExternalChe
 		// real EOF. Treating the synthetic one as EOF truncated any file whose
 		// comment lexes as >1 token (rust/lua/dart starting with a comment).
 		eof := tok.Symbol == 0 && !tok.NoLookahead
+		if progress.enabled {
+			progress.endDetail(time.Now(), "forest_token_next_end", iter, tokens, tok, true, nil, 0, 0, 0, true, 0, 0,
+				forestProgressExtra(frontier, work, nextFrontier, curIndex, nextIndex, processEpoch, recoverCount, reducer, nil, ""))
+		}
 
 		// Reduces coalesce into curIndex (same position, seeded with the
 		// frontier so a reduced nonterminal can merge with an existing actor);
@@ -1031,9 +2446,46 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte, captureExternalChe
 		nextIndex.reset()
 		nextFrontier = nextFrontier[:0]
 		var accepted *gssForestNode
+		acceptedOrder := 0
+		acceptedBestOrder := 0
 
 		work = append(work[:0], frontier...)
+		if progress.enabled {
+			progress.beginDetail(time.Now(), "forest_reduce_worklist_begin", "forest_reduce_worklist_end", iter, tokens, tok, true, nil, 0, 0, 0, true, 0, 0,
+				forestProgressExtra(frontier, work, nextFrontier, curIndex, nextIndex, processEpoch, recoverCount, reducer, accepted, ""))
+		}
+		reducer.visitCount = 0
+		reducer.visitCap = forestReduceVisitCap
+		reducer.capReason = ""
+		workVisits := 0
 		for len(work) > 0 {
+			workVisits++
+			if workVisits > forestWorklistVisitCap {
+				reducer.capped = true
+				reducer.capReason = "worklist-cap"
+				p.recordForestDecline("worklist-cap", tok, nil)
+				if progress.enabled {
+					progress.emit(time.Now(), "forest_decline", iter, tokens, tok, true, nil, 0, 0, 0, false, 0, 0,
+						forestProgressExtra(frontier, work, nextFrontier, curIndex, nextIndex, processEpoch, recoverCount, reducer, accepted,
+							fmt.Sprintf("decline_reason=worklist-cap work_visits=%d work_cap=%d", workVisits, forestWorklistVisitCap)))
+				}
+				return nil, false
+			}
+			// Masked (every 1024 calls, parser_timeout.go) so a hot worklist
+			// doesn't pay a time.Now() per visit: this loop can run far more
+			// than once per token on an ambiguous shape, unlike the per-token
+			// pollNow() above.
+			if reason := stopPoller.poll(); parseStopReasonIsTerminal(reason) {
+				reducer.capped = true
+				reducer.capReason = string(reason)
+				p.recordForestDecline(string(reason), tok, nil)
+				if progress.enabled {
+					progress.emit(time.Now(), "forest_decline", iter, tokens, tok, true, nil, 0, 0, 0, false, 0, 0,
+						forestProgressExtra(frontier, work, nextFrontier, curIndex, nextIndex, processEpoch, recoverCount, reducer, accepted,
+							"decline_reason="+string(reason)))
+				}
+				return nil, false
+			}
 			node := work[len(work)-1]
 			work = work[:len(work)-1]
 			// Process a node the first time it is seen, and again whenever it has
@@ -1046,7 +2498,25 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte, captureExternalChe
 			node.processedEpoch = processEpoch
 			node.processedDirty = node.dirty
 
-			for _, act := range p.actionsForParseState(node.state, tok.Symbol, lang.ParseActions) {
+			nodeActions := p.actionsForParseState(node.state, tok.Symbol, lang.ParseActions)
+			nodeActions = p.forestResolveConflict(node.state, tok, nodeActions)
+			if progress.enabled {
+				reduceActions, shiftActions, acceptActions := 0, 0, 0
+				for _, act := range nodeActions {
+					switch act.Type {
+					case ParseActionReduce:
+						reduceActions++
+					case ParseActionShift:
+						shiftActions++
+					case ParseActionAccept:
+						acceptActions++
+					}
+				}
+				progress.beginDetail(time.Now(), "forest_actions", "", iter, tokens, tok, true, nil, 0, 0, 0, true, 0, 0,
+					forestProgressExtra(frontier, work, nextFrontier, curIndex, nextIndex, processEpoch, recoverCount, reducer, accepted,
+						fmt.Sprintf("state=%d action_count=%d reduce_actions=%d shift_actions=%d accept_actions=%d", node.state, len(nodeActions), reduceActions, shiftActions, acceptActions)))
+			}
+			for _, act := range nodeActions {
 				switch act.Type {
 				case ParseActionReduce:
 					// Synthetic-EOF containment: a NoLookahead token is the synthetic
@@ -1065,11 +2535,35 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte, captureExternalChe
 					}
 					cc := int(act.ChildCount)
 					var gotoCache forestGotoCache
+					if progress.enabled {
+						progress.beginDetail(time.Now(), "forest_reduce_begin", "forest_reduce_end", iter, tokens, tok, true, nil, 0, 0, 0, true, 0, 0,
+							forestProgressExtra(frontier, work, nextFrontier, curIndex, nextIndex, processEpoch, recoverCount, reducer, accepted,
+								fmt.Sprintf("state=%d reduce_symbol=%d child_count=%d production_id=%d dynamic_precedence=%d", node.state, act.Symbol, cc, act.ProductionID, act.DynamicPrecedence)))
+					}
 					reducer.reduce(node, cc, func(children []stackEntry, childScore int, popTo *gssForestNode, noExtras bool) {
+						if reducer.capped {
+							return
+						}
+						if progress.enabled {
+							popState := StateID(0)
+							popOffset := uint32(0)
+							if popTo != nil {
+								popState = popTo.state
+								popOffset = popTo.byteOffset
+							}
+							progress.beginDetail(time.Now(), "forest_reduce_visit_begin", "", iter, tokens, tok, true, nil, 0, 0, 0, true, 0, 0,
+								forestProgressExtra(frontier, work, nextFrontier, curIndex, nextIndex, processEpoch, recoverCount, reducer, accepted,
+									fmt.Sprintf("reduce_symbol=%d child_count=%d visit_child_len=%d child_score=%d pop_state=%d pop_offset=%d no_extras=%t", act.Symbol, cc, len(children), childScore, popState, popOffset, noExtras)))
+						}
 						gotoState := gotoCache.lookup(p, popTo.state, act.Symbol)
 						if gotoState == 0 {
 							if perfCountersEnabled {
 								perfRecordForestReduceGotoMiss()
+							}
+							if progress.enabled {
+								progress.beginDetail(time.Now(), "forest_reduce_goto_miss", "", iter, tokens, tok, true, nil, 0, 0, 0, true, 0, 0,
+									forestProgressExtra(frontier, work, nextFrontier, curIndex, nextIndex, processEpoch, recoverCount, reducer, accepted,
+										fmt.Sprintf("reduce_symbol=%d child_count=%d pop_state=%d", act.Symbol, cc, popTo.state)))
 							}
 							return
 						}
@@ -1127,6 +2621,11 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte, captureExternalChe
 							if perfCountersEnabled {
 								perfRecordForestCoalescePreCapDrop()
 							}
+							if progress.enabled {
+								progress.beginDetail(time.Now(), "forest_reduce_precap_drop", "", iter, tokens, tok, true, nil, 0, 0, 0, true, 0, 0,
+									forestProgressExtra(frontier, work, nextFrontier, curIndex, nextIndex, processEpoch, recoverCount, reducer, accepted,
+										fmt.Sprintf("reduce_symbol=%d child_count=%d goto_state=%d parent_end=%d score=%d error_cost=%d", act.Symbol, cc, gotoState, parentEnd, score, popTo.errorCost)))
+							}
 							return
 						}
 						// A collapsible named-keyword-leaf reduce (e.g. go `false`->'false',
@@ -1137,10 +2636,32 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte, captureExternalChe
 						// entirely so the child's parent link is untouched and the collapsed
 						// leaf keeps the child's span.
 						var parent *Node
+						var childNodes []*Node
 						if collapsed := p.forestCollapsibleNamedKeywordLeaf(act, tok, arena, children, 0, reducedEnd); collapsed != nil {
+							if progress.enabled {
+								progress.beginDetail(time.Now(), "forest_reduce_parent_begin", "forest_reduce_parent_end", iter, tokens, tok, true, nil, 0, 0, 0, true, 0, 0,
+									forestProgressExtra(frontier, work, nextFrontier, curIndex, nextIndex, processEpoch, recoverCount, reducer, accepted,
+										fmt.Sprintf("reduce_symbol=%d child_count=%d child_nodes=0 collapsed=true", act.Symbol, cc)))
+							}
 							parent = collapsed
 						} else {
-							childNodes, fieldIDs, fieldSources, childPath := p.buildReduceChildrenWithPath(children, 0, reducedEnd, cc, act.Symbol, act.ProductionID, arena)
+							if progress.enabled {
+								progress.beginDetail(time.Now(), "forest_reduce_children_begin", "forest_reduce_children_end", iter, tokens, tok, true, nil, 0, 0, 0, true, 0, 0,
+									forestProgressExtra(frontier, work, nextFrontier, curIndex, nextIndex, processEpoch, recoverCount, reducer, accepted,
+										fmt.Sprintf("reduce_symbol=%d child_count=%d reduced_end=%d children_len=%d", act.Symbol, cc, reducedEnd, len(children))))
+							}
+							var fieldIDs []FieldID
+							var fieldSources []uint8
+							var childPath reduceChildPath
+							childNodes, fieldIDs, fieldSources, childPath = p.buildReduceChildrenWithPath(children, 0, reducedEnd, cc, act.Symbol, act.ProductionID, arena)
+							if progress.enabled {
+								progress.endDetail(time.Now(), "forest_reduce_children_end", iter, tokens, tok, true, nil, 0, 0, 0, true, 0, 0,
+									forestProgressExtra(frontier, work, nextFrontier, curIndex, nextIndex, processEpoch, recoverCount, reducer, accepted,
+										fmt.Sprintf("reduce_symbol=%d child_count=%d child_nodes=%d", act.Symbol, cc, len(childNodes))))
+								progress.beginDetail(time.Now(), "forest_reduce_parent_begin", "forest_reduce_parent_end", iter, tokens, tok, true, nil, 0, 0, 0, true, 0, 0,
+									forestProgressExtra(frontier, work, nextFrontier, curIndex, nextIndex, processEpoch, recoverCount, reducer, accepted,
+										fmt.Sprintf("reduce_symbol=%d child_count=%d child_nodes=%d", act.Symbol, cc, len(childNodes))))
+							}
 							parent = newParentNodeInArenaWithFieldSources(arena, act.Symbol, named(act.Symbol), childNodes, fieldIDs, fieldSources, act.ProductionID)
 							// Recover the reduced node's byte span from the full window,
 							// mirroring the production reduce. newParentNode spans only the
@@ -1156,7 +2677,7 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte, captureExternalChe
 								rawSpanApplied = true
 							}
 							if !rawSpanApplied && reduceChildPathMayDropSpan(childPath) {
-								extendParentSpanToWindow(parent, children, 0, reducedEnd, lang.SymbolMetadata, p.spanExtendingInvisibleSymbols, p.nonSpanExtendingInvisibleSymbols)
+								extendParentSpanToWindow(parent, children, 0, reducedEnd, lang.SymbolMetadata, p.spanExtendingInvisibleSymbols, p.nonSpanExtendingInvisibleSymbols, source)
 							}
 						}
 						// Coalescing tracks parser input position, not necessarily the
@@ -1179,23 +2700,68 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte, captureExternalChe
 						if tok.NoLookahead && gotoState == popTo.state {
 							parent.setExtra(true)
 						}
+						parent.dynamicPrecedence = int32(score)
+						parent.rawShape = p.captureRawShape(arena, act.Symbol, act.ProductionID, children, 0, reducedEnd)
+						if len(childNodes) > 0 {
+							forestRecordParentChildAlternatives(alternatives, parent, childNodes, children[:reducedEnd])
+						}
+						if progress.enabled {
+							progress.endDetail(time.Now(), "forest_reduce_parent_end", iter, tokens, tok, true, nil, 0, 0, 0, true, 0, 0,
+								forestProgressExtra(frontier, work, nextFrontier, curIndex, nextIndex, processEpoch, recoverCount, reducer, accepted,
+									fmt.Sprintf("reduce_symbol=%d parent_start=%d parent_end=%d goto_state=%d", act.Symbol, parent.startByte, parent.endByte, gotoState)))
+							progress.beginDetail(time.Now(), "forest_reduce_coalesce_begin", "forest_reduce_coalesce_end", iter, tokens, tok, true, nil, 0, 0, 0, true, 0, 0,
+								forestProgressExtra(frontier, work, nextFrontier, curIndex, nextIndex, processEpoch, recoverCount, reducer, accepted,
+									fmt.Sprintf("reduce_symbol=%d goto_state=%d parent_end=%d trailing_extras=%d", act.Symbol, gotoState, parentEnd, len(children)-reducedEnd)))
+						}
+						parentEntry := stackEntry{node: unsafe.Pointer(parent), state: gotoState, kind: stackEntryKindNode}
 						// Subtree score = this production's dynamic precedence +
 						// the children's accumulated scores.
-						top := coalesceForest(&curIndex, slab, gotoState, parentEnd, popTo,
-							stackEntry{node: unsafe.Pointer(parent), state: gotoState, kind: stackEntryKindNode},
-							score, popTo.errorCost, linkCap)
+						top := coalesceForestWithRawAndAlternatives(p, arena, &curIndex, slab, gotoState, parentEnd, popTo,
+							parentEntry,
+							score, popTo.errorCost, linkCap, alternatives)
 						for _, ex := range children[reducedEnd:] {
 							extra := (*Node)(ex.node)
 							extra.parseState = gotoState
 							nodeBumpEquivVersion(extra)
 							exEnd := extra.endByte
-							top = coalesceForest(&curIndex, slab, gotoState, exEnd, top,
+							top = coalesceForestWithRawAndAlternatives(p, arena, &curIndex, slab, gotoState, exEnd, top,
 								stackEntry{node: ex.node, state: gotoState, kind: stackEntryKindNode},
-								0, top.errorCost, linkCap)
+								0, top.errorCost, linkCap, alternatives)
 						}
 						work = append(work, top)
+						if progress.enabled {
+							progress.endDetail(time.Now(), "forest_reduce_coalesce_end", iter, tokens, tok, true, nil, 0, 0, 0, true, 0, 0,
+								forestProgressExtra(frontier, work, nextFrontier, curIndex, nextIndex, processEpoch, recoverCount, reducer, accepted,
+									fmt.Sprintf("reduce_symbol=%d goto_state=%d work_len_after_append=%d", act.Symbol, gotoState, len(work))))
+						}
 					})
+					if reducer.capped {
+						reason := reducer.capReason
+						if reason == "" {
+							reason = "reduce-cap"
+						}
+						p.recordForestDecline(reason, tok, nil)
+						if progress.enabled {
+							progress.emit(time.Now(), "forest_decline", iter, tokens, tok, true, nil, 0, 0, 0, false, 0, 0,
+								forestProgressExtra(frontier, work, nextFrontier, curIndex, nextIndex, processEpoch, recoverCount, reducer, accepted,
+									fmt.Sprintf("decline_reason=%s work_visits=%d reduce_symbol=%d child_count=%d visit_cap=%d step_cap=%d", reason, workVisits, act.Symbol, cc, forestReduceVisitCap, forestReduceStepCap)))
+						}
+						return nil, false
+					}
+					if progress.enabled {
+						progress.endDetail(time.Now(), "forest_reduce_end", iter, tokens, tok, true, nil, 0, 0, 0, true, 0, 0,
+							forestProgressExtra(frontier, work, nextFrontier, curIndex, nextIndex, processEpoch, recoverCount, reducer, accepted,
+								fmt.Sprintf("state=%d reduce_symbol=%d child_count=%d reducer_steps=%d reducer_capped=%t", node.state, act.Symbol, cc, reducer.steps, reducer.capped)))
+					}
 				case ParseActionShift:
+					if !p.guardForestRealShiftGap(source, node, tok) {
+						continue
+					}
+					if progress.enabled {
+						progress.beginDetail(time.Now(), "forest_shift_begin", "forest_shift_end", iter, tokens, tok, true, nil, 0, 0, 0, true, 0, 0,
+							forestProgressExtra(frontier, work, nextFrontier, curIndex, nextIndex, processEpoch, recoverCount, reducer, accepted,
+								fmt.Sprintf("state=%d shift_state=%d extra=%t", node.state, act.State, act.Extra)))
+					}
 					leaf := newLeafNodeInArena(arena, tok.Symbol, named(tok.Symbol), tok.StartByte, tok.EndByte, tok.StartPoint, tok.EndPoint)
 					// An extra (comment/whitespace) shifts without advancing the
 					// parse state: it stays transparent to the grammar and is
@@ -1211,11 +2777,16 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte, captureExternalChe
 					leaf.parseState = target
 					p.recordCurrentExternalLeafCheckpoint(leaf, tok)
 					before := nextIndex.len()
-					sh := coalesceForest(&nextIndex, slab, target, tok.EndByte, node,
+					sh := coalesceForestWithRawAndAlternatives(p, arena, &nextIndex, slab, target, tok.EndByte, node,
 						stackEntry{node: unsafe.Pointer(leaf), state: target, kind: stackEntryKindNode},
-						0, node.errorCost, linkCap) // a shifted leaf carries no dynamic precedence
+						0, node.errorCost, linkCap, alternatives) // a shifted leaf carries no dynamic precedence
 					if nextIndex.len() != before {
 						nextFrontier = append(nextFrontier, sh)
+					}
+					if progress.enabled {
+						progress.endDetail(time.Now(), "forest_shift_end", iter, tokens, tok, true, nil, 0, 0, 0, true, 0, 0,
+							forestProgressExtra(frontier, work, nextFrontier, curIndex, nextIndex, processEpoch, recoverCount, reducer, accepted,
+								fmt.Sprintf("state=%d target_state=%d next_index_before=%d next_index_after=%d shifted=%t", node.state, target, before, nextIndex.len(), nextIndex.len() != before)))
 					}
 				case ParseActionAccept:
 					// Prefer the accept candidate that consumed the MOST input. A
@@ -1223,17 +2794,77 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte, captureExternalChe
 					// EOF) produces a second accept node ABOVE the root whose
 					// byteOffset is larger; the plain root accepts too, and taking the
 					// last-seen one drops the trailing comment. Max-coverage keeps it.
-					if accepted == nil || node.byteOffset > accepted.byteOffset {
+					order := acceptedOrder
+					acceptedOrder++
+					if accepted == nil ||
+						node.byteOffset > accepted.byteOffset ||
+						(node.byteOffset == accepted.byteOffset && forestAcceptedNodeCompare(p, arena, node, order, accepted, acceptedBestOrder) > 0) {
 						accepted = node
+						acceptedBestOrder = order
+					}
+					if progress.enabled {
+						progress.beginDetail(time.Now(), "forest_accept_seen", "", iter, tokens, tok, true, nil, 0, 0, 0, true, 0, 0,
+							forestProgressExtra(frontier, work, nextFrontier, curIndex, nextIndex, processEpoch, recoverCount, reducer, accepted,
+								fmt.Sprintf("state=%d", node.state)))
 					}
 				}
 			}
 		}
+		if progress.enabled {
+			progress.endDetail(time.Now(), "forest_reduce_worklist_end", iter, tokens, tok, true, nil, 0, 0, 0, true, 0, 0,
+				forestProgressExtra(frontier, work, nextFrontier, curIndex, nextIndex, processEpoch, recoverCount, reducer, accepted, ""))
+		}
 
 		if eof {
-			root, extras := collectForestRootAndExtras(accepted)
+			if accepted != nil && (recoverActive || p.errorCostCompetitionEnabled()) && p.forestEOFRecoveryCouldCompete(&curIndex, arena, tok.StartByte, !recoverActive) {
+				p.recordForestDecline(forestDeclineEOFRecoveryConflict, tok, nil)
+				if progress.enabled {
+					progress.emit(time.Now(), "forest_decline", iter, tokens, tok, true, nil, 0, 0, 0, false, 0, 0,
+						forestProgressExtra(frontier, work, nextFrontier, curIndex, nextIndex, processEpoch, recoverCount, reducer, accepted, "decline_reason="+forestDeclineEOFRecoveryConflict))
+				}
+				return nil, false
+			}
+			if progress.enabled {
+				progress.beginDetail(time.Now(), "forest_collect_root_begin", "forest_collect_root_end", iter, tokens, tok, true, nil, 0, 0, 0, true, 0, 0,
+					forestProgressExtra(frontier, work, nextFrontier, curIndex, nextIndex, processEpoch, recoverCount, reducer, accepted, ""))
+			}
+			root, extras := collectForestRootAndExtras(p, arena, accepted, alternatives)
+			if progress.enabled {
+				progress.endDetail(time.Now(), "forest_collect_root_end", iter, tokens, tok, true, nil, 0, 0, 0, true, 0, 0,
+					forestProgressExtra(frontier, work, nextFrontier, curIndex, nextIndex, processEpoch, recoverCount, reducer, accepted,
+						fmt.Sprintf("root_present=%t extras_len=%d", root != nil, len(extras))))
+			}
 			if root == nil {
+				if recoverActive {
+					if progress.enabled {
+						progress.beginDetail(time.Now(), "forest_collect_error_root_begin", "forest_collect_error_root_end", iter, tokens, tok, true, nil, 0, 0, 0, true, 0, 0,
+							forestProgressExtra(frontier, work, nextFrontier, curIndex, nextIndex, processEpoch, recoverCount, reducer, accepted, ""))
+					}
+					if eroot := p.collectForestErrorRoot(&curIndex, arena); eroot != nil {
+						forestPreserveRootVisibleContainerAlternatives(p, arena, eroot, alternatives)
+						if int(eroot.endByte) < len(source) && bytesAreTrivia(source[eroot.endByte:]) {
+							extendNodeEndTo(eroot, uint32(len(source)), source)
+						}
+						if progress.enabled {
+							progress.endDetail(time.Now(), "forest_collect_error_root_end", iter, tokens, tok, true, nil, 0, 0, 0, false, 0, 0,
+								forestProgressExtra(frontier, work, nextFrontier, curIndex, nextIndex, processEpoch, recoverCount, reducer, accepted,
+									fmt.Sprintf("root_present=true root_end=%d", eroot.EndByte())))
+							progress.emit(time.Now(), "forest_return", iter, tokens, tok, true, nil, 0, 0, 0, false, 0, 0,
+								forestProgressExtra(frontier, work, nextFrontier, curIndex, nextIndex, processEpoch, recoverCount, reducer, accepted,
+									fmt.Sprintf("ok=true root_end=%d error_root=true", eroot.EndByte())))
+						}
+						return eroot, true
+					}
+					if progress.enabled {
+						progress.endDetail(time.Now(), "forest_collect_error_root_end", iter, tokens, tok, true, nil, 0, 0, 0, true, 0, 0,
+							forestProgressExtra(frontier, work, nextFrontier, curIndex, nextIndex, processEpoch, recoverCount, reducer, accepted, "root_present=false"))
+					}
+				}
 				p.recordForestDecline("eof_no_root", tok, nil)
+				if progress.enabled {
+					progress.emit(time.Now(), "forest_decline", iter, tokens, tok, true, nil, 0, 0, 0, false, 0, 0,
+						forestProgressExtra(frontier, work, nextFrontier, curIndex, nextIndex, processEpoch, recoverCount, reducer, accepted, "decline_reason=eof_no_root"))
+				}
 				return nil, false
 			}
 			// Leading/trailing extras live outside the start-symbol node (above or
@@ -1256,7 +2887,16 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte, captureExternalChe
 			// structurally-incomplete tree. Decline so production re-runs.
 			if !forestRootChildrenCoverNonTrivia(root, source) {
 				p.recordForestDecline("noncontiguous_root", tok, nil)
+				if progress.enabled {
+					progress.emit(time.Now(), "forest_decline", iter, tokens, tok, true, nil, 0, 0, 0, false, 0, 0,
+						forestProgressExtra(frontier, work, nextFrontier, curIndex, nextIndex, processEpoch, recoverCount, reducer, accepted, "decline_reason=noncontiguous_root"))
+				}
 				return nil, false
+			}
+			if progress.enabled {
+				progress.emit(time.Now(), "forest_return", iter, tokens, tok, true, nil, 0, 0, 0, false, 0, 0,
+					forestProgressExtra(frontier, work, nextFrontier, curIndex, nextIndex, processEpoch, recoverCount, reducer, accepted,
+						fmt.Sprintf("ok=true root_end=%d extras_len=%d", root.EndByte(), len(extras))))
 			}
 			return root, true
 		}
@@ -1291,12 +2931,84 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte, captureExternalChe
 			for i := range curIndex.entries {
 				curStates = append(curStates, curIndex.entries[i].node.state)
 			}
-			p.recordForestDecline("dead_end", tok, curStates)
-			return nil, false
+			// No frontier node could shift this token: the production parser would
+			// recover here. EXPERIMENTAL: absorb the token into an error region and
+			// keep the frontier alive in its current states, advancing past the
+			// token. Consecutive absorbed tokens are deferred to finalization, which
+			// wraps the error span(s). Off by default (glrForestRecover).
+			if !recoverActive || eof || recoverCount >= forestRecoverCap || tok.EndByte <= tok.StartByte {
+				p.recordForestDecline("dead_end", tok, curStates)
+				if progress.enabled {
+					progress.emit(time.Now(), "forest_decline", iter, tokens, tok, true, nil, 0, 0, 0, false, 0, 0,
+						forestProgressExtra(frontier, work, nextFrontier, curIndex, nextIndex, processEpoch, recoverCount, reducer, accepted,
+							fmt.Sprintf("decline_reason=dead_end recover_active=%t recover_cap_hit=%t", recoverActive, recoverCount >= forestRecoverCap)))
+				}
+				return nil, false
+			}
+			// error_cost recovery (tree-sitter C model, reusing production's
+			// recover-action table): for each stuck frontier node, prefer a
+			// grammar RECOVER action (pop to a recover-capable state so reductions
+			// can continue toward accept — the piece naive error-skip lacked);
+			// otherwise absorb the token into an error leaf at the current state.
+			// Each absorbed token raises errorCost by its width; finalization
+			// selects the lowest-errorCost path.
+			tokWidth := int(tok.EndByte - tok.StartByte)
+			nextIndex.reset()
+			nextFrontier = nextFrontier[:0]
+			if progress.enabled {
+				progress.beginDetail(time.Now(), "forest_recovery_begin", "forest_recovery_end", iter, tokens, tok, true, nil, 0, 0, 0, true, 0, 0,
+					forestProgressExtra(frontier, work, nextFrontier, curIndex, nextIndex, processEpoch, recoverCount, reducer, accepted,
+						fmt.Sprintf("tok_width=%d", tokWidth)))
+			}
+			for _, n := range frontier {
+				if !p.guardForestRealShiftGap(source, n, tok) {
+					continue
+				}
+				recoverState := n.state
+				if act, ok := p.recoverActionForState(n.state, tok.Symbol); ok && act.State != 0 {
+					recoverState = act.State
+				}
+				errLeaf := newLeafNodeInArena(arena, errorSymbol, true, tok.StartByte, tok.EndByte, tok.StartPoint, tok.EndPoint)
+				errLeaf.setHasError(true)
+				errLeaf.preGotoState = n.state
+				errLeaf.parseState = recoverState
+				before := nextIndex.len()
+				sh := coalesceForestWithRawAndAlternatives(p, arena, &nextIndex, slab, recoverState, tok.EndByte, n,
+					stackEntry{node: unsafe.Pointer(errLeaf), state: recoverState, kind: stackEntryKindNode},
+					0, n.errorCost+tokWidth, linkCap, alternatives)
+				if nextIndex.len() != before {
+					nextFrontier = append(nextFrontier, sh)
+				}
+			}
+			if len(nextFrontier) == 0 {
+				p.recordForestDecline("dead_end", tok, curStates)
+				if progress.enabled {
+					progress.endDetail(time.Now(), "forest_recovery_end", iter, tokens, tok, true, nil, 0, 0, 0, false, 0, 0,
+						forestProgressExtra(frontier, work, nextFrontier, curIndex, nextIndex, processEpoch, recoverCount, reducer, accepted, "recovered=false"))
+					progress.emit(time.Now(), "forest_decline", iter, tokens, tok, true, nil, 0, 0, 0, false, 0, 0,
+						forestProgressExtra(frontier, work, nextFrontier, curIndex, nextIndex, processEpoch, recoverCount, reducer, accepted, "decline_reason=dead_end"))
+				}
+				return nil, false
+			}
+			recoverCount++
+			if progress.enabled {
+				progress.endDetail(time.Now(), "forest_recovery_end", iter, tokens, tok, true, nil, 0, 0, 0, true, 0, 0,
+					forestProgressExtra(frontier, work, nextFrontier, curIndex, nextIndex, processEpoch, recoverCount, reducer, accepted, "recovered=true"))
+			}
+			frontier = append(frontier[:0], nextFrontier...)
+			if progress.enabled {
+				progress.beginDetail(time.Now(), "forest_frontier_advance", "", iter, tokens, tok, true, nil, 0, 0, 0, true, 0, 0,
+					forestProgressExtra(frontier, work, nextFrontier, curIndex, nextIndex, processEpoch, recoverCount, reducer, accepted, "via=recovery"))
+			}
+			continue
 		}
 		// Copy (not alias) so the next step can reset nextFrontier in place;
 		// frontier is only read at the top of a step, before that reset.
 		frontier = append(frontier[:0], nextFrontier...)
+		if progress.enabled {
+			progress.beginDetail(time.Now(), "forest_frontier_advance", "", iter, tokens, tok, true, nil, 0, 0, 0, true, 0, 0,
+				forestProgressExtra(frontier, work, nextFrontier, curIndex, nextIndex, processEpoch, recoverCount, reducer, accepted, "via=shift"))
+		}
 	}
 }
 
@@ -1305,6 +3017,14 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte, captureExternalChe
 // frontier); exceeding it means a runaway chain, so the forest declines to
 // production rather than spin.
 const maxForestNoLookaheadSteps = 64
+
+func (p *Parser) guardForestRealShiftGap(source []byte, node *gssForestNode, tok Token) bool {
+	if node == nil {
+		return true
+	}
+	stack := glrStack{byteOffset: node.byteOffset}
+	return p.guardRealShiftGap(source, &stack, tok)
+}
 
 // reduceOverForest enumerates every length-childCount path of subtrees ending at
 // `node` and invokes visit once per path with the children in left-to-right
@@ -1345,11 +3065,35 @@ type forestReduceVisitor func(children []stackEntry, childScore int, popTo *gssF
 // under this cap, so it never fires for the allowlisted forest languages.
 var forestReduceStepCap = 1 << 16
 
+// forestReduceVisitCap bounds reducer output visits per token. It covers the
+// specialized no-extra reducers that bypass forestReduceStepCap's DFS step
+// counter, so repeated low-child-count reductions cannot enqueue unbounded
+// materialization work before the forest declines to production.
+const forestReduceVisitCap = 1 << 15
+
+// forestWorklistVisitCap bounds dirty-node worklist churn for one token. A
+// healthy forest worklist drains quickly; crossing this cap means reductions are
+// cycling faster than the token stream can advance, so the fast path declines.
+const forestWorklistVisitCap = 1 << 15
+
 type forestReducer struct {
-	path   []stackEntry
-	rev    []stackEntry
-	steps  int
-	capped bool
+	path         []stackEntry
+	rev          []stackEntry
+	emitChildren []stackEntry
+	emits        []forestReduceEmit
+	steps        int
+	visitCount   int
+	visitCap     int
+	capReason    string
+	capped       bool
+}
+
+type forestReduceEmit struct {
+	childStart int
+	childCount int
+	childScore int
+	popTo      *gssForestNode
+	noExtras   bool
 }
 
 // reduce walks back to childCount non-extra subtrees ending at node, including
@@ -1361,6 +3105,8 @@ func (fr *forestReducer) reduce(node *gssForestNode, childCount int, visit fores
 		return
 	}
 	fr.steps = 0 // per-reduce budget; fr.capped stays sticky for the whole parse
+	fr.emitChildren = fr.emitChildren[:0]
+	fr.emits = fr.emits[:0]
 	if perfCountersEnabled {
 		perfRecordForestReduceCall(childCount)
 	}
@@ -1368,34 +3114,42 @@ func (fr *forestReducer) reduce(node *gssForestNode, childCount int, visit fores
 		if perfCountersEnabled {
 			perfRecordForestReduceZero()
 		}
-		visit(nil, 0, node, true)
+		fr.visit(nil, 0, node, true, "zero", visit)
+		fr.flushVisits(visit)
 		return
 	}
 	if childCount == 1 && fr.reduceOneNoExtras(node, visit) {
+		fr.flushVisits(visit)
 		return
 	}
 	if fr.reduceLinearNoExtras(node, childCount, visit) {
 		if perfCountersEnabled {
 			perfRecordForestReduceLinearNoExtras(childCount)
 		}
+		fr.flushVisits(visit)
 		return
 	}
 	if fr.reduceForkedLinearNoExtras(node, childCount, visit) {
 		if perfCountersEnabled {
 			perfRecordForestReduceLinearNoExtras(childCount)
 		}
+		fr.flushVisits(visit)
 		return
 	}
 	if fr.reduceForkedLinearSinglePath(node, childCount, visit) {
+		fr.flushVisits(visit)
 		return
 	}
 	if fr.reduceLinearForkedSinglePath(node, childCount, visit) {
+		fr.flushVisits(visit)
 		return
 	}
 	if fr.reduceLinearSinglePath(node, childCount, visit) {
+		fr.flushVisits(visit)
 		return
 	}
 	if fr.reduceNoExtrasDFS(node, childCount, visit) {
+		fr.flushVisits(visit)
 		return
 	}
 	if perfCountersEnabled {
@@ -1403,6 +3157,7 @@ func (fr *forestReducer) reduce(node *gssForestNode, childCount int, visit fores
 	}
 	fr.path = fr.path[:0]
 	fr.dfs(node, childCount, 0, visit)
+	fr.flushVisits(visit)
 }
 
 func (fr *forestReducer) reduceOneNoExtras(node *gssForestNode, visit forestReduceVisitor) bool {
@@ -1421,9 +3176,12 @@ func (fr *forestReducer) reduceOneNoExtras(node *gssForestNode, visit forestRedu
 	}
 	links := node.links
 	for i := range links {
+		if fr.capped {
+			return true
+		}
 		link := &links[i]
 		fr.rev[0] = link.subtree
-		visit(fr.rev, link.score, link.prev, true)
+		fr.visit(fr.rev, link.score, link.prev, true, "oneNoExtras", visit)
 	}
 	return true
 }
@@ -1451,7 +3209,7 @@ func (fr *forestReducer) reduceLinearNoExtras(node *gssForestNode, childCount in
 		score += link.score
 		cur = link.prev
 	}
-	visit(fr.rev, score, cur, true)
+	fr.visit(fr.rev, score, cur, true, "linearNoExtras", visit)
 	return true
 }
 
@@ -1483,6 +3241,9 @@ func (fr *forestReducer) reduceForkedLinearNoExtras(node *gssForestNode, childCo
 		fr.rev = fr.rev[:childCount]
 	}
 	for i := range links {
+		if fr.capped {
+			return true
+		}
 		link := &links[i]
 		score := link.score
 		fr.rev[childCount-1] = link.subtree
@@ -1493,7 +3254,7 @@ func (fr *forestReducer) reduceForkedLinearNoExtras(node *gssForestNode, childCo
 			score += next.score
 			cur = next.prev
 		}
-		visit(fr.rev, score, cur, true)
+		fr.visit(fr.rev, score, cur, true, "forkedLinearNoExtras", visit)
 	}
 	return true
 }
@@ -1520,6 +3281,9 @@ func (fr *forestReducer) reduceForkedLinearSinglePath(node *gssForestNode, child
 		fr.rev = make([]stackEntry, maxPathLen)
 	}
 	for i := range links {
+		if fr.capped {
+			return true
+		}
 		fr.emitLinearReducePathFromLink(&links[i], childCount, visit)
 	}
 	return true
@@ -1558,7 +3322,7 @@ func (fr *forestReducer) emitLinearReducePathFromLink(link *gssLink, childCount 
 				for i := range fr.path {
 					fr.rev[len(fr.path)-1-i] = fr.path[i]
 				}
-				visit(fr.rev, score, link.prev, false)
+				fr.visit(fr.rev, score, link.prev, false, "linearFromLink", visit)
 				return
 			}
 		}
@@ -1607,6 +3371,9 @@ func (fr *forestReducer) reduceLinearForkedSinglePath(node *gssForestNode, child
 		fr.rev = make([]stackEntry, maxPathLen)
 	}
 	for i := range links {
+		if fr.capped {
+			return true
+		}
 		fr.emitLinearReducePathFromLinkWithPrefix(&links[i], remaining, branchLens[i], prefixLen, prefixScore, visit)
 	}
 	return true
@@ -1627,7 +3394,7 @@ func (fr *forestReducer) emitLinearReducePathFromLinkWithPrefix(link *gssLink, c
 		if !forestStackEntryIsExtra(link.subtree) {
 			remaining--
 			if remaining == 0 {
-				visit(fr.rev, score, link.prev, false)
+				fr.visit(fr.rev, score, link.prev, false, "linearWithPrefix", visit)
 				return
 			}
 		}
@@ -1661,7 +3428,7 @@ func (fr *forestReducer) reduceLinearSinglePath(node *gssForestNode, childCount 
 				for i := range fr.path {
 					fr.rev[len(fr.path)-1-i] = fr.path[i]
 				}
-				visit(fr.rev, score, link.prev, false)
+				fr.visit(fr.rev, score, link.prev, false, "linearSinglePath", visit)
 				return true
 			}
 		}
@@ -1695,15 +3462,21 @@ func (fr *forestReducer) reduceNoExtrasDFS(node *gssForestNode, childCount int, 
 func (fr *forestReducer) dfsNoExtras2(cur *gssForestNode, score int, visit forestReduceVisitor) {
 	links0 := cur.links
 	for i := range links0 {
+		if fr.capped {
+			return
+		}
 		l0 := &links0[i]
 		fr.rev[1] = l0.subtree
 		score0 := score + l0.score
 		n1 := l0.prev
 		links1 := n1.links
 		for j := range links1 {
+			if fr.capped {
+				return
+			}
 			l1 := &links1[j]
 			fr.rev[0] = l1.subtree
-			visit(fr.rev, score0+l1.score, l1.prev, true)
+			fr.visit(fr.rev, score0+l1.score, l1.prev, true, "dfsNoExtras2", visit)
 		}
 	}
 }
@@ -1711,21 +3484,30 @@ func (fr *forestReducer) dfsNoExtras2(cur *gssForestNode, score int, visit fores
 func (fr *forestReducer) dfsNoExtras3(cur *gssForestNode, score int, visit forestReduceVisitor) {
 	links0 := cur.links
 	for i := range links0 {
+		if fr.capped {
+			return
+		}
 		l0 := &links0[i]
 		fr.rev[2] = l0.subtree
 		score0 := score + l0.score
 		n1 := l0.prev
 		links1 := n1.links
 		for j := range links1 {
+			if fr.capped {
+				return
+			}
 			l1 := &links1[j]
 			fr.rev[1] = l1.subtree
 			score1 := score0 + l1.score
 			n2 := l1.prev
 			links2 := n2.links
 			for k := range links2 {
+				if fr.capped {
+					return
+				}
 				l2 := &links2[k]
 				fr.rev[0] = l2.subtree
-				visit(fr.rev, score1+l2.score, l2.prev, true)
+				fr.visit(fr.rev, score1+l2.score, l2.prev, true, "dfsNoExtras3", visit)
 			}
 		}
 	}
@@ -1734,27 +3516,39 @@ func (fr *forestReducer) dfsNoExtras3(cur *gssForestNode, score int, visit fores
 func (fr *forestReducer) dfsNoExtras4(cur *gssForestNode, score int, visit forestReduceVisitor) {
 	links0 := cur.links
 	for i := range links0 {
+		if fr.capped {
+			return
+		}
 		l0 := &links0[i]
 		fr.rev[3] = l0.subtree
 		score0 := score + l0.score
 		n1 := l0.prev
 		links1 := n1.links
 		for j := range links1 {
+			if fr.capped {
+				return
+			}
 			l1 := &links1[j]
 			fr.rev[2] = l1.subtree
 			score1 := score0 + l1.score
 			n2 := l1.prev
 			links2 := n2.links
 			for k := range links2 {
+				if fr.capped {
+					return
+				}
 				l2 := &links2[k]
 				fr.rev[1] = l2.subtree
 				score2 := score1 + l2.score
 				n3 := l2.prev
 				links3 := n3.links
 				for m := range links3 {
+					if fr.capped {
+						return
+					}
 					l3 := &links3[m]
 					fr.rev[0] = l3.subtree
-					visit(fr.rev, score2+l3.score, l3.prev, true)
+					fr.visit(fr.rev, score2+l3.score, l3.prev, true, "dfsNoExtras4", visit)
 				}
 			}
 		}
@@ -1770,13 +3564,14 @@ func (fr *forestReducer) dfsNoExtras(cur *gssForestNode, remaining, score int, v
 		}
 		if fr.steps++; fr.steps > forestReduceStepCap {
 			fr.capped = true
+			fr.capReason = "reduce-cap"
 			break
 		}
 		link := &links[i]
 		fr.rev[out] = link.subtree
 		nextScore := score + link.score
 		if remaining == 1 {
-			visit(fr.rev, nextScore, link.prev, true)
+			fr.visit(fr.rev, nextScore, link.prev, true, "dfsNoExtras", visit)
 			continue
 		}
 		fr.dfsNoExtras(link.prev, remaining-1, nextScore, visit)
@@ -1795,6 +3590,7 @@ func (fr *forestReducer) dfs(cur *gssForestNode, remaining, score int, visit for
 		}
 		if fr.steps++; fr.steps > forestReduceStepCap {
 			fr.capped = true
+			fr.capReason = "reduce-cap"
 			break
 		}
 		link := &links[i]
@@ -1819,12 +3615,44 @@ func (fr *forestReducer) dfs(cur *gssForestNode, remaining, score int, visit for
 			for j := range fr.path {
 				fr.rev[len(fr.path)-1-j] = fr.path[j]
 			}
-			visit(fr.rev, score+link.score, link.prev, false)
+			fr.visit(fr.rev, score+link.score, link.prev, false, "dfs", visit)
 			continue
 		}
 		fr.dfs(link.prev, rem, score+link.score, visit)
 	}
 	fr.path = fr.path[:mark]
+}
+
+func (fr *forestReducer) visit(children []stackEntry, childScore int, popTo *gssForestNode, noExtras bool, route string, visit forestReduceVisitor) {
+	if fr.capped {
+		return
+	}
+	fr.visitCount++
+	if fr.visitCap > 0 && fr.visitCount > fr.visitCap {
+		fr.capped = true
+		fr.capReason = "reduce-visit-cap"
+		return
+	}
+	start := len(fr.emitChildren)
+	fr.emitChildren = append(fr.emitChildren, children...)
+	fr.emits = append(fr.emits, forestReduceEmit{
+		childStart: start,
+		childCount: len(children),
+		childScore: childScore,
+		popTo:      popTo,
+		noExtras:   noExtras,
+	})
+}
+
+func (fr *forestReducer) flushVisits(visit forestReduceVisitor) {
+	for i := range fr.emits {
+		if fr.capped {
+			return
+		}
+		emit := fr.emits[i]
+		children := fr.emitChildren[emit.childStart : emit.childStart+emit.childCount]
+		visit(children, emit.childScore, emit.popTo, emit.noExtras)
+	}
 }
 
 func forestStackEntryIsExtra(e stackEntry) bool {

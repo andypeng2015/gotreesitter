@@ -26,6 +26,7 @@ func init() {
 		"typst":      TypstExternalScanner{},
 		// New hand-written scanners:
 		"jsdoc":           JsdocExternalScanner{},
+		"toml":            TomlExternalScanner{},
 		"gleam":           GleamExternalScanner{},
 		"scss":            ScssExternalScanner{},
 		"css":             CssExternalScanner{},
@@ -54,6 +55,7 @@ func init() {
 		"beancount":       BeancountExternalScanner{},
 		"dtd":             DtdExternalScanner{},
 		"nix":             NixExternalScanner{},
+		"lua":             LuaExternalScanner{},
 		"luau":            LuauExternalScanner{},
 		"liquid":          LiquidExternalScanner{},
 		"wolfram":         WolframExternalScanner{},
@@ -91,6 +93,7 @@ func init() {
 		"pkl":             PklExternalScanner{},
 		"c_sharp":         CSharpExternalScanner{},
 		"mojo":            MojoExternalScanner{},
+		"move":            MoveExternalScanner{},
 		"blade":           BladeExternalScanner{},
 		"angular":         AngularExternalScanner{},
 		"vue":             VueExternalScanner{},
@@ -119,6 +122,7 @@ func init() {
 		"caddy":           CaddyExternalScanner{},
 		"javascript":      JavaScriptExternalScanner{},
 		"typescript":      TypeScriptExternalScanner{},
+		"go":              GoExternalScanner{},
 		"rust":            RustExternalScanner{},
 		"hcl":             HclExternalScanner{},
 		"rescript":        RescriptExternalScanner{},
@@ -136,6 +140,8 @@ func init() {
 	externalLexStates := map[string][][]bool{
 		// Bash: generated from tree-sitter-bash ts_external_scanner_states.
 		"bash": bashExternalLexStates,
+		// Lua: generated from tree-sitter-lua ts_external_scanner_states.
+		"lua": luaExternalLexStates,
 		// SCSS: 6 external lex states, 4 external tokens
 		// [0]=_descendant_operator [1]=_pseudo_class_selector_colon
 		// [2]=__error_recovery [3]=_concat
@@ -151,6 +157,8 @@ func init() {
 		"yaml": yamlExternalLexStates,
 		// Python: generated from tree-sitter-python ts_external_scanner_states.
 		"python": pythonExternalLexStates,
+		// Elm: generated from tree-sitter-elm ts_external_scanner_states.
+		"elm": elmExternalLexStates,
 	}
 
 	// Register scanners in the embedded loader's registry so direct calls like

@@ -1,6 +1,10 @@
 package parserresult_test
 
-import "testing"
+import (
+	"testing"
+
+	gotreesitter "github.com/odvcencio/gotreesitter"
+)
 
 func TestPugTopLevelTagCarriesTrailingNewlineSpan(t *testing.T) {
 	const src = "p hello\n"
@@ -59,6 +63,35 @@ func TestCooklangStepCarriesTerminalPunctuationAndRootNewline(t *testing.T) {
 	}
 	if got, want := root.EndByte(), uint32(len(src)); got != want {
 		t.Fatalf("cooklang root.EndByte=%d, want %d", got, want)
+	}
+}
+
+func TestCooklangFrontmatterFenceCommentsAndFinalPunctuation(t *testing.T) {
+	const src = "---\nservings: 4\nemoji: 🥟\ntags: warm, fried, starter\n---\n\nServe hot.\n"
+	tree, lang := parseByLanguageName(t, "cooklang", src)
+	root := tree.RootNode()
+	if got, want := root.EndByte(), uint32(len(src)); got != want {
+		t.Fatalf("cooklang root.EndByte=%d, want %d; tree=%s", got, want, root.SExpr(lang))
+	}
+	if root.ChildCount() < 3 {
+		t.Fatalf("cooklang root childCount=%d, want >=3; tree=%s", root.ChildCount(), root.SExpr(lang))
+	}
+	first := root.Child(0)
+	if first == nil || first.Type(lang) != "comment" {
+		t.Fatalf("cooklang first child=%v, want frontmatter comment; tree=%s", first, root.SExpr(lang))
+	}
+	var last *gotreesitter.Node
+	for i := root.ChildCount() - 1; i >= 0; i-- {
+		if child := root.Child(i); child != nil && child.Type(lang) == "step" {
+			last = child
+			break
+		}
+	}
+	if last == nil {
+		t.Fatalf("cooklang missing final step; tree=%s", root.SExpr(lang))
+	}
+	if got, want := last.EndByte(), uint32(len(src)-1); got != want {
+		t.Fatalf("cooklang final step.EndByte=%d, want %d; tree=%s", got, want, root.SExpr(lang))
 	}
 }
 

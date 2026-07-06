@@ -90,6 +90,41 @@ func (c *sourceCursor) skipSpacesAndTabs() {
 	}
 }
 
+func (c *sourceCursor) skipEscapedNewline() bool {
+	if c.eof() || c.peekByte() != '\\' {
+		return false
+	}
+	next := c.offset + 1
+	if next >= len(c.src) {
+		return false
+	}
+	switch c.src[next] {
+	case '\n':
+		c.advanceByte()
+		c.advanceByte()
+		return true
+	case '\r':
+		if next+1 >= len(c.src) || c.src[next+1] != '\n' {
+			return false
+		}
+		c.advanceByte()
+		c.advanceByte()
+		c.advanceByte()
+		return true
+	default:
+		return false
+	}
+}
+
+func (c *sourceCursor) skipSpacesTabsAndEscapedNewlines() {
+	for {
+		c.skipSpacesAndTabs()
+		if !c.skipEscapedNewline() {
+			return
+		}
+	}
+}
+
 func (c *sourceCursor) matchLiteralAtCurrent(lexeme string) bool {
 	if c.offset+len(lexeme) > len(c.src) {
 		return false

@@ -4,4 +4,5 @@ package grammars
 
 func init() {
 	RegisterExternalScanner("elm", ElmExternalScanner{})
+	RegisterExternalLexStates("elm", elmExternalLexStates)
 }

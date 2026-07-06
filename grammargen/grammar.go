@@ -77,12 +77,18 @@ type Grammar struct {
 	FlattenGeneratedRepeatAux                  bool          // allow generated repeat helpers to participate in hidden-choice flattening
 	ReuseRepeatAuxForParents                   []string      // parent rule names whose repeat helpers may be shared by canonical body
 	PreserveKeywordIdentifierConflicts         bool          // keep keyword-as-identifier S/R ambiguity for grammars like Fortran
+	PreferExpressionOperatorIdentifierReduces  bool          // prefer expression/binary-operator reduces over operator_identifier shifts for Elixir-style operators
+	PreferParenthesizedCallDoBlockReduces      bool          // prefer completed parenthesized calls over same-line do_block shifts for Elixir-style calls
+	PreferRemoteCallOperatorReduces            bool          // prefer completed remote calls before Elixir-style binary operator shifts
+	PreferStabClauseLeftArrowReduces           bool          // prefer completed stab-clause left operands before Elixir-style -> shifts
+	PreferPreciseExternalLexStates             bool          // prefer LR(1)-precise external lex rows when merged rows lose scanner context
 	ExactPrefixStates                          int           // keep this many LR(1) states exact before merge compaction
 	Precedences                                [][]PrecEntry // ordered precedence levels (each level: earlier = higher prec)
 	ChoiceLiftThreshold                        int           // if >0, lift inline CHOICE nodes with more alternatives than this into auxiliary nonterminals to prevent production explosion
 	SuppressEquivalentExternalReduceLookaheads bool          // suppress external scanner validity for duplicate reduce-only lookaheads
 	ExternalReduceFollowLookaheads             []string      // external token names that may be valid after reducing in the current state
 	PriorityInlinePatterns                     []string      // anonymous pattern terminals that should win same-length ties against named tokens
+	PreserveHiddenChoicePassthrough            []string      // hidden choice rules whose single-symbol reductions must not be flattened away
 	WantsForest                                bool          // opt this grammar's assembled Language into the GSS-forest GLR fast path (see gotreesitter.Language.WantsForest)
 }
 
@@ -331,12 +337,18 @@ func ExtendGrammar(name string, base *Grammar, customize func(g *Grammar)) *Gram
 		FlattenGeneratedRepeatAux:          base.FlattenGeneratedRepeatAux,
 		ReuseRepeatAuxForParents:           make([]string, len(base.ReuseRepeatAuxForParents)),
 		PreserveKeywordIdentifierConflicts: base.PreserveKeywordIdentifierConflicts,
-		ExactPrefixStates:                  base.ExactPrefixStates,
-		Precedences:                        clonePrecedenceLevels(base.Precedences),
-		ChoiceLiftThreshold:                base.ChoiceLiftThreshold,
+		PreferExpressionOperatorIdentifierReduces:  base.PreferExpressionOperatorIdentifierReduces,
+		PreferParenthesizedCallDoBlockReduces:      base.PreferParenthesizedCallDoBlockReduces,
+		PreferRemoteCallOperatorReduces:            base.PreferRemoteCallOperatorReduces,
+		PreferStabClauseLeftArrowReduces:           base.PreferStabClauseLeftArrowReduces,
+		PreferPreciseExternalLexStates:             base.PreferPreciseExternalLexStates,
+		ExactPrefixStates:                          base.ExactPrefixStates,
+		Precedences:                                clonePrecedenceLevels(base.Precedences),
+		ChoiceLiftThreshold:                        base.ChoiceLiftThreshold,
 		SuppressEquivalentExternalReduceLookaheads: base.SuppressEquivalentExternalReduceLookaheads,
 		ExternalReduceFollowLookaheads:             append([]string(nil), base.ExternalReduceFollowLookaheads...),
 		PriorityInlinePatterns:                     append([]string(nil), base.PriorityInlinePatterns...),
+		PreserveHiddenChoicePassthrough:            append([]string(nil), base.PreserveHiddenChoicePassthrough...),
 		WantsForest:                                base.WantsForest,
 	}
 

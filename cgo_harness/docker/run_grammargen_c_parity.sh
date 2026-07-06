@@ -14,6 +14,8 @@
 #   --max-cases N      Max corpus samples per grammar (default: 20)
 #   --max-bytes N      Max sample size in bytes (default: 262144)
 #   --langs LANGS      Comma-separated language filter (default: all)
+#   --generate-timeout DURATION
+#                     Override per-grammar grammargen generation timeout
 #   --ratchet-update   Write ratchet floor file after run
 #   --label LABEL      Label for output directory
 #   --timeout MINS     Test timeout in minutes (default: 45)
@@ -36,6 +38,7 @@ PIDS="4096"
 MAX_CASES="20"
 MAX_BYTES="262144"
 LANGS=""
+GENERATE_TIMEOUT=""
 RATCHET_UPDATE=""
 LABEL=""
 TIMEOUT_MINS="45"
@@ -54,6 +57,7 @@ while [[ $# -gt 0 ]]; do
         --max-cases)   MAX_CASES="$2"; shift 2 ;;
         --max-bytes)   MAX_BYTES="$2"; shift 2 ;;
         --langs)       LANGS="$2"; shift 2 ;;
+        --generate-timeout) GENERATE_TIMEOUT="$2"; shift 2 ;;
         --ratchet-update) RATCHET_UPDATE="1"; shift ;;
         --label)       LABEL="$2"; shift 2 ;;
         --timeout)     TIMEOUT_MINS="$2"; shift 2 ;;
@@ -82,10 +86,12 @@ echo "  pids:       $PIDS"
 echo "  max_cases:  $MAX_CASES"
 echo "  max_bytes:  $MAX_BYTES"
 echo "  langs:      ${LANGS:-all}"
+echo "  generate_timeout: ${GENERATE_TIMEOUT:-per-grammar default}"
 echo "  ratchet:    ${RATCHET_UPDATE:-no}"
 echo "  timeout:    ${TIMEOUT_MINS}m"
 echo "  gomaxprocs: ${GOMAXPROCS_VALUE:-inherit}"
 echo "  goflags:    ${GOFLAGS_VALUE:-inherit}"
+echo "  trace_phases: ${GTS_GRAMMARGEN_TRACE_PHASES:-unset}"
 echo "  glr_v2_pending_parents: ${GOT_GLR_V2_PENDING_PARENTS:-unset}"
 echo "  glr_v2_compact_full_leaves: ${GOT_GLR_V2_COMPACT_FULL_LEAVES:-unset}"
 echo "  offline:    $OFFLINE"
@@ -136,6 +142,9 @@ ENV_ARGS=(
 if [[ -n "$LANGS" ]]; then
     ENV_ARGS+=(-e "GTS_GRAMMARGEN_CGO_LANGS=$LANGS")
 fi
+if [[ -n "$GENERATE_TIMEOUT" ]]; then
+    ENV_ARGS+=(-e "GTS_GRAMMARGEN_CGO_GENERATE_TIMEOUT=$GENERATE_TIMEOUT")
+fi
 if [[ -n "$RATCHET_UPDATE" ]]; then
     ENV_ARGS+=(-e "GTS_GRAMMARGEN_CGO_RATCHET_UPDATE=1")
 fi
@@ -144,6 +153,9 @@ if [[ -n "$GOMAXPROCS_VALUE" ]]; then
 fi
 if [[ -n "$GOFLAGS_VALUE" ]]; then
     ENV_ARGS+=(-e "GOFLAGS=$GOFLAGS_VALUE")
+fi
+if [[ -n "${GTS_GRAMMARGEN_TRACE_PHASES:-}" ]]; then
+    ENV_ARGS+=(-e "GTS_GRAMMARGEN_TRACE_PHASES=$GTS_GRAMMARGEN_TRACE_PHASES")
 fi
 if [[ -n "${GOT_GLR_V2_PENDING_PARENTS:-}" ]]; then
     ENV_ARGS+=(-e "GOT_GLR_V2_PENDING_PARENTS=$GOT_GLR_V2_PENDING_PARENTS")
@@ -338,6 +350,7 @@ pids: $PIDS
 max_cases: $MAX_CASES
 max_bytes: $MAX_BYTES
 langs: ${LANGS:-all}
+generate_timeout: ${GENERATE_TIMEOUT:-per-grammar default}
 ratchet_update: ${RATCHET_UPDATE:-no}
 timeout_mins: $TIMEOUT_MINS
 gomaxprocs: ${GOMAXPROCS_VALUE:-inherit}

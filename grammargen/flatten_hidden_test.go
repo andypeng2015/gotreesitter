@@ -105,6 +105,83 @@ func TestFlattenHiddenPassthrough(t *testing.T) {
 	}
 }
 
+func TestFlattenHiddenPassthroughPreservesAliasReferencedRule(t *testing.T) {
+	g := &Grammar{
+		Name: "test_flatten_alias_preserve",
+		Rules: map[string]*Rule{
+			"document": Seq(Alias(Sym("_value"), "wrapped", true), Sym("member")),
+			"member":   Seq(Sym("_value")),
+			"_value":   Choice(Sym("item"), Seq(Str("("), Sym("item"), Str(")"))),
+			"item":     Pat(`[a-z]+`),
+		},
+		RuleOrder: []string{"document", "member", "_value", "item"},
+	}
+
+	ng, err := Normalize(g)
+	if err != nil {
+		t.Fatalf("normalize: %v", err)
+	}
+
+	symNameToID := make(map[string]int)
+	for i, info := range ng.Symbols {
+		symNameToID[info.Name] = i
+	}
+
+	valueID := symNameToID["_value"]
+	itemID := symNameToID["item"]
+	memberID := symNameToID["member"]
+
+	hasValueItem := false
+	hasMemberItem := false
+	for _, p := range ng.Productions {
+		switch p.LHS {
+		case valueID:
+			if len(p.RHS) == 1 && p.RHS[0] == itemID {
+				hasValueItem = true
+			}
+		case memberID:
+			for _, sym := range p.RHS {
+				if sym == itemID {
+					hasMemberItem = true
+				}
+			}
+		}
+	}
+
+	if !hasValueItem {
+		t.Fatal("_value pass-through item production should be retained for alias references")
+	}
+	if !hasMemberItem {
+		t.Fatal("non-alias _value references should still receive inlined pass-through alternatives")
+	}
+}
+
+func TestFlattenGeneratedHiddenPassthroughPreservesAliasReferencedRule(t *testing.T) {
+	g := NewGrammar("test_flatten_generated_alias_preserve")
+	g.FlattenGeneratedRepeatAux = true
+	g.Define("document", Seq(Alias(Sym("list_repeat1"), "wrapped", true), Sym("member")))
+	g.Define("member", Seq(Sym("list_repeat1")))
+	g.Define("list_repeat1", Choice(Sym("item"), Seq(Sym("item"), Sym("item"))))
+	g.Define("item", Pat(`[a-z]+`))
+
+	flattened := flattenHiddenChoiceAlts(g, map[string]bool{"list_repeat1": true})
+
+	aux := flattened.Rules["list_repeat1"]
+	if !choiceHasSymbolAlt(aux, "item") {
+		t.Fatal("generated hidden aux pass-through item production should be retained for alias references")
+	}
+
+	document := flattened.Rules["document"]
+	if alias := document.Children[0]; alias.Kind != RuleAlias || alias.Children[0].Kind != RuleSymbol || alias.Children[0].Value != "list_repeat1" {
+		t.Fatalf("alias reference should remain a direct aux symbol, got %#v", document.Children[0])
+	}
+
+	member := flattened.Rules["member"]
+	if member.Kind != RuleSeq || len(member.Children) != 1 || !choiceHasSymbolAlt(member.Children[0], "item") {
+		t.Fatalf("ordinary generated hidden aux reference should inline pass-through item alternative, got %#v", member)
+	}
+}
+
 func TestFlattenHiddenTopLevelRepeat1Passthrough(t *testing.T) {
 	g := &Grammar{
 		Name: "test_flatten_hidden_repeat1",
@@ -279,4 +356,73 @@ func TestFlattenHiddenPassthroughTransitiveChoice(t *testing.T) {
 	if !hasNumber {
 		t.Fatal("document missing transitive passthrough reference to number")
 	}
+}
+
+func TestFlattenHiddenPassthroughPreservesContinuationSensitiveWrappers(t *testing.T) {
+	g := &Grammar{
+		Name: "test_flatten_hidden_continuation_sensitive",
+		Rules: map[string]*Rule{
+			"document": Seq(Sym("_outer"), Sym("tail")),
+			"_outer":   Choice(Sym("_inner"), Seq(Sym("_inner"), Sym("tail"))),
+			"_inner":   Choice(Sym("item"), Seq(Str("all"), Sym("item"))),
+			"item":     Pat(`[a-z]+`),
+			"tail":     Pat(`[0-9]+`),
+		},
+		RuleOrder: []string{"document", "_outer", "_inner", "item", "tail"},
+	}
+
+	ng, err := Normalize(g)
+	if err != nil {
+		t.Fatalf("normalize: %v", err)
+	}
+
+	symNameToID := make(map[string]int)
+	for i, info := range ng.Symbols {
+		symNameToID[info.Name] = i
+	}
+
+	documentID := symNameToID["document"]
+	outerID := symNameToID["_outer"]
+	innerID := symNameToID["_inner"]
+	itemID := symNameToID["item"]
+
+	hasOuterInner := false
+	hasDocumentInner := false
+	hasDocumentItem := false
+	for _, p := range ng.Productions {
+		switch p.LHS {
+		case outerID:
+			if len(p.RHS) == 1 && p.RHS[0] == innerID {
+				hasOuterInner = true
+			}
+		case documentID:
+			for _, sym := range p.RHS {
+				if sym == innerID {
+					hasDocumentInner = true
+				}
+				if sym == itemID {
+					hasDocumentItem = true
+				}
+			}
+		}
+	}
+
+	if !hasOuterInner {
+		t.Fatal("_outer pass-through _inner production should be retained when it also starts a compound continuation")
+	}
+	if !hasDocumentInner || !hasDocumentItem {
+		t.Fatalf("document missing inlined passthrough refs: inner=%v item=%v", hasDocumentInner, hasDocumentItem)
+	}
+}
+
+func choiceHasSymbolAlt(r *Rule, name string) bool {
+	if r == nil || r.Kind != RuleChoice {
+		return false
+	}
+	for _, child := range r.Children {
+		if child.Kind == RuleSymbol && child.Value == name {
+			return true
+		}
+	}
+	return false
 }

@@ -20,12 +20,32 @@ package gotreesitter
 // member snippet, capped by size and count, so the anti-OOM guarantees from
 // #64/#98/#106 hold on pathological input.
 
-// csharpRecoverNamespaceBodyMembersFromSource recovers the declarations inside a
-// namespace body [openBrace+1, closeBrace) directly from source: each top-level
-// chunk is recovered as a comment, a lenient type declaration (class/struct/
-// record/interface with per-member reparse), or — for small chunks such as enums
-// — a whole-chunk reparse. Unrecoverable chunks are skipped.
-func csharpRecoverNamespaceBodyMembersFromSource(source []byte, openBrace, closeBrace uint32, p *Parser, arena *nodeArena) ([]*Node, bool) {
+// csharpRecoverNamespaceBodyMembersFromSourceAlt recovers the declarations
+// inside a namespace body [openBrace+1, closeBrace) directly from source: each
+// top-level chunk is recovered as a comment, a lenient type declaration
+// (class/struct/record/interface with per-member reparse), or — for small
+// chunks such as enums — a whole-chunk reparse. Unrecoverable chunks are
+// skipped.
+//
+// This is the "Alt" driver (upstream #138): a second, independently-bounded
+// namespace-body recovery pass alongside
+// csharpRecoverNamespaceBodyMembersFromSource in parser_result_csharp_namespace.go
+// (#136's original driver, which recurses through
+// csharpRecoverTopLevelChunkNodesFromRange / csharpRecoverSourceTypeMembersFromRange
+// and additionally covers struct/interface/enum shells and preprocessor-skipped
+// spans). Both drivers solve the same problem — reconstructing a shredded
+// namespace/class body's methods directly from source when the whole-file gate
+// (csharpMaxTopLevelChunkRecoverySourceBytes) and the child-based #115/#116
+// recovery both come up empty — via different per-member reparse strategies (this
+// one reparses each member inside a minimal `class __Q { … }` wrapper first,
+// falling back to the signature-shell + lenient block path only for
+// method-shaped members that still fail in isolation). On some real-world files
+// (e.g. Newtonsoft.Json's JsonTextReader.cs) this Alt driver recovers strictly
+// more method_declaration nodes than the primary driver, so
+// csharpBuildRecoveredNamespaceDeclarationFromErrorRoot runs both and keeps
+// whichever recovers more (csharpChooseRecoveredNamespaceMembers /
+// csharpPreferRecoveredDeclarations).
+func csharpRecoverNamespaceBodyMembersFromSourceAlt(source []byte, openBrace, closeBrace uint32, p *Parser, arena *nodeArena) ([]*Node, bool) {
 	if p == nil || p.language == nil || arena == nil || openBrace >= closeBrace || closeBrace > uint32(len(source)) {
 		return nil, false
 	}

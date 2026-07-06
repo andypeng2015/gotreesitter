@@ -2,6 +2,7 @@ package gotreesitter_test
 
 import (
 	"bytes"
+	"os"
 	"testing"
 
 	"github.com/odvcencio/gotreesitter"
@@ -98,6 +99,191 @@ func TestParseGoPackageOnly(t *testing.T) {
 	}
 	if got := ident.Text(tree.Source()); got != "main" {
 		t.Errorf("expected identifier text %q, got %q", "main", got)
+	}
+}
+
+func TestParseGoFunctionDeclarationFields(t *testing.T) {
+	tree, lang := parseGo(t, "package main\nfunc Hello() string { return \"hello\" }\n")
+	fn := findNamedChild(lang, tree.RootNode(), "function_declaration")
+	if fn == nil {
+		t.Fatal("no function_declaration found")
+	}
+
+	fieldNames := make([]string, fn.ChildCount())
+	childTypes := make([]string, fn.ChildCount())
+	for i := 0; i < fn.ChildCount(); i++ {
+		fieldNames[i] = fn.FieldNameForChild(i, lang)
+		if child := fn.Child(i); child != nil {
+			childTypes[i] = child.Type(lang)
+		}
+	}
+
+	for _, tc := range []struct {
+		field string
+		typ   string
+	}{
+		{"name", "identifier"},
+		{"parameters", "parameter_list"},
+		{"result", "type_identifier"},
+		{"body", "block"},
+	} {
+		child := fn.ChildByFieldName(tc.field, lang)
+		if child == nil {
+			t.Fatalf("ChildByFieldName(%q) returned nil; child fields=%v child types=%v root=%s", tc.field, fieldNames, childTypes, tree.RootNode().SExpr(lang))
+		}
+		if got := child.Type(lang); got != tc.typ {
+			t.Fatalf("ChildByFieldName(%q).Type() = %q, want %q; child fields=%v child types=%v", tc.field, got, tc.typ, fieldNames, childTypes)
+		}
+	}
+}
+
+func TestParseGoRangeWithNestedFunctionLiteralBody(t *testing.T) {
+	src := `package p
+
+func TestUnderSize(t *testing.T) {
+	z, err := OpenReader("testdata/readme.zip")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer z.Close()
+
+	for _, f := range z.File {
+		t.Run(f.Name, func(t *testing.T) {
+			rd, err := f.Open()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer rd.Close()
+
+			_, err = io.Copy(io.Discard, rd)
+			if err != ErrFormat {
+				t.Fatalf("Error mismatch\n\tGot:  %v\n\tWant: %v", err, ErrFormat)
+			}
+		})
+	}
+}
+`
+	tree, lang := parseGo(t, src)
+	root := tree.RootNode()
+	defer tree.Release()
+
+	if got := root.Type(lang); got != "source_file" {
+		t.Fatalf("root type = %q, want source_file", got)
+	}
+	if root.HasError() {
+		t.Fatalf("root has error:\n%s", root.SExpr(lang))
+	}
+	if got, want := root.EndByte(), uint32(len(src)); got != want {
+		t.Fatalf("root end = %d, want %d", got, want)
+	}
+	if findNamedChild(lang, root, "for_statement") == nil {
+		t.Fatalf("missing for_statement:\n%s", root.SExpr(lang))
+	}
+	if findNamedChild(lang, root, "func_literal") == nil {
+		t.Fatalf("missing nested func_literal:\n%s", root.SExpr(lang))
+	}
+	if findNamedChild(lang, root, "defer_statement") == nil {
+		t.Fatalf("missing nested defer_statement:\n%s", root.SExpr(lang))
+	}
+}
+
+func TestParseGoRecoveredForIgnoresLineCommentBrace(t *testing.T) {
+	src := `package p
+
+func TestCommentBrace(t *testing.T) {
+	for _, name := range []string{"one"} {
+		_ = name
+		// }
+		t.Run(name, func(t *testing.T) {
+			defer t.Helper()
+		})
+	}
+}
+`
+	assertGoRecoveryCanary(t, src, []string{
+		"for_statement",
+		"func_literal",
+		"defer_statement",
+	}, []string{
+		"t.Run(name, func(t *testing.T)",
+		"defer t.Helper()",
+	})
+}
+
+func TestParseGoRecoveredForIgnoresLiteralAndCommentBraces(t *testing.T) {
+	src := "package p\n\n" +
+		"func TestLiteralBraces(t *testing.T) {\n" +
+		"\tfor _, name := range []string{\"one\"} {\n" +
+		"\t\ttext := \"}\"\n" +
+		"\t\traw := `}`\n" +
+		"\t\t/* } */\n" +
+		"\t\t// }\n" +
+		"\t\tt.Run(text+raw, func(t *testing.T) {\n" +
+		"\t\t\tdefer t.Helper()\n" +
+		"\t\t})\n" +
+		"\t}\n" +
+		"}\n"
+	assertGoRecoveryCanary(t, src, []string{
+		"for_statement",
+		"interpreted_string_literal",
+		"raw_string_literal",
+		"func_literal",
+		"defer_statement",
+	}, []string{
+		"text := \"}\"",
+		"raw := `}`",
+		"defer t.Helper()",
+	})
+}
+
+func TestParseGoRecoveredForFindsBodyAfterRangeCompositeLiteral(t *testing.T) {
+	src := `package p
+
+func TestCompositeRange(t *testing.T) {
+	for _, v := range []struct{ A int }{{1}} {
+		t.Run("case", func(t *testing.T) {
+			_ = v.A
+		})
+	}
+}
+`
+	assertGoRecoveryCanary(t, src, []string{
+		"for_statement",
+		"range_clause",
+		"func_literal",
+		"selector_expression",
+	}, []string{
+		"[]struct{ A int }{{1}}",
+		"_ = v.A",
+	})
+}
+
+func assertGoRecoveryCanary(t *testing.T, src string, wantTypes, wantTexts []string) {
+	t.Helper()
+
+	tree, lang := parseGo(t, src)
+	root := tree.RootNode()
+	defer tree.Release()
+
+	if got := root.Type(lang); got != "source_file" {
+		t.Fatalf("root type = %q, want source_file", got)
+	}
+	if root.HasError() {
+		t.Fatalf("root has error:\n%s", root.SExpr(lang))
+	}
+	if got, want := root.EndByte(), uint32(len(src)); got != want {
+		t.Fatalf("root end = %d, want %d", got, want)
+	}
+	for _, typ := range wantTypes {
+		if findNamedChild(lang, root, typ) == nil {
+			t.Fatalf("missing %s:\n%s", typ, root.SExpr(lang))
+		}
+	}
+	rootText := root.Text(tree.Source())
+	for _, text := range wantTexts {
+		if !bytes.Contains([]byte(rootText), []byte(text)) {
+			t.Fatalf("root text missing %q:\n%s", text, rootText)
+		}
 	}
 }
 
@@ -681,5 +867,392 @@ func f(s []int) int {
 	})
 	t.Run("return 2", func(t *testing.T) {
 		parseWithReturnDigit(t, '2')
+	})
+}
+
+// TestGoInterpretedStringFalseErrors pins two confirmed false-ERROR defect
+// classes traced to a stale grammars/grammar_blobs/go.bin: the shipped blob
+// was compiled by an older grammargen revision (before the LALR/alias fixes
+// landed on this branch) and never regenerated afterward, so its LR tables
+// for interpreted_string_literal disagreed with the rest of the grammar.
+//
+//   - "Bug A": a comparison ending in an interpreted string literal
+//     immediately followed by the lowest-precedence binary operator `||`
+//     produced a spurious ERROR at `||` (the completed
+//     interpreted_string_literal's reduce action was missing `||` from its
+//     lookahead set in the stale table).
+//   - "Bug B": escape_sequence adjacency inside an interpreted string
+//     (content ending right before an escape, or two adjacent escapes)
+//     produced a 1-byte ERROR at the backslash with an orphaned
+//     interpreted_string_literal_content node beside the real string.
+//
+// Regenerating go.bin from the current grammargen source (same `emit go
+// -bin` invocation documented in grammargen/README.md) fixes both; this test
+// guards against the blob going stale again.
+func TestGoInterpretedStringFalseErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+	}{
+		{
+			name: "bugA_string_or_lowest_precedence",
+			src:  "package p\nfunc f(x string) bool { return x == \"a\" || x == \"b\" }\n",
+		},
+		{
+			name: "bugA_three_chain_or",
+			src:  "package p\nfunc f(a, b string) bool { return a == \"x\" || a == \"y\" || b == \"z\" }\n",
+		},
+		{
+			name: "bugB_space_before_escaped_quote",
+			src:  "package p\nvar s = \"hello \\\"world\\\"\"\n",
+		},
+		{
+			// Real-world repro (derived from cgo_harness/c_extern_wrapper_parity_test.go,
+			// which itself hit the false ERROR under the stale blob): a
+			// string literal containing both a space-then-escaped-quote and
+			// several runs of adjacent escape_sequence tokens (\n\n).
+			name: "bugB_adjacent_escapes_real_world",
+			src: "package p\nfunc f() {\n" +
+				"\tsrc := []byte(\"#ifdef __cplusplus\\nextern \\\"C\\\" {\\n#endif\\n\\nint x;\\n\\n#ifdef __cplusplus\\n}\\n#endif\\n\")\n" +
+				"\t_ = src\n}\n",
+		},
+		{
+			// ddmin-minimized repro from the investigation's residual bucket:
+			// two adjacent top-level functions where the first ends in a
+			// call taking a func-literal argument and the second is a
+			// simple `if a.hash() != b.hash() {}`. Originally fell out of the
+			// same stale-blob root cause as bugA/bugB above; later became the
+			// regression pin for the `_automatic_semicolon` external-scanner
+			// ASI fix (grammars/go_scanner.go): routing the terminator
+			// through an external token restructures the LALR table enough
+			// that the pre-existing, upstream-intentional dynamic-precedence
+			// tie between index_expression and generic_type(composite_literal)
+			// (both prec.dynamic(1, ...), see grammargen/go_grammar.go) needs
+			// a wider merge-per-key survivor budget at its merge point — see
+			// the "go" case in effectiveParseMergePerKeyCap in parser_retry.go
+			// (steady-state cap raised from 3 to 8; an earlier, narrower
+			// content-gated widen missed non-bracket-shaped triggers, see that
+			// comment for the regression files that caught it).
+			name: "residual_adjacent_funcs_call_then_if_ne",
+			src: "package grammargen\n" +
+				"func TestBitsetForEach(t *testing.T) {\n" +
+				"\tb.forEach(func(idx int) {\n\t})\n" +
+				"\tfor i := range want {\n" +
+				"\t\tif got[i] != want[i] {\n" +
+				"\t\t\tt.Errorf(\"forEach[%d] = %d, want %d\", i, got[i], want[i])\n" +
+				"\t\t}\n\t}\n}\n" +
+				"func TestBitsetHash(t *testing.T) {\n" +
+				"\tif a.hash() != b.hash() {\n\t}\n}\n",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tree, lang := parseGo(t, tc.src)
+			root := tree.RootNode()
+			if root.HasError() {
+				t.Fatalf("root has error for %q:\n%s", tc.name, root.SExpr(lang))
+			}
+			var walk func(n *gotreesitter.Node)
+			walk = func(n *gotreesitter.Node) {
+				if n == nil {
+					return
+				}
+				if n.IsError() || n.IsMissing() {
+					t.Fatalf("found ERROR/MISSING node in otherwise-clean tree for %q:\n%s", tc.name, root.SExpr(lang))
+				}
+				for i := 0; i < n.ChildCount(); i++ {
+					walk(n.Child(i))
+				}
+			}
+			walk(root)
+		})
+	}
+}
+
+// TestGoWhitespaceAdjacentImmediateStringToken pins a second, distinct
+// grammargen defect found while investigating the false-ERROR classes above:
+// grammargen/dfa.go's lex-mode computation unconditionally injected the
+// grammar's terminal extras (whitespace, comments) into every lex mode,
+// including "strict immediate" modes reached mid interpreted_string_literal
+// (right after content, expecting only more content, an escape_sequence, or
+// the closing quote — all token.immediate()). That corrupted the
+// immediate-vs-non-immediate tie-break used when generating the DFA: a
+// same-character non-immediate sibling terminal (e.g. the plain, non-immediate
+// '"' that opens a brand new string elsewhere in the grammar), pulled in only
+// via reduce-follow/missing-token-recovery lookahead widening, would win over
+// the correct immediate token for genuinely byte-adjacent input with no
+// whitespace to skip at all. The lexer then handed the parser the wrong
+// symbol for a plain "content immediately followed by the closing quote"
+// string (most visibly on interpreted string literals whose content is pure
+// whitespace, or ends right before the closing quote), sending it into
+// unnecessary — and here, badly wrong — error recovery. This could silently
+// produce either a totally wrong tree shape (composite_literal/expression_list
+// garbling of what should be an if_statement or call_expression, with no
+// HasError() signal at all) or a HasError()==true tree with zero visible
+// ERROR/MISSING nodes (the "phantom" class): the tainted, error-absorbed
+// leaf token survived, GSS-shared, into a completely different, ultimately-
+// winning GLR fork that never itself entered error recovery.
+//
+// Fixed in grammargen/dfa.go by excluding follow/missing-recovery widening
+// (and terminal-extras injection) for states whose only real, non-widened
+// parser actions are already all token.immediate() terminals.
+func TestGoWhitespaceAdjacentImmediateStringToken(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+	}{
+		{
+			name: "bare_space_only_string_var_decl",
+			src:  "package p\nvar x = \" \"\n",
+		},
+		{
+			name: "bare_space_only_string_call_arg",
+			src:  "package p\nfunc f() {\n\tg(\" \")\n}\n",
+		},
+		{
+			name: "space_only_string_short_var_decl",
+			src:  "package p\nfunc f() {\n\tx := \" \"\n\t_ = x\n}\n",
+		},
+		{
+			name: "content_ending_in_space_before_close_quote",
+			src:  "package p\nfunc f() {\n\tx := \"a \"\n\t_ = x\n}\n",
+		},
+		{
+			// The originally-discovered real-world trigger: an if-block whose
+			// body ends in a multi-line t.Fatalf(...) call with a "..." +
+			// "..." concatenated, %d-bearing format string. Before the fix
+			// this silently misparsed the entire if_statement as an unrelated
+			// composite_literal/expression_list, with HasError()==false.
+			name: "if_block_multiline_fatalf_composite_literal_garble",
+			src: "package p\nfunc f() {\n" +
+				"\tif actualBytes > maxRetainedFullNodeBytes {\n" +
+				"\t\tt.Fatalf(\"maxRetainedNodeCapacityForClass(full) = %d nodes = %d bytes; \"+\n" +
+				"\t\t\t\"below default full-parse slab capacity %d nodes\",\n" +
+				"\t\t\tmaxNodes, nodeCapacityForClass(arenaClassFull))\n" +
+				"\t}\n}\n",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tree, lang := parseGo(t, tc.src)
+			root := tree.RootNode()
+			if root.HasError() {
+				t.Fatalf("root has error for %q:\n%s", tc.name, root.SExpr(lang))
+			}
+			var walk func(n *gotreesitter.Node)
+			walk = func(n *gotreesitter.Node) {
+				if n == nil {
+					return
+				}
+				if n.IsError() || n.IsMissing() {
+					t.Fatalf("found ERROR/MISSING node in otherwise-clean tree for %q:\n%s", tc.name, root.SExpr(lang))
+				}
+				for i := 0; i < n.ChildCount(); i++ {
+					walk(n.Child(i))
+				}
+			}
+			walk(root)
+			if got := findNamedChild(lang, root, "interpreted_string_literal"); got == nil {
+				t.Fatalf("expected interpreted_string_literal in tree for %q, got:\n%s", tc.name, root.SExpr(lang))
+			}
+			// The if-block case's own defect was a silently WRONG shape with
+			// no error flag at all (if_statement collapsing into
+			// expression_list/composite_literal) — walk()/root.HasError()
+			// above can't catch that, so pin the shape directly here too,
+			// not just in the separate if_block_keeps_if_statement_shape
+			// subtest below.
+			if tc.name == "if_block_multiline_fatalf_composite_literal_garble" {
+				if findNamedChild(lang, root, "if_statement") == nil {
+					t.Fatalf("missing if_statement, tree collapsed into something else for %q:\n%s", tc.name, root.SExpr(lang))
+				}
+			}
+		})
+	}
+
+	// The if-block case must keep its if_statement shape, not collapse into a
+	// bare expression_list — this is what the original garble looked like.
+	t.Run("if_block_keeps_if_statement_shape", func(t *testing.T) {
+		src := "package p\nfunc f() {\n" +
+			"\tif actualBytes > maxRetainedFullNodeBytes {\n" +
+			"\t\tt.Fatalf(\"maxRetainedNodeCapacityForClass(full) = %d nodes = %d bytes; \"+\n" +
+			"\t\t\t\"below default full-parse slab capacity %d nodes\",\n" +
+			"\t\t\tmaxNodes, nodeCapacityForClass(arenaClassFull))\n" +
+			"\t}\n}\n"
+		tree, lang := parseGo(t, src)
+		root := tree.RootNode()
+		if findNamedChild(lang, root, "if_statement") == nil {
+			t.Fatalf("missing if_statement, tree collapsed into something else:\n%s", root.SExpr(lang))
+		}
+	})
+}
+
+// TestGoIfElseSameLineKeywordPromotion pins a third, distinct false-ERROR
+// class found while stress-testing the two fixes above against a broader
+// real-world corpus (Go stdlib): grammargen-compiled Go blobs mis-lexed the
+// "else" keyword when it directly follows an if-block's closing "}" on the
+// same line separated only by spaces/tabs (never a newline).
+//
+// Root cause: parser_dfa_token_source.go's
+// preferSameLineTokenOverGeneratedZeroWidthSentinel scans past same-line
+// whitespace looking for a real token to prefer over the parser's generated
+// zero-width auto-semicolon sentinel ("\x00"), but checked the RAW,
+// un-promoted DFA classification of that token — reserved words come back
+// as a plain "identifier" from the raw scan; keyword promotion (recognizing
+// that identifier text "else" should really be the "else" keyword symbol)
+// happens later in the pipeline. Since the if-block's closing state has no
+// action for a bare "identifier" there (only for the "else" keyword
+// symbol), the same-line preference check always lost and fell back to the
+// sentinel — completing the if_statement one token early with no else
+// clause, then reparsing "else { ... }" as a bare identifier followed by an
+// unrelated composite_literal (the block's "{...}" reinterpreted as a
+// literal_value, "else" as its type name). Fixed by promoting the
+// candidate real token before checking whether the current parser state can
+// consume it.
+//
+// This is an engine-level fix (parser_dfa_token_source.go, not
+// grammargen-generated tables), so it applies to every grammargen-compiled,
+// DFA-driven language with the same "\n | ; | \x00" auto-semicolon shape,
+// not just Go.
+func TestGoIfElseSameLineKeywordPromotion(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+	}{
+		{
+			name: "assignment_in_both_branches",
+			src:  "package p\nfunc f() { if x { z = a } else { z = b } }\n",
+		},
+		{
+			name: "short_var_decl_in_else",
+			src:  "package p\nfunc f() { if x { z = a } else { z := b } }\n",
+		},
+		{
+			name: "call_in_else",
+			src:  "package p\nfunc f() { if x { z = a } else { b() } }\n",
+		},
+		{
+			name: "no_space_before_else",
+			src:  "package p\nfunc f() { if x { z = a }else{ z = b } }\n",
+		},
+		{
+			name: "else_if_chain_with_assignment",
+			src:  "package p\nfunc f() { if x { z = a } else if y { z = b } else { z = c } }\n",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tree, lang := parseGo(t, tc.src)
+			root := tree.RootNode()
+			if root.HasError() {
+				t.Fatalf("root has error for %q:\n%s", tc.name, root.SExpr(lang))
+			}
+			var walk func(n *gotreesitter.Node)
+			walk = func(n *gotreesitter.Node) {
+				if n == nil {
+					return
+				}
+				if n.IsError() || n.IsMissing() {
+					t.Fatalf("found ERROR/MISSING node in otherwise-clean tree for %q:\n%s", tc.name, root.SExpr(lang))
+				}
+				for i := 0; i < n.ChildCount(); i++ {
+					walk(n.Child(i))
+				}
+			}
+			walk(root)
+			ifStmt := findNamedChild(lang, root, "if_statement")
+			if ifStmt == nil {
+				t.Fatalf("missing if_statement for %q, tree collapsed into something else:\n%s", tc.name, root.SExpr(lang))
+			}
+			if ifStmt.ChildByFieldName("alternative", lang) == nil {
+				t.Fatalf("if_statement lost its else alternative for %q:\n%s", tc.name, root.SExpr(lang))
+			}
+		})
+	}
+}
+
+// TestGoMergePerKeyCapRegressionFiles pins the two smallest of four real
+// files a review pass found clean at the pre-ASI-fix baseline and under the
+// C oracle, but that flipped to a false ERROR under the first (content-gated,
+// cap=5) attempt at fixing the merge-per-key survivor budget needed by the
+// `_automatic_semicolon` external-scanner ASI fix (grammars/go_scanner.go).
+// query_kotlin_regression_test.go is notable: its `got[i] != want[i]` /
+// `imports[i] != wantImports[i]` shapes actually matched the old gate's
+// bracket-index-comparison content probe (grep for the shape) and still
+// needed more survivors than that gate's cap=5 provided — cap=5 was
+// calibrated to the single original pin case, not to every occurrence of the
+// shape it targeted. The other two (cursor_test.go, this repo;
+// sort_slices_benchmark_test.go, Go standard library) are exercised by ad
+// hoc corpus walks rather than pinned here. See the "go" case in
+// effectiveParseMergePerKeyCap and fullParseRetryMergePerKeyOverride's "go"
+// case (parser_retry.go) for the full account: the fix landed as a
+// steady-state cap=3 (unchanged from pre-ASI-fix) plus a retry rung that
+// fires only when a fresh cap=3 parse reports HasError, re-parsing once at
+// cap=16 — these two files' cap=3 parses report HasError=true, so this test
+// exercises the retry rung internally without asserting on it directly.
+func TestGoMergePerKeyCapRegressionFiles(t *testing.T) {
+	for _, name := range []string{
+		"language_forest_optin_test.go",
+		"query_kotlin_regression_test.go",
+	} {
+		t.Run(name, func(t *testing.T) {
+			src, err := os.ReadFile(name)
+			if err != nil {
+				t.Fatalf("read %s: %v", name, err)
+			}
+			tree, lang := parseGo(t, string(src))
+			root := tree.RootNode()
+			defer tree.Release()
+			if root.HasError() {
+				t.Fatalf("root has error for %s:\n%s", name, root.SExpr(lang))
+			}
+		})
+	}
+}
+
+// TestGoMergePerKeyCapNormalizeGoStaysCleanAtSteadyState pins the other half
+// of the merge-per-key cap story: grammargen/normalize.go (and the 153-byte
+// repro of its trigger shape below) parses clean at the steady-state cap=3
+// — the retry rung in fullParseRetryMergePerKeyOverride's "go" case must
+// never fire for it. This matters because an earlier, since-reverted attempt
+// at this fix (an unconditional steady-state raise to cap=8, commit
+// a03cdff0) broke this exact file: the same construct parses clean at cap=3
+// but produces a false ERROR at every fixed steady-state cap from 8 through
+// 16 tested — the GLR merge-selection engine is not monotonic in the cap
+// value, so a from-scratch parse at a fixed, elevated cap can select a worse
+// merge winner than one that started narrow. The retry-rung design sidesteps
+// this by construction (clean-at-cap=3 files never retry), but this test
+// guards against a future change reintroducing a steady-state raise, or
+// otherwise causing this file/shape to see a wider cap on its first pass.
+func TestGoMergePerKeyCapNormalizeGoStaysCleanAtSteadyState(t *testing.T) {
+	t.Run("grammargen/normalize.go", func(t *testing.T) {
+		src, err := os.ReadFile("grammargen/normalize.go")
+		if err != nil {
+			t.Fatalf("read grammargen/normalize.go: %v", err)
+		}
+		tree, lang := parseGo(t, string(src))
+		root := tree.RootNode()
+		defer tree.Release()
+		if root.HasError() {
+			t.Fatalf("root has error for grammargen/normalize.go:\n%s", root.SExpr(lang))
+		}
+	})
+	t.Run("minimal_repro", func(t *testing.T) {
+		src := "package p\n" +
+			"func f() {\n" +
+			"\tfor value, names := range candidatesByValue {\n" +
+			"\t\tif anonymousSources[value] {\n" +
+			"\t\t\tout[names[0]] = true\n" +
+			"\t\t}\n" +
+			"\t}\n" +
+			"}\n"
+		tree, lang := parseGo(t, src)
+		root := tree.RootNode()
+		defer tree.Release()
+		if root.HasError() {
+			t.Fatalf("root has error for minimal_repro:\n%s", root.SExpr(lang))
+		}
 	})
 }

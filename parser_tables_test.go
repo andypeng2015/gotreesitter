@@ -90,6 +90,54 @@ func TestLookupActionIndexSmallUsesFullTokenRowsForOtherLanguages(t *testing.T) 
 	}
 }
 
+func TestLookupActionIndexSmallUsesFullSymbolRowsForGo(t *testing.T) {
+	lang := &Language{
+		Name:                  "go",
+		GeneratedByGrammargen: true,
+		TokenCount:            8,
+		SymbolCount:           16,
+		LargeStateCount:       1,
+		SmallParseTableMap:    []uint32{0},
+		// groupCount=3
+		// action 11 for token symbols 1..2
+		// action 17 for nonterminal symbol 12
+		// action 19 for nonterminal symbol 15
+		SmallParseTable: []uint16{
+			3,
+			11, 2, 1, 2,
+			17, 1, 12,
+			19, 1, 15,
+		},
+	}
+
+	smallTokenLookup := buildSmallTokenLookup(lang)
+	p := &Parser{
+		language:         lang,
+		smallBase:        int(lang.LargeStateCount),
+		smallLookup:      buildSmallLookup(lang, smallTokenLookup),
+		smallTokenLookup: smallTokenLookup,
+	}
+
+	if got, want := p.lookupActionIndexSmall(1, 1), uint16(11); got != want {
+		t.Fatalf("lookupActionIndexSmall token = %d, want %d", got, want)
+	}
+	if got, want := p.lookupActionIndexSmall(1, 12), uint16(17); got != want {
+		t.Fatalf("lookupActionIndexSmall nonterminal 12 = %d, want %d", got, want)
+	}
+	if got, want := p.lookupActionIndexSmall(1, 15), uint16(19); got != want {
+		t.Fatalf("lookupActionIndexSmall nonterminal 15 = %d, want %d", got, want)
+	}
+	if got := p.lookupActionIndexSmall(1, 14); got != 0 {
+		t.Fatalf("lookupActionIndexSmall missing nonterminal = %d, want 0", got)
+	}
+	if len(p.smallTokenLookup) != 1 || len(p.smallTokenLookup[0]) != int(lang.SymbolCount) {
+		t.Fatalf("smallTokenLookup should use full symbol row for Go: %+v", p.smallTokenLookup)
+	}
+	if len(p.smallLookup) != 1 || len(p.smallLookup[0]) != 0 {
+		t.Fatalf("smallLookup should not retain symbols covered by Go full symbol rows: %+v", p.smallLookup)
+	}
+}
+
 func TestBuildExternalValidByStateUsesCompactExternalIndexes(t *testing.T) {
 	lang := &Language{
 		TokenCount:      5,

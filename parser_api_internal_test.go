@@ -2,6 +2,7 @@ package gotreesitter
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 	"time"
 )
@@ -166,33 +167,143 @@ func TestTypeScriptRepetitionShiftConflictChoiceRejectsOtherState(t *testing.T) 
 	}
 }
 
-func TestPythonRepetitionShiftConflictChoiceAllowsHotModuleRepeat(t *testing.T) {
-	lang := &Language{SymbolNames: []string{"end", "identifier", "def", "module_repeat1"}}
+func TestTypeScriptRepetitionShiftConflictChoiceForDispatchLegacyCondense(t *testing.T) {
+	old := glrFaithfulCapOneMerge
+	glrFaithfulCapOneMerge = false
+	t.Cleanup(func() { glrFaithfulCapOneMerge = old })
+
+	lang := &Language{SymbolNames: []string{"end", "function", "program_repeat1"}}
 	actions := []ParseAction{
-		{Type: ParseActionReduce, Symbol: 3, ChildCount: 2},
-		{Type: ParseActionShift, State: 616, Repetition: true},
+		{Type: ParseActionReduce, Symbol: 2, ChildCount: 2},
+		{Type: ParseActionShift, State: 3693, Repetition: true},
 	}
 
-	for _, sym := range []Symbol{1, 2} {
-		chosen, ok := pythonRepetitionShiftConflictChoice(lang, Token{Symbol: sym}, 72, actions)
-		if !ok {
-			t.Fatalf("pythonRepetitionShiftConflictChoice(%q) = false, want true", lang.SymbolNames[sym])
+	chosen, ok := typescriptRepetitionShiftConflictChoiceForDispatch(lang, Token{Symbol: 1}, 9, actions)
+	if !ok {
+		t.Fatal("typescriptRepetitionShiftConflictChoiceForDispatch = false, want true")
+	}
+	if chosen.Type != ParseActionShift || chosen.State != 3693 || !chosen.Repetition {
+		t.Fatalf("typescriptRepetitionShiftConflictChoiceForDispatch picked %+v, want program repeat shift", chosen)
+	}
+}
+
+func TestTypeScriptRepetitionShiftConflictChoiceForDispatchSkipsFaithfulCondense(t *testing.T) {
+	old := glrFaithfulCapOneMerge
+	glrFaithfulCapOneMerge = true
+	t.Cleanup(func() { glrFaithfulCapOneMerge = old })
+
+	lang := &Language{SymbolNames: []string{"end", "function", "program_repeat1"}}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 2, ChildCount: 2},
+		{Type: ParseActionShift, State: 3693, Repetition: true},
+	}
+
+	if _, ok := typescriptRepetitionShiftConflictChoiceForDispatch(lang, Token{Symbol: 1}, 9, actions); ok {
+		t.Fatal("typescriptRepetitionShiftConflictChoiceForDispatch = true, want false")
+	}
+}
+
+func TestGeneratedRepeatBoundaryConflictBypassesDispatchShortcut(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		state StateID
+		tok   Symbol
+	}{
+		{name: "python", state: 72, tok: 1},
+		{name: "dart", state: 596, tok: 1},
+	} {
+		lang := &Language{
+			Name:                  tc.name,
+			GeneratedByGrammargen: true,
+			SymbolNames:           []string{"end", "identifier", "def", "module_repeat1"},
+			SymbolMetadata: []SymbolMetadata{
+				{Name: "end"},
+				{Name: "identifier"},
+				{Name: "def"},
+				{Name: "module_repeat1", GeneratedRepeatAux: true},
+			},
 		}
-		if chosen.Type != ParseActionShift || chosen.State != 616 || !chosen.Repetition {
-			t.Fatalf("pythonRepetitionShiftConflictChoice(%q) picked %+v, want repetition shift", lang.SymbolNames[sym], chosen)
+		actions := []ParseAction{
+			{Type: ParseActionReduce, Symbol: 3, ChildCount: 2},
+			{Type: ParseActionShift, State: 616, Repetition: true},
+		}
+		if !generatedRepeatBoundaryConflict(lang, actions) {
+			t.Fatalf("%s generatedRepeatBoundaryConflict = false, want true", tc.name)
+		}
+		parser := &Parser{language: lang}
+		if chosen, ok := parser.deterministicConflictChoiceForDispatch(nil, nil, Token{Symbol: tc.tok}, tc.state, actions, 2, nil); ok {
+			t.Fatalf("%s deterministicConflictChoiceForDispatch picked %+v, want GLR fork", tc.name, chosen)
 		}
 	}
 }
 
-func TestPythonRepetitionShiftConflictChoiceRejectsOtherState(t *testing.T) {
-	lang := &Language{SymbolNames: []string{"end", "identifier", "module_repeat1"}}
+func TestGeneratedRepeatBoundaryConflictRequiresGeneratedReduce(t *testing.T) {
+	lang := &Language{
+		Name:                  "python",
+		GeneratedByGrammargen: true,
+		SymbolNames:           []string{"end", "identifier", "module_repeat1"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "end"},
+			{Name: "identifier"},
+			{Name: "module_repeat1"},
+		},
+	}
 	actions := []ParseAction{
 		{Type: ParseActionReduce, Symbol: 2, ChildCount: 2},
 		{Type: ParseActionShift, State: 616, Repetition: true},
 	}
+	if generatedRepeatBoundaryConflict(lang, actions) {
+		t.Fatal("generatedRepeatBoundaryConflict = true for non-generated reduce, want false")
+	}
+}
 
-	if _, ok := pythonRepetitionShiftConflictChoice(lang, Token{Symbol: 1}, 73, actions); ok {
-		t.Fatal("pythonRepetitionShiftConflictChoice = true, want false")
+func TestGeneratedRepeatBoundaryConflictAllowsMixedReduces(t *testing.T) {
+	lang := &Language{
+		Name:                  "python",
+		GeneratedByGrammargen: true,
+		SymbolNames:           []string{"end", "identifier", "module_repeat1", "statement"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "end"},
+			{Name: "identifier"},
+			{Name: "module_repeat1", GeneratedRepeatAux: true},
+			{Name: "statement"},
+		},
+	}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 2, ChildCount: 2},
+		{Type: ParseActionReduce, Symbol: 3, ChildCount: 1},
+		{Type: ParseActionShift, State: 616, Repetition: true},
+	}
+	if !generatedRepeatBoundaryConflict(lang, actions) {
+		t.Fatal("generatedRepeatBoundaryConflict = false for mixed generated/non-generated reduces, want true")
+	}
+}
+
+func TestDeterministicConflictChoiceKeepsNonGeneratedShortcut(t *testing.T) {
+	lang := &Language{
+		Name:        "php",
+		SymbolNames: []string{"end", "namespace", "\\", "name", "use", "new", "program_repeat1"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "end"},
+			{Name: "namespace"},
+			{Name: "\\"},
+			{Name: "name"},
+			{Name: "use"},
+			{Name: "new"},
+			{Name: "program_repeat1"},
+		},
+	}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 6, ChildCount: 2},
+		{Type: ParseActionShift, State: 1846, Repetition: true},
+	}
+	parser := &Parser{language: lang}
+	chosen, ok := parser.deterministicConflictChoiceForDispatch(nil, nil, Token{Symbol: 1}, 2, actions, 2, nil)
+	if !ok {
+		t.Fatal("deterministicConflictChoiceForDispatch = false, want non-generated PHP shortcut")
+	}
+	if chosen.Type != ParseActionShift || chosen.State != 1846 || !chosen.Repetition {
+		t.Fatalf("deterministicConflictChoiceForDispatch picked %+v, want repetition shift", chosen)
 	}
 }
 
@@ -633,6 +744,55 @@ func TestAwkRepetitionShiftConflictChoiceRejectsOtherRepeat(t *testing.T) {
 	}
 }
 
+func TestSchemeRepetitionShiftConflictChoiceAllowsBlockCommentRepeat(t *testing.T) {
+	lang := &Language{SymbolNames: []string{"end", "block_comment_token1", "block_comment_repeat1"}}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 2, ChildCount: 2},
+		{Type: ParseActionShift, State: 129, Repetition: true},
+	}
+
+	chosen, ok := schemeRepetitionShiftConflictChoice(lang, Token{Symbol: 1}, 129, actions)
+	if !ok {
+		t.Fatal("schemeRepetitionShiftConflictChoice = false, want true")
+	}
+	if chosen.Type != ParseActionShift || chosen.State != 129 || !chosen.Repetition {
+		t.Fatalf("schemeRepetitionShiftConflictChoice picked %+v, want repetition shift", chosen)
+	}
+}
+
+func TestSchemeRepetitionShiftConflictChoiceRejectsOtherShapes(t *testing.T) {
+	lang := &Language{SymbolNames: []string{"end", "block_comment_token1", "block_comment_repeat1", "other_repeat1"}}
+	baseActions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 2, ChildCount: 2},
+		{Type: ParseActionShift, State: 129, Repetition: true},
+	}
+
+	if _, ok := schemeRepetitionShiftConflictChoice(lang, Token{Symbol: 1}, 128, baseActions); ok {
+		t.Fatal("schemeRepetitionShiftConflictChoice accepted wrong state")
+	}
+	if _, ok := schemeRepetitionShiftConflictChoice(lang, Token{Symbol: 0}, 129, baseActions); ok {
+		t.Fatal("schemeRepetitionShiftConflictChoice accepted wrong lookahead")
+	}
+	if _, ok := schemeRepetitionShiftConflictChoice(lang, Token{Symbol: 1}, 129, []ParseAction{
+		{Type: ParseActionReduce, Symbol: 3, ChildCount: 2},
+		{Type: ParseActionShift, State: 129, Repetition: true},
+	}); ok {
+		t.Fatal("schemeRepetitionShiftConflictChoice accepted wrong reduce symbol")
+	}
+	if _, ok := schemeRepetitionShiftConflictChoice(lang, Token{Symbol: 1}, 129, []ParseAction{
+		{Type: ParseActionReduce, Symbol: 2, ChildCount: 1},
+		{Type: ParseActionShift, State: 129, Repetition: true},
+	}); ok {
+		t.Fatal("schemeRepetitionShiftConflictChoice accepted wrong reduce child count")
+	}
+	if _, ok := schemeRepetitionShiftConflictChoice(lang, Token{Symbol: 1}, 129, []ParseAction{
+		{Type: ParseActionReduce, Symbol: 2, ChildCount: 2},
+		{Type: ParseActionShift, State: 129, Repetition: false},
+	}); ok {
+		t.Fatal("schemeRepetitionShiftConflictChoice accepted non-repetition shift")
+	}
+}
+
 func TestRustRepetitionShiftConflictChoiceAllowsSourceFileRepeat(t *testing.T) {
 	lang := &Language{SymbolNames: []string{"end", "identifier", ";", "..", "source_file_repeat1", "_non_special_token_repeat1"}}
 	actions := []ParseAction{
@@ -889,6 +1049,78 @@ func TestJavaRepetitionShiftConflictChoiceRejectsArrayInitializerTrailingComma(t
 	}
 }
 
+func TestJavaRepetitionShiftConflictChoiceForDispatchLegacyCondense(t *testing.T) {
+	old := glrFaithfulCapOneMerge
+	glrFaithfulCapOneMerge = false
+	t.Cleanup(func() { glrFaithfulCapOneMerge = old })
+
+	lang := &Language{SymbolNames: []string{"end", "escape_sequence", "_string_literal_repeat1"}}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 2, ChildCount: 1},
+		{Type: ParseActionShift, State: 983, Repetition: true},
+	}
+
+	chosen, ok := javaRepetitionShiftConflictChoiceForDispatch(lang, nil, Token{Symbol: 1}, 983, actions)
+	if !ok {
+		t.Fatal("javaRepetitionShiftConflictChoiceForDispatch = false, want true")
+	}
+	if chosen.Type != ParseActionShift || chosen.State != 983 || !chosen.Repetition {
+		t.Fatalf("javaRepetitionShiftConflictChoiceForDispatch picked %+v, want string repeat shift", chosen)
+	}
+}
+
+func TestJavaRepetitionShiftConflictChoiceForDispatchSkipsFaithfulCondense(t *testing.T) {
+	old := glrFaithfulCapOneMerge
+	glrFaithfulCapOneMerge = true
+	t.Cleanup(func() { glrFaithfulCapOneMerge = old })
+
+	lang := &Language{SymbolNames: []string{"end", "escape_sequence", "_string_literal_repeat1"}}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 2, ChildCount: 1},
+		{Type: ParseActionShift, State: 983, Repetition: true},
+	}
+
+	if _, ok := javaRepetitionShiftConflictChoiceForDispatch(lang, nil, Token{Symbol: 1}, 983, actions); ok {
+		t.Fatal("javaRepetitionShiftConflictChoiceForDispatch = true, want false")
+	}
+}
+
+func TestJavaScriptRepetitionShiftConflictChoiceForDispatchLegacyCondense(t *testing.T) {
+	old := glrFaithfulCapOneMerge
+	glrFaithfulCapOneMerge = false
+	t.Cleanup(func() { glrFaithfulCapOneMerge = old })
+
+	lang := &Language{SymbolNames: []string{"end", "this", "program_repeat1"}}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 2, ChildCount: 2},
+		{Type: ParseActionShift, State: 1245, Repetition: true},
+	}
+
+	chosen, ok := javascriptRepetitionShiftConflictChoiceForDispatch(lang, Token{Symbol: 1}, 9, actions)
+	if !ok {
+		t.Fatal("javascriptRepetitionShiftConflictChoiceForDispatch = false, want true")
+	}
+	if chosen.Type != ParseActionShift || chosen.State != 1245 || !chosen.Repetition {
+		t.Fatalf("javascriptRepetitionShiftConflictChoiceForDispatch picked %+v, want program repeat shift", chosen)
+	}
+}
+
+func TestJavaScriptRepetitionShiftConflictChoiceForDispatchSkipsFaithfulCondense(t *testing.T) {
+	old := glrFaithfulCapOneMerge
+	glrFaithfulCapOneMerge = true
+	t.Cleanup(func() { glrFaithfulCapOneMerge = old })
+
+	lang := &Language{SymbolNames: []string{"end", "this", "program_repeat1"}}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 2, ChildCount: 2},
+		{Type: ParseActionShift, State: 1245, Repetition: true},
+	}
+
+	if _, ok := javascriptRepetitionShiftConflictChoiceForDispatch(lang, Token{Symbol: 1}, 9, actions); ok {
+		t.Fatal("javascriptRepetitionShiftConflictChoiceForDispatch = true, want false")
+	}
+}
+
 func TestShouldRetryNodeLimitParse(t *testing.T) {
 	tree := &Tree{
 		parseRuntime: ParseRuntime{
@@ -1046,6 +1278,112 @@ func TestJavaAcceptedErrorRetryUsesWideMergeRetry(t *testing.T) {
 
 	if got := fullParseRetryMergePerKeyOverride(tree, 128, 6); got != javaFullParseRetryMaxMergePerKey {
 		t.Fatalf("fullParseRetryMergePerKeyOverride(java accepted error) = %d, want %d", got, javaFullParseRetryMaxMergePerKey)
+	}
+}
+
+func TestNoStacksCleanRootRetryWidenMergeBeforeStackCap(t *testing.T) {
+	tree := &Tree{
+		language: &Language{Name: "go"},
+		root: &Node{
+			endByte: 96,
+		},
+		parseRuntime: ParseRuntime{
+			StopReason:      ParseStopNoStacksAlive,
+			ExpectedEOFByte: 128,
+			RootEndByte:     96,
+			Truncated:       true,
+			MaxStacksSeen:   3,
+		},
+	}
+
+	if got := fullParseRetryMergePerKeyOverride(tree, 128, 8); got != fullParseRetryMaxMergePerKey {
+		t.Fatalf("fullParseRetryMergePerKeyOverride(clean EOF no_stacks) = %d, want %d", got, fullParseRetryMaxMergePerKey)
+	}
+}
+
+func TestShouldTakeCleanWideRetryRejectsNodeLimitNonTruncatedNoError(t *testing.T) {
+	incumbent := &Tree{
+		root: &Node{
+			endByte: 64,
+		},
+		parseRuntime: ParseRuntime{
+			StopReason:      ParseStopNoStacksAlive,
+			ExpectedEOFByte: 128,
+			RootEndByte:     64,
+		},
+	}
+	candidate := &Tree{
+		root: &Node{
+			endByte: 128,
+		},
+		parseRuntime: ParseRuntime{
+			StopReason:      ParseStopNodeLimit,
+			ExpectedEOFByte: 128,
+			RootEndByte:     128,
+		},
+	}
+
+	if shouldTakeCleanWideRetry(incumbent, candidate, 128, 8) {
+		t.Fatal("shouldTakeCleanWideRetry(node_limit non-truncated clean candidate) = true, want false")
+	}
+}
+
+func TestShouldTakeCleanWideRetryAcceptsAcceptedNoError(t *testing.T) {
+	incumbent := &Tree{
+		root: &Node{
+			endByte: 64,
+		},
+		parseRuntime: ParseRuntime{
+			StopReason:      ParseStopNoStacksAlive,
+			ExpectedEOFByte: 128,
+			RootEndByte:     64,
+		},
+	}
+	candidate := &Tree{
+		root: &Node{
+			endByte: 128,
+		},
+		parseRuntime: ParseRuntime{
+			StopReason:      ParseStopAccepted,
+			ExpectedEOFByte: 128,
+			RootEndByte:     128,
+		},
+	}
+
+	if !shouldTakeCleanWideRetry(incumbent, candidate, 128, 8) {
+		t.Fatal("shouldTakeCleanWideRetry(accepted clean candidate) = false, want true")
+	}
+}
+
+func TestShouldTakeCleanWideRetryNoStacksAliveRequiresExpectedEOFCoverage(t *testing.T) {
+	incumbent := &Tree{
+		root: &Node{
+			endByte: 64,
+		},
+		parseRuntime: ParseRuntime{
+			StopReason:      ParseStopNoStacksAlive,
+			ExpectedEOFByte: 128,
+			RootEndByte:     64,
+		},
+	}
+	candidate := &Tree{
+		root: &Node{
+			endByte: 127,
+		},
+		parseRuntime: ParseRuntime{
+			StopReason:      ParseStopNoStacksAlive,
+			ExpectedEOFByte: 128,
+			RootEndByte:     127,
+		},
+	}
+
+	if shouldTakeCleanWideRetry(incumbent, candidate, 128, 8) {
+		t.Fatal("shouldTakeCleanWideRetry(no_stacks_alive short clean candidate) = true, want false")
+	}
+	candidate.root.endByte = 128
+	candidate.parseRuntime.RootEndByte = 128
+	if !shouldTakeCleanWideRetry(incumbent, candidate, 128, 8) {
+		t.Fatal("shouldTakeCleanWideRetry(no_stacks_alive EOF-covering clean candidate) = false, want true")
 	}
 }
 
@@ -1224,6 +1562,46 @@ func TestParseWithSnippetParserParsesSource(t *testing.T) {
 	tree.Release()
 }
 
+func TestParseWithSnippetParserInheritsExpiredParentDeadline(t *testing.T) {
+	parent := NewParser(buildArithmeticLanguage())
+	parent.SetTimeoutMicros(100)
+	endBudget := parent.beginParseOperationBudget()
+	defer endBudget()
+	time.Sleep(2 * time.Millisecond)
+
+	tree, err := parseWithSnippetParserInheriting(buildArithmeticLanguage(), []byte("1+2"), parent)
+	if err != nil {
+		t.Fatalf("parseWithSnippetParserInheriting error: %v", err)
+	}
+	defer tree.Release()
+	if got, want := tree.ParseStopReason(), ParseStopTimeout; got != want {
+		t.Fatalf("ParseStopReason() = %q, want %q", got, want)
+	}
+	if !tree.ParseStoppedEarly() {
+		t.Fatal("ParseStoppedEarly() = false, want true")
+	}
+}
+
+func TestParseWithSnippetParserInheritsParentCancellation(t *testing.T) {
+	parent := NewParser(buildArithmeticLanguage())
+	var cancelled uint32 = 1
+	parent.SetCancellationFlag(&cancelled)
+	endBudget := parent.beginParseOperationBudget()
+	defer endBudget()
+
+	tree, err := parseWithSnippetParserInheriting(buildArithmeticLanguage(), []byte("1+2"), parent)
+	if err != nil {
+		t.Fatalf("parseWithSnippetParserInheriting error: %v", err)
+	}
+	defer tree.Release()
+	if got, want := tree.ParseStopReason(), ParseStopCancelled; got != want {
+		t.Fatalf("ParseStopReason() = %q, want %q", got, want)
+	}
+	if !tree.ParseStoppedEarly() {
+		t.Fatal("ParseStoppedEarly() = false, want true")
+	}
+}
+
 func TestParserParseClearsRecoveryParserAcrossTopLevelParses(t *testing.T) {
 	parser := NewParser(buildArithmeticLanguage())
 	parser.recoveryParser = NewParser(buildArithmeticLanguage())
@@ -1261,8 +1639,60 @@ func TestPreferRetryTreePrefersFurtherAcceptedProgress(t *testing.T) {
 		},
 	}
 
-	if !preferRetryTree(candidate, incumbent) {
+	if !preferRetryTree(nil, candidate, incumbent) {
 		t.Fatal("preferRetryTree = false, want true for accepted full-length retry")
+	}
+}
+
+func TestPreferRetryTreeKeepsFurtherErrorOverShortCleanCandidate(t *testing.T) {
+	incumbent := &Tree{
+		root: &Node{
+			endByte: 200,
+			flags:   nodeFlagHasError,
+		},
+		parseRuntime: ParseRuntime{
+			StopReason:      ParseStopAccepted,
+			ExpectedEOFByte: 200,
+		},
+	}
+	candidate := &Tree{
+		root: &Node{
+			endByte: 120,
+		},
+		parseRuntime: ParseRuntime{
+			StopReason:      ParseStopAccepted,
+			ExpectedEOFByte: 200,
+		},
+	}
+
+	if preferRetryTree(nil, candidate, incumbent) {
+		t.Fatal("preferRetryTree = true, want false for short clean retry against further error incumbent")
+	}
+}
+
+func TestPreferRetryTreePrefersFullCleanCandidateOverError(t *testing.T) {
+	incumbent := &Tree{
+		root: &Node{
+			endByte: 200,
+			flags:   nodeFlagHasError,
+		},
+		parseRuntime: ParseRuntime{
+			StopReason:      ParseStopAccepted,
+			ExpectedEOFByte: 200,
+		},
+	}
+	candidate := &Tree{
+		root: &Node{
+			endByte: 200,
+		},
+		parseRuntime: ParseRuntime{
+			StopReason:      ParseStopAccepted,
+			ExpectedEOFByte: 200,
+		},
+	}
+
+	if !preferRetryTree(nil, candidate, incumbent) {
+		t.Fatal("preferRetryTree = false, want true for full clean retry against error incumbent")
 	}
 }
 
@@ -1292,7 +1722,7 @@ func TestPreferRetryTreePrefersFewerChildrenOnEqualErrorTrees(t *testing.T) {
 		},
 	}
 
-	if !preferRetryTree(candidate, incumbent) {
+	if !preferRetryTree(nil, candidate, incumbent) {
 		t.Fatal("preferRetryTree = false, want true for smaller equal-span error tree")
 	}
 }
@@ -1341,8 +1771,17 @@ func TestEffectiveFullParseInitialMaxStacks(t *testing.T) {
 	if got := effectiveFullParseInitialMaxStacks(&Language{Name: "hcl"}, maxGLRStacks); got != 2 {
 		t.Fatalf("effectiveFullParseInitialMaxStacks(hcl) = %d, want 2", got)
 	}
+	if got := effectiveFullParseInitialMaxStacks(&Language{Name: "objc"}, maxGLRStacks); got != 2 {
+		t.Fatalf("effectiveFullParseInitialMaxStacks(objc) = %d, want 2", got)
+	}
+	if got := effectiveFullParseInitialMaxStacks(&Language{Name: "crystal"}, maxGLRStacks); got != 2 {
+		t.Fatalf("effectiveFullParseInitialMaxStacks(crystal) = %d, want 2", got)
+	}
 	if got := effectiveFullParseInitialMaxStacks(&Language{Name: "javascript"}, maxGLRStacks); got != 6 {
 		t.Fatalf("effectiveFullParseInitialMaxStacks(javascript) = %d, want 6", got)
+	}
+	if got := effectiveFullParseInitialMaxStacks(&Language{Name: "java"}, maxGLRStacks); got != 14 {
+		t.Fatalf("effectiveFullParseInitialMaxStacks(java) = %d, want 14", got)
 	}
 	if got := effectiveFullParseInitialMaxStacks(&Language{Name: "typescript"}, maxGLRStacks); got != 2 {
 		t.Fatalf("effectiveFullParseInitialMaxStacks(typescript) = %d, want 2", got)
@@ -1358,6 +1797,9 @@ func TestEffectiveFullParseInitialMaxStacks(t *testing.T) {
 	}
 	if got := effectiveFullParseInitialMaxStacks(&Language{Name: "rust"}, maxGLRStacks); got != 2 {
 		t.Fatalf("effectiveFullParseInitialMaxStacks(rust) = %d, want 2", got)
+	}
+	if got := effectiveFullParseInitialMaxStacks(&Language{Name: "comment"}, maxGLRStacks); got != 2 {
+		t.Fatalf("effectiveFullParseInitialMaxStacks(comment) = %d, want 2", got)
 	}
 	if got := effectiveFullParseInitialMaxStacks(&Language{Name: "php"}, maxGLRStacks); got != 16 {
 		t.Fatalf("effectiveFullParseInitialMaxStacks(php) = %d, want 16", got)
@@ -1377,6 +1819,15 @@ func TestEffectiveFullParseInitialMaxStacks(t *testing.T) {
 	if got := effectiveFullParseInitialMaxStacks(&Language{Name: "javascript"}, 16); got != 16 {
 		t.Fatalf("effectiveFullParseInitialMaxStacks(javascript, explicit override) = %d, want 16", got)
 	}
+	if got := effectiveFullParseInitialMaxStacks(&Language{Name: "java"}, 16); got != 16 {
+		t.Fatalf("effectiveFullParseInitialMaxStacks(java, explicit override) = %d, want 16", got)
+	}
+	if got := effectiveFullParseInitialMaxStacks(&Language{Name: "crystal"}, 16); got != 16 {
+		t.Fatalf("effectiveFullParseInitialMaxStacks(crystal, explicit override) = %d, want 16", got)
+	}
+	if got := effectiveFullParseInitialMaxStacks(&Language{Name: "objc"}, 16); got != 16 {
+		t.Fatalf("effectiveFullParseInitialMaxStacks(objc, explicit override) = %d, want 16", got)
+	}
 	if got := effectiveFullParseInitialMaxStacks(&Language{Name: "typescript"}, 16); got != 16 {
 		t.Fatalf("effectiveFullParseInitialMaxStacks(typescript, explicit override) = %d, want 16", got)
 	}
@@ -1388,6 +1839,9 @@ func TestEffectiveFullParseInitialMaxStacks(t *testing.T) {
 	}
 	if got := effectiveFullParseInitialMaxStacks(&Language{Name: "rust"}, 16); got != 16 {
 		t.Fatalf("effectiveFullParseInitialMaxStacks(rust, explicit override) = %d, want 16", got)
+	}
+	if got := effectiveFullParseInitialMaxStacks(&Language{Name: "comment"}, 16); got != 16 {
+		t.Fatalf("effectiveFullParseInitialMaxStacks(comment, explicit override) = %d, want 16", got)
 	}
 	if got := effectiveFullParseInitialMaxStacks(&Language{Name: "php"}, 32); got != 32 {
 		t.Fatalf("effectiveFullParseInitialMaxStacks(php, explicit override) = %d, want 32", got)
@@ -1435,6 +1889,7 @@ func TestParsePreMaterializationDiagEnabled(t *testing.T) {
 
 func TestEffectiveParseMergePerKeyCap(t *testing.T) {
 	t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "")
+	t.Setenv("GOT_FAITHFUL_CONDENSE", "")
 	ResetParseEnvConfigCacheForTests()
 	defer ResetParseEnvConfigCacheForTests()
 
@@ -1447,8 +1902,8 @@ func TestEffectiveParseMergePerKeyCap(t *testing.T) {
 	if got := effectiveParseMergePerKeyCap(&Language{Name: "starlark"}, maxStacksPerMergeKey, false); got != 1 {
 		t.Fatalf("effectiveParseMergePerKeyCap(starlark, default, full) = %d, want 1", got)
 	}
-	if got := effectiveParseMergePerKeyCap(&Language{Name: "elixir"}, maxStacksPerMergeKey, false); got != 1 {
-		t.Fatalf("effectiveParseMergePerKeyCap(elixir, default, full) = %d, want 1", got)
+	if got := effectiveParseMergePerKeyCap(&Language{Name: "elixir"}, maxStacksPerMergeKey, false); got != 2 {
+		t.Fatalf("effectiveParseMergePerKeyCap(elixir, default, full) = %d, want 2", got)
 	}
 	if got := effectiveParseMergePerKeyCap(&Language{Name: "typescript"}, maxStacksPerMergeKey, false); got != 1 {
 		t.Fatalf("effectiveParseMergePerKeyCap(typescript, default, full) = %d, want 1", got)
@@ -1483,6 +1938,9 @@ func TestEffectiveParseMergePerKeyCap(t *testing.T) {
 	if got := effectiveParseMergePerKeyCap(&Language{Name: "kotlin"}, maxStacksPerMergeKey, false); got != 1 {
 		t.Fatalf("effectiveParseMergePerKeyCap(kotlin, default, full) = %d, want 1", got)
 	}
+	if got := effectiveParseMergePerKeyCap(&Language{Name: "scheme"}, maxStacksPerMergeKey, false); got != 1 {
+		t.Fatalf("effectiveParseMergePerKeyCap(scheme, default, full) = %d, want 1", got)
+	}
 	if got := effectiveParseMergePerKeyCap(&Language{Name: "php"}, maxStacksPerMergeKey, false); got != 1 {
 		t.Fatalf("effectiveParseMergePerKeyCap(php, default, full) = %d, want 1", got)
 	}
@@ -1507,8 +1965,11 @@ func TestEffectiveParseMergePerKeyCap(t *testing.T) {
 	if got := effectiveParseMergePerKeyCap(&Language{Name: "make"}, maxStacksPerMergeKey, false); got != 2 {
 		t.Fatalf("effectiveParseMergePerKeyCap(make, default, full) = %d, want 2", got)
 	}
-	if got := effectiveParseMergePerKeyCap(&Language{Name: "lua"}, maxStacksPerMergeKey, false); got != 1 {
-		t.Fatalf("effectiveParseMergePerKeyCap(lua, default, full) = %d, want 1", got)
+	// Lua's table-constructor field list (field (sep field)* sep?) needs two
+	// same-key survivors at each separator, or the trailing-separator branch is
+	// pruned and a clean parse degrades into recovery under the DFA lexer path.
+	if got := effectiveParseMergePerKeyCap(&Language{Name: "lua"}, maxStacksPerMergeKey, false); got != 2 {
+		t.Fatalf("effectiveParseMergePerKeyCap(lua, default, full) = %d, want 2", got)
 	}
 	if got := effectiveParseMergePerKeyCap(&Language{Name: "ruby"}, maxStacksPerMergeKey, false); got != 1 {
 		t.Fatalf("effectiveParseMergePerKeyCap(ruby, default, full) = %d, want 1", got)
@@ -1516,8 +1977,8 @@ func TestEffectiveParseMergePerKeyCap(t *testing.T) {
 	if got := effectiveParseMergePerKeyCap(&Language{Name: "rust"}, maxStacksPerMergeKey, false); got != 1 {
 		t.Fatalf("effectiveParseMergePerKeyCap(rust, default, full) = %d, want 1", got)
 	}
-	if got := effectiveParseMergePerKeyCap(&Language{Name: "svelte"}, maxStacksPerMergeKey, false); got != 1 {
-		t.Fatalf("effectiveParseMergePerKeyCap(svelte, default, full) = %d, want 1", got)
+	if got := effectiveParseMergePerKeyCap(&Language{Name: "svelte"}, maxStacksPerMergeKey, false); got != maxStacksPerMergeKey {
+		t.Fatalf("effectiveParseMergePerKeyCap(svelte, default, full) = %d, want %d", got, maxStacksPerMergeKey)
 	}
 	if got := effectiveParseMergePerKeyCap(&Language{Name: "xml"}, maxStacksPerMergeKey, false); got != 1 {
 		t.Fatalf("effectiveParseMergePerKeyCap(xml, default, full) = %d, want 1", got)
@@ -1548,6 +2009,9 @@ func TestEffectiveParseMergePerKeyCap(t *testing.T) {
 	}
 	if got := effectiveParseMergePerKeyCap(&Language{Name: "kotlin"}, maxStacksPerMergeKey, true); got != maxStacksPerMergeKey {
 		t.Fatalf("effectiveParseMergePerKeyCap(kotlin, default, incremental) = %d, want %d", got, maxStacksPerMergeKey)
+	}
+	if got := effectiveParseMergePerKeyCap(&Language{Name: "scheme"}, maxStacksPerMergeKey, true); got != maxStacksPerMergeKey {
+		t.Fatalf("effectiveParseMergePerKeyCap(scheme, default, incremental) = %d, want %d", got, maxStacksPerMergeKey)
 	}
 	if got := effectiveParseMergePerKeyCap(&Language{Name: "javascript"}, maxStacksPerMergeKey, true); got != maxStacksPerMergeKey {
 		t.Fatalf("effectiveParseMergePerKeyCap(javascript, default, incremental) = %d, want %d", got, maxStacksPerMergeKey)
@@ -1632,8 +2096,57 @@ func TestEffectiveParseMergePerKeyCap(t *testing.T) {
 	}
 }
 
+func TestEffectiveParseMergePerKeyCapElixirFaithfulCondense(t *testing.T) {
+	t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "")
+	t.Setenv("GOT_FAITHFUL_CONDENSE", "1")
+	ResetParseEnvConfigCacheForTests()
+	defer ResetParseEnvConfigCacheForTests()
+
+	if got := effectiveParseMergePerKeyCap(&Language{Name: "elixir"}, maxStacksPerMergeKey, false); got != 1 {
+		t.Fatalf("effectiveParseMergePerKeyCap(elixir, faithful default, full) = %d, want 1", got)
+	}
+	if got := effectiveParseMergePerKeyCap(&Language{Name: "elixir"}, maxStacksPerMergeKey, true); got != maxStacksPerMergeKey {
+		t.Fatalf("effectiveParseMergePerKeyCap(elixir, faithful default, incremental) = %d, want %d", got, maxStacksPerMergeKey)
+	}
+}
+
+func TestEffectiveParseMergePerKeyCapGoFaithfulCondense(t *testing.T) {
+	t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "")
+	t.Setenv("GOT_FAITHFUL_CONDENSE", "1")
+	ResetParseEnvConfigCacheForTests()
+	defer ResetParseEnvConfigCacheForTests()
+
+	if got := effectiveParseMergePerKeyCap(&Language{Name: "go"}, maxStacksPerMergeKey, false); got != 1 {
+		t.Fatalf("effectiveParseMergePerKeyCap(go, faithful default, full) = %d, want 1", got)
+	}
+	if got := effectiveParseMergePerKeyCap(&Language{Name: "go"}, maxStacksPerMergeKey, true); got != maxStacksPerMergeKey {
+		t.Fatalf("effectiveParseMergePerKeyCap(go, faithful default, incremental) = %d, want %d", got, maxStacksPerMergeKey)
+	}
+}
+
+func TestConfigureParseCapsTypedArrowDoesNotLowerLargeTypeScriptCap(t *testing.T) {
+	t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "")
+	ResetParseEnvConfigCacheForTests()
+	defer ResetParseEnvConfigCacheForTests()
+
+	source := []byte(strings.Repeat("const filler = 1;\n", 8192) + "const f = (str: string) => str;\n")
+	parser := &Parser{language: &Language{Name: "typescript"}}
+	var scratch parserScratch
+
+	caps := parser.configureParseCaps(source, nil, arenaClassFull, &scratch, 0, 0, 0)
+	if caps.mergePerKeyCap != maxStacksPerMergeKey {
+		t.Fatalf("configureParseCaps(large TypeScript typed arrow) merge cap = %d, want %d", caps.mergePerKeyCap, maxStacksPerMergeKey)
+	}
+
+	caps = parser.configureParseCaps(source, nil, arenaClassFull, &scratch, 0, 0, -4)
+	if caps.mergePerKeyCap != 4 {
+		t.Fatalf("configureParseCaps(large TypeScript typed arrow, exact retry cap) merge cap = %d, want 4", caps.mergePerKeyCap)
+	}
+}
+
 func TestEffectiveParseMergePerKeyCapJavaExplicitOverride(t *testing.T) {
 	t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "4")
+	t.Setenv("GOT_FAITHFUL_CONDENSE", "1")
 	ResetParseEnvConfigCacheForTests()
 	defer ResetParseEnvConfigCacheForTests()
 
@@ -1655,6 +2168,15 @@ func TestEffectiveParseMergePerKeyCapJavaExplicitOverride(t *testing.T) {
 	if got := effectiveParseMergePerKeyCap(&Language{Name: "ocaml"}, 4, false); got != 4 {
 		t.Fatalf("effectiveParseMergePerKeyCap(ocaml, explicit, full) = %d, want 4", got)
 	}
+	if got := effectiveParseMergePerKeyCap(&Language{Name: "scheme"}, 4, false); got != 4 {
+		t.Fatalf("effectiveParseMergePerKeyCap(scheme, explicit, full) = %d, want 4", got)
+	}
+	if got := effectiveParseMergePerKeyCap(&Language{Name: "elixir"}, 4, false); got != 4 {
+		t.Fatalf("effectiveParseMergePerKeyCap(elixir, faithful explicit, full) = %d, want 4", got)
+	}
+	if got := effectiveParseMergePerKeyCap(&Language{Name: "go"}, 4, false); got != 4 {
+		t.Fatalf("effectiveParseMergePerKeyCap(go, faithful explicit, full) = %d, want 4", got)
+	}
 }
 
 func TestEffectiveParseMergePerKeyCapDartExplicitOverride(t *testing.T) {
@@ -1667,6 +2189,37 @@ func TestEffectiveParseMergePerKeyCapDartExplicitOverride(t *testing.T) {
 	}
 	if got := effectiveParseMergePerKeyCap(&Language{Name: "dart"}, 8, true, dartIncrementalReuseMaxSourceBytes+1); got != 8 {
 		t.Fatalf("effectiveParseMergePerKeyCap(dart, explicit, large incremental fallback) = %d, want 8", got)
+	}
+}
+
+func TestErrorCostCompetitionLanguageRequiresCapabilityByDefault(t *testing.T) {
+	t.Setenv("GOT_C_RECOVERY", "")
+	if errorCostCompetitionLanguage(&Language{
+		CRecoveryCostCompetitionCapable:          true,
+		Name:                                     "scheme",
+		CRecoveryCostCompetitionEnabledByDefault: true,
+	}) {
+		t.Fatal("errorCostCompetitionLanguage enabled without table capability")
+	}
+
+	t.Setenv("GOT_C_RECOVERY", "scheme")
+	if errorCostCompetitionLanguage(&Language{Name: "scheme"}) {
+		t.Fatal("GOT_C_RECOVERY=scheme enabled without table capability")
+	}
+	lang := cRecoveryGateLanguage()
+	lang.Name = "scheme"
+	lang.CRecoveryCostCompetitionEnabledByDefault = false
+	if !errorCostCompetitionLanguage(lang) {
+		t.Fatal("GOT_C_RECOVERY=scheme did not force-enable diagnostic gate with runtime capability")
+	}
+
+	t.Setenv("GOT_C_RECOVERY", "0")
+	if errorCostCompetitionLanguage(&Language{
+		CRecoveryCostCompetitionCapable:          true,
+		Name:                                     "scheme",
+		CRecoveryCostCompetitionEnabledByDefault: true,
+	}) {
+		t.Fatal("GOT_C_RECOVERY=0 did not disable C recovery")
 	}
 }
 
@@ -1729,6 +2282,208 @@ func TestNoteRepeatedReduceChainSignatureResetsOnChange(t *testing.T) {
 	}
 	if count != 1 || prev != second {
 		t.Fatalf("changed signature = (%+v, %d), want (%+v, 1)", prev, count, second)
+	}
+}
+
+func TestRecoverReduceChainCycle(t *testing.T) {
+	lang := buildArithmeticLanguage()
+	parser := NewParser(lang)
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	var entryScratch glrEntryScratch
+	var gssScratch gssScratch
+
+	t.Run("pushes and extends error node", func(t *testing.T) {
+		source := []byte("     abcdef")
+		s := newGLRStack(lang.InitialState)
+		nodeCount := 0
+		trackChildErrors := false
+
+		ok := parser.recoverReduceChainCycle(source, &s, lang.InitialState, Token{
+			Symbol:     3,
+			StartByte:  5,
+			EndByte:    8,
+			StartPoint: Point{Row: 0, Column: 5},
+			EndPoint:   Point{Row: 0, Column: 8},
+		}, &nodeCount, arena, &entryScratch, &gssScratch, &trackChildErrors)
+		if !ok {
+			t.Fatal("recoverReduceChainCycle returned false, want true")
+		}
+		if got, want := nodeCount, 1; got != want {
+			t.Fatalf("nodeCount after push = %d, want %d", got, want)
+		}
+		if got, want := s.byteOffset, uint32(8); got != want {
+			t.Fatalf("stack byteOffset after push = %d, want %d", got, want)
+		}
+		top := stackEntryNode(s.top())
+		if top == nil || top.symbol != errorSymbol || !top.hasError() {
+			t.Fatalf("top node after push = %+v, want ERROR node", top)
+		}
+		if !trackChildErrors {
+			t.Fatal("trackChildErrors = false, want true")
+		}
+		depthAfterPush := s.depth()
+
+		ok = parser.recoverReduceChainCycle(source, &s, lang.InitialState, Token{
+			Symbol:     3,
+			StartByte:  8,
+			EndByte:    11,
+			StartPoint: Point{Row: 0, Column: 8},
+			EndPoint:   Point{Row: 0, Column: 11},
+		}, &nodeCount, arena, &entryScratch, &gssScratch, &trackChildErrors)
+		if !ok {
+			t.Fatal("recoverReduceChainCycle extend returned false, want true")
+		}
+		if got, want := nodeCount, 1; got != want {
+			t.Fatalf("nodeCount after extend = %d, want %d", got, want)
+		}
+		if got, want := s.depth(), depthAfterPush; got != want {
+			t.Fatalf("stack depth after extend = %d, want %d", got, want)
+		}
+		if got, want := s.byteOffset, uint32(11); got != want {
+			t.Fatalf("stack byteOffset after extend = %d, want %d", got, want)
+		}
+		top = stackEntryNode(s.top())
+		if top == nil || top.symbol != errorSymbol || top.endByte != 11 {
+			t.Fatalf("top node after extend = %+v, want ERROR through byte 11", top)
+		}
+	})
+
+	t.Run("ignores eof and no-lookahead", func(t *testing.T) {
+		source := []byte("    ")
+		for _, tc := range []struct {
+			name string
+			tok  Token
+		}{
+			{name: "eof", tok: Token{Symbol: 0, StartByte: 5, EndByte: 5}},
+			{name: "no-lookahead", tok: Token{Symbol: 3, StartByte: 5, EndByte: 8, NoLookahead: true}},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				s := newGLRStack(lang.InitialState)
+				s.byteOffset = 4
+				nodeCount := 7
+				beforeDepth := s.depth()
+
+				ok := parser.recoverReduceChainCycle(source, &s, lang.InitialState, tc.tok, &nodeCount, arena, &entryScratch, &gssScratch, nil)
+				if ok {
+					t.Fatal("recoverReduceChainCycle returned true, want false")
+				}
+				if got, want := nodeCount, 7; got != want {
+					t.Fatalf("nodeCount = %d, want %d", got, want)
+				}
+				if got, want := s.depth(), beforeDepth; got != want {
+					t.Fatalf("stack depth = %d, want %d", got, want)
+				}
+				if got, want := s.byteOffset, uint32(4); got != want {
+					t.Fatalf("stack byteOffset = %d, want %d", got, want)
+				}
+			})
+		}
+	})
+
+	t.Run("pauses eof cycle for c recovery", func(t *testing.T) {
+		parser := NewParser(lang)
+		parser.errorCostCompetition = true
+		s := newGLRStack(lang.InitialState)
+		s.byteOffset = 4
+		nodeCount := 7
+		beforeDepth := s.depth()
+
+		ok := parser.recoverReduceChainCycle([]byte("    "), &s, lang.InitialState, Token{
+			Symbol:    0,
+			StartByte: 4,
+			EndByte:   4,
+		}, &nodeCount, arena, &entryScratch, &gssScratch, nil)
+		if ok {
+			t.Fatal("recoverReduceChainCycle returned true, want false because EOF is not consumed")
+		}
+		if !s.cPaused {
+			t.Fatal("stack was not paused for C EOF recovery")
+		}
+		if got, want := nodeCount, 7; got != want {
+			t.Fatalf("nodeCount = %d, want %d", got, want)
+		}
+		if got, want := s.depth(), beforeDepth; got != want {
+			t.Fatalf("stack depth = %d, want %d", got, want)
+		}
+		if got, want := s.byteOffset, uint32(4); got != want {
+			t.Fatalf("stack byteOffset = %d, want %d", got, want)
+		}
+	})
+
+	t.Run("rejects skipped comment gap before attaching token", func(t *testing.T) {
+		source := []byte("1/*c*/234")
+		s := newGLRStack(lang.InitialState)
+		s.byteOffset = 1
+		nodeCount := 7
+		beforeDepth := s.depth()
+
+		ok := parser.recoverReduceChainCycle(source, &s, lang.InitialState, Token{
+			Symbol:     3,
+			StartByte:  6,
+			EndByte:    9,
+			StartPoint: Point{Row: 0, Column: 6},
+			EndPoint:   Point{Row: 0, Column: 9},
+		}, &nodeCount, arena, &entryScratch, &gssScratch, nil)
+		if ok {
+			t.Fatal("recoverReduceChainCycle returned true, want false for non-padding gap")
+		}
+		if !s.dead {
+			t.Fatal("stack.dead = false, want true")
+		}
+		if got, want := nodeCount, 7; got != want {
+			t.Fatalf("nodeCount = %d, want %d", got, want)
+		}
+		if got, want := s.depth(), beforeDepth; got != want {
+			t.Fatalf("stack depth = %d, want %d", got, want)
+		}
+	})
+}
+
+func TestTryResyncErrorRecoveryRejectsAdvanceCommentGap(t *testing.T) {
+	lang := &Language{
+		Name:              "c",
+		SymbolCount:       4,
+		TokenCount:        3,
+		StateCount:        2,
+		InitialState:      0,
+		ProductionIDCount: 1,
+		SymbolNames:       []string{"EOF", "TOK", "item", "root"},
+		SymbolMetadata:    []SymbolMetadata{{Name: "EOF"}, {Name: "TOK", Visible: true, Named: true}, {Name: "item", Visible: true, Named: true}, {Name: "root", Visible: true, Named: true}},
+		ParseActions:      []ParseActionEntry{{}},
+		ParseTable:        [][]uint16{{0, 0, 0, 0}, {0, 0, 0, 0}},
+		LexModes:          []LexMode{{LexState: 0}, {LexState: 0}},
+		LexStates:         []LexState{{Default: -1, EOF: -1}},
+	}
+	parser := NewParser(lang)
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	source := []byte("x/*c*/y")
+	s := newGLRStack(lang.InitialState)
+	failed := newLeafNodeInArena(arena, 2, true, 0, 1, Point{}, Point{Column: 1})
+	failed.setHasError(true)
+	var entryScratch glrEntryScratch
+	var gssScratch gssScratch
+	parser.pushStackNode(&s, 1, failed, &entryScratch, &gssScratch)
+	nodeCount := 0
+
+	status := parser.tryResyncErrorRecovery(source, &s, Token{
+		Symbol:     1,
+		StartByte:  6,
+		EndByte:    7,
+		StartPoint: Point{Column: 6},
+		EndPoint:   Point{Column: 7},
+	}, &nodeCount, arena, &entryScratch, &gssScratch, nil)
+	if status != resyncNone {
+		t.Fatalf("tryResyncErrorRecovery status = %d, want resyncNone for non-padding gap", status)
+	}
+	if !s.dead {
+		t.Fatal("stack.dead = false, want true")
+	}
+	if got, want := nodeCount, 0; got != want {
+		t.Fatalf("nodeCount = %d, want %d", got, want)
 	}
 }
 

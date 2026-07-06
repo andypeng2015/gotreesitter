@@ -27,6 +27,7 @@ C_REF_BUILD_JOBS_SET="0"
 PARITY_RUN='^TestParityFreshParse$|^TestParityIncrementalParse$|^TestParityHasNoErrors$|^TestParityIssue3Repros$|^TestParityGLRCanaryGo$|^TestParityGLRCanarySet$|^TestParityGLRCapPressureTopLanguages$|^TestParityHighlight$'
 STRICT_SCALA=0
 BUILD_IMAGE=1
+EXTRA_MOUNTS=()
 
 # Ring-matrix scope: the top-50 value languages by default. The parser must
 # match tree-sitter C across this set for any parser-core change to merge.
@@ -61,6 +62,8 @@ Options:
   --run <regex>          go test -run regex for default parity command
   --strict-scala         Also run strict Scala real-world parity probe
   --no-build             Skip docker build step
+  --mount <src:dst[:ro]> Add an extra bind mount. Use this for external
+                         corpus workspaces needed by custom commands.
   -h, --help             Show this help
 
 Ring-matrix scope (GTS_PARITY_MODE, default: top50):
@@ -69,17 +72,24 @@ Ring-matrix scope (GTS_PARITY_MODE, default: top50):
   exhaustive  every curated structural grammar
 
 Environment passthrough (if set):
-  GOTOOLCHAIN
-  GOMAXPROCS
-  GOT_GLR_FOREST
-  GOT_GLR_MAX_STACKS
-  GOT_GLR_V2_COMPACT_FULL_LEAVES
-  GOT_GLR_V2_PENDING_PARENTS
-  GOT_PARSE_NODE_LIMIT_SCALE
-  GOT_GLR_FORCE_CONFLICT_WIDTH
-  GTS_PARITY_MODE
-  GTS_PARITY_SKIP_LANGS
-  GTS_PARITY_C_REF_BUILD_CACHE
+  Go/parser controls:
+    GOTOOLCHAIN, GOMAXPROCS, GOT_GLR_FOREST, GOT_GLR_MAX_STACKS,
+    GOT_GLR_MAX_MERGE_PER_KEY, GOT_GLR_V2_PRE_MATERIALIZATION_DIAG,
+    GOT_GLR_V2_COMPACT_FULL_LEAVES, GOT_GLR_V2_PENDING_PARENTS,
+    GOT_GLR_V2_FINAL_CHILD_REFS, GOT_PARSE_NODE_LIMIT_SCALE,
+    GOT_GLR_FORCE_CONFLICT_WIDTH, GOT_C_RECOVERY,
+    GOT_FAITHFUL_CONDENSE
+  Parity controls:
+    GTS_PARITY_MODE, GTS_PARITY_SKIP_LANGS, GTS_PARITY_C_REF_BUILD_CACHE
+  Wringer controls:
+    GTS_WRINGER_* documented by run_grammar_integrity_wringer.sh
+  Tier scan controls:
+    GTS_TIER_SCAN_* documented by run_tier_scan.sh and
+    run_tier_scan_parallel.sh
+
+GTS_CORPUS_DIR is intentionally not passed through. When using --mount for an
+external corpus, set GTS_CORPUS_DIR in the custom command to the container path
+(for example /workspace/corpus_sources), not the host path.
 
 Artifacts are written to <out-root>/<timestamp>[-<label>]/:
   - container.log
@@ -164,6 +174,10 @@ while [[ $# -gt 0 ]]; do
       BUILD_IMAGE=0
       shift
       ;;
+    --mount)
+      EXTRA_MOUNTS+=("$2")
+      shift 2
+      ;;
     -h|--help)
       usage
       exit 0
@@ -247,7 +261,72 @@ ENV_ARGS=(
   "-e" "GOMEMLIMIT=$GOMEMLIMIT_VALUE"
   "-e" "GOFLAGS=$GOFLAGS_VALUE"
 )
-for var in GOTOOLCHAIN GOMAXPROCS GOT_GLR_FOREST GOT_GLR_MAX_STACKS GOT_GLR_V2_COMPACT_FULL_LEAVES GOT_GLR_V2_PENDING_PARENTS GOT_PARSE_NODE_LIMIT_SCALE GOT_GLR_FORCE_CONFLICT_WIDTH GTS_PARITY_MODE GTS_PARITY_SKIP_LANGS GTS_PARITY_C_REF_BUILD_CACHE; do
+PASSTHROUGH_VARS=(
+  GOTOOLCHAIN
+  GOMAXPROCS
+  GOT_GLR_FOREST
+  GOT_GLR_MAX_STACKS
+  GOT_GLR_MAX_MERGE_PER_KEY
+  GOT_GLR_V2_PRE_MATERIALIZATION_DIAG
+  GOT_GLR_V2_COMPACT_FULL_LEAVES
+  GOT_GLR_V2_PENDING_PARENTS
+  GOT_GLR_V2_FINAL_CHILD_REFS
+  GOT_PARSE_NODE_LIMIT_SCALE
+  GOT_GLR_FORCE_CONFLICT_WIDTH
+  GOT_C_RECOVERY
+  GOT_FAITHFUL_CONDENSE
+  GTS_PARITY_MODE
+  GTS_PARITY_SKIP_LANGS
+  GTS_PARITY_C_REF_BUILD_CACHE
+  GTS_WRINGER_N
+  GTS_WRINGER_ROUNDS
+  GTS_WRINGER_TIMEOUT
+  GTS_WRINGER_KILL_AFTER
+  GTS_WRINGER_HEARTBEAT
+  GTS_WRINGER_MODE
+  GTS_WRINGER_FULL
+  GTS_WRINGER_PROFILE
+  GTS_WRINGER_PLAN_ONLY
+  GTS_WRINGER_ASSERTS
+  GTS_WRINGER_REUSE_BASELINE
+  GTS_WRINGER_STAGES
+  GTS_WRINGER_VARIANT_SCOPE
+  GTS_WRINGER_VARIANTS
+  GTS_WRINGER_BASELINE_FRAMES
+  GTS_WRINGER_VARIANT_FRAMES
+  GTS_WRINGER_FIRSTDIFF_FRAMES
+  GTS_WRINGER_FRAMES
+  GTS_WRINGER_CLEAR_FRAMES
+  GTS_WRINGER_MAX_SUSPICIOUS
+  GTS_WRINGER_MAX_DIAG_FILES
+  GTS_WRINGER_DIAG_TIMEOUT
+  GTS_WRINGER_GLR_TRACE
+  GTS_WRINGER_DEBUG_DFA
+  GTS_WRINGER_PARSE_PROGRESS
+  GTS_WRINGER_PARSE_PROGRESS_INTERVAL_MS
+  GTS_WRINGER_PARALLELISM
+  GTS_WRINGER_PARALLEL_DRY_RUN
+  GTS_WRINGER_START_AFTER
+  GTS_WRINGER_LIMIT
+  GTS_WRINGER_ALL_FILES
+  GTS_TIER_SCAN_N
+  GTS_TIER_SCAN_ROUNDS
+  GTS_TIER_SCAN_TIMEOUT
+  GTS_TIER_SCAN_KILL_AFTER
+  GTS_TIER_SCAN_PLAN_ONLY
+  GTS_TIER_SCAN_LANGS
+  GTS_TIER_SCAN_START_AFTER
+  GTS_TIER_SCAN_LIMIT
+  GTS_TIER_SCAN_ALL_FILES
+  GTS_TIER_SCAN_HEARTBEAT
+  GTS_TIER_SCAN_ISOLATE_FILES
+  GTS_TIER_SCAN_FRAMES
+  GTS_TIER_SCAN_SKIP_TIER_PUBLISH
+  GTS_TIER_SCAN_PARALLELISM
+  GTS_TIER_SCAN_SHARDS
+  GTS_TIER_SCAN_PARALLEL_DRY_RUN
+)
+for var in "${PASSTHROUGH_VARS[@]}"; do
   if [[ -n "${!var:-}" ]]; then
     ENV_ARGS+=("-e" "$var=${!var}")
   fi
@@ -272,6 +351,36 @@ fi
 
 RUN_START_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 RUN_START_NS="$(date +%s%N)"
+
+EXTRA_MOUNT_ARGS=()
+for spec in "${EXTRA_MOUNTS[@]}"; do
+  IFS=':' read -r mount_src mount_dst mount_mode extra <<< "$spec"
+  if [[ -z "${mount_src:-}" || -z "${mount_dst:-}" || -n "${extra:-}" ]]; then
+    echo "invalid --mount spec: $spec" >&2
+    exit 2
+  fi
+  if [[ ! -e "$mount_src" ]]; then
+    echo "mount source does not exist: $mount_src" >&2
+    exit 2
+  fi
+  if [[ -d "$mount_src" ]]; then
+    mount_src="$(cd "$mount_src" && pwd -P)"
+  else
+    mount_dir="$(cd "$(dirname "$mount_src")" && pwd -P)"
+    mount_src="$mount_dir/$(basename "$mount_src")"
+  fi
+  mount_arg="type=bind,src=$mount_src,dst=$mount_dst"
+  case "${mount_mode:-rw}" in
+    ro|readonly) mount_arg="$mount_arg,readonly" ;;
+    rw|"") ;;
+    *)
+      echo "invalid --mount mode in $spec" >&2
+      exit 2
+      ;;
+  esac
+  EXTRA_MOUNT_ARGS+=(--mount "$mount_arg")
+done
+
 CID="$(docker create \
   --name "$CONTAINER_NAME" \
   --init \
@@ -281,6 +390,7 @@ CID="$(docker create \
   "${CPUSET_ARGS[@]}" \
   --pids-limit "$PIDS_LIMIT" \
   --mount "type=bind,src=$REPO_ROOT,dst=/workspace" \
+  "${EXTRA_MOUNT_ARGS[@]}" \
   --mount "type=volume,src=gotreesitter-go-mod-cache,dst=/go/pkg/mod" \
   --mount "type=volume,src=gotreesitter-go-build-cache,dst=/root/.cache/go-build" \
   "${ENV_ARGS[@]}" \
@@ -321,6 +431,9 @@ STATE_ERROR="$(docker inspect -f '{{.State.Error}}' "$CID")"
   echo "run_end_ns=$RUN_END_NS"
   echo "elapsed_ns=$((RUN_END_NS - RUN_START_NS))"
   echo "repo_root=$REPO_ROOT"
+  if [[ ${#EXTRA_MOUNTS[@]} -gt 0 ]]; then
+    printf 'extra_mounts=%s\n' "$(IFS=,; echo "${EXTRA_MOUNTS[*]}")"
+  fi
   echo "out_root=$OUT_ROOT"
   echo "label=$LABEL_SLUG"
   echo "command=$INNER_CMD"

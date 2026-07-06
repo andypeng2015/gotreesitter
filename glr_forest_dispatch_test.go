@@ -72,6 +72,14 @@ func TestForestDispatchParity(t *testing.T) {
 	check("bash-dispatched", grm.BashLanguage(), "f() { echo a; }\n")
 	// Non-dispatched languages must be untouched even with the switch on.
 	check("go-untouched", grm.GoLanguage(), "package p\nfunc f() { return }\n")
+	goTree, err := gts.NewParser(grm.GoLanguage()).Parse([]byte("package p\nfunc f() { return }\n"))
+	if err != nil {
+		t.Fatalf("go default parse: %v", err)
+	}
+	defer goTree.Release()
+	if rt := goTree.ParseRuntime(); rt.ForestFastPath {
+		t.Fatalf("go default parse used forest fast path with global forest enabled: %s", rt.Summary())
+	}
 	check("rust-untouched", grm.RustLanguage(), "fn main() {}\n")
 	gts.SetGLRForestEnabled(true)
 }
@@ -97,8 +105,8 @@ func TestForestExperimentalAppliesBashCompatibility(t *testing.T) {
 	if got, want := root.SExpr(lang), prod.RootNode().SExpr(lang); got != want {
 		t.Fatalf("forest experimental Bash compatibility mismatch\n got: %s\nwant: %s", got, want)
 	}
-	if got, want := root.NamedChildCount(), 2; got != want {
-		t.Fatalf("forest Bash root named child count = %d, want %d; root=%s", got, want, root.SExpr(lang))
+	if got, want := root.NamedChildCount(), prod.RootNode().NamedChildCount(); got != want {
+		t.Fatalf("forest Bash root named child count = %d, want production count %d; root=%s", got, want, root.SExpr(lang))
 	}
 }
 
@@ -121,6 +129,24 @@ func TestForestDispatchReportsAcceptedRuntime(t *testing.T) {
 	}
 	if rt.SourceLen != uint32(len(src)) || rt.ExpectedEOFByte != uint32(len(src)) || rt.LastTokenEndByte != uint32(len(src)) || !rt.LastTokenWasEOF {
 		t.Fatalf("forest dispatch runtime mismatch: %s", rt.Summary())
+	}
+}
+
+func TestForestDispatchDeclinesIncludedRanges(t *testing.T) {
+	gts.SetGLRForestEnabled(true)
+	defer gts.SetGLRForestEnabled(true)
+
+	src := []byte("a { color: red; }\n")
+	parser := gts.NewParser(grm.CssLanguage())
+	parser.SetIncludedRanges([]gts.Range{{StartByte: 0, EndByte: uint32(len(src))}})
+	tree, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse with included range: %v", err)
+	}
+	defer tree.Release()
+	rt := tree.ParseRuntime()
+	if rt.TokensConsumed == 0 {
+		t.Fatalf("forest fast path was used despite included ranges: %s", rt.Summary())
 	}
 }
 

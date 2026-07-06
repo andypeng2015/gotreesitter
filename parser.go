@@ -17,23 +17,34 @@ import (
 // Parser is not safe for concurrent use. Use one parser per goroutine, a
 // ParserPool, or guard shared parser instances with external synchronization.
 type Parser struct {
-	language                    *Language
-	reuseCursor                 reuseCursor
-	reuseScratch                reuseScratch
-	reuseMu                     sync.Mutex
-	reparseFactory              TokenSourceFactory
-	recoveryParser              *Parser
-	skipRecoveryReparse         bool
-	compatibilityBorrowedArenas []*nodeArena
-	fullArenaHint               uint32
-	pendingFullArenaHint        uint32
-	compactFullArenaHint        uint32
-	finalChildRefArenaHint      uint32
-	incrementalArenaHint        uint32
-	fullGSSHint                 uint32
-	incrementalGSSHint          uint32
-	rootSymbol                  Symbol
-	hasRootSymbol               bool
+	language            *Language
+	reuseCursor         reuseCursor
+	reuseScratch        reuseScratch
+	reuseMu             sync.Mutex
+	reparseFactory      TokenSourceFactory
+	recoveryParser      *Parser
+	skipRecoveryReparse bool
+	// forceCleanRetryPass forces a single parseInternal call to behave as a
+	// non-retry ("clean") pass even when the caller widened the GLR stack
+	// budget via maxStacksOverride. A widened retry would normally also enable
+	// the retry-pass error-recovery behavior (single-stack resurrection on
+	// all-stacks-dead, and the associated degraded error handling), which turns
+	// an otherwise-recoverable parse into a fragmented ERROR root. With this
+	// set, the extra budget alone keeps a winning branch alive to the same
+	// clean accepted forest a wider built-in budget (GOT_GLR_MAX_STACKS) would
+	// have produced, matching tree-sitter C on bash for/while/case scripts.
+	forceCleanRetryPass           bool
+	retryStructuralTopLevelResync bool
+	compatibilityBorrowedArenas   []*nodeArena
+	fullArenaHint                 uint32
+	pendingFullArenaHint          uint32
+	compactFullArenaHint          uint32
+	finalChildRefArenaHint        uint32
+	incrementalArenaHint          uint32
+	fullGSSHint                   uint32
+	incrementalGSSHint            uint32
+	rootSymbol                    Symbol
+	hasRootSymbol                 bool
 
 	// Forest-decline diagnostics: the experimental forest fast path records
 	// WHERE and WHY it last declined (fell back to production) so the language
@@ -48,12 +59,118 @@ type Parser struct {
 	hasRecoverSymbol                    []bool
 	recoverByState                      [][]recoverSymbolAction
 	hasKeywordState                     []bool
+	// lookupActionIndexFn caches the bound-method closure for
+	// lookupActionIndex. Passing p.lookupActionIndex directly at token-source
+	// construction sites allocates a fresh 16-byte closure per parse; the
+	// bound method only captures p (tables are re-read at call time), so one
+	// closure stays valid for the parser's whole lifetime, including language
+	// changes. See lookupActionIndexFunc (parser_tables.go).
+	lookupActionIndexFn func(state StateID, sym Symbol) uint16
 	typeScriptPropertyIdentifierSymbol  Symbol
 	typeScriptIdentifierSymbol          Symbol
 	typeScriptHasPropertyIdentifier     bool
 	typeScriptHasIdentifier             bool
 	typeScriptContextualPropertyKeyword map[string]Symbol
-	forceRawSpanAll                     bool
+	// Scheme error-recovery: a datum that fails to lex (e.g. a bare backslash)
+	// must be recovered as a `_datum` so the enclosing list keeps its opening
+	// delimiter. schemeDatumSymbol is the `_datum` nonterminal used to take the
+	// correct GOTO when an error node is pushed in a list that has no datum yet.
+	isScheme             bool
+	schemeDatumSymbol    Symbol
+	schemeHasDatumSymbol bool
+	// errorCostCompetition enables the faithful C error-recovery port
+	// (parser_recover_c.go) for this grammar; see errorCostCompetitionLanguage.
+	errorCostCompetition bool
+	// crecoveryEnteredErrorState is set once per Parse() call the first time
+	// cHandleError actually runs (a no-action point was hit for the current
+	// lookahead in some parser state). It is reset at the start of
+	// parseInternal.
+	//
+	// IMPORTANT: cHandleError is NOT proof that the input is malformed.
+	// LALR table limitations routinely drive well-formed, compiling input
+	// into a momentary no-action dead end that cDoAllPotentialReductions
+	// (step 1 of cHandleError) resolves losslessly via ordinary reduce
+	// closure — this is exactly the same "ordinary GLR disambiguation"
+	// mechanism eds's legitimate empty-value grammar production and a
+	// measurable fraction (~2% in a real repo-file walk) of syntactically
+	// valid Go source both exercise. So this field is only a cheap
+	// pre-filter ("recovery machinery ran at all") for
+	// resolveCRecoverySwallowedError, never the actual suspicion signal —
+	// see crecoveryDroppedErrorForClean, which is scoped to the selected
+	// result's own lineage and is what the fallback check actually keys on.
+	crecoveryEnteredErrorState bool
+	// crecoverySwallowedErrorCheckActive guards resolveCRecoverySwallowedError
+	// against recursing into itself when it temporarily disables the C
+	// recovery gate and re-invokes Parse for the fallback comparison parse.
+	crecoverySwallowedErrorCheckActive bool
+	// crecoveryDroppedErrorForClean is set exclusively in buildResultFromGLR
+	// (parser_result.go), for the stack actually selected as the parse
+	// result, when that stack carries cRecoveryUnvalidatedMarker (see
+	// glr.go) and no unflagged sibling reaches the same final position (see
+	// hasCleanSiblingAtSamePosition). That marker means the selected
+	// lineage itself created a real ERROR node via cRecoverToState — for a
+	// single-stack dead end, with a small recovered span — and was never
+	// re-validated by another cost competition before reaching ACCEPT. Real
+	// tree-sitter C's ts_parser__handle_error/ts_parser__recover never
+	// produce a zero-marker result from a version that needed recovery
+	// (recover_to_state, skip_token, and recover_eof all wrap something in
+	// ERROR or MISSING) — this is the precise, narrow signature of the
+	// C-recovery cost model swallowing an error signal that resync-based
+	// recovery would have kept.
+	//
+	// This field is deliberately NOT set from "a drop happened somewhere in
+	// the parse": an earlier version of this signal fired for any
+	// recovery-owning-vs-clean condense drop anywhere, including on stacks
+	// that never influenced the final result, and a later version tagged the
+	// surviving side of such a drop regardless of stack count or span — both
+	// versions triggered the (expensive, always-discarded) fallback re-parse
+	// broadly on valid, compiling Go source in a real repo-file walk (the
+	// condense-drop trigger specifically: thousands of times per large file,
+	// ordinary LALR-table disambiguation, not error recovery). Scoping the
+	// signal to cRecoverToState's single-stack, small-span trigger only, plus
+	// the same-position sibling check, eliminated that false-fire rate while
+	// keeping the confirmed defect-class fixes (java/php/gomod) working. It
+	// also deliberately does NOT fire for ordinary "recovered cleanly, no
+	// leftover error" resolutions (e.g. eds/ledger), whose selected lineage
+	// never carries the marker.
+	crecoveryDroppedErrorForClean bool
+	// crecoveryHandleErrorSingleStack records whether the GLR engine had
+	// exactly one live stack the moment the current cHandleError call began —
+	// i.e. whether C-recovery currently owns the whole parse, as opposed to
+	// being one of several unrelated ambiguity forks. Read by
+	// cRecoverToState when deciding whether a freshly created ERROR node
+	// makes its fork worth tracking via cRecoveryUnvalidatedMarker: a fork
+	// born while a highly ambiguous grammar (e.g. kotlin's
+	// generic-vs-comparison forks) was exploring several unrelated GLR
+	// candidates routinely settles back to a legitimately clean tree without
+	// ever being "re-validated", so it must not be treated as suspicious.
+	crecoveryHandleErrorSingleStack bool
+	// cRecoverSharedTokenErrorModeLexed records whether the CURRENT shared
+	// token was produced by C-equivalent error-mode lexing (the DFA token
+	// source lexing with the ERROR-state primary because every live stack is
+	// absorbing). When true, cRecoverElectionLookaheadSymbol trusts the shared
+	// token's identity instead of re-lexing — the DFA source's error-mode lex
+	// includes external-scanner and keyword handling the internal relex lacks.
+	// Refreshed by updateParserStateTokenSource before each token acquisition.
+	cRecoverSharedTokenErrorModeLexed bool
+	// cRecoverCustomResyncActive/-Byte track a custom (non-DFA) token source
+	// that has been bypassed by cRecoverInternalErrorModeToken while every
+	// live stack absorbed in the C error state: once a normally-parsing stack
+	// exists again, the source is resynchronized with SkipToByte to the end
+	// of the last internally lexed token.
+	cRecoverCustomResyncActive bool
+	cRecoverCustomResyncByte   uint32
+	// cRecoverCustomSourceEligible caches, per token acquisition, whether the
+	// active source qualifies for engine-side error-mode substitution (see
+	// cRecoverCustomSourceEligibleFor).
+	cRecoverCustomSourceEligible bool
+	// cNodeMemo caches per-subtree error cost and visible node count for the
+	// gated recovery, keyed on (node pointer, equivVersion) — the engine
+	// analogue of C's SubtreeHeapData.error_cost/visible_descendant_count
+	// computed once in ts_subtree_summarize_children. Cleared at parse start;
+	// nil while the gate is off.
+	cNodeMemo       map[*Node]cNodeMemoEntry
+	forceRawSpanAll bool
 	// leafInternByLang enables canonical leaf interning for this language even
 	// when the global GOT_PARSE_INTERN_LEAVES_SUBSTITUTE flag is off. Limited to
 	// languages whose GLR parses keep hundreds of stacks alive (bash, swift),
@@ -64,6 +181,7 @@ type Parser struct {
 	forceRawSpanTable                   []bool
 	spanExtendingInvisibleSymbols       []bool
 	nonSpanExtendingInvisibleSymbols    []bool
+	aliasPreservedWrapperSymbols        []bool
 	included                            []Range
 	logger                              ParserLogger
 	glrTrace                            bool // verbose GLR stack tracing
@@ -86,7 +204,8 @@ type Parser struct {
 	reduceChainHintByState              []int
 	reduceAliasSeq                      [][]Symbol
 	aliasTargetSymbol                   []bool
-	singleTokenWrapperSymbol            []bool
+	keepSameNamedAnonChildSymbol        []bool
+	sharedAnonymousTokenSymbol          []bool
 	reduceHasFields                     []bool
 	reduceFieldPlans                    []reduceFieldPlan
 	fieldIDScratch                      []FieldID
@@ -97,6 +216,7 @@ type Parser struct {
 	noTreeCheckpointBenchmarkOnly       bool
 	compactNoTreeShiftLeaves            bool
 	compactFullShiftLeaves              bool
+	eagerDefaultReduces                 []eagerDefaultReduceAction
 	pendingFullParents                  bool
 	finalChildRefs                      bool
 	skipInvisibleFullLeafCheckpoints    bool
@@ -111,9 +231,784 @@ type Parser struct {
 	normalizationStats                  normalizationStats
 	materializationTiming               *parseMaterializationTiming
 	reduceTiming                        *parseMaterializationTiming
+	// forestConflictChoice backs forestSingletonActions: a single-element scratch
+	// slice the GSS-forest path reuses when a scoped conflict rule collapses a
+	// multi-action set to one C-preferred action, avoiding a per-node allocation.
+	forestConflictChoice [1]ParseAction
+	// pendingForkStacks buffers extra stacks produced by gated multi-link GSS
+	// reductions. The dispatch loop drains them into stacks for same-token
+	// re-dispatch.
+	pendingForkStacks          []glrStack
+	pendingFrontierForkStacks  []glrStack
+	disablePostReduceForkMerge bool
+	stopActionDiag             *parseStopActionDiagnostic
 }
 
 var snippetParserPools sync.Map
+
+type parseStopActionDiagnostic struct {
+	captured                     bool
+	phase                        string
+	stackState                   StateID
+	stackByte                    uint32
+	stackDepth                   int
+	lookaheadSymbol              Symbol
+	lookaheadStartByte           uint32
+	lookaheadEndByte             uint32
+	lookaheadNoLookahead         bool
+	actionType                   ParseActionType
+	actionState                  StateID
+	actionSymbol                 Symbol
+	actionChildCount             uint8
+	actionProductionID           uint16
+	actionDynamicPrecedence      int16
+	actionCount                  int
+	resultState                  StateID
+	inReduceChain                bool
+	reduceChainStep              int
+	repeatedReduceSignatureCount int
+	reduceChainCycle             bool
+	forceAdvanceAfterReduce      bool
+	postDispatchDefaultReduced   bool
+	anyReduced                   bool
+	consumedToken                bool
+	dispatchShiftActions         int
+	dispatchReduceActions        int
+	dispatchAcceptActions        int
+	dispatchRecoverActions       int
+	dispatchOtherActions         int
+	lastReduceCaptured           bool
+	lastReducePhase              string
+	lastReduceStackState         StateID
+	lastReduceStackByte          uint32
+	lastReduceStackDepth         int
+	lastReduceSymbol             Symbol
+	lastReduceChildCount         uint8
+	lastReduceProductionID       uint16
+	lastReduceDynamicPrecedence  int16
+	lastReduceResultState        StateID
+	lastReduceInChain            bool
+	lastReduceChainStep          int
+	lastReduceRepeatedSigCount   int
+	lastReduceChainCycle         bool
+}
+
+type postDispatchStackStatus struct {
+	liveUnaccepted            int
+	shiftedLiveUnaccepted     int
+	unshiftedLiveUnaccepted   int
+	unshiftedPaused           int
+	unshiftedActionable       int
+	unshiftedActionEntries    int
+	unshiftedShiftActions     int
+	unshiftedReduceActions    int
+	unshiftedAcceptActions    int
+	unshiftedRecoverActions   int
+	unshiftedOtherActions     int
+	snapshotActionable        int
+	snapshotActionEntries     int
+	snapshotShiftActions      int
+	snapshotReduceActions     int
+	snapshotAcceptActions     int
+	snapshotRecoverActions    int
+	snapshotOtherActions      int
+	appendedActionable        int
+	appendedActionEntries     int
+	appendedShiftActions      int
+	appendedReduceActions     int
+	appendedAcceptActions     int
+	appendedRecoverActions    int
+	appendedOtherActions      int
+	firstUnshiftedActionable  bool
+	firstUnshiftedActionState StateID
+	firstUnshiftedActionDepth int
+	firstUnshiftedActionByte  uint32
+	accepted                  int
+	dead                      int
+}
+
+type conflictFrontierResult struct {
+	ran               bool
+	reason            string
+	step              int
+	beforeState       StateID
+	beforeByte        uint32
+	beforeDepth       int
+	afterState        StateID
+	afterByte         uint32
+	afterDepth        int
+	afterShifted      bool
+	afterDead         bool
+	afterAccepted     bool
+	lastReduceState   StateID
+	lastReduceByte    uint32
+	lastReduceDepth   int
+	lastReduceSeen    bool
+	terminalActionTyp ParseActionType
+	terminalActionSet bool
+	terminalCount     int
+}
+
+type dispatchStackSurvivorTrace struct {
+	inSnapshot          bool
+	visited             bool
+	origin              string
+	sourceIndex         int
+	path                string
+	actionIndex         int
+	actionCount         int
+	actionType          ParseActionType
+	actionState         StateID
+	actionSymbol        Symbol
+	actionChildCount    uint8
+	beforeState         StateID
+	beforeByte          uint32
+	beforeDepth         int
+	afterPrimaryState   StateID
+	afterPrimaryByte    uint32
+	afterPrimaryDepth   int
+	afterPrimaryShifted bool
+	afterPrimaryDead    bool
+	afterPrimaryAccept  bool
+	afterFinalState     StateID
+	afterFinalByte      uint32
+	afterFinalDepth     int
+	afterFinalShifted   bool
+	afterFinalDead      bool
+	afterFinalAccepted  bool
+	frontier            conflictFrontierResult
+}
+
+func (s postDispatchStackStatus) progressString() string {
+	result := fmt.Sprintf(
+		"post_dispatch_live_unaccepted=%d post_dispatch_shifted_live=%d post_dispatch_unshifted_live=%d post_dispatch_unshifted_paused=%d post_dispatch_unshifted_actionable=%d post_dispatch_unshifted_action_entries=%d post_dispatch_unshifted_shift_actions=%d post_dispatch_unshifted_reduce_actions=%d post_dispatch_unshifted_accept_actions=%d post_dispatch_unshifted_recover_actions=%d post_dispatch_unshifted_other_actions=%d post_dispatch_accepted=%d post_dispatch_dead=%d",
+		s.liveUnaccepted,
+		s.shiftedLiveUnaccepted,
+		s.unshiftedLiveUnaccepted,
+		s.unshiftedPaused,
+		s.unshiftedActionable,
+		s.unshiftedActionEntries,
+		s.unshiftedShiftActions,
+		s.unshiftedReduceActions,
+		s.unshiftedAcceptActions,
+		s.unshiftedRecoverActions,
+		s.unshiftedOtherActions,
+		s.accepted,
+		s.dead,
+	)
+	result += fmt.Sprintf(
+		" post_dispatch_snapshot_actionable=%d post_dispatch_snapshot_action_entries=%d post_dispatch_snapshot_shift_actions=%d post_dispatch_snapshot_reduce_actions=%d post_dispatch_snapshot_accept_actions=%d post_dispatch_snapshot_recover_actions=%d post_dispatch_snapshot_other_actions=%d post_dispatch_appended_actionable=%d post_dispatch_appended_action_entries=%d post_dispatch_appended_shift_actions=%d post_dispatch_appended_reduce_actions=%d post_dispatch_appended_accept_actions=%d post_dispatch_appended_recover_actions=%d post_dispatch_appended_other_actions=%d",
+		s.snapshotActionable,
+		s.snapshotActionEntries,
+		s.snapshotShiftActions,
+		s.snapshotReduceActions,
+		s.snapshotAcceptActions,
+		s.snapshotRecoverActions,
+		s.snapshotOtherActions,
+		s.appendedActionable,
+		s.appendedActionEntries,
+		s.appendedShiftActions,
+		s.appendedReduceActions,
+		s.appendedAcceptActions,
+		s.appendedRecoverActions,
+		s.appendedOtherActions,
+	)
+	if s.firstUnshiftedActionable {
+		result += fmt.Sprintf(
+			" post_dispatch_first_unshifted_state=%d post_dispatch_first_unshifted_depth=%d post_dispatch_first_unshifted_byte=%d",
+			s.firstUnshiftedActionState,
+			s.firstUnshiftedActionDepth,
+			s.firstUnshiftedActionByte,
+		)
+	}
+	return result
+}
+
+func (p *Parser) classifyPostDispatchStacks(stacks []glrStack, tok Token, snapshotSize int) postDispatchStackStatus {
+	var status postDispatchStackStatus
+	if p == nil || p.language == nil {
+		return status
+	}
+	parseActions := p.language.ParseActions
+	for i := range stacks {
+		s := &stacks[i]
+		if s.dead {
+			status.dead++
+			continue
+		}
+		if s.accepted {
+			status.accepted++
+			continue
+		}
+		status.liveUnaccepted++
+		if s.shifted {
+			status.shiftedLiveUnaccepted++
+			continue
+		}
+		status.unshiftedLiveUnaccepted++
+		if s.cPaused {
+			status.unshiftedPaused++
+			continue
+		}
+		if s.depth() == 0 {
+			continue
+		}
+		actionIdx := p.lookupActionIndex(s.top().state, tok.Symbol)
+		if actionIdx == 0 || int(actionIdx) >= len(parseActions) {
+			continue
+		}
+		actions := parseActions[actionIdx].Actions
+		if len(actions) == 0 {
+			continue
+		}
+		status.unshiftedActionable++
+		status.unshiftedActionEntries += len(actions)
+		inSnapshot := snapshotSize < 0 || i < snapshotSize
+		if inSnapshot {
+			status.snapshotActionable++
+			status.snapshotActionEntries += len(actions)
+		} else {
+			status.appendedActionable++
+			status.appendedActionEntries += len(actions)
+		}
+		if !status.firstUnshiftedActionable {
+			status.firstUnshiftedActionable = true
+			status.firstUnshiftedActionState = s.top().state
+			status.firstUnshiftedActionDepth = s.depth()
+			status.firstUnshiftedActionByte = s.byteOffset
+		}
+		for _, act := range actions {
+			switch act.Type {
+			case ParseActionShift:
+				status.unshiftedShiftActions++
+				if inSnapshot {
+					status.snapshotShiftActions++
+				} else {
+					status.appendedShiftActions++
+				}
+			case ParseActionReduce:
+				status.unshiftedReduceActions++
+				if inSnapshot {
+					status.snapshotReduceActions++
+				} else {
+					status.appendedReduceActions++
+				}
+			case ParseActionAccept:
+				status.unshiftedAcceptActions++
+				if inSnapshot {
+					status.snapshotAcceptActions++
+				} else {
+					status.appendedAcceptActions++
+				}
+			case ParseActionRecover:
+				status.unshiftedRecoverActions++
+				if inSnapshot {
+					status.snapshotRecoverActions++
+				} else {
+					status.appendedRecoverActions++
+				}
+			default:
+				status.unshiftedOtherActions++
+				if inSnapshot {
+					status.snapshotOtherActions++
+				} else {
+					status.appendedOtherActions++
+				}
+			}
+		}
+	}
+	return status
+}
+
+const (
+	stopFrontierStackTableLimit = 16
+	stopFrontierPairLimit       = 128
+)
+
+type stopFrontierDiagnostics struct {
+	stackTable string
+	actions    string
+	sameHeader string
+	survivors  string
+}
+
+type stopFrontierHeaderGroup struct {
+	state   StateID
+	offset  uint32
+	indices []int
+}
+
+func (p *Parser) buildStopFrontierDiagnostics(stacks []glrStack, tok Token, snapshotSize int, traces []dispatchStackSurvivorTrace) stopFrontierDiagnostics {
+	status := p.classifyPostDispatchStacks(stacks, tok, snapshotSize)
+	return stopFrontierDiagnostics{
+		stackTable: p.stopFrontierStackTable(stacks, snapshotSize),
+		actions:    status.progressString(),
+		sameHeader: p.stopFrontierSameHeaderSummary(stacks),
+		survivors:  p.stopFrontierSurvivorTrace(stacks, tok, snapshotSize, traces),
+	}
+}
+
+func parseActionTypeDiagName(t ParseActionType) string {
+	switch t {
+	case ParseActionShift:
+		return "shift"
+	case ParseActionReduce:
+		return "reduce"
+	case ParseActionAccept:
+		return "accept"
+	case ParseActionRecover:
+		return "recover"
+	default:
+		return fmt.Sprintf("type%d", t)
+	}
+}
+
+func stackTraceState(s *glrStack) (StateID, uint32, int) {
+	if s == nil {
+		return 0, 0, 0
+	}
+	depth := s.depth()
+	state := StateID(0)
+	if depth > 0 {
+		state = s.top().state
+	}
+	return state, s.byteOffset, depth
+}
+
+func actionSetSummary(actions []ParseAction) (entries, shifts, reduces, accepts, recovers, others int) {
+	entries = len(actions)
+	for _, act := range actions {
+		switch act.Type {
+		case ParseActionShift:
+			shifts++
+		case ParseActionReduce:
+			reduces++
+		case ParseActionAccept:
+			accepts++
+		case ParseActionRecover:
+			recovers++
+		default:
+			others++
+		}
+	}
+	return entries, shifts, reduces, accepts, recovers, others
+}
+
+func (p *Parser) stopFrontierSurvivorTrace(stacks []glrStack, tok Token, snapshotSize int, traces []dispatchStackSurvivorTrace) string {
+	if len(stacks) == 0 || p == nil || p.language == nil {
+		return ""
+	}
+	var b strings.Builder
+	count := 0
+	emitted := 0
+	const limit = 8
+	for i := range stacks {
+		s := &stacks[i]
+		if s.dead || s.accepted || s.shifted || s.cPaused || s.depth() == 0 {
+			continue
+		}
+		actionIdx := p.lookupActionIndex(s.top().state, tok.Symbol)
+		if actionIdx == 0 || int(actionIdx) >= len(p.language.ParseActions) {
+			continue
+		}
+		actions := p.language.ParseActions[actionIdx].Actions
+		if len(actions) == 0 {
+			continue
+		}
+		count++
+		if emitted >= limit {
+			continue
+		}
+		if emitted == 0 {
+			b.WriteString("survivors={rows=[")
+		} else {
+			b.WriteByte(';')
+		}
+		entries, shifts, reduces, accepts, recovers, others := actionSetSummary(actions)
+		trace := dispatchStackSurvivorTrace{
+			inSnapshot: snapshotSize < 0 || i < snapshotSize,
+			origin:     "unknown",
+		}
+		if i < len(traces) {
+			trace = traces[i]
+		}
+		if trace.origin == "" {
+			trace.origin = "preexisting"
+		}
+		state, byteOffset, depth := stackTraceState(s)
+		fmt.Fprintf(&b, "%d:%d@%d/d%d snap=%t visited=%t origin=%q source=%d path=%q action_index=%d action_count=%d action=%s(state=%d,symbol=%d,children=%d) before=%d@%d/d%d after_primary=%d@%d/d%d shifted=%t dead=%t acc=%t after_final=%d@%d/d%d shifted=%t dead=%t acc=%t final_actions={entries=%d shift=%d reduce=%d accept=%d recover=%d other=%d}",
+			i,
+			state,
+			byteOffset,
+			depth,
+			trace.inSnapshot,
+			trace.visited,
+			trace.origin,
+			trace.sourceIndex,
+			trace.path,
+			trace.actionIndex,
+			trace.actionCount,
+			parseActionTypeDiagName(trace.actionType),
+			trace.actionState,
+			trace.actionSymbol,
+			trace.actionChildCount,
+			trace.beforeState,
+			trace.beforeByte,
+			trace.beforeDepth,
+			trace.afterPrimaryState,
+			trace.afterPrimaryByte,
+			trace.afterPrimaryDepth,
+			trace.afterPrimaryShifted,
+			trace.afterPrimaryDead,
+			trace.afterPrimaryAccept,
+			trace.afterFinalState,
+			trace.afterFinalByte,
+			trace.afterFinalDepth,
+			trace.afterFinalShifted,
+			trace.afterFinalDead,
+			trace.afterFinalAccepted,
+			entries,
+			shifts,
+			reduces,
+			accepts,
+			recovers,
+			others,
+		)
+		if trace.frontier.ran {
+			frontierAction := "none"
+			if trace.frontier.terminalActionSet {
+				frontierAction = parseActionTypeDiagName(trace.frontier.terminalActionTyp)
+			}
+			fmt.Fprintf(&b, " frontier={reason=%q step=%d before=%d@%d/d%d after=%d@%d/d%d shifted=%t dead=%t acc=%t last_reduce_seen=%t last_reduce=%d@%d/d%d terminal_action=%s terminal_count=%d}",
+				trace.frontier.reason,
+				trace.frontier.step,
+				trace.frontier.beforeState,
+				trace.frontier.beforeByte,
+				trace.frontier.beforeDepth,
+				trace.frontier.afterState,
+				trace.frontier.afterByte,
+				trace.frontier.afterDepth,
+				trace.frontier.afterShifted,
+				trace.frontier.afterDead,
+				trace.frontier.afterAccepted,
+				trace.frontier.lastReduceSeen,
+				trace.frontier.lastReduceState,
+				trace.frontier.lastReduceByte,
+				trace.frontier.lastReduceDepth,
+				frontierAction,
+				trace.frontier.terminalCount,
+			)
+		}
+		emitted++
+	}
+	if count == 0 {
+		return ""
+	}
+	if emitted == 0 {
+		return fmt.Sprintf("survivors={count=%d rows=[]}", count)
+	}
+	if omitted := count - emitted; omitted > 0 {
+		fmt.Fprintf(&b, ";omitted=%d", omitted)
+	}
+	fmt.Fprintf(&b, "] count=%d}", count)
+	return b.String()
+}
+
+func (p *Parser) stopFrontierStackTable(stacks []glrStack, snapshotSize int) string {
+	var b strings.Builder
+	live := 0
+	emitted := 0
+	for i := range stacks {
+		if !stacks[i].dead {
+			live++
+		}
+	}
+	fmt.Fprintf(&b, "stacks={total=%d live=%d limit=%d rows=[", len(stacks), live, stopFrontierStackTableLimit)
+	for i := range stacks {
+		if emitted >= stopFrontierStackTableLimit {
+			break
+		}
+		s := &stacks[i]
+		state := StateID(0)
+		depth := s.depth()
+		if depth > 0 {
+			state = s.top().state
+		}
+		if emitted > 0 {
+			b.WriteByte(';')
+		}
+		fmt.Fprintf(&b, "%d:%d@%d/d%d sh=%t dead=%t acc=%t pause=%t rec=%t score=%d br=%d snap=%t",
+			i,
+			state,
+			s.byteOffset,
+			depth,
+			s.shifted,
+			s.dead,
+			s.accepted,
+			s.cPaused,
+			s.cRec != nil,
+			s.score,
+			s.branchOrder,
+			snapshotSize < 0 || i < snapshotSize,
+		)
+		emitted++
+	}
+	if omitted := len(stacks) - emitted; omitted > 0 {
+		fmt.Fprintf(&b, ";omitted=%d", omitted)
+	}
+	b.WriteString("]}")
+	return b.String()
+}
+
+func (p *Parser) stopFrontierSameHeaderSummary(stacks []glrStack) string {
+	groups := make([]stopFrontierHeaderGroup, 0, len(stacks))
+	for i := range stacks {
+		if stacks[i].dead || stacks[i].depth() == 0 {
+			continue
+		}
+		key := mergeKeyForStack(stacks[i])
+		found := -1
+		for gi := range groups {
+			if groups[gi].state == key.state && groups[gi].offset == key.byteOffset {
+				found = gi
+				break
+			}
+		}
+		if found < 0 {
+			groups = append(groups, stopFrontierHeaderGroup{state: key.state, offset: key.byteOffset})
+			found = len(groups) - 1
+		}
+		groups[found].indices = append(groups[found].indices, i)
+	}
+	sameGroups := 0
+	maxGroup := 0
+	pairs := 0
+	deepRejected := 0
+	costDiff := 0
+	gssEligible := 0
+	gssAttemptable := 0
+	gssWouldMerge := 0
+	pairBudgetHit := false
+	scratch := glrMergeScratch{language: p.language, cRecoveryCost: p.errorCostCompetitionEnabled()}
+	for gi := range groups {
+		size := len(groups[gi].indices)
+		if size > maxGroup {
+			maxGroup = size
+		}
+		if size < 2 {
+			continue
+		}
+		sameGroups++
+		for ai := 0; ai < size; ai++ {
+			for bi := ai + 1; bi < size; bi++ {
+				if pairs >= stopFrontierPairLimit {
+					pairBudgetHit = true
+					continue
+				}
+				a := &stacks[groups[gi].indices[ai]]
+				b := &stacks[groups[gi].indices[bi]]
+				pairs++
+				if cRecoveryMergeCostsDiffer(&scratch, a, b) {
+					costDiff++
+				}
+				if !stackEquivalentForMergeState(&scratch, p.language, groups[gi].state, *a, *b) {
+					deepRejected++
+				}
+				if gssMainCanMergeWithScratch(&scratch, a, b) {
+					gssEligible++
+					gssAttemptable++
+					if !gssStacksHaveDistinctMaterializingShapesWithScratch(&scratch, a, b) {
+						gssWouldMerge++
+					}
+				}
+			}
+		}
+	}
+	return fmt.Sprintf(
+		"sameHeader={groups=%d max=%d pairs=%d deepReject=%d costDiff=%d externalScannerDiffKnown=false gssEligible=%d gssAttemptable=%d gssWouldMerge=%d pairBudgetHit=%t}",
+		sameGroups,
+		maxGroup,
+		pairs,
+		deepRejected,
+		costDiff,
+		gssEligible,
+		gssAttemptable,
+		gssWouldMerge,
+		pairBudgetHit,
+	)
+}
+
+func cRecoveryRelevantStack(stacks []glrStack) bool {
+	for i := range stacks {
+		if stacks[i].cPaused || stacks[i].cRec != nil || stacks[i].cRecoverMissingGroup != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func stopCondenseGatingString(errorCostCompetitionEnabled, anyReduced, condenseRelevant, condenseRan, condenseResumed bool, stacks []glrStack) string {
+	hasPaused := false
+	hasCRec := false
+	hasMissingGroup := false
+	for i := range stacks {
+		if stacks[i].dead {
+			continue
+		}
+		if stacks[i].cPaused {
+			hasPaused = true
+		}
+		if stacks[i].cRec != nil {
+			hasCRec = true
+		}
+		if stacks[i].cRecoverMissingGroup != nil {
+			hasMissingGroup = true
+		}
+	}
+	return fmt.Sprintf(
+		"condense={errorCostCompetitionEnabled=%t anyReduced=%t hasPaused=%t hasCRec=%t hasMissingGroup=%t condenseSkippedDueToAnyReduced=%t condenseRan=%t condenseResumed=%t}",
+		errorCostCompetitionEnabled,
+		anyReduced,
+		hasPaused,
+		hasCRec,
+		hasMissingGroup,
+		errorCostCompetitionEnabled && anyReduced && condenseRelevant && !condenseRan,
+		condenseRan,
+		condenseResumed,
+	)
+}
+
+func (d *parseStopActionDiagnostic) progressString() string {
+	if d == nil || !d.captured {
+		return ""
+	}
+	s := fmt.Sprintf(
+		"last_action_phase=%q last_action_stack=%d[%d]@%d last_action_token=%d[%d:%d] last_action_no_lookahead=%t last_action_type=%d last_action_state=%d last_action_symbol=%d last_action_child_count=%d last_action_production_id=%d last_action_dynamic_precedence=%d last_action_count=%d last_action_result_state=%d last_action_reduce_chain=%t last_action_chain_step=%d last_action_repeated_sig_count=%d last_action_chain_cycle=%t dispatch_shift_actions=%d dispatch_reduce_actions=%d dispatch_accept_actions=%d dispatch_recover_actions=%d dispatch_other_actions=%d force_advance_after_reduce=%t post_dispatch_default_reduce=%t",
+		d.phase,
+		d.stackState,
+		d.stackDepth,
+		d.stackByte,
+		d.lookaheadSymbol,
+		d.lookaheadStartByte,
+		d.lookaheadEndByte,
+		d.lookaheadNoLookahead,
+		d.actionType,
+		d.actionState,
+		d.actionSymbol,
+		d.actionChildCount,
+		d.actionProductionID,
+		d.actionDynamicPrecedence,
+		d.actionCount,
+		d.resultState,
+		d.inReduceChain,
+		d.reduceChainStep,
+		d.repeatedReduceSignatureCount,
+		d.reduceChainCycle,
+		d.dispatchShiftActions,
+		d.dispatchReduceActions,
+		d.dispatchAcceptActions,
+		d.dispatchRecoverActions,
+		d.dispatchOtherActions,
+		d.forceAdvanceAfterReduce,
+		d.postDispatchDefaultReduced,
+	)
+	if d.lastReduceCaptured {
+		s += fmt.Sprintf(
+			" last_reduce_phase=%q last_reduce_stack=%d[%d]@%d last_reduce_symbol=%d last_reduce_child_count=%d last_reduce_production_id=%d last_reduce_dynamic_precedence=%d last_reduce_result_state=%d last_reduce_chain=%t last_reduce_chain_step=%d last_reduce_repeated_sig_count=%d last_reduce_chain_cycle=%t",
+			d.lastReducePhase,
+			d.lastReduceStackState,
+			d.lastReduceStackDepth,
+			d.lastReduceStackByte,
+			d.lastReduceSymbol,
+			d.lastReduceChildCount,
+			d.lastReduceProductionID,
+			d.lastReduceDynamicPrecedence,
+			d.lastReduceResultState,
+			d.lastReduceInChain,
+			d.lastReduceChainStep,
+			d.lastReduceRepeatedSigCount,
+			d.lastReduceChainCycle,
+		)
+	}
+	return s
+}
+
+func (d *parseStopActionDiagnostic) beginDispatch() {
+	if d == nil {
+		return
+	}
+	d.captured = false
+	d.dispatchShiftActions = 0
+	d.dispatchReduceActions = 0
+	d.dispatchAcceptActions = 0
+	d.dispatchRecoverActions = 0
+	d.dispatchOtherActions = 0
+	d.lastReduceCaptured = false
+}
+
+func (p *Parser) noteStopActionDiagnostic(phase string, s *glrStack, tok Token, act ParseAction, actionCount int, inReduceChain bool, chainStep int, repeatedCount int, cycle bool) {
+	if p == nil || p.stopActionDiag == nil || s == nil || s.dead || s.accepted || s.depth() == 0 {
+		return
+	}
+	d := p.stopActionDiag
+	d.captured = true
+	d.phase = phase
+	d.stackState = s.top().state
+	d.stackByte = s.byteOffset
+	d.stackDepth = s.depth()
+	d.lookaheadSymbol = tok.Symbol
+	d.lookaheadStartByte = tok.StartByte
+	d.lookaheadEndByte = tok.EndByte
+	d.lookaheadNoLookahead = tok.NoLookahead
+	d.actionType = act.Type
+	d.actionState = act.State
+	d.actionSymbol = act.Symbol
+	d.actionChildCount = act.ChildCount
+	d.actionProductionID = act.ProductionID
+	d.actionDynamicPrecedence = act.DynamicPrecedence
+	d.actionCount = actionCount
+	d.resultState = s.top().state
+	d.inReduceChain = inReduceChain
+	d.reduceChainStep = chainStep
+	d.repeatedReduceSignatureCount = repeatedCount
+	d.reduceChainCycle = cycle
+	switch act.Type {
+	case ParseActionShift:
+		d.dispatchShiftActions++
+	case ParseActionReduce:
+		d.dispatchReduceActions++
+		d.lastReduceCaptured = true
+		d.lastReducePhase = phase
+		d.lastReduceStackState = d.stackState
+		d.lastReduceStackByte = d.stackByte
+		d.lastReduceStackDepth = d.stackDepth
+		d.lastReduceSymbol = act.Symbol
+		d.lastReduceChildCount = act.ChildCount
+		d.lastReduceProductionID = act.ProductionID
+		d.lastReduceDynamicPrecedence = act.DynamicPrecedence
+		d.lastReduceResultState = d.resultState
+		d.lastReduceInChain = inReduceChain
+		d.lastReduceChainStep = chainStep
+		d.lastReduceRepeatedSigCount = repeatedCount
+		d.lastReduceChainCycle = cycle
+	case ParseActionAccept:
+		d.dispatchAcceptActions++
+	case ParseActionRecover:
+		d.dispatchRecoverActions++
+	default:
+		d.dispatchOtherActions++
+	}
+}
+
+func (p *Parser) noteStopActionResult(s *glrStack) {
+	if p == nil || p.stopActionDiag == nil || !p.stopActionDiag.captured || s == nil || s.depth() == 0 {
+		return
+	}
+	p.stopActionDiag.resultState = s.top().state
+	if p.stopActionDiag.actionType == ParseActionReduce {
+		p.stopActionDiag.lastReduceResultState = s.top().state
+	}
+}
 
 type smallActionPair struct {
 	sym uint16
@@ -132,6 +1027,10 @@ const (
 	// maxConsecutivePrimaryReduces prevents infinite reduce loops on the
 	// primary stack when no token advancement occurs.
 	maxConsecutivePrimaryReduces = 256
+	// maxConsecutiveNoTokenDispatches prevents multi-stack GLR reduce/merge
+	// loops that keep re-dispatching the same concrete lookahead without
+	// advancing the token source.
+	maxConsecutiveNoTokenDispatches = 128
 	// maxConsecutiveMissingSingleShifts prevents single-stack recovery from
 	// cycling forever by repeatedly inserting the same missing token before
 	// the same lookahead without advancing the parse position.
@@ -369,6 +1268,10 @@ func NewParser(lang *Language) *Parser {
 		} else {
 			p.denseLimit = len(lang.ParseTable)
 		}
+		// Bind the cached action-lookup closure eagerly at language-config
+		// time so lookupActionIndexFunc's lazy fallback never races, even in
+		// the (unsupported) shared-Parser case.
+		p.lookupActionIndexFn = p.lookupActionIndex
 		p.smallBase = int(lang.LargeStateCount)
 		if len(lang.SmallParseTableMap) > 0 && len(lang.SmallParseTable) > 0 {
 			p.smallTokenLookup = buildSmallTokenLookup(lang)
@@ -378,17 +1281,22 @@ func NewParser(lang *Language) *Parser {
 		p.externalValidMaskByState = buildExternalValidMaskByState(p.externalValidByState, len(lang.ExternalSymbols))
 		p.hasExtraChainActions = languageHasExtraChainActions(lang)
 		p.classifiedActions = buildClassifiedParseActions(lang)
+		p.eagerDefaultReduces = buildEagerDefaultReduceActions(p)
 		p.reduceChainHints = buildReduceChainHints(lang)
 		p.reduceChainHintByState = buildReduceChainHintIndex(p.reduceChainHints)
 		p.reduceAliasSeq = buildReduceAliasSequences(lang)
 		p.aliasTargetSymbol = buildAliasTargetSymbols(lang)
-		p.singleTokenWrapperSymbol = buildSingleTokenWrapperSymbols(lang)
+		p.keepSameNamedAnonChildSymbol = buildKeepSameNamedAnonChildSymbols(lang)
+		p.sharedAnonymousTokenSymbol = buildSharedAnonymousTokenSymbols(lang)
 		p.reduceHasFields = buildReduceFieldPresence(lang)
 		p.reduceFieldPlans = buildReduceFieldPlans(lang)
 		p.recoverByState, p.hasRecoverState, p.hasRecoverSymbol = buildRecoverActionsByState(lang)
 		p.hasKeywordState = buildKeywordStates(lang)
 		p.spanExtendingInvisibleSymbols, p.nonSpanExtendingInvisibleSymbols = buildInvisibleSpanSymbolTables(lang.SymbolNames)
+		p.aliasPreservedWrapperSymbols = buildAliasPreservedWrapperSymbols(lang)
 		p.initTypeScriptContextualKeywordSymbols(lang)
+		p.initSchemeErrorRecoverySymbols(lang)
+		p.errorCostCompetition = errorCostCompetitionLanguage(lang)
 		p.rootSymbol, p.hasRootSymbol = p.inferRootSymbol()
 		p.maxConflictWidth = computeMaxConflictWidth(lang)
 	}
@@ -654,7 +1562,8 @@ func (p *Parser) tryRelexBroadDFA(tok Token, parserState StateID, ts TokenSource
 			return cand.token, true
 		}
 	} else {
-		if cand, ok := tryAt(int(tok.StartByte), tok.StartPoint.Row, tok.StartPoint.Column); ok && cand.extraShift {
+		if cand, ok := tryAt(int(tok.StartByte), tok.StartPoint.Row, tok.StartPoint.Column); ok &&
+			(cand.extraShift || p.sameSurfaceRelexToken(tok, cand.token)) {
 			return cand.token, true
 		}
 	}
@@ -707,6 +1616,37 @@ func (p *Parser) tryRelexBroadDFA(tok Token, parserState StateID, ts TokenSource
 	return Token{}, false
 }
 
+func (p *Parser) sameSurfaceRelexToken(original, candidate Token) bool {
+	if p == nil || p.language == nil {
+		return false
+	}
+	if original.StartByte != candidate.StartByte || original.EndByte != candidate.EndByte {
+		return false
+	}
+	if original.Symbol == 0 || candidate.Symbol == 0 || original.Symbol == candidate.Symbol {
+		return false
+	}
+	return p.symbolSurfaceName(original.Symbol) != "" &&
+		p.symbolSurfaceName(original.Symbol) == p.symbolSurfaceName(candidate.Symbol)
+}
+
+func (p *Parser) symbolSurfaceName(sym Symbol) string {
+	if p == nil || p.language == nil {
+		return ""
+	}
+	idx := int(sym)
+	if idx < 0 {
+		return ""
+	}
+	if idx < len(p.language.SymbolMetadata) && p.language.SymbolMetadata[idx].Name != "" {
+		return p.language.SymbolMetadata[idx].Name
+	}
+	if idx < len(p.language.SymbolNames) {
+		return p.language.SymbolNames[idx]
+	}
+	return ""
+}
+
 func (p *Parser) allowStringContentWhitespaceBroadRelex(candidate Symbol) bool {
 	if p == nil || p.language == nil || int(candidate) >= len(p.language.SymbolNames) {
 		return false
@@ -745,7 +1685,8 @@ func (p *Parser) tryRelexCurrentStateDFA(tok Token, parserState StateID, ts Toke
 	if int(parserState) >= len(p.language.LexModes) {
 		return Token{}, false
 	}
-	if dts.language.ExternalScanner != nil && p.language.LexModes[parserState].ExternalLexState != 0 &&
+	if dts.language.ExternalScanner != nil && dts.externalSymbolIndex(tok.Symbol) >= 0 &&
+		p.language.LexModes[parserState].ExternalLexState != 0 &&
 		!p.canRelexExternalTokenWithCurrentStateDFA(tok) {
 		return Token{}, false
 	}
@@ -861,7 +1802,7 @@ func (p *Parser) canFinalizeNoActionEOFAt(s *glrStack, expectedEOFByte uint32, s
 	return true
 }
 
-func (p *Parser) tryInsertMissingSingleShift(s *glrStack, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) bool {
+func (p *Parser) tryInsertMissingSingleShift(source []byte, s *glrStack, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) bool {
 	if p == nil || p.language == nil || s == nil || s.dead || tok.NoLookahead {
 		return false
 	}
@@ -905,8 +1846,54 @@ func (p *Parser) tryInsertMissingSingleShift(s *glrStack, tok Token, nodeCount *
 		candidateCnt++
 		return candidateCnt < 2
 	})
+	var reducePrefix []ParseAction
 	if candidateCnt != 1 {
-		return false
+		// Mirror tree-sitter's ts_parser__recover_with_missing: when the strict
+		// single-shift heuristic above did not isolate a unique visible/named
+		// candidate, fall back to the C runtime's exact algorithm. Scan terminal
+		// symbols in ascending id order and pick the first whose shift target has
+		// a reduce action on the real lookahead. C does this without any
+		// visible/named filter and without a uniqueness requirement, taking the
+		// lowest-id symbol that lets the parse make progress. This recovers
+		// constructs such as Zig's empty container body `struct {}`, where the
+		// grammar requires at least one `container_field` and the runtime inserts
+		// a missing `_identifier` (an invisible terminal) at the `}`.
+		//
+		// The broadened scan is gated exactly like the C runtime: a candidate is
+		// only accepted when, after inserting the missing terminal, performing all
+		// possible reductions eventually reaches a state that can SHIFT the real
+		// lookahead (ts_parser__do_all_potential_reductions returning
+		// can_shift_lookahead_symbol). For grammars such as PHP's
+		// `static function ...`, no missing terminal lets the offending `function`
+		// lookahead be shifted, so this returns false and the parser falls through
+		// to its established ERROR recovery; for Zig's `struct {}` the missing
+		// `_identifier` reduces up to a state that can shift the closing `}`.
+		if sym, act, ok := p.findRecoverWithMissingShift(s, state, tok.Symbol); ok {
+			candidateSym = sym
+			candidateAct = act
+		} else if reduces, sym, act, ok := p.findRecoverWithMissingAfterReductions(s, state, tok.Symbol); ok {
+			// C's ts_parser__handle_error runs do_all_potential_reductions
+			// BEFORE per-version missing insertion, so the missing terminal is
+			// often only insertable after pending reductions land (jq: REDUCE
+			// if_expression first, then `?` becomes shiftable and MISSING `?`
+			// completes the pair). Apply the discovered reduce chain for real,
+			// then insert the missing terminal at the reduced state.
+			reducePrefix = reduces
+			candidateSym = sym
+			candidateAct = act
+		} else {
+			return false
+		}
+	}
+
+	for _, reduceAct := range reducePrefix {
+		p.applyAction(source, s, reduceAct, tok, new(bool), nodeCount, arena, entryScratch, gssScratch, nil, false, trackChildErrors)
+		if p.rejectUndrainedPendingForkStacks(s) {
+			return false
+		}
+		if s.dead {
+			return false
+		}
 	}
 
 	missingTok := Token{
@@ -923,7 +1910,10 @@ func (p *Parser) tryInsertMissingSingleShift(s *glrStack, tok Token, nodeCount *
 		missingTok.StartPoint = stackEntryNodeEndPoint(top)
 		missingTok.EndPoint = stackEntryNodeEndPoint(top)
 	}
-	p.applyAction(s, candidateAct, missingTok, new(bool), nodeCount, arena, entryScratch, gssScratch, nil, false, trackChildErrors)
+	p.applyAction(source, s, candidateAct, missingTok, new(bool), nodeCount, arena, entryScratch, gssScratch, nil, false, trackChildErrors)
+	if p.rejectUndrainedPendingForkStacks(s) {
+		return false
+	}
 	s.shifted = false
 	return true
 }
@@ -990,6 +1980,274 @@ func (p *Parser) tryRecoverPreviousShiftAsError(s *glrStack, tok Token, nodeCoun
 		*trackChildErrors = true
 	}
 	return true
+}
+
+func (p *Parser) rejectUndrainedPendingForkStacks(s *glrStack) bool {
+	if p == nil || !glrFaithfulCapOneMerge || len(p.pendingForkStacks) == 0 {
+		return false
+	}
+	p.pendingForkStacks = p.pendingForkStacks[:0]
+	if s != nil {
+		s.dead = true
+	}
+	return true
+}
+
+// findRecoverWithMissingAfterReductions extends findRecoverWithMissingShift
+// with C's handle_error ordering: ts_parser__do_all_potential_reductions runs
+// BEFORE missing-token insertion, so a missing terminal that only becomes
+// shiftable after pending reductions (jq's `?` after `if … end`) is still
+// found. It chases the chain of reduce actions available for ANY lookahead at
+// the current state (bounded), re-running the missing-shift scan after each
+// step, and returns the reduce chain to apply plus the discovered candidate.
+func (p *Parser) findRecoverWithMissingAfterReductions(s *glrStack, state StateID, lookahead Symbol) ([]ParseAction, Symbol, ParseAction, bool) {
+	if p == nil || p.language == nil || s == nil {
+		return nil, 0, ParseAction{}, false
+	}
+	baseStates := p.collectStackStates(s)
+	if len(baseStates) == 0 {
+		return nil, 0, ParseAction{}, false
+	}
+	// C's ts_parser__handle_error performs exactly ONE round of
+	// do_all_potential_reductions (one reduce per forked version) before
+	// missing-token insertion — deeper chains find insertions C never takes
+	// (PHP's `static function …` recovery is pinned on NOT inserting).
+	const maxReduceChase = 1
+	states := append([]StateID(nil), baseStates...)
+	var reduces []ParseAction
+	cur := state
+	for step := 0; step < maxReduceChase; step++ {
+		reduceAct, ok := p.anyLookaheadReduceAction(cur)
+		if !ok {
+			return nil, 0, ParseAction{}, false
+		}
+		childCount := int(reduceAct.ChildCount)
+		if childCount <= 0 || childCount >= len(states) {
+			return nil, 0, ParseAction{}, false
+		}
+		states = states[:len(states)-childCount]
+		gotoState := p.lookupGoto(states[len(states)-1], reduceAct.Symbol)
+		if gotoState == 0 {
+			return nil, 0, ParseAction{}, false
+		}
+		states = append(states, gotoState)
+		reduces = append(reduces, reduceAct)
+		cur = gotoState
+		if sym, act, ok := p.findRecoverWithMissingShiftAtStates(states, cur, lookahead); ok {
+			return reduces, sym, act, true
+		}
+	}
+	return nil, 0, ParseAction{}, false
+}
+
+// anyLookaheadReduceAction returns a deterministic single reduce action
+// available in the state's table row regardless of lookahead — the first
+// (lowest symbol id) entry whose sole action is a reduce. Conflicted rows are
+// skipped so the chase never guesses between competing reductions.
+func (p *Parser) anyLookaheadReduceAction(state StateID) (ParseAction, bool) {
+	var found ParseAction
+	var have bool
+	p.forEachActionIndexInState(state, func(sym Symbol, idx uint16) bool {
+		if have || int(idx) >= len(p.language.ParseActions) {
+			return !have
+		}
+		actions := p.language.ParseActions[idx].Actions
+		if len(actions) != 1 {
+			return true
+		}
+		act := actions[0]
+		if act.Type != ParseActionReduce || act.ChildCount <= 0 {
+			return true
+		}
+		found = act
+		have = true
+		return false
+	})
+	return found, have
+}
+
+// findRecoverWithMissingShiftAtStates is findRecoverWithMissingShift's scan
+// over an explicit (simulated) state chain instead of the live stack.
+func (p *Parser) findRecoverWithMissingShiftAtStates(baseStates []StateID, state StateID, lookahead Symbol) (Symbol, ParseAction, bool) {
+	tokenCount := Symbol(p.language.TokenCount)
+	var sim []StateID
+	for ms := Symbol(1); ms < tokenCount; ms++ {
+		if ms == lookahead {
+			continue
+		}
+		idx := p.lookupActionIndex(state, ms)
+		if idx == 0 || int(idx) >= len(p.language.ParseActions) {
+			continue
+		}
+		actions := p.language.ParseActions[idx].Actions
+		if len(actions) == 0 {
+			continue
+		}
+		act := actions[len(actions)-1]
+		if act.Type != ParseActionShift || act.Extra {
+			continue
+		}
+		nextState := act.State
+		if nextState == 0 || nextState == state {
+			continue
+		}
+		if !p.stateHasLeadingReduceAction(nextState, lookahead) {
+			continue
+		}
+		sim = append(sim[:0], baseStates...)
+		sim = append(sim, nextState)
+		if p.canShiftAfterReductions(sim, lookahead) {
+			return ms, act, true
+		}
+	}
+	return 0, ParseAction{}, false
+}
+
+// findRecoverWithMissingShift mirrors tree-sitter's ts_parser__recover_with_missing
+// (lib/src/parser.c). It walks terminal symbols in ascending id order; for each it
+// computes the shift target (ts_language_next_state) and checks that the target
+// state has a leading reduce action on the real lookahead (ts_language_has_reduce_action).
+// The candidate is then confirmed by simulating ts_parser__do_all_potential_reductions:
+// the missing terminal is only accepted when, after applying every available
+// reduction, some reachable state can SHIFT the real lookahead. The first symbol
+// that passes wins, exactly matching the C runtime's lowest-id selection.
+func (p *Parser) findRecoverWithMissingShift(s *glrStack, state StateID, lookahead Symbol) (Symbol, ParseAction, bool) {
+	if p == nil || p.language == nil || s == nil {
+		return 0, ParseAction{}, false
+	}
+	tokenCount := Symbol(p.language.TokenCount)
+	// Materialize the current stack's state chain once; the per-candidate
+	// reduction simulation works on a scratch copy so the real stack is never
+	// mutated.
+	baseStates := p.collectStackStates(s)
+	if len(baseStates) == 0 {
+		return 0, ParseAction{}, false
+	}
+	var sim []StateID
+	for ms := Symbol(1); ms < tokenCount; ms++ {
+		if ms == lookahead {
+			continue
+		}
+		idx := p.lookupActionIndex(state, ms)
+		if idx == 0 || int(idx) >= len(p.language.ParseActions) {
+			continue
+		}
+		actions := p.language.ParseActions[idx].Actions
+		if len(actions) == 0 {
+			continue
+		}
+		// ts_language_next_state uses the LAST action of the entry — for GLR
+		// conflict entries like [REDUCE, SHIFT] the shift is the next-state
+		// candidate (jq's `?` after `if … end` is exactly this shape).
+		act := actions[len(actions)-1]
+		if act.Type != ParseActionShift || act.Extra {
+			continue
+		}
+		nextState := act.State
+		// ts_language_next_state skips when the target is 0 or unchanged.
+		if nextState == 0 || nextState == state {
+			continue
+		}
+		if !p.stateHasLeadingReduceAction(nextState, lookahead) {
+			continue
+		}
+		// Simulate inserting the missing terminal (shift to nextState) followed
+		// by all potential reductions, then check the lookahead can be shifted.
+		sim = append(sim[:0], baseStates...)
+		sim = append(sim, nextState)
+		if p.canShiftAfterReductions(sim, lookahead) {
+			return ms, act, true
+		}
+	}
+	return 0, ParseAction{}, false
+}
+
+// collectStackStates returns the chain of parser states for s, bottom-to-top.
+func (p *Parser) collectStackStates(s *glrStack) []StateID {
+	if s == nil {
+		return nil
+	}
+	if s.gss.head == nil && len(s.entries) > 0 {
+		states := make([]StateID, len(s.entries))
+		for i := range s.entries {
+			states[i] = s.entries[i].state
+		}
+		return states
+	}
+	entries := s.gss.materialize(nil)
+	if len(entries) == 0 {
+		return nil
+	}
+	states := make([]StateID, len(entries))
+	for i := range entries {
+		states[i] = entries[i].state
+	}
+	return states
+}
+
+// stateHasLeadingReduceAction mirrors ts_language_has_reduce_action: the first
+// action for (state, sym) must be a reduce.
+func (p *Parser) stateHasLeadingReduceAction(state StateID, sym Symbol) bool {
+	entry := p.lookupAction(state, sym)
+	if entry == nil || len(entry.Actions) == 0 {
+		return false
+	}
+	return entry.Actions[0].Type == ParseActionReduce
+}
+
+// canShiftAfterReductions simulates ts_parser__do_all_potential_reductions for a
+// single lookahead symbol over a linear copy of the state stack. It repeatedly
+// applies reduce actions available for the lookahead (popping child states and
+// taking the GOTO of the reduced nonterminal) and returns true as soon as a
+// reachable state can shift (or recover on) the lookahead. The state slice is
+// mutated in place; callers pass a scratch copy.
+func (p *Parser) canShiftAfterReductions(states []StateID, lookahead Symbol) bool {
+	const maxSimSteps = 1024
+	for step := 0; step < maxSimSteps; step++ {
+		if len(states) == 0 {
+			return false
+		}
+		top := states[len(states)-1]
+		entry := p.lookupAction(top, lookahead)
+		if entry == nil || len(entry.Actions) == 0 {
+			return false
+		}
+		var reduce ParseAction
+		haveReduce := false
+		for i := range entry.Actions {
+			act := entry.Actions[i]
+			switch act.Type {
+			case ParseActionShift, ParseActionRecover:
+				if !act.Extra && !act.Repetition {
+					return true
+				}
+			case ParseActionReduce:
+				if act.ChildCount > 0 && !haveReduce {
+					reduce = act
+					haveReduce = true
+				}
+			}
+		}
+		if !haveReduce {
+			return false
+		}
+		// Apply the reduction: pop child_count states, then GOTO on the reduced
+		// nonterminal from the new top state.
+		childCount := int(reduce.ChildCount)
+		if childCount > len(states) {
+			return false
+		}
+		states = states[:len(states)-childCount]
+		if len(states) == 0 {
+			return false
+		}
+		gotoState := p.lookupGoto(states[len(states)-1], reduce.Symbol)
+		if gotoState == 0 {
+			return false
+		}
+		states = append(states, gotoState)
+	}
+	return false
 }
 
 func nodesFromStack(stack glrStack) []*Node {
@@ -1118,7 +2376,10 @@ func (p *Parser) tryAdvanceEOFOnSingleStack(s *glrStack, tok Token, expectedEOFB
 		act := actions[0]
 		switch act.Type {
 		case ParseActionReduce:
-			p.applyAction(s, act, tok, &anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, false, nil)
+			p.applyAction(nil, s, act, tok, &anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, false, nil)
+			if p.rejectUndrainedPendingForkStacks(s) {
+				return false
+			}
 			if s.dead {
 				return false
 			}
@@ -1185,7 +2446,10 @@ func (p *Parser) tryInsertMissingSingleShiftAtEOF(s *glrStack, tok Token, nodeCo
 		EndPoint:   tok.StartPoint,
 		Missing:    true,
 	}
-	p.applyAction(s, candidateAct, missingTok, new(bool), nodeCount, arena, entryScratch, gssScratch, nil, false, nil)
+	p.applyAction(nil, s, candidateAct, missingTok, new(bool), nodeCount, arena, entryScratch, gssScratch, nil, false, nil)
+	if p.rejectUndrainedPendingForkStacks(s) {
+		return false
+	}
 	s.shifted = false
 	return true
 }
@@ -1927,7 +3191,7 @@ func recordParseRuntimeTokenStats(parseRuntime *ParseRuntime, tokensConsumed uin
 	parseRuntime.TokenSourceEOFEarly = tokenSourceEOFEarly
 }
 
-func recordParseRuntimeRootStats(parseRuntime *ParseRuntime, tree *Tree, expectedEOFByte uint32, collectFinalStats bool, lang *Language) {
+func recordParseRuntimeRootStats(parseRuntime *ParseRuntime, tree *Tree, source []byte, expectedEOFByte uint32, included []Range, collectFinalStats bool, lang *Language) {
 	if parseRuntime == nil {
 		return
 	}
@@ -1939,11 +3203,18 @@ func recordParseRuntimeRootStats(parseRuntime *ParseRuntime, tree *Tree, expecte
 	}
 	parseRuntime.RootEndByte = root.EndByte()
 	parseRuntime.Truncated = parseRuntime.RootEndByte < expectedEOFByte
-	if !collectFinalStats {
-		return
+	tailSource := source
+	if tailSource == nil && tree != nil {
+		tailSource = tree.Source()
 	}
-	root = tree.RootNode()
-	if root == nil {
+	tailStart := parseRuntime.RootEndByte
+	if parseRuntime.LastTokenWasEOF && parseRuntime.LastTokenEndByte > tailStart && parseRuntime.LastTokenEndByte <= expectedEOFByte {
+		tailStart = parseRuntime.LastTokenEndByte
+	}
+	if parseRuntime.Truncated && parserTailAllowsCleanAcceptance(tailSource, tailStart, expectedEOFByte, included) {
+		parseRuntime.Truncated = false
+	}
+	if !collectFinalStats {
 		return
 	}
 	finalStats := collectFinalTreeMaterializationStats(root, lang)
@@ -1959,6 +3230,28 @@ func recordParseRuntimeRootStats(parseRuntime *ParseRuntime, tree *Tree, expecte
 	parseRuntime.FinalChildPointers = finalStats.childPointers
 	parseRuntime.FinalFieldIDElements = finalStats.fieldIDElements
 	parseRuntime.FinalFieldSourceElements = finalStats.fieldSourceElements
+}
+
+func firstErrorNode(root *Node) *Node {
+	if root == nil {
+		return nil
+	}
+	if root.symbol == errorSymbol {
+		return root
+	}
+	for i := 0; i < root.ChildCount(); i++ {
+		if child := firstErrorNode(root.Child(i)); child != nil {
+			return child
+		}
+	}
+	return nil
+}
+
+func (p *Parser) materializeTransientChildrenForReturnedTree(tree *Tree, arena *nodeArena, scratch *parserScratch) ParseStopReason {
+	if scratch == nil {
+		return ParseStopNone
+	}
+	return scratch.transientChildren.materializeNodeUntil(rawRootOrNil(tree), arena, &scratch.nodeLinks, p)
 }
 
 func copyParseRuntimeToTiming(timing *incrementalParseTiming, parseRuntime ParseRuntime) {
@@ -2037,6 +3330,348 @@ func copyParseRuntimeToTiming(timing *incrementalParseTiming, parseRuntime Parse
 	timing.normalizationNanos = parseRuntime.NormalizationNanos
 }
 
+func realTokenAttachmentGapIsParserPadding(source []byte, s *glrStack, tok Token) bool {
+	if s == nil || tok.Missing || tok.NoLookahead || tok.StartByte <= s.byteOffset {
+		return true
+	}
+	if tok.ExternalScannerToken && tok.ExternalScannerStartByte == s.byteOffset {
+		return true
+	}
+	if int(s.byteOffset) > len(source) || int(tok.StartByte) > len(source) {
+		return true
+	}
+	return bytesAreParserPadding(source, s.byteOffset, tok.StartByte)
+}
+
+func realShiftGapIsParserPadding(source []byte, s *glrStack, tok Token) bool {
+	return realTokenAttachmentGapIsParserPadding(source, s, tok)
+}
+
+// skippedRealGapContinuesSeparatedList reports whether the sole active stack is
+// mid-production immediately after an anonymous separator terminal (e.g. a comma
+// in a separated list) and the real lookahead continues that production. In that
+// position, covering a lexer-skipped stray with a STRUCTURAL error node would
+// insert it between the separator and the next element and corrupt the pending
+// reduction; the correct behavior is to shift across the uncovered gap (as the
+// parser did before the shift-gap guard existed) without materializing any node
+// for the stray, so the skipped bytes stay interior to the covering
+// production's span and total-span invariants hold. That is parse-time
+// behavior only: the stray now lands in no leaf's span, so leaf-level parity
+// with C tree-sitter — which represents such a stray as an EXTRA error
+// transparent to the production — currently depends on a per-language
+// post-parse normalizer re-materializing it (today only
+// normalizeJuliaTrailingCommaAssignmentTuple, dispatched from
+// parser_result_compat.go's language switch). Emitting the EXTRA error
+// directly at parse time, so every language gets it without a bespoke
+// normalizer, is the tracked follow-up.
+func (p *Parser) skippedRealGapContinuesSeparatedList(s *glrStack, state StateID, tok Token) bool {
+	if p == nil || s == nil || tok.Symbol == 0 || tok.Symbol == errorSymbol || tok.Missing || tok.NoLookahead {
+		return false
+	}
+	top := stackEntryNode(s.top())
+	if top == nil || top.symbol == errorSymbol || top.isMissing() || len(top.children) != 0 {
+		return false
+	}
+	// The just-shifted top must be an anonymous (hidden) terminal with a real
+	// span — the separator position where a structural error breaks the
+	// enclosing production. Named leaves (identifiers, literals) and reduced
+	// nonterminals are excluded so ordinary gap materialization is unaffected.
+	if p.isNamedSymbol(top.symbol) || top.startByte >= top.endByte {
+		return false
+	}
+	// The real lookahead must continue the production via a single, NON-extra
+	// shift. Extra-shift lookaheads (trivia/comment tokens attached transparently)
+	// and recover/ambiguous entries must still take ordinary gap materialization.
+	return p.stateDeterministicNonExtraShift(state, tok.Symbol)
+}
+
+// stateDeterministicNonExtraShift reports whether state has exactly one action
+// for sym and it is a plain (non-extra) shift.
+func (p *Parser) stateDeterministicNonExtraShift(state StateID, sym Symbol) bool {
+	if p == nil || p.language == nil {
+		return false
+	}
+	idx := p.lookupActionIndex(state, sym)
+	if idx == 0 || int(idx) >= len(p.language.ParseActions) {
+		return false
+	}
+	actions := p.language.ParseActions[idx].Actions
+	if len(actions) != 1 {
+		return false
+	}
+	return actions[0].Type == ParseActionShift && !actions[0].Extra
+}
+
+func (p *Parser) tryMaterializeSkippedRealGap(source []byte, s *glrStack, state StateID, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) bool {
+	if s == nil || tok.StartByte <= s.byteOffset || realTokenAttachmentGapIsParserPadding(source, s, tok) {
+		return false
+	}
+	// A stray token that the lexer skipped mid-production (immediately after an
+	// anonymous separator terminal, e.g. a comma in a separated list) must not be
+	// covered by a STRUCTURAL error node here: inserting one between the
+	// separator and the next element corrupts the pending reduction and collapses
+	// the enclosing construct into a flat ERROR. The parser has a concrete shift
+	// for the real lookahead that continues the production, so advance across the
+	// uncovered gap (restoring the pre-guard shift-across behavior) without
+	// materializing a node for the stray: the skipped bytes stay interior to the
+	// covering production's span, so total-span invariants hold, but they now sit
+	// in no leaf's span. Leaf-level parity with C tree-sitter's transparent
+	// EXTRA-error representation of such strays depends on a per-language
+	// post-parse normalizer re-materializing the stray afterward (today only
+	// normalizeJuliaTrailingCommaAssignmentTuple, dispatched from
+	// parser_result_compat.go's language switch); emitting the EXTRA error here
+	// at parse time instead, for every language, is the tracked follow-up.
+	if p.skippedRealGapContinuesSeparatedList(s, state, tok) {
+		if p.glrTrace {
+			fmt.Printf("    SHIFT-ACROSS skipped real gap (mid-list separator): gap=%d..%d before tok=%d..%d\n",
+				s.byteOffset, tok.StartByte, tok.StartByte, tok.EndByte)
+		}
+		s.byteOffset = tok.StartByte
+		return true
+	}
+	if p.tryExtendHiddenTrailingErrorAcrossSkippedRealGap(source, s, tok, nodeCount, arena, trackChildErrors) {
+		return s.byteOffset == tok.StartByte
+	}
+	top := stackEntryNode(s.top())
+	startPoint := stackEntryNodeEndPoint(s.top())
+	if top != nil && top.symbol == errorSymbol {
+		if top.isMissing() ||
+			len(top.children) != 0 ||
+			top.parseState != state ||
+			top.endByte != s.byteOffset {
+			return false
+		}
+		startPoint = top.endPoint
+	}
+	gapTok := Token{
+		Symbol:     errorSymbol,
+		StartByte:  s.byteOffset,
+		EndByte:    tok.StartByte,
+		StartPoint: startPoint,
+		EndPoint:   tok.StartPoint,
+	}
+	p.pushOrExtendErrorNode(s, state, gapTok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
+	return s.byteOffset == tok.StartByte
+}
+
+func (p *Parser) tryExtendHiddenTrailingErrorAcrossSkippedRealGap(source []byte, s *glrStack, tok Token, nodeCount *int, arena *nodeArena, trackChildErrors *bool) bool {
+	if p == nil || p.language == nil || s == nil || arena == nil {
+		return false
+	}
+	top := stackEntryNode(s.top())
+	if top == nil || top.symbol == errorSymbol || top.isMissing() || len(top.children) == 0 {
+		return false
+	}
+	if symbolStructuralForHiddenFlattening(top.symbol, p.language.SymbolMetadata, nil) {
+		return false
+	}
+	err, ok := trailingHiddenErrorLeaf(top, p.language.SymbolMetadata, s.byteOffset)
+	if !ok || err == nil || err.startByte >= err.endByte || tok.StartByte <= err.endByte {
+		return false
+	}
+
+	merged := newParentNodeInArena(arena, errorSymbol, true, nil, nil, 0)
+	cSetNodeSpan(merged, err.startByte, tok.StartByte, err.startPoint, tok.StartPoint)
+	merged.setHasError(true)
+	merged.setExtra(err.isExtra())
+	merged.preGotoState = err.preGotoState
+	merged.parseState = err.parseState
+	p.materializeAnonymousChildrenForRecoveredError(source, merged, arena)
+	if len(merged.children) == 0 {
+		return false
+	}
+	replaceTrailingHiddenErrorLeaf(top, p.language.SymbolMetadata, s.byteOffset, merged, tok.StartByte, tok.StartPoint)
+	if s.byteOffset < tok.StartByte {
+		s.byteOffset = tok.StartByte
+	}
+	if trackChildErrors != nil {
+		*trackChildErrors = true
+	}
+	if nodeCount != nil {
+		*nodeCount = *nodeCount + 1
+	}
+	if p.glrTrace {
+		fmt.Printf("    MATERIALIZE skipped real gap into hidden ERROR: gap=%d..%d before tok=%d..%d\n",
+			err.endByte, tok.StartByte, tok.StartByte, tok.EndByte)
+	}
+	return true
+}
+
+func trailingHiddenErrorLeaf(n *Node, symbolMeta []SymbolMetadata, end uint32) (*Node, bool) {
+	if n == nil || len(n.children) == 0 {
+		return nil, false
+	}
+	for i := len(n.children) - 1; i >= 0; i-- {
+		child := n.children[i]
+		if child == nil {
+			continue
+		}
+		if symbolStructuralForHiddenFlattening(child.symbol, symbolMeta, nil) {
+			if child.symbol == errorSymbol &&
+				!child.isMissing() &&
+				len(child.children) == 0 &&
+				child.endByte == end {
+				return child, true
+			}
+			if child.endByte == end && child.startByte == child.endByte {
+				continue
+			}
+			return nil, false
+		}
+		if child.endByte > end || end < child.startByte {
+			return nil, false
+		}
+		if err, ok := trailingHiddenErrorLeaf(child, symbolMeta, end); ok {
+			return err, true
+		}
+		if child.endByte == end && child.startByte == child.endByte {
+			continue
+		}
+		return nil, false
+	}
+	return nil, false
+}
+
+func replaceTrailingHiddenErrorLeaf(n *Node, symbolMeta []SymbolMetadata, oldEnd uint32, repl *Node, newEnd uint32, newEndPoint Point) bool {
+	if n == nil || repl == nil || len(n.children) == 0 {
+		return false
+	}
+	for i := len(n.children) - 1; i >= 0; i-- {
+		child := n.children[i]
+		if child == nil {
+			continue
+		}
+		if symbolStructuralForHiddenFlattening(child.symbol, symbolMeta, nil) {
+			if child.symbol == errorSymbol &&
+				!child.isMissing() &&
+				len(child.children) == 0 &&
+				child.endByte == oldEnd {
+				n.children[i] = repl
+				extendHiddenErrorAncestorEnd(n, newEnd, newEndPoint)
+				nodeBumpEquivVersion(n)
+				return true
+			}
+			continue
+		}
+		if replaceTrailingHiddenErrorLeaf(child, symbolMeta, oldEnd, repl, newEnd, newEndPoint) {
+			extendHiddenErrorAncestorEnd(n, newEnd, newEndPoint)
+			nodeBumpEquivVersion(n)
+			return true
+		}
+	}
+	return false
+}
+
+func extendHiddenErrorAncestorEnd(n *Node, end uint32, point Point) {
+	if n == nil || n.endByte > end {
+		return
+	}
+	n.endByte = end
+	n.endPoint = point
+	n.setHasError(true)
+}
+
+func bytesAreParserPadding(source []byte, start, end uint32) bool {
+	if start > end || int(end) > len(source) {
+		return false
+	}
+	i := int(start)
+	if i == 0 && bytes.HasPrefix(source, utf8BOM) && int(end) >= len(utf8BOM) {
+		i = len(utf8BOM)
+	}
+	for ; i < int(end); i++ {
+		switch source[i] {
+		case ' ', '\t', '\n', '\r', '\f', '\v':
+			continue
+		case '\\':
+			next := i + 1
+			if next < int(end) && source[next] == '\n' {
+				i = next
+				continue
+			}
+			if next+1 < int(end) && source[next] == '\r' && source[next+1] == '\n' {
+				i = next + 1
+				continue
+			}
+			return false
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func parserTailAllowsCleanAcceptance(source []byte, start, end uint32, included []Range) bool {
+	if start >= end {
+		return true
+	}
+	if start > end || int(end) > len(source) {
+		return false
+	}
+	if len(included) == 0 {
+		return bytesAreParserPadding(source, start, end)
+	}
+	for _, r := range included {
+		if r.EndByte <= start {
+			continue
+		}
+		if r.StartByte >= end {
+			break
+		}
+		overlapStart := start
+		if r.StartByte > overlapStart {
+			overlapStart = r.StartByte
+		}
+		overlapEnd := end
+		if r.EndByte < overlapEnd {
+			overlapEnd = r.EndByte
+		}
+		if overlapStart < overlapEnd && !bytesAreParserPadding(source, overlapStart, overlapEnd) {
+			return false
+		}
+	}
+	return true
+}
+
+func cleanAcceptedStackSelectableAtEOF(source []byte, expectedEOFByte uint32, included []Range, arena *nodeArena, s *glrStack) bool {
+	if s == nil || !s.accepted {
+		return false
+	}
+	if stackResultErrorRank(s, arena) != 0 {
+		return true
+	}
+	return parserTailAllowsCleanAcceptance(source, s.byteOffset, expectedEOFByte, included)
+}
+
+func cleanAcceptedTreeLeavesRealTail(tree *Tree, source []byte, expectedEOFByte uint32, included []Range) bool {
+	root := rawRootOrNil(tree)
+	if root == nil || root.HasError() || root.EndByte() >= expectedEOFByte {
+		return false
+	}
+	return !parserTailAllowsCleanAcceptance(source, root.EndByte(), expectedEOFByte, included)
+}
+
+func (p *Parser) guardRealTokenAttachmentGap(source []byte, s *glrStack, tok Token, consumer string) bool {
+	if realTokenAttachmentGapIsParserPadding(source, s, tok) {
+		return true
+	}
+	if consumer == "" {
+		consumer = "attachment"
+	}
+	if p != nil && p.glrTrace && s != nil {
+		fmt.Printf("    KILL stale %s: stack_byte=%d tok=%d..%d gap=%q\n",
+			consumer, s.byteOffset, tok.StartByte, tok.EndByte, string(source[s.byteOffset:tok.StartByte]))
+	}
+	if s != nil {
+		s.dead = true
+	}
+	return false
+}
+
+func (p *Parser) guardRealShiftGap(source []byte, s *glrStack, tok Token) bool {
+	return p.guardRealTokenAttachmentGap(source, s, tok, "shift")
+}
+
 // parseInternal is the core GLR parsing loop shared by Parse and
 // ParseWithTokenSource.
 //
@@ -2054,6 +3689,8 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	defer p.restoreParseModeFlags(parseFlags)
 	p.clearCurrentExternalTokenCheckpoint()
 	p.resetNormalizationStats()
+	p.pendingForkStacks = p.pendingForkStacks[:0]
+	p.pendingFrontierForkStacks = p.pendingFrontierForkStacks[:0]
 	if p.logger != nil {
 		p.logf(ParserLogParse, "start len=%d incremental=%t", len(source), reuse != nil || oldTree != nil)
 	}
@@ -2072,6 +3709,21 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	scratch.audit.beginParse()
 	scratch.merge.audit = nil
 	scratch.gss.audit = nil
+	if p.errorCostCompetitionEnabled() {
+		// Faithful C recovery port: arena nodes are pooled across parses, so
+		// stale (pointer, version) memo hits from a previous parse must be
+		// impossible.
+		if p.cNodeMemo == nil {
+			p.cNodeMemo = make(map[*Node]cNodeMemoEntry, 256)
+		} else {
+			clear(p.cNodeMemo)
+		}
+		p.crecoveryEnteredErrorState = false
+		p.crecoveryDroppedErrorForClean = false
+		p.cRecoverSharedTokenErrorModeLexed = false
+		p.cRecoverCustomResyncActive = false
+		p.cRecoverCustomResyncByte = 0
+	}
 	trackChildErrors := !deferParentLinks
 
 	arena := acquireNodeArena(arenaClass)
@@ -2120,6 +3772,11 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	var actionLookupNanos int64
 	var glrMergeNanos int64
 	var glrCullNanos int64
+	type terminalFrontierAction struct {
+		index  int
+		action ParseAction
+	}
+	var terminalFrontierScratch [maxGLRStacks]terminalFrontierAction
 	prevMaterializationTiming := p.materializationTiming
 	prevReduceTiming := p.reduceTiming
 	p.materializationTiming = materializationTimingRef
@@ -2146,6 +3803,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	var lastTokenEndByte uint32
 	var lastTokenSymbol Symbol
 	var lastTokenWasEOF bool
+	var tok Token
 	tokenSourceEOFEarly := false
 	singleStackIterations := 0
 	multiStackIterations := 0
@@ -2159,12 +3817,244 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	if len(p.included) > 0 {
 		expectedEOFByte = p.included[len(p.included)-1].EndByte
 	}
+	progress := newParseProgressTelemetry(p, len(source), expectedEOFByte, parseStart)
+	if progress.enabled {
+		progress.emit(time.Now(), "start", 0, 0, Token{}, false, nil, 0, 0, 0, true, 0, 0, "")
+	}
+	var stopActionDiag parseStopActionDiagnostic
+	var stopActionDiagRef *parseStopActionDiagnostic
+	if !p.noResultCompatibilityBenchmarkOnly {
+		stopActionDiagRef = &stopActionDiag
+	}
+	prevStopActionDiag := p.stopActionDiag
+	p.stopActionDiag = stopActionDiagRef
+	defer func() {
+		p.stopActionDiag = prevStopActionDiag
+	}()
 	var stacks []glrStack
+	var dispatchTrace []dispatchStackSurvivorTrace
+	var pendingTraceOrigin string
+	var pendingTraceSourceIndex int
+	var pendingTraceActionIndex int
+	var pendingTraceActionCount int
+	var pendingTraceAction ParseAction
+	drainPendingForkStacks := func() {
+		if !glrFaithfulCapOneMerge || len(p.pendingForkStacks) == 0 {
+			return
+		}
+		if progress.enabled {
+			for i := range p.pendingForkStacks {
+				pending := &p.pendingForkStacks[i]
+				state, byteOffset, depth := stackTraceState(pending)
+				dispatchTrace = append(dispatchTrace, dispatchStackSurvivorTrace{
+					inSnapshot:          false,
+					visited:             false,
+					origin:              "pending-reduce-fork",
+					sourceIndex:         pendingTraceSourceIndex,
+					path:                pendingTraceOrigin,
+					actionIndex:         pendingTraceActionIndex,
+					actionCount:         pendingTraceActionCount,
+					actionType:          pendingTraceAction.Type,
+					actionState:         pendingTraceAction.State,
+					actionSymbol:        pendingTraceAction.Symbol,
+					actionChildCount:    pendingTraceAction.ChildCount,
+					afterPrimaryState:   state,
+					afterPrimaryByte:    byteOffset,
+					afterPrimaryDepth:   depth,
+					afterPrimaryShifted: pending.shifted,
+					afterPrimaryDead:    pending.dead,
+					afterPrimaryAccept:  pending.accepted,
+					afterFinalState:     state,
+					afterFinalByte:      byteOffset,
+					afterFinalDepth:     depth,
+					afterFinalShifted:   pending.shifted,
+					afterFinalDead:      pending.dead,
+					afterFinalAccepted:  pending.accepted,
+				})
+			}
+		}
+		stacks = append(stacks, p.pendingForkStacks...)
+		p.pendingForkStacks = p.pendingForkStacks[:0]
+	}
+	drainPendingFrontierForkStacks := func() {
+		if len(p.pendingFrontierForkStacks) == 0 {
+			return
+		}
+		if progress.enabled {
+			for i := range p.pendingFrontierForkStacks {
+				pending := &p.pendingFrontierForkStacks[i]
+				state, byteOffset, depth := stackTraceState(pending)
+				dispatchTrace = append(dispatchTrace, dispatchStackSurvivorTrace{
+					inSnapshot:          false,
+					visited:             false,
+					origin:              "pending-frontier-fork",
+					sourceIndex:         pendingTraceSourceIndex,
+					path:                pendingTraceOrigin,
+					actionIndex:         pendingTraceActionIndex,
+					actionCount:         pendingTraceActionCount,
+					actionType:          pendingTraceAction.Type,
+					actionState:         pendingTraceAction.State,
+					actionSymbol:        pendingTraceAction.Symbol,
+					actionChildCount:    pendingTraceAction.ChildCount,
+					afterPrimaryState:   state,
+					afterPrimaryByte:    byteOffset,
+					afterPrimaryDepth:   depth,
+					afterPrimaryShifted: pending.shifted,
+					afterPrimaryDead:    pending.dead,
+					afterPrimaryAccept:  pending.accepted,
+					afterFinalState:     state,
+					afterFinalByte:      byteOffset,
+					afterFinalDepth:     depth,
+					afterFinalShifted:   pending.shifted,
+					afterFinalDead:      pending.dead,
+					afterFinalAccepted:  pending.accepted,
+				})
+			}
+		}
+		stacks = append(stacks, p.pendingFrontierForkStacks...)
+		p.pendingFrontierForkStacks = p.pendingFrontierForkStacks[:0]
+	}
 	parseRuntime := ParseRuntime{
 		StopReason:        ParseStopNone,
 		SourceLen:         uint32(len(source)),
 		ExpectedEOFByte:   expectedEOFByte,
 		MemoryBudgetBytes: arena.budgetBytes,
+	}
+	stopDiagHaveStack := false
+	stopDiagHaveToken := false
+	stopDiagLastStackState := StateID(0)
+	stopDiagLastStackByte := uint32(0)
+	stopDiagLastStackDepth := 0
+	stopDiagToken := Token{}
+	stopDiagRecoverActionAvailable := false
+	stopDiagFrontier := stopFrontierDiagnostics{}
+	stopDiagCondenseGating := ""
+	stopDiagCondenseErrorCostEnabled := false
+	stopDiagCondenseAnyReduced := false
+	stopDiagCondenseRelevant := false
+	stopDiagCondenseRan := false
+	stopDiagCondenseResumed := false
+	noteStopDiagnosticStack := func(s *glrStack) {
+		if s == nil || s.dead || s.accepted || s.depth() == 0 {
+			return
+		}
+		stopDiagHaveStack = true
+		stopDiagLastStackState = s.top().state
+		stopDiagLastStackByte = s.byteOffset
+		stopDiagLastStackDepth = s.depth()
+	}
+	noteStopDiagnosticStacks := func(stacks []glrStack) {
+		for i := range stacks {
+			noteStopDiagnosticStack(&stacks[i])
+		}
+	}
+	noteStopDiagnosticToken := func(t Token) {
+		stopDiagHaveToken = true
+		stopDiagToken = t
+	}
+	computeStopDiagnosticRecoverAction := func() bool {
+		if stopDiagRecoverActionAvailable || !stopDiagHaveToken {
+			return stopDiagRecoverActionAvailable
+		}
+		for i := range stacks {
+			s := &stacks[i]
+			if s.accepted || s.depth() == 0 {
+				continue
+			}
+			if _, _, ok := p.findRecoverActionOnStack(s, stopDiagToken.Symbol, nil); ok {
+				stopDiagRecoverActionAvailable = true
+				break
+			}
+		}
+		return stopDiagRecoverActionAvailable
+	}
+	recordStopDiagnostic := func(reason ParseStopReason, tree *Tree) {
+		if reason != ParseStopNoStacksAlive && reason != ParseStopIterationLimit {
+			return
+		}
+		parseRuntime.StopDiagnosticCaptured = true
+		parseRuntime.StopDiagnosticCRecoveryEnabled = p.errorCostCompetitionEnabled()
+		if !parseRuntime.StopDiagnosticCRecoveryEnabled {
+			parseRuntime.StopDiagnosticCRecoveryGateReason = p.cRecoveryGateReason()
+		}
+		parseRuntime.StopDiagnosticRecoverActionAvailable = computeStopDiagnosticRecoverAction()
+		if stopDiagHaveStack {
+			parseRuntime.StopDiagnosticLastStackState = stopDiagLastStackState
+			parseRuntime.StopDiagnosticLastStackByte = stopDiagLastStackByte
+			parseRuntime.StopDiagnosticLastStackDepth = stopDiagLastStackDepth
+		}
+		if stopDiagHaveToken {
+			parseRuntime.StopDiagnosticTokenSymbol = stopDiagToken.Symbol
+			parseRuntime.StopDiagnosticTokenStartByte = stopDiagToken.StartByte
+			parseRuntime.StopDiagnosticTokenEndByte = stopDiagToken.EndByte
+			parseRuntime.StopDiagnosticTokenNoLookahead = stopDiagToken.NoLookahead
+		}
+		root := rawRootOrNil(tree)
+		if root == nil {
+			return
+		}
+		parseRuntime.StopDiagnosticRootType = root.Type(p.language)
+		parseRuntime.StopDiagnosticRootStartByte = root.StartByte()
+		parseRuntime.StopDiagnosticRootEndByte = root.EndByte()
+		parseRuntime.StopDiagnosticRootHasError = root.HasError()
+		if errNode := firstErrorNode(root); errNode != nil {
+			parseRuntime.StopDiagnosticFirstErrorFound = true
+			parseRuntime.StopDiagnosticFirstErrorStartByte = errNode.StartByte()
+			parseRuntime.StopDiagnosticFirstErrorEndByte = errNode.EndByte()
+		}
+		parseRuntime.StopDiagnosticFrontierStacks = stopDiagFrontier.stackTable
+		parseRuntime.StopDiagnosticFrontierActions = stopDiagFrontier.actions
+		parseRuntime.StopDiagnosticSameHeaderGroups = stopDiagFrontier.sameHeader
+		if stopDiagCondenseGating == "" {
+			stopDiagCondenseGating = stopCondenseGatingString(stopDiagCondenseErrorCostEnabled, stopDiagCondenseAnyReduced, stopDiagCondenseRelevant, stopDiagCondenseRan, stopDiagCondenseResumed, stacks)
+		}
+		parseRuntime.StopDiagnosticCondenseGating = stopDiagCondenseGating
+		if stopActionDiag.captured {
+			parseRuntime.StopDiagnosticActionCaptured = true
+			parseRuntime.StopDiagnosticActionPhase = stopActionDiag.phase
+			parseRuntime.StopDiagnosticActionStackState = stopActionDiag.stackState
+			parseRuntime.StopDiagnosticActionStackByte = stopActionDiag.stackByte
+			parseRuntime.StopDiagnosticActionStackDepth = stopActionDiag.stackDepth
+			parseRuntime.StopDiagnosticActionTokenSymbol = stopActionDiag.lookaheadSymbol
+			parseRuntime.StopDiagnosticActionTokenStartByte = stopActionDiag.lookaheadStartByte
+			parseRuntime.StopDiagnosticActionTokenEndByte = stopActionDiag.lookaheadEndByte
+			parseRuntime.StopDiagnosticActionTokenNoLookahead = stopActionDiag.lookaheadNoLookahead
+			parseRuntime.StopDiagnosticActionType = stopActionDiag.actionType
+			parseRuntime.StopDiagnosticActionState = stopActionDiag.actionState
+			parseRuntime.StopDiagnosticActionSymbol = stopActionDiag.actionSymbol
+			parseRuntime.StopDiagnosticActionChildCount = stopActionDiag.actionChildCount
+			parseRuntime.StopDiagnosticActionProductionID = stopActionDiag.actionProductionID
+			parseRuntime.StopDiagnosticActionDynamicPrecedence = stopActionDiag.actionDynamicPrecedence
+			parseRuntime.StopDiagnosticActionCount = stopActionDiag.actionCount
+			parseRuntime.StopDiagnosticActionResultState = stopActionDiag.resultState
+			parseRuntime.StopDiagnosticActionInReduceChain = stopActionDiag.inReduceChain
+			parseRuntime.StopDiagnosticActionReduceChainStep = stopActionDiag.reduceChainStep
+			parseRuntime.StopDiagnosticActionRepeatedSignatureCount = stopActionDiag.repeatedReduceSignatureCount
+			parseRuntime.StopDiagnosticActionReduceChainCycle = stopActionDiag.reduceChainCycle
+			parseRuntime.StopDiagnosticActionForceAdvanceAfterReduce = stopActionDiag.forceAdvanceAfterReduce
+			parseRuntime.StopDiagnosticActionPostDispatchDefaultReduce = stopActionDiag.postDispatchDefaultReduced
+			parseRuntime.StopDiagnosticActionAnyReduced = stopActionDiag.anyReduced
+			parseRuntime.StopDiagnosticActionConsumedToken = stopActionDiag.consumedToken
+			parseRuntime.StopDiagnosticActionDispatchShiftActions = stopActionDiag.dispatchShiftActions
+			parseRuntime.StopDiagnosticActionDispatchReduceActions = stopActionDiag.dispatchReduceActions
+			parseRuntime.StopDiagnosticActionDispatchAcceptActions = stopActionDiag.dispatchAcceptActions
+			parseRuntime.StopDiagnosticActionDispatchRecoverActions = stopActionDiag.dispatchRecoverActions
+			parseRuntime.StopDiagnosticActionDispatchOtherActions = stopActionDiag.dispatchOtherActions
+			parseRuntime.StopDiagnosticLastReduceCaptured = stopActionDiag.lastReduceCaptured
+			parseRuntime.StopDiagnosticLastReducePhase = stopActionDiag.lastReducePhase
+			parseRuntime.StopDiagnosticLastReduceStackState = stopActionDiag.lastReduceStackState
+			parseRuntime.StopDiagnosticLastReduceStackByte = stopActionDiag.lastReduceStackByte
+			parseRuntime.StopDiagnosticLastReduceStackDepth = stopActionDiag.lastReduceStackDepth
+			parseRuntime.StopDiagnosticLastReduceSymbol = stopActionDiag.lastReduceSymbol
+			parseRuntime.StopDiagnosticLastReduceChildCount = stopActionDiag.lastReduceChildCount
+			parseRuntime.StopDiagnosticLastReduceProductionID = stopActionDiag.lastReduceProductionID
+			parseRuntime.StopDiagnosticLastReduceDynamicPrecedence = stopActionDiag.lastReduceDynamicPrecedence
+			parseRuntime.StopDiagnosticLastReduceResultState = stopActionDiag.lastReduceResultState
+			parseRuntime.StopDiagnosticLastReduceInChain = stopActionDiag.lastReduceInChain
+			parseRuntime.StopDiagnosticLastReduceChainStep = stopActionDiag.lastReduceChainStep
+			parseRuntime.StopDiagnosticLastReduceRepeatedSigCount = stopActionDiag.lastReduceRepeatedSigCount
+			parseRuntime.StopDiagnosticLastReduceChainCycle = stopActionDiag.lastReduceChainCycle
+		}
 	}
 	arenaStatsCaptured := false
 	var arenaBreakdown *ArenaBreakdown
@@ -2185,34 +4075,66 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			scratchStatsCaptured = true
 		}
 	}
+	errorTreeWithOwnedArena := func(reason ParseStopReason) *Tree {
+		tree := parseErrorTreeWithArena(source, p.language, arena)
+		tree.setParseStopReason(reason)
+		return tree
+	}
+	replaceWithOwnedErrorTree := func(tree *Tree, reason ParseStopReason) *Tree {
+		if tree != nil {
+			if tree.arena == arena {
+				tree.arena = nil
+			}
+			tree.Release()
+		}
+		return errorTreeWithOwnedArena(reason)
+	}
 	finalizeTree := func(tree *Tree, stopReason ParseStopReason) *Tree {
 		if phaseTiming && parserLoopNanos == 0 {
 			parserLoopNanos = time.Since(parseStart).Nanoseconds()
 		}
-		if reason := p.activeParseStopReason(); parseStopReasonIsActive(reason) && (stopReason == ParseStopAccepted || stopReason == ParseStopNone) {
-			stopReason = reason
+		if !parseStopReasonIsTerminal(stopReason) {
+			if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
+				stopReason = reason
+			}
 		}
 		if p.transientReduceChildren && tree != nil {
-			materializeStart := time.Time{}
-			if materializationTimingRef != nil {
-				materializeStart = time.Now()
+			if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
+				stopReason = reason
+				tree = replaceWithOwnedErrorTree(tree, reason)
+			} else {
+				materializeStart := time.Time{}
+				if materializationTimingRef != nil {
+					materializeStart = time.Now()
+				}
+				if reason := p.materializeTransientChildrenForReturnedTree(tree, arena, scratch); parseStopReasonIsTerminal(reason) {
+					stopReason = reason
+					tree = replaceWithOwnedErrorTree(tree, reason)
+				}
+				if materializationTimingRef != nil {
+					materializationTimingRef.transientChildMaterializationNanos += time.Since(materializeStart).Nanoseconds()
+				}
 			}
-			scratch.transientChildren.materializeNode(tree.RootNode(), arena, &scratch.nodeLinks)
-			if materializationTimingRef != nil {
-				materializationTimingRef.transientChildMaterializationNanos += time.Since(materializeStart).Nanoseconds()
-			}
+		}
+		if stopReason == ParseStopAccepted && cleanAcceptedTreeLeavesRealTail(tree, source, expectedEOFByte, p.included) {
+			stopReason = ParseStopNoStacksAlive
+			tree = replaceWithOwnedErrorTree(tree, stopReason)
 		}
 		scratch.audit.finishParse(stacks)
 		captureArenaStats()
 		captureScratchStats()
 		parseRuntime.StopReason = parseStopReasonWithTokenSourceEOF(stopReason, tokenSourceEOFEarly)
+		parseRuntime.CRecoveryEnteredErrorState = p.crecoveryEnteredErrorState
+		parseRuntime.CRecoveryDroppedErrorForClean = p.crecoveryDroppedErrorForClean
 		recordParseRuntimeLoopStats(&parseRuntime, scratch, iterationsUsed, nodeCount, peakStackDepth, maxStacksSeen, singleStackIterations, multiStackIterations, singleStackTokens, multiStackTokens)
 		recordParseRuntimePhaseTiming(&parseRuntime, materializationTimingRef, parseStart, parserLoopNanos, tokenNextNanos, actionDispatchNanos, actionLookupNanos, glrMergeNanos, glrCullNanos)
 		recordParseRuntimeMaterializationTiming(&parseRuntime, materializationTimingRef, materializationTiming)
 		recordParseRuntimeTokenStats(&parseRuntime, perfTokensConsumed, lastTokenEndByte, lastTokenSymbol, lastTokenWasEOF, tokenSourceEOFEarly)
-		recordParseRuntimeRootStats(&parseRuntime, tree, expectedEOFByte, scratch.audit.enabled || (arena != nil && arena.breakdownEnabled), p.language)
+		recordParseRuntimeRootStats(&parseRuntime, tree, source, expectedEOFByte, p.included, scratch.audit.enabled || (arena != nil && arena.breakdownEnabled), p.language)
+		recordStopDiagnostic(parseRuntime.StopReason, tree)
 		p.copyNormalizationStats(&parseRuntime)
 		if tree != nil {
+			tree.setIncludedRanges(p.included)
 			tree.setParseRuntime(parseRuntime)
 			if arenaBreakdown != nil {
 				tree.setArenaBreakdown(arenaBreakdown)
@@ -2227,6 +4149,24 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				parseRuntime.Truncated,
 				parseRuntime.TokensConsumed,
 				parseRuntime.MaxStacksSeen,
+			)
+		}
+		if progress.enabled {
+			progress.emit(
+				time.Now(),
+				"stop",
+				iterationsUsed,
+				perfTokensConsumed,
+				Token{},
+				false,
+				stacks,
+				maxStacksSeen,
+				nodeCount,
+				peakStackDepth,
+				false,
+				singleStackIterations,
+				multiStackIterations,
+				fmt.Sprintf("stop_reason=%s last_token_symbol=%d last_token_end=%d last_token_eof=%t", parseRuntime.StopReason, lastTokenSymbol, lastTokenEndByte, lastTokenWasEOF),
 			)
 		}
 		return tree
@@ -2258,26 +4198,37 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			!trackChildErrors,
 			materializationTimingRef,
 		)
+		if tree != nil && !parseStopReasonIsTerminal(stopReason) {
+			if reason := tree.ParseStopReason(); parseStopReasonIsTerminal(reason) {
+				stopReason = reason
+			}
+		}
 		return finalizeTree(tree, stopReason)
 	}
 	finalizeErrorTree := func(stopReason ParseStopReason) *Tree {
 		if phaseTiming && parserLoopNanos == 0 {
 			parserLoopNanos = time.Since(parseStart).Nanoseconds()
 		}
-		captureArenaStats()
-		arena.Release()
-		return finalizeTree(parseErrorTree(source, p.language), stopReason)
+		return finalizeTree(errorTreeWithOwnedArena(stopReason), stopReason)
 	}
 	finalizeRecoveredNodes := func(nodes []*Node) *Tree {
 		if phaseTiming && parserLoopNanos == 0 {
 			parserLoopNanos = time.Since(parseStart).Nanoseconds()
 		}
-		materializeTransientParentNodes(nodes, arena, scratch.reduce.transientParents, scratch.reduce.transientChildren)
+		if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
+			return finalizeTree(errorTreeWithOwnedArena(reason), reason)
+		}
+		if reason := materializeTransientParentNodes(nodes, arena, scratch.reduce.transientParents, scratch.reduce.transientChildren, p); parseStopReasonIsTerminal(reason) {
+			return finalizeTree(errorTreeWithOwnedArena(reason), reason)
+		}
+		if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
+			return finalizeTree(errorTreeWithOwnedArena(reason), reason)
+		}
 		for _, n := range nodes {
 			stripResultTreeSelfCycles(n)
 		}
 		tree := p.buildResultFromNodes(nodes, source, arena, oldTree, &reuseState, &scratch.nodeLinks)
-		if root := tree.RootNode(); root != nil {
+		if root := rawRootOrNil(tree); root != nil {
 			normalizeSQLRecoveredMissingNull(root, arena, p.language)
 			for _, child := range root.children {
 				trimRecoveryWhitespaceTail(child, source)
@@ -2312,22 +4263,33 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	parseRuntime.MemoryBudgetBytes = arena.budgetBytes
 
 	needToken := true
-	var tok Token
 	var nextBranchOrder uint64 = 1
+	allocBranchOrder := func() uint64 {
+		order := nextBranchOrder
+		nextBranchOrder++
+		return order
+	}
 
 	var lastReduceState StateID
 	lastReduceDepth := -1
 	var consecutiveReduces int
+	var lastNoTokenProgressTok Token
+	var lastNoTokenProgressTokens uint64
+	var consecutiveNoTokenDispatches int
+	noTokenProgressHaveLast := false
 	missingShift := parseMissingShiftTracker{lastDepth: -1}
 	tryMissingSingleShift := func(stackIndex int, s *glrStack, currentState StateID) bool {
-		return missingShift.tryInsert(p, stackIndex, s, currentState, tok, &nodeCount, arena, scratch, &trackChildErrors)
+		return missingShift.tryInsert(p, source, stackIndex, s, currentState, tok, &nodeCount, arena, scratch, &trackChildErrors)
 	}
 
 	for iter := 0; iter < maxIter; iter++ {
-		if p.parseBudgetDepth > 0 {
-			if reason := p.activeParseStopReason(); parseStopReasonIsActive(reason) {
-				return finalize(stacks, reason)
-			}
+		reusedLookaheadThisPass := !needToken
+		passStartTokensConsumed := perfTokensConsumed
+		if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
+			// Timeout/cancellation are checked inside the parse loop so
+			// long-running parses can terminate predictably under
+			// caller-configured limits.
+			return finalize(stacks, reason)
 		}
 		iterationsUsed = iter + 1
 		if perfCountersEnabled {
@@ -2339,6 +4301,10 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		if len(stacks) > maxStacksSeen {
 			maxStacksSeen = len(stacks)
 		}
+		noteStopDiagnosticStacks(stacks)
+		if progress.enabled {
+			progress.maybeLoop(time.Now(), iterationsUsed, perfTokensConsumed, tok, perfTokensConsumed > 0, stacks, maxStacksSeen, nodeCount, peakStackDepth, needToken, singleStackIterations, multiStackIterations)
+		}
 		if len(stacks) == 1 {
 			if stacks[0].dead {
 				return finalize(stacks, ParseStopNoStacksAlive)
@@ -2346,8 +4312,14 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			scratch.gss.singleStackMode = true
 			clearParseStackEntryCaches(stacks)
 		} else {
+			if progress.enabled {
+				progress.emit(time.Now(), "merge_cull_begin", iterationsUsed, perfTokensConsumed, tok, perfTokensConsumed > 0, stacks, maxStacksSeen, nodeCount, peakStackDepth, needToken, singleStackIterations, multiStackIterations, "")
+			}
 			prep := p.prepareParseStacksForIteration(stacks, scratch, arena, arenaClass, maxStacks, maxStackCullTrigger, phaseTiming, &glrMergeNanos, &glrCullNanos)
 			stacks = prep.stacks
+			if progress.enabled {
+				progress.emit(time.Now(), "merge_cull_end", iterationsUsed, perfTokensConsumed, tok, perfTokensConsumed > 0, stacks, maxStacksSeen, nodeCount, peakStackDepth, needToken, singleStackIterations, multiStackIterations, fmt.Sprintf("stopped=%t", prep.stopped))
+			}
 			if prep.stopped {
 				if prep.errorTree {
 					return finalizeErrorTree(prep.stopReason)
@@ -2390,18 +4362,25 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			} else {
 				multiStackTokens++
 			}
+			if progress.enabled {
+				progress.emit(time.Now(), "token_begin", iterationsUsed, perfTokensConsumed, tok, perfTokensConsumed > 0, stacks, maxStacksSeen, nodeCount, peakStackDepth, needToken, singleStackIterations, multiStackIterations, "")
+			}
 			if phaseTiming {
 				tokenStart := time.Now()
-				tok = ts.Next()
+				tok = p.cRecoverAcquireToken(ts, stacks, source)
 				tokenNextNanos += time.Since(tokenStart).Nanoseconds()
 			} else {
-				tok = ts.Next()
+				tok = p.cRecoverAcquireToken(ts, stacks, source)
+			}
+			if progress.enabled {
+				progress.emit(time.Now(), "token_end", iterationsUsed, perfTokensConsumed+1, tok, true, stacks, maxStacksSeen, nodeCount, peakStackDepth, needToken, singleStackIterations, multiStackIterations, "")
 			}
 			p.updateCurrentExternalTokenCheckpoint(ts, tok)
 			if p.logger != nil {
 				p.logf(ParserLogLex, "token sym=%d start=%d end=%d", tok.Symbol, tok.StartByte, tok.EndByte)
 			}
 			perfTokensConsumed++
+			noteStopDiagnosticToken(tok)
 			lastTokenEndByte = tok.EndByte
 			lastTokenSymbol = tok.Symbol
 			lastTokenWasEOF = tok.Symbol == 0 && tok.StartByte == tok.EndByte && !tok.NoLookahead
@@ -2419,13 +4398,194 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				tok = nextTok
 				needToken = false
 				consecutiveReduces = 0
+				consecutiveNoTokenDispatches = 0
+				noTokenProgressHaveLast = false
 				continue
 			}
 		}
 
 		numStacks := len(stacks)
+		if progress.enabled {
+			dispatchTrace = make([]dispatchStackSurvivorTrace, len(stacks))
+			for i := range dispatchTrace {
+				dispatchTrace[i] = dispatchStackSurvivorTrace{
+					inSnapshot:  true,
+					origin:      "preexisting",
+					sourceIndex: i,
+				}
+			}
+		} else {
+			dispatchTrace = nil
+		}
+		pendingTraceOrigin = ""
+		pendingTraceSourceIndex = -1
+		pendingTraceActionIndex = -1
+		pendingTraceActionCount = 0
+		pendingTraceAction = ParseAction{}
+		traceVisit := func(index int, s *glrStack, path string, actionIndex, actionCount int, act ParseAction) {
+			if !progress.enabled || index < 0 || index >= len(dispatchTrace) {
+				return
+			}
+			state, byteOffset, depth := stackTraceState(s)
+			t := &dispatchTrace[index]
+			t.visited = true
+			t.path = path
+			t.actionIndex = actionIndex
+			t.actionCount = actionCount
+			t.actionType = act.Type
+			t.actionState = act.State
+			t.actionSymbol = act.Symbol
+			t.actionChildCount = act.ChildCount
+			t.beforeState = state
+			t.beforeByte = byteOffset
+			t.beforeDepth = depth
+		}
+		traceAfterPrimary := func(index int, s *glrStack) {
+			if !progress.enabled || index < 0 || index >= len(dispatchTrace) {
+				return
+			}
+			state, byteOffset, depth := stackTraceState(s)
+			t := &dispatchTrace[index]
+			t.afterPrimaryState = state
+			t.afterPrimaryByte = byteOffset
+			t.afterPrimaryDepth = depth
+			if s != nil {
+				t.afterPrimaryShifted = s.shifted
+				t.afterPrimaryDead = s.dead
+				t.afterPrimaryAccept = s.accepted
+			}
+			t.afterFinalState = state
+			t.afterFinalByte = byteOffset
+			t.afterFinalDepth = depth
+			if s != nil {
+				t.afterFinalShifted = s.shifted
+				t.afterFinalDead = s.dead
+				t.afterFinalAccepted = s.accepted
+			}
+		}
+		traceFrontier := func(index int, s *glrStack, frontier conflictFrontierResult) {
+			if !progress.enabled || index < 0 || index >= len(dispatchTrace) {
+				return
+			}
+			state, byteOffset, depth := stackTraceState(s)
+			t := &dispatchTrace[index]
+			t.frontier = frontier
+			t.afterFinalState = state
+			t.afterFinalByte = byteOffset
+			t.afterFinalDepth = depth
+			if s != nil {
+				t.afterFinalShifted = s.shifted
+				t.afterFinalDead = s.dead
+				t.afterFinalAccepted = s.accepted
+			}
+		}
+		traceAppend := func(origin string, sourceIndex, actionIndex, actionCount int, act ParseAction, s *glrStack, frontier conflictFrontierResult) {
+			if !progress.enabled {
+				return
+			}
+			state, byteOffset, depth := stackTraceState(s)
+			dispatchTrace = append(dispatchTrace, dispatchStackSurvivorTrace{
+				inSnapshot:          false,
+				visited:             false,
+				origin:              origin,
+				sourceIndex:         sourceIndex,
+				path:                origin,
+				actionIndex:         actionIndex,
+				actionCount:         actionCount,
+				actionType:          act.Type,
+				actionState:         act.State,
+				actionSymbol:        act.Symbol,
+				actionChildCount:    act.ChildCount,
+				afterPrimaryState:   state,
+				afterPrimaryByte:    byteOffset,
+				afterPrimaryDepth:   depth,
+				afterPrimaryShifted: s != nil && s.shifted,
+				afterPrimaryDead:    s != nil && s.dead,
+				afterPrimaryAccept:  s != nil && s.accepted,
+				afterFinalState:     state,
+				afterFinalByte:      byteOffset,
+				afterFinalDepth:     depth,
+				afterFinalShifted:   s != nil && s.shifted,
+				afterFinalDead:      s != nil && s.dead,
+				afterFinalAccepted:  s != nil && s.accepted,
+				frontier:            frontier,
+			})
+		}
+		traceFrontierResult := func(beforeState StateID, beforeByte uint32, beforeDepth int, s *glrStack) conflictFrontierResult {
+			afterState, afterByte, afterDepth := stackTraceState(s)
+			result := conflictFrontierResult{
+				ran:           true,
+				reason:        "returned_unshifted",
+				beforeState:   beforeState,
+				beforeByte:    beforeByte,
+				beforeDepth:   beforeDepth,
+				afterState:    afterState,
+				afterByte:     afterByte,
+				afterDepth:    afterDepth,
+				afterShifted:  s != nil && s.shifted,
+				afterDead:     s != nil && s.dead,
+				afterAccepted: s != nil && s.accepted,
+			}
+			switch {
+			case result.afterShifted:
+				result.reason = "shifted"
+			case result.afterDead:
+				result.reason = "dead"
+			case result.afterAccepted:
+				result.reason = "accepted"
+			}
+			if stopActionDiag.lastReduceCaptured {
+				result.lastReduceSeen = true
+				result.lastReduceState = stopActionDiag.lastReduceResultState
+				result.lastReduceByte = stopActionDiag.lastReduceStackByte
+				result.lastReduceDepth = stopActionDiag.lastReduceStackDepth
+			}
+			if s != nil && !s.dead && !s.accepted && !s.shifted && s.depth() > 0 {
+				actionIdx := p.lookupActionIndex(s.top().state, tok.Symbol)
+				if actionIdx != 0 && p.language != nil && int(actionIdx) < len(p.language.ParseActions) {
+					frontierActions := p.language.ParseActions[actionIdx].Actions
+					result.terminalCount = len(frontierActions)
+					if len(frontierActions) == 1 {
+						result.terminalActionSet = true
+						result.terminalActionTyp = frontierActions[0].Type
+					}
+					if len(frontierActions) != 1 {
+						result.reason = "multi_action_frontier"
+					}
+				} else {
+					result.reason = "no_action_frontier"
+				}
+			}
+			return result
+		}
+		setPendingTrace := func(origin string, sourceIndex, actionIndex, actionCount int, act ParseAction) {
+			if !progress.enabled {
+				return
+			}
+			pendingTraceOrigin = origin
+			pendingTraceSourceIndex = sourceIndex
+			pendingTraceActionIndex = actionIndex
+			pendingTraceActionCount = actionCount
+			pendingTraceAction = act
+		}
 		anyReduced := false
 		forceAdvanceAfterReduce := false
+		dispatchConsumedCurrentToken := false
+		// consumeCurrentToken marks a stack as fully done processing the
+		// current token, whether it got there via a real terminal shift or
+		// via an error/recovery/extra-token placeholder path — all of these
+		// are equally "this stack will not revisit tok again" signals. The
+		// caller passes the stack it just finished dispatching so
+		// allLiveUnacceptedStacksShifted (used below to gate whether it's
+		// safe to advance to the next token) sees it as settled instead of
+		// mistaking it for a still-mid-reduce-chain stack.
+		consumeCurrentToken := func(s *glrStack) {
+			if s != nil {
+				s.shifted = true
+			}
+			dispatchConsumedCurrentToken = true
+			needToken = true
+		}
 		dispatchStart := time.Time{}
 		if phaseTiming {
 			dispatchStart = time.Now()
@@ -2433,13 +4593,110 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		if p.glrTrace {
 			p.traceParseIteration(iter, tok, stacks, needToken)
 		}
+		stopActionDiag.beginDispatch()
+		if progress.enabled {
+			progress.emit(time.Now(), "dispatch_begin", iterationsUsed, perfTokensConsumed, tok, true, stacks, maxStacksSeen, nodeCount, peakStackDepth, needToken, singleStackIterations, multiStackIterations, fmt.Sprintf("num_stacks=%d", numStacks))
+		}
 		parseActions := p.language.ParseActions
+		if !tok.NoLookahead && p.isExternalToken(tok.Symbol) {
+			if relexer, canRelex := ts.(tokenSourceRelexer); canRelex && relexer.CanRelexFromTokenStart(tok) {
+				preDispatchDefaultReduced := false
+				seen := make(map[externalDefaultReduceSeenKey]int)
+				for step := 0; step < maxConsecutivePrimaryReduces; step++ {
+					if !p.applyExternalNoActionDefaultReduceStep(source, tok, stacks, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors, seen) {
+						break
+					}
+					preDispatchDefaultReduced = true
+					anyReduced = true
+					drainPendingForkStacks()
+					numStacks = len(stacks)
+					if !p.canApplyExternalNoActionDefaultReduce(tok, stacks) {
+						break
+					}
+				}
+				if preDispatchDefaultReduced {
+					numStacks = len(stacks)
+					if !p.externalNoActionDefaultReducesStable(tok, stacks) {
+						if parseEagerDefaultReduceDebugEnabled() {
+							fmt.Printf("  EXTERNAL-DEFAULT-RELEX-DEFER old=%d[%d-%d]\n",
+								tok.Symbol, tok.StartByte, tok.EndByte)
+						}
+					} else if !p.updateCurrentRelexParserStateTokenSource(ts, stacks, scratch) {
+						if parseEagerDefaultReduceDebugEnabled() {
+							fmt.Printf("  EXTERNAL-DEFAULT-RELEX-STATE-FAILED old=%d[%d-%d]\n",
+								tok.Symbol, tok.StartByte, tok.EndByte)
+						}
+						if p.logger != nil {
+							p.logf(ParserLogLex, "relex state update failed sym=%d start=%d end=%d", tok.Symbol, tok.StartByte, tok.EndByte)
+						}
+					} else if nextTok, ok := relexer.RelexFromTokenStart(tok); !ok {
+						if parseEagerDefaultReduceDebugEnabled() {
+							fmt.Printf("  EXTERNAL-DEFAULT-RELEX-FAILED old=%d[%d-%d]\n",
+								tok.Symbol, tok.StartByte, tok.EndByte)
+						}
+						if p.logger != nil {
+							p.logf(ParserLogLex, "relex failed sym=%d start=%d end=%d", tok.Symbol, tok.StartByte, tok.EndByte)
+						}
+					} else {
+						if parseEagerDefaultReduceDebugEnabled() {
+							fmt.Printf("  EXTERNAL-DEFAULT-RELEX old=%d[%d-%d] new=%d[%d-%d]\n",
+								tok.Symbol, tok.StartByte, tok.EndByte, nextTok.Symbol, nextTok.StartByte, nextTok.EndByte)
+						}
+						tok = nextTok
+						noteStopDiagnosticToken(tok)
+						p.updateCurrentExternalTokenCheckpoint(ts, tok)
+						lastTokenEndByte = tok.EndByte
+						lastTokenSymbol = tok.Symbol
+						lastTokenWasEOF = tok.Symbol == 0 && tok.StartByte == tok.EndByte && !tok.NoLookahead
+						if lastTokenWasEOF && tok.EndByte < expectedEOFByte {
+							tokenSourceEOFEarly = true
+						}
+						if p.logger != nil {
+							p.logf(ParserLogLex, "relex token sym=%d start=%d end=%d", tok.Symbol, tok.StartByte, tok.EndByte)
+						}
+					}
+				}
+			}
+		}
 		for si := 0; si < numStacks; si++ {
 			s := &stacks[si]
 			if s.dead || s.shifted {
 				continue
 			}
+			// Faithful C recovery port (parser_recover_c.go): an accepted
+			// version has left the version pool (C stashes its tree in
+			// finished_tree and removes the version); it must not dispatch
+			// again while other versions finish competing. Outside the gated
+			// recovery, accepted stacks never survive an iteration (the loop
+			// tail finalizes immediately), so this is unreachable there.
+			if s.accepted {
+				continue
+			}
+			// Faithful C recovery port (parser_recover_c.go): paused stacks
+			// (C StackStatusPaused) wait for the condense step after this
+			// dispatch pass to be resumed or removed.
+			if s.cPaused {
+				continue
+			}
+			// Faithful C recovery port (parser_recover_c.go): a stack already
+			// in the C error state dispatches through ts_parser__recover
+			// instead of the parse table, except for shiftable tokens.
+			if s.cRec != nil && p.errorCostCompetitionEnabled() {
+				outcome, redispatch := p.cRecoverDispatchInError(&stacks, si, source, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors)
+				s = &stacks[si]
+				if redispatch {
+					anyReduced = true
+				}
+				switch outcome {
+				case cRecConsumed:
+					continue
+				case cRecHalted:
+					s.dead = true
+					continue
+				}
+			}
 			currentState := s.top().state
+			noteStopDiagnosticStack(s)
 		retryAction:
 			actionStart := time.Time{}
 			if phaseTiming {
@@ -2469,9 +4726,19 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				if actionTiming != nil {
 					actionKindStart = time.Now()
 				}
+				if numStacks == 1 && p.tryMaterializeSkippedRealGap(source, s, currentState, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors) {
+					anyReduced = true
+					needToken = false
+					goto retryAction
+				}
+				if !p.guardRealShiftGap(source, s, tok) {
+					continue
+				}
+				traceVisit(si, s, "extra-shift", 0, len(actions), actions[0])
 				p.applyExtraShiftAction(s, currentState, actions[0], tok, arena, scratch)
 				nodeCount++
-				needToken = true
+				traceAfterPrimary(si, s)
+				consumeCurrentToken(s)
 				if actionTiming != nil {
 					ns := time.Since(actionKindStart).Nanoseconds()
 					actionTiming.actionExtraShiftNanos += ns
@@ -2494,6 +4761,40 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					return ns
 				}
 				sameState := parseStacksShareState(stacks, currentState)
+				if tok.Symbol == errorSymbol && tok.StartByte != tok.EndByte && p.errorCostCompetitionEnabled() {
+					// Faithful C recovery port: an unlexable-run lookahead has
+					// no table actions in C either; the version pauses and the
+					// condense step decides (ts_parser__handle_error skips the
+					// strategy-1 scan for error lookaheads and absorbs it).
+					s.cPaused = true
+					if actionTiming != nil {
+						ns := recordNoActionTiming()
+						actionTiming.actionNoActionErrorNanos += ns
+					}
+					continue
+				}
+				if tok.Symbol == errorSymbol && tok.StartByte != tok.EndByte && !p.isScheme {
+					// Unlexable-run lookahead (mirrors C skipped-error lexing):
+					// absorb it into this stack as an extra ERROR leaf the way
+					// C ts_parser__recover does. It is never a reason to kill a
+					// GLR stack, relex (the error lex state already failed at
+					// this position), or pop into a resync. Scheme keeps its
+					// dedicated recovery flow (schemeErrorRunToken + _datum
+					// goto) further down this chain.
+					if DebugDFA.Load() {
+						fmt.Printf("  ABSORB-ERR tok=%d-%d state=%d stacks=%d\n", tok.StartByte, tok.EndByte, currentState, len(stacks))
+					}
+					if !p.guardRealTokenAttachmentGap(source, s, tok, "lex-error") {
+						continue
+					}
+					p.pushLexErrorRunLeaf(s, currentState, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors)
+					consumeCurrentToken(s)
+					if actionTiming != nil {
+						ns := recordNoActionTiming()
+						actionTiming.actionNoActionErrorNanos += ns
+					}
+					continue
+				}
 				if tok.Symbol == 0 {
 					if sameState {
 						if reTok, ok := p.tryRelexCurrentStateDFA(tok, currentState, ts); ok {
@@ -2507,9 +4808,20 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 						}
 					}
 					if tok.StartByte != tok.EndByte {
-						needToken = true
+						consumeCurrentToken(s)
 						if actionTiming != nil {
 							recordNoActionTiming()
+						}
+						continue
+					}
+					if p.errorCostCompetitionEnabled() {
+						// Faithful C recovery port: EOF with no action pauses;
+						// the condense step resumes via ts_parser__handle_error
+						// whose recover_eof wraps the stack in an ERROR root.
+						s.cPaused = true
+						if actionTiming != nil {
+							ns := recordNoActionTiming()
+							actionTiming.actionNoActionErrorNanos += ns
 						}
 						continue
 					}
@@ -2541,7 +4853,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					continue
 				}
 				if tok.StartByte == tok.EndByte {
-					needToken = true
+					consumeCurrentToken(s)
 					if actionTiming != nil {
 						recordNoActionTiming()
 					}
@@ -2566,6 +4878,55 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 						}
 						goto retryAction
 					}
+				}
+				// Languages gated into the faithful C error-recovery cost
+				// competition (parser_recover_c.go) own single-stack no-action
+				// dead ends themselves: pausing + condense + ts_parser__recover
+				// resumes locally, matching tree-sitter C. The opportunistic
+				// top-level resync below is a heuristic for languages WITHOUT
+				// that port; letting it fire first for a C-recovery-gated
+				// language can unwind the whole stack back to the grammar's
+				// initial state (wrapping a huge, otherwise-locally-recoverable
+				// span in one ERROR, or replaying it error-free) instead of the
+				// narrow, tested local recovery the C-recovery gate would have
+				// produced. Known tradeoff: this also removes the opportunistic
+				// resync's ERROR-wrap safety net for the (currently small) set
+				// of C-recovery-gated languages that relied on it to flag a
+				// nested declaration-start construct as an error rather than
+				// silently accepting it — see
+				// TestOpportunisticTopLevelResyncDoesNotLiftNestedDeclarationStarts/java_import_inside_malformed_method.
+				if len(stacks) == 1 && !p.resyncTopLevelLanguage() && !p.errorCostCompetitionEnabled() {
+					switch p.tryOpportunisticTopLevelResyncRecovery(source, s, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors) {
+					case resyncRetry:
+						currentState = s.top().state
+						needToken = false
+						if actionTiming != nil {
+							ns := recordNoActionTiming()
+							actionTiming.actionNoActionRecoverNanos += ns
+						}
+						goto retryAction
+					case resyncAdvance:
+						consumeCurrentToken(s)
+						if actionTiming != nil {
+							ns := recordNoActionTiming()
+							actionTiming.actionNoActionRecoverNanos += ns
+						}
+						continue
+					}
+				}
+				if p.errorCostCompetitionEnabled() {
+					// Faithful C recovery port: no action for the lookahead —
+					// pause the version (C detect_error / ts_stack_pause) and
+					// let the post-pass condense step resume or remove it.
+					if p.glrTrace {
+						fmt.Printf("  stack[%d] C-PAUSED: no action for sym=%d in state=%d\n", si, tok.Symbol, currentState)
+					}
+					s.cPaused = true
+					if actionTiming != nil {
+						ns := recordNoActionTiming()
+						actionTiming.actionNoActionErrorNanos += ns
+					}
+					continue
 				}
 				if _, _, hasRecoverAction := p.findRecoverActionOnStack(s, tok.Symbol, timing); !hasRecoverAction &&
 					p.tryRecoverPreviousShiftAsError(s, tok, &nodeCount, arena, &scratch.entries, &trackChildErrors) {
@@ -2608,8 +4969,14 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 						}
 						continue
 					}
-					p.applyAction(s, recoverAct, tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
-					needToken = true
+					if !p.guardRealTokenAttachmentGap(source, s, tok, "recover") {
+						continue
+					}
+					p.noteStopActionDiagnostic("no-action-recover", s, tok, recoverAct, 1, false, 0, 0, false)
+					p.applyAction(source, s, recoverAct, tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
+					p.noteStopActionResult(s)
+					drainPendingForkStacks()
+					consumeCurrentToken(s)
 					if actionTiming != nil {
 						ns := recordNoActionTiming()
 						actionTiming.actionNoActionRecoverNanos += ns
@@ -2626,8 +4993,49 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					}
 					return finalize(stacks, ParseStopNoStacksAlive)
 				}
+				// In-context recovery (C ts_parser__recover candidate rule):
+				// pop to the NEAREST stack state with an action on the
+				// lookahead, wrap only the popped fragments into an extra
+				// ERROR, and retry there. Runs before the top-level resync so
+				// damage stays contained inside the enclosing construct.
+				if p.tryNearestActionStateRecovery(s, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors) {
+					currentState = s.top().state
+					needToken = false
+					if actionTiming != nil {
+						ns := recordNoActionTiming()
+						actionTiming.actionNoActionRecoverNanos += ns
+					}
+					goto retryAction
+				}
+				// Panic-mode resync (mirrors C ts_parser__recover): before
+				// appending a flat ERROR leaf at this dead-end state, try to pop
+				// down to the grammar's top-level (initial) state, wrap the failed
+				// region into one localized ERROR node (preserving any already
+				// completed valid top-level siblings), and resume there. This keeps
+				// subsequent valid top-level constructs nested under the real root
+				// instead of shredding the rest of the file into flat fragments.
+				switch p.tryResyncErrorRecovery(source, s, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors) {
+				case resyncRetry:
+					currentState = s.top().state
+					needToken = false
+					if actionTiming != nil {
+						ns := recordNoActionTiming()
+						actionTiming.actionNoActionRecoverNanos += ns
+					}
+					goto retryAction
+				case resyncAdvance:
+					consumeCurrentToken(s)
+					if actionTiming != nil {
+						ns := recordNoActionTiming()
+						actionTiming.actionNoActionRecoverNanos += ns
+					}
+					continue
+				}
+				if !p.guardRealTokenAttachmentGap(source, s, tok, "error") {
+					continue
+				}
 				p.pushOrExtendErrorNode(s, currentState, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors)
-				needToken = true
+				consumeCurrentToken(s)
 				if actionTiming != nil {
 					ns := recordNoActionTiming()
 					actionTiming.actionNoActionErrorNanos += ns
@@ -2641,114 +5049,41 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				}
 				var chosen ParseAction
 				choice := false
-				if p.language != nil && p.language.Name == "gomod" {
-					if next, ok := gomodRepetitionShiftConflictChoice(p.language, currentState, actions); ok {
-						chosen, choice = next, true
-					}
-				}
-				if !choice && reuse == nil && p.language != nil {
-					switch p.language.Name {
-					case "java":
-						if next, ok := p.javaSwitchArrowConflictChoice(s, tok, actions); ok {
-							chosen, choice = next, true
-						} else if next, ok := javaRepetitionShiftConflictChoice(p.language, source, tok, currentState, actions); ok {
-							chosen, choice = next, true
-						}
-					case "c_sharp":
-						if next, ok := csharpRepetitionShiftConflictChoice(p.language, tok, actions); ok {
-							chosen, choice = next, true
-						}
-					case "go":
-						if maxStacksSeen > 1 && currentState == 3 && tok.Symbol == 15 {
-							if next, ok := repetitionShiftConflictChoice(actions); ok {
-								chosen, choice = next, true
-							}
-						}
-					case "c":
-						if next, ok := cRepetitionShiftConflictChoice(p.language, actions); ok {
-							chosen, choice = next, true
-						}
-					case "rust":
-						if !p.noTreeBenchmarkOnly {
-							if next, ok := rustRepetitionShiftConflictChoice(p.language, tok, currentState, actions); ok {
-								chosen, choice = next, true
-							}
-						}
-					case "typescript":
-						if next, ok := typescriptRepetitionShiftConflictChoice(p.language, tok, currentState, actions); ok {
-							chosen, choice = next, true
-						}
-					case "tsx":
-						if next, ok := tsxRepetitionReduceConflictChoice(p.language, tok, currentState, actions); ok {
-							chosen, choice = next, true
-						}
-					case "javascript":
-						if next, ok := javascriptRepetitionShiftConflictChoice(p.language, tok, currentState, actions); ok {
-							chosen, choice = next, true
-						}
-					case "python":
-						if next, ok := pythonRepetitionShiftConflictChoice(p.language, tok, currentState, actions); ok {
-							chosen, choice = next, true
-						}
-					case "r":
-						if next, ok := rRepetitionShiftConflictChoice(p.language, currentState, actions); ok {
-							chosen, choice = next, true
-						}
-					case "php":
-						if next, ok := phpRepetitionShiftConflictChoice(p.language, tok, currentState, actions); ok {
-							chosen, choice = next, true
-						}
-					case "perl":
-						if next, ok := perlRepetitionShiftConflictChoice(p.language, currentState, actions); ok {
-							chosen, choice = next, true
-						}
-					case "sql":
-						if next, ok := sqlRepetitionShiftConflictChoice(p.language, tok, currentState, actions); ok {
-							chosen, choice = next, true
-						}
-					case "dart":
-						if next, ok := dartRepetitionShiftConflictChoice(p.language, currentState, actions); ok {
-							chosen, choice = next, true
-						}
-					case "hcl":
-						if next, ok := hclRepetitionShiftConflictChoice(p.language, currentState, actions); ok {
-							chosen, choice = next, true
-						}
-					case "haskell":
-						if next, ok := haskellRepeatBoundaryConflictChoice(p.language, currentState, actions); ok {
-							chosen, choice = next, true
-						}
-					case "make":
-						if next, ok := makeRepetitionShiftConflictChoice(p.language, currentState, actions); ok {
-							chosen, choice = next, true
-						}
-					case "swift":
-						if next, ok := swiftBraceTypeExpressionConflictChoice(p.language, tok, currentState, actions); ok {
-							chosen, choice = next, true
-						}
-					case "d":
-						if next, ok := dRepetitionShiftConflictChoice(p.language, currentState, actions); ok {
-							chosen, choice = next, true
-						}
-					case "clojure":
-						if next, ok := clojureRepetitionShiftConflictChoice(p.language, currentState, actions); ok {
-							chosen, choice = next, true
-						}
-					case "awk":
-						if next, ok := awkRepetitionShiftConflictChoice(p.language, currentState, actions); ok {
-							chosen, choice = next, true
-						}
-					case "kotlin":
-						if next, ok := kotlinObjectLiteralConflictChoice(p.language, actions); ok {
-							chosen, choice = next, true
-						}
-					}
+				if next, ok := p.deterministicConflictChoiceForDispatch(source, s, tok, currentState, actions, maxStacksSeen, reuse); ok {
+					chosen, choice = next, true
 				}
 				if !choice && deterministicExternalConflicts && p.language != nil && p.language.Name == "yaml" && p.language.ExternalScanner != nil {
 					chosen, choice = deterministicExternalConflictAction(actions), true
 				}
 				if choice {
-					p.applyAction(s, chosen, tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
+					if chosen.Type == ParseActionShift && !p.guardRealShiftGap(source, s, tok) {
+						continue
+					}
+					if chosen.Type == ParseActionRecover && !p.guardRealTokenAttachmentGap(source, s, tok, "recover") {
+						continue
+					}
+					traceVisit(si, s, "conflict-choice", -1, len(actions), chosen)
+					setPendingTrace("conflict-choice", si, -1, len(actions), chosen)
+					p.noteStopActionDiagnostic("conflict-choice", s, tok, chosen, len(actions), false, 0, 0, false)
+					actionBeforeState, actionBeforeByte, actionBeforeDepth := stackTraceState(s)
+					p.applyAction(source, s, chosen, tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
+					p.noteStopActionResult(s)
+					actionAfterState, actionAfterByte, actionAfterDepth := stackTraceState(s)
+					traceAfterPrimary(si, s)
+					if chosen.Type == ParseActionReduce {
+						p.completeConflictReduceFrontier(source, s, tok, conflictReduceFrontierSeed{
+							action:      chosen,
+							beforeState: actionBeforeState,
+							beforeByte:  actionBeforeByte,
+							beforeDepth: actionBeforeDepth,
+							afterState:  actionAfterState,
+							afterByte:   actionAfterByte,
+							afterDepth:  actionAfterDepth,
+						}, allocBranchOrder, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
+						traceFrontier(si, s, traceFrontierResult(actionAfterState, actionAfterByte, actionAfterDepth, s))
+					}
+					drainPendingForkStacks()
+					drainPendingFrontierForkStacks()
 					if actionTiming != nil {
 						ns := time.Since(conflictStart).Nanoseconds()
 						actionTiming.actionConflictChoiceNanos += ns
@@ -2775,7 +5110,34 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					preMaterializationFieldRejectOverflowCandidates += overflow
 				}
 				if s.depth() > maxForkCloneDepth {
-					p.applyAction(s, actions[0], tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
+					if actions[0].Type == ParseActionShift && !p.guardRealShiftGap(source, s, tok) {
+						continue
+					}
+					if actions[0].Type == ParseActionRecover && !p.guardRealTokenAttachmentGap(source, s, tok, "recover") {
+						continue
+					}
+					traceVisit(si, s, "conflict-depth-cap", 0, len(actions), actions[0])
+					setPendingTrace("conflict-depth-cap", si, 0, len(actions), actions[0])
+					p.noteStopActionDiagnostic("conflict-depth-cap", s, tok, actions[0], len(actions), false, 0, 0, false)
+					actionBeforeState, actionBeforeByte, actionBeforeDepth := stackTraceState(s)
+					p.applyAction(source, s, actions[0], tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
+					p.noteStopActionResult(s)
+					actionAfterState, actionAfterByte, actionAfterDepth := stackTraceState(s)
+					traceAfterPrimary(si, s)
+					if actions[0].Type == ParseActionReduce {
+						p.completeConflictReduceFrontier(source, s, tok, conflictReduceFrontierSeed{
+							action:      actions[0],
+							beforeState: actionBeforeState,
+							beforeByte:  actionBeforeByte,
+							beforeDepth: actionBeforeDepth,
+							afterState:  actionAfterState,
+							afterByte:   actionAfterByte,
+							afterDepth:  actionAfterDepth,
+						}, allocBranchOrder, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
+						traceFrontier(si, s, traceFrontierResult(actionAfterState, actionAfterByte, actionAfterDepth, s))
+					}
+					drainPendingForkStacks()
+					drainPendingFrontierForkStacks()
 					if actionTiming != nil {
 						ns := time.Since(conflictStart).Nanoseconds()
 						actionTiming.actionConflictForkNanos += ns
@@ -2789,21 +5151,82 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				}
 				for ai := 1; ai < len(actions); ai++ {
 					fork := base.cloneWithScratch(&scratch.gss)
-					fork.branchOrder = nextBranchOrder
-					nextBranchOrder++
-					p.applyAction(&fork, actions[ai], tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
+					fork.branchOrder = allocBranchOrder()
+					if actions[ai].Type != ParseActionShift || p.guardRealShiftGap(source, &fork, tok) {
+						if actions[ai].Type != ParseActionRecover || p.guardRealTokenAttachmentGap(source, &fork, tok, "recover") {
+							setPendingTrace("conflict-fork", si, ai, len(actions), actions[ai])
+							p.noteStopActionDiagnostic("conflict-fork", &fork, tok, actions[ai], len(actions), false, 0, 0, false)
+							actionBeforeState, actionBeforeByte, actionBeforeDepth := stackTraceState(&fork)
+							p.applyAction(source, &fork, actions[ai], tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
+							p.noteStopActionResult(&fork)
+							actionAfterState, actionAfterByte, actionAfterDepth := stackTraceState(&fork)
+							if actions[ai].Type == ParseActionReduce {
+								p.completeConflictReduceFrontier(source, &fork, tok, conflictReduceFrontierSeed{
+									action:      actions[ai],
+									beforeState: actionBeforeState,
+									beforeByte:  actionBeforeByte,
+									beforeDepth: actionBeforeDepth,
+									afterState:  actionAfterState,
+									afterByte:   actionAfterByte,
+									afterDepth:  actionAfterDepth,
+								}, allocBranchOrder, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
+								frontier := traceFrontierResult(actionAfterState, actionAfterByte, actionAfterDepth, &fork)
+								traceAppend("conflict-fork", si, ai, len(actions), actions[ai], &fork, frontier)
+							} else {
+								traceAppend("conflict-fork", si, ai, len(actions), actions[ai], &fork, conflictFrontierResult{})
+							}
+						} else {
+							traceAppend("conflict-fork-guard-recover", si, ai, len(actions), actions[ai], &fork, conflictFrontierResult{})
+						}
+					} else {
+						traceAppend("conflict-fork-guard-shift", si, ai, len(actions), actions[ai], &fork, conflictFrontierResult{})
+					}
 					if p.glrTrace {
 						fmt.Printf("[GLR] fork[%d] after action[%d]: st=%d dead=%v shift=%v dep=%d byte=%d\n",
 							len(stacks), ai, fork.top().state, fork.dead, fork.shifted, fork.depth(), fork.byteOffset)
 					}
 					stacks = append(stacks, fork)
+					if !progress.enabled {
+						drainPendingForkStacks()
+						drainPendingFrontierForkStacks()
+					} else {
+						drainPendingForkStacks()
+						drainPendingFrontierForkStacks()
+					}
 				}
 				s = &stacks[si]
-				p.applyAction(s, actions[0], tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
+				if actions[0].Type == ParseActionShift && !p.guardRealShiftGap(source, s, tok) {
+					continue
+				}
+				if actions[0].Type == ParseActionRecover && !p.guardRealTokenAttachmentGap(source, s, tok, "recover") {
+					continue
+				}
+				traceVisit(si, s, "conflict-original", 0, len(actions), actions[0])
+				setPendingTrace("conflict-original", si, 0, len(actions), actions[0])
+				p.noteStopActionDiagnostic("conflict-original", s, tok, actions[0], len(actions), false, 0, 0, false)
+				actionBeforeState, actionBeforeByte, actionBeforeDepth := stackTraceState(s)
+				p.applyAction(source, s, actions[0], tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
+				p.noteStopActionResult(s)
+				actionAfterState, actionAfterByte, actionAfterDepth := stackTraceState(s)
+				traceAfterPrimary(si, s)
+				if actions[0].Type == ParseActionReduce {
+					p.completeConflictReduceFrontier(source, s, tok, conflictReduceFrontierSeed{
+						action:      actions[0],
+						beforeState: actionBeforeState,
+						beforeByte:  actionBeforeByte,
+						beforeDepth: actionBeforeDepth,
+						afterState:  actionAfterState,
+						afterByte:   actionAfterByte,
+						afterDepth:  actionAfterDepth,
+					}, allocBranchOrder, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
+					traceFrontier(si, s, traceFrontierResult(actionAfterState, actionAfterByte, actionAfterDepth, s))
+				}
 				if p.glrTrace {
 					fmt.Printf("[GLR] orig[%d] after action[0]: st=%d dead=%v shift=%v dep=%d byte=%d\n",
 						si, s.top().state, s.dead, s.shifted, s.depth(), s.byteOffset)
 				}
+				drainPendingForkStacks()
+				drainPendingFrontierForkStacks()
 				if actionTiming != nil {
 					ns := time.Since(conflictStart).Nanoseconds()
 					actionTiming.actionConflictForkNanos += ns
@@ -2818,9 +5241,15 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			}
 			disableBashReduceChain := p.language != nil && p.language.Name == "bash" && s.gss.head != nil
 			if act.Type == ParseActionReduce && !disableBashReduceChain {
-				if p.applyActionWithReduceChain(s, act, tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors) {
+				traceVisit(si, s, "single-reduce", 0, len(actions), act)
+				setPendingTrace("single-reduce", si, 0, len(actions), act)
+				p.noteStopActionDiagnostic("single-reduce", s, tok, act, len(actions), false, 0, 0, false)
+				if p.applyActionWithReduceChain(source, s, act, tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors) {
 					forceAdvanceAfterReduce = true
 				}
+				p.noteStopActionResult(s)
+				traceAfterPrimary(si, s)
+				drainPendingForkStacks()
 				if actionTiming != nil {
 					ns := time.Since(actionKindStart).Nanoseconds()
 					actionTiming.actionSingleReduceNanos += ns
@@ -2829,28 +5258,64 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			} else {
 				switch act.Type {
 				case ParseActionShift:
+					if numStacks == 1 && p.tryMaterializeSkippedRealGap(source, s, currentState, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors) {
+						anyReduced = true
+						needToken = false
+						goto retryAction
+					}
+					if !p.guardRealShiftGap(source, s, tok) {
+						continue
+					}
+					traceVisit(si, s, "single-shift", 0, len(actions), act)
+					p.noteStopActionDiagnostic("single-shift", s, tok, act, len(actions), false, 0, 0, false)
 					p.applyShiftAction(s, act, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors)
+					p.noteStopActionResult(s)
+					traceAfterPrimary(si, s)
+					consumeCurrentToken(s)
 					if actionTiming != nil {
 						ns := time.Since(actionKindStart).Nanoseconds()
 						actionTiming.actionSingleShiftNanos += ns
 						recordActionTiming(currentState, tok.Symbol, actions, ambiguityActionSingleShift, ns)
 					}
 				case ParseActionAccept:
+					traceVisit(si, s, "single-accept", 0, len(actions), act)
+					p.noteStopActionDiagnostic("single-accept", s, tok, act, len(actions), false, 0, 0, false)
 					p.applyAcceptAction(s)
+					p.noteStopActionResult(s)
+					traceAfterPrimary(si, s)
 					if actionTiming != nil {
 						ns := time.Since(actionKindStart).Nanoseconds()
 						actionTiming.actionSingleAcceptNanos += ns
 						recordActionTiming(currentState, tok.Symbol, actions, ambiguityActionSingleAccept, ns)
 					}
 				case ParseActionRecover:
+					if numStacks == 1 && p.tryMaterializeSkippedRealGap(source, s, currentState, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors) {
+						anyReduced = true
+						needToken = false
+						goto retryAction
+					}
+					if !p.guardRealTokenAttachmentGap(source, s, tok, "recover") {
+						continue
+					}
+					traceVisit(si, s, "single-recover", 0, len(actions), act)
+					p.noteStopActionDiagnostic("single-recover", s, tok, act, len(actions), false, 0, 0, false)
 					p.applyRecoverAction(s, act, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors)
+					p.noteStopActionResult(s)
+					traceAfterPrimary(si, s)
+					consumeCurrentToken(s)
 					if actionTiming != nil {
 						ns := time.Since(actionKindStart).Nanoseconds()
 						actionTiming.actionSingleRecoverNanos += ns
 						recordActionTiming(currentState, tok.Symbol, actions, ambiguityActionSingleRecover, ns)
 					}
 				default:
-					p.applyAction(s, act, tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
+					traceVisit(si, s, "single-other", 0, len(actions), act)
+					setPendingTrace("single-other", si, 0, len(actions), act)
+					p.noteStopActionDiagnostic("single-other", s, tok, act, len(actions), false, 0, 0, false)
+					p.applyAction(source, s, act, tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
+					p.noteStopActionResult(s)
+					traceAfterPrimary(si, s)
+					drainPendingForkStacks()
 					if actionTiming != nil {
 						ns := time.Since(actionKindStart).Nanoseconds()
 						actionTiming.actionSingleOtherNanos += ns
@@ -2861,6 +5326,9 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		}
 		if phaseTiming {
 			actionDispatchNanos += time.Since(dispatchStart).Nanoseconds()
+		}
+		if progress.enabled {
+			progress.emit(time.Now(), "dispatch_end", iterationsUsed, perfTokensConsumed, tok, true, stacks, maxStacksSeen, nodeCount, peakStackDepth, needToken, singleStackIterations, multiStackIterations, fmt.Sprintf("any_reduced=%t consumed_token=%t", anyReduced, dispatchConsumedCurrentToken))
 		}
 
 		if numStacks > 1 && retryPass && allParseStacksDead(stacks) {
@@ -2885,15 +5353,210 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				consecutiveReduces = 0
 			} else if depth, recoverAct, ok := p.findRecoverActionOnStack(&stacks[0], tok.Symbol, timing); ok {
 				if stacks[0].truncate(depth + 1) {
-					p.applyAction(&stacks[0], recoverAct, tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
-					needToken = true
+					if !p.guardRealTokenAttachmentGap(source, &stacks[0], tok, "recover") {
+						continue
+					}
+					p.noteStopActionDiagnostic("retry-recover", &stacks[0], tok, recoverAct, 1, false, 0, 0, false)
+					p.applyAction(source, &stacks[0], recoverAct, tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
+					p.noteStopActionResult(&stacks[0])
+					drainPendingForkStacks()
+					consumeCurrentToken(&stacks[0])
 				} else {
 					stacks[0].dead = true
 				}
 			} else if stacks[0].depth() > 0 {
+				if !p.guardRealTokenAttachmentGap(source, &stacks[0], tok, "error") {
+					continue
+				}
 				p.pushOrExtendErrorNode(&stacks[0], currentState, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors)
-				needToken = true
+				consumeCurrentToken(&stacks[0])
 			}
+		}
+
+		// Faithful C recovery port: ts_parser__condense_stack runs after each
+		// completed dispatch pass — prune versions by error cost, resume the
+		// best paused version (ts_parser__handle_error), remove the rest.
+		// Only touches passes where some stack is paused or absorbing, so
+		// clean parses are unaffected.
+		condenseErrorCostEnabled := p.errorCostCompetitionEnabled()
+		condenseAnyReduced := anyReduced
+		condenseRelevant := condenseErrorCostEnabled && cRecoveryRelevantStack(stacks)
+		condenseEOFRecovery := condenseRelevant && tok.Symbol == 0 && tok.StartByte == tok.EndByte && !tok.NoLookahead
+		condenseShiftedRecovery := condenseRelevant && anyReduced && !tok.NoLookahead && allLiveUnacceptedStacksShifted(stacks)
+		condenseRan := false
+		condenseResumed := false
+		if condenseErrorCostEnabled && (!anyReduced || condenseEOFRecovery || condenseShiftedRecovery) {
+			var resumed bool
+			condenseRan = true
+			stacks, resumed, tok = p.cCondenseAndResume(stacks, source, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors)
+			condenseResumed = resumed
+			if resumed {
+				anyReduced = true
+			}
+		}
+		stopDiagCondenseErrorCostEnabled = condenseErrorCostEnabled
+		stopDiagCondenseAnyReduced = condenseAnyReduced
+		stopDiagCondenseRelevant = condenseRelevant
+		stopDiagCondenseRan = condenseRan
+		stopDiagCondenseResumed = condenseResumed
+		stopDiagCondenseGating = ""
+
+		postDispatchDefaultReduced := false
+		if anyReduced && !tok.NoLookahead && parseEagerDefaultReduceEnabled() && p.isExternalToken(tok.Symbol) {
+			if relexer, canRelex := ts.(tokenSourceRelexer); canRelex && relexer.CanRelexFromTokenStart(tok) {
+				postDispatchDefaultReduced = p.applyEagerDefaultReduces(source, "post-dispatch", stacks, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
+				if postDispatchDefaultReduced {
+					drainPendingForkStacks()
+					if !p.updateCurrentRelexParserStateTokenSource(ts, stacks, scratch) {
+						postDispatchDefaultReduced = false
+					} else {
+						nextTok, ok := relexer.RelexFromTokenStart(tok)
+						if !ok {
+							postDispatchDefaultReduced = false
+							if parseEagerDefaultReduceDebugEnabled() {
+								fmt.Printf("  EAGER-DEFAULT-RELEX-FAILED old=%d[%d-%d]\n",
+									tok.Symbol, tok.StartByte, tok.EndByte)
+							}
+							if p.logger != nil {
+								p.logf(ParserLogLex, "relex failed sym=%d start=%d end=%d", tok.Symbol, tok.StartByte, tok.EndByte)
+							}
+						} else {
+							if parseEagerDefaultReduceDebugEnabled() {
+								fmt.Printf("  EAGER-DEFAULT-RELEX old=%d[%d-%d] new=%d[%d-%d]\n",
+									tok.Symbol, tok.StartByte, tok.EndByte, nextTok.Symbol, nextTok.StartByte, nextTok.EndByte)
+							}
+							tok = nextTok
+							noteStopDiagnosticToken(tok)
+							p.updateCurrentExternalTokenCheckpoint(ts, tok)
+							lastTokenEndByte = tok.EndByte
+							lastTokenSymbol = tok.Symbol
+							lastTokenWasEOF = tok.Symbol == 0 && tok.StartByte == tok.EndByte && !tok.NoLookahead
+							if lastTokenWasEOF && tok.EndByte < expectedEOFByte {
+								tokenSourceEOFEarly = true
+							}
+							if p.logger != nil {
+								p.logf(ParserLogLex, "relex token sym=%d start=%d end=%d", tok.Symbol, tok.StartByte, tok.EndByte)
+							}
+						}
+					}
+				}
+			}
+		}
+
+		if anyReduced && !dispatchConsumedCurrentToken && !tok.NoLookahead && !(tok.Symbol == 0 && tok.StartByte == tok.EndByte) {
+			terminalFrontier := terminalFrontierScratch[:0]
+			terminalFrontierConsumes := false
+			terminalFrontierOK := true
+			for i := range stacks {
+				s := &stacks[i]
+				if s.dead || s.accepted || s.shifted || s.cPaused || s.depth() == 0 {
+					continue
+				}
+				actionIdx := p.lookupActionIndex(s.top().state, tok.Symbol)
+				if actionIdx == 0 || int(actionIdx) >= len(parseActions) {
+					terminalFrontierOK = false
+					break
+				}
+				actions := parseActions[actionIdx].Actions
+				if len(actions) != 1 {
+					terminalFrontierOK = false
+					break
+				}
+				act := actions[0]
+				switch act.Type {
+				case ParseActionShift:
+					if len(stacks) == 1 && p.tryMaterializeSkippedRealGap(source, s, s.top().state, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors) {
+						terminalFrontierOK = false
+						terminalFrontier = terminalFrontier[:0]
+						needToken = false
+						break
+					}
+					if !p.guardRealShiftGap(source, s, tok) {
+						terminalFrontierOK = false
+						break
+					}
+					terminalFrontierConsumes = true
+				case ParseActionRecover:
+					if len(stacks) == 1 && p.tryMaterializeSkippedRealGap(source, s, s.top().state, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors) {
+						terminalFrontierOK = false
+						terminalFrontier = terminalFrontier[:0]
+						needToken = false
+						break
+					}
+					if !p.guardRealTokenAttachmentGap(source, s, tok, "post-reduce-terminal-frontier-recover") {
+						terminalFrontierOK = false
+						break
+					}
+					terminalFrontierConsumes = true
+				case ParseActionAccept:
+				default:
+					terminalFrontierOK = false
+				}
+				if !terminalFrontierOK {
+					break
+				}
+				terminalFrontier = append(terminalFrontier, terminalFrontierAction{index: i, action: act})
+			}
+			if terminalFrontierOK && len(terminalFrontier) > 0 {
+				for _, item := range terminalFrontier {
+					s := &stacks[item.index]
+					switch item.action.Type {
+					case ParseActionShift:
+						if len(stacks) == 1 && p.tryMaterializeSkippedRealGap(source, s, s.top().state, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors) {
+							terminalFrontierOK = false
+							terminalFrontier = terminalFrontier[:0]
+							needToken = false
+							break
+						}
+						p.noteStopActionDiagnostic("post-reduce-terminal-frontier-shift", s, tok, item.action, 1, false, 0, 0, false)
+						p.applyShiftAction(s, item.action, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors)
+						p.noteStopActionResult(s)
+					case ParseActionRecover:
+						if len(stacks) == 1 && p.tryMaterializeSkippedRealGap(source, s, s.top().state, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors) {
+							terminalFrontierOK = false
+							terminalFrontier = terminalFrontier[:0]
+							needToken = false
+							break
+						}
+						p.noteStopActionDiagnostic("post-reduce-terminal-frontier-recover", s, tok, item.action, 1, false, 0, 0, false)
+						p.applyRecoverAction(s, item.action, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors)
+						s.shifted = true
+						p.noteStopActionResult(s)
+					case ParseActionAccept:
+						p.noteStopActionDiagnostic("post-reduce-terminal-frontier-accept", s, tok, item.action, 1, false, 0, 0, false)
+						p.applyAcceptAction(s)
+						p.noteStopActionResult(s)
+					}
+				}
+				if terminalFrontierConsumes && allLiveUnacceptedStacksShifted(stacks) {
+					dispatchConsumedCurrentToken = true
+					needToken = true
+				}
+			}
+		}
+
+		// C parity: ts_parser__condense_stack runs after EVERY advance round.
+		// A strategy-1 recovery fork created during this round's dispatch
+		// shifts the current token in the terminal-frontier block above —
+		// AFTER the main condense gate already ran with allShifted=false — so
+		// the post-shift cost competition must be re-checked here. This is the
+		// round where C kills the absorbing version the moment the recovered
+		// fork advances cleanly past the elected token (compare_versions
+		// in-error vs clean → TakeRight; e.g. the FIDL versioned-layout
+		// recovery chain). No stack is paused at this point (paused stacks
+		// have shifted=false), so the resume tail inside is a no-op.
+		if condenseErrorCostEnabled && !condenseRan && condenseRelevant &&
+			anyReduced && !tok.NoLookahead &&
+			allLiveUnacceptedStacksShifted(stacks) {
+			var resumed bool
+			condenseRan = true
+			stacks, resumed, tok = p.cCondenseAndResume(stacks, source, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors)
+			condenseResumed = resumed
+			if resumed {
+				anyReduced = true
+			}
+			stopDiagCondenseRan = condenseRan
+			stopDiagCondenseResumed = condenseResumed
 		}
 
 		// After processing all stacks: determine whether to advance the
@@ -2902,7 +5565,31 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		// the current lookahead). Otherwise, advance to next token.
 		if anyReduced {
 			needToken = tok.NoLookahead || forceAdvanceAfterReduce
-			if tok.NoLookahead {
+			// dispatchConsumedCurrentToken is set as soon as ANY single stack
+			// performs a terminal action (shift/recover/accept/error) for the
+			// current token via consumeCurrentToken(). In a multi-stack GLR
+			// dispatch pass, other live stacks may have only reduced this
+			// pass (their new top state still needs to be re-checked against
+			// the SAME lookahead before it's safe to advance). Advancing the
+			// token here would strand those stacks mid-reduce-chain: the next
+			// pass would probe their post-reduce state against the WRONG
+			// (already-advanced) token instead of the one they were still
+			// waiting to shift, killing an otherwise-viable parse (see e.g.
+			// TypeScript's `foo<Bar>()` instantiation-expression vs.
+			// binary_expression ambiguity: the type_arguments fork reduces
+			// into a state that still needs to shift "(", but a sibling
+			// fork's shift of "(" would force the token forward under it).
+			// Only treat the token as fully consumed once every live,
+			// unaccepted stack has actually shifted it.
+			if dispatchConsumedCurrentToken && allLiveUnacceptedStacksShifted(stacks) {
+				needToken = true
+				lastReduceDepth = -1
+				consecutiveReduces = 0
+			} else if tok.NoLookahead {
+				lastReduceDepth = -1
+				consecutiveReduces = 0
+			} else if postDispatchDefaultReduced {
+				needToken = false
 				lastReduceDepth = -1
 				consecutiveReduces = 0
 			} else if len(stacks) > 0 && !stacks[0].dead {
@@ -2925,9 +5612,13 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 						}
 						return finalize(stacks, ParseStopNoStacksAlive)
 					}
-					needToken = true
-					lastReduceDepth = -1
-					consecutiveReduces = 0
+					if len(stacks) > 1 && !tok.NoLookahead && !(tok.Symbol == 0 && tok.StartByte == tok.EndByte) {
+						needToken = false
+					} else {
+						needToken = true
+						lastReduceDepth = -1
+						consecutiveReduces = 0
+					}
 				}
 			}
 		} else {
@@ -2935,8 +5626,102 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			lastReduceDepth = -1
 			consecutiveReduces = 0
 		}
-		if accepted := compactAcceptedStacks(stacks); len(accepted) > 0 {
-			return finalize(accepted, ParseStopAccepted)
+		if anyReduced && !dispatchConsumedCurrentToken && !needToken && !tok.NoLookahead &&
+			!(tok.Symbol == 0 && tok.StartByte == tok.EndByte) &&
+			allLiveUnacceptedStacksShifted(stacks) {
+			needToken = true
+			lastReduceDepth = -1
+			consecutiveReduces = 0
+		}
+		if stopActionDiag.captured {
+			stopActionDiag.forceAdvanceAfterReduce = forceAdvanceAfterReduce
+			stopActionDiag.postDispatchDefaultReduced = postDispatchDefaultReduced
+			stopActionDiag.anyReduced = anyReduced
+			stopActionDiag.consumedToken = dispatchConsumedCurrentToken
+		}
+		if reusedLookaheadThisPass && anyReduced && !dispatchConsumedCurrentToken && !needToken && !tok.NoLookahead &&
+			!(tok.Symbol == 0 && tok.StartByte == tok.EndByte) &&
+			perfTokensConsumed == passStartTokensConsumed {
+			if noTokenProgressHaveLast &&
+				tok.Symbol == lastNoTokenProgressTok.Symbol &&
+				tok.StartByte == lastNoTokenProgressTok.StartByte &&
+				tok.EndByte == lastNoTokenProgressTok.EndByte &&
+				tok.NoLookahead == lastNoTokenProgressTok.NoLookahead &&
+				perfTokensConsumed == lastNoTokenProgressTokens {
+				consecutiveNoTokenDispatches++
+			} else {
+				lastNoTokenProgressTok = tok
+				lastNoTokenProgressTokens = perfTokensConsumed
+				consecutiveNoTokenDispatches = 1
+				noTokenProgressHaveLast = true
+			}
+			if consecutiveNoTokenDispatches > maxConsecutiveNoTokenDispatches {
+				stopDiagFrontier = p.buildStopFrontierDiagnostics(stacks, tok, numStacks, dispatchTrace)
+				if progress.enabled {
+					extra := fmt.Sprintf("count=%d cap=%d any_reduced=%t consumed_token=%t", consecutiveNoTokenDispatches, maxConsecutiveNoTokenDispatches, anyReduced, dispatchConsumedCurrentToken)
+					if actionExtra := stopActionDiag.progressString(); actionExtra != "" {
+						extra += " " + actionExtra
+					}
+					extra += " " + stopDiagFrontier.actions
+					extra += " " + stopDiagFrontier.stackTable
+					extra += " " + stopDiagFrontier.sameHeader
+					if stopDiagFrontier.survivors != "" {
+						extra += " " + stopDiagFrontier.survivors
+					}
+					stopDiagCondenseGating = stopCondenseGatingString(stopDiagCondenseErrorCostEnabled, stopDiagCondenseAnyReduced, stopDiagCondenseRelevant, stopDiagCondenseRan, stopDiagCondenseResumed, stacks)
+					if stopDiagCondenseGating != "" {
+						extra += " " + stopDiagCondenseGating
+					}
+					progress.emit(time.Now(), "no_token_progress_stop", iterationsUsed, perfTokensConsumed, tok, true, stacks, maxStacksSeen, nodeCount, peakStackDepth, needToken, singleStackIterations, multiStackIterations,
+						extra)
+				}
+				return finalize(stacks, ParseStopIterationLimit)
+			}
+		} else {
+			consecutiveNoTokenDispatches = 0
+			noTokenProgressHaveLast = false
+		}
+		acceptedCount, liveUnaccepted := 0, 0
+		for i := range stacks {
+			if stacks[i].accepted {
+				acceptedCount++
+			} else if !stacks[i].dead {
+				liveUnaccepted++
+			}
+		}
+		if acceptedCount > 0 {
+			// Faithful C recovery port: C keeps parsing the remaining
+			// versions after one accepts (the accepted tree is stashed and
+			// competes in ts_parser__select_tree); finalize only when every
+			// version has accepted or halted. Without the gate, finalize on
+			// the first accept exactly as before.
+			if p.errorCostCompetitionEnabled() && tok.Symbol == 0 && tok.StartByte == tok.EndByte && !tok.NoLookahead && anyReduced && liveUnaccepted > 0 {
+				needToken = false
+				continue
+			}
+			if !p.errorCostCompetitionEnabled() || liveUnaccepted == 0 {
+				accepted := compactAcceptedStacks(stacks)
+				selectable := accepted[:0]
+				for i := range accepted {
+					if cleanAcceptedStackSelectableAtEOF(source, expectedEOFByte, p.included, arena, &accepted[i]) {
+						selectable = append(selectable, accepted[i])
+					}
+				}
+				if len(selectable) == 0 && liveUnaccepted > 0 {
+					continue
+				}
+				if len(selectable) > 0 {
+					accepted = selectable
+				}
+				if p.errorCostCompetitionEnabled() {
+					// Faithful C recovery port: ts_parser__accept rebuilds the
+					// root around trailing extras before the tree competes.
+					for i := range accepted {
+						p.cAcceptRootRebuild(&accepted[i], arena, &scratch.entries, &scratch.gss)
+					}
+				}
+				return finalize(accepted, ParseStopAccepted)
+			}
 		}
 	}
 
@@ -3057,6 +5842,9 @@ func (p *Parser) ensureFullParseInitialCapacity(source []byte, arena *nodeArena,
 		checkpointCapacityTarget = target
 	}
 	arena.ensureExactNodeCapacity(target)
+	if p.noTreeBenchmarkOnly && !p.noTreeCheckpointBenchmarkOnly {
+		arena.dropExternalScannerCheckpointStorage()
+	}
 	if !p.noTreeBenchmarkOnly && languageUsesExternalScannerCheckpoints(p.language) {
 		arena.ensureExternalScannerCheckpointCapacity(parseFullExternalScannerCheckpointCapacity(len(source), checkpointCapacityTarget))
 	}
@@ -3091,14 +5879,24 @@ type parseCaps struct {
 
 func (p *Parser) configureParseCaps(source []byte, reuse *reuseCursor, arenaClass arenaClass, scratch *parserScratch, maxStacksOverride, maxNodesOverride, maxMergePerKeyOverride int) parseCaps {
 	maxStacks, retryPass := resolveParseMaxStacks(parseMaxGLRStacksValue(), maxStacksOverride, p.maxConflictWidth)
+	if p.forceCleanRetryPass {
+		retryPass = false
+	}
 	mergePerKeyCap := effectiveParseMergePerKeyCap(p.language, parseMaxMergePerKeyValue(), reuse != nil, len(source))
-	if tsxFullParseNeedsTypedArrowMergeWidth(p.language, source, reuse) && mergePerKeyCap < 2 {
+	tsNeedsTypedArrow := typeScriptFullParseNeedsTypedArrowMergeWidth(p.language, source, reuse)
+	if typeScriptFullParseNeedsDestructuredArrowReturnMergeWidth(p.language, source, reuse) {
+		if mergePerKeyCap < maxStacksPerMergeKey {
+			mergePerKeyCap = maxStacksPerMergeKey
+		}
+	} else if tsNeedsTypedArrow && mergePerKeyCap < 2 {
 		mergePerKeyCap = 2
 	}
 	if javaFullParseNeedsAnnotationDeclarationMergeWidth(p.language, source, reuse) && mergePerKeyCap < javaFullParseRetryMaxMergePerKey {
 		mergePerKeyCap = javaFullParseRetryMaxMergePerKey
 	}
-	if maxMergePerKeyOverride > mergePerKeyCap {
+	if maxMergePerKeyOverride < 0 {
+		mergePerKeyCap = -maxMergePerKeyOverride
+	} else if maxMergePerKeyOverride > mergePerKeyCap {
 		mergePerKeyCap = maxMergePerKeyOverride
 	}
 	if mergePerKeyCap > maxStacksPerMergeKeyCeiling {
@@ -3116,7 +5914,7 @@ func (p *Parser) configureParseCaps(source []byte, reuse *reuseCursor, arenaClas
 		retryPass:           retryPass,
 		mergePerKeyCap:      mergePerKeyCap,
 		maxStackCullTrigger: glrStackCullTrigger(maxStacks, arenaClass, languageName(p.language)),
-		maxIter:             parseIterations(len(source)),
+		maxIter:             parseIterationsForLanguage(len(source), p.language),
 		maxDepth:            parseStackDepth(len(source)),
 		maxNodes:            maxNodes,
 	}
@@ -3204,10 +6002,15 @@ func (p *Parser) prepareParseStacksForIteration(stacks []glrStack, scratch *pars
 		return result
 	}
 	scratch.merge.language = p.language
+	scratch.merge.trace = p.glrTrace
+	scratch.merge.cRecoveryCost = p.errorCostCompetitionEnabled()
 	scratch.merge.deferExactDedupe = languageDefersExactDedupe(p.language, p.noTreeBenchmarkOnly)
 	scratch.merge.frontierMergeHash = p.usesGenericFrontierMergeHash()
 	if p.ambiguityProfile != nil {
 		p.ambiguityProfile.recordMergeBefore(stacks)
+	}
+	if p.glrTrace {
+		p.traceCRecoverPrepareStacks("pre-merge", stacks)
 	}
 	if phaseTiming && glrMergeNanos != nil {
 		mergeStart := time.Now()
@@ -3215,6 +6018,9 @@ func (p *Parser) prepareParseStacksForIteration(stacks []glrStack, scratch *pars
 		*glrMergeNanos += time.Since(mergeStart).Nanoseconds()
 	} else {
 		result.stacks = mergeStacksWithScratch(stacks, &scratch.merge)
+	}
+	if p.glrTrace {
+		p.traceCRecoverPrepareStacks("post-merge", result.stacks)
 	}
 	if p.ambiguityProfile != nil {
 		p.ambiguityProfile.recordMergeAfter(result.stacks)
@@ -3224,12 +6030,42 @@ func (p *Parser) prepareParseStacksForIteration(stacks []glrStack, scratch *pars
 		return result
 	}
 	result.stacks = p.cullParseStacksForIteration(result.stacks, scratch, arenaClass, maxStacks, maxStackCullTrigger, phaseTiming, glrCullNanos)
+	if p.glrTrace {
+		p.traceCRecoverPrepareStacks("post-cull", result.stacks)
+	}
 	if len(result.stacks) > 1 {
 		p.promotePrimaryStack(result.stacks)
 	}
 	scratch.gss.singleStackMode = len(result.stacks) == 1
 	clearParseStackEntryCaches(result.stacks)
 	return result
+}
+
+func (p *Parser) traceCRecoverPrepareStacks(label string, stacks []glrStack) {
+	interesting := false
+	for i := range stacks {
+		if stacks[i].cRec != nil || stacks[i].cRecoverMissingGroup != nil {
+			interesting = true
+			break
+		}
+	}
+	if !interesting {
+		return
+	}
+	fmt.Printf("[GLR] %s recovery stacks=%d\n", label, len(stacks))
+	for i := range stacks {
+		fmt.Printf("  %s[%d]: kind=%s st=%d dead=%v shift=%v dep=%d score=%d byte=%d\n",
+			label,
+			i,
+			cRecoverStackTraceKind(stacks[i]),
+			stacks[i].top().state,
+			stacks[i].dead,
+			stacks[i].shifted,
+			stacks[i].depth(),
+			stacks[i].score,
+			stacks[i].byteOffset,
+		)
+	}
 }
 
 func (r *parseStackPrepResult) stop(reason ParseStopReason, errorTree bool) {
@@ -3245,6 +6081,20 @@ func allParseStacksDead(stacks []glrStack) bool {
 		}
 	}
 	return true
+}
+
+func allLiveUnacceptedStacksShifted(stacks []glrStack) bool {
+	liveUnaccepted := 0
+	for i := range stacks {
+		if stacks[i].dead || stacks[i].accepted {
+			continue
+		}
+		liveUnaccepted++
+		if !stacks[i].shifted {
+			return false
+		}
+	}
+	return liveUnaccepted > 0
 }
 
 func (p *Parser) cullParseStacksForIteration(stacks []glrStack, scratch *parserScratch, arenaClass arenaClass, maxStacks, maxStackCullTrigger int, phaseTiming bool, glrCullNanos *int64) []glrStack {
@@ -3308,7 +6158,7 @@ func (t *parseMissingShiftTracker) resetForToken() {
 	t.consecutive = 0
 }
 
-func (t *parseMissingShiftTracker) tryInsert(p *Parser, stackIndex int, s *glrStack, currentState StateID, tok Token, nodeCount *int, arena *nodeArena, scratch *parserScratch, trackChildErrors *bool) bool {
+func (t *parseMissingShiftTracker) tryInsert(p *Parser, source []byte, stackIndex int, s *glrStack, currentState StateID, tok Token, nodeCount *int, arena *nodeArena, scratch *parserScratch, trackChildErrors *bool) bool {
 	missingShiftDepth := s.depth()
 	if t.matches(currentState, missingShiftDepth, tok) && t.consecutive >= maxConsecutiveMissingSingleShifts {
 		if p.glrTrace {
@@ -3317,7 +6167,7 @@ func (t *parseMissingShiftTracker) tryInsert(p *Parser, stackIndex int, s *glrSt
 		}
 		return false
 	}
-	if !p.tryInsertMissingSingleShift(s, tok, nodeCount, arena, &scratch.entries, &scratch.gss, trackChildErrors) {
+	if !p.tryInsertMissingSingleShift(source, s, tok, nodeCount, arena, &scratch.entries, &scratch.gss, trackChildErrors) {
 		return false
 	}
 	if t.matches(currentState, missingShiftDepth, tok) {
@@ -3397,6 +6247,45 @@ func (p *Parser) actionsForParseState(state StateID, symbol Symbol, parseActions
 	return parseActions[actionIdx].Actions
 }
 
+// forestResolveConflict applies the same deterministic conflict tie-breaks the
+// production GLR loop uses (the `switch p.language.Name` block) to the GSS-forest
+// fast path. The forest disambiguates surviving alternatives purely by subtree
+// score (dynamic precedence); when two interpretations tie at score 0 the forest
+// keeps whichever coalesced first, which does not always match C tree-sitter's
+// associativity-driven resolution. For the conflicts that C resolves at table
+// generation via prec/associativity (not a runtime dynamic-precedence number),
+// we collapse the action set to the single C-preferred action so the forest
+// builds the matching shape. When no scoped rule applies, the full action set is
+// returned unchanged and the forest's normal multi-action handling proceeds.
+func (p *Parser) forestResolveConflict(state StateID, tok Token, actions []ParseAction) []ParseAction {
+	if p == nil || p.language == nil || len(actions) < 2 {
+		return actions
+	}
+	if chosen, ok := conflictPolicyChoice(p.language, tok, state, actions); ok {
+		return p.forestSingletonActions(chosen)
+	}
+	if generatedRepeatBoundaryConflict(p.language, actions) {
+		return actions
+	}
+	if p.language.GeneratedByGrammargen {
+		return actions
+	}
+	switch p.language.Name {
+	case "dot":
+		if chosen, ok := dotRepetitionShiftConflictChoice(p.language, tok, state, actions); ok {
+			return p.forestSingletonActions(chosen)
+		}
+	}
+	return actions
+}
+
+// forestSingletonActions returns a reusable one-element action slice holding the
+// chosen action, avoiding a per-call allocation in the forest hot loop.
+func (p *Parser) forestSingletonActions(act ParseAction) []ParseAction {
+	p.forestConflictChoice[0] = act
+	return p.forestConflictChoice[:1]
+}
+
 func (p *Parser) traceStackActions(stackIndex int, state StateID, symbol Symbol, actions []ParseAction) {
 	if !p.glrTrace {
 		return
@@ -3450,11 +6339,43 @@ func bestRetryRecoveryStack(stacks []glrStack) int {
 }
 
 func (p *Parser) updateParserStateTokenSource(ts TokenSource, stacks []glrStack, scratch *parserScratch) {
+	p.cRecoverSharedTokenErrorModeLexed = false
 	stateful, ok := ts.(parserStateTokenSource)
 	if !ok || len(stacks) == 0 {
 		return
 	}
-	stateful.SetParserState(stacks[0].top().state)
+	// Faithful C recovery port (parser_recover_c.go): C versions each lex
+	// with their own state's mode, so the merged error version's ERROR_STATE
+	// mode — where every token, external tokens included, is valid — never
+	// leaks into another version's lexing. This engine lexes once for all
+	// stacks; keep absorbing stacks (head at the C error state) out of the
+	// primary-state choice and the GLR lex union while any normally-parsing
+	// stack is live. When only absorbing stacks remain, ERROR_STATE drives
+	// the lex exactly like C's error-mode lexing.
+	excludeAbsorbing := false
+	primary := stacks[0].top().state
+	if p.errorCostCompetitionEnabled() {
+		for si := range stacks {
+			if stacks[si].dead {
+				continue
+			}
+			if stacks[si].cRec != nil && stacks[si].top().state == cErrorState {
+				continue
+			}
+			primary = stacks[si].top().state
+			excludeAbsorbing = true
+			break
+		}
+		if primary == cErrorState {
+			if em, ok := ts.(errorModeLexingTokenSource); ok && em.lexesErrorModeAtErrorState() {
+				// Every live stack is absorbing and the source will lex this
+				// token with the ERROR-state mode — C-equivalent error-mode
+				// lookahead; the strategy-1 election can trust it directly.
+				p.cRecoverSharedTokenErrorModeLexed = true
+			}
+		}
+	}
+	stateful.SetParserState(primary)
 	if len(stacks) == 1 || p.usesPrimaryExternalScannerStateForGLR() {
 		clearGLRStateTokenSource(stateful, scratch)
 		return
@@ -3464,12 +6385,83 @@ func (p *Parser) updateParserStateTokenSource(ts TokenSource, stacks []glrStack,
 		glrBuf = make([]StateID, 0, len(stacks))
 	}
 	for si := range stacks {
-		if !stacks[si].dead {
-			glrBuf = append(glrBuf, stacks[si].top().state)
+		if stacks[si].dead {
+			continue
 		}
+		if excludeAbsorbing && stacks[si].cRec != nil && stacks[si].top().state == cErrorState {
+			continue
+		}
+		glrBuf = append(glrBuf, stacks[si].top().state)
 	}
 	scratch.glrStates = glrBuf
 	stateful.SetGLRStates(glrBuf)
+}
+
+func (p *Parser) updateCurrentRelexParserStateTokenSource(ts TokenSource, stacks []glrStack, scratch *parserScratch) bool {
+	stateful, ok := ts.(parserStateTokenSource)
+	if !ok || len(stacks) == 0 {
+		return false
+	}
+
+	primaryIdx := -1
+	excludeAbsorbing := false
+	if p.errorCostCompetitionEnabled() {
+		for si := range stacks {
+			if !currentRelexStateStackEligible(&stacks[si]) {
+				continue
+			}
+			if stacks[si].cRec != nil && stacks[si].top().state == cErrorState {
+				continue
+			}
+			primaryIdx = si
+			excludeAbsorbing = true
+			break
+		}
+	}
+	if primaryIdx == -1 {
+		for si := range stacks {
+			if currentRelexStateStackEligible(&stacks[si]) {
+				primaryIdx = si
+				break
+			}
+		}
+	}
+	if primaryIdx == -1 {
+		clearGLRStateTokenSource(stateful, scratch)
+		return false
+	}
+
+	primary := stacks[primaryIdx].top().state
+	stateful.SetParserState(primary)
+	if p.usesPrimaryExternalScannerStateForGLR() {
+		clearGLRStateTokenSource(stateful, scratch)
+		return true
+	}
+
+	glrBuf := scratch.glrStates[:0]
+	if cap(glrBuf) < len(stacks) {
+		glrBuf = make([]StateID, 0, len(stacks))
+	}
+	for si := range stacks {
+		if !currentRelexStateStackEligible(&stacks[si]) {
+			continue
+		}
+		if excludeAbsorbing && stacks[si].cRec != nil && stacks[si].top().state == cErrorState {
+			continue
+		}
+		glrBuf = append(glrBuf, stacks[si].top().state)
+	}
+	scratch.glrStates = glrBuf
+	if len(glrBuf) <= 1 {
+		clearGLRStateTokenSource(stateful, scratch)
+		return true
+	}
+	stateful.SetGLRStates(glrBuf)
+	return true
+}
+
+func currentRelexStateStackEligible(s *glrStack) bool {
+	return s != nil && !s.dead && !s.shifted && s.depth() > 0
 }
 
 func (p *Parser) usesPrimaryExternalScannerStateForGLR() bool {
@@ -3499,6 +6491,7 @@ func (p *Parser) applyExtraShiftAction(s *glrStack, currentState StateID, act Pa
 		leaf.setHasError(true)
 	}
 	leaf.setExtra(true)
+	leaf.setExternalScannerToken(tok.ExternalScannerToken)
 	leaf.preGotoState = currentState
 	leaf.parseState = targetState
 	p.recordCurrentExternalLeafCheckpoint(leaf, tok)
@@ -3509,6 +6502,7 @@ func (p *Parser) applyCompactExtraShiftAction(s *glrStack, currentState, targetS
 	if cp, ok := p.currentExternalNoTreeLeafCheckpointRef(arena, tok); ok {
 		leaf := newCompactCheckpointLeafInArena(arena, tok.Symbol, named, tok.StartByte, tok.EndByte, cp)
 		leaf.setExtra(true)
+		leaf.setExternalScannerToken(tok.ExternalScannerToken)
 		leaf.preGotoState = currentState
 		leaf.parseState = targetState
 		p.pushStackCompactCheckpointLeaf(s, targetState, leaf, &scratch.entries, &scratch.gss)
@@ -3516,6 +6510,7 @@ func (p *Parser) applyCompactExtraShiftAction(s *glrStack, currentState, targetS
 	}
 	leaf := newNoTreeLeafNodeInArena(arena, tok.Symbol, named, tok.StartByte, tok.EndByte, tok.StartPoint, tok.EndPoint)
 	leaf.setExtra(true)
+	leaf.setExternalScannerToken(tok.ExternalScannerToken)
 	leaf.preGotoState = currentState
 	leaf.parseState = targetState
 	p.pushStackNoTreeNode(s, targetState, leaf, &scratch.entries, &scratch.gss)
@@ -3735,6 +6730,13 @@ func javaRepetitionShiftConflictChoice(lang *Language, source []byte, tok Token,
 	return repetitionShiftConflictChoice(actions)
 }
 
+func javaRepetitionShiftConflictChoiceForDispatch(lang *Language, source []byte, tok Token, state StateID, actions []ParseAction) (ParseAction, bool) {
+	if glrFaithfulCapOneMerge {
+		return ParseAction{}, false
+	}
+	return javaRepetitionShiftConflictChoice(lang, source, tok, state, actions)
+}
+
 func typescriptRepetitionShiftConflictChoice(lang *Language, tok Token, state StateID, actions []ParseAction) (ParseAction, bool) {
 	if lang == nil {
 		return ParseAction{}, false
@@ -3759,6 +6761,13 @@ func typescriptRepetitionShiftConflictChoice(lang *Language, tok Token, state St
 		return ParseAction{}, false
 	}
 	return repetitionShiftConflictChoice(actions)
+}
+
+func typescriptRepetitionShiftConflictChoiceForDispatch(lang *Language, tok Token, state StateID, actions []ParseAction) (ParseAction, bool) {
+	if glrFaithfulCapOneMerge {
+		return ParseAction{}, false
+	}
+	return typescriptRepetitionShiftConflictChoice(lang, tok, state, actions)
 }
 
 // kotlinObjectLiteralConflictChoice resolves issue #93: the bundled Kotlin
@@ -3871,23 +6880,11 @@ func javascriptRepetitionShiftConflictChoice(lang *Language, tok Token, state St
 	return repetitionShiftConflictChoice(actions)
 }
 
-// pythonRepetitionShiftConflictChoice resolves the module_repeat1 boundary
-// where statement-start identifiers and definitions can either reduce the
-// existing module list or shift as the next top-level statement. The shift
-// continues the list while preserving current Python parity gates.
-func pythonRepetitionShiftConflictChoice(lang *Language, tok Token, state StateID, actions []ParseAction) (ParseAction, bool) {
-	if lang == nil {
+func javascriptRepetitionShiftConflictChoiceForDispatch(lang *Language, tok Token, state StateID, actions []ParseAction) (ParseAction, bool) {
+	if glrFaithfulCapOneMerge {
 		return ParseAction{}, false
 	}
-	switch state {
-	case 71, 72:
-		if !symbolHasName(lang, tok.Symbol, "identifier") && !symbolHasName(lang, tok.Symbol, "def") {
-			return ParseAction{}, false
-		}
-	default:
-		return ParseAction{}, false
-	}
-	return repetitionShiftConflictChoice(actions)
+	return javascriptRepetitionShiftConflictChoice(lang, tok, state, actions)
 }
 
 func rRepetitionShiftConflictChoice(lang *Language, state StateID, actions []ParseAction) (ParseAction, bool) {
@@ -3986,33 +6983,6 @@ func sqlRepetitionShiftConflictChoice(lang *Language, tok Token, state StateID, 
 	switch state {
 	case 10852:
 		if !symbolHasName(lang, tok.Symbol, ",") || !allReducesHaveSymbol(lang, actions, "select_clause_body_repeat1") {
-			return ParseAction{}, false
-		}
-	default:
-		return ParseAction{}, false
-	}
-	return repetitionShiftConflictChoice(actions)
-}
-
-// dartRepetitionShiftConflictChoice collapses Dart list-boundary forks where a
-// repeat reduce competes with shifting the next element. These states dominate
-// the current Dart real-corpus shard: enum bodies, extension bodies, and
-// top-level program declarations.
-func dartRepetitionShiftConflictChoice(lang *Language, state StateID, actions []ParseAction) (ParseAction, bool) {
-	if lang == nil {
-		return ParseAction{}, false
-	}
-	switch state {
-	case 596:
-		if !allReducesHaveSymbol(lang, actions, "enum_body_repeat2") {
-			return ParseAction{}, false
-		}
-	case 602:
-		if !allReducesHaveSymbol(lang, actions, "extension_body_repeat1") {
-			return ParseAction{}, false
-		}
-	case 479:
-		if !allReducesHaveSymbol(lang, actions, "program_repeat4") {
 			return ParseAction{}, false
 		}
 	default:
@@ -4225,6 +7195,54 @@ func awkRepetitionShiftConflictChoice(lang *Language, state StateID, actions []P
 	return repetitionShiftConflictChoice(actions)
 }
 
+// schemeRepetitionShiftConflictChoice collapses Scheme's block-comment body
+// repeat continuation. The Scheme table exposes block comments as
+// "#|" block_comment_repeat1 "|#"; inside a long comment, state 129 on
+// block_comment_token1 offers both "reduce block_comment_repeat1 (2 children)"
+// and "shift next block_comment_token1 as a repetition". C continues the
+// repeat deterministically; forking on every comment byte keeps hundreds of
+// equivalent versions alive and can hit the iteration budget before the named
+// block_comment reduces. Keep this scoped to that exact hidden-repeat shape.
+func schemeRepetitionShiftConflictChoice(lang *Language, tok Token, state StateID, actions []ParseAction) (ParseAction, bool) {
+	if lang == nil || state != 129 || !symbolHasName(lang, tok.Symbol, "block_comment_token1") {
+		return ParseAction{}, false
+	}
+	foundReduce := false
+	for _, act := range actions {
+		if act.Type != ParseActionReduce {
+			continue
+		}
+		if act.ChildCount != 2 || !symbolHasName(lang, act.Symbol, "block_comment_repeat1") {
+			return ParseAction{}, false
+		}
+		foundReduce = true
+	}
+	if !foundReduce {
+		return ParseAction{}, false
+	}
+	return repetitionShiftConflictChoice(actions)
+}
+
+// dotRepetitionShiftConflictChoice collapses DOT's top-level statement-list
+// continuation fork. Upstream's `stmt_list` repeat closes only on `}`, so an
+// `identifier` after an existing statement is always another statement start;
+// taking the repetition shift matches C tree-sitter and prevents large graph
+// files from keeping both list-boundary interpretations alive.
+func dotRepetitionShiftConflictChoice(lang *Language, tok Token, state StateID, actions []ParseAction) (ParseAction, bool) {
+	if lang == nil || state != 4 {
+		return ParseAction{}, false
+	}
+	if tok.Symbol != 0 && !symbolHasName(lang, tok.Symbol, "identifier") {
+		return ParseAction{}, false
+	}
+	for _, act := range actions {
+		if act.Type == ParseActionReduce && !symbolHasName(lang, act.Symbol, "stmt_list_repeat1") {
+			return ParseAction{}, false
+		}
+	}
+	return repetitionShiftConflictChoice(actions)
+}
+
 func singleReduceAgainstRepetitionShiftConflictChoice(actions []ParseAction) (ParseAction, bool) {
 	if len(actions) < 2 {
 		return ParseAction{}, false
@@ -4298,6 +7316,14 @@ func tsxRepetitionReduceConflictChoice(lang *Language, tok Token, state StateID,
 		return ParseAction{}, false
 	}
 	return reduce, true
+}
+
+func (p *Parser) initSchemeErrorRecoverySymbols(lang *Language) {
+	if p == nil || lang == nil || lang.Name != "scheme" {
+		return
+	}
+	p.isScheme = true
+	p.schemeDatumSymbol, p.schemeHasDatumSymbol = lang.SymbolByName("_datum")
 }
 
 func (p *Parser) initTypeScriptContextualKeywordSymbols(lang *Language) {

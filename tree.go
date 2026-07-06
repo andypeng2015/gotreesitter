@@ -6,8 +6,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"unicode"
-	"unicode/utf8"
 )
 
 // Range is a span of source text.
@@ -22,24 +20,26 @@ type Range struct {
 type Node struct {
 	// Layout is performance-sensitive. Keep TestNodeLayoutSizeBudget updated
 	// when changing field order or adding fields.
-	children      []*Node
-	fieldIDs      []FieldID // parallel to children, 0 = no field
-	fieldSources  []uint8   // parallel to children, 0 = none, 1 = direct, 2 = inherited
-	parent        *Node
-	ownerArena    *nodeArena
-	startPoint    Point
-	endPoint      Point
-	startByte     uint32
-	endByte       uint32
-	parseState    StateID // parser state after this node was pushed
-	preGotoState  StateID // parser state before goto (state exposed after popping children)
-	equivVersion  uint32
-	childIndex    int32
-	symbol        Symbol
-	productionID  uint16
-	flags         nodeFlags
-	dirtyFlag     bool
-	subtreeHeight uint8 // forest dedup tie-break cache (0 = uncomputed); see nodeCachedHeight
+	children          []*Node
+	fieldIDs          []FieldID // parallel to children, 0 = no field
+	fieldSources      []uint8   // parallel to children, 0 = none, 1 = direct, 2 = inherited
+	parent            *Node
+	ownerArena        *nodeArena
+	startPoint        Point
+	endPoint          Point
+	startByte         uint32
+	endByte           uint32
+	parseState        StateID // parser state after this node was pushed
+	preGotoState      StateID // parser state before goto (state exposed after popping children)
+	equivVersion      uint32
+	dynamicPrecedence int32
+	childIndex        int32
+	symbol            Symbol
+	rawShape          rawShapeRef
+	productionID      uint16
+	flags             nodeFlags
+	dirtyFlag         bool
+	subtreeHeight     uint8 // forest dedup tie-break cache (0 = uncomputed); see nodeCachedHeight
 }
 
 type nodeFlags uint8
@@ -59,6 +59,7 @@ const (
 	// already-built immutable child subtrees.
 	nodeFlagFieldIDCacheComputed
 	nodeFlagFieldIDCacheHasFieldIDs
+	nodeFlagExternalScannerToken
 )
 
 func (n *Node) hasFlag(flag nodeFlags) bool {
@@ -81,6 +82,10 @@ func (n *Node) isMissing() bool    { return n.hasFlag(nodeFlagMissing) }
 func (n *Node) setMissing(v bool)  { n.setFlag(nodeFlagMissing, v) }
 func (n *Node) hasError() bool     { return n.hasFlag(nodeFlagHasError) }
 func (n *Node) setHasError(v bool) { n.setFlag(nodeFlagHasError, v) }
+func (n *Node) isExternalScannerToken() bool {
+	return n != nil && n.hasFlag(nodeFlagExternalScannerToken)
+}
+func (n *Node) setExternalScannerToken(v bool) { n.setFlag(nodeFlagExternalScannerToken, v) }
 func (n *Node) dirty() bool {
 	return n != nil && (n.dirtyFlag || n.hasFlag(nodeFlagDirty))
 }
@@ -651,148 +656,255 @@ type ParseEquivStateRuntime struct {
 
 // ParseRuntime captures parser-loop diagnostics for a completed tree.
 type ParseRuntime struct {
-	StopReason                                   ParseStopReason
-	ForestFastPath                               bool
-	SourceLen                                    uint32
-	ExpectedEOFByte                              uint32
-	RootEndByte                                  uint32
-	Truncated                                    bool
-	TokenSourceEOFEarly                          bool
-	TokensConsumed                               uint64
-	LastTokenEndByte                             uint32
-	LastTokenSymbol                              Symbol
-	LastTokenWasEOF                              bool
-	IterationLimit                               int
-	StackDepthLimit                              int
-	NodeLimit                                    int
-	MemoryBudgetBytes                            int64
-	Iterations                                   int
-	NodesAllocated                               int
-	ArenaBytesAllocated                          int64
-	ScratchBytesAllocated                        int64
-	EntryScratchBytesAllocated                   int64
-	GSSBytesAllocated                            int64
-	PeakStackDepth                               int
-	MaxStacksSeen                                int
-	SingleStackIterations                        int
-	MultiStackIterations                         int
-	SingleStackTokens                            uint64
-	MultiStackTokens                             uint64
-	SingleStackGSSNodes                          uint64
-	MultiStackGSSNodes                           uint64
-	GSSNodesAllocated                            uint64
-	GSSNodesRetained                             uint64
-	GSSNodesDroppedSameToken                     uint64
-	ParentNodesAllocated                         uint64
-	ParentNodesRetained                          uint64
-	ParentNodesDroppedSameToken                  uint64
-	LeafNodesAllocated                           uint64
-	LeafNodesRetained                            uint64
-	LeafNodesDroppedSameToken                    uint64
-	ChildSlicesAllocated                         uint64
-	ChildSlicesRetained                          uint64
-	ChildSlicesDroppedSameToken                  uint64
-	ChildPointersAllocated                       uint64
-	ChildPointersRetained                        uint64
-	ChildPointersDroppedSameToken                uint64
-	ReduceChildFastGSS                           ReduceChildPathRuntime
-	ReduceChildAllVisible                        ReduceChildPathRuntime
-	ReduceChildNoAlias                           ReduceChildPathRuntime
-	ReduceChildScratchGeneral                    ReduceChildPathRuntime
-	ReduceChildScratchNoAlias                    ReduceChildPathRuntime
-	TransientChildSlicesAllocated                uint64
-	TransientChildPointersAllocated              uint64
-	TransientChildSlicesMaterialized             uint64
-	TransientChildPointersMaterialized           uint64
-	TransientParentNodesAllocated                uint64
-	TransientParentNodesMaterialized             uint64
-	FinalNodes                                   uint64
-	FinalParentNodes                             uint64
-	FinalLeafNodes                               uint64
-	FinalFieldedParentNodes                      uint64
-	FinalUnfieldedParentNodes                    uint64
-	FinalVisibleParentNodes                      uint64
-	FinalHiddenParentNodes                       uint64
-	FinalCheckpointLeafNodes                     uint64
-	FinalChildSlices                             uint64
-	FinalChildPointers                           uint64
-	FinalFieldIDElements                         uint64
-	FinalFieldSourceElements                     uint64
-	FinalChildRefParents                         uint64
-	FinalChildRefs                               uint64
-	FinalChildRefMaterializedParents             uint64
-	FinalChildRefMaterializedChildren            uint64
-	FinalChildRefSingleChildAccesses             uint64
-	FinalChildRefSingleChildMaterializedChildren uint64
-	MergeStacksIn                                uint64
-	MergeStacksOut                               uint64
-	MergeSlotsUsed                               uint64
-	GlobalCullStacksIn                           uint64
-	GlobalCullStacksOut                          uint64
-	StackEquivCalls                              uint64
-	StackEquivTrue                               uint64
-	StackEquivDepthMismatch                      uint64
-	StackEquivHashMismatch                       uint64
-	StackEquivStateMismatch                      uint64
-	StackEquivPayloadMismatch                    uint64
-	StackEquivEntryCompares                      uint64
-	StackEquivStateMismatchDepthSum              uint64
-	StackEquivStateMismatchMaxDepth              uint32
-	StackEquivStateMismatchDepthBuckets          [stackEquivMismatchDepthBucketCount]uint64
-	StackEquivPayloadMismatchDepthSum            uint64
-	StackEquivPayloadMismatchMaxDepth            uint32
-	StackEquivPayloadMismatchDepthBuckets        [stackEquivMismatchDepthBucketCount]uint64
-	StackEquivPayloadHeaderSigDiff               uint64
-	StackEquivPayloadHeaderSigSame               uint64
-	StackEquivPayloadShallowSigDiff              uint64
-	StackEquivPayloadShallowSigSame              uint64
-	StackEquivPairKeyed                          uint64
-	StackEquivPairUnkeyed                        uint64
-	StackEquivPairRepeats                        uint64
-	StackEquivPairRepeatTrue                     uint64
-	StackEquivPairRepeatFalse                    uint64
-	StackEquivPairRepeatMismatch                 uint64
-	StackEquivPairStores                         uint64
-	MergeHeaderEqTotal                           uint64
-	MergeDeepTrue                                uint64
-	MergeDeepFalse                               uint64
-	MergeHeaderDeepDivergent                     uint64
-	EquivCacheLookups                            uint64
-	EquivCacheHits                               uint64
-	EquivCacheStores                             uint64
-	EquivCacheMisses                             uint64
-	EquivCacheTrueHits                           uint64
-	EquivCacheFalseHits                          uint64
-	EquivCacheEpochMisses                        uint64
-	EquivCacheKeyMisses                          uint64
-	EquivCacheVersionMisses                      uint64
-	EquivSkipError                               uint64
-	EquivSkipLeaf                                uint64
-	EquivSkipFieldMismatch                       uint64
-	EquivExactCalls                              uint64
-	EquivExactTrue                               uint64
-	EquivExactPointerTrue                        uint64
-	EquivExactNilMismatch                        uint64
-	EquivExactHeaderMismatch                     uint64
-	EquivExactChildMismatch                      uint64
-	EquivExactTerminalCalls                      uint64
-	EquivExactTerminalTrue                       uint64
-	EquivExactTerminalFalse                      uint64
-	EquivFrontierCalls                           uint64
-	EquivFrontierTrue                            uint64
-	EquivExactChildCompares                      uint64
-	EquivFrontierChildScans                      uint64
-	EquivFrontierCandidateCompares               uint64
-	EquivStateStats                              []ParseEquivStateRuntime
-	ParseWallNanos                               int64
-	ParserLoopNanos                              int64
-	TokenNextNanos                               int64
-	ActionDispatchNanos                          int64
-	ActionLookupNanos                            int64
-	GLRMergeNanos                                int64
-	GLRCullNanos                                 int64
-	ReduceTiming                                 *ParseReduceTiming
-	ActionTiming                                 *ParseActionTiming
+	StopReason     ParseStopReason
+	ForestFastPath bool
+	// CRecoveryEnteredErrorState is true when the faithful C error-recovery
+	// port (parser_recover_c.go) actually ran ts_parser__handle_error at
+	// least once while producing this specific tree — i.e. some no-action
+	// point was hit for the current lookahead. This is NOT proof the input is
+	// malformed: LALR table limitations routinely drive well-formed,
+	// compiling input into a momentary no-action point that C-recovery
+	// resolves losslessly (ordinary GLR disambiguation). It is only a cheap
+	// pre-filter for Parse()'s post-parse swallowed-error safety net
+	// (resolveCRecoverySwallowedError) — see CRecoveryDroppedErrorForClean
+	// for the actual, precise suspicion signal. It is captured per finalized
+	// tree (not read from a raw Parser field) so a discarded retry attempt
+	// can never leave a stale value on the tree that is actually returned.
+	CRecoveryEnteredErrorState bool
+	// CRecoveryDroppedErrorForClean is true when the stack SELECTED as this
+	// tree's parse result (buildResultFromGLR, parser_result.go) carried an
+	// unvalidated C-recovery marker (see glrStack.cRecoveryUnvalidatedMarker)
+	// with no unflagged sibling reaching the same final position — i.e. the
+	// selected lineage itself created a real ERROR node via cRecoverToState
+	// (for a single-stack dead end with a small recovered span) and was
+	// never re-validated by another cost competition. This is the precise
+	// signature of the swallowed-error defect class (see
+	// resolveCRecoverySwallowedError): unlike an ordinary clean recovery (no
+	// unvalidated marker, or a corroborating clean sibling, at the same
+	// position), this means the specific result being returned lost real
+	// ERROR content somewhere along its own lineage. Deliberately scoped to
+	// the selected result only — NOT set for drops/forks on discarded
+	// lineages elsewhere in the parse, nor for large/multi-stack recoveries;
+	// both were tried and found to fire on ordinary GLR disambiguation for a
+	// measurable fraction of valid, compiling source in a real repo-file
+	// walk (the discarded-lineage version: thousands of times per large Go
+	// file) and were the cause of a prior, over-broad version of this
+	// signal's false-fire rate.
+	CRecoveryDroppedErrorForClean bool
+	// CRecoverySwallowedErrorFallbackAttempted is true when
+	// resolveCRecoverySwallowedError actually re-parsed the source with the
+	// C-recovery gate disabled to double-check a suspicious clean result (see
+	// CRecoveryDroppedErrorForClean). Diagnostic only — lets callers measure
+	// the fallback's false-fire rate (extra latency from a re-parse that is
+	// usually discarded) against their own corpora, e.g. by walking a tree of
+	// known-valid source files and counting how often this is true.
+	CRecoverySwallowedErrorFallbackAttempted      bool
+	SourceLen                                     uint32
+	ExpectedEOFByte                               uint32
+	RootEndByte                                   uint32
+	Truncated                                     bool
+	TokenSourceEOFEarly                           bool
+	TokensConsumed                                uint64
+	LastTokenEndByte                              uint32
+	LastTokenSymbol                               Symbol
+	LastTokenWasEOF                               bool
+	StopDiagnosticCaptured                        bool
+	StopDiagnosticCRecoveryEnabled                bool
+	StopDiagnosticCRecoveryGateReason             string
+	StopDiagnosticRecoverActionAvailable          bool
+	StopDiagnosticLastStackState                  StateID
+	StopDiagnosticLastStackByte                   uint32
+	StopDiagnosticLastStackDepth                  int
+	StopDiagnosticTokenSymbol                     Symbol
+	StopDiagnosticTokenStartByte                  uint32
+	StopDiagnosticTokenEndByte                    uint32
+	StopDiagnosticTokenNoLookahead                bool
+	StopDiagnosticRootType                        string
+	StopDiagnosticRootStartByte                   uint32
+	StopDiagnosticRootEndByte                     uint32
+	StopDiagnosticRootHasError                    bool
+	StopDiagnosticFirstErrorFound                 bool
+	StopDiagnosticFirstErrorStartByte             uint32
+	StopDiagnosticFirstErrorEndByte               uint32
+	StopDiagnosticFrontierStacks                  string
+	StopDiagnosticFrontierActions                 string
+	StopDiagnosticSameHeaderGroups                string
+	StopDiagnosticCondenseGating                  string
+	StopDiagnosticActionCaptured                  bool
+	StopDiagnosticActionPhase                     string
+	StopDiagnosticActionStackState                StateID
+	StopDiagnosticActionStackByte                 uint32
+	StopDiagnosticActionStackDepth                int
+	StopDiagnosticActionTokenSymbol               Symbol
+	StopDiagnosticActionTokenStartByte            uint32
+	StopDiagnosticActionTokenEndByte              uint32
+	StopDiagnosticActionTokenNoLookahead          bool
+	StopDiagnosticActionType                      ParseActionType
+	StopDiagnosticActionState                     StateID
+	StopDiagnosticActionSymbol                    Symbol
+	StopDiagnosticActionChildCount                uint8
+	StopDiagnosticActionProductionID              uint16
+	StopDiagnosticActionDynamicPrecedence         int16
+	StopDiagnosticActionCount                     int
+	StopDiagnosticActionResultState               StateID
+	StopDiagnosticActionInReduceChain             bool
+	StopDiagnosticActionReduceChainStep           int
+	StopDiagnosticActionRepeatedSignatureCount    int
+	StopDiagnosticActionReduceChainCycle          bool
+	StopDiagnosticActionForceAdvanceAfterReduce   bool
+	StopDiagnosticActionPostDispatchDefaultReduce bool
+	StopDiagnosticActionAnyReduced                bool
+	StopDiagnosticActionConsumedToken             bool
+	StopDiagnosticActionDispatchShiftActions      int
+	StopDiagnosticActionDispatchReduceActions     int
+	StopDiagnosticActionDispatchAcceptActions     int
+	StopDiagnosticActionDispatchRecoverActions    int
+	StopDiagnosticActionDispatchOtherActions      int
+	StopDiagnosticLastReduceCaptured              bool
+	StopDiagnosticLastReducePhase                 string
+	StopDiagnosticLastReduceStackState            StateID
+	StopDiagnosticLastReduceStackByte             uint32
+	StopDiagnosticLastReduceStackDepth            int
+	StopDiagnosticLastReduceSymbol                Symbol
+	StopDiagnosticLastReduceChildCount            uint8
+	StopDiagnosticLastReduceProductionID          uint16
+	StopDiagnosticLastReduceDynamicPrecedence     int16
+	StopDiagnosticLastReduceResultState           StateID
+	StopDiagnosticLastReduceInChain               bool
+	StopDiagnosticLastReduceChainStep             int
+	StopDiagnosticLastReduceRepeatedSigCount      int
+	StopDiagnosticLastReduceChainCycle            bool
+	IterationLimit                                int
+	StackDepthLimit                               int
+	NodeLimit                                     int
+	MemoryBudgetBytes                             int64
+	Iterations                                    int
+	NodesAllocated                                int
+	ArenaBytesAllocated                           int64
+	ScratchBytesAllocated                         int64
+	EntryScratchBytesAllocated                    int64
+	GSSBytesAllocated                             int64
+	PeakStackDepth                                int
+	MaxStacksSeen                                 int
+	SingleStackIterations                         int
+	MultiStackIterations                          int
+	SingleStackTokens                             uint64
+	MultiStackTokens                              uint64
+	SingleStackGSSNodes                           uint64
+	MultiStackGSSNodes                            uint64
+	GSSNodesAllocated                             uint64
+	GSSNodesRetained                              uint64
+	GSSNodesDroppedSameToken                      uint64
+	ParentNodesAllocated                          uint64
+	ParentNodesRetained                           uint64
+	ParentNodesDroppedSameToken                   uint64
+	LeafNodesAllocated                            uint64
+	LeafNodesRetained                             uint64
+	LeafNodesDroppedSameToken                     uint64
+	ChildSlicesAllocated                          uint64
+	ChildSlicesRetained                           uint64
+	ChildSlicesDroppedSameToken                   uint64
+	ChildPointersAllocated                        uint64
+	ChildPointersRetained                         uint64
+	ChildPointersDroppedSameToken                 uint64
+	ReduceChildFastGSS                            ReduceChildPathRuntime
+	ReduceChildAllVisible                         ReduceChildPathRuntime
+	ReduceChildNoAlias                            ReduceChildPathRuntime
+	ReduceChildScratchGeneral                     ReduceChildPathRuntime
+	ReduceChildScratchNoAlias                     ReduceChildPathRuntime
+	TransientChildSlicesAllocated                 uint64
+	TransientChildPointersAllocated               uint64
+	TransientChildSlicesMaterialized              uint64
+	TransientChildPointersMaterialized            uint64
+	TransientParentNodesAllocated                 uint64
+	TransientParentNodesMaterialized              uint64
+	FinalNodes                                    uint64
+	FinalParentNodes                              uint64
+	FinalLeafNodes                                uint64
+	FinalFieldedParentNodes                       uint64
+	FinalUnfieldedParentNodes                     uint64
+	FinalVisibleParentNodes                       uint64
+	FinalHiddenParentNodes                        uint64
+	FinalCheckpointLeafNodes                      uint64
+	FinalChildSlices                              uint64
+	FinalChildPointers                            uint64
+	FinalFieldIDElements                          uint64
+	FinalFieldSourceElements                      uint64
+	FinalChildRefParents                          uint64
+	FinalChildRefs                                uint64
+	FinalChildRefMaterializedParents              uint64
+	FinalChildRefMaterializedChildren             uint64
+	FinalChildRefSingleChildAccesses              uint64
+	FinalChildRefSingleChildMaterializedChildren  uint64
+	MergeStacksIn                                 uint64
+	MergeStacksOut                                uint64
+	MergeSlotsUsed                                uint64
+	GlobalCullStacksIn                            uint64
+	GlobalCullStacksOut                           uint64
+	StackEquivCalls                               uint64
+	StackEquivTrue                                uint64
+	StackEquivDepthMismatch                       uint64
+	StackEquivHashMismatch                        uint64
+	StackEquivStateMismatch                       uint64
+	StackEquivPayloadMismatch                     uint64
+	StackEquivEntryCompares                       uint64
+	StackEquivStateMismatchDepthSum               uint64
+	StackEquivStateMismatchMaxDepth               uint32
+	StackEquivStateMismatchDepthBuckets           [stackEquivMismatchDepthBucketCount]uint64
+	StackEquivPayloadMismatchDepthSum             uint64
+	StackEquivPayloadMismatchMaxDepth             uint32
+	StackEquivPayloadMismatchDepthBuckets         [stackEquivMismatchDepthBucketCount]uint64
+	StackEquivPayloadHeaderSigDiff                uint64
+	StackEquivPayloadHeaderSigSame                uint64
+	StackEquivPayloadShallowSigDiff               uint64
+	StackEquivPayloadShallowSigSame               uint64
+	StackEquivPairKeyed                           uint64
+	StackEquivPairUnkeyed                         uint64
+	StackEquivPairRepeats                         uint64
+	StackEquivPairRepeatTrue                      uint64
+	StackEquivPairRepeatFalse                     uint64
+	StackEquivPairRepeatMismatch                  uint64
+	StackEquivPairStores                          uint64
+	MergeHeaderEqTotal                            uint64
+	MergeDeepTrue                                 uint64
+	MergeDeepFalse                                uint64
+	MergeHeaderDeepDivergent                      uint64
+	EquivCacheLookups                             uint64
+	EquivCacheHits                                uint64
+	EquivCacheStores                              uint64
+	EquivCacheMisses                              uint64
+	EquivCacheTrueHits                            uint64
+	EquivCacheFalseHits                           uint64
+	EquivCacheEpochMisses                         uint64
+	EquivCacheKeyMisses                           uint64
+	EquivCacheVersionMisses                       uint64
+	EquivSkipError                                uint64
+	EquivSkipLeaf                                 uint64
+	EquivSkipFieldMismatch                        uint64
+	EquivExactCalls                               uint64
+	EquivExactTrue                                uint64
+	EquivExactPointerTrue                         uint64
+	EquivExactNilMismatch                         uint64
+	EquivExactHeaderMismatch                      uint64
+	EquivExactChildMismatch                       uint64
+	EquivExactTerminalCalls                       uint64
+	EquivExactTerminalTrue                        uint64
+	EquivExactTerminalFalse                       uint64
+	EquivFrontierCalls                            uint64
+	EquivFrontierTrue                             uint64
+	EquivExactChildCompares                       uint64
+	EquivFrontierChildScans                       uint64
+	EquivFrontierCandidateCompares                uint64
+	EquivStateStats                               []ParseEquivStateRuntime
+	ParseWallNanos                                int64
+	ParserLoopNanos                               int64
+	TokenNextNanos                                int64
+	ActionDispatchNanos                           int64
+	ActionLookupNanos                             int64
+	GLRMergeNanos                                 int64
+	GLRCullNanos                                  int64
+	ReduceTiming                                  *ParseReduceTiming
+	ActionTiming                                  *ParseActionTiming
 
 	ExternalScannerCheckpointRecords                 uint64
 	ExternalScannerCheckpointSlotsAllocated          uint64
@@ -944,19 +1056,22 @@ func (p reduceChildPath) valid() bool {
 // ArenaBreakdown captures optional arena/materialization attribution. It is
 // populated only when EnableArenaBreakdown(true) is set before parsing.
 type ArenaBreakdown struct {
-	NodeStructBytesAllocated        int64
-	NoTreeNodeBytesAllocated        int64
-	CompactFullLeafBytesAllocated   int64
-	PendingParentBytesAllocated     int64
-	PendingChildEntryBytesAllocated int64
-	FinalChildSidecarBytesAllocated int64
-	PendingChildEntriesAllocated    uint64
-	PendingChildEntryCapacity       uint64
-	PendingChildEntryWaste          uint64
-	ChildSliceBytesAllocated        int64
-	FieldIDBytesAllocated           int64
-	FieldSourceBytesAllocated       int64
-	MergeScratchBytesAllocated      int64
+	NodeStructBytesAllocated            int64
+	NoTreeNodeBytesAllocated            int64
+	CompactFullLeafBytesAllocated       int64
+	PendingParentBytesAllocated         int64
+	PendingChildEntryBytesAllocated     int64
+	RawShapeBytesAllocated              int64
+	RawShapeChildBytesAllocated         int64
+	FinalChildSidecarBytesAllocated     int64
+	CompactCheckpointLeafBytesAllocated int64
+	PendingChildEntriesAllocated        uint64
+	PendingChildEntryCapacity           uint64
+	PendingChildEntryWaste              uint64
+	ChildSliceBytesAllocated            int64
+	FieldIDBytesAllocated               int64
+	FieldSourceBytesAllocated           int64
+	MergeScratchBytesAllocated          int64
 
 	ArenaNodesConstructed uint64
 	// NodeLiveCount is arena allocation-slot usage, not root-reachable tree
@@ -1057,7 +1172,7 @@ func (rt ParseRuntime) Summary() string {
 	if stopReason == "" {
 		stopReason = ParseStopNone
 	}
-	return fmt.Sprintf(
+	s := fmt.Sprintf(
 		"truncated=%v stopReason=%s forestFastPath=%v tokenEOFEarly=%v tokens=%d lastTokenEnd=%d expectedEOF=%d lastTokenSymbol=%d lastTokenEOF=%v iterations=%d/%d nodes=%d/%d arena=%d/%d scratch=%d(entry=%d gss=%d)/%d peakDepth=%d/%d maxStacks=%d",
 		rt.Truncated, stopReason, rt.ForestFastPath, rt.TokenSourceEOFEarly, rt.TokensConsumed,
 		rt.LastTokenEndByte, rt.ExpectedEOFByte, rt.LastTokenSymbol, rt.LastTokenWasEOF,
@@ -1066,6 +1181,96 @@ func (rt ParseRuntime) Summary() string {
 		rt.ScratchBytesAllocated, rt.EntryScratchBytesAllocated, rt.GSSBytesAllocated, rt.MemoryBudgetBytes,
 		rt.PeakStackDepth, rt.StackDepthLimit, rt.MaxStacksSeen,
 	)
+	if rt.StopDiagnosticCaptured {
+		s += fmt.Sprintf(
+			" stopDiag={cRecovery=%v recoverAction=%v stackState=%d stackByte=%d stackDepth=%d token=%d[%d:%d] noLookahead=%v root=%q[%d:%d] rootErr=%v firstError=%v[%d:%d]",
+			rt.StopDiagnosticCRecoveryEnabled,
+			rt.StopDiagnosticRecoverActionAvailable,
+			rt.StopDiagnosticLastStackState,
+			rt.StopDiagnosticLastStackByte,
+			rt.StopDiagnosticLastStackDepth,
+			rt.StopDiagnosticTokenSymbol,
+			rt.StopDiagnosticTokenStartByte,
+			rt.StopDiagnosticTokenEndByte,
+			rt.StopDiagnosticTokenNoLookahead,
+			rt.StopDiagnosticRootType,
+			rt.StopDiagnosticRootStartByte,
+			rt.StopDiagnosticRootEndByte,
+			rt.StopDiagnosticRootHasError,
+			rt.StopDiagnosticFirstErrorFound,
+			rt.StopDiagnosticFirstErrorStartByte,
+			rt.StopDiagnosticFirstErrorEndByte,
+		)
+		if rt.StopDiagnosticCRecoveryGateReason != "" {
+			s += " cRecoveryGateReason=" + rt.StopDiagnosticCRecoveryGateReason
+		}
+		if rt.StopDiagnosticFrontierStacks != "" {
+			s += " " + rt.StopDiagnosticFrontierStacks
+		}
+		if rt.StopDiagnosticFrontierActions != "" {
+			s += " " + rt.StopDiagnosticFrontierActions
+		}
+		if rt.StopDiagnosticSameHeaderGroups != "" {
+			s += " " + rt.StopDiagnosticSameHeaderGroups
+		}
+		if rt.StopDiagnosticCondenseGating != "" {
+			s += " " + rt.StopDiagnosticCondenseGating
+		}
+		s += "}"
+	}
+	if rt.StopDiagnosticActionCaptured {
+		s += fmt.Sprintf(
+			" stopAction={phase=%q stack=%d[%d]@%d token=%d[%d:%d] noLookahead=%v type=%d state=%d symbol=%d childCount=%d productionID=%d dynamicPrecedence=%d actionCount=%d resultState=%d reduceChain=%v chainStep=%d repeatedSigCount=%d chainCycle=%v dispatchShift=%d dispatchReduce=%d dispatchAccept=%d dispatchRecover=%d dispatchOther=%d forceAdvanceAfterReduce=%v postDispatchDefaultReduce=%v anyReduced=%v consumedToken=%v}",
+			rt.StopDiagnosticActionPhase,
+			rt.StopDiagnosticActionStackState,
+			rt.StopDiagnosticActionStackDepth,
+			rt.StopDiagnosticActionStackByte,
+			rt.StopDiagnosticActionTokenSymbol,
+			rt.StopDiagnosticActionTokenStartByte,
+			rt.StopDiagnosticActionTokenEndByte,
+			rt.StopDiagnosticActionTokenNoLookahead,
+			rt.StopDiagnosticActionType,
+			rt.StopDiagnosticActionState,
+			rt.StopDiagnosticActionSymbol,
+			rt.StopDiagnosticActionChildCount,
+			rt.StopDiagnosticActionProductionID,
+			rt.StopDiagnosticActionDynamicPrecedence,
+			rt.StopDiagnosticActionCount,
+			rt.StopDiagnosticActionResultState,
+			rt.StopDiagnosticActionInReduceChain,
+			rt.StopDiagnosticActionReduceChainStep,
+			rt.StopDiagnosticActionRepeatedSignatureCount,
+			rt.StopDiagnosticActionReduceChainCycle,
+			rt.StopDiagnosticActionDispatchShiftActions,
+			rt.StopDiagnosticActionDispatchReduceActions,
+			rt.StopDiagnosticActionDispatchAcceptActions,
+			rt.StopDiagnosticActionDispatchRecoverActions,
+			rt.StopDiagnosticActionDispatchOtherActions,
+			rt.StopDiagnosticActionForceAdvanceAfterReduce,
+			rt.StopDiagnosticActionPostDispatchDefaultReduce,
+			rt.StopDiagnosticActionAnyReduced,
+			rt.StopDiagnosticActionConsumedToken,
+		)
+	}
+	if rt.StopDiagnosticLastReduceCaptured {
+		s += fmt.Sprintf(
+			" stopLastReduce={phase=%q stack=%d[%d]@%d symbol=%d childCount=%d productionID=%d dynamicPrecedence=%d resultState=%d reduceChain=%v chainStep=%d repeatedSigCount=%d chainCycle=%v}",
+			rt.StopDiagnosticLastReducePhase,
+			rt.StopDiagnosticLastReduceStackState,
+			rt.StopDiagnosticLastReduceStackDepth,
+			rt.StopDiagnosticLastReduceStackByte,
+			rt.StopDiagnosticLastReduceSymbol,
+			rt.StopDiagnosticLastReduceChildCount,
+			rt.StopDiagnosticLastReduceProductionID,
+			rt.StopDiagnosticLastReduceDynamicPrecedence,
+			rt.StopDiagnosticLastReduceResultState,
+			rt.StopDiagnosticLastReduceInChain,
+			rt.StopDiagnosticLastReduceChainStep,
+			rt.StopDiagnosticLastReduceRepeatedSigCount,
+			rt.StopDiagnosticLastReduceChainCycle,
+		)
+	}
+	return s
 }
 
 // Symbol returns the node's grammar symbol.
@@ -1333,46 +1538,29 @@ func (n *Node) Type(lang *Language) string {
 		return "ERROR"
 	}
 	if int(n.symbol) < len(lang.SymbolNames) {
-		name := lang.SymbolNames[n.symbol]
-		name = unescapePunctuationSymbolName(name)
-		return name
+		return unescapePunctuationSymbolName(lang.SymbolNames[n.symbol])
 	}
 	return ""
 }
 
+// unescapePunctuationSymbolName maps blob symbol names back to C's display
+// names. The blob generator escapes exactly one character in anonymous
+// string-token display names — `?` becomes `\?` (grammargen's
+// escapeAnonymousName) — where C names the token by its literal text
+// (`?`, `defined?`, `.?`, `??=`). This function is the exact inverse:
+// every `\?` becomes `?`, and nothing else changes. All other backslashes
+// are literal name content that C also reports verbatim: string tokens
+// whose text contains a backslash (pkl/swift/jq `\(`, cue `\#(`, circom
+// `\=`, tmux/cmake `\;`, twig `\"`, org `\]`, tlaplus `\/`, textproto
+// `\?` which the generator escapes to `\\?`) and regex-source token names
+// (fortran's `\.not\.` dot-keyword operators). Verified against the C
+// oracle over every backslash-containing symbol name in the embedded
+// blobs (2026-06-10).
 func unescapePunctuationSymbolName(name string) string {
-	if !strings.Contains(name, "\\") {
+	if !strings.Contains(name, `\?`) {
 		return name
 	}
-	var b strings.Builder
-	b.Grow(len(name))
-	changed := false
-	for i := 0; i < len(name); {
-		r, size := utf8.DecodeRuneInString(name[i:])
-		if r != '\\' {
-			b.WriteRune(r)
-			i += size
-			continue
-		}
-		if i+size >= len(name) {
-			b.WriteRune(r)
-			i += size
-			continue
-		}
-		next, nextSize := utf8.DecodeRuneInString(name[i+size:])
-		if next == '\\' || unicode.IsLetter(next) || unicode.IsDigit(next) {
-			b.WriteRune(r)
-			i += size
-			continue
-		}
-		changed = true
-		b.WriteRune(next)
-		i += size + nextSize
-	}
-	if !changed {
-		return name
-	}
-	return b.String()
+	return strings.ReplaceAll(name, `\?`, `?`)
 }
 
 func pointLessThan(a, b Point) bool {
@@ -1617,8 +1805,12 @@ func populateParentNodeNoLinks(n *Node, children []*Node, trackChildErrors bool)
 }
 
 func wireParentLinksWithScratch(root *Node, scratch *[]*Node) {
+	wireParentLinksWithScratchUntil(root, scratch, nil)
+}
+
+func wireParentLinksWithScratchUntil(root *Node, scratch *[]*Node, p *Parser) bool {
 	if root == nil {
-		return
+		return true
 	}
 	setNodeRootLink(root)
 
@@ -1631,6 +1823,12 @@ func wireParentLinksWithScratch(root *Node, scratch *[]*Node) {
 	}
 	stack = append(stack, root)
 	for len(stack) > 0 {
+		if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
+			if scratch != nil {
+				*scratch = stack[:0]
+			}
+			return false
+		}
 		n := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
 		childCount := nodeChildCountNoMaterialize(n)
@@ -1646,6 +1844,7 @@ func wireParentLinksWithScratch(root *Node, scratch *[]*Node) {
 	if scratch != nil {
 		*scratch = stack[:0]
 	}
+	return true
 }
 
 type finalTreeMaterializationStats struct {
@@ -1899,7 +2098,8 @@ func (t *Tree) ensureResultCompatibility() {
 			return
 		}
 		if !parsePhaseTimingEnabled() {
-			normalizeResultCompatibility(t.root, t.source, &Parser{language: t.language})
+			result := normalizeResultCompatibility(t.root, t.source, &Parser{language: t.language})
+			t.finishDeferredResultCompatibility(result)
 			return
 		}
 		timing := &parseMaterializationTiming{}
@@ -1908,11 +2108,25 @@ func (t *Tree) ensureResultCompatibility() {
 			materializationTiming: timing,
 		}
 		start := materializationTimingStart(timing)
-		normalizeResultCompatibility(t.root, t.source, parser)
+		result := normalizeResultCompatibility(t.root, t.source, parser)
 		timing.addResultCompatibility(start)
 		t.parseRuntime.ResultCompatibilityNanos += timing.resultCompatibilityNanos
 		parser.copyNormalizationStats(&t.parseRuntime)
+		t.finishDeferredResultCompatibility(result)
 	})
+}
+
+func (t *Tree) finishDeferredResultCompatibility(result resultCompatibilityResult) {
+	if t == nil || t.root == nil || t.language == nil || t.language.Name != "ini" {
+		return
+	}
+	extendNodeToTrailingWhitespace(t.root, t.source)
+	wireParentLinksWithScratch(t.root, nil)
+	if t.parseRuntime.StopReason == ParseStopNoStacksAlive && iniDeferredCompatibilityAccepted(t.root, t.source, t.language, result) {
+		t.parseRuntime.StopReason = ParseStopAccepted
+		t.parseRuntime.RootEndByte = t.root.endByte
+		t.parseRuntime.Truncated = false
+	}
 }
 
 func newParentNode(arena *nodeArena, sym Symbol, named bool, children []*Node, fieldIDs []FieldID, productionID uint16) *Node {
@@ -1929,6 +2143,7 @@ func newParentNode(arena *nodeArena, sym Symbol, named bool, children []*Node, f
 	n.fieldIDs = fieldIDs
 	n.fieldSources = defaultFieldSourcesInArena(arena, fieldIDs)
 	n.productionID = productionID
+	n.dynamicPrecedence = nodeSliceDynamicPrecedence(children)
 	n.childIndex = -1
 	populateParentNode(n, children)
 	nodeInitEquivVersion(n)
@@ -2013,6 +2228,7 @@ func newParentNodeInArenaWithFieldSources(arena *nodeArena, sym Symbol, named bo
 		n.fieldSources = defaultFieldSourcesInArena(arena, fieldIDs)
 	}
 	n.productionID = productionID
+	n.dynamicPrecedence = nodeSliceDynamicPrecedence(children)
 	n.childIndex = -1
 	arena.parentNodesConstructed++
 	if arena.breakdownEnabled {
@@ -2045,6 +2261,7 @@ func newParentNodeInArenaNoLinksWithFieldSources(arena *nodeArena, sym Symbol, n
 		n.fieldSources = defaultFieldSourcesInArena(arena, fieldIDs)
 	}
 	n.productionID = productionID
+	n.dynamicPrecedence = nodeSliceDynamicPrecedence(children)
 	n.childIndex = -1
 	arena.parentNodesConstructed++
 	if arena.breakdownEnabled {
@@ -2236,6 +2453,7 @@ type Tree struct {
 	borrowedArena                      []*nodeArena // arenas borrowed via subtree reuse
 	parseRuntime                       ParseRuntime
 	arenaBreakdown                     *ArenaBreakdown
+	includedRanges                     []Range
 	externalScannerCheckpointsDeferred bool
 	forestFastPath                     bool
 	incrementalReuseDisabled           bool
@@ -2352,6 +2570,7 @@ func (t *Tree) Release() {
 	t.edits = edits
 	t.parseRuntime = ParseRuntime{}
 	t.arenaBreakdown = nil
+	t.includedRanges = nil
 	treePool.Put(t)
 }
 
@@ -2454,6 +2673,7 @@ func (t *Tree) descendantForUTF16Range(startCodeUnit, endCodeUnit uint32, namedO
 	if t == nil || t.utf16Map == nil || t.root == nil || endCodeUnit < startCodeUnit {
 		return nil
 	}
+	t.ensureResultCompatibility()
 	startByte, ok := t.utf16Map.utf16UnitToByte(startCodeUnit)
 	if !ok {
 		return nil
@@ -3092,6 +3312,26 @@ func (t *Tree) setParseRuntime(rt ParseRuntime) {
 		rt.StopReason = ParseStopNone
 	}
 	t.parseRuntime = rt
+}
+
+func (t *Tree) setIncludedRanges(ranges []Range) {
+	if t == nil {
+		return
+	}
+	if len(ranges) == 0 {
+		t.includedRanges = nil
+		return
+	}
+	t.includedRanges = append(t.includedRanges[:0], ranges...)
+}
+
+func (t *Tree) setParseStopReason(reason ParseStopReason) {
+	if t == nil || reason == "" {
+		return
+	}
+	rt := t.ParseRuntime()
+	rt.StopReason = reason
+	t.setParseRuntime(rt)
 }
 
 func (t *Tree) setArenaBreakdown(breakdown *ArenaBreakdown) {

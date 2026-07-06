@@ -138,19 +138,3 @@ func (p *Parser) remainingTimeoutMicros() uint64 {
 	}
 	return uint64(micros)
 }
-
-func (p *Parser) applyActiveStopReasonToTree(tree *Tree) {
-	if p == nil || tree == nil {
-		return
-	}
-	reason := p.activeParseStopReason()
-	if !parseStopReasonIsActive(reason) {
-		return
-	}
-	rt := tree.ParseRuntime()
-	if parseStopReasonIsActive(rt.StopReason) {
-		return
-	}
-	rt.StopReason = reason
-	tree.setParseRuntime(rt)
-}

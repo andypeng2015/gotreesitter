@@ -3,12 +3,15 @@ package gotreesitter
 import "bytes"
 
 // normalizeSwiftCompatibility recovers the leading control-keyword token that
-// grammargen's reduce path drops from `control_transfer_statement` nodes.
-// The C reference parser keeps "return"/"continue"/"break"/"yield" as the
-// first child of the statement; grammargen reduces through the hidden
-// _optionally_valueful_control_keyword in a way that loses the anonymous
-// token, leaving either a childless node (bare `return`) or a node whose
-// span starts at the result expression (`return 42`).
+// grammargen's reduce path drops from `control_transfer_statement` nodes for
+// the `return <expr>` case: existing children are present but the keyword
+// leaf is missing as the first child and the span starts at the result
+// expression (`return 42`). The bare-keyword case (`return` with no result
+// expression) no longer needs a post-hoc patch here:
+// shouldKeepVisibleAnonymousTokenChild keeps different-named
+// single-token-wrapper anonymous children unconditionally, so the reduce
+// engine now preserves that keyword child natively (see
+// TestSwiftBareControlTransferKeywordChild in grammars/).
 func normalizeSwiftCompatibility(root *Node, source []byte, p *Parser, lang *Language) {
 	if root == nil || lang == nil || lang.Name != "swift" {
 		return
@@ -16,12 +19,6 @@ func normalizeSwiftCompatibility(root *Node, source []byte, p *Parser, lang *Lan
 	normalizeSwiftRecoveredTrailingClosureConditions(root, source, p, lang)
 	normalizeSwiftRecoveredTernaryExpressions(root, source, p, lang)
 	normalizeSwiftRecoveredTopLevelDeclarations(root, source, p, lang)
-	// Bare keyword case (childCount=0, span covers exactly the keyword).
-	normalizeCollapsedNamedLeafChildrenBySource(
-		root, source, lang,
-		"control_transfer_statement",
-		"return", "continue", "break", "yield",
-	)
 	// `return <expr>` case: existing children present but the keyword leaf is
 	// missing as the first child and the span starts at the result expression.
 	prependSwiftControlTransferKeyword(root, source, lang)

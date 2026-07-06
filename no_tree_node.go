@@ -3,13 +3,15 @@ package gotreesitter
 import "unsafe"
 
 type noTreeNode struct {
-	startByte    uint32
-	endByte      uint32
-	parseState   StateID
-	preGotoState StateID
-	symbol       Symbol
-	productionID uint16
-	flags        nodeFlags
+	startByte         uint32
+	endByte           uint32
+	rawShape          rawShapeRef
+	parseState        StateID
+	preGotoState      StateID
+	dynamicPrecedence int32
+	symbol            Symbol
+	productionID      uint16
+	flags             nodeFlags
 }
 
 type noTreeNodeSlab struct {
@@ -43,15 +45,9 @@ type compactFullLeafSlab struct {
 type compactFullLeafMaterializeReason = materializeReason
 
 const (
-	compactFullLeafMaterializeForParentReduce      compactFullLeafMaterializeReason = materializeForParentReduce
-	compactFullLeafMaterializeForFinalTree         compactFullLeafMaterializeReason = materializeForFinalTree
-	compactFullLeafMaterializeForNormalization     compactFullLeafMaterializeReason = materializeForNormalization
-	compactFullLeafMaterializeForRecovery          compactFullLeafMaterializeReason = materializeForRecovery
-	compactFullLeafMaterializeForQuery             compactFullLeafMaterializeReason = materializeForQuery
-	compactFullLeafMaterializeForCursor            compactFullLeafMaterializeReason = materializeForCursor
-	compactFullLeafMaterializeForParentAPI         compactFullLeafMaterializeReason = materializeForParentAPI
-	compactFullLeafMaterializeForEdit              compactFullLeafMaterializeReason = materializeForEdit
-	compactFullLeafMaterializeForCheckpointRebuild compactFullLeafMaterializeReason = materializeForCheckpointRebuild
+	compactFullLeafMaterializeForParentReduce  compactFullLeafMaterializeReason = materializeForParentReduce
+	compactFullLeafMaterializeForFinalTree     compactFullLeafMaterializeReason = materializeForFinalTree
+	compactFullLeafMaterializeForNormalization compactFullLeafMaterializeReason = materializeForNormalization
 )
 
 const (
@@ -163,8 +159,12 @@ func (n *noTreeNode) isMissing() bool    { return n.hasFlag(nodeFlagMissing) }
 func (n *noTreeNode) setMissing(v bool)  { n.setFlag(nodeFlagMissing, v) }
 func (n *noTreeNode) hasError() bool     { return n.hasFlag(nodeFlagHasError) }
 func (n *noTreeNode) setHasError(v bool) { n.setFlag(nodeFlagHasError, v) }
-func (n *noTreeNode) dirty() bool        { return n.hasFlag(nodeFlagDirty) }
-func (n *noTreeNode) setDirty(v bool)    { n.setFlag(nodeFlagDirty, v) }
+func (n *noTreeNode) isExternalScannerToken() bool {
+	return n != nil && n.hasFlag(nodeFlagExternalScannerToken)
+}
+func (n *noTreeNode) setExternalScannerToken(v bool) { n.setFlag(nodeFlagExternalScannerToken, v) }
+func (n *noTreeNode) dirty() bool                    { return n.hasFlag(nodeFlagDirty) }
+func (n *noTreeNode) setDirty(v bool)                { n.setFlag(nodeFlagDirty, v) }
 
 func noTreeNodeBytesForCap(n int) int64 {
 	if n <= 0 {
@@ -512,6 +512,8 @@ func newNoTreeLeafNodeInArena(arena *nodeArena, sym Symbol, named bool, startByt
 	n.parseState = 0
 	n.preGotoState = 0
 	n.productionID = 0
+	n.rawShape = 0
+	n.dynamicPrecedence = 0
 	n.flags = noTreeNodeInitialFlags(named)
 	return n
 }
@@ -529,6 +531,8 @@ func newCompactCheckpointLeafInArena(arena *nodeArena, sym Symbol, named bool, s
 	n.parseState = 0
 	n.preGotoState = 0
 	n.productionID = 0
+	n.rawShape = 0
+	n.dynamicPrecedence = 0
 	n.flags = noTreeNodeInitialFlags(named)
 	n.checkpoint = checkpoint
 	return n
@@ -548,6 +552,8 @@ func newCompactFullLeafInArena(arena *nodeArena, sym Symbol, named bool, startBy
 	n.parseState = 0
 	n.preGotoState = 0
 	n.productionID = 0
+	n.rawShape = 0
+	n.dynamicPrecedence = 0
 	n.flags = noTreeNodeInitialFlags(named)
 	n.startPoint = startPoint
 	n.endPoint = endPoint
@@ -575,6 +581,8 @@ func materializeStackEntryCompactFullLeafEntry(arena *nodeArena, entry stackEntr
 	node.parseState = leaf.parseState
 	node.preGotoState = leaf.preGotoState
 	node.productionID = leaf.productionID
+	node.rawShape = leaf.rawShape
+	node.dynamicPrecedence = leaf.dynamicPrecedence
 	if leaf.hasCheckpoint && arena != nil {
 		if arena.setExternalScannerCheckpoint(node, leaf.checkpoint) {
 			arena.externalScannerCheckpointLeafNodes++

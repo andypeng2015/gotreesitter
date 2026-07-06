@@ -797,29 +797,8 @@ func inputEditPreservesTokenExtent(edit InputEdit) bool {
 	return edit.NewEndPoint == edit.OldEndPoint && edit.OldEndByte > edit.StartByte
 }
 
-func tokenInvariantEditedLeaf(root *Node, oldTree *Tree, edit InputEdit) *Node {
-	if root == nil || oldTree == nil {
-		return nil
-	}
-	leaf := oldTree.lastEditedLeaf
-	if leaf == nil || !leaf.containsByteRange(edit.StartByte, edit.OldEndByte) {
-		leaf = root.DescendantForByteRange(edit.StartByte, edit.OldEndByte)
-	}
-	if !tokenInvariantLeafReusable(leaf) {
-		return nil
-	}
-	return leaf
-}
-
 func tokenInvariantLeafReusable(leaf *Node) bool {
 	return leaf != nil && leaf.ChildCount() == 0 && !leaf.hasError() && !leaf.isMissing()
-}
-
-func tokenInvariantReuseStart(timing *incrementalParseTiming) time.Time {
-	if timing != nil {
-		return time.Now()
-	}
-	return time.Time{}
 }
 
 func (p *Parser) scanTokenInvariantEditedLeaf(source []byte, ts TokenSource, leaf *Node) (Token, bool) {
@@ -827,7 +806,7 @@ func (p *Parser) scanTokenInvariantEditedLeaf(source []byte, ts TokenSource, lea
 	if ok {
 		return tok, true
 	}
-	if tok, ok = p.scanLeafTokenWithFreshSource(source, leaf); ok {
+	if tok, ok = p.scanLeafTokenWithFreshSource(source, leaf, tokenSourceHasDFABase(ts)); ok {
 		return tok, true
 	}
 
@@ -846,13 +825,31 @@ func (p *Parser) scanTokenInvariantEditedLeaf(source []byte, ts TokenSource, lea
 	return skipTokenSourceToLeaf(ts, leaf)
 }
 
-func (p *Parser) scanLeafTokenWithFreshSource(source []byte, leaf *Node) (Token, bool) {
-	if p == nil || p.reparseFactory == nil || leaf == nil {
+func (p *Parser) scanLeafTokenWithFreshSource(source []byte, leaf *Node, allowDFA bool) (Token, bool) {
+	if p == nil || leaf == nil {
 		return Token{}, false
 	}
-	fresh, err := p.reparseFactory(source)
-	if err != nil || fresh == nil {
-		return Token{}, false
+	var fresh TokenSource
+	if p.reparseFactory != nil {
+		var err error
+		fresh, err = p.reparseFactory(source)
+		if err != nil || fresh == nil {
+			return Token{}, false
+		}
+	} else {
+		if !allowDFA {
+			return Token{}, false
+		}
+		// Pooled + lexer-reusing: this scan runs on the clean incremental
+		// fast path (token-invariant single-leaf edits), so it must not
+		// allocate a fresh token source + lexer per parse. The source's
+		// lifetime is strictly local (released via manageTokenSourceLifetime
+		// below, which returns it to the pool).
+		dfaFresh := p.acquireParserDFATokenSource(source)
+		if dfaFresh == nil {
+			return Token{}, false
+		}
+		fresh = dfaFresh
 	}
 	release := manageTokenSourceLifetime(fresh)
 	defer release()
@@ -865,6 +862,21 @@ func (p *Parser) scanLeafTokenWithFreshSource(source []byte, leaf *Node) (Token,
 	return skipTokenSourceToLeaf(ts, leaf)
 }
 
+func tokenSourceHasDFABase(ts TokenSource) bool {
+	switch typed := ts.(type) {
+	case *dfaTokenSource:
+		return typed != nil
+	case *includedRangeTokenSource:
+		if typed == nil {
+			return false
+		}
+		_, ok := typed.base.(*dfaTokenSource)
+		return ok
+	default:
+		return false
+	}
+}
+
 func skipTokenSourceToLeaf(ts TokenSource, leaf *Node) (Token, bool) {
 	if skipper, ok := ts.(PointSkippableTokenSource); ok {
 		return skipper.SkipToByteWithPoint(leaf.startByte, leaf.startPoint), true
@@ -873,38 +885,6 @@ func skipTokenSourceToLeaf(ts TokenSource, leaf *Node) (Token, bool) {
 		return skipper.SkipToByte(leaf.startByte), true
 	}
 	return Token{}, false
-}
-
-func tokenMatchesLeaf(tok Token, leaf *Node) bool {
-	return leaf != nil && tok.Symbol == leaf.symbol && tok.StartByte == leaf.startByte && tok.EndByte == leaf.endByte
-}
-
-func setTokenInvariantReuseRuntime(tree *Tree, source []byte, tok Token) {
-	tree.setParseRuntime(ParseRuntime{
-		StopReason:       ParseStopAccepted,
-		SourceLen:        uint32(len(source)),
-		TokensConsumed:   1,
-		LastTokenEndByte: tok.EndByte,
-		LastTokenSymbol:  tok.Symbol,
-		ExpectedEOFByte:  uint32(len(source)),
-		RootEndByte:      tree.root.EndByte(),
-		MaxStacksSeen:    1,
-	})
-}
-
-func recordTokenInvariantReuseTiming(timing *incrementalParseTiming, source []byte, tok Token, start time.Time) {
-	if timing != nil {
-		timing.reuseNanos += time.Since(start).Nanoseconds()
-		timing.reusedSubtrees++
-		timing.reusedBytes += uint64(len(source))
-		timing.maxStacksSeen = 1
-		timing.stopReason = ParseStopAccepted
-		timing.tokensConsumed = 1
-		timing.lastTokenEndByte = tok.EndByte
-		timing.expectedEOFByte = uint32(len(source))
-		timing.singleStackIterations = 1
-		timing.singleStackTokens = 1
-	}
 }
 
 func scanLeafTokenWithoutMutatingSource(ts TokenSource, leaf *Node) (Token, bool) {

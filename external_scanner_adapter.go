@@ -9,6 +9,7 @@ type externalScannerOrderAdapter struct {
 	inner                ExternalScanner
 	targetToSource       []int // len == len(targetExt)
 	sourceCount          int   // len(sourceExt), for sizing sourceValid in Scan
+	sourceSymbolToIndex  map[Symbol]int
 	sourceResultToTarget map[Symbol]Symbol
 }
 
@@ -63,28 +64,34 @@ func (a *externalScannerOrderAdapter) Scan(payload any, lexer *ExternalLexer, va
 		return false
 	}
 
-	innerPayload, sourceValid := a.prepareScanPayload(payload)
+	_, innerPayload, sourceValid := a.prepareScanPayload(payload)
 	a.mapValidSymbols(validSymbols, sourceValid)
 	ok := a.inner.Scan(innerPayload, lexer, sourceValid)
 	if !ok {
 		return false
 	}
 
-	a.mapResultSymbol(lexer)
+	if !a.mapResultSymbol(lexer, sourceValid) {
+		if lexer != nil {
+			lexer.resultSymbol = 0
+			lexer.hasResult = false
+		}
+		return false
+	}
 	return true
 }
 
-func (a *externalScannerOrderAdapter) prepareScanPayload(payload any) (any, []bool) {
+func (a *externalScannerOrderAdapter) prepareScanPayload(payload any) (*externalScannerOrderAdapterPayload, any, []bool) {
 	adapterPayload, _ := payload.(*externalScannerOrderAdapterPayload)
 	if adapterPayload == nil {
-		return payload, make([]bool, a.sourceCount)
+		return nil, payload, make([]bool, a.sourceCount)
 	}
 	if cap(adapterPayload.sourceValid) < a.sourceCount {
 		adapterPayload.sourceValid = make([]bool, a.sourceCount)
 	}
 	sourceValid := adapterPayload.sourceValid[:a.sourceCount]
 	clear(sourceValid)
-	return adapterPayload.inner, sourceValid
+	return adapterPayload, adapterPayload.inner, sourceValid
 }
 
 func (a *externalScannerOrderAdapter) mapValidSymbols(validSymbols []bool, sourceValid []bool) {
@@ -99,12 +106,23 @@ func (a *externalScannerOrderAdapter) mapValidSymbols(validSymbols []bool, sourc
 	}
 }
 
-func (a *externalScannerOrderAdapter) mapResultSymbol(lexer *ExternalLexer) {
-	if lexer != nil && lexer.hasResult {
-		if mapped, exists := a.sourceResultToTarget[lexer.resultSymbol]; exists {
-			lexer.resultSymbol = mapped
-		}
+func (a *externalScannerOrderAdapter) mapResultSymbol(lexer *ExternalLexer, sourceValid []bool) bool {
+	if lexer == nil || !lexer.hasResult {
+		return true
 	}
+	if mapped, exists := a.sourceResultToTarget[lexer.resultSymbol]; exists && a.sourceResultWasValid(lexer.resultSymbol, sourceValid) {
+		lexer.resultSymbol = mapped
+		return true
+	}
+	return false
+}
+
+func (a *externalScannerOrderAdapter) sourceResultWasValid(sym Symbol, sourceValid []bool) bool {
+	if a == nil {
+		return false
+	}
+	idx, ok := a.sourceSymbolToIndex[sym]
+	return ok && idx >= 0 && idx < len(sourceValid) && sourceValid[idx]
 }
 
 func (a *externalScannerOrderAdapter) innerPayload(payload any) any {
@@ -137,11 +155,13 @@ func AdaptExternalScannerByExternalOrder(sourceLang, targetLang *Language) (Exte
 	sourceExt := sourceLang.ExternalSymbols
 	nSource := len(sourceExt)
 	mapping := buildExternalScannerOrderMapping(sourceLang, targetLang)
+	adaptExternalLexStatesByExternalOrder(sourceLang, targetLang, mapping.targetToSource)
 
 	return &externalScannerOrderAdapter{
 		inner:                sourceLang.ExternalScanner,
 		targetToSource:       mapping.targetToSource,
 		sourceCount:          nSource,
+		sourceSymbolToIndex:  buildExternalSymbolIndex(sourceExt),
 		sourceResultToTarget: mapping.sourceResultToTarget,
 	}, true
 }
@@ -168,14 +188,36 @@ func buildExternalScannerOrderMapping(sourceLang, targetLang *Language) external
 		mapExternalSymbolsByIndex(targetToSource, usedSource)
 	} else {
 		mapExternalSymbolsByName(sourceLang, targetLang, targetToSource, usedSource)
-		fillExternalSymbolIndexFallback(targetToSource, usedSource)
+		fillExternalSymbolIndexFallback(sourceLang, targetLang, targetToSource, usedSource)
 	}
-	fillUnmatchedExternalTargets(targetToSource, usedSource)
 
 	return externalScannerOrderMapping{
 		targetToSource:       targetToSource,
 		sourceResultToTarget: buildExternalResultSymbolMap(sourceExt, targetExt, targetToSource),
 	}
+}
+
+func adaptExternalLexStatesByExternalOrder(sourceLang, targetLang *Language, targetToSource []int) {
+	if sourceLang == nil || targetLang == nil || len(sourceLang.ExternalLexStates) == 0 ||
+		len(targetLang.ExternalSymbols) == 0 || len(targetToSource) != len(targetLang.ExternalSymbols) {
+		return
+	}
+	if len(targetLang.ExternalLexStates) > 0 {
+		CertifyCRecoveryCostCompetition(targetLang)
+		return
+	}
+	rows := make([][]bool, len(sourceLang.ExternalLexStates))
+	for rowIdx, sourceRow := range sourceLang.ExternalLexStates {
+		targetRow := make([]bool, len(targetLang.ExternalSymbols))
+		for targetIdx, sourceIdx := range targetToSource {
+			if sourceIdx >= 0 && sourceIdx < len(sourceRow) && sourceRow[sourceIdx] {
+				targetRow[targetIdx] = true
+			}
+		}
+		rows[rowIdx] = targetRow
+	}
+	targetLang.ExternalLexStates = rows
+	CertifyCRecoveryCostCompetition(targetLang)
 }
 
 func newExternalTargetMap(n int) []int {
@@ -189,6 +231,9 @@ func newExternalTargetMap(n int) []int {
 func externalScannerUsesIndexOnlyMapping(sourceLang, targetLang *Language) bool {
 	sourceExt := sourceLang.ExternalSymbols
 	targetExt := targetLang.ExternalSymbols
+	if targetLang.GeneratedByGrammargen {
+		return true
+	}
 	// Equal-length duplicate-name tables are ambiguous; preserve the old
 	// positional contract instead of trying to infer by name.
 	return len(sourceExt) == len(targetExt) &&
@@ -230,36 +275,17 @@ func assignFirstUnusedExternalSource(targetIdx int, candidates []int, targetToSo
 	}
 }
 
-func fillExternalSymbolIndexFallback(targetToSource []int, usedSource []bool) {
-	for i := 0; i < len(targetToSource) && i < len(usedSource); i++ {
-		if targetToSource[i] == -1 && !usedSource[i] {
-			targetToSource[i] = i
-			usedSource[i] = true
-		}
+func fillExternalSymbolIndexFallback(sourceLang, targetLang *Language, targetToSource []int, usedSource []bool) {
+	if targetLang == nil || !targetLang.GeneratedByGrammargen {
+		return
 	}
-}
-
-func fillUnmatchedExternalTargets(targetToSource []int, usedSource []bool) {
-	nextUnused := 0
-	for i := 0; i < len(targetToSource); i++ {
-		if targetToSource[i] != -1 {
+	for i := 0; i < len(targetToSource) && i < len(usedSource); i++ {
+		if targetToSource[i] != -1 || usedSource[i] {
 			continue
 		}
-		nextUnused = nextUnusedExternalSource(nextUnused, usedSource)
-		if nextUnused >= len(usedSource) {
-			return
-		}
-		targetToSource[i] = nextUnused
-		usedSource[nextUnused] = true
-		nextUnused++
+		targetToSource[i] = i
+		usedSource[i] = true
 	}
-}
-
-func nextUnusedExternalSource(start int, usedSource []bool) int {
-	for start < len(usedSource) && usedSource[start] {
-		start++
-	}
-	return start
 }
 
 func buildExternalResultSymbolMap(sourceExt, targetExt []Symbol, targetToSource []int) map[Symbol]Symbol {
@@ -274,6 +300,16 @@ func buildExternalResultSymbolMap(sourceExt, targetExt []Symbol, targetToSource 
 	}
 	addUnassignedExternalResultSymbols(sourceExt, sourceAssigned, sourceResultToTarget)
 	return sourceResultToTarget
+}
+
+func buildExternalSymbolIndex(sourceExt []Symbol) map[Symbol]int {
+	out := make(map[Symbol]int, len(sourceExt))
+	for idx, sym := range sourceExt {
+		if _, exists := out[sym]; !exists {
+			out[sym] = idx
+		}
+	}
+	return out
 }
 
 func addUnassignedExternalResultSymbols(sourceExt []Symbol, sourceAssigned []bool, sourceResultToTarget map[Symbol]Symbol) {

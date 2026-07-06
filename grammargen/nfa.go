@@ -102,7 +102,7 @@ func (b *nfaBuilder) buildEpsilon() nfaFragment {
 }
 
 func (b *nfaBuilder) buildString(s string) nfaFragment {
-	if len(s) == 0 {
+	if len(s) == 0 || s == "\x00" {
 		return b.buildEpsilon()
 	}
 	start := b.addState()
@@ -136,7 +136,7 @@ func terminalRuleCanMatchEmpty(r *Rule) bool {
 	case RuleBlank:
 		return true
 	case RuleString:
-		return r.Value == ""
+		return r.Value == "" || r.Value == "\x00"
 	case RulePattern:
 		node, err := parseRegex(r.Value)
 		return err == nil && regexCanMatchEmpty(node)
@@ -340,7 +340,16 @@ func (b *nfaBuilder) buildFromRegexNode(node *regexNode) (nfaFragment, error) {
 		}
 		// Build optional copies up to max
 		if maxCount < 0 {
-			// {n,} = unbounded: add a star after the required copies
+			// {n,} — mirror the C CLI's expand_tokens.rs repetition arms:
+			// (0, None) and (1, None) hit the dedicated star/plus arms, but
+			// (min>=2, None) builds its zero_or_more tail without ever wiring
+			// the min-count chain into the loop, so the loop is unreachable
+			// and the token lexes as exactly {min}. The C oracle's observed
+			// behavior is the parity spec, so truncate {n,} (n >= 2) to {n}.
+			if minCount >= 2 {
+				return cur, nil
+			}
+			// {0,} and {1,} keep true star/plus semantics.
 			star, err := b.buildFromRegexNode(node.children[0])
 			if err != nil {
 				return nfaFragment{}, err
@@ -536,7 +545,7 @@ func buildCombinedNFA(patterns []TerminalPattern) (*nfa, error) {
 	}
 
 	for i, pat := range patterns {
-		if pat.Rule != nil && pat.Rule.Kind == RuleString && stringCounts[pat.Rule.Value] == 1 {
+		if pat.Rule != nil && pat.Rule.Kind == RuleString && pat.Rule.Value != "\x00" && stringCounts[pat.Rule.Value] == 1 {
 			addStringPattern(pat.Rule.Value, pat.SymbolID, pat.Priority, i)
 			continue
 		}

@@ -12,6 +12,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf16"
+	"unicode/utf8"
 
 	"github.com/odvcencio/gotreesitter"
 )
@@ -163,9 +165,7 @@ func loadEmbeddedLanguageBase(blobName string) *gotreesitter.Language {
 			// Attach external scanner and lex states if registered.
 			name := strings.TrimSuffix(blobName, ".bin")
 			attachExternalScannerForLanguage(name, entry.lang)
-			if els, ok := externalLexStatesRegistry[name]; ok {
-				entry.lang.ExternalLexStates = els
-			}
+			attachRegisteredExternalLexStates(name, entry.lang)
 		}
 	})
 	if entry.err != nil {
@@ -459,11 +459,7 @@ func AdaptScannerForLanguage(name string, targetLang *gotreesitter.Language) boo
 		}
 	}
 	if targetLang.ExternalScanner != nil {
-		if len(targetLang.ExternalLexStates) == 0 {
-			if els := externalLexStatesRegistry[lookupName]; els != nil {
-				targetLang.ExternalLexStates = els
-			}
-		}
+		attachRegisteredExternalLexStates(lookupName, targetLang)
 		return true
 	}
 
@@ -485,11 +481,7 @@ func AdaptScannerForLanguage(name string, targetLang *gotreesitter.Language) boo
 		}
 		if same {
 			targetLang.ExternalScanner = refLang.ExternalScanner
-			if len(targetLang.ExternalLexStates) == 0 {
-				if els := externalLexStatesRegistry[lookupName]; els != nil {
-					targetLang.ExternalLexStates = els
-				}
-			}
+			attachRegisteredExternalLexStates(lookupName, targetLang)
 			return true
 		}
 	}
@@ -499,12 +491,19 @@ func AdaptScannerForLanguage(name string, targetLang *gotreesitter.Language) boo
 		return false
 	}
 	targetLang.ExternalScanner = adapted
-	if len(targetLang.ExternalLexStates) == 0 {
-		if els := externalLexStatesRegistry[lookupName]; els != nil {
-			targetLang.ExternalLexStates = els
-		}
-	}
+	attachRegisteredExternalLexStates(lookupName, targetLang)
 	return true
+}
+
+func attachRegisteredExternalLexStates(name string, targetLang *gotreesitter.Language) {
+	if targetLang == nil {
+		return
+	}
+	els := externalLexStatesRegistry[name]
+	if len(els) > 0 && len(targetLang.ExternalLexStates) == 0 {
+		targetLang.ExternalLexStates = els
+	}
+	gotreesitter.CertifyCRecoveryCostCompetition(targetLang)
 }
 
 func decodeEmbeddedLanguage(blobName string) (*gotreesitter.Language, error) {
@@ -530,13 +529,110 @@ func decodeLanguageBlobData(blobName string, data []byte) (*gotreesitter.Languag
 		return nil, fmt.Errorf("decode grammar blob %q: %w", blobName, err)
 	}
 
+	gotreesitter.InferGeneratedRepeatAuxMetadata(&lang)
 	compactDecodedLanguage(&lang)
 	repairNoLookaheadLexModes(&lang)
 	repairJavaScriptTypeScriptOptionalChainTokenSymbol(blobName, &lang)
 	repairDartCollapsedLeafTokenSymbols(blobName, &lang)
+	repairDhallUnicodeAnonymousSymbolNames(blobName, &lang)
 	attachReduceChainHints(blobName, &lang)
 
 	return &lang, nil
+}
+
+func repairDhallUnicodeAnonymousSymbolNames(blobName string, lang *gotreesitter.Language) {
+	if lang == nil {
+		return
+	}
+	name := strings.TrimSuffix(blobName, ".bin")
+	if slash := strings.LastIndexAny(name, "/\\"); slash >= 0 {
+		name = name[slash+1:]
+	}
+	if name != "dhall" {
+		return
+	}
+	for i := range lang.SymbolNames {
+		if i >= len(lang.SymbolMetadata) {
+			break
+		}
+		meta := lang.SymbolMetadata[i]
+		if !meta.Visible || meta.Named || !strings.Contains(lang.SymbolNames[i], `\u`) {
+			continue
+		}
+		normalized := decodeDhallAnonymousUnicodeEscapes(lang.SymbolNames[i])
+		if normalized == lang.SymbolNames[i] {
+			continue
+		}
+		lang.SymbolNames[i] = normalized
+		lang.SymbolMetadata[i].Name = normalized
+	}
+}
+
+func decodeDhallAnonymousUnicodeEscapes(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); {
+		r, next, ok := parseDhallAnonymousUnicodeEscape(s, i)
+		if ok {
+			b.WriteRune(r)
+			i = next
+			continue
+		}
+		b.WriteByte(s[i])
+		i++
+	}
+	return b.String()
+}
+
+func parseDhallAnonymousUnicodeEscape(s string, i int) (rune, int, bool) {
+	if i+2 > len(s) || s[i] != '\\' || s[i+1] != 'u' {
+		return 0, i, false
+	}
+	if i+2 < len(s) && s[i+2] == '{' {
+		end := strings.IndexByte(s[i+3:], '}')
+		if end < 0 {
+			return 0, i, false
+		}
+		hex := s[i+3 : i+3+end]
+		if hex == "" {
+			return 0, i, false
+		}
+		r, ok := parseDhallAnonymousUnicodeHex(hex)
+		if !ok || utf16.IsSurrogate(r) {
+			return 0, i, false
+		}
+		return r, i + 3 + end + 1, true
+	}
+	if i+6 > len(s) {
+		return 0, i, false
+	}
+	r, ok := parseDhallAnonymousUnicodeHex(s[i+2 : i+6])
+	if !ok {
+		return 0, i, false
+	}
+	if utf16.IsSurrogate(r) {
+		if r < 0xD800 || r > 0xDBFF || i+12 > len(s) || s[i+6] != '\\' || s[i+7] != 'u' {
+			return 0, i, false
+		}
+		r2, ok := parseDhallAnonymousUnicodeHex(s[i+8 : i+12])
+		if !ok || r2 < 0xDC00 || r2 > 0xDFFF {
+			return 0, i, false
+		}
+		return utf16.DecodeRune(r, r2), i + 12, true
+	}
+	return r, i + 6, true
+}
+
+func parseDhallAnonymousUnicodeHex(hex string) (rune, bool) {
+	n, err := strconv.ParseUint(hex, 16, 32)
+	if err != nil {
+		return 0, false
+	}
+	r := rune(n)
+	if !utf8.ValidRune(r) && !utf16.IsSurrogate(r) {
+		return 0, false
+	}
+	return r, true
 }
 
 func repairJavaScriptTypeScriptOptionalChainTokenSymbol(blobName string, lang *gotreesitter.Language) {

@@ -122,5 +122,20 @@ func TestCobolCorpusSnippetDeepParity(t *testing.T) {
 				"       perform aa varying c FROM 1 BY 1 UNTIL c >= 1.\n" +
 				"       aa.\n",
 		},
+		{
+			name: "perform_forever_block_corpus_block_exact",
+			src: "       identification division.\n" +
+				"       program-id. a.\n" +
+				"       procedure division.\n" +
+				"       perform forever\n" +
+				"         continue\n" +
+				"       end-perform.",
+		},
+		{
+			name: "fixed_format_comment_corpus_block_exact",
+			src: "aaaaaa identification division.\n" +
+				"aaaaaa program-id. a.  ,,, ;;;                                          aaaaa\n" +
+				"      *aaaa\n",
+		},
 	})
 }

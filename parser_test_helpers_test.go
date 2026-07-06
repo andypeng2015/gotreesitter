@@ -256,6 +256,100 @@ func buildArithmeticRecoverLanguage() *Language {
 	}
 }
 
+// buildPrefixAcceptLanguage constructs a deliberately tiny GLR grammar whose
+// state after "a" has a conflict on "b": reduce source -> "a" or shift "b".
+// The reduced branch can accept immediately on the same "b" lookahead, while
+// the shifted branch can still reduce source -> "a" "b" and accept at EOF.
+func buildPrefixAcceptLanguage() *Language {
+	return &Language{
+		Name:               "prefix_accept",
+		SymbolCount:        4,
+		TokenCount:         3,
+		ExternalTokenCount: 0,
+		StateCount:         4,
+		LargeStateCount:    0,
+		FieldCount:         0,
+		ProductionIDCount:  2,
+
+		SymbolNames: []string{"EOF", "a", "b", "source"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF", Visible: false, Named: false},
+			{Name: "a", Visible: true, Named: false},
+			{Name: "b", Visible: true, Named: false},
+			{Name: "source", Visible: true, Named: true},
+		},
+		FieldNames: []string{""},
+
+		ParseActions: []ParseActionEntry{
+			{Actions: nil},
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 1}}},
+			{Actions: []ParseAction{{Type: ParseActionReduce, Symbol: 3, ChildCount: 1, ProductionID: 0}}},
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 2}}},
+			{Actions: []ParseAction{{Type: ParseActionAccept}}},
+			{Actions: []ParseAction{{Type: ParseActionReduce, Symbol: 3, ChildCount: 2, ProductionID: 1}}},
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 3}}},
+			{Actions: []ParseAction{
+				{Type: ParseActionReduce, Symbol: 3, ChildCount: 1, ProductionID: 0},
+				{Type: ParseActionShift, State: 2},
+			}},
+		},
+
+		// Columns: EOF(0), a(1), b(2), source(3)
+		ParseTable: [][]uint16{
+			{0, 1, 0, 6}, // state 0: shift "a", goto source
+			{2, 0, 7, 0}, // state 1: source -> "a", or conflict with "b"
+			{5, 0, 0, 0}, // state 2: source -> "a" "b" at EOF
+			{4, 0, 4, 0}, // state 3: accept at EOF, and prefix-accept on "b"
+		},
+
+		LexModes: []LexMode{
+			{LexState: 0},
+			{LexState: 0},
+			{LexState: 0},
+			{LexState: 0},
+		},
+
+		LexStates: []LexState{
+			{
+				AcceptToken: 0,
+				Skip:        false,
+				Default:     -1,
+				EOF:         -1,
+				Transitions: []LexTransition{
+					{Lo: 'a', Hi: 'a', NextState: 1},
+					{Lo: 'b', Hi: 'b', NextState: 2},
+					{Lo: ' ', Hi: ' ', NextState: 3},
+					{Lo: '\t', Hi: '\t', NextState: 3},
+					{Lo: '\n', Hi: '\n', NextState: 3},
+				},
+			},
+			{
+				AcceptToken: 1,
+				Skip:        false,
+				Default:     -1,
+				EOF:         -1,
+			},
+			{
+				AcceptToken: 2,
+				Skip:        false,
+				Default:     -1,
+				EOF:         -1,
+			},
+			{
+				AcceptToken: 0,
+				Skip:        true,
+				Default:     -1,
+				EOF:         -1,
+				Transitions: []LexTransition{
+					{Lo: ' ', Hi: ' ', NextState: 3},
+					{Lo: '\t', Hi: '\t', NextState: 3},
+					{Lo: '\n', Hi: '\n', NextState: 3},
+				},
+			},
+		},
+	}
+}
+
 func buildKeywordStateLanguageDense() *Language {
 	return &Language{
 		Name:                "keyword_state_dense",

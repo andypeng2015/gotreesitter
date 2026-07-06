@@ -262,12 +262,12 @@ func TestBuildResultFromNodesRepairsPythonIfWrappers(t *testing.T) {
 	if call == nil || call.Type(lang) != "call" {
 		t.Fatalf("expected block child to unwrap to call, got %s", root.SExpr(lang))
 	}
-	if got, want := block.startByte, uint32(26); got != want {
+	if got, want := block.startByte, uint32(30); got != want {
 		t.Fatalf("block startByte = %d, want %d", got, want)
 	}
 }
 
-func TestBuildResultFromNodesRepairsPythonBlockRangeWithoutWrapperChanges(t *testing.T) {
+func TestBuildResultFromNodesRepairsPythonBlockRangeToFirstStatement(t *testing.T) {
 	lang := &Language{
 		Name:       "python",
 		FieldNames: []string{"", "condition", "consequence"},
@@ -315,7 +315,9 @@ func TestBuildResultFromNodesRepairsPythonBlockRangeWithoutWrapperChanges(t *tes
 	if got, want := block.ChildCount(), 1; got != want {
 		t.Fatalf("block child count = %d, want %d", got, want)
 	}
-	if got, want := block.startByte, uint32(26); got != want {
+	// Current tree-sitter C oracle starts Python block ranges at the first
+	// statement, not at the colon/newline indentation prefix.
+	if got, want := block.startByte, uint32(30); got != want {
 		t.Fatalf("block startByte = %d, want %d", got, want)
 	}
 }
@@ -517,10 +519,10 @@ func TestNormalizePythonCompatibilityRecordsRuntimeStats(t *testing.T) {
 	normalizePythonCompatibilityWithParser(root, []byte(";"), parser, lang)
 
 	stats := parser.normalizationStats
-	if got, want := stats.passesChecked, uint64(15); got != want {
+	if got, want := stats.passesChecked, uint64(14); got != want {
 		t.Fatalf("passesChecked = %d, want %d", got, want)
 	}
-	if got, want := stats.passesRun, uint64(2); got != want {
+	if got, want := stats.passesRun, uint64(1); got != want {
 		t.Fatalf("passesRun = %d, want %d", got, want)
 	}
 	if got, want := stats.nodesVisited, uint64(1); got != want {
@@ -929,55 +931,6 @@ func TestNormalizePythonCompatibilityWrapsInlineTupleExpressionBlock(t *testing.
 	}
 	if got, want := expr.ChildCount(), 3; got != want {
 		t.Fatalf("tuple_expression.ChildCount = %d, want %d", got, want)
-	}
-}
-
-func TestNormalizePythonAsPatternTargetWrapsTupleTarget(t *testing.T) {
-	lang := &Language{
-		Name: "python",
-		SymbolNames: []string{
-			"",
-			"module",
-			"as_pattern_target",
-			"(",
-			"identifier",
-			",",
-			")",
-			"tuple",
-		},
-		SymbolMetadata: []SymbolMetadata{
-			{},
-			{Name: "module", Visible: true, Named: true},
-			{Name: "as_pattern_target", Visible: true, Named: true},
-			{Name: "(", Visible: true, Named: false},
-			{Name: "identifier", Visible: true, Named: true},
-			{Name: ",", Visible: true, Named: false},
-			{Name: ")", Visible: true, Named: false},
-			{Name: "tuple", Visible: true, Named: true},
-		},
-	}
-	source := []byte("(x, y)")
-	arena := newNodeArena(arenaClassFull)
-	target := newParentNodeInArena(arena, 2, true, []*Node{
-		newLeafNodeInArena(arena, 3, false, 0, 1, Point{}, Point{Column: 1}),
-		newLeafNodeInArena(arena, 4, true, 1, 2, Point{Column: 1}, Point{Column: 2}),
-		newLeafNodeInArena(arena, 5, false, 2, 3, Point{Column: 2}, Point{Column: 3}),
-		newLeafNodeInArena(arena, 4, true, 4, 5, Point{Column: 4}, Point{Column: 5}),
-		newLeafNodeInArena(arena, 6, false, 5, 6, Point{Column: 5}, Point{Column: 6}),
-	}, nil, 0)
-	root := newParentNodeInArena(arena, 1, true, []*Node{target}, nil, 0)
-
-	normalizePythonAsPatternTargetIdentifiers(root, source, lang)
-
-	if got, want := target.ChildCount(), 1; got != want {
-		t.Fatalf("as_pattern_target.ChildCount = %d, want %d", got, want)
-	}
-	tuple := target.Child(0)
-	if tuple == nil || tuple.Type(lang) != "tuple" {
-		t.Fatalf("as_pattern_target child = %#v, want tuple", tuple)
-	}
-	if got, want := tuple.ChildCount(), 5; got != want {
-		t.Fatalf("tuple.ChildCount = %d, want %d", got, want)
 	}
 }
 

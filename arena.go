@@ -101,6 +101,10 @@ type nodeArena struct {
 	pendingParentSlabCursor         int
 	pendingChildEntrySlabs          []pendingChildEntrySlab
 	pendingChildEntrySlabCursor     int
+	rawShapeSlabs                   []rawShapeSlab
+	rawShapeSlabCursor              int
+	rawShapeChildSlabs              []rawShapeChildSlab
+	rawShapeChildSlabCursor         int
 	compactCheckpointLeafSlabs      []compactCheckpointLeafSlab
 	compactCheckpointLeafSlabCursor int
 	finalChildSidecars              []finalChildSidecar
@@ -244,6 +248,32 @@ type nodeArena struct {
 	pendingParentRejectedFieldsHiddenChildPlainOne   uint64
 	pendingParentRejectedFieldsHiddenChildPlainMany  uint64
 	pendingParentRejectedFieldsHiddenChildWithFields uint64
+
+	// nodeErrorRankMemo/pendingParentErrorRankMemo memoize
+	// computeStackEntryErrorRank (parser_result.go) per node identity: an
+	// exact cache (never a heuristic — a miss always falls back to the same
+	// recursive computation the uncached path would run), so it cannot change
+	// any result, only avoid re-deriving it. Node entries are additionally
+	// keyed by equivVersion because a Node CAN mutate while it is still the
+	// top of a live stack (pushOrExtendErrorNode/pushLexErrorRunLeaf extend an
+	// open ERROR run and bump equivVersion each time — the same invalidation
+	// signal parser_recover_c.go's cNodeMemo already relies on); a version
+	// mismatch is a cache miss, never a stale hit. pendingParent has no
+	// equivVersion field and, once its child entries are filled at
+	// construction, is never mutated again, so pointer identity alone is
+	// enough there. Both maps are per-arena rather than per-Parser because
+	// nodeArena is already threaded through every caller that needs this
+	// (stackEntryResultErrorRank/stackCompareForResultSelectionWithRawShape/
+	// forestResultLinkCompareWithRawShape), avoiding a Parser struct change.
+	// Cleared in reset() because arena node slabs — and therefore these
+	// pointers — are reused across parses on the same arena.
+	nodeErrorRankMemo          map[*Node]nodeErrorRankMemoEntry
+	pendingParentErrorRankMemo map[*pendingParent]int8
+}
+
+type nodeErrorRankMemoEntry struct {
+	ver  uint32
+	rank int8
 }
 
 type nodeSlab struct {
@@ -482,6 +512,8 @@ func (a *nodeArena) reset() {
 	a.resetCompactFullLeafSlabs()
 	a.resetPendingParentSlabs()
 	a.resetPendingChildEntrySlabs()
+	a.resetRawShapeSlabs()
+	a.resetRawShapeChildSlabs()
 	a.resetFinalChildSidecars()
 	a.resetCompactCheckpointLeafSlabs()
 	a.resetChildSlabs()
@@ -499,6 +531,16 @@ func (a *nodeArena) reset() {
 	a.internLeaves.reset()
 	a.internLeavesFull.reset()
 	a.internShiftLeafObserved = 0
+	// Node/pendingParent slab memory is reused across parses on this arena
+	// (only `used`/slab cursors reset above, not the backing storage), so a
+	// stale entry from a previous parse could otherwise alias a
+	// structurally-different node at the same address in the next parse. Drop
+	// both maps rather than clear-in-place: they are allocated lazily on
+	// first use (see cachedStackEntryErrorRank, parser_result.go) and most
+	// parses never populate them at all (only reached via the
+	// !skipErrorRank / forest link-cap comparison paths).
+	a.nodeErrorRankMemo = nil
+	a.pendingParentErrorRankMemo = nil
 }
 
 func (a *nodeArena) resetPrimaryNodes() {
@@ -675,6 +717,72 @@ func (a *nodeArena) resetPendingChildEntrySlabs() {
 		}
 	}
 	a.pendingChildEntrySlabCursor = 0
+}
+
+func (a *nodeArena) resetRawShapeSlabs() {
+	if len(a.rawShapeSlabs) > 0 {
+		retained := 0
+		keep := 0
+		limit := maxRetainedRawShapeCapacityForClass(a.class)
+		for i := 0; i < len(a.rawShapeSlabs); i++ {
+			capacity := len(a.rawShapeSlabs[i].data)
+			if capacity <= 0 {
+				break
+			}
+			if retained+capacity > limit {
+				break
+			}
+			retained += capacity
+			keep = i + 1
+		}
+		for i := keep; i < len(a.rawShapeSlabs); i++ {
+			a.rawShapeSlabs[i] = rawShapeSlab{}
+		}
+		a.rawShapeSlabs = a.rawShapeSlabs[:keep]
+	}
+	for i := range a.rawShapeSlabs {
+		slab := &a.rawShapeSlabs[i]
+		used := slab.used
+		if used > len(slab.data) {
+			used = len(slab.data)
+		}
+		clear(slab.data[:used])
+		slab.used = 0
+	}
+	a.rawShapeSlabCursor = 0
+}
+
+func (a *nodeArena) resetRawShapeChildSlabs() {
+	if len(a.rawShapeChildSlabs) > 0 {
+		retained := 0
+		keep := 0
+		limit := maxRetainedRawShapeChildCapacityForClass(a.class)
+		for i := 0; i < len(a.rawShapeChildSlabs); i++ {
+			capacity := len(a.rawShapeChildSlabs[i].data)
+			if capacity <= 0 {
+				break
+			}
+			if retained+capacity > limit {
+				break
+			}
+			retained += capacity
+			keep = i + 1
+		}
+		for i := keep; i < len(a.rawShapeChildSlabs); i++ {
+			a.rawShapeChildSlabs[i] = rawShapeChildSlab{}
+		}
+		a.rawShapeChildSlabs = a.rawShapeChildSlabs[:keep]
+	}
+	for i := range a.rawShapeChildSlabs {
+		slab := &a.rawShapeChildSlabs[i]
+		used := slab.used
+		if used > len(slab.data) {
+			used = len(slab.data)
+		}
+		clear(slab.data[:used])
+		slab.used = 0
+	}
+	a.rawShapeChildSlabCursor = 0
 }
 
 func (a *nodeArena) resetFinalChildSidecars() {
@@ -1153,6 +1261,77 @@ func (a *nodeArena) allocPendingChildEntryRange(logicalCount, slotCount int) (pe
 	}
 }
 
+func (a *nodeArena) allocRawShape() (rawShapeRef, *rawShape) {
+	if a == nil {
+		return 0, nil
+	}
+	if len(a.rawShapeSlabs) == 0 {
+		capacity := max(defaultRawShapeSlabCap(a.class), minArenaNodeCap)
+		a.rawShapeSlabs = append(a.rawShapeSlabs, rawShapeSlab{data: make([]rawShape, capacity)})
+		a.allocatedBytes += rawShapeBytesForCap(capacity)
+		a.rawShapeSlabCursor = 0
+	}
+	if a.rawShapeSlabCursor < 0 || a.rawShapeSlabCursor >= len(a.rawShapeSlabs) {
+		a.rawShapeSlabCursor = 0
+	}
+	for i := a.rawShapeSlabCursor; ; i++ {
+		if i+1 >= 1<<(32-rawShapeRefIndexBits) {
+			return 0, nil
+		}
+		if i >= len(a.rawShapeSlabs) {
+			capacity := max(defaultRawShapeSlabCap(a.class), minArenaNodeCap)
+			a.rawShapeSlabs = append(a.rawShapeSlabs, rawShapeSlab{data: make([]rawShape, capacity)})
+			a.allocatedBytes += rawShapeBytesForCap(capacity)
+		}
+		slab := &a.rawShapeSlabs[i]
+		if slab.used >= len(slab.data) {
+			continue
+		}
+		idx := slab.used
+		if idx >= 1<<rawShapeRefIndexBits {
+			return 0, nil
+		}
+		slab.used++
+		a.rawShapeSlabCursor = i
+		ref := rawShapeRef((uint32(i+1) << rawShapeRefIndexBits) | uint32(idx))
+		return ref, &slab.data[idx]
+	}
+}
+
+func (a *nodeArena) allocRawShapeChildren(n int) rawShapeChildRange {
+	if n <= 0 {
+		return 0
+	}
+	if a == nil {
+		panic("raw shape child ranges require an arena")
+	}
+	if len(a.rawShapeChildSlabs) == 0 {
+		capacity := max(defaultRawShapeChildSlabCap(a.class), n)
+		a.rawShapeChildSlabs = append(a.rawShapeChildSlabs, rawShapeChildSlab{data: make([]rawShapeChild, capacity)})
+		a.allocatedBytes += rawShapeChildBytesForCap(capacity)
+		a.rawShapeChildSlabCursor = 0
+	}
+	if a.rawShapeChildSlabCursor < 0 || a.rawShapeChildSlabCursor >= len(a.rawShapeChildSlabs) {
+		a.rawShapeChildSlabCursor = 0
+	}
+	for i := a.rawShapeChildSlabCursor; ; i++ {
+		if i >= len(a.rawShapeChildSlabs) {
+			lastCap := len(a.rawShapeChildSlabs[len(a.rawShapeChildSlabs)-1].data)
+			capacity := max(lastCap*2, n)
+			a.rawShapeChildSlabs = append(a.rawShapeChildSlabs, rawShapeChildSlab{data: make([]rawShapeChild, capacity)})
+			a.allocatedBytes += rawShapeChildBytesForCap(capacity)
+		}
+		slab := &a.rawShapeChildSlabs[i]
+		if len(slab.data)-slab.used < n {
+			continue
+		}
+		start := slab.used
+		slab.used += n
+		a.rawShapeChildSlabCursor = i
+		return makeRawShapeChildRange(i, start, n)
+	}
+}
+
 func nextPendingChildEntrySlabCap(class arenaClass, lastCap, min int) int {
 	if class != arenaClassFull {
 		return max(lastCap*2, min)
@@ -1236,6 +1415,24 @@ func (a *nodeArena) ensureExternalScannerCheckpointCapacity(min int) {
 		return
 	}
 	a.allocatedBytes += a.externalScannerNodeCheckpoints.ensureCapacity(min)
+}
+
+func (a *nodeArena) dropExternalScannerCheckpointStorage() {
+	if a == nil {
+		return
+	}
+	before := a.externalScannerCheckpointBytesAllocated()
+	a.externalScannerNodeCheckpoints = externalScannerCheckpointSet{}
+	a.externalScannerNodeCheckpointSlabs = nil
+	a.externalScannerLastSnapshotRef = externalScannerSnapshotRef{}
+	if before <= 0 {
+		return
+	}
+	if a.allocatedBytes >= before {
+		a.allocatedBytes -= before
+		return
+	}
+	a.recomputeAllocatedBytes()
 }
 
 func (a *nodeArena) allocNodeSlice(n int) []*Node {
@@ -1522,6 +1719,28 @@ func (a *nodeArena) pendingChildEntryBytesAllocated() int64 {
 	return total
 }
 
+func (a *nodeArena) rawShapeBytesAllocated() int64 {
+	if a == nil {
+		return 0
+	}
+	var total int64
+	for i := range a.rawShapeSlabs {
+		total += rawShapeBytesForCap(len(a.rawShapeSlabs[i].data))
+	}
+	return total
+}
+
+func (a *nodeArena) rawShapeChildBytesAllocated() int64 {
+	if a == nil {
+		return 0
+	}
+	var total int64
+	for i := range a.rawShapeChildSlabs {
+		total += rawShapeChildBytesForCap(len(a.rawShapeChildSlabs[i].data))
+	}
+	return total
+}
+
 func (a *nodeArena) pendingChildEntryCapacity() uint64 {
 	if a == nil {
 		return 0
@@ -1575,6 +1794,8 @@ func (a *nodeArena) recomputeAllocatedBytes() {
 		a.compactFullLeafBytesAllocated() +
 		a.pendingParentBytesAllocated() +
 		a.pendingChildEntryBytesAllocated() +
+		a.rawShapeBytesAllocated() +
+		a.rawShapeChildBytesAllocated() +
 		a.finalChildSidecarBytesAllocated() +
 		a.compactCheckpointLeafBytesAllocated() +
 		a.childSliceBytesAllocated() +
@@ -1925,91 +2146,94 @@ func (a *nodeArena) collectArenaBreakdown() *ArenaBreakdown {
 		fieldSourceElements = 0
 	}
 	breakdown := &ArenaBreakdown{
-		NodeStructBytesAllocated:          a.nodeStructBytesAllocated(),
-		NoTreeNodeBytesAllocated:          a.noTreeNodeBytesAllocated(),
-		CompactFullLeafBytesAllocated:     a.compactFullLeafBytesAllocated(),
-		PendingParentBytesAllocated:       a.pendingParentBytesAllocated(),
-		PendingChildEntryBytesAllocated:   a.pendingChildEntryBytesAllocated(),
-		FinalChildSidecarBytesAllocated:   a.finalChildSidecarBytesAllocated(),
-		PendingChildEntriesAllocated:      a.pendingChildEntriesAllocated,
-		PendingChildEntryCapacity:         a.pendingChildEntryCapacity(),
-		PendingChildEntryWaste:            a.pendingChildEntryWaste(),
-		ChildSliceBytesAllocated:          a.childSliceBytesAllocated(),
-		FieldIDBytesAllocated:             a.fieldIDBytesAllocated(),
-		FieldSourceBytesAllocated:         a.fieldSourceBytesAllocated(),
-		ArenaNodesConstructed:             nodeUsage.live,
-		NodeLiveCount:                     nodeUsage.live,
-		NodeCapacityCount:                 nodeUsage.capacity,
-		NodeCapacityWaste:                 nodeUsage.waste,
-		PrimaryNodeCapacity:               nodeUsage.primaryCapacity,
-		PrimaryNodeUsed:                   nodeUsage.primaryUsed,
-		OverflowNodeCapacity:              nodeUsage.overflowCapacity,
-		OverflowNodeUsed:                  nodeUsage.overflowUsed,
-		OverflowNodeSlabs:                 nodeUsage.overflowSlabs,
-		LargestNodeSlabUsedFraction:       nodeUsage.largestSlabUsedFraction,
-		LeafNodesConstructed:              a.leafNodesConstructed,
-		ParentNodesConstructed:            a.parentNodesConstructed,
-		FieldedParentNodesConstructed:     a.fieldedParentNodesConstructed,
-		UnfieldedParentNodesConstructed:   a.unfieldedParentNodesConstructed,
-		ParentConstructedChildLen0:        a.parentConstructedChildLen0,
-		ParentConstructedChildLen1:        a.parentConstructedChildLen1,
-		ParentConstructedChildLen2:        a.parentConstructedChildLen2,
-		ParentConstructedChildLen3:        a.parentConstructedChildLen3,
-		ParentConstructedChildLen4Plus:    a.parentConstructedChildLen4Plus,
-		ParentConstructedNoLinks:          a.parentConstructedNoLinks,
-		ParentConstructedWithLinks:        a.parentConstructedWithLinks,
-		ParentConstructedTrackErrors:      a.parentConstructedTrackErrors,
-		ParentConstructedFieldSources:     a.parentConstructedFieldSources,
-		ParentReductionVisible:            a.parentReductionVisible,
-		ParentReductionInvisible:          a.parentReductionInvisible,
-		ParentReductionVisibleFielded:     a.parentReductionVisibleFielded,
-		ParentReductionVisibleUnfielded:   a.parentReductionVisibleUnfielded,
-		ParentReductionInvisibleFielded:   a.parentReductionInvisibleFielded,
-		ParentReductionInvisibleUnfielded: a.parentReductionInvisibleUnfielded,
-		ParentReductionVisibleChildPtrs:   a.parentReductionVisibleChildPointers,
-		ParentReductionInvisibleChildPtrs: a.parentReductionInvisibleChildPtrs,
-		ParentReductionVisibleLen0:        a.parentReductionVisibleChildLen0,
-		ParentReductionVisibleLen1:        a.parentReductionVisibleChildLen1,
-		ParentReductionVisibleLen2:        a.parentReductionVisibleChildLen2,
-		ParentReductionVisibleLen3:        a.parentReductionVisibleChildLen3,
-		ParentReductionVisibleLen4Plus:    a.parentReductionVisibleChildLen4Plus,
-		ParentReductionInvisibleLen0:      a.parentReductionInvisibleChildLen0,
-		ParentReductionInvisibleLen1:      a.parentReductionInvisibleChildLen1,
-		ParentReductionInvisibleLen2:      a.parentReductionInvisibleChildLen2,
-		ParentReductionInvisibleLen3:      a.parentReductionInvisibleChildLen3,
-		ParentReductionInvisibleLen4Plus:  a.parentReductionInvisibleChildLen4P,
-		ReduceChildSlicesFastGSS:          a.reduceChildSlicesFastGSS,
-		ReduceChildPointersFastGSS:        a.reduceChildPointersFastGSS,
-		ReduceChildSlicesAllVisible:       a.reduceChildSlicesAllVisible,
-		ReduceChildPointersAllVisible:     a.reduceChildPointersAllVisible,
-		ReduceChildSlicesNoAlias:          a.reduceChildSlicesNoAlias,
-		ReduceChildPointersNoAlias:        a.reduceChildPointersNoAlias,
-		ReduceChildSlicesScratchGeneral:   a.reduceChildSlicesScratchGeneral,
-		ReduceChildPointersScratchGeneral: a.reduceChildPointersScratchGeneral,
-		ReduceChildSlicesScratchNoAlias:   a.reduceChildSlicesScratchNoAlias,
-		ReduceChildPointersScratchNoAlias: a.reduceChildPointersScratchNoAlias,
-		CollapseRawUnaryAttempts:          a.collapseRawUnaryAttempts,
-		CollapseRawUnarySuccesses:         a.collapseRawUnarySuccesses,
-		CollapseRawUnaryMissShape:         a.collapseRawUnaryMissShape,
-		CollapseRawUnaryMissGrammar:       a.collapseRawUnaryMissGrammar,
-		CollapseRawUnaryMissChild:         a.collapseRawUnaryMissChild,
-		CollapseRawUnaryMissRule:          a.collapseRawUnaryMissRule,
-		CollapseUnaryAttempts:             a.collapseUnaryAttempts,
-		CollapseUnarySuccesses:            a.collapseUnarySuccesses,
-		CollapseUnaryMissShape:            a.collapseUnaryMissShape,
-		CollapseUnaryMissGrammar:          a.collapseUnaryMissGrammar,
-		CollapseUnaryMissFielded:          a.collapseUnaryMissFielded,
-		CollapseUnaryMissChild:            a.collapseUnaryMissChild,
-		CollapseUnaryMissRule:             a.collapseUnaryMissRule,
-		CollapseRuleSameSymbol:            a.collapseRuleSameSymbol,
-		CollapseRuleInvisibleWrapper:      a.collapseRuleInvisibleWrapper,
-		CollapseRuleNamedLeafAlias:        a.collapseRuleNamedLeafAlias,
-		NoTreeReduceNodesConstructed:      a.noTreeReduceNodesConstructed,
-		NoTreeLeafNodesConstructed:        a.noTreeLeafNodesConstructed,
-		NoTreePlaceholderNodesConstructed: a.noTreePlaceholderNodesConstructed,
-		ChildPointersConstructed:          a.childPointersUsed(),
-		FieldIDElementsConstructed:        a.fieldIDElementsUsed(),
-		FieldSourceElementsConstructed:    fieldSourceElements,
+		NodeStructBytesAllocated:            a.nodeStructBytesAllocated(),
+		NoTreeNodeBytesAllocated:            a.noTreeNodeBytesAllocated(),
+		CompactFullLeafBytesAllocated:       a.compactFullLeafBytesAllocated(),
+		PendingParentBytesAllocated:         a.pendingParentBytesAllocated(),
+		PendingChildEntryBytesAllocated:     a.pendingChildEntryBytesAllocated(),
+		RawShapeBytesAllocated:              a.rawShapeBytesAllocated(),
+		RawShapeChildBytesAllocated:         a.rawShapeChildBytesAllocated(),
+		FinalChildSidecarBytesAllocated:     a.finalChildSidecarBytesAllocated(),
+		CompactCheckpointLeafBytesAllocated: a.compactCheckpointLeafBytesAllocated(),
+		PendingChildEntriesAllocated:        a.pendingChildEntriesAllocated,
+		PendingChildEntryCapacity:           a.pendingChildEntryCapacity(),
+		PendingChildEntryWaste:              a.pendingChildEntryWaste(),
+		ChildSliceBytesAllocated:            a.childSliceBytesAllocated(),
+		FieldIDBytesAllocated:               a.fieldIDBytesAllocated(),
+		FieldSourceBytesAllocated:           a.fieldSourceBytesAllocated(),
+		ArenaNodesConstructed:               nodeUsage.live,
+		NodeLiveCount:                       nodeUsage.live,
+		NodeCapacityCount:                   nodeUsage.capacity,
+		NodeCapacityWaste:                   nodeUsage.waste,
+		PrimaryNodeCapacity:                 nodeUsage.primaryCapacity,
+		PrimaryNodeUsed:                     nodeUsage.primaryUsed,
+		OverflowNodeCapacity:                nodeUsage.overflowCapacity,
+		OverflowNodeUsed:                    nodeUsage.overflowUsed,
+		OverflowNodeSlabs:                   nodeUsage.overflowSlabs,
+		LargestNodeSlabUsedFraction:         nodeUsage.largestSlabUsedFraction,
+		LeafNodesConstructed:                a.leafNodesConstructed,
+		ParentNodesConstructed:              a.parentNodesConstructed,
+		FieldedParentNodesConstructed:       a.fieldedParentNodesConstructed,
+		UnfieldedParentNodesConstructed:     a.unfieldedParentNodesConstructed,
+		ParentConstructedChildLen0:          a.parentConstructedChildLen0,
+		ParentConstructedChildLen1:          a.parentConstructedChildLen1,
+		ParentConstructedChildLen2:          a.parentConstructedChildLen2,
+		ParentConstructedChildLen3:          a.parentConstructedChildLen3,
+		ParentConstructedChildLen4Plus:      a.parentConstructedChildLen4Plus,
+		ParentConstructedNoLinks:            a.parentConstructedNoLinks,
+		ParentConstructedWithLinks:          a.parentConstructedWithLinks,
+		ParentConstructedTrackErrors:        a.parentConstructedTrackErrors,
+		ParentConstructedFieldSources:       a.parentConstructedFieldSources,
+		ParentReductionVisible:              a.parentReductionVisible,
+		ParentReductionInvisible:            a.parentReductionInvisible,
+		ParentReductionVisibleFielded:       a.parentReductionVisibleFielded,
+		ParentReductionVisibleUnfielded:     a.parentReductionVisibleUnfielded,
+		ParentReductionInvisibleFielded:     a.parentReductionInvisibleFielded,
+		ParentReductionInvisibleUnfielded:   a.parentReductionInvisibleUnfielded,
+		ParentReductionVisibleChildPtrs:     a.parentReductionVisibleChildPointers,
+		ParentReductionInvisibleChildPtrs:   a.parentReductionInvisibleChildPtrs,
+		ParentReductionVisibleLen0:          a.parentReductionVisibleChildLen0,
+		ParentReductionVisibleLen1:          a.parentReductionVisibleChildLen1,
+		ParentReductionVisibleLen2:          a.parentReductionVisibleChildLen2,
+		ParentReductionVisibleLen3:          a.parentReductionVisibleChildLen3,
+		ParentReductionVisibleLen4Plus:      a.parentReductionVisibleChildLen4Plus,
+		ParentReductionInvisibleLen0:        a.parentReductionInvisibleChildLen0,
+		ParentReductionInvisibleLen1:        a.parentReductionInvisibleChildLen1,
+		ParentReductionInvisibleLen2:        a.parentReductionInvisibleChildLen2,
+		ParentReductionInvisibleLen3:        a.parentReductionInvisibleChildLen3,
+		ParentReductionInvisibleLen4Plus:    a.parentReductionInvisibleChildLen4P,
+		ReduceChildSlicesFastGSS:            a.reduceChildSlicesFastGSS,
+		ReduceChildPointersFastGSS:          a.reduceChildPointersFastGSS,
+		ReduceChildSlicesAllVisible:         a.reduceChildSlicesAllVisible,
+		ReduceChildPointersAllVisible:       a.reduceChildPointersAllVisible,
+		ReduceChildSlicesNoAlias:            a.reduceChildSlicesNoAlias,
+		ReduceChildPointersNoAlias:          a.reduceChildPointersNoAlias,
+		ReduceChildSlicesScratchGeneral:     a.reduceChildSlicesScratchGeneral,
+		ReduceChildPointersScratchGeneral:   a.reduceChildPointersScratchGeneral,
+		ReduceChildSlicesScratchNoAlias:     a.reduceChildSlicesScratchNoAlias,
+		ReduceChildPointersScratchNoAlias:   a.reduceChildPointersScratchNoAlias,
+		CollapseRawUnaryAttempts:            a.collapseRawUnaryAttempts,
+		CollapseRawUnarySuccesses:           a.collapseRawUnarySuccesses,
+		CollapseRawUnaryMissShape:           a.collapseRawUnaryMissShape,
+		CollapseRawUnaryMissGrammar:         a.collapseRawUnaryMissGrammar,
+		CollapseRawUnaryMissChild:           a.collapseRawUnaryMissChild,
+		CollapseRawUnaryMissRule:            a.collapseRawUnaryMissRule,
+		CollapseUnaryAttempts:               a.collapseUnaryAttempts,
+		CollapseUnarySuccesses:              a.collapseUnarySuccesses,
+		CollapseUnaryMissShape:              a.collapseUnaryMissShape,
+		CollapseUnaryMissGrammar:            a.collapseUnaryMissGrammar,
+		CollapseUnaryMissFielded:            a.collapseUnaryMissFielded,
+		CollapseUnaryMissChild:              a.collapseUnaryMissChild,
+		CollapseUnaryMissRule:               a.collapseUnaryMissRule,
+		CollapseRuleSameSymbol:              a.collapseRuleSameSymbol,
+		CollapseRuleInvisibleWrapper:        a.collapseRuleInvisibleWrapper,
+		CollapseRuleNamedLeafAlias:          a.collapseRuleNamedLeafAlias,
+		NoTreeReduceNodesConstructed:        a.noTreeReduceNodesConstructed,
+		NoTreeLeafNodesConstructed:          a.noTreeLeafNodesConstructed,
+		NoTreePlaceholderNodesConstructed:   a.noTreePlaceholderNodesConstructed,
+		ChildPointersConstructed:            a.childPointersUsed(),
+		FieldIDElementsConstructed:          a.fieldIDElementsUsed(),
+		FieldSourceElementsConstructed:      fieldSourceElements,
 	}
 	a.scanConstructedNodes(breakdown)
 	knownNodes := a.leafNodesConstructed + a.parentNodesConstructed +
@@ -2334,6 +2558,30 @@ func maxRetainedPendingChildEntryCapacityForClass(class arenaClass) int {
 		return max(maxRetainedFullSliceCap, defaultPendingChildEntrySlabCap(class))
 	}
 	return max(defaultPendingChildEntrySlabCap(class)*maxRetainedArenaFactor, maxRetainedIncrementalSliceCap)
+}
+
+func maxRetainedRawShapeCapacityForClass(class arenaClass) int {
+	nodeSize := int(unsafe.Sizeof(rawShape{}))
+	if nodeSize <= 0 {
+		nodeSize = 1
+	}
+	if class == arenaClassFull {
+		return max(maxRetainedFullSliceCap, defaultRawShapeSlabCap(class))
+	}
+	floor := maxRetainedIncrementalSliceCap
+	return max(defaultRawShapeSlabCap(class)*maxRetainedArenaFactor, floor)
+}
+
+func maxRetainedRawShapeChildCapacityForClass(class arenaClass) int {
+	nodeSize := int(unsafe.Sizeof(rawShapeChild{}))
+	if nodeSize <= 0 {
+		nodeSize = 1
+	}
+	if class == arenaClassFull {
+		return max(maxRetainedFullSliceCap, defaultRawShapeChildSlabCap(class))
+	}
+	floor := maxRetainedIncrementalSliceCap
+	return max(defaultRawShapeChildSlabCap(class)*maxRetainedArenaFactor, floor)
 }
 
 func maxRetainedFinalChildSidecarCapacityForClass(class arenaClass) int {

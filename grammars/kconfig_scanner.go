@@ -2,7 +2,11 @@
 
 package grammars
 
-import gotreesitter "github.com/odvcencio/gotreesitter"
+import (
+	"unicode"
+
+	gotreesitter "github.com/odvcencio/gotreesitter"
+)
 
 // External token indexes for the kconfig grammar.
 const (
@@ -26,22 +30,49 @@ func (KconfigExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexe
 	if !kconfigValid(validSymbols, kconfigTokText) {
 		return false
 	}
-	// Scan help text: consume all characters until end of line
-	hasContent := false
+
+	startCol := uint32(0)
+	for unicode.IsSpace(lexer.Lookahead()) {
+		startCol = kconfigScannerIndentColumn(startCol, lexer.Lookahead())
+		lexer.Advance(true)
+	}
+
 	for {
-		ch := lexer.Lookahead()
-		if ch == '\n' || ch == '\r' || ch == 0 {
-			break
+		for lexer.Lookahead() != '\n' && lexer.Lookahead() != 0 {
+			lexer.Advance(false)
 		}
-		lexer.Advance(false)
-		hasContent = true
-	}
-	if hasContent {
+
+		if lexer.Lookahead() == 0 {
+			lexer.MarkEnd()
+			lexer.SetResultSymbol(kconfigSymText)
+			return true
+		}
+
 		lexer.MarkEnd()
-		lexer.SetResultSymbol(kconfigSymText)
-		return true
+		nextCol := uint32(0)
+		for unicode.IsSpace(lexer.Lookahead()) {
+			nextCol = kconfigScannerIndentColumn(nextCol, lexer.Lookahead())
+			lexer.Advance(false)
+		}
+
+		if nextCol < startCol {
+			lexer.MarkEnd()
+			lexer.SetResultSymbol(kconfigSymText)
+			return true
+		}
 	}
-	return false
 }
 
 func kconfigValid(vs []bool, i int) bool { return i < len(vs) && vs[i] }
+
+func kconfigScannerIndentColumn(col uint32, ch rune) uint32 {
+	switch ch {
+	case ' ':
+		return col + 1
+	case '\t':
+		col += 8
+		return col - col%8
+	default:
+		return col
+	}
+}

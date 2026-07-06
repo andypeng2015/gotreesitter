@@ -31,6 +31,12 @@ type precOrderTable struct {
 	// different levels are not (they serve different ordering purposes).
 	symbolLevels map[string]int
 
+	// symbolLevelPositions keeps every SYMBOL occurrence by precedence level.
+	// Some grammars repeat a symbol in multiple levels for different conflict
+	// families. Symbol-vs-symbol resolution must compare the occurrence from a
+	// shared level instead of only the globally highest occurrence.
+	symbolLevelPositions map[string]map[int]int
+
 	// namedPrecPositions maps STRING-only numeric prec values (from
 	// buildNamedPrecMap) to their global position. This reverse mapping
 	// enables conflict resolution to compare shift prec values (which
@@ -88,6 +94,7 @@ func buildPrecOrderTable(levels [][]PrecEntry, namedPrecs map[string]int) *precO
 
 	symbolPositions := make(map[string]int)
 	symbolLevels := make(map[string]int)
+	symbolLevelPositions := make(map[string]map[int]int)
 	namedPrecPositions := make(map[int]int)
 
 	idx := 0
@@ -96,6 +103,14 @@ func buildPrecOrderTable(levels [][]PrecEntry, namedPrecs map[string]int) *precO
 			val := total - 1 - idx // higher value = higher precedence
 			idx++
 			if e.IsSymbol {
+				levels := symbolLevelPositions[e.Name]
+				if levels == nil {
+					levels = make(map[int]int)
+					symbolLevelPositions[e.Name] = levels
+				}
+				if existing, ok := levels[levelIdx]; !ok || val > existing {
+					levels[levelIdx] = val
+				}
 				if existing, ok := symbolPositions[e.Name]; !ok || val > existing {
 					symbolPositions[e.Name] = val
 					symbolLevels[e.Name] = levelIdx
@@ -116,9 +131,10 @@ func buildPrecOrderTable(levels [][]PrecEntry, namedPrecs map[string]int) *precO
 	}
 
 	return &precOrderTable{
-		symbolPositions:    symbolPositions,
-		symbolLevels:       symbolLevels,
-		namedPrecPositions: namedPrecPositions,
+		symbolPositions:      symbolPositions,
+		symbolLevels:         symbolLevels,
+		symbolLevelPositions: symbolLevelPositions,
+		namedPrecPositions:   namedPrecPositions,
 	}
 }
 
@@ -161,6 +177,36 @@ func buildNamedPrecMapFromLevels(levels [][]PrecEntry) map[string]int {
 func (t *precOrderTable) resolveSymbolVsSymbol(symbolA, symbolB string) int {
 	if t == nil {
 		return 0
+	}
+
+	if levelsA := t.symbolLevelPositions[symbolA]; len(levelsA) > 0 {
+		result := 0
+		for level, posA := range levelsA {
+			levelsB := t.symbolLevelPositions[symbolB]
+			posB, ok := levelsB[level]
+			if !ok {
+				continue
+			}
+			cmp := 0
+			if posA > posB {
+				cmp = 1
+			} else if posA < posB {
+				cmp = -1
+			}
+			if cmp == 0 {
+				continue
+			}
+			if result != 0 && result != cmp {
+				return 0
+			}
+			result = cmp
+		}
+		if result > 0 {
+			return 1
+		}
+		if result < 0 {
+			return -1
+		}
 	}
 
 	posA, okA := t.symbolPositions[symbolA]

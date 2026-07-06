@@ -49,6 +49,21 @@ func RunBatchManifest(manifestPath, outDir, pkg string, compact bool) error {
 		if err := grpCtx.Err(); err != nil {
 			break
 		}
+		if grammargenOwnedBlobs[entry.Name] {
+			// This language's checked-in blob is compiled by grammargen, not
+			// ts2go. Keep the embedded loader entry pointing at the existing
+			// blob but never re-extract it from C tables or emit a ts2go
+			// register stub for it (its registry entry advertises
+			// GrammarSourceGrammargenBlob).
+			mu.Lock()
+			loaderSpecs = append(loaderSpecs, embeddedLoaderSpec{
+				Name:     entry.Name,
+				BlobName: safeFileBase(entry.Name) + ".bin",
+			})
+			mu.Unlock()
+			fmt.Println(grammargenOwnedBlobSkipMessage(entry.Name))
+			continue
+		}
 		grp.Go(func() error {
 			if err := grpCtx.Err(); err != nil {
 				return err
@@ -105,6 +120,10 @@ func RunBatchManifest(manifestPath, outDir, pkg string, compact bool) error {
 			highlightQuery, _ := loadHighlightQuery(repoDir)
 			if err := writeRegisterStub(outDir, entry, highlightQuery); err != nil {
 				return fmt.Errorf("%s: write register stub: %w", entry.Name, err)
+			}
+			sourceComment := externalLexStatesSourceComment(entry)
+			if err := writeExternalLexStatesSidecar(outDir, pkg, entry.Name, sourceComment, grammar.ExternalLexStates); err != nil {
+				return fmt.Errorf("%s: write external lex states: %w", entry.Name, err)
 			}
 
 			fmt.Printf("generated %s (%d states, %d symbols)\n", blobPath, grammar.StateCount, grammar.SymbolCount)
@@ -215,6 +234,38 @@ func loadHighlightQuery(repoDir string) (string, bool) {
 	return "", false
 }
 
+// grammargenOwnedBlobs lists languages whose checked-in grammar_blobs/*.bin
+// is compiled by grammargen (go run ./cmd/grammargen -lr-split -bin ...)
+// instead of the ts2go C-table extraction pipeline. Batch regeneration must
+// not clobber these blobs or relabel their registry entries: they advertise
+// GrammarSourceGrammargenBlob in grammars/registry_builtin_gen.go.
+var grammargenOwnedBlobs = map[string]bool{
+	"go":    true,
+	"swift": true,
+	"regex": true,
+}
+
+// grammargenOwnedBlobSkipMessage returns the batch-skip log line for a
+// grammargen-owned blob, with a regeneration hint accurate for how that
+// specific language is actually built. "go" and "swift" are grammargen
+// builtin grammar names (see builtinGrammars in cmd/grammargen/main.go) and
+// regenerate via the positional-arg form below. "regex" is NOT a grammargen
+// builtin name — its blob is built ad hoc by importing a resolved
+// tree-sitter grammar.json (grammargen's -json flag), not from a builtin Go
+// DSL grammar, so the builtin-name regen command would fail if run verbatim.
+// See grammargen/regex_import_parity_test.go for the import path this blob
+// must stay parity-checked against.
+func grammargenOwnedBlobSkipMessage(name string) string {
+	if name == "regex" {
+		return fmt.Sprintf("skipped %s (grammargen-owned blob; regex.bin is grammargen-built via a "+
+			"tree-sitter grammar.json import, not a grammargen builtin grammar name — "+
+			"see grammargen/regex_import_parity_test.go for the import/parity path; "+
+			"do not regenerate it through this batch pipeline or clobber it here)", name)
+	}
+	return fmt.Sprintf("skipped %s (grammargen-owned blob; regenerate with: go run ./cmd/grammargen -lr-split -bin grammars/grammar_blobs/%s.bin %s)",
+		name, safeFileBase(name), name)
+}
+
 func writeRegisterStub(outDir string, entry ManifestEntry, highlightQuery string) error {
 	nameIdent := languageRegisterIdentifier(entry.Name)
 	funcName := languageFuncName(entry.Name)
@@ -240,6 +291,7 @@ func init() {
 		Name:           %q,
 		Extensions:     %s,
 		Language:       %s,
+		GrammarSource:  GrammarSourceTS2GoBlob,
 		HighlightQuery: %sHighlightQuery,
 		TokenSourceFactory: defaultTokenSourceFactory(%q),
 	})
@@ -277,6 +329,62 @@ func languageRegisterIdentifier(name string) string {
 		id = "Lang"
 	}
 	return strings.ToLower(id[:1]) + id[1:]
+}
+
+func externalLexStatesSourceComment(entry ManifestEntry) string {
+	parts := []string{entry.RepoURL}
+	if entry.Commit != "" {
+		parts = append(parts, entry.Commit)
+	}
+	if entry.Subdir != "" {
+		parts = append(parts, filepath.Join(entry.Subdir, "parser.c"))
+	} else {
+		parts = append(parts, "parser.c")
+	}
+	return strings.Join(parts, " ")
+}
+
+func writeExternalLexStatesSidecar(outDir, pkg, name, sourceComment string, states [][]bool) error {
+	if len(states) == 0 {
+		return nil
+	}
+
+	fileBase := safeFileBase(name)
+	varName := languageRegisterIdentifier(name) + "ExternalLexStates"
+	buildTag := "grammar_subset_" + fileBase
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "//go:build !grammar_subset || %s\n\n", buildTag)
+	b.WriteString("// Code generated from tree-sitter parser.c; DO NOT EDIT.\n")
+	if strings.TrimSpace(sourceComment) != "" {
+		fmt.Fprintf(&b, "// Source: %s\n", sourceComment)
+	}
+	b.WriteString("\n")
+	fmt.Fprintf(&b, "package %s\n\n", pkg)
+	fmt.Fprintf(&b, "// %s mirrors C tree-sitter ts_external_scanner_states.\n", varName)
+	fmt.Fprintf(&b, "var %s = [][]bool{\n", varName)
+	width := len(fmt.Sprintf("%d", len(states)-1))
+	for i, row := range states {
+		fmt.Fprintf(&b, "\t/* %*d */ {", width, i)
+		for j, v := range row {
+			if j > 0 {
+				b.WriteString(", ")
+			}
+			if v {
+				b.WriteString("true")
+			} else {
+				b.WriteString("false")
+			}
+		}
+		b.WriteString("},\n")
+	}
+	b.WriteString("}\n\n")
+	b.WriteString("func init() {\n")
+	fmt.Fprintf(&b, "\tRegisterExternalLexStates(%q, %s)\n", name, varName)
+	b.WriteString("}\n")
+
+	outFile := filepath.Join(outDir, fileBase+"_external_lex_states_gen.go")
+	return os.WriteFile(outFile, []byte(b.String()), 0644)
 }
 
 func findParserC(repoDir string) (string, error) {

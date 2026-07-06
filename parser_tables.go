@@ -18,8 +18,10 @@ func buildSmallLookup(lang *Language, smallTokenLookup [][]uint16) [][]smallActi
 		pos++
 		total := 0
 		countPos := pos
-		denseTokenRow := smallIdx < len(smallTokenLookup) && len(smallTokenLookup[smallIdx]) > 0
-		tokenCount := int(lang.TokenCount)
+		denseLookupLimit := 0
+		if smallIdx < len(smallTokenLookup) {
+			denseLookupLimit = len(smallTokenLookup[smallIdx])
+		}
 		for i := uint16(0); i < groupCount; i++ {
 			if countPos+1 >= len(table) {
 				total = 0
@@ -27,7 +29,7 @@ func buildSmallLookup(lang *Language, smallTokenLookup [][]uint16) [][]smallActi
 			}
 			symbolCount := int(table[countPos+1])
 			countPos += 2
-			if !denseTokenRow {
+			if denseLookupLimit == 0 {
 				total += symbolCount
 				countPos += symbolCount
 				continue
@@ -37,7 +39,7 @@ func buildSmallLookup(lang *Language, smallTokenLookup [][]uint16) [][]smallActi
 					break
 				}
 				sym := int(table[countPos])
-				if sym >= tokenCount {
+				if sym >= denseLookupLimit {
 					total++
 				}
 				countPos++
@@ -60,7 +62,7 @@ func buildSmallLookup(lang *Language, smallTokenLookup [][]uint16) [][]smallActi
 					break
 				}
 				sym := table[pos]
-				if !denseTokenRow || int(sym) >= tokenCount {
+				if denseLookupLimit == 0 || int(sym) >= denseLookupLimit {
 					pairs = append(pairs, smallActionPair{sym: sym, val: val})
 				}
 				pos++
@@ -78,7 +80,11 @@ func buildSmallTokenLookup(lang *Language) [][]uint16 {
 	}
 	if !compactSmallTokenRows(lang) {
 		threshold := smallTokenDenseThreshold
-		if lang.Name == "typescript" {
+		// grammargen-compiled blobs (today only go) use dense small-token rows;
+		// keyed on the general GeneratedByGrammargen flag, not the language name.
+		if lang.GeneratedByGrammargen {
+			threshold = 0
+		} else if lang.Name == "typescript" {
 			threshold = typeScriptSmallTokenDenseThreshold
 		}
 		return buildSmallTokenLookupFullRows(lang, threshold)
@@ -152,10 +158,21 @@ func compactSmallTokenRows(lang *Language) bool {
 	return isCobolLanguage(lang)
 }
 
+func smallDenseLookupSymbolLimit(lang *Language) int {
+	if lang == nil {
+		return 0
+	}
+	limit := int(lang.TokenCount)
+	if lang.GeneratedByGrammargen && lang.SymbolCount > lang.TokenCount {
+		limit = int(lang.SymbolCount)
+	}
+	return limit
+}
+
 func buildSmallTokenLookupFullRows(lang *Language, threshold int) [][]uint16 {
 	out := make([][]uint16, len(lang.SmallParseTableMap))
 	table := lang.SmallParseTable
-	tokenCount := int(lang.TokenCount)
+	symbolLimit := smallDenseLookupSymbolLimit(lang)
 	for smallIdx, offset := range lang.SmallParseTableMap {
 		pos := int(offset)
 		if pos >= len(table) {
@@ -163,7 +180,7 @@ func buildSmallTokenLookupFullRows(lang *Language, threshold int) [][]uint16 {
 		}
 		groupCount := table[pos]
 		pos++
-		row := make([]uint16, tokenCount)
+		row := make([]uint16, symbolLimit)
 		used := 0
 		for i := uint16(0); i < groupCount; i++ {
 			if pos+1 >= len(table) {
@@ -177,7 +194,7 @@ func buildSmallTokenLookupFullRows(lang *Language, threshold int) [][]uint16 {
 					break
 				}
 				sym := int(table[pos])
-				if sym >= 0 && sym < tokenCount {
+				if sym >= 0 && sym < symbolLimit {
 					if row[sym] == 0 {
 						used++
 					}
@@ -203,6 +220,19 @@ func (p *Parser) lookupAction(state StateID, sym Symbol) *ParseActionEntry {
 		return &p.language.ParseActions[idx]
 	}
 	return nil
+}
+
+// lookupActionIndexFunc returns a cached bound-method closure for
+// lookupActionIndex. Token-source construction happens per parse; using this
+// instead of `p.lookupActionIndex` avoids allocating a fresh method-value
+// closure each time. The closure captures only p, and lookupActionIndex reads
+// p.denseLimit/p.language at call time, so caching is safe across language
+// changes.
+func (p *Parser) lookupActionIndexFunc() func(state StateID, sym Symbol) uint16 {
+	if p.lookupActionIndexFn == nil {
+		p.lookupActionIndexFn = p.lookupActionIndex
+	}
+	return p.lookupActionIndexFn
 }
 
 // lookupActionIndex returns the parse action index for (state, symbol).
@@ -346,7 +376,7 @@ func (p *Parser) lookupActionIndexSmall(state StateID, sym Symbol) uint16 {
 	if smallIdx < 0 || smallIdx >= len(p.language.SmallParseTableMap) {
 		return 0
 	}
-	if uint32(sym) < p.language.TokenCount && smallIdx < len(p.smallTokenLookup) {
+	if smallIdx < len(p.smallTokenLookup) {
 		row := p.smallTokenLookup[smallIdx]
 		if int(sym) < len(row) {
 			return row[sym]

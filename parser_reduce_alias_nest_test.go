@@ -50,6 +50,165 @@ func TestAliasedHiddenChildedWrapperNestsUnderAlias(t *testing.T) {
 	}
 }
 
+func TestAliasedHiddenAnonymousLeafToNamedNonterminalNestsUnderAlias(t *testing.T) {
+	lang := &Language{
+		SymbolCount: 3,
+		TokenCount:  1,
+		SymbolMetadata: []SymbolMetadata{
+			{Visible: true, Named: false}, // 0: anonymous token
+			{Visible: false, Named: true}, // 1: hidden wrapper
+			{Visible: true, Named: true},  // 2: visible named nonterminal alias
+		},
+	}
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	leaf := newLeafNodeInArena(arena, 0, false, 0, 1, Point{}, Point{Column: 1})
+	hidden := newParentNodeInArena(arena, 1, false, []*Node{leaf}, nil, 0)
+
+	aliased := aliasedNodeInArena(arena, lang, hidden, 2)
+	if aliased == nil {
+		t.Fatal("expected aliased node")
+	}
+	if got, want := aliased.symbol, Symbol(2); got != want {
+		t.Fatalf("symbol = %d, want %d", got, want)
+	}
+	if got, want := aliased.ChildCount(), 1; got != want {
+		t.Fatalf("child count = %d, want %d", got, want)
+	}
+	child := aliased.Child(0)
+	if child == nil {
+		t.Fatal("aliased child = nil")
+	}
+	if got, want := child.symbol, Symbol(0); got != want {
+		t.Fatalf("child symbol = %d, want %d", got, want)
+	}
+	if child.IsNamed() {
+		t.Fatal("anonymous token child became named")
+	}
+}
+
+func TestAliasedHiddenAnonymousLeafToSameAnonymousTokenRenamesThroughAlias(t *testing.T) {
+	lang := &Language{
+		SymbolCount: 3,
+		TokenCount:  2,
+		SymbolMetadata: []SymbolMetadata{
+			{},                            // 0: no alias / EOF
+			{Visible: true, Named: false}, // 1: anonymous token and alias
+			{Visible: false, Named: true}, // 2: hidden token wrapper
+		},
+	}
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	leaf := newLeafNodeInArena(arena, 1, false, 12, 13, Point{Column: 12}, Point{Column: 13})
+	hidden := newParentNodeInArena(arena, 2, false, []*Node{leaf}, nil, 0)
+
+	aliased := aliasedNodeInArena(arena, lang, hidden, 1)
+	if aliased == nil {
+		t.Fatal("expected aliased node")
+	}
+	if got, want := aliased.symbol, Symbol(1); got != want {
+		t.Fatalf("symbol = %d, want %d", got, want)
+	}
+	if aliased.IsNamed() {
+		t.Fatal("same anonymous-token alias became named")
+	}
+	if got, want := aliased.ChildCount(), 0; got != want {
+		t.Fatalf("child count = %d, want %d", got, want)
+	}
+	if got, want := aliased.StartByte(), uint32(12); got != want {
+		t.Fatalf("start byte = %d, want %d", got, want)
+	}
+	if got, want := aliased.EndByte(), uint32(13); got != want {
+		t.Fatalf("end byte = %d, want %d", got, want)
+	}
+}
+
+func TestAliasedInvisibleTerminalLeafToVisibleAnonymousAliasSymbolNestsUnderAlias(t *testing.T) {
+	lang := &Language{
+		SymbolCount: 3,
+		TokenCount:  2,
+		SymbolMetadata: []SymbolMetadata{
+			{},                            // 0: no alias / EOF
+			{Visible: false, Named: true}, // 1: invisible terminal token
+			{Visible: true, Named: false}, // 2: anonymous alias symbol outside TokenCount
+		},
+	}
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	leaf := newLeafNodeInArena(arena, 1, false, 12, 13, Point{Column: 12}, Point{Column: 13})
+
+	aliased := aliasedNodeInArena(arena, lang, leaf, 2)
+	if aliased == nil {
+		t.Fatal("expected aliased node")
+	}
+	if aliased == leaf {
+		t.Fatal("visible anonymous alias returned invisible leaf unchanged; want wrapper materialization")
+	}
+	if got, want := aliased.symbol, Symbol(2); got != want {
+		t.Fatalf("symbol = %d, want %d", got, want)
+	}
+	if aliased.IsNamed() {
+		t.Fatal("visible anonymous alias became named")
+	}
+	if got, want := aliased.ChildCount(), 1; got != want {
+		t.Fatalf("child count = %d, want %d", got, want)
+	}
+	child := aliased.Child(0)
+	if child == nil {
+		t.Fatal("aliased child = nil")
+	}
+	if child == leaf {
+		t.Fatal("aliased child reused invisible source leaf; want visible alias clone")
+	}
+	if got, want := child.symbol, Symbol(2); got != want {
+		t.Fatalf("child symbol = %d, want %d", got, want)
+	}
+	if child.IsNamed() {
+		t.Fatal("visible anonymous alias child became named")
+	}
+}
+
+func TestAliasedSameAnonymousTokenLeafRemainsBareTerminalAlias(t *testing.T) {
+	lang := &Language{
+		SymbolCount: 2,
+		TokenCount:  2,
+		SymbolMetadata: []SymbolMetadata{
+			{},                            // 0: no alias / EOF
+			{Visible: true, Named: false}, // 1: anonymous token and alias
+		},
+	}
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	leaf := newLeafNodeInArena(arena, 1, false, 12, 13, Point{Column: 12}, Point{Column: 13})
+
+	aliased := aliasedNodeInArena(arena, lang, leaf, 1)
+	if aliased == nil {
+		t.Fatal("expected aliased node")
+	}
+	if aliased != leaf {
+		t.Fatalf("same anonymous-token alias = %p, want original leaf %p", aliased, leaf)
+	}
+	if got, want := aliased.symbol, Symbol(1); got != want {
+		t.Fatalf("symbol = %d, want %d", got, want)
+	}
+	if aliased.IsNamed() {
+		t.Fatal("same anonymous-token alias became named")
+	}
+	if got, want := aliased.ChildCount(), 0; got != want {
+		t.Fatalf("child count = %d, want %d", got, want)
+	}
+	if got, want := aliased.StartByte(), uint32(12); got != want {
+		t.Fatalf("start byte = %d, want %d", got, want)
+	}
+	if got, want := aliased.EndByte(), uint32(13); got != want {
+		t.Fatalf("end byte = %d, want %d", got, want)
+	}
+}
+
 // TestAliasedHiddenBareLeafStillRenamesThrough guards the companion side of the
 // discriminator: a hidden node whose lone visible descendant is a childless LEAF
 // (a token-shaped wrapper) must still rename-through (collapse) — the alias

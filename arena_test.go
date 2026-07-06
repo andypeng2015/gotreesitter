@@ -64,6 +64,30 @@ func TestAllocNodeUsesOverflowSlabsWhenPrimaryExhausted(t *testing.T) {
 	}
 }
 
+func TestAllocRawShapeDoesNotGrowPastRefSlabLimit(t *testing.T) {
+	maxSlabs := 1 << (32 - rawShapeRefIndexBits)
+	arena := &nodeArena{
+		class:              arenaClassFull,
+		rawShapeSlabs:      make([]rawShapeSlab, maxSlabs),
+		rawShapeSlabCursor: maxSlabs - 1,
+		allocatedBytes:     1234,
+	}
+
+	ref, shape := arena.allocRawShape()
+	if ref != 0 || shape != nil {
+		t.Fatalf("allocRawShape at slab limit = (%d, %p), want zero/nil", ref, shape)
+	}
+	if got := len(arena.rawShapeSlabs); got != maxSlabs {
+		t.Fatalf("rawShapeSlabs length after exhausted alloc = %d, want %d", got, maxSlabs)
+	}
+	if got := arena.rawShapeSlabCursor; got != maxSlabs-1 {
+		t.Fatalf("rawShapeSlabCursor after exhausted alloc = %d, want %d", got, maxSlabs-1)
+	}
+	if got := arena.allocatedBytes; got != 1234 {
+		t.Fatalf("allocatedBytes after exhausted alloc = %d, want 1234", got)
+	}
+}
+
 func TestArenaResetRetainsOverflowWithinBudget(t *testing.T) {
 	arena := newNodeArena(arenaClassIncremental)
 	primaryCap := len(arena.nodes)

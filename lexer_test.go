@@ -366,6 +366,74 @@ func TestLongestMatch(t *testing.T) {
 	}
 }
 
+func TestAcceptPriorityBeatsLongerMatch(t *testing.T) {
+	states := []LexState{
+		{
+			Default: -1,
+			EOF:     -1,
+			Transitions: []LexTransition{
+				{Lo: 'a', Hi: 'a', NextState: 1},
+			},
+		},
+		{
+			AcceptToken:    1,
+			AcceptPriority: 0,
+			Default:        -1,
+			EOF:            -1,
+			Transitions: []LexTransition{
+				{Lo: 'b', Hi: 'b', NextState: 2},
+			},
+		},
+		{
+			AcceptToken:    2,
+			AcceptPriority: 100,
+			Default:        -1,
+			EOF:            -1,
+		},
+	}
+
+	lex := NewLexer(states, []byte("ab"))
+	tok := lex.Next(0)
+	if tok.Symbol != 1 || tok.Text != "a" || tok.StartByte != 0 || tok.EndByte != 1 {
+		t.Fatalf("token = sym=%d text=%q bytes=[%d:%d], want higher-priority short token sym=1 text=a bytes=[0:1]",
+			tok.Symbol, tok.Text, tok.StartByte, tok.EndByte)
+	}
+}
+
+func TestEqualAcceptPriorityUsesLongestMatch(t *testing.T) {
+	states := []LexState{
+		{
+			Default: -1,
+			EOF:     -1,
+			Transitions: []LexTransition{
+				{Lo: 'a', Hi: 'a', NextState: 1},
+			},
+		},
+		{
+			AcceptToken:    1,
+			AcceptPriority: 0,
+			Default:        -1,
+			EOF:            -1,
+			Transitions: []LexTransition{
+				{Lo: 'b', Hi: 'b', NextState: 2},
+			},
+		},
+		{
+			AcceptToken:    2,
+			AcceptPriority: 0,
+			Default:        -1,
+			EOF:            -1,
+		},
+	}
+
+	lex := NewLexer(states, []byte("ab"))
+	tok := lex.Next(0)
+	if tok.Symbol != 2 || tok.Text != "ab" || tok.StartByte != 0 || tok.EndByte != 2 {
+		t.Fatalf("token = sym=%d text=%q bytes=[%d:%d], want equal-priority longest token sym=2 text=ab bytes=[0:2]",
+			tok.Symbol, tok.Text, tok.StartByte, tok.EndByte)
+	}
+}
+
 // TestNewLexerFields verifies that NewLexer initializes all fields correctly.
 func TestNewLexerFields(t *testing.T) {
 	states := buildIdentNumberWSDFA()

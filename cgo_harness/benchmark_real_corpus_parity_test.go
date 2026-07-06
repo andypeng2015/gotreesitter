@@ -3,6 +3,7 @@
 package cgoharness
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -288,13 +289,13 @@ func prepareRealCorpusBenchmarkCases(b *testing.B, name string) []realCorpusBenc
 	}
 
 	root := realCorpusBenchmarkRoot(b)
-	langRoot := filepath.Join(root, name)
+	langRoot := realCorpusBenchmarkLanguageRoot(b, root, name)
 	stat, err := os.Stat(langRoot)
 	if err != nil || !stat.IsDir() {
 		b.Skipf("no real corpus directory for %s under %s", name, root)
 	}
 
-	files := loadRealCorpusBenchmarkFiles(b, langRoot)
+	files := loadRealCorpusBenchmarkFiles(b, langRoot, realCorpusBenchmarkFileFiltersFor(b, name, root))
 	cases := make([]realCorpusBenchmarkCase, 0, len(files))
 	for _, file := range files {
 		cases = append(cases, realCorpusBenchmarkCase{
@@ -330,6 +331,13 @@ type realCorpusBenchmarkFile struct {
 	source []byte
 }
 
+type realCorpusBenchmarkFileFilters struct {
+	allowAll   bool
+	extensions map[string]struct{}
+	basenames  map[string]struct{}
+	paths      map[string]struct{}
+}
+
 func realCorpusBenchmarkRoot(b *testing.B) string {
 	b.Helper()
 	if root := strings.TrimSpace(os.Getenv("GTS_REAL_CORPUS_BENCH_ROOT")); root != "" {
@@ -339,6 +347,10 @@ func realCorpusBenchmarkRoot(b *testing.B) string {
 		"corpus_real",
 		filepath.Join("cgo_harness", "corpus_real"),
 		filepath.Join("..", "cgo_harness", "corpus_real"),
+		"corpus_sources",
+		"corpus-sources",
+		filepath.Join("cgo_harness", "corpus_sources"),
+		filepath.Join("..", "cgo_harness", "corpus_sources"),
 	} {
 		if st, err := os.Stat(candidate); err == nil && st.IsDir() {
 			return candidate
@@ -348,10 +360,27 @@ func realCorpusBenchmarkRoot(b *testing.B) string {
 	return ""
 }
 
-func loadRealCorpusBenchmarkFiles(b *testing.B, root string) []realCorpusBenchmarkFile {
-	b.Helper()
-	minBytes := realCorpusBenchmarkEnvInt(b, "GTS_REAL_CORPUS_BENCH_MIN_BYTES", 0)
-	maxFileBytes := realCorpusBenchmarkEnvInt(b, "GTS_REAL_CORPUS_BENCH_MAX_FILE_BYTES", 0)
+func realCorpusBenchmarkLanguageRoot(tb testing.TB, root string, language string) string {
+	tb.Helper()
+	langRoot := filepath.Join(root, language)
+	if !realCorpusBenchmarkUseLockFilter(root) {
+		return langRoot
+	}
+	entry, ok := realCorpusBenchmarkLockEntryFor(tb, language)
+	if !ok || strings.TrimSpace(entry.Subdir) == "" || strings.TrimSpace(entry.Subdir) == "." {
+		return langRoot
+	}
+	subdir, ok := realCorpusBenchmarkCleanLockSubdir(entry.Subdir)
+	if !ok {
+		tb.Fatalf("invalid real corpus lock subdir for %s: %q", language, entry.Subdir)
+	}
+	return filepath.Join(langRoot, subdir)
+}
+
+func loadRealCorpusBenchmarkFiles(tb testing.TB, root string, filters realCorpusBenchmarkFileFilters) []realCorpusBenchmarkFile {
+	tb.Helper()
+	minBytes := realCorpusBenchmarkEnvInt(tb, "GTS_REAL_CORPUS_BENCH_MIN_BYTES", 0)
+	maxFileBytes := realCorpusBenchmarkEnvInt(tb, "GTS_REAL_CORPUS_BENCH_MAX_FILE_BYTES", 0)
 	var files []realCorpusBenchmarkFile
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -362,6 +391,20 @@ func loadRealCorpusBenchmarkFiles(b *testing.B, root string) []realCorpusBenchma
 			case ".git", ".gradle", "bazel-bin", "bazel-out", "bazel-testlogs", "build", "node_modules", "target":
 				return filepath.SkipDir
 			}
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+		relPath := path
+		if rel, err := filepath.Rel(root, path); err == nil {
+			relPath = rel
+		}
+		if !realCorpusBenchmarkFileAllowed(relPath, filters) {
 			return nil
 		}
 		src, err := os.ReadFile(path)
@@ -378,15 +421,16 @@ func loadRealCorpusBenchmarkFiles(b *testing.B, root string) []realCorpusBenchma
 		return nil
 	})
 	if err != nil {
-		b.Fatalf("load real corpus %s: %v", root, err)
+		tb.Fatalf("load real corpus %s: %v", root, err)
 	}
 	if len(files) == 0 {
-		b.Fatalf("real corpus filters selected no files under %s", root)
+		tb.Fatalf("real corpus filters selected no files under %s", root)
 	}
-	sortRealCorpusBenchmarkFiles(b, files)
+	sortRealCorpusBenchmarkFiles(tb, files)
+	files = selectRealCorpusBenchmarkShard(tb, files)
 
-	maxFiles := realCorpusBenchmarkEnvInt(b, "GTS_REAL_CORPUS_BENCH_MAX_FILES", 0)
-	maxBytes := realCorpusBenchmarkEnvInt(b, "GTS_REAL_CORPUS_BENCH_MAX_BYTES", 0)
+	maxFiles := realCorpusBenchmarkEnvInt(tb, "GTS_REAL_CORPUS_BENCH_MAX_FILES", 0)
+	maxBytes := realCorpusBenchmarkEnvInt(tb, "GTS_REAL_CORPUS_BENCH_MAX_BYTES", 0)
 	selected := make([]realCorpusBenchmarkFile, 0, len(files))
 	selectedBytes := 0
 	for _, file := range files {
@@ -400,7 +444,7 @@ func loadRealCorpusBenchmarkFiles(b *testing.B, root string) []realCorpusBenchma
 		selectedBytes += len(file.source)
 	}
 	if len(selected) == 0 {
-		b.Fatalf("real corpus filters selected no files under %s", root)
+		tb.Fatalf("real corpus filters selected no files under %s", root)
 	}
 	sort.Slice(selected, func(i, j int) bool {
 		return selected[i].path < selected[j].path
@@ -408,8 +452,532 @@ func loadRealCorpusBenchmarkFiles(b *testing.B, root string) []realCorpusBenchma
 	return selected
 }
 
-func sortRealCorpusBenchmarkFiles(b *testing.B, files []realCorpusBenchmarkFile) {
-	b.Helper()
+func selectRealCorpusBenchmarkShard(tb testing.TB, files []realCorpusBenchmarkFile) []realCorpusBenchmarkFile {
+	tb.Helper()
+	shard, shards, ok := realCorpusBenchmarkShardSelection(tb)
+	if !ok {
+		return files
+	}
+	start := (len(files) * (shard - 1)) / shards
+	end := (len(files) * shard) / shards
+	if start == end {
+		tb.Fatalf("GTS_REAL_CORPUS_BENCH_SHARD=%d/%d selected no files from %d file(s)", shard, shards, len(files))
+	}
+	selected := files[start:end]
+	tb.Logf(
+		"GTS_REAL_CORPUS_BENCH_SHARD selected shard %d/%d: files=%d/%d bytes=%d/%d",
+		shard,
+		shards,
+		len(selected),
+		len(files),
+		totalRealCorpusBenchmarkFileBytes(selected),
+		totalRealCorpusBenchmarkFileBytes(files),
+	)
+	return selected
+}
+
+func realCorpusBenchmarkShardSelection(tb testing.TB) (int, int, bool) {
+	tb.Helper()
+	rawShards := strings.TrimSpace(os.Getenv("GTS_REAL_CORPUS_BENCH_SHARDS"))
+	rawShard := strings.TrimSpace(os.Getenv("GTS_REAL_CORPUS_BENCH_SHARD"))
+	if rawShards == "" && rawShard == "" {
+		return 0, 0, false
+	}
+	if rawShards == "" {
+		tb.Fatal("GTS_REAL_CORPUS_BENCH_SHARD requires GTS_REAL_CORPUS_BENCH_SHARDS")
+	}
+	shards := realCorpusBenchmarkEnvInt(tb, "GTS_REAL_CORPUS_BENCH_SHARDS", 0)
+	if shards < 1 {
+		tb.Fatalf("invalid GTS_REAL_CORPUS_BENCH_SHARDS=%q; want >= 1", rawShards)
+	}
+	shard := 1
+	if rawShard != "" {
+		shard = realCorpusBenchmarkEnvInt(tb, "GTS_REAL_CORPUS_BENCH_SHARD", 0)
+	}
+	if shard < 1 || shard > shards {
+		tb.Fatalf("invalid GTS_REAL_CORPUS_BENCH_SHARD=%q; want 1..%d", rawShard, shards)
+	}
+	if shards == 1 {
+		return 0, 0, false
+	}
+	return shard, shards, true
+}
+
+func realCorpusBenchmarkFileAllowed(path string, filters realCorpusBenchmarkFileFilters) bool {
+	if len(filters.extensions) == 0 && len(filters.basenames) == 0 && len(filters.paths) == 0 {
+		return filters.allowAll
+	}
+	if realCorpusBenchmarkPathAllowed(path, filters.paths) {
+		return true
+	}
+	if realCorpusBenchmarkPathHasAllowedExtension(path, filters.extensions) {
+		return true
+	}
+	base := strings.ToLower(filepath.Base(path))
+	return realCorpusBenchmarkBasenameAllowed(base, filters.basenames)
+}
+
+func realCorpusBenchmarkBasenameAllowed(base string, basenames map[string]struct{}) bool {
+	if _, ok := basenames[base]; ok {
+		return true
+	}
+	for pattern := range basenames {
+		if pattern == "kconfig.*" {
+			if strings.HasPrefix(base, "kconfig.") && !strings.HasSuffix(base, ".txt") && !strings.HasSuffix(base, ".md") && !strings.HasSuffix(base, ".rst") {
+				return true
+			}
+			continue
+		}
+		if strings.HasSuffix(pattern, "*") && strings.HasPrefix(base, strings.TrimSuffix(pattern, "*")) {
+			return true
+		}
+	}
+	return false
+}
+
+func realCorpusBenchmarkPathAllowed(path string, paths map[string]struct{}) bool {
+	path = strings.ToLower(filepath.ToSlash(filepath.Clean(path)))
+	if path == "." || path == "" {
+		return false
+	}
+	_, ok := paths[path]
+	return ok
+}
+
+func realCorpusBenchmarkPathHasAllowedExtension(path string, extensions map[string]struct{}) bool {
+	path = strings.ToLower(filepath.ToSlash(path))
+	for ext := range extensions {
+		if ext == "" {
+			continue
+		}
+		if strings.HasSuffix(path, strings.ToLower(ext)) {
+			return true
+		}
+	}
+	return false
+}
+
+func realCorpusBenchmarkFileFiltersFor(tb testing.TB, language string, root string) realCorpusBenchmarkFileFilters {
+	tb.Helper()
+	if !realCorpusBenchmarkUseLockFilter(root) {
+		return realCorpusBenchmarkFileFilters{allowAll: true}
+	}
+	entry, _ := realCorpusBenchmarkLockEntryFor(tb, language)
+	filters := realCorpusBenchmarkFileFilters{
+		extensions: map[string]struct{}{},
+		basenames:  map[string]struct{}{},
+		paths:      map[string]struct{}{},
+	}
+	for _, ext := range entry.Exts {
+		ext = strings.ToLower(strings.TrimSpace(ext))
+		if ext == "" {
+			continue
+		}
+		if strings.ContainsAny(ext, `/\`) {
+			path := strings.ReplaceAll(ext, "\\", "/")
+			path = strings.ToLower(filepath.ToSlash(filepath.Clean(filepath.FromSlash(path))))
+			if path != "." && path != "" {
+				filters.paths[path] = struct{}{}
+			}
+		} else if strings.HasPrefix(ext, ".") {
+			filters.extensions[ext] = struct{}{}
+		} else {
+			filters.basenames[ext] = struct{}{}
+		}
+	}
+	hasExplicitMatchers := len(filters.extensions) != 0 || len(filters.basenames) != 0 || len(filters.paths) != 0
+	if len(filters.extensions) == 0 && len(filters.basenames) == 0 && len(filters.paths) == 0 {
+		for _, ext := range realCorpusBenchmarkRegistryExtensions(language) {
+			if strings.HasPrefix(ext, ".") {
+				filters.extensions[ext] = struct{}{}
+			} else {
+				filters.basenames[ext] = struct{}{}
+			}
+		}
+	}
+	if len(filters.extensions) == 0 && len(filters.basenames) == 0 && len(filters.paths) == 0 {
+		if entry, ok := parityEntriesByName[language]; ok {
+			for _, ext := range entry.Extensions {
+				ext = strings.ToLower(strings.TrimSpace(ext))
+				if ext == "" {
+					continue
+				}
+				if strings.HasPrefix(ext, ".") {
+					filters.extensions[ext] = struct{}{}
+				} else {
+					filters.basenames[ext] = struct{}{}
+				}
+			}
+		}
+	}
+	if !hasExplicitMatchers {
+		addRealCorpusBenchmarkLanguageFilters(language, filters.extensions, filters.basenames)
+	}
+	if len(filters.extensions) == 0 && len(filters.basenames) == 0 && len(filters.paths) == 0 {
+		return realCorpusBenchmarkFileFilters{}
+	}
+	return filters
+}
+
+func addRealCorpusBenchmarkLanguageFilters(language string, extensions, basenames map[string]struct{}) {
+	addExt := func(ext string) {
+		ext = strings.ToLower(strings.TrimSpace(ext))
+		if ext != "" {
+			extensions[ext] = struct{}{}
+		}
+	}
+	addBase := func(name string) {
+		name = strings.ToLower(strings.TrimSpace(name))
+		if name != "" {
+			basenames[name] = struct{}{}
+		}
+	}
+	switch strings.ToLower(strings.TrimSpace(language)) {
+	case "caddy":
+		addBase("caddyfile")
+	case "dockerfile":
+		addExt(".dockerfile")
+		addBase("dockerfile")
+		addBase("containerfile")
+		for i := 1; i <= 9; i++ {
+			addBase(strconv.Itoa(i))
+		}
+	case "earthfile":
+		addExt(".earth")
+		addBase("earthfile")
+	case "git_rebase":
+		addExt(".git-rebase-todo")
+		addBase("git-rebase-todo")
+		addBase("rebase-todo")
+	case "gomod":
+		addBase("go.mod")
+	case "kconfig":
+		addBase("kconfig")
+		addBase("kconfig.*")
+	case "meson":
+		addBase("meson.build")
+		addBase("meson_options.txt")
+	case "nginx":
+		addExt(".nginx")
+		addBase("nginx.conf")
+		addBase("conf.nginx")
+	case "requirements":
+		addBase("requirements.txt")
+	case "ssh_config":
+		addBase("ssh_config")
+		addBase("sshd_config")
+		addBase("known_hosts")
+		addBase("authorized_keys")
+	case "tmux":
+		addBase("tmux.conf")
+		addBase(".tmux.conf")
+	case "todotxt":
+		addBase("todo.txt")
+	}
+}
+
+func TestAddRealCorpusBenchmarkLanguageFiltersAddsCanonicalNames(t *testing.T) {
+	tests := []struct {
+		language   string
+		allowed    []string
+		disallowed string
+	}{
+		{language: "dockerfile", allowed: []string{"examples/1", "Dockerfile", "service.dockerfile"}, disallowed: "test/corpus/from.txt"},
+		{language: "earthfile", allowed: []string{"examples/go/Earthfile", "build.earth"}, disallowed: "test/corpus/from.txt"},
+		{language: "git_rebase", allowed: []string{"test/highlight/rebase-merges.git-rebase-todo", "git-rebase-todo"}, disallowed: "test/corpus/corpus.txt"},
+		{language: "gomod", allowed: []string{"go.mod", "internal/foo/go.mod"}, disallowed: "go.sum"},
+		{language: "kconfig", allowed: []string{"arch/Kconfig", "arch/Kconfig.nxp"}, disallowed: "docs/kconfig.txt"},
+		{language: "meson", allowed: []string{"examples/meson.build", "meson_options.txt"}, disallowed: "test/corpus/commands.txt"},
+		{language: "nginx", allowed: []string{"test/nginx.conf", "test/conf.nginx"}, disallowed: "test/corpus/base.txt"},
+		{language: "requirements", allowed: []string{"requirements.txt"}, disallowed: "test/corpus/example.txt"},
+		{language: "ssh_config", allowed: []string{"test/highlight/ssh_config", "known_hosts"}, disallowed: "test/corpus/examples.txt"},
+		{language: "todotxt", allowed: []string{"examples/todo.txt"}, disallowed: "corpus/mix.txt"},
+	}
+	for _, tc := range tests {
+		filters := realCorpusBenchmarkFileFilters{
+			extensions: map[string]struct{}{},
+			basenames:  map[string]struct{}{},
+		}
+		addRealCorpusBenchmarkLanguageFilters(tc.language, filters.extensions, filters.basenames)
+		for _, path := range tc.allowed {
+			if !realCorpusBenchmarkFileAllowed(path, filters) {
+				t.Fatalf("%s should allow %q: %#v", tc.language, path, filters)
+			}
+		}
+		if realCorpusBenchmarkFileAllowed(tc.disallowed, filters) {
+			t.Fatalf("%s should not allow path %q: %#v", tc.language, tc.disallowed, filters)
+		}
+	}
+}
+
+func TestRealCorpusBenchmarkLockMatchersAreAuthoritative(t *testing.T) {
+	dir := t.TempDir()
+	lockPath := filepath.Join(dir, "corpus_sources.lock")
+	if err := os.WriteFile(lockPath, []byte(strings.Join([]string{
+		"# name repo commit subdir extensions",
+		"ssh_config https://example.invalid/openssh abc123 . ssh_config",
+		"",
+	}, "\n")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GTS_REAL_CORPUS_BENCH_LOCK", lockPath)
+	t.Setenv("GTS_REAL_CORPUS_BENCH_LOCK_FILTER", "1")
+
+	filters := realCorpusBenchmarkFileFiltersFor(t, "ssh_config", filepath.Join(dir, "corpus-sources", "ssh_config"))
+	if !realCorpusBenchmarkFileAllowed("ssh_config", filters) {
+		t.Fatalf("explicit lock matcher should allow ssh_config: %#v", filters)
+	}
+	for _, path := range []string{"sshd_config", "known_hosts", "authorized_keys"} {
+		if realCorpusBenchmarkFileAllowed(path, filters) {
+			t.Fatalf("explicit lock matcher should not allow canonical extra %q: %#v", path, filters)
+		}
+	}
+}
+
+func TestRealCorpusBenchmarkLockPathMatchersAreAuthoritative(t *testing.T) {
+	dir := t.TempDir()
+	lockPath := filepath.Join(dir, "corpus_sources.lock")
+	if err := os.WriteFile(lockPath, []byte(strings.Join([]string{
+		"# name repo commit subdir extensions",
+		"ini https://example.invalid/cpython abc123 . Lib/tomllib/mypy.ini",
+		"",
+	}, "\n")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GTS_REAL_CORPUS_BENCH_LOCK", lockPath)
+	t.Setenv("GTS_REAL_CORPUS_BENCH_LOCK_FILTER", "1")
+
+	filters := realCorpusBenchmarkFileFiltersFor(t, "ini", filepath.Join(dir, "corpus-sources", "ini"))
+	if !realCorpusBenchmarkFileAllowed("Lib/tomllib/mypy.ini", filters) {
+		t.Fatalf("explicit path matcher should allow exact path: %#v", filters)
+	}
+	if realCorpusBenchmarkFileAllowed("Lib/_pyrepl/mypy.ini", filters) {
+		t.Fatalf("explicit path matcher should not allow duplicate basename: %#v", filters)
+	}
+	if realCorpusBenchmarkFileAllowed("mypy.ini", filters) {
+		t.Fatalf("explicit path matcher should not degrade to basename match: %#v", filters)
+	}
+}
+
+func TestRealCorpusBenchmarkRootPathMatchersAreAuthoritative(t *testing.T) {
+	dir := t.TempDir()
+	lockPath := filepath.Join(dir, "corpus_sources.lock")
+	if err := os.WriteFile(lockPath, []byte(strings.Join([]string{
+		"# name repo commit subdir extensions",
+		"requirements https://example.invalid/ansible abc123 . ./requirements.txt",
+		"",
+	}, "\n")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GTS_REAL_CORPUS_BENCH_LOCK", lockPath)
+	t.Setenv("GTS_REAL_CORPUS_BENCH_LOCK_FILTER", "1")
+
+	filters := realCorpusBenchmarkFileFiltersFor(t, "requirements", filepath.Join(dir, "corpus-sources", "requirements"))
+	if !realCorpusBenchmarkFileAllowed("requirements.txt", filters) {
+		t.Fatalf("root path matcher should allow exact root file: %#v", filters)
+	}
+	if realCorpusBenchmarkFileAllowed("test/units/requirements.txt", filters) {
+		t.Fatalf("root path matcher should not allow duplicate basename: %#v", filters)
+	}
+}
+
+func TestRealCorpusBenchmarkCasePathPrefersLanguageRelativePath(t *testing.T) {
+	got := realCorpusBenchmarkCasePath(realCorpusBenchmarkCase{
+		name: "ini",
+		path: filepath.Join("/corpus-sources", "ini", "Lib", "tomllib", "mypy.ini"),
+	})
+	if got != "Lib/tomllib/mypy.ini" {
+		t.Fatalf("case path = %q, want language-relative path", got)
+	}
+}
+
+func TestRealCorpusBenchmarkLanguageRootHonorsLockSubdir(t *testing.T) {
+	dir := t.TempDir()
+	lockPath := filepath.Join(dir, "corpus_sources.lock")
+	if err := os.WriteFile(lockPath, []byte(strings.Join([]string{
+		"# name repo commit subdir extensions",
+		"vimdoc https://example.invalid/vimdoc abc123 runtime/doc .txt",
+		"",
+	}, "\n")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(dir, "corpus-sources")
+	t.Setenv("GTS_REAL_CORPUS_BENCH_LOCK", lockPath)
+	t.Setenv("GTS_REAL_CORPUS_BENCH_LOCK_FILTER", "1")
+
+	got := filepath.ToSlash(realCorpusBenchmarkLanguageRoot(t, root, "vimdoc"))
+	want := filepath.ToSlash(filepath.Join(root, "vimdoc", "runtime", "doc"))
+	if got != want {
+		t.Fatalf("language root=%q, want %q", got, want)
+	}
+}
+
+func TestSelectRealCorpusBenchmarkShardUsesContiguousOrderedSlices(t *testing.T) {
+	files := []realCorpusBenchmarkFile{
+		{path: "a.sh", source: []byte("a")},
+		{path: "b.sh", source: []byte("bb")},
+		{path: "c.sh", source: []byte("ccc")},
+		{path: "d.sh", source: []byte("dddd")},
+		{path: "e.sh", source: []byte("eeeee")},
+	}
+	t.Setenv("GTS_REAL_CORPUS_BENCH_SHARDS", "2")
+	t.Setenv("GTS_REAL_CORPUS_BENCH_SHARD", "2")
+
+	got := selectRealCorpusBenchmarkShard(t, files)
+	gotPaths := make([]string, 0, len(got))
+	for _, file := range got {
+		gotPaths = append(gotPaths, file.path)
+	}
+	want := []string{"c.sh", "d.sh", "e.sh"}
+	if strings.Join(gotPaths, ",") != strings.Join(want, ",") {
+		t.Fatalf("selected shard paths=%v, want %v", gotPaths, want)
+	}
+}
+
+func TestLoadRealCorpusBenchmarkFilesSkipsNonRegularMatchingPaths(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "schema.prisma"), []byte("model User { id Int @id }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	targetDir := filepath.Join(dir, "fixture-dir")
+	if err := os.Mkdir(targetDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(targetDir, filepath.Join(dir, "linked-dir.prisma")); err != nil {
+		t.Skipf("create symlink: %v", err)
+	}
+
+	files := loadRealCorpusBenchmarkFiles(t, dir, realCorpusBenchmarkFileFilters{
+		extensions: map[string]struct{}{".prisma": {}},
+	})
+	if len(files) != 1 {
+		t.Fatalf("selected files=%d, want 1: %#v", len(files), files)
+	}
+	if got := filepath.Base(files[0].path); got != "schema.prisma" {
+		t.Fatalf("selected path=%q, want schema.prisma", got)
+	}
+}
+
+func realCorpusBenchmarkRegistryExtensions(language string) []string {
+	language = strings.ToLower(strings.TrimSpace(language))
+	if language == "" {
+		return nil
+	}
+	for _, entry := range grammars.AllLanguages() {
+		if strings.ToLower(strings.TrimSpace(entry.Name)) != language {
+			continue
+		}
+		out := make([]string, 0, len(entry.Extensions))
+		for _, ext := range entry.Extensions {
+			ext = strings.ToLower(strings.TrimSpace(ext))
+			if ext != "" {
+				out = append(out, ext)
+			}
+		}
+		return out
+	}
+	return nil
+}
+
+func realCorpusBenchmarkUseLockFilter(root string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("GTS_REAL_CORPUS_BENCH_LOCK_FILTER"))) {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	}
+	clean := filepath.ToSlash(filepath.Clean(root))
+	return strings.HasSuffix(clean, "corpus_sources") || strings.HasSuffix(clean, "corpus-sources")
+}
+
+type realCorpusBenchmarkLockEntry struct {
+	Subdir string
+	Exts   []string
+}
+
+func realCorpusBenchmarkLockPath(tb testing.TB) string {
+	tb.Helper()
+	if path := strings.TrimSpace(os.Getenv("GTS_REAL_CORPUS_BENCH_LOCK")); path != "" {
+		return path
+	}
+	for _, candidate := range []string{
+		filepath.Join("..", "grammars", "languages.lock"),
+		filepath.Join("grammars", "languages.lock"),
+		filepath.Join("..", "..", "grammars", "languages.lock"),
+	} {
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+	}
+	tb.Fatal("set GTS_REAL_CORPUS_BENCH_LOCK for lock-filtered full corpus benchmarks")
+	return ""
+}
+
+func realCorpusBenchmarkLockEntryFor(tb testing.TB, language string) (realCorpusBenchmarkLockEntry, bool) {
+	tb.Helper()
+	lockPath := realCorpusBenchmarkLockPath(tb)
+	entries, err := realCorpusBenchmarkLockEntries(lockPath)
+	if err != nil {
+		tb.Fatalf("load real corpus benchmark lock filters: %v", err)
+	}
+	entry, ok := entries[language]
+	return entry, ok
+}
+
+func realCorpusBenchmarkLockEntries(path string) (map[string]realCorpusBenchmarkLockEntry, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	out := map[string]realCorpusBenchmarkLockEntry{}
+	scanner := bufio.NewScanner(f)
+	lineNo := 0
+	for scanner.Scan() {
+		lineNo++
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			return nil, fmt.Errorf("%s:%d: invalid lock row", path, lineNo)
+		}
+		entry := realCorpusBenchmarkLockEntry{}
+		if len(fields) >= 4 {
+			entry.Subdir = fields[3]
+		}
+		if len(fields) >= 5 {
+			for _, ext := range strings.Split(fields[4], ",") {
+				ext = strings.TrimSpace(ext)
+				if ext != "" {
+					entry.Exts = append(entry.Exts, ext)
+				}
+			}
+		}
+		out[fields[0]] = entry
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func realCorpusBenchmarkCleanLockSubdir(raw string) (string, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "." {
+		return "", true
+	}
+	clean := filepath.Clean(filepath.FromSlash(raw))
+	if clean == "." || clean == "" || filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	return clean, true
+}
+
+func sortRealCorpusBenchmarkFiles(tb testing.TB, files []realCorpusBenchmarkFile) {
+	tb.Helper()
 	switch realCorpusBenchmarkOrder() {
 	case "path":
 		sort.Slice(files, func(i, j int) bool {
@@ -430,7 +998,7 @@ func sortRealCorpusBenchmarkFiles(b *testing.B, files []realCorpusBenchmarkFile)
 			return files[i].path < files[j].path
 		})
 	default:
-		b.Fatalf("invalid GTS_REAL_CORPUS_BENCH_ORDER=%q; want path, largest, or smallest", realCorpusBenchmarkOrder())
+		tb.Fatalf("invalid GTS_REAL_CORPUS_BENCH_ORDER=%q; want path, largest, or smallest", realCorpusBenchmarkOrder())
 	}
 }
 
@@ -460,17 +1028,25 @@ func realCorpusBenchmarkAllowMismatch() bool {
 	}
 }
 
-func realCorpusBenchmarkEnvInt(b *testing.B, name string, fallback int) int {
-	b.Helper()
+func realCorpusBenchmarkEnvInt(tb testing.TB, name string, fallback int) int {
+	tb.Helper()
 	raw := strings.TrimSpace(os.Getenv(name))
 	if raw == "" {
 		return fallback
 	}
 	n, err := strconv.Atoi(raw)
 	if err != nil || n < 0 {
-		b.Fatalf("invalid %s=%q", name, raw)
+		tb.Fatalf("invalid %s=%q", name, raw)
 	}
 	return n
+}
+
+func totalRealCorpusBenchmarkFileBytes(files []realCorpusBenchmarkFile) int64 {
+	var total int64
+	for _, file := range files {
+		total += int64(len(file.source))
+	}
+	return total
 }
 
 func totalRealCorpusBenchmarkBytes(cases []realCorpusBenchmarkCase) int64 {
@@ -491,7 +1067,7 @@ func verifyRealCorpusBenchmarkFreshParity(b *testing.B, cases []realCorpusBenchm
 		b.Fatalf(
 			"structural parity mismatch before benchmark for %s/%s: first=%s\n  %s",
 			tc.name,
-			filepath.Base(tc.path),
+			realCorpusBenchmarkCasePath(tc),
 			formatRealCorpusDivergence(first),
 			firstTop50BenchmarkLines(errs, 12),
 		)
@@ -503,16 +1079,16 @@ func filterRealCorpusBenchmarkFreshParity(b *testing.B, cases []realCorpusBenchm
 	out := make([]realCorpusBenchmarkCase, 0, len(cases))
 	var skipped []string
 	for _, tc := range cases {
-		errs, first, ok, reason := tryRealCorpusBenchmarkFreshParityErrors(b, tc)
-		if !ok {
-			skipped = append(skipped, fmt.Sprintf("%s(%s)", filepath.Base(tc.path), reason))
+		errs, first, failure := tryRealCorpusBenchmarkFreshParity(b, tc)
+		if failure != "" {
+			skipped = append(skipped, fmt.Sprintf("%s(%s)", realCorpusBenchmarkCasePath(tc), failure))
 			continue
 		}
 		if len(errs) == 0 {
 			out = append(out, tc)
 			continue
 		}
-		skipped = append(skipped, fmt.Sprintf("%s(%s)", filepath.Base(tc.path), formatRealCorpusDivergence(first)))
+		skipped = append(skipped, fmt.Sprintf("%s(%s)", realCorpusBenchmarkCasePath(tc), formatRealCorpusDivergence(first)))
 	}
 	if len(out) == 0 {
 		b.Fatalf("GTS_REAL_CORPUS_BENCH_SKIP_MISMATCH selected no parity-clean files; skipped=%s", strings.Join(skipped, ", "))
@@ -523,35 +1099,39 @@ func filterRealCorpusBenchmarkFreshParity(b *testing.B, cases []realCorpusBenchm
 	return out
 }
 
-func tryRealCorpusBenchmarkFreshParityErrors(b *testing.B, tc realCorpusBenchmarkCase) ([]string, *DumpV1Divergence, bool, string) {
-	b.Helper()
-	goParser := gotreesitter.NewParser(tc.goLang)
-	goTree, ok := tryParseCompleteRealCorpusGoFull(b, tc, goParser)
-	if !ok {
-		return nil, nil, false, "gotreesitter incomplete fresh parse"
-	}
-	defer releaseGoTree(goTree)
-
-	cParser := newRealCorpusCParser(b, tc)
-	defer cParser.Close()
-	cTree, ok := tryParseCompleteRealCorpusCFull(cParser, tc.source)
-	if !ok {
-		return nil, nil, false, "C incomplete fresh parse"
-	}
-	defer cTree.Close()
-
-	var errs []string
-	compareNodes(goTree.RootNode(), tc.goLang, cTree.RootNode(), "root", &errs)
-	first := FirstDivergenceDumpV1(goTree.RootNode(), tc.goLang, cTree.RootNode())
-	return errs, first, true, ""
-}
-
 func realCorpusBenchmarkFreshParityErrors(b *testing.B, tc realCorpusBenchmarkCase) ([]string, *DumpV1Divergence) {
 	b.Helper()
+	errs, first, failure := tryRealCorpusBenchmarkFreshParity(b, tc)
+	if failure != "" {
+		b.Fatal(failure)
+	}
+	return errs, first
+}
+
+func tryRealCorpusBenchmarkFreshParity(b *testing.B, tc realCorpusBenchmarkCase) ([]string, *DumpV1Divergence, string) {
+	b.Helper()
 	goParser := gotreesitter.NewParser(tc.goLang)
-	goTree := parseRealCorpusGoFull(b, tc, goParser)
+	goTree, failure := tryParseRealCorpusGoFull(tc, goParser, "gotreesitter full")
+	if failure != "" {
+		return nil, nil, fmt.Sprintf(
+			"gotreesitter full %s/%s %s",
+			tc.name,
+			realCorpusBenchmarkCasePath(tc),
+			failure,
+		)
+	}
 	cParser := newRealCorpusCParser(b, tc)
-	cTree := parseRealCorpusCFull(b, cParser, tc.source)
+	cTree, failure := tryParseRealCorpusCFull(cParser, tc.source, "C full")
+	if failure != "" {
+		releaseGoTree(goTree)
+		cParser.Close()
+		return nil, nil, fmt.Sprintf(
+			"C full %s/%s %s",
+			tc.name,
+			realCorpusBenchmarkCasePath(tc),
+			failure,
+		)
+	}
 
 	var errs []string
 	compareNodes(goTree.RootNode(), tc.goLang, cTree.RootNode(), "root", &errs)
@@ -559,7 +1139,7 @@ func realCorpusBenchmarkFreshParityErrors(b *testing.B, tc realCorpusBenchmarkCa
 	releaseGoTree(goTree)
 	cTree.Close()
 	cParser.Close()
-	return errs, first
+	return errs, first, ""
 }
 
 func formatRealCorpusDivergence(diff *DumpV1Divergence) string {
@@ -590,7 +1170,9 @@ func prepareRealCorpusIncrementalCase(b *testing.B, tc realCorpusBenchmarkCase) 
 	b.Helper()
 	candidates := incrementalEditCandidates(tc.source)
 	maxCandidates := realCorpusBenchmarkEnvInt(b, "GTS_REAL_CORPUS_BENCH_EDIT_CANDIDATES", 128)
+	maxRejectLogs := realCorpusBenchmarkEnvInt(b, "GTS_REAL_CORPUS_BENCH_EDIT_REJECTION_LOGS", 4)
 	tried := 0
+	rejectLogs := 0
 	for _, candidate := range candidates {
 		if candidate.oldEnd != candidate.start+1 || len(candidate.replacement) != 1 {
 			continue
@@ -602,9 +1184,13 @@ func prepareRealCorpusIncrementalCase(b *testing.B, tc realCorpusBenchmarkCase) 
 		if realCorpusBenchmarkAllowMismatch() {
 			return makeRealCorpusIncrementalCase(tc, candidate), true
 		}
-		editCase, ok := verifyRealCorpusIncrementalCandidate(b, tc, candidate)
+		editCase, rejectReason, ok := verifyRealCorpusIncrementalCandidate(b, tc, candidate)
 		if ok {
 			return editCase, true
+		}
+		if rejectReason != "" && (maxRejectLogs <= 0 || rejectLogs < maxRejectLogs) {
+			b.Logf("skip %s/%s candidate=%s: %s", tc.name, realCorpusBenchmarkCasePath(tc), candidate.label, rejectReason)
+			rejectLogs++
 		}
 	}
 	return realCorpusIncrementalCase{}, false
@@ -631,29 +1217,29 @@ func makeRealCorpusIncrementalCase(tc realCorpusBenchmarkCase, candidate increme
 	}
 }
 
-func verifyRealCorpusIncrementalCandidate(b *testing.B, tc realCorpusBenchmarkCase, candidate incrementalEditCandidate) (realCorpusIncrementalCase, bool) {
+func verifyRealCorpusIncrementalCandidate(b *testing.B, tc realCorpusBenchmarkCase, candidate incrementalEditCandidate) (realCorpusIncrementalCase, string, bool) {
 	b.Helper()
 	editCase := makeRealCorpusIncrementalCase(tc, candidate)
 	edited := applyEditCandidate(tc.source, candidate)
 
 	goParser := gotreesitter.NewParser(tc.goLang)
-	goFreshTree, ok := tryParseCompleteRealCorpusGoFull(b, realCorpusCaseWithSource(tc, edited), goParser)
-	if !ok {
-		return realCorpusIncrementalCase{}, false
+	goFreshTree, goFreshFailure := tryParseRealCorpusGoFull(realCorpusCaseWithSource(tc, edited), goParser, "gotreesitter fresh edit candidate")
+	if goFreshFailure != "" {
+		return realCorpusIncrementalCase{}, goFreshFailure, false
 	}
 	defer releaseGoTree(goFreshTree)
 
 	cParser := newRealCorpusCParser(b, tc)
 	defer cParser.Close()
-	cFreshTree, ok := tryParseCompleteRealCorpusCFull(cParser, edited)
-	if !ok {
-		return realCorpusIncrementalCase{}, false
+	cFreshTree, cFreshFailure := tryParseRealCorpusCFull(cParser, edited, "C fresh edit candidate")
+	if cFreshFailure != "" {
+		return realCorpusIncrementalCase{}, cFreshFailure, false
 	}
 	defer cFreshTree.Close()
 	var freshErrs []string
 	compareNodes(goFreshTree.RootNode(), tc.goLang, cFreshTree.RootNode(), "root", &freshErrs)
 	if len(freshErrs) > 0 {
-		return realCorpusIncrementalCase{}, false
+		return realCorpusIncrementalCase{}, formatRealCorpusCandidateFreshMismatch(goFreshTree, tc.goLang, cFreshTree, freshErrs), false
 	}
 
 	goOldTree := parseRealCorpusGoFull(b, tc, goParser)
@@ -668,13 +1254,13 @@ func verifyRealCorpusIncrementalCandidate(b *testing.B, tc realCorpusBenchmarkCa
 	goIncrTree, ok := tryParseCompleteRealCorpusGoIncrementalWithPhase(b, realCorpusCaseWithSource(tc, edited), goParser, goOldTree, verifyPhase)
 	releaseGoTree(goOldTree)
 	if !ok {
-		return realCorpusIncrementalCase{}, false
+		return realCorpusIncrementalCase{}, "gotreesitter incremental incomplete parse", false
 	}
 	defer releaseGoTree(goIncrTree)
 	var goIncrErrs []string
 	compareGoNodes(goIncrTree.RootNode(), tc.goLang, goFreshTree.RootNode(), "root", &goIncrErrs)
 	if len(goIncrErrs) > 0 {
-		return realCorpusIncrementalCase{}, false
+		return realCorpusIncrementalCase{}, "gotreesitter incremental mismatch against fresh: " + firstRealCorpusBenchmarkError(goIncrErrs), false
 	}
 
 	cOldTree := parseRealCorpusCFull(b, cParser, tc.source)
@@ -682,16 +1268,42 @@ func verifyRealCorpusIncrementalCandidate(b *testing.B, tc realCorpusBenchmarkCa
 	cIncrTree, ok := tryParseCompleteRealCorpusCIncremental(cParser, edited, cOldTree)
 	cOldTree.Close()
 	if !ok {
-		return realCorpusIncrementalCase{}, false
+		return realCorpusIncrementalCase{}, "C incremental incomplete parse", false
 	}
 	defer cIncrTree.Close()
 	var cIncrErrs []string
 	compareNodes(goFreshTree.RootNode(), tc.goLang, cIncrTree.RootNode(), "root", &cIncrErrs)
 	if len(cIncrErrs) > 0 {
-		return realCorpusIncrementalCase{}, false
+		return realCorpusIncrementalCase{}, formatRealCorpusCandidateCIncrementalMismatch(goFreshTree, tc.goLang, cIncrTree, cIncrErrs), false
 	}
 
-	return editCase, true
+	return editCase, "", true
+}
+
+func formatRealCorpusCandidateFreshMismatch(goTree *gotreesitter.Tree, goLang *gotreesitter.Language, cTree *sitter.Tree, errs []string) string {
+	if diff := FirstDivergenceDumpV1(goTree.RootNode(), goLang, cTree.RootNode()); diff != nil {
+		return "fresh structural mismatch: first=" + formatRealCorpusDivergence(diff)
+	}
+	return "fresh structural mismatch: " + firstRealCorpusBenchmarkError(errs)
+}
+
+func formatRealCorpusCandidateCIncrementalMismatch(goFreshTree *gotreesitter.Tree, goLang *gotreesitter.Language, cIncrTree *sitter.Tree, errs []string) string {
+	if diff := FirstDivergenceDumpV1(goFreshTree.RootNode(), goLang, cIncrTree.RootNode()); diff != nil {
+		return "C incremental mismatch against fresh: first=" + formatRealCorpusDivergence(diff)
+	}
+	return "C incremental mismatch against fresh: " + firstRealCorpusBenchmarkError(errs)
+}
+
+func firstRealCorpusBenchmarkError(errs []string) string {
+	if len(errs) == 0 {
+		return "(unknown)"
+	}
+	line := strings.TrimSpace(firstTop50BenchmarkLines(errs, 1))
+	line = strings.ReplaceAll(line, "\n", "; ")
+	if line == "" {
+		return "(unknown)"
+	}
+	return line
 }
 
 func realCorpusCaseWithSource(tc realCorpusBenchmarkCase, source []byte) realCorpusBenchmarkCase {
@@ -929,32 +1541,34 @@ func benchmarkRealCorpusCParseIncrementalNoEdit(b *testing.B, cases []realCorpus
 
 func parseRealCorpusGoFull(tb testing.TB, tc realCorpusBenchmarkCase, parser *gotreesitter.Parser) *gotreesitter.Tree {
 	tb.Helper()
-	tree, ok := tryParseCompleteRealCorpusGoFull(tb, tc, parser)
-	if !ok {
-		tb.Fatalf("gotreesitter full %s/%s incomplete parse", tc.name, filepath.Base(tc.path))
+	tree, failure := tryParseRealCorpusGoFull(tc, parser, "gotreesitter full")
+	if failure != "" {
+		tb.Fatalf("%s %s/%s %s", "gotreesitter full", tc.name, realCorpusBenchmarkCasePath(tc), failure)
 	}
 	return tree
 }
 
-func tryParseCompleteRealCorpusGoFull(tb testing.TB, tc realCorpusBenchmarkCase, parser *gotreesitter.Parser) (*gotreesitter.Tree, bool) {
-	tb.Helper()
+func tryParseRealCorpusGoFull(tc realCorpusBenchmarkCase, parser *gotreesitter.Parser, phase string) (*gotreesitter.Tree, string) {
 	var tree *gotreesitter.Tree
 	var err error
 	switch tc.report.Backend {
 	case grammars.ParseBackendTokenSource:
 		if tc.entry.TokenSourceFactory == nil {
-			tb.Fatalf("token source backend without factory for %q", tc.name)
+			return nil, fmt.Sprintf("token source backend without factory for %q", tc.name)
 		}
 		tree, err = parser.ParseWithTokenSource(tc.source, tc.entry.TokenSourceFactory(tc.source, tc.goLang))
 	case grammars.ParseBackendDFA, grammars.ParseBackendDFAPartial:
 		tree, err = parser.Parse(tc.source)
 	default:
-		tb.Fatalf("unsupported parse backend %q for %q", tc.report.Backend, tc.name)
+		return nil, fmt.Sprintf("unsupported parse backend %q for %q", tc.report.Backend, tc.name)
 	}
-	if !isCompleteRealCorpusGoTree(tb, tc, tree, "gotreesitter full", err) {
-		return nil, false
+	if failure := completeRealCorpusGoTreeFailure(tc, tree, phase, err); failure != "" {
+		if tree != nil {
+			releaseGoTree(tree)
+		}
+		return nil, failure
 	}
-	return tree, true
+	return tree, ""
 }
 
 func parseRealCorpusGoIncremental(tb testing.TB, tc realCorpusBenchmarkCase, parser *gotreesitter.Parser, oldTree *gotreesitter.Tree) *gotreesitter.Tree {
@@ -986,7 +1600,11 @@ func tryParseCompleteRealCorpusGoIncrementalWithPhase(tb testing.TB, tc realCorp
 	default:
 		tb.Fatalf("unsupported incremental backend %q for %q", tc.report.Backend, tc.name)
 	}
-	if !isCompleteRealCorpusGoTree(tb, tc, tree, phase, err) {
+	if failure := completeRealCorpusGoTreeFailure(tc, tree, phase, err); failure != "" {
+		if tree != nil {
+			releaseGoTree(tree)
+		}
+		tb.Logf("%s %s/%s %s", phase, tc.name, realCorpusBenchmarkCasePath(tc), failure)
 		return nil, false
 	}
 	return tree, true
@@ -1019,36 +1637,26 @@ func parseRealCorpusGoIncrementalProfiledWithPhase(tb testing.TB, tc realCorpusB
 
 func requireCompleteRealCorpusGoTree(tb testing.TB, tc realCorpusBenchmarkCase, tree *gotreesitter.Tree, phase string, err error) {
 	tb.Helper()
-	if !isCompleteRealCorpusGoTree(tb, tc, tree, phase, err) {
-		tb.Fatalf("%s %s/%s incomplete parse", phase, tc.name, filepath.Base(tc.path))
-	}
-}
-
-func isCompleteRealCorpusGoTree(tb testing.TB, tc realCorpusBenchmarkCase, tree *gotreesitter.Tree, phase string, err error) bool {
-	tb.Helper()
-	if err != nil {
+	if failure := completeRealCorpusGoTreeFailure(tc, tree, phase, err); failure != "" {
 		if tree != nil {
 			releaseGoTree(tree)
 		}
-		tb.Logf("%s %s/%s candidate parse error: %v", phase, tc.name, filepath.Base(tc.path), err)
-		return false
+		tb.Fatalf("%s %s/%s %s", phase, tc.name, realCorpusBenchmarkCasePath(tc), failure)
 	}
-	if tree == nil {
-		tb.Logf("%s %s/%s candidate parse returned nil tree", phase, tc.name, filepath.Base(tc.path))
-		return false
+}
+
+func completeRealCorpusGoTreeFailure(tc realCorpusBenchmarkCase, tree *gotreesitter.Tree, phase string, err error) string {
+	if err != nil {
+		return fmt.Sprintf("error: %v", err)
 	}
-	if tree.RootNode() == nil {
-		releaseGoTree(tree)
-		tb.Logf("%s %s/%s candidate parse returned nil root", phase, tc.name, filepath.Base(tc.path))
-		return false
+	if tree == nil || tree.RootNode() == nil {
+		return "returned nil tree"
 	}
 	if got, want := tree.RootNode().EndByte(), uint32(len(tc.source)); got != want {
 		rt := tree.ParseRuntime()
-		releaseGoTree(tree)
-		tb.Logf("%s %s/%s candidate parse truncated: root.EndByte=%d want=%d %s", phase, tc.name, filepath.Base(tc.path), got, want, rt.Summary())
-		return false
+		return fmt.Sprintf("truncated: root.EndByte=%d want=%d %s", got, want, rt.Summary())
 	}
-	return true
+	return ""
 }
 
 func newRealCorpusCParser(tb testing.TB, tc realCorpusBenchmarkCase) *sitter.Parser {
@@ -1066,8 +1674,10 @@ func newRealCorpusCParser(tb testing.TB, tc realCorpusBenchmarkCase) *sitter.Par
 
 func parseRealCorpusCFull(tb testing.TB, parser *sitter.Parser, source []byte) *sitter.Tree {
 	tb.Helper()
-	tree := parser.Parse(source, nil)
-	requireCompleteRealCorpusCTree(tb, tree, source, "C full")
+	tree, failure := tryParseRealCorpusCFull(parser, source, "C full")
+	if failure != "" {
+		tb.Fatalf("C full parse %s", failure)
+	}
 	return tree
 }
 
@@ -1096,16 +1706,33 @@ func tryParseCompleteRealCorpusCIncremental(parser *sitter.Parser, source []byte
 
 func requireCompleteRealCorpusCTree(tb testing.TB, tree *sitter.Tree, source []byte, phase string) {
 	tb.Helper()
+	if failure := completeRealCorpusCTreeFailure(tree, source, phase); failure != "" {
+		if tree != nil {
+			tree.Close()
+		}
+		tb.Fatalf("%s parse %s", phase, failure)
+	}
+}
+
+func tryParseRealCorpusCFull(parser *sitter.Parser, source []byte, phase string) (*sitter.Tree, string) {
+	tree := parser.Parse(source, nil)
+	if failure := completeRealCorpusCTreeFailure(tree, source, phase); failure != "" {
+		if tree != nil {
+			tree.Close()
+		}
+		return nil, failure
+	}
+	return tree, ""
+}
+
+func completeRealCorpusCTreeFailure(tree *sitter.Tree, source []byte, phase string) string {
 	if tree == nil || tree.RootNode() == nil {
-		tb.Fatalf("%s parse returned nil tree", phase)
+		return "returned nil tree"
 	}
 	if got, want := uint32(tree.RootNode().EndByte()), uint32(len(source)); got != want {
-		root := tree.RootNode()
-		kind := root.Kind()
-		hasError := root.HasError()
-		tree.Close()
-		tb.Fatalf("%s parse truncated: root.EndByte=%d want=%d type=%q hasError=%v", phase, got, want, kind, hasError)
+		return fmt.Sprintf("truncated: root.EndByte=%d want=%d type=%q hasError=%v", got, want, tree.RootNode().Kind(), tree.RootNode().HasError())
 	}
+	return ""
 }
 
 func isCompleteRealCorpusCTree(tree *sitter.Tree, source []byte) bool {
@@ -1600,7 +2227,18 @@ func reportRealCorpusCaseMetrics(b *testing.B, cases []realCorpusBenchmarkCase) 
 func formatRealCorpusCaseList(cases []realCorpusBenchmarkCase) string {
 	names := make([]string, 0, len(cases))
 	for _, tc := range cases {
-		names = append(names, fmt.Sprintf("%s:%dB", filepath.Base(tc.path), len(tc.source)))
+		names = append(names, fmt.Sprintf("%s:%dB", realCorpusBenchmarkCasePath(tc), len(tc.source)))
 	}
 	return strings.Join(names, ",")
+}
+
+func realCorpusBenchmarkCasePath(tc realCorpusBenchmarkCase) string {
+	path := filepath.ToSlash(tc.path)
+	parts := strings.Split(path, "/")
+	for i := len(parts) - 2; i >= 0; i-- {
+		if parts[i] == tc.name {
+			return strings.Join(parts[i+1:], "/")
+		}
+	}
+	return filepath.Base(tc.path)
 }

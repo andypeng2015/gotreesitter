@@ -155,6 +155,26 @@ func EmitGrammarGo(g *Grammar, pkgName, funcName string) ([]byte, error) {
 		fmt.Fprintf(&buf, "\tg.PreserveKeywordIdentifierConflicts = true\n\n")
 	}
 
+	if g.PreferExpressionOperatorIdentifierReduces {
+		fmt.Fprintf(&buf, "\tg.PreferExpressionOperatorIdentifierReduces = true\n\n")
+	}
+
+	if g.PreferParenthesizedCallDoBlockReduces {
+		fmt.Fprintf(&buf, "\tg.PreferParenthesizedCallDoBlockReduces = true\n\n")
+	}
+
+	if g.PreferRemoteCallOperatorReduces {
+		fmt.Fprintf(&buf, "\tg.PreferRemoteCallOperatorReduces = true\n\n")
+	}
+
+	if g.PreferStabClauseLeftArrowReduces {
+		fmt.Fprintf(&buf, "\tg.PreferStabClauseLeftArrowReduces = true\n\n")
+	}
+
+	if g.PreferPreciseExternalLexStates {
+		fmt.Fprintf(&buf, "\tg.PreferPreciseExternalLexStates = true\n\n")
+	}
+
 	if g.ExactPrefixStates != 0 {
 		fmt.Fprintf(&buf, "\tg.ExactPrefixStates = %d\n\n", g.ExactPrefixStates)
 	}
@@ -179,6 +199,14 @@ func EmitGrammarGo(g *Grammar, pkgName, funcName string) ([]byte, error) {
 		fmt.Fprintf(&buf, "\tg.PriorityInlinePatterns = []string{\n")
 		for _, pattern := range g.PriorityInlinePatterns {
 			fmt.Fprintf(&buf, "\t\t%s,\n", goString(pattern))
+		}
+		fmt.Fprintf(&buf, "\t}\n\n")
+	}
+
+	if len(g.PreserveHiddenChoicePassthrough) > 0 {
+		fmt.Fprintf(&buf, "\tg.PreserveHiddenChoicePassthrough = []string{\n")
+		for _, name := range g.PreserveHiddenChoicePassthrough {
+			fmt.Fprintf(&buf, "\t\t%s,\n", goString(name))
 		}
 		fmt.Fprintf(&buf, "\t}\n\n")
 	}

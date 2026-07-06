@@ -56,6 +56,7 @@ func assemble(
 	lexStates []gotreesitter.LexState,
 	lexModeMapping []int,
 	lexModeOffsets []int,
+	afterWSModes []afterWSModeEntry,
 ) (*gotreesitter.Language, error) {
 	tokenCount := ng.TokenCount()
 	symbolCount := len(ng.Symbols)
@@ -82,12 +83,14 @@ func assemble(
 	for i, sym := range ng.Symbols {
 		lang.SymbolNames[i] = sym.Name
 		lang.SymbolMetadata[i] = gotreesitter.SymbolMetadata{
-			Name:      sym.Name,
-			Visible:   sym.Visible,
-			Named:     sym.Named,
-			Supertype: sym.Supertype,
+			Name:               sym.Name,
+			Visible:            sym.Visible,
+			Named:              sym.Named,
+			Supertype:          sym.Supertype,
+			GeneratedRepeatAux: sym.GeneratedRepeatAux,
 		}
 	}
+	lang.HiddenChoicePassthroughSymbols = buildHiddenChoicePassthroughSymbols(ng, symbolCount)
 
 	// Field names.
 	lang.FieldNames = ng.FieldNames
@@ -106,6 +109,11 @@ func assemble(
 		}
 		lang.LexModes[i].SetLexStateIndex(uint32(offset))
 	}
+	for _, entry := range afterWSModes {
+		if entry.stateIdx < len(lang.LexModes) && entry.modeIdx < len(lexModeOffsets) {
+			lang.LexModes[entry.stateIdx].SetAfterWhitespaceLexStateIndex(uint32(lexModeOffsets[entry.modeIdx]))
+		}
+	}
 
 	// Compact production IDs: assign ProductionID=0 to all productions without
 	// aliases, and assign shared IDs to productions with identical alias patterns.
@@ -122,11 +130,13 @@ func assemble(
 	if err != nil {
 		return nil, fmt.Errorf("build parse tables: %w", err)
 	}
+	lang.ConflictPolicies = buildConflictPolicies(tables, ng)
 
 	buildReservedWordTables(lang, ng)
 
 	// Build field map tables.
 	buildFieldMaps(lang, ng)
+	buildProductionSignatures(lang, ng)
 
 	// Supertype symbols.
 	if len(ng.Supertypes) > 0 {
@@ -186,7 +196,61 @@ func assemble(
 	// Supertype map.
 	buildSupertypeMap(lang, ng)
 
+	certifyGeneratedCRecoveryCostCompetition(lang)
+
 	return lang, nil
+}
+
+func certifyGeneratedCRecoveryCostCompetition(lang *gotreesitter.Language) {
+	gotreesitter.CertifyCRecoveryCostCompetition(lang)
+}
+
+func buildHiddenChoicePassthroughSymbols(ng *NormalizedGrammar, symbolCount int) []bool {
+	if ng == nil || symbolCount == 0 {
+		return nil
+	}
+	aliasReferenced := make([]bool, symbolCount)
+	prodCount := make([]int, symbolCount)
+	allNeutralUnary := make([]bool, symbolCount)
+	for i := range allNeutralUnary {
+		allNeutralUnary[i] = true
+	}
+	for _, prod := range ng.Productions {
+		if prod.LHS >= 0 && prod.LHS < symbolCount {
+			prodCount[prod.LHS]++
+			if len(prod.RHS) != 1 ||
+				prod.Prec != 0 || prod.DynPrec != 0 || prod.Assoc != AssocNone || prod.HasExplicitPrec ||
+				len(prod.Fields) != 0 || len(prod.Aliases) != 0 {
+				allNeutralUnary[prod.LHS] = false
+			}
+		}
+		for _, alias := range prod.Aliases {
+			if alias.ChildIndex < 0 || alias.ChildIndex >= len(prod.RHS) {
+				continue
+			}
+			child := prod.RHS[alias.ChildIndex]
+			if child >= 0 && child < symbolCount {
+				aliasReferenced[child] = true
+			}
+		}
+	}
+	var out []bool
+	for i, sym := range ng.Symbols {
+		if i >= symbolCount || prodCount[i] <= 1 || !allNeutralUnary[i] || aliasReferenced[i] {
+			continue
+		}
+		if sym.Kind != SymbolNonterminal || sym.Visible || !sym.Named || sym.Supertype || sym.GeneratedRepeatAux {
+			continue
+		}
+		if !strings.HasPrefix(sym.Name, "_") {
+			continue
+		}
+		if out == nil {
+			out = make([]bool, symbolCount)
+		}
+		out[i] = true
+	}
+	return out
 }
 
 func buildReservedWordTables(lang *gotreesitter.Language, ng *NormalizedGrammar) {
@@ -701,6 +765,44 @@ func buildParseTables(
 	return nil
 }
 
+// buildProductionSignatures records compact RHS shape metadata for generated grammars.
+func buildProductionSignatures(lang *gotreesitter.Language, ng *NormalizedGrammar) {
+	if lang == nil || ng == nil || len(ng.Productions) == 0 {
+		return
+	}
+	seen := make(map[string]struct{}, len(ng.Productions))
+	out := make([]gotreesitter.ProductionSignature, 0, len(ng.Productions))
+	for _, prod := range ng.Productions {
+		key := productionSignatureKey(prod)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		rhs := make([]gotreesitter.Symbol, len(prod.RHS))
+		for i, sym := range prod.RHS {
+			rhs[i] = gotreesitter.Symbol(sym)
+		}
+		out = append(out, gotreesitter.ProductionSignature{
+			LHS:          gotreesitter.Symbol(prod.LHS),
+			ProductionID: uint16(prod.ProductionID),
+			RHS:          rhs,
+		})
+	}
+	if len(out) > 0 {
+		lang.ProductionSignatures = out
+	}
+}
+
+func productionSignatureKey(prod Production) string {
+	buf := make([]byte, 0, 4+len(prod.RHS)*2)
+	buf = append(buf, byte(prod.LHS>>8), byte(prod.LHS))
+	buf = append(buf, byte(prod.ProductionID>>8), byte(prod.ProductionID))
+	for _, sym := range prod.RHS {
+		buf = append(buf, byte(sym>>8), byte(sym))
+	}
+	return string(buf)
+}
+
 // buildFieldMaps constructs FieldMapSlices and FieldMapEntries.
 func buildFieldMaps(lang *gotreesitter.Language, ng *NormalizedGrammar) {
 	if len(ng.FieldNames) <= 1 {
@@ -762,14 +864,12 @@ func buildExternalLexStates(lang *gotreesitter.Language, tables *LRTables, ng *N
 	// entries for them because their shift-extra actions are added later
 	// in the assembly step, so we must mark them explicitly here.
 	extraExtSet := make(map[int]bool, len(ng.ExtraSymbols))
-	tokenCount := ng.TokenCount()
 	for _, extraSym := range ng.ExtraSymbols {
-		if extraSym < tokenCount {
-			if _, isExt := extSymSet[extraSym]; isExt {
-				extraExtSet[extSymSet[extraSym]] = true
-			}
+		if extIdx, isExt := extSymSet[extraSym]; isExt {
+			extraExtSet[extIdx] = true
 		}
 	}
+	tokenCount := ng.TokenCount()
 
 	// Build counterpart map: external symbol ID -> non-external terminals
 	// with the same surface token name. Used to detect LALR merging artifacts

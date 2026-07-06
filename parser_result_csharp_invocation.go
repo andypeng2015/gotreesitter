@@ -12,6 +12,14 @@ func normalizeCSharpInvocationStatements(root *Node, source []byte, lang *Langua
 	if !ok {
 		return
 	}
+	implicitObjectCreationSym, ok := lang.SymbolByName("implicit_object_creation_expression")
+	if !ok {
+		return
+	}
+	newSym, ok := lang.SymbolByName("new")
+	if !ok {
+		return
+	}
 	memberAccessSym, ok := lang.SymbolByName("member_access_expression")
 	if !ok {
 		return
@@ -33,6 +41,8 @@ func normalizeCSharpInvocationStatements(root *Node, source []byte, lang *Langua
 	}
 	exprStmtNamed := symbolIsNamed(lang, exprStmtSym)
 	invocationNamed := symbolIsNamed(lang, invocationSym)
+	implicitObjectCreationNamed := symbolIsNamed(lang, implicitObjectCreationSym)
+	newNamed := symbolIsNamed(lang, newSym)
 	memberAccessNamed := symbolIsNamed(lang, memberAccessSym)
 	argumentListNamed := symbolIsNamed(lang, argumentListSym)
 	argumentNamed := symbolIsNamed(lang, argumentSym)
@@ -48,6 +58,12 @@ func normalizeCSharpInvocationStatements(root *Node, source []byte, lang *Langua
 		}
 		if n.Type(lang) == "argument_list" {
 			csharpPopulateMissingInvocationArguments(n, source, lang)
+		}
+		if n.Type(lang) == "invocation_expression" {
+			csharpRewriteImplicitObjectCreationInvocation(n, source, lang, implicitObjectCreationSym, implicitObjectCreationNamed, newSym, newNamed)
+		}
+		if n.Type(lang) == "variable_declarator" {
+			csharpRewriteGenericInvocationInitializer(n, source, lang)
 		}
 		if n.Type(lang) == "local_declaration_statement" && len(n.children) == 2 {
 			decl := n.children[0]
@@ -80,6 +96,114 @@ func normalizeCSharpInvocationStatements(root *Node, source []byte, lang *Langua
 			}
 		}
 	})
+}
+
+func csharpRewriteGenericInvocationInitializer(declarator *Node, source []byte, lang *Language) bool {
+	if declarator == nil || declarator.ownerArena == nil || resultChildCount(declarator) < 3 {
+		return false
+	}
+	valueIdx := -1
+	for i := resultChildCount(declarator) - 1; i >= 0; i-- {
+		child := resultChildAt(declarator, i)
+		if child != nil && child.IsNamed() && child.Type(lang) != "identifier" {
+			valueIdx = i
+			break
+		}
+	}
+	if valueIdx < 0 {
+		return false
+	}
+	value := resultChildAt(declarator, valueIdx)
+	if value == nil || value.Type(lang) != "binary_expression" || !csharpLooksLikeGenericInvocationSource(source, value.startByte, value.endByte) {
+		return false
+	}
+	invocation, ok := csharpBuildGenericInvocationExpressionNode(declarator.ownerArena, source, lang, value.startByte, value.endByte)
+	if !ok || invocation == nil || invocation.Type(lang) != "invocation_expression" {
+		return false
+	}
+	children := resultChildSliceForMutation(declarator)
+	if valueIdx >= len(children) {
+		return false
+	}
+	children[valueIdx] = invocation
+	declarator.children = cloneNodeSliceIfArena(declarator.ownerArena, children)
+	declarator.productionID = 0
+	declarator.setHasError(false)
+	populateParentNode(declarator, declarator.children)
+	return true
+}
+
+func csharpBuildGenericInvocationExpressionNode(arena *nodeArena, source []byte, lang *Language, start, end uint32) (*Node, bool) {
+	openParen, ok := csharpFindInvocationOpenParen(source, start, end)
+	if !ok {
+		return nil, false
+	}
+	functionEnd := csharpTrimRightSpaceBytes(source, openParen)
+	function, ok := csharpBuildGenericNameNode(arena, source, lang, start, functionEnd)
+	if !ok {
+		return nil, false
+	}
+	args, ok := csharpBuildArgumentListNode(arena, source, lang, openParen, end)
+	if !ok {
+		return nil, false
+	}
+	sym, ok := symbolByName(lang, "invocation_expression")
+	if !ok {
+		return nil, false
+	}
+	functionID, _ := lang.FieldByName("function")
+	argumentsID, _ := lang.FieldByName("arguments")
+	fields := cloneFieldIDSliceInArena(arena, []FieldID{functionID, argumentsID})
+	named := symbolIsNamed(lang, sym)
+	node := newParentNodeInArena(arena, sym, named, []*Node{function, args}, fields, 0)
+	node.setHasError(false)
+	return node, true
+}
+
+func csharpLooksLikeGenericInvocationSource(source []byte, start, end uint32) bool {
+	start, end = csharpTrimSpaceBounds(source, start, end)
+	if start >= end || int(end) > len(source) || source[end-1] != ')' {
+		return false
+	}
+	openParen, ok := csharpFindInvocationOpenParen(source, start, end)
+	if !ok || openParen <= start {
+		return false
+	}
+	beforeParen := csharpTrimRightSpaceBytes(source, openParen)
+	if beforeParen <= start || source[beforeParen-1] != '>' {
+		return false
+	}
+	ltPos, ok := csharpFindGenericTypeArgumentOpen(source, start, beforeParen)
+	if !ok || ltPos <= start {
+		return false
+	}
+	nameStart, nameEnd, ok := csharpScanIdentifierAt(source, start)
+	return ok && nameStart == start && nameEnd == ltPos
+}
+
+func csharpRewriteImplicitObjectCreationInvocation(n *Node, source []byte, lang *Language, implicitObjectCreationSym Symbol, implicitObjectCreationNamed bool, newSym Symbol, newNamed bool) bool {
+	if n == nil || lang == nil || resultChildCount(n) != 2 || len(source) == 0 {
+		return false
+	}
+	newNode := resultChildAt(n, 0)
+	args := resultChildAt(n, 1)
+	if newNode == nil || args == nil || newNode.Type(lang) != "identifier" || args.Type(lang) != "argument_list" {
+		return false
+	}
+	if newNode.startByte >= newNode.endByte || int(newNode.endByte) > len(source) || string(source[newNode.startByte:newNode.endByte]) != "new" {
+		return false
+	}
+	if args.startByte != newNode.endByte {
+		return false
+	}
+	retagResultRoot(newNode, newSym, newNamed)
+	n.symbol = implicitObjectCreationSym
+	n.setNamed(implicitObjectCreationNamed)
+	n.fieldIDs = nil
+	n.fieldSources = nil
+	n.productionID = 0
+	n.setHasError(false)
+	return true
 }
 
 func csharpPopulateMissingInvocationArguments(n *Node, source []byte, lang *Language) bool {

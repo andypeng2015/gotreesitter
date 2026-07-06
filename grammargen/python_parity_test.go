@@ -1,6 +1,10 @@
 package grammargen
 
 import (
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -117,6 +121,63 @@ func TestPythonDoubleStarParity(t *testing.T) {
 	}
 }
 
+func TestPythonGeneratedRepeatContinuationParity(t *testing.T) {
+	genLang := loadGeneratedPythonLanguageForParity(t)
+	refLang := grammars.PythonLanguage()
+	adaptExternalScanner(refLang, genLang)
+
+	samples := []string{
+		"a.b.c",
+		"2**2**3\n-2**2",
+		"if a:\n  b\n  c",
+		"{a, b, c,}\n{*{}}",
+	}
+
+	for _, sample := range samples {
+		assertPythonParity(t, genLang, refLang, sample)
+	}
+}
+
+func TestPythonGeneratedRepeatContinuationParityWithExternalOrderAdapter(t *testing.T) {
+	genLang := loadGeneratedPythonLanguageForParity(t)
+	refLang := grammars.PythonLanguage()
+	if scanner, ok := gotreesitter.AdaptExternalScannerByExternalOrder(refLang, genLang); ok {
+		genLang.ExternalScanner = scanner
+	}
+
+	samples := []string{
+		"a.b.c",
+		"2**2**3\n-2**2",
+		"if a:\n  b\n  c",
+		"{a, b, c,}\n{*{}}",
+	}
+
+	for _, sample := range samples {
+		assertPythonParity(t, genLang, refLang, sample)
+	}
+}
+
+func TestPythonGeneratedExternalOrderCorpusFloorCanary(t *testing.T) {
+	genLang := loadGeneratedPythonLanguageForParity(t)
+	refLang := grammars.PythonLanguage()
+	if scanner, ok := gotreesitter.AdaptExternalScannerByExternalOrder(refLang, genLang); ok {
+		genLang.ExternalScanner = scanner
+	}
+
+	samples := loadPythonCorpusBlocksForTest(t, 20)
+	parser := gotreesitter.NewParser(genLang)
+	for i, sample := range samples {
+		tree, err := parser.Parse([]byte(sample))
+		if err != nil {
+			t.Fatalf("sample %d parse returned error: %v\nsource:\n%s", i, err, sample)
+		}
+		t.Cleanup(tree.Release)
+		if root := tree.RootNode(); root.HasError() {
+			t.Fatalf("sample %d has ERROR\nGEN: %s\nsource:\n%s", i, root.SExpr(genLang), sample)
+		}
+	}
+}
+
 func TestTokenPrecStringDoesNotGloballyOverrideLongerBareString(t *testing.T) {
 	g := NewGrammar("token_prec_prefix")
 	g.Define("source_file", Choice(Sym("short"), Sym("long"), Seq(Str("q"), Sym("contextual"))))
@@ -156,6 +217,115 @@ func loadGeneratedPythonLanguageForParity(t *testing.T) *gotreesitter.Language {
 		t.Fatalf("generate Python language: %v", err)
 	}
 	return genLang
+}
+
+func loadPythonCorpusBlocksForTest(t *testing.T, limit int) []string {
+	t.Helper()
+	root := ""
+	for _, candidate := range []string{
+		"/tmp/grammar_parity/python",
+		".parity_seed/python",
+		"../.parity_seed/python",
+	} {
+		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+			root = candidate
+			break
+		}
+	}
+	if root == "" {
+		t.Skip("Python corpus unavailable")
+	}
+
+	dir := filepath.Join(root, "test", "corpus")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Skipf("Python corpus unavailable: %v", err)
+	}
+	var samples []string
+	seen := map[string]bool{}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, entry.Name()))
+		if err != nil {
+			continue
+		}
+		for _, block := range extractPythonCorpusBlocksForTest(string(data)) {
+			normalized := strings.ReplaceAll(block, "\r\n", "\n")
+			trimmed := strings.TrimSpace(normalized)
+			if trimmed == "" || seen[trimmed] {
+				continue
+			}
+			seen[trimmed] = true
+			samples = append(samples, normalized)
+		}
+	}
+	sort.Slice(samples, func(i, j int) bool { return len(samples[i]) < len(samples[j]) })
+	if len(samples) == 0 {
+		t.Skip("Python corpus has no blocks")
+	}
+	if limit > 0 && len(samples) > limit {
+		samples = samples[:limit]
+	}
+	return samples
+}
+
+func extractPythonCorpusBlocksForTest(data string) []string {
+	lines := strings.Split(strings.ReplaceAll(data, "\r\n", "\n"), "\n")
+	var out []string
+	for i := 0; i < len(lines); {
+		if !pythonCorpusEqualsFenceForTest(lines[i]) {
+			i++
+			continue
+		}
+		i++
+		for i < len(lines) && !pythonCorpusEqualsFenceForTest(lines[i]) {
+			i++
+		}
+		if i >= len(lines) {
+			break
+		}
+		i++
+		for i < len(lines) && strings.TrimSpace(lines[i]) == "" {
+			i++
+		}
+		start := i
+		for i < len(lines) && !pythonCorpusDashFenceForTest(lines[i]) {
+			i++
+		}
+		if i > start {
+			src := strings.Trim(strings.Join(lines[start:i], "\n"), "\n")
+			if strings.TrimSpace(src) != "" {
+				out = append(out, src)
+			}
+		}
+		if i < len(lines) {
+			i++
+		}
+	}
+	return out
+}
+
+func pythonCorpusEqualsFenceForTest(line string) bool {
+	return pythonCorpusFenceForTest(line, '=')
+}
+
+func pythonCorpusDashFenceForTest(line string) bool {
+	return pythonCorpusFenceForTest(line, '-')
+}
+
+func pythonCorpusFenceForTest(line string, want rune) bool {
+	s := strings.TrimSpace(line)
+	if len(s) < 3 {
+		return false
+	}
+	for _, r := range s {
+		if r != want {
+			return false
+		}
+	}
+	return true
 }
 
 func assertPythonParity(t *testing.T, genLang, refLang *gotreesitter.Language, sample string) {

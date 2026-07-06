@@ -2,7 +2,7 @@ package gotreesitter
 
 import "bytes"
 
-func normalizeScalaObjectTemplateBodyFragments(root *Node, source []byte, lang *Language) {
+func normalizeScalaObjectTemplateBodyFragments(root *Node, source []byte, parser *Parser, lang *Language) {
 	if root == nil || lang == nil || lang.Name != "scala" || len(root.children) < 3 || len(source) == 0 {
 		return
 	}
@@ -54,7 +54,7 @@ func normalizeScalaObjectTemplateBodyFragments(root *Node, source []byte, lang *
 	}
 }
 
-func normalizeScalaTemplateBodyObjectFragments(root *Node, source []byte, lang *Language) {
+func normalizeScalaTemplateBodyObjectFragments(root *Node, source []byte, parser *Parser, lang *Language) {
 	if root == nil || lang == nil || lang.Name != "scala" || len(source) == 0 {
 		return
 	}
@@ -79,7 +79,7 @@ func normalizeScalaTemplateBodyObjectFragments(root *Node, source []byte, lang *
 					continue
 				}
 				objectEnd := uint32(closePos + 1)
-				recovered, ok := scalaRecoverTopLevelObjectNodeFromRange(source, objTok.startByte, objectEnd, lang, n.ownerArena)
+				recovered, ok := scalaRecoverTopLevelObjectNodeFromRange(source, objTok.startByte, objectEnd, parser, lang, n.ownerArena)
 				if !ok || recovered == nil {
 					continue
 				}
@@ -98,7 +98,7 @@ func normalizeScalaTemplateBodyObjectFragments(root *Node, source []byte, lang *
 					continue
 				}
 				replaceChildRangeWithSingleNode(n, startIdx, endIdx, recovered)
-				scalaRecoverTemplateBodyTailMembers(n, recovered.endByte, source, lang)
+				scalaRecoverTemplateBodyTailMembers(n, recovered.endByte, source, parser, lang)
 				populateParentNode(n, n.children)
 				i = startIdx
 			}
@@ -128,18 +128,18 @@ type scalaTemplateMemberSpan struct {
 	kind  scalaTemplateMemberKind
 }
 
-func normalizeScalaTemplateBodyRecoveredMembers(root *Node, source []byte, lang *Language) {
+func normalizeScalaTemplateBodyRecoveredMembers(root *Node, source []byte, parser *Parser, lang *Language) {
 	if root == nil || lang == nil || lang.Name != "scala" || len(source) == 0 {
 		return
 	}
 	walkResultTree(root, func(n *Node) {
 		if n.Type(lang) == "template_body" && n.HasError() {
-			scalaRecoverTemplateBodyMembers(n, source, lang)
+			scalaRecoverTemplateBodyMembers(n, source, parser, lang)
 		}
 	})
 }
 
-func normalizeScalaRecoveredObjectTemplateBodies(root *Node, source []byte, lang *Language) {
+func normalizeScalaRecoveredObjectTemplateBodies(root *Node, source []byte, parser *Parser, lang *Language) {
 	if root == nil || lang == nil || lang.Name != "scala" || len(source) == 0 {
 		return
 	}
@@ -149,7 +149,7 @@ func normalizeScalaRecoveredObjectTemplateBodies(root *Node, source []byte, lang
 				if child == nil || child.Type(lang) != "template_body" {
 					continue
 				}
-				rebuilt, ok := scalaRebuildTemplateBodyFromSource(child, source, lang, n.ownerArena)
+				rebuilt, ok := scalaRebuildTemplateBodyFromSource(child, source, parser, lang, n.ownerArena)
 				if !ok || rebuilt == nil {
 					break
 				}
@@ -209,7 +209,7 @@ func scalaDefinitionTemplateBodyNeedsRecovery(n *Node, lang *Language) bool {
 	return sawRepeatComment && sawOpenComment && !sawBlockComment
 }
 
-func scalaRebuildTemplateBodyFromSource(body *Node, source []byte, lang *Language, arena *nodeArena) (*Node, bool) {
+func scalaRebuildTemplateBodyFromSource(body *Node, source []byte, parser *Parser, lang *Language, arena *nodeArena) (*Node, bool) {
 	if body == nil || lang == nil || body.Type(lang) != "template_body" || len(body.children) < 2 {
 		return nil, false
 	}
@@ -227,7 +227,7 @@ func scalaRebuildTemplateBodyFromSource(body *Node, source []byte, lang *Languag
 	}
 	spans := scalaTemplateBodyMemberSpans(source, memberStart, close.startByte)
 	for _, span := range spans {
-		recovered, ok := scalaRecoverTemplateBodyMemberNode(source, span, lang, arena)
+		recovered, ok := scalaRecoverTemplateBodyMemberNode(source, span, parser, lang, arena)
 		if !ok || recovered == nil {
 			continue
 		}
@@ -323,18 +323,18 @@ closeLeafDone:
 	return comment, true
 }
 
-func normalizeScalaSplitFunctionDefinitions(root *Node, source []byte, lang *Language) {
+func normalizeScalaSplitFunctionDefinitions(root *Node, source []byte, parser *Parser, lang *Language) {
 	if root == nil || lang == nil || lang.Name != "scala" || len(source) == 0 {
 		return
 	}
 	walkResultTree(root, func(n *Node) {
 		if n.Type(lang) == "template_body" && n.HasError() {
-			scalaRecoverSplitFunctionDefinition(n, source, lang)
+			scalaRecoverSplitFunctionDefinition(n, source, parser, lang)
 		}
 	})
 }
 
-func scalaRecoverSplitFunctionDefinition(body *Node, source []byte, lang *Language) {
+func scalaRecoverSplitFunctionDefinition(body *Node, source []byte, parser *Parser, lang *Language) {
 	if body == nil || lang == nil || body.Type(lang) != "template_body" || len(body.children) < 4 {
 		return
 	}
@@ -372,7 +372,7 @@ func scalaRecoverSplitFunctionDefinition(body *Node, source []byte, lang *Langua
 		if closePos < 0 {
 			continue
 		}
-		recovered, ok := scalaRecoverSplitFunctionDefinitionFromRange(source, header.startByte, uint32(closePos+1), lang, body.ownerArena)
+		recovered, ok := scalaRecoverSplitFunctionDefinitionFromRange(source, header.startByte, uint32(closePos+1), parser, lang, body.ownerArena)
 		if !ok || recovered == nil {
 			continue
 		}
@@ -389,7 +389,7 @@ func scalaRecoverSplitFunctionDefinition(body *Node, source []byte, lang *Langua
 	}
 }
 
-func scalaRecoverTemplateBodyMembers(body *Node, source []byte, lang *Language) {
+func scalaRecoverTemplateBodyMembers(body *Node, source []byte, parser *Parser, lang *Language) {
 	if body == nil || lang == nil || body.Type(lang) != "template_body" || len(body.children) < 3 {
 		return
 	}
@@ -404,7 +404,7 @@ func scalaRecoverTemplateBodyMembers(body *Node, source []byte, lang *Language) 
 	}
 	changed := false
 	for _, span := range spans {
-		recovered, ok := scalaRecoverTemplateBodyMemberNode(source, span, lang, body.ownerArena)
+		recovered, ok := scalaRecoverTemplateBodyMemberNode(source, span, parser, lang, body.ownerArena)
 		if !ok || recovered == nil {
 			continue
 		}
@@ -451,34 +451,34 @@ func scalaTemplateBodyChildRange(children []*Node, start, end uint32) (int, int,
 	return startIdx, endIdx, true
 }
 
-func scalaRecoverTemplateBodyMemberNode(source []byte, span scalaTemplateMemberSpan, lang *Language, arena *nodeArena) (*Node, bool) {
+func scalaRecoverTemplateBodyMemberNode(source []byte, span scalaTemplateMemberSpan, parser *Parser, lang *Language, arena *nodeArena) (*Node, bool) {
 	if span.end <= span.start || int(span.end) > len(source) {
 		return nil, false
 	}
 	switch span.kind {
 	case scalaTemplateMemberClass:
-		return scalaRecoverTopLevelClassNodeFromRange(source, span.start, span.end, lang, arena)
+		return scalaRecoverTopLevelClassNodeFromRange(source, span.start, span.end, parser, lang, arena)
 	case scalaTemplateMemberObject:
-		return scalaRecoverTopLevelObjectNodeFromRange(source, span.start, span.end, lang, arena)
+		return scalaRecoverTopLevelObjectNodeFromRange(source, span.start, span.end, parser, lang, arena)
 	case scalaTemplateMemberFunction:
-		return scalaRecoverTopLevelFunctionNodeFromRange(source, span.start, span.end, lang, arena)
+		return scalaRecoverTopLevelFunctionNodeFromRange(source, span.start, span.end, parser, lang, arena)
 	case scalaTemplateMemberImport:
-		return scalaRecoverTopLevelNamedNodeFromRange(source, span.start, span.end, lang, arena, "import_declaration")
+		return scalaRecoverTopLevelNamedNodeFromRange(source, span.start, span.end, parser, lang, arena, "import_declaration")
 	case scalaTemplateMemberVal:
-		return scalaRecoverTopLevelNamedNodeFromRange(source, span.start, span.end, lang, arena, "val_definition")
+		return scalaRecoverTopLevelNamedNodeFromRange(source, span.start, span.end, parser, lang, arena, "val_definition")
 	case scalaTemplateMemberComment:
-		return scalaRecoverTopLevelNamedNodeFromRange(source, span.start, span.end, lang, arena, "comment")
+		return scalaRecoverTopLevelNamedNodeFromRange(source, span.start, span.end, parser, lang, arena, "comment")
 	case scalaTemplateMemberBlockComment:
 		if comment, ok := scalaBuildTemplateBodyLeadingBlockComment(source, span.start, span.end, lang, arena); ok && comment != nil {
 			return comment, true
 		}
-		return scalaRecoverTopLevelNamedNodeFromRange(source, span.start, span.end, lang, arena, "block_comment")
+		return scalaRecoverTopLevelNamedNodeFromRange(source, span.start, span.end, parser, lang, arena, "block_comment")
 	default:
 		return nil, false
 	}
 }
 
-func scalaRecoverTemplateBodyTailMembers(body *Node, start uint32, source []byte, lang *Language) {
+func scalaRecoverTemplateBodyTailMembers(body *Node, start uint32, source []byte, parser *Parser, lang *Language) {
 	if body == nil || lang == nil || body.Type(lang) != "template_body" || len(body.children) < 2 {
 		return
 	}
@@ -499,7 +499,7 @@ func scalaRecoverTemplateBodyTailMembers(body *Node, start uint32, source []byte
 	}
 	recovered := make([]*Node, 0, len(spans))
 	for _, span := range spans {
-		node, ok := scalaRecoverTemplateBodyMemberNode(source, span, lang, body.ownerArena)
+		node, ok := scalaRecoverTemplateBodyMemberNode(source, span, parser, lang, body.ownerArena)
 		if !ok || node == nil {
 			continue
 		}
@@ -928,11 +928,11 @@ type scalaStatementSpan struct {
 	end   uint32
 }
 
-func scalaRecoverSplitFunctionDefinitionFromRange(source []byte, fnStart, fnEnd uint32, lang *Language, arena *nodeArena) (*Node, bool) {
+func scalaRecoverSplitFunctionDefinitionFromRange(source []byte, fnStart, fnEnd uint32, parser *Parser, lang *Language, arena *nodeArena) (*Node, bool) {
 	if lang == nil || int(fnStart) >= len(source) || fnEnd <= fnStart || int(fnEnd) > len(source) {
 		return nil, false
 	}
-	tree, err := parseWithSnippetParser(lang, source[fnStart:fnEnd])
+	tree, err := parseWithSnippetParserInheriting(lang, source[fnStart:fnEnd], parser)
 	if err != nil || tree == nil || tree.RootNode() == nil {
 		return nil, false
 	}
@@ -966,7 +966,7 @@ func scalaRecoverSplitFunctionDefinitionFromRange(source []byte, fnStart, fnEnd 
 	if closePos < 0 {
 		return nil, false
 	}
-	block, ok := scalaRecoverFunctionBlockFromRange(source, open.startByte, uint32(closePos+1), lang, arena)
+	block, ok := scalaRecoverFunctionBlockFromRange(source, open.startByte, uint32(closePos+1), parser, lang, arena)
 	if !ok || block == nil {
 		return nil, false
 	}
@@ -992,7 +992,7 @@ func scalaRecoverSplitFunctionDefinitionFromRange(source []byte, fnStart, fnEnd 
 	return newParentNodeInArena(arena, functionSym, functionNamed, children, nil, 0), true
 }
 
-func scalaRecoverFunctionBlockFromRange(source []byte, blockStart, blockEnd uint32, lang *Language, arena *nodeArena) (*Node, bool) {
+func scalaRecoverFunctionBlockFromRange(source []byte, blockStart, blockEnd uint32, parser *Parser, lang *Language, arena *nodeArena) (*Node, bool) {
 	if lang == nil || blockEnd <= blockStart || int(blockEnd) > len(source) {
 		return nil, false
 	}
@@ -1020,7 +1020,7 @@ func scalaRecoverFunctionBlockFromRange(source []byte, blockStart, blockEnd uint
 	children := make([]*Node, 0, len(statementSpans)+2)
 	children = append(children, open)
 	for _, span := range statementSpans {
-		stmt, ok := scalaRecoverBlockStatementNode(source, span.start, span.end, lang, arena)
+		stmt, ok := scalaRecoverBlockStatementNode(source, span.start, span.end, parser, lang, arena)
 		if !ok || stmt == nil {
 			return nil, false
 		}
@@ -1182,11 +1182,11 @@ func scalaFindNextBlockStatementBoundary(source []byte, start, limit int) int {
 	return trimTrailingHorizontalAndVerticalTrivia(source, start, limit)
 }
 
-func scalaRecoverBlockStatementNode(source []byte, start, end uint32, lang *Language, arena *nodeArena) (*Node, bool) {
+func scalaRecoverBlockStatementNode(source []byte, start, end uint32, parser *Parser, lang *Language, arena *nodeArena) (*Node, bool) {
 	if end <= start || int(end) > len(source) {
 		return nil, false
 	}
-	tree, err := parseWithSnippetParser(lang, source[start:end])
+	tree, err := parseWithSnippetParserInheriting(lang, source[start:end], parser)
 	if err == nil && tree != nil && tree.RootNode() != nil {
 		defer tree.Release()
 		startPoint := advancePointByBytes(Point{}, source[:start])
@@ -1205,12 +1205,12 @@ func scalaRecoverBlockStatementNode(source []byte, start, end uint32, lang *Lang
 		}
 	}
 	if bytes.HasPrefix(source[start:end], []byte("val ")) {
-		return scalaRecoverValDefinitionIfExpressionFromRange(source, start, end, lang, arena)
+		return scalaRecoverValDefinitionIfExpressionFromRange(source, start, end, parser, lang, arena)
 	}
 	return nil, false
 }
 
-func scalaRecoverValDefinitionIfExpressionFromRange(source []byte, start, end uint32, lang *Language, arena *nodeArena) (*Node, bool) {
+func scalaRecoverValDefinitionIfExpressionFromRange(source []byte, start, end uint32, parser *Parser, lang *Language, arena *nodeArena) (*Node, bool) {
 	if end <= start || int(end) > len(source) || lang == nil {
 		return nil, false
 	}
@@ -1270,15 +1270,15 @@ func scalaRecoverValDefinitionIfExpressionFromRange(source []byte, start, end ui
 	if alternativeStart >= int(end) {
 		return nil, false
 	}
-	condition, ok := scalaRecoverSingleExpressionNode(source, uint32(condStart), uint32(condEnd+1), lang, arena, "parenthesized_expression")
+	condition, ok := scalaRecoverSingleExpressionNode(source, uint32(condStart), uint32(condEnd+1), parser, lang, arena, "parenthesized_expression")
 	if !ok {
 		return nil, false
 	}
-	consequence, ok := scalaRecoverSingleExpressionNode(source, uint32(consequenceStart), uint32(elsePos), lang, arena, "infix_expression")
+	consequence, ok := scalaRecoverSingleExpressionNode(source, uint32(consequenceStart), uint32(elsePos), parser, lang, arena, "infix_expression")
 	if !ok {
 		return nil, false
 	}
-	alternative, ok := scalaRecoverSingleExpressionNode(source, uint32(alternativeStart), end, lang, arena, "identifier")
+	alternative, ok := scalaRecoverSingleExpressionNode(source, uint32(alternativeStart), end, parser, lang, arena, "identifier")
 	if !ok {
 		return nil, false
 	}
@@ -1306,11 +1306,11 @@ func scalaRecoverValDefinitionIfExpressionFromRange(source []byte, start, end ui
 	return newParentNodeInArena(arena, valDefSym, valDefNamed, valChildren, nil, 0), true
 }
 
-func scalaRecoverSingleExpressionNode(source []byte, start, end uint32, lang *Language, arena *nodeArena, want string) (*Node, bool) {
+func scalaRecoverSingleExpressionNode(source []byte, start, end uint32, parser *Parser, lang *Language, arena *nodeArena, want string) (*Node, bool) {
 	if end <= start || int(end) > len(source) {
 		return nil, false
 	}
-	tree, err := parseWithSnippetParser(lang, source[start:end])
+	tree, err := parseWithSnippetParserInheriting(lang, source[start:end], parser)
 	if err != nil || tree == nil || tree.RootNode() == nil {
 		return nil, false
 	}
@@ -1340,7 +1340,7 @@ func scalaRecoverSingleExpressionNode(source []byte, start, end uint32, lang *La
 	return nil, false
 }
 
-func scalaRecoverLeadingAnnotations(source []byte, start, fnStart, fnEnd uint32, lang *Language, arena *nodeArena) []*Node {
+func scalaRecoverLeadingAnnotations(source []byte, start, fnStart, fnEnd uint32, parser *Parser, lang *Language, arena *nodeArena) []*Node {
 	if lang == nil || fnStart <= start || fnEnd <= fnStart || int(fnEnd) > len(source) {
 		return nil
 	}
@@ -1358,7 +1358,7 @@ found:
 	if pos >= limit || source[pos] != '@' {
 		return nil
 	}
-	tree, err := parseWithSnippetParser(lang, source[pos:fnEnd])
+	tree, err := parseWithSnippetParserInheriting(lang, source[pos:fnEnd], parser)
 	if err != nil || tree == nil || tree.RootNode() == nil {
 		return nil
 	}

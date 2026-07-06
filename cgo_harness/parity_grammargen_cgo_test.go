@@ -18,7 +18,9 @@ package cgoharness
 //   cgo_harness/docker/run_grammargen_c_parity.sh --memory 8g
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -40,14 +42,15 @@ import (
 )
 
 const (
-	grammargenCGOEnableEnv     = "GTS_GRAMMARGEN_CGO_ENABLE"
-	grammargenCGORootEnv       = "GTS_GRAMMARGEN_CGO_ROOT"
-	grammargenCGOLangsEnv      = "GTS_GRAMMARGEN_CGO_LANGS"
-	grammargenCGOMaxCasesEnv   = "GTS_GRAMMARGEN_CGO_MAX_CASES"
-	grammargenCGOMaxBytesEnv   = "GTS_GRAMMARGEN_CGO_MAX_BYTES"
-	grammargenCGOFloorsPathEnv = "GTS_GRAMMARGEN_CGO_FLOORS_PATH"
-	grammargenCGORatchetEnv    = "GTS_GRAMMARGEN_CGO_RATCHET_UPDATE"
-	grammargenCGOMaxWalkFiles  = 6000
+	grammargenCGOEnableEnv          = "GTS_GRAMMARGEN_CGO_ENABLE"
+	grammargenCGORootEnv            = "GTS_GRAMMARGEN_CGO_ROOT"
+	grammargenCGOLangsEnv           = "GTS_GRAMMARGEN_CGO_LANGS"
+	grammargenCGOMaxCasesEnv        = "GTS_GRAMMARGEN_CGO_MAX_CASES"
+	grammargenCGOMaxBytesEnv        = "GTS_GRAMMARGEN_CGO_MAX_BYTES"
+	grammargenCGOGenerateTimeoutEnv = "GTS_GRAMMARGEN_CGO_GENERATE_TIMEOUT"
+	grammargenCGOFloorsPathEnv      = "GTS_GRAMMARGEN_CGO_FLOORS_PATH"
+	grammargenCGORatchetEnv         = "GTS_GRAMMARGEN_CGO_RATCHET_UPDATE"
+	grammargenCGOMaxWalkFiles       = 6000
 )
 
 // grammargenCGOGrammar describes a grammar to test through the
@@ -115,11 +118,13 @@ var grammargenCGOGrammars = []grammargenCGOGrammar{
 	{name: "scala", jsPath: "/tmp/grammar_parity/scala/grammar.js", blobFunc: grammars.ScalaLanguage, genTimeout: 180 * time.Second},
 	{name: "gomod", jsonPath: "/tmp/grammar_parity/gomod/src/grammar.json", blobFunc: grammars.GomodLanguage},
 	{name: "go", jsonPath: "/tmp/grammar_parity/go/src/grammar.json", blobFunc: grammars.GoLanguage, genTimeout: 45 * time.Second},
+	{name: "java", jsonPath: "/tmp/grammar_parity/java/src/grammar.json", blobFunc: grammars.JavaLanguage, genTimeout: 180 * time.Second},
 	{name: "python", jsonPath: "/tmp/grammar_parity/python/src/grammar.json", blobFunc: grammars.PythonLanguage, genTimeout: 300 * time.Second},
 	{name: "javascript", jsonPath: "/tmp/grammar_parity/javascript/src/grammar.json", blobFunc: grammars.JavascriptLanguage, genTimeout: 90 * time.Second},
 	{name: "typescript", jsonPath: "/tmp/grammar_parity/typescript/typescript/src/grammar.json", blobFunc: grammars.TypescriptLanguage, genTimeout: 180 * time.Second},
 	{name: "tsx", jsonPath: "/tmp/grammar_parity/typescript/tsx/src/grammar.json", blobFunc: grammars.TsxLanguage, genTimeout: 180 * time.Second},
 	{name: "c", jsonPath: "/tmp/grammar_parity/c/src/grammar.json", blobFunc: grammars.CLanguage, genTimeout: 60 * time.Second},
+	{name: "rust", jsonPath: "/tmp/grammar_parity/rust/src/grammar.json", blobFunc: grammars.RustLanguage, genTimeout: 180 * time.Second},
 	// Keep cpp opt-in for direct grammargen-vs-C runs until generation fits the
 	// bounded high-value container budget; default ratchets skip seeding it.
 	{name: "cpp", jsonPath: "/tmp/grammar_parity/cpp/src/grammar.json", blobFunc: grammars.CppLanguage, genTimeout: 300 * time.Second},
@@ -154,6 +159,8 @@ var grammargenCGOGrammars = []grammargenCGOGrammar{
 	{name: "properties", jsonPath: "/tmp/grammar_parity/properties/src/grammar.json", blobFunc: grammars.PropertiesLanguage},
 	{name: "requirements", jsonPath: "/tmp/grammar_parity/requirements/src/grammar.json", blobFunc: grammars.RequirementsLanguage},
 	{name: "ssh_config", jsonPath: "/tmp/grammar_parity/ssh_config/src/grammar.json", blobFunc: grammars.SshConfigLanguage, genTimeout: 45 * time.Second},
+	{name: "dart", jsonPath: "/tmp/grammar_parity/dart/src/grammar.json", blobFunc: grammars.DartLanguage, genTimeout: 300 * time.Second},
+	{name: "svelte", jsonPath: "/tmp/grammar_parity/svelte/src/grammar.json", blobFunc: grammars.SvelteLanguage, genTimeout: 180 * time.Second},
 	{name: "swift", jsonPath: "/tmp/grammar_parity/swift/src/grammar.json", blobFunc: grammars.SwiftLanguage, genTimeout: 120 * time.Second},
 	{name: "corn", jsonPath: "/tmp/grammar_parity/corn/src/grammar.json", blobFunc: grammars.CornLanguage},
 }
@@ -180,6 +187,10 @@ func TestGrammargenCGOParity(t *testing.T) {
 	maxBytes := envInt(grammargenCGOMaxBytesEnv, 256*1024)
 	updateRatchet := envBool(grammargenCGORatchetEnv, false)
 	langFilter := parseLangFilter(os.Getenv(grammargenCGOLangsEnv))
+	generateTimeoutOverride, hasGenerateTimeoutOverride, err := grammargenCGOGenerateTimeoutOverride()
+	if err != nil {
+		t.Fatalf("%s: %v", grammargenCGOGenerateTimeoutEnv, err)
+	}
 
 	floorsPath := strings.TrimSpace(os.Getenv(grammargenCGOFloorsPathEnv))
 	if floorsPath == "" {
@@ -195,6 +206,7 @@ func TestGrammargenCGOParity(t *testing.T) {
 	totalNoErr := 0
 	totalParity := 0
 	observed := map[string]grammargenCGOFloorEntry{}
+	generationTimeoutFailures := []string{}
 
 	for _, g := range grammargenCGOGrammars {
 		if len(langFilter) > 0 && !langFilter[g.name] {
@@ -215,20 +227,23 @@ func TestGrammargenCGOParity(t *testing.T) {
 			if timeout == 0 {
 				timeout = 30 * time.Second
 			}
+			if hasGenerateTimeoutOverride {
+				timeout = generateTimeoutOverride
+			}
 			genLang, err := grammargenGenerate(gram, timeout)
 			if err != nil {
+				if len(langFilter) > 0 && isGrammargenGenerationTimeout(err) {
+					generationTimeoutFailures = append(generationTimeoutFailures, g.name)
+					t.Fatalf("generate timed out for explicitly requested grammar %q after %v; increase %s or fix generation: %v",
+						g.name, timeout, grammargenCGOGenerateTimeoutEnv, err)
+				}
 				t.Skipf("generate failed: %v", err)
 				return
 			}
 
-			// Adapt external scanner from ts2go blob if grammargen
-			// produced external symbols.
+			// Adapt external scanner if grammargen produced external symbols.
 			refLang := g.blobFunc()
-			if refLang.ExternalScanner != nil && len(genLang.ExternalSymbols) > 0 {
-				if scanner, ok := gotreesitter.AdaptExternalScannerByExternalOrder(refLang, genLang); ok {
-					genLang.ExternalScanner = scanner
-				}
-			}
+			adaptGrammargenCGOExternalScanner(g.name, refLang, genLang)
 
 			// Stage 3: Load C reference parser.
 			cLang, err := ParityCLanguage(g.name)
@@ -361,6 +376,9 @@ func TestGrammargenCGOParity(t *testing.T) {
 	}
 
 	if testedGrammars == 0 {
+		if len(generationTimeoutFailures) > 0 {
+			t.Fatalf("no grammars tested because explicitly requested grammar generation timed out: %s", strings.Join(generationTimeoutFailures, ","))
+		}
 		t.Skipf("no grammars tested (root=%s)", root)
 	}
 
@@ -370,6 +388,21 @@ func TestGrammargenCGOParity(t *testing.T) {
 
 	t.Logf("GRAMMARGEN-CGO SUMMARY: grammars=%d eligible=%d no_error=%d tree_parity=%d",
 		testedGrammars, totalElig, totalNoErr, totalParity)
+}
+
+func adaptGrammargenCGOExternalScanner(name string, refLang, genLang *gotreesitter.Language) {
+	if genLang == nil || len(genLang.ExternalSymbols) == 0 {
+		return
+	}
+	if name != "" && grammars.AdaptScannerForLanguage(name, genLang) {
+		return
+	}
+	if refLang == nil || refLang.ExternalScanner == nil {
+		return
+	}
+	if scanner, ok := gotreesitter.AdaptExternalScannerByExternalOrder(refLang, genLang); ok {
+		genLang.ExternalScanner = scanner
+	}
 }
 
 // compareGrammargenVsC walks a grammargen Go tree and a C sitter tree in
@@ -635,21 +668,27 @@ func importGrammargenSource(g grammargenCGOGrammar) (*grammargen.Grammar, error)
 }
 
 func grammargenGenerate(gram *grammargen.Grammar, timeout time.Duration) (*gotreesitter.Language, error) {
-	type result struct {
-		lang *gotreesitter.Language
-		err  error
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	lang, err := grammargen.GenerateLanguageWithContext(ctx, gram)
+	if err != nil && ctx.Err() != nil {
+		return nil, grammargenGenerationTimeoutError{timeout: timeout}
 	}
-	ch := make(chan result, 1)
-	go func() {
-		lang, err := grammargen.GenerateLanguage(gram)
-		ch <- result{lang, err}
-	}()
-	select {
-	case r := <-ch:
-		return r.lang, r.err
-	case <-time.After(timeout):
-		return nil, fmt.Errorf("generation timed out after %v", timeout)
-	}
+	return lang, err
+}
+
+type grammargenGenerationTimeoutError struct {
+	timeout time.Duration
+}
+
+func (e grammargenGenerationTimeoutError) Error() string {
+	return fmt.Sprintf("generation timed out after %v", e.timeout)
+}
+
+func isGrammargenGenerationTimeout(err error) bool {
+	var timeoutErr grammargenGenerationTimeoutError
+	return errors.As(err, &timeoutErr)
 }
 
 // collectGrammargenCorpusSamples gathers test inputs from the grammar's
@@ -889,6 +928,25 @@ func parseLangFilter(raw string) map[string]bool {
 		}
 	}
 	return out
+}
+
+func grammargenCGOGenerateTimeoutOverride() (time.Duration, bool, error) {
+	raw, ok := os.LookupEnv(grammargenCGOGenerateTimeoutEnv)
+	if !ok {
+		return 0, false, nil
+	}
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, false, fmt.Errorf("must be a positive Go duration when set")
+	}
+	timeout, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, false, fmt.Errorf("invalid Go duration %q: %w", raw, err)
+	}
+	if timeout <= 0 {
+		return 0, false, fmt.Errorf("must be positive, got %q", raw)
+	}
+	return timeout, true, nil
 }
 
 // envBool and envInt are defined in parity_breaker_test.go.

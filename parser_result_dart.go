@@ -14,14 +14,8 @@ func normalizeDartCollapsedLeafChildren(root *Node, source []byte, lang *Languag
 	if root == nil || lang == nil || lang.Name != "dart" || len(source) == 0 {
 		return
 	}
-	normalizeCollapsedNamedLeafChildrenBySource(root, source, lang, "final_builtin", "final")
 	normalizeCollapsedNamedLeafChildrenBySource(root, source, lang, "super", "super")
-	normalizeCollapsedNamedLeafChildrenBySource(root, source, lang, "base", "base")
 	normalizeCollapsedNamedLeafChildrenBySource(root, source, lang, "this", "this")
-	normalizeCollapsedNamedLeafChildrenBySource(root, source, lang, "negation_operator", "!")
-	normalizeCollapsedNamedLeafChildrenBySource(root, source, lang, "relational_operator", "<", ">", "<=", ">=", "==", "is", "as")
-	normalizeCollapsedNamedLeafChildrenBySource(root, source, lang, "nullable_type", "?")
-	normalizeCollapsedNamedLeafChildrenBySource(root, source, lang, "null_literal", "null")
 }
 
 func normalizeDartSingleTypeArgumentFreeCalls(root *Node, lang *Language) {
@@ -546,7 +540,7 @@ func normalizeDartConstructorSignatureKinds(root *Node, source []byte, lang *Lan
 	parametersID, _ := lang.FieldByName("parameters")
 	constructorNamed := symbolIsNamed(lang, constructorSym)
 	walkResultTree(root, func(n *Node) {
-		if n.Type(lang) == "class_definition" {
+		if dartConstructorOwnerType(n.Type(lang)) {
 			className := n.ChildByFieldName("name", lang)
 			body := n.ChildByFieldName("body", lang)
 			if className != nil && body != nil {
@@ -579,6 +573,15 @@ func normalizeDartConstructorSignatureKinds(root *Node, source []byte, lang *Lan
 			}
 		}
 	})
+}
+
+func dartConstructorOwnerType(typ string) bool {
+	switch typ {
+	case "class_definition", "enum_declaration":
+		return true
+	default:
+		return false
+	}
 }
 
 func dartConstructorCandidateSignature(member *Node, lang *Language) *Node {

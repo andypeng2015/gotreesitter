@@ -1,6 +1,6 @@
 package gotreesitter
 
-func csharpRecoverAttributedTopLevelTypeDeclarationFromChildren(children []*Node, startIdx int, source []byte, lang *Language, arena *nodeArena) (*Node, int, bool) {
+func csharpRecoverAttributedTopLevelTypeDeclarationFromChildren(children []*Node, startIdx int, source []byte, parser *Parser, lang *Language, arena *nodeArena) (*Node, int, bool) {
 	if startIdx < 0 || startIdx >= len(children) || lang == nil || arena == nil || len(source) == 0 {
 		return nil, startIdx, false
 	}
@@ -21,7 +21,7 @@ func csharpRecoverAttributedTopLevelTypeDeclarationFromChildren(children []*Node
 		return nil, startIdx, false
 	}
 	declEnd := declStart + spans[0][1]
-	recovered, ok := csharpRecoverAttributedTopLevelTypeDeclarationFromRange(source, declStart, declEnd, attributeLists, lang, arena)
+	recovered, ok := csharpRecoverAttributedTopLevelTypeDeclarationFromRange(source, declStart, declEnd, attributeLists, parser, lang, arena)
 	if !ok {
 		return nil, startIdx, false
 	}
@@ -40,7 +40,7 @@ func csharpRecoverAttributedTopLevelTypeDeclarationFromChildren(children []*Node
 	return recovered, nextIdx, true
 }
 
-func csharpRecoverAttributedTopLevelTypeDeclarationFromError(n *Node, source []byte, lang *Language, arena *nodeArena) (*Node, bool) {
+func csharpRecoverAttributedTopLevelTypeDeclarationFromError(n *Node, source []byte, parser *Parser, lang *Language, arena *nodeArena) (*Node, bool) {
 	if n == nil || lang == nil || arena == nil || n.Type(lang) != "ERROR" || len(source) == 0 {
 		return nil, false
 	}
@@ -52,14 +52,14 @@ func csharpRecoverAttributedTopLevelTypeDeclarationFromError(n *Node, source []b
 	if !ok || len(attributeLists) == 0 || declStart >= end {
 		return nil, false
 	}
-	return csharpRecoverAttributedTopLevelTypeDeclarationFromRange(source, declStart, end, attributeLists, lang, arena)
+	return csharpRecoverAttributedTopLevelTypeDeclarationFromRange(source, declStart, end, attributeLists, parser, lang, arena)
 }
 
-func csharpRecoverAttributedTopLevelTypeDeclarationFromRange(source []byte, declStart, declEnd uint32, attributeLists []*Node, lang *Language, arena *nodeArena) (*Node, bool) {
+func csharpRecoverAttributedTopLevelTypeDeclarationFromRange(source []byte, declStart, declEnd uint32, attributeLists []*Node, parser *Parser, lang *Language, arena *nodeArena) (*Node, bool) {
 	if lang == nil || arena == nil || len(attributeLists) == 0 || declStart >= declEnd || int(declEnd) > len(source) {
 		return nil, false
 	}
-	tree, err := parseWithSnippetParser(lang, source[declStart:declEnd])
+	tree, err := parseWithSnippetParserInheriting(lang, source[declStart:declEnd], parser)
 	if err != nil || tree == nil || tree.RootNode() == nil {
 		if tree != nil {
 			tree.Release()
@@ -415,7 +415,17 @@ func csharpBuildQualifiedNameNode(source []byte, start, end uint32, lang *Langua
 	}
 	cursor := segEnd
 	for {
-		cursor = csharpSkipSpaceBytes(source, cursor)
+		// Bounded: csharpSkipSpaceBytes skips whitespace against the whole
+		// source, ignoring end, so if the caller already trimmed end to
+		// exclude the trailing whitespace right after this segment (e.g. the
+		// "\n" between a namespace name and its opening "{"), it would
+		// otherwise walk past end into whatever non-whitespace content
+		// follows and the cursor!=end check below would spuriously fail.
+		if skipped := csharpSkipSpaceBytes(source, cursor); skipped <= end {
+			cursor = skipped
+		} else {
+			cursor = end
+		}
 		if cursor >= end {
 			break
 		}

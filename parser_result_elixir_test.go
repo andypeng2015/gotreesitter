@@ -2,6 +2,33 @@ package gotreesitter
 
 import "testing"
 
+func TestNormalizeElixirDropsNewlineBeforeCommentExtras(t *testing.T) {
+	lang := testElixirCompatibilityLanguage()
+	arena := newNodeArena(arenaClassFull)
+	firstComment := newLeafNodeInArena(arena, 17, true, 0, 7, Point{}, Point{Column: 7})
+	newline := newLeafNodeInArena(arena, 18, true, 7, 8, Point{Column: 7}, Point{Row: 1})
+	secondComment := newLeafNodeInArena(arena, 17, true, 8, 15, Point{Row: 1}, Point{Row: 1, Column: 7})
+	list := newLeafNodeInArena(arena, 19, true, 17, 19, Point{Row: 2}, Point{Row: 2, Column: 2})
+	root := newParentNodeInArena(arena, 1, true, []*Node{firstComment, newline, secondComment, list}, nil, 0)
+
+	normalizeElixirCompatibility(root, []byte("# one\n# two\n\n[]"), lang)
+
+	if got, want := root.ChildCount(), 3; got != want {
+		t.Fatalf("root child count = %d, want %d", got, want)
+	}
+	for i, want := range []string{"comment", "comment", "list"} {
+		if got := root.Child(i).Type(lang); got != want {
+			t.Fatalf("root child[%d] = %q, want %q", i, got, want)
+		}
+	}
+	if got := secondComment.Parent(); got != root {
+		t.Fatalf("second comment parent = %v, want root", got)
+	}
+	if got := secondComment.childIndex; got != 1 {
+		t.Fatalf("second comment childIndex = %d, want 1", got)
+	}
+}
+
 func TestNormalizeElixirCollapsedLiteralChildren(t *testing.T) {
 	lang := testElixirCompatibilityLanguage()
 	source := []byte("false true nil")
@@ -13,8 +40,13 @@ func TestNormalizeElixirCollapsedLiteralChildren(t *testing.T) {
 
 	normalizeElixirCompatibility(root, source, lang)
 
-	assertCollapsedKeywordChild(t, falseNode, lang, "false")
-	assertCollapsedKeywordChild(t, trueNode, lang, "true")
+	// Note: "boolean" ("false"/"true") is intentionally NOT asserted here
+	// anymore. The post-hoc patch that used to reconstruct its anonymous token
+	// child in normalizeElixirCollapsedLiteralChildren has been removed: the
+	// reduce engine's shouldKeepVisibleAnonymousTokenChild now keeps it
+	// unconditionally on real parses (see
+	// TestElixirBooleanKeepsTrueTokenChildViaEngine in grammars/), so
+	// falseNode/trueNode above stay untouched by this call.
 	assertCollapsedKeywordChild(t, nilNode, lang, "nil")
 }
 
@@ -117,6 +149,9 @@ func testElixirCompatibilityLanguage() *Language {
 			"=>",
 			"nil",
 			"nil",
+			"comment",
+			"_newline_before_comment",
+			"list",
 		},
 		SymbolMetadata: []SymbolMetadata{
 			{Name: "EOF", Visible: false, Named: false},
@@ -136,6 +171,9 @@ func testElixirCompatibilityLanguage() *Language {
 			{Name: "=>", Visible: true, Named: false},
 			{Name: "nil", Visible: true, Named: true},
 			{Name: "nil", Visible: true, Named: false},
+			{Name: "comment", Visible: true, Named: true},
+			{Name: "_newline_before_comment", Visible: true, Named: true},
+			{Name: "list", Visible: true, Named: true},
 		},
 	}
 }

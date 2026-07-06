@@ -1,167 +1,203 @@
 package gotreesitter
 
+import "unicode/utf8"
+
+// normalizeRCompatibility aligns R trees with C tree-sitter output.
 func normalizeRCompatibility(root *Node, source []byte, lang *Language) {
+	normalizeRStringContents(root, source, lang)
+}
+
+// normalizeRStringContents rebuilds collapsed string_content nodes.
+//
+// R's grammar aliases the hidden rules `_single_quoted_string_content` /
+// `_double_quoted_string_content` (repeat1 of invisible text chunks and
+// visible escape_sequence tokens) to the visible `string_content`. When the
+// content holds exactly one escape_sequence, the Go reduce path collapses
+// the aliased hidden rule onto that single visible child: string_content
+// ends up spanning only the escape bytes and loses the escape_sequence
+// child. C instead materializes string_content over the full content span
+// (open quote end → close quote start) with the escape_sequence as a child.
+// Contents with two or more escape_sequences already build the C shape.
+//
+// The C shape is fully determined by the source bytes, so rebuild it: reset
+// the string_content span to the content span and synthesize one
+// escape_sequence leaf per escape token found by re-lexing the content with
+// the grammar's exact escape_sequence definition. Bail out (leave the node
+// untouched) on any unexpected shape or invalid escape.
+func normalizeRStringContents(root *Node, source []byte, lang *Language) {
 	if root == nil || lang == nil || lang.Name != "r" || len(source) == 0 {
 		return
 	}
-	normalizeRStringContentEscapes(root, source, lang)
-}
-
-func normalizeRStringContentEscapes(root *Node, source []byte, lang *Language) {
-	stringSym, ok := symbolByName(lang, "string")
+	stringSym, ok := lang.symbolByNameAndNamed("string", true)
 	if !ok {
 		return
 	}
-	contentSym, ok := symbolByName(lang, "string_content")
+	escapeSym, ok := lang.symbolByNameAndNamed("escape_sequence", true)
 	if !ok {
 		return
 	}
-	escapeSym, ok := symbolByName(lang, "escape_sequence")
-	if !ok {
-		return
-	}
-	escapeNamed := symbolIsNamed(lang, escapeSym)
-
 	walkResultTree(root, func(n *Node) {
-		if n == nil || n.symbol != stringSym || n.startByte+2 > n.endByte || int(n.endByte) > len(source) {
+		if n.symbol != stringSym || resultChildCount(n) != 3 {
 			return
 		}
-		quote := source[n.startByte]
-		if quote != '"' && quote != '\'' {
+		open, mid, close := n.children[0], n.children[1], n.children[2]
+		if open == nil || mid == nil || close == nil {
 			return
 		}
-		if source[n.endByte-1] != quote {
+		if !rIsQuoteToken(open, source) || !rIsQuoteToken(close, source) ||
+			source[open.startByte] != source[close.startByte] {
 			return
 		}
-		content := rStringContentChild(n, contentSym)
-		if content == nil {
+		if !mid.IsNamed() || nodeSymbolDisplayName(lang, mid.symbol) != "string_content" {
 			return
 		}
-		contentStart := n.startByte + 1
-		contentEnd := n.endByte - 1
-		contentStartPoint := advancePointByBytes(n.startPoint, source[n.startByte:contentStart])
-		escapeChildren := rBuildEscapeSequenceChildren(content, source, contentStart, contentEnd, contentStartPoint, escapeSym, escapeNamed)
-		replaceNodeChildrenUnfielded(content, escapeChildren)
-		content.startByte = contentStart
-		content.endByte = contentEnd
-		content.startPoint = contentStartPoint
-		content.endPoint = advancePointByBytes(contentStartPoint, source[contentStart:contentEnd])
+		contentStart, contentEnd := open.endByte, close.startByte
+		if contentStart >= contentEnd || int(contentEnd) > len(source) {
+			return
+		}
+		if resultChildCount(mid) != 0 {
+			// Multi-escape contents already carry the C shape; never touch
+			// nodes that have children.
+			return
+		}
+		escapes, ok := rScanStringEscapes(source[contentStart:contentEnd])
+		if !ok {
+			return
+		}
+		if mid.startByte == contentStart && mid.endByte == contentEnd && len(escapes) == 0 {
+			return // already correct
+		}
+		if len(escapes) == 0 {
+			// No escapes but a span mismatch — not the known collapse
+			// signature; leave it alone.
+			return
+		}
+		contentStartPoint := open.endPoint
+		children := make([]*Node, 0, len(escapes))
+		prevEnd := contentStart
+		point := contentStartPoint
+		for i, span := range escapes {
+			escStart := contentStart + uint32(span[0])
+			escEnd := contentStart + uint32(span[1])
+			point = advancePointByBytes(point, source[prevEnd:escStart])
+			startPoint := point
+			point = advancePointByBytes(point, source[escStart:escEnd])
+			child := newLeafNodeInArena(mid.ownerArena, escapeSym, true, escStart, escEnd, startPoint, point)
+			child.parent = mid
+			child.childIndex = int32(i)
+			children = append(children, child)
+			prevEnd = escEnd
+		}
+		mid.startByte = contentStart
+		mid.endByte = contentEnd
+		mid.startPoint = contentStartPoint
+		mid.endPoint = close.startPoint
+		mid.children = cloneNodeSliceInArena(mid.ownerArena, children)
 	})
 }
 
-func rStringContentChild(n *Node, contentSym Symbol) *Node {
-	for i := 0; i < resultChildCount(n); i++ {
-		child := resultChildAt(n, i)
-		if child != nil && child.symbol == contentSym {
-			return child
-		}
+func rIsQuoteToken(n *Node, source []byte) bool {
+	if n == nil || n.IsNamed() || n.endByte != n.startByte+1 || int(n.endByte) > len(source) {
+		return false
 	}
-	return nil
+	c := source[n.startByte]
+	return c == '"' || c == '\''
 }
 
-func rBuildEscapeSequenceChildren(parent *Node, source []byte, start, end uint32, startPoint Point, escapeSym Symbol, escapeNamed bool) []*Node {
-	if parent == nil || start >= end || int(end) > len(source) {
-		return nil
+// nodeSymbolDisplayName returns the raw blob symbol name for sym (alias
+// symbols included), or "" when out of range.
+func nodeSymbolDisplayName(lang *Language, sym Symbol) string {
+	if lang == nil || int(sym) < 0 || int(sym) >= len(lang.SymbolNames) {
+		return ""
 	}
-	var children []*Node
-	point := startPoint
-	last := start
-	for i := start; i < end; i++ {
-		if source[i] != '\\' {
+	return lang.SymbolNames[sym]
+}
+
+// rScanStringEscapes returns the [start,end) offsets of every
+// escape_sequence token inside an R string content chunk, or ok=false if a
+// backslash run does not form a valid escape.
+func rScanStringEscapes(content []byte) ([][2]int, bool) {
+	var out [][2]int
+	for i := 0; i < len(content); {
+		if content[i] != '\\' {
+			i++
 			continue
 		}
-		point = advancePointByBytes(point, source[last:i])
-		seqEnd := rEscapeSequenceEnd(source, i, end)
-		if seqEnd <= i {
-			continue
+		l, ok := rEscapeSequenceLen(content[i:])
+		if !ok {
+			return nil, false
 		}
-		seqEndPoint := advancePointByBytes(point, source[i:seqEnd])
-		child := newLeafNodeInArena(
-			parent.ownerArena,
-			escapeSym,
-			escapeNamed,
-			i,
-			seqEnd,
-			point,
-			seqEndPoint,
-		)
-		child.parent = parent
-		child.childIndex = int32(len(children))
-		children = append(children, child)
-		point = seqEndPoint
-		last = seqEnd
-		i = seqEnd - 1
+		out = append(out, [2]int{i, i + l})
+		i += l
 	}
-	return cloneNodeSliceInArena(parent.ownerArena, children)
+	return out, true
 }
 
-func rEscapeSequenceEnd(source []byte, start, limit uint32) uint32 {
-	if start >= limit || int(limit) > len(source) || source[start] != '\\' {
-		return start
+// rEscapeSequenceLen mirrors tree-sitter-r's escape_sequence token:
+//
+//	token.immediate(seq('\\', choice(
+//	  /[^0-9xuU]/,
+//	  /[0-7]{1,3}/,
+//	  /x[0-9a-fA-F]{1,2}/,
+//	  /u[0-9a-fA-F]{1,4}/, /u\{[0-9a-fA-F]{1,4}\}/,
+//	  /U[0-9a-fA-F]{1,8}/, /U\{[0-9a-fA-F]{1,8}\}/,
+//	)))
+//
+// with the lexer's maximal-munch behavior. b must start with a backslash.
+func rEscapeSequenceLen(b []byte) (int, bool) {
+	if len(b) < 2 || b[0] != '\\' {
+		return 0, false
 	}
-	i := start + 1
-	if i >= limit {
-		return i
-	}
-	switch source[i] {
-	case 'x':
-		end := rConsumeHex(source, i+1, limit, 2)
-		if end == i+1 {
-			return start
+	c := b[1]
+	switch {
+	case c >= '0' && c <= '7':
+		n := 1
+		for n < 3 && 1+n < len(b) && b[1+n] >= '0' && b[1+n] <= '7' {
+			n++
 		}
-		return end
-	case 'u':
-		if end, ok := rConsumeUnicodeEscape(source, i+1, limit, 4); ok {
-			return end
+		return 1 + n, true
+	case c == '8' || c == '9':
+		return 0, false
+	case c == 'x':
+		n := rCountHex(b[2:], 2)
+		if n == 0 {
+			return 0, false
 		}
-		return start
-	case 'U':
-		if end, ok := rConsumeUnicodeEscape(source, i+1, limit, 8); ok {
-			return end
-		}
-		return start
+		return 2 + n, true
+	case c == 'u':
+		return rUnicodeEscapeLen(b, 4)
+	case c == 'U':
+		return rUnicodeEscapeLen(b, 8)
+	default:
+		// /[^0-9xuU]/ — any other single character, multibyte included.
+		_, size := utf8.DecodeRune(b[1:])
+		return 1 + size, true
 	}
-	if source[i] >= '0' && source[i] <= '7' {
-		for count := 0; i < limit && count < 3 && source[i] >= '0' && source[i] <= '7'; count++ {
-			i++
-		}
-		return i
-	}
-	if source[i] >= '0' && source[i] <= '9' {
-		return start
-	}
-	return i + 1
 }
 
-func rConsumeUnicodeEscape(source []byte, start, limit uint32, maxDigits int) (uint32, bool) {
-	if start < limit && source[start] == '{' {
-		i := start + 1
-		digitStart := i
-		for count := 0; i < limit && count < maxDigits && rIsASCIIHex(source[i]); count++ {
-			i++
+func rUnicodeEscapeLen(b []byte, maxHex int) (int, bool) {
+	if len(b) > 2 && b[2] == '{' {
+		n := rCountHex(b[3:], maxHex)
+		if n == 0 || len(b) < 3+n+1 || b[3+n] != '}' {
+			return 0, false
 		}
-		if i > digitStart && i < limit && source[i] == '}' {
-			return i + 1, true
-		}
-		return start, false
+		return 3 + n + 1, true
 	}
-	end := rConsumeHex(source, start, limit, maxDigits)
-	if end == start {
-		return start, false
+	n := rCountHex(b[2:], maxHex)
+	if n == 0 {
+		return 0, false
 	}
-	return end, true
+	return 2 + n, true
 }
 
-func rConsumeHex(source []byte, start, limit uint32, maxDigits int) uint32 {
-	i := start
-	for count := 0; i < limit && count < maxDigits && rIsASCIIHex(source[i]); count++ {
-		i++
+func rCountHex(b []byte, max int) int {
+	n := 0
+	for n < max && n < len(b) && isHexDigit(b[n]) {
+		n++
 	}
-	return i
+	return n
 }
 
-func rIsASCIIHex(b byte) bool {
-	return (b >= '0' && b <= '9') ||
-		(b >= 'a' && b <= 'f') ||
-		(b >= 'A' && b <= 'F')
+func isHexDigit(c byte) bool {
+	return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
 }

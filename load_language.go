@@ -56,5 +56,7 @@ func LoadLanguage(data []byte) (*Language, error) {
 		return nil, fmt.Errorf("decode language: %w", err)
 	}
 
+	InferGeneratedRepeatAuxMetadata(&lang)
+
 	return &lang, nil
 }

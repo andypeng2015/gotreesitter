@@ -4,6 +4,7 @@ func normalizeErlangSourceFileForms(root *Node, lang *Language) {
 	if root == nil || lang == nil || lang.Name != "erlang" || root.Type(lang) != "source_file" {
 		return
 	}
+	normalizeErlangReplacementClauses(root, lang)
 	formsOnlyID, ok := lang.FieldByName("forms_only")
 	if !ok || !erlangSourceFileLooksLikeForms(root, lang) {
 		return
@@ -99,4 +100,62 @@ func normalizeErlangTopLevelFormBounds(node *Node) {
 	node.startPoint = first.startPoint
 	node.endByte = last.endByte
 	node.endPoint = last.endPoint
+}
+
+func normalizeErlangReplacementClauses(root *Node, lang *Language) {
+	replacementCRClausesSym, ok := symbolByName(lang, "replacement_cr_clauses")
+	if !ok {
+		return
+	}
+	replacementFunctionClausesSym, ok := symbolByName(lang, "replacement_function_clauses")
+	if !ok {
+		return
+	}
+	crClauseSym, ok := symbolByName(lang, "cr_clause")
+	if !ok {
+		return
+	}
+	functionClauseSym, ok := symbolByName(lang, "function_clause")
+	if !ok {
+		return
+	}
+	walkResultTree(root, func(n *Node) {
+		if n == nil || n.symbol != replacementCRClausesSym {
+			return
+		}
+		n.symbol = replacementFunctionClausesSym
+		for i := 0; i < resultChildCount(n); i++ {
+			child := resultChildAt(n, i)
+			if child != nil && child.symbol == crClauseSym {
+				child.symbol = functionClauseSym
+				normalizeErlangReplacementFunctionClauseHead(child, lang)
+			}
+		}
+	})
+}
+
+func normalizeErlangReplacementFunctionClauseHead(clause *Node, lang *Language) {
+	if clause == nil || resultChildCount(clause) == 0 {
+		return
+	}
+	call := resultChildAt(clause, 0)
+	if call == nil || call.Type(lang) != "call" || resultChildCount(call) != 2 {
+		return
+	}
+	name := resultChildAt(call, 0)
+	args := resultChildAt(call, 1)
+	if name == nil || args == nil || name.Type(lang) != "var" || args.Type(lang) != "expr_args" {
+		return
+	}
+	if call.startByte != name.startByte || call.endByte != args.endByte {
+		return
+	}
+	clauseChildren := resultChildSliceForMutation(clause)
+	if len(clauseChildren) == 0 || clauseChildren[0] == nil {
+		return
+	}
+	rewritten := make([]*Node, 0, len(clauseChildren)+1)
+	rewritten = append(rewritten, name, args)
+	rewritten = append(rewritten, clauseChildren[1:]...)
+	replaceNodeChildrenUnfielded(clause, cloneNodeSliceInArena(clause.ownerArena, rewritten))
 }

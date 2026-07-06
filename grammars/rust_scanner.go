@@ -42,6 +42,36 @@ const (
 	rustSymErrorSentinel       gotreesitter.Symbol = 156
 )
 
+const rustTokenCount = rustTokErrorSentinel + 1
+
+var rustDefaultSymTable = [rustTokenCount]gotreesitter.Symbol{
+	rustTokStringContent:       rustSymStringContent,
+	rustTokStringClose:         rustSymStringClose,
+	rustTokRawStringStart:      rustSymRawStringStart,
+	rustTokRawStringContent:    rustSymRawStringContent,
+	rustTokRawStringEnd:        rustSymRawStringEnd,
+	rustTokFloatLiteral:        rustSymFloatLiteral,
+	rustTokOuterDocMarker:      rustSymOuterDocMarker,
+	rustTokInnerDocMarker:      rustSymInnerDocMarker,
+	rustTokBlockCommentContent: rustSymBlockCommentContent,
+	rustTokDocComment:          rustSymDocComment,
+	rustTokErrorSentinel:       rustSymErrorSentinel,
+}
+
+var rustExternalSymbolNames = []string{
+	"string_content",
+	"\"",
+	"_raw_string_literal_start",
+	"string_content",
+	"_raw_string_literal_end",
+	"float_literal",
+	"outer_doc_comment_marker",
+	"inner_doc_comment_marker",
+	"_block_comment_content",
+	"doc_comment",
+	"_error_sentinel",
+}
+
 // rustScannerState holds the opening hash count for raw string literals.
 type rustScannerState struct {
 	openingHashCount uint8
@@ -58,7 +88,42 @@ type rustScannerState struct {
 //   - Doc comments (/// and //!)
 //   - Outer/inner doc comment markers
 //   - Error sentinel for error recovery detection
-type RustExternalScanner struct{}
+type RustExternalScanner struct {
+	symbols         [rustTokenCount]gotreesitter.Symbol
+	externalToToken []int
+}
+
+func (RustExternalScanner) ExternalScannerForLanguage(lang *gotreesitter.Language) gotreesitter.ExternalScanner {
+	s := RustExternalScanner{symbols: rustDefaultSymTable}
+	s.externalToToken = bindExternalScannerSymbolNames(lang, rustExternalSymbolNames, func(tokenIdx int, sym gotreesitter.Symbol) {
+		s.symbols[tokenIdx] = sym
+	})
+	return s
+}
+
+func (s RustExternalScanner) symbolTable() *[rustTokenCount]gotreesitter.Symbol {
+	if s.symbols == ([rustTokenCount]gotreesitter.Symbol{}) {
+		return &rustDefaultSymTable
+	}
+	return &s.symbols
+}
+
+func (s RustExternalScanner) remapValidSymbols(validSymbols []bool, semanticValid *[rustTokenCount]bool) []bool {
+	if len(s.externalToToken) == 0 {
+		return validSymbols
+	}
+	*semanticValid = [rustTokenCount]bool{}
+	for externalIdx, valid := range validSymbols {
+		if !valid || externalIdx >= len(s.externalToToken) {
+			continue
+		}
+		tokenIdx := s.externalToToken[externalIdx]
+		if tokenIdx >= 0 && tokenIdx < rustTokenCount {
+			semanticValid[tokenIdx] = true
+		}
+	}
+	return semanticValid[:]
+}
 
 func (RustExternalScanner) Create() any {
 	return &rustScannerState{}
@@ -67,36 +132,39 @@ func (RustExternalScanner) Create() any {
 func (RustExternalScanner) Destroy(payload any) {}
 
 func (RustExternalScanner) Serialize(payload any, buf []byte) int {
-	s := payload.(*rustScannerState)
+	state := payload.(*rustScannerState)
 	if len(buf) < 1 {
 		return 0
 	}
-	buf[0] = s.openingHashCount
+	buf[0] = state.openingHashCount
 	return 1
 }
 
 func (RustExternalScanner) Deserialize(payload any, buf []byte) {
-	s := payload.(*rustScannerState)
-	s.openingHashCount = 0
+	state := payload.(*rustScannerState)
+	state.openingHashCount = 0
 	if len(buf) == 1 {
-		s.openingHashCount = buf[0]
+		state.openingHashCount = buf[0]
 	}
 }
 
-func (RustExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
+func (scanner RustExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
+	var semanticValid [rustTokenCount]bool
+	validSymbols = scanner.remapValidSymbols(validSymbols, &semanticValid)
+	symbols := scanner.symbolTable()
 	// If the error sentinel is valid, tree-sitter is in error recovery mode.
 	// We cannot help recover, so bail out.
 	if rustValid(validSymbols, rustTokErrorSentinel) {
 		return false
 	}
 
-	s := payload.(*rustScannerState)
+	state := payload.(*rustScannerState)
 
 	// Block comment handling (content, inner/outer doc markers).
 	if rustValid(validSymbols, rustTokBlockCommentContent) ||
 		rustValid(validSymbols, rustTokInnerDocMarker) ||
 		rustValid(validSymbols, rustTokOuterDocMarker) {
-		return rustProcessBlockComment(lexer, validSymbols)
+		return rustProcessBlockComment(lexer, validSymbols, symbols)
 	}
 
 	// String content (but not when float literal is also valid).
@@ -105,7 +173,7 @@ func (RustExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, 
 	// the closing quote. This mirrors the upstream C scanner's behaviour
 	// introduced in tree-sitter-rust 0.24.2.
 	if rustValid(validSymbols, rustTokStringContent) && !rustValid(validSymbols, rustTokFloatLiteral) {
-		if rustProcessString(lexer) {
+		if rustProcessString(lexer, symbols) {
 			return true
 		}
 	}
@@ -115,14 +183,14 @@ func (RustExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, 
 	// strings more gracefully.
 	if rustValid(validSymbols, rustTokStringClose) && lexer.Lookahead() == '"' {
 		lexer.Advance(false)
-		lexer.SetResultSymbol(rustSymStringClose)
+		lexer.SetResultSymbol(symbols[rustTokStringClose])
 		lexer.MarkEnd()
 		return true
 	}
 
 	// Line doc content.
 	if rustValid(validSymbols, rustTokDocComment) {
-		return rustProcessLineDocContent(lexer)
+		return rustProcessLineDocContent(lexer, symbols)
 	}
 
 	// Skip whitespace before checking remaining tokens.
@@ -134,23 +202,23 @@ func (RustExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, 
 	if rustValid(validSymbols, rustTokRawStringStart) {
 		ch := lexer.Lookahead()
 		if ch == 'r' || ch == 'b' || ch == 'c' {
-			return rustScanRawStringStart(s, lexer)
+			return rustScanRawStringStart(state, lexer, symbols)
 		}
 	}
 
 	// Raw string literal content.
 	if rustValid(validSymbols, rustTokRawStringContent) {
-		return rustScanRawStringContent(s, lexer)
+		return rustScanRawStringContent(state, lexer, symbols)
 	}
 
 	// Raw string literal end.
 	if rustValid(validSymbols, rustTokRawStringEnd) && lexer.Lookahead() == '"' {
-		return rustScanRawStringEnd(s, lexer)
+		return rustScanRawStringEnd(state, lexer, symbols)
 	}
 
 	// Float literal.
 	if rustValid(validSymbols, rustTokFloatLiteral) && unicode.IsDigit(lexer.Lookahead()) {
-		return rustProcessFloatLiteral(lexer)
+		return rustProcessFloatLiteral(lexer, symbols)
 	}
 
 	return false
@@ -160,7 +228,7 @@ func (RustExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, 
 // String content
 // ---------------------------------------------------------------------------
 
-func rustProcessString(lexer *gotreesitter.ExternalLexer) bool {
+func rustProcessString(lexer *gotreesitter.ExternalLexer, symbols *[rustTokenCount]gotreesitter.Symbol) bool {
 	hasContent := false
 	for {
 		ch := lexer.Lookahead()
@@ -173,7 +241,7 @@ func rustProcessString(lexer *gotreesitter.ExternalLexer) bool {
 		hasContent = true
 		lexer.Advance(false)
 	}
-	lexer.SetResultSymbol(rustSymStringContent)
+	lexer.SetResultSymbol(symbols[rustTokStringContent])
 	lexer.MarkEnd()
 	return hasContent
 }
@@ -182,7 +250,7 @@ func rustProcessString(lexer *gotreesitter.ExternalLexer) bool {
 // Raw string literals
 // ---------------------------------------------------------------------------
 
-func rustScanRawStringStart(s *rustScannerState, lexer *gotreesitter.ExternalLexer) bool {
+func rustScanRawStringStart(s *rustScannerState, lexer *gotreesitter.ExternalLexer, symbols *[rustTokenCount]gotreesitter.Symbol) bool {
 	ch := lexer.Lookahead()
 	if ch == 'b' || ch == 'c' {
 		lexer.Advance(false)
@@ -204,11 +272,11 @@ func rustScanRawStringStart(s *rustScannerState, lexer *gotreesitter.ExternalLex
 	lexer.Advance(false)
 	s.openingHashCount = openingHashCount
 
-	lexer.SetResultSymbol(rustSymRawStringStart)
+	lexer.SetResultSymbol(symbols[rustTokRawStringStart])
 	return true
 }
 
-func rustScanRawStringContent(s *rustScannerState, lexer *gotreesitter.ExternalLexer) bool {
+func rustScanRawStringContent(s *rustScannerState, lexer *gotreesitter.ExternalLexer, symbols *[rustTokenCount]gotreesitter.Symbol) bool {
 	for {
 		if lexer.Lookahead() == 0 { // EOF
 			return false
@@ -222,7 +290,7 @@ func rustScanRawStringContent(s *rustScannerState, lexer *gotreesitter.ExternalL
 				hashCount++
 			}
 			if hashCount == s.openingHashCount {
-				lexer.SetResultSymbol(rustSymRawStringContent)
+				lexer.SetResultSymbol(symbols[rustTokRawStringContent])
 				return true
 			}
 		} else {
@@ -231,12 +299,12 @@ func rustScanRawStringContent(s *rustScannerState, lexer *gotreesitter.ExternalL
 	}
 }
 
-func rustScanRawStringEnd(s *rustScannerState, lexer *gotreesitter.ExternalLexer) bool {
+func rustScanRawStringEnd(s *rustScannerState, lexer *gotreesitter.ExternalLexer, symbols *[rustTokenCount]gotreesitter.Symbol) bool {
 	lexer.Advance(false) // consume the '"'
 	for i := uint8(0); i < s.openingHashCount; i++ {
 		lexer.Advance(false)
 	}
-	lexer.SetResultSymbol(rustSymRawStringEnd)
+	lexer.SetResultSymbol(symbols[rustTokRawStringEnd])
 	return true
 }
 
@@ -248,8 +316,8 @@ func rustIsNumChar(ch rune) bool {
 	return ch == '_' || unicode.IsDigit(ch)
 }
 
-func rustProcessFloatLiteral(lexer *gotreesitter.ExternalLexer) bool {
-	lexer.SetResultSymbol(rustSymFloatLiteral)
+func rustProcessFloatLiteral(lexer *gotreesitter.ExternalLexer, symbols *[rustTokenCount]gotreesitter.Symbol) bool {
+	lexer.SetResultSymbol(symbols[rustTokFloatLiteral])
 
 	lexer.Advance(false)
 	for rustIsNumChar(lexer.Lookahead()) {
@@ -316,8 +384,11 @@ func rustProcessFloatLiteral(lexer *gotreesitter.ExternalLexer) bool {
 // Line doc content
 // ---------------------------------------------------------------------------
 
-func rustProcessLineDocContent(lexer *gotreesitter.ExternalLexer) bool {
-	lexer.SetResultSymbol(rustSymDocComment)
+func rustProcessLineDocContent(lexer *gotreesitter.ExternalLexer, symbols *[rustTokenCount]gotreesitter.Symbol) bool {
+	if !lexer.HasPreviousBytes("///") && !lexer.HasPreviousBytes("//!") {
+		return false
+	}
+	lexer.SetResultSymbol(symbols[rustTokDocComment])
 	for {
 		if lexer.Lookahead() == 0 { // EOF
 			return true
@@ -345,7 +416,7 @@ const (
 	bcContinuing
 )
 
-func rustProcessBlockComment(lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
+func rustProcessBlockComment(lexer *gotreesitter.ExternalLexer, validSymbols []bool, symbols *[rustTokenCount]gotreesitter.Symbol) bool {
 	first := lexer.Lookahead()
 
 	// The first character is stored so we can safely advance inside
@@ -355,7 +426,7 @@ func rustProcessBlockComment(lexer *gotreesitter.ExternalLexer, validSymbols []b
 	// the program ends up in a sane state prior to processing the block
 	// comment if need be.
 	if rustValid(validSymbols, rustTokInnerDocMarker) && first == '!' {
-		lexer.SetResultSymbol(rustSymInnerDocMarker)
+		lexer.SetResultSymbol(symbols[rustTokInnerDocMarker])
 		lexer.Advance(false)
 		return true
 	}
@@ -369,7 +440,7 @@ func rustProcessBlockComment(lexer *gotreesitter.ExternalLexer, validSymbols []b
 		// If the next token is a * that means that this isn't a BLOCK_OUTER_DOC_MARKER
 		// as BLOCK_OUTER_DOC_MARKER's only have 2 * not 3 or more.
 		if lexer.Lookahead() != '*' {
-			lexer.SetResultSymbol(rustSymOuterDocMarker)
+			lexer.SetResultSymbol(symbols[rustTokOuterDocMarker])
 			return true
 		}
 	} else {
@@ -437,7 +508,7 @@ func rustProcessBlockComment(lexer *gotreesitter.ExternalLexer, validSymbols []b
 			}
 		}
 
-		lexer.SetResultSymbol(rustSymBlockCommentContent)
+		lexer.SetResultSymbol(symbols[rustTokBlockCommentContent])
 		return true
 	}
 

@@ -911,3 +911,118 @@ func csharpIdentifierStartByte(b byte) bool {
 func csharpIdentifierContinueByte(b byte) bool {
 	return csharpIdentifierStartByte(b) || b >= '0' && b <= '9'
 }
+
+// csharpFindTopLevelNamespaceKeyword scans [start, end) for the first
+// occurrence of the "namespace" keyword that is not part of a longer
+// identifier and not inside a comment, string, or char literal, skipping
+// past preprocessor directive lines (#region/#endregion/#if/etc). It is a
+// heuristic scan, not full lexing — SHORT-TERM RELIEF for issue #136, used
+// only as a fallback in csharpRecoverNamespaceFromChildren when a file's
+// leading boilerplate (copyright header comments, using directives) has
+// collapsed into the same opaque ERROR span as the namespace keyword itself,
+// so the keyword is not at that span's own start byte.
+func csharpFindTopLevelNamespaceKeyword(source []byte, start, end uint32) (uint32, bool) {
+	if end > uint32(len(source)) {
+		end = uint32(len(source))
+	}
+	inLineComment := false
+	inBlockComment := false
+	inString := false
+	inChar := false
+	verbatimString := false
+	escape := false
+	for i := start; i < end; i++ {
+		b := source[i]
+		if inLineComment {
+			if b == '\n' {
+				inLineComment = false
+			}
+			continue
+		}
+		if inBlockComment {
+			if i > start && source[i-1] == '*' && b == '/' {
+				inBlockComment = false
+			}
+			continue
+		}
+		if inString {
+			if verbatimString {
+				if b == '"' {
+					if i+1 < end && source[i+1] == '"' {
+						i++
+						continue
+					}
+					inString = false
+					verbatimString = false
+				}
+				continue
+			}
+			if escape {
+				escape = false
+				continue
+			}
+			if b == '\\' {
+				escape = true
+				continue
+			}
+			if b == '"' {
+				inString = false
+			}
+			continue
+		}
+		if inChar {
+			if escape {
+				escape = false
+				continue
+			}
+			if b == '\\' {
+				escape = true
+				continue
+			}
+			if b == '\'' {
+				inChar = false
+			}
+			continue
+		}
+		if b == '/' && i+1 < end {
+			switch source[i+1] {
+			case '/':
+				inLineComment = true
+				i++
+				continue
+			case '*':
+				inBlockComment = true
+				i++
+				continue
+			}
+		}
+		switch b {
+		case '"':
+			inString = true
+			verbatimString = (i > start && source[i-1] == '@') ||
+				(i > start+1 && source[i-1] == '$' && source[i-2] == '@')
+			escape = false
+			continue
+		case '\'':
+			inChar = true
+			escape = false
+			continue
+		case '#':
+			for i < end && source[i] != '\n' {
+				i++
+			}
+			continue
+		}
+		if b == 'n' && csharpHasKeywordAt(source, i, "namespace") {
+			afterOK := true
+			if after := i + uint32(len("namespace")); after < end && csharpIdentifierContinueByte(source[after]) {
+				afterOK = false
+			}
+			beforeOK := i == start || !csharpIdentifierContinueByte(source[i-1])
+			if afterOK && beforeOK {
+				return i, true
+			}
+		}
+	}
+	return 0, false
+}

@@ -3,7 +3,6 @@ package gotreesitter
 func normalizeJavaCompatibility(root *Node, source []byte, lang *Language) {
 	normalizeJavaPrimitiveTypeTokens(root, source, lang)
 	normalizeJavaDottedAssignmentDeclarations(root, source, lang)
-	normalizeJavaCollapsedLeafChildren(root, source, lang)
 	normalizeJavaRecoveredProgramRoot(root, lang)
 }
 
@@ -42,33 +41,6 @@ func javaPrimitiveTypeToken(text string) bool {
 	default:
 		return false
 	}
-}
-
-func normalizeJavaCollapsedLeafChildren(root *Node, source []byte, lang *Language) {
-	if root == nil || lang == nil || lang.Name != "java" || len(source) == 0 {
-		return
-	}
-	normalizeCollapsedNamedLeafChildrenBySource(
-		root,
-		source,
-		lang,
-		"modifiers",
-		"abstract",
-		"default",
-		"final",
-		"native",
-		"non-sealed",
-		"private",
-		"protected",
-		"public",
-		"sealed",
-		"static",
-		"strictfp",
-		"synchronized",
-		"transient",
-		"volatile",
-	)
-	normalizeCollapsedNamedLeafChildrenBySource(root, source, lang, "asterisk", "*")
 }
 
 func normalizeJavaDottedAssignmentDeclarations(root *Node, source []byte, lang *Language) {

@@ -148,214 +148,82 @@ func TestNormalizePowerShellErrorProgramRootRetagsCompatibleRoot(t *testing.T) {
 	}
 }
 
-func TestNormalizePowerShellAssignmentOperatorTokensRestoresCommandArgumentSep(t *testing.T) {
-	for _, sourceText := range []string{" ", ":"} {
-		source := []byte(sourceText)
-		lang := &Language{
-			Name: "powershell",
-			SymbolNames: []string{
-				"EOF", "program", "command_argument_sep", sourceText,
-			},
-			SymbolMetadata: []SymbolMetadata{
-				{Name: "EOF", Visible: false, Named: false},
-				{Name: "program", Visible: true, Named: true},
-				{Name: "command_argument_sep", Visible: true, Named: true},
-				{Name: sourceText, Visible: true, Named: false},
-			},
-		}
-		arena := newNodeArena(arenaClassFull)
-		sep := newLeafNodeInArena(arena, 2, true, 0, uint32(len(source)), Point{}, Point{Column: uint32(len(source))})
-		root := newParentNodeInArena(arena, 1, true, []*Node{sep}, nil, 0)
-
-		normalizePowerShellAssignmentOperatorTokens(root, source, lang)
-
-		if got := sep.ChildCount(); got != 1 {
-			t.Fatalf("sep child count for %q = %d, want 1", sourceText, got)
-		}
-		child := sep.Child(0)
-		if child == nil {
-			t.Fatalf("sep child for %q = nil", sourceText)
-		}
-		if got := child.Type(lang); got != sourceText {
-			t.Fatalf("sep child type for %q = %q", sourceText, got)
-		}
-		if child.IsNamed() {
-			t.Fatalf("sep child for %q is named", sourceText)
-		}
-	}
-}
-
-func TestNormalizePowerShellAssignmentOperatorTokensRestoresComparisonOperator(t *testing.T) {
+func TestNormalizePowerShellPathCommandNameWrapsVariable(t *testing.T) {
 	lang := &Language{
 		Name: "powershell",
 		SymbolNames: []string{
-			"EOF", "program", "comparison_operator", "-match",
+			"EOF", "program", "command_name", "variable", "path_command_name",
 		},
 		SymbolMetadata: []SymbolMetadata{
 			{Name: "EOF", Visible: false, Named: false},
 			{Name: "program", Visible: true, Named: true},
-			{Name: "comparison_operator", Visible: true, Named: true},
-			{Name: "-match", Visible: true, Named: false},
+			{Name: "command_name", Visible: true, Named: true},
+			{Name: "variable", Visible: true, Named: true},
+			{Name: "path_command_name", Visible: true, Named: true},
 		},
 	}
-	source := []byte("-match")
+
+	source := []byte("& $sb")
 	arena := newNodeArena(arenaClassFull)
-	op := newLeafNodeInArena(arena, 2, true, 0, uint32(len(source)), Point{}, Point{Column: uint32(len(source))})
-	root := newParentNodeInArena(arena, 1, true, []*Node{op}, nil, 0)
+	variable := newLeafNodeInArena(arena, 3, true, 2, uint32(len(source)), Point{Column: 2}, Point{Column: uint32(len(source))})
+	commandName := newParentNodeInArena(arena, 2, true, []*Node{variable}, nil, 0)
+	root := newParentNodeInArena(arena, 1, true, []*Node{commandName}, nil, 0)
 
-	normalizePowerShellAssignmentOperatorTokens(root, source, lang)
+	normalizePowerShellPathCommandNameVariables(root, source, lang)
 
-	if got := op.ChildCount(); got != 1 {
-		t.Fatalf("comparison_operator child count = %d, want 1", got)
+	wrapped := commandName.children[0]
+	if got, want := wrapped.Type(lang), "path_command_name"; got != want {
+		t.Fatalf("wrapped.Type = %q, want %q", got, want)
 	}
-	child := op.Child(0)
-	if child == nil {
-		t.Fatal("comparison_operator child = nil")
+	if got, want := len(wrapped.children), 1; got != want {
+		t.Fatalf("len(wrapped.children) = %d, want %d", got, want)
 	}
-	if got := child.Type(lang); got != "-match" {
-		t.Fatalf("comparison_operator child type = %q, want -match", got)
+	if got, want := wrapped.children[0].Type(lang), "variable"; got != want {
+		t.Fatalf("wrapped.children[0].Type = %q, want %q", got, want)
 	}
-	if child.IsNamed() {
-		t.Fatal("comparison_operator child is named")
+	if got, want := wrapped.startByte, uint32(2); got != want {
+		t.Fatalf("wrapped.startByte = %d, want %d", got, want)
+	}
+	if got, want := wrapped.endByte, uint32(len(source)); got != want {
+		t.Fatalf("wrapped.endByte = %d, want %d", got, want)
 	}
 }
 
-func TestNormalizePowerShellAssignmentOperatorTokensRestoresFormatOperator(t *testing.T) {
+func TestNormalizePowerShellEnumStatementKeywordSpan(t *testing.T) {
 	lang := &Language{
 		Name: "powershell",
 		SymbolNames: []string{
-			"EOF", "program", "format_operator", "-f",
+			"EOF", "program", "statement_list", "enum_statement", "simple_name", "{", "}",
 		},
 		SymbolMetadata: []SymbolMetadata{
 			{Name: "EOF", Visible: false, Named: false},
 			{Name: "program", Visible: true, Named: true},
-			{Name: "format_operator", Visible: true, Named: true},
-			{Name: "-f", Visible: true, Named: false},
+			{Name: "statement_list", Visible: true, Named: true},
+			{Name: "enum_statement", Visible: true, Named: true},
+			{Name: "simple_name", Visible: true, Named: true},
+			{Name: "{", Visible: true, Named: false},
+			{Name: "}", Visible: true, Named: false},
 		},
 	}
-	source := []byte("-f")
+
+	source := []byte("enum LogLevel\n{}")
 	arena := newNodeArena(arenaClassFull)
-	op := newLeafNodeInArena(arena, 2, true, 0, uint32(len(source)), Point{}, Point{Column: uint32(len(source))})
-	root := newParentNodeInArena(arena, 1, true, []*Node{op}, nil, 0)
+	name := newLeafNodeInArena(arena, 4, true, 5, 13, Point{Column: 5}, Point{Column: 13})
+	open := newLeafNodeInArena(arena, 5, false, 14, 15, Point{Row: 1, Column: 0}, Point{Row: 1, Column: 1})
+	close := newLeafNodeInArena(arena, 6, false, 15, 16, Point{Row: 1, Column: 1}, Point{Row: 1, Column: 2})
+	enum := newParentNodeInArena(arena, 3, true, []*Node{name, open, close}, nil, 0)
+	list := newParentNodeInArena(arena, 2, true, []*Node{enum}, nil, 0)
+	root := newParentNodeInArena(arena, 1, true, []*Node{list}, nil, 0)
 
-	normalizePowerShellAssignmentOperatorTokens(root, source, lang)
+	normalizePowerShellEnumStatementKeywordSpans(root, source, lang)
 
-	if got := op.ChildCount(); got != 1 {
-		t.Fatalf("format_operator child count = %d, want 1", got)
+	if got, want := enum.startByte, uint32(0); got != want {
+		t.Fatalf("enum.startByte = %d, want %d", got, want)
 	}
-	child := op.Child(0)
-	if child == nil {
-		t.Fatal("format_operator child = nil")
+	if got, want := enum.startPoint, (Point{}); got != want {
+		t.Fatalf("enum.startPoint = %+v, want %+v", got, want)
 	}
-	if got := child.Type(lang); got != "-f" {
-		t.Fatalf("format_operator child type = %q, want -f", got)
-	}
-	if child.IsNamed() {
-		t.Fatal("format_operator child is named")
-	}
-}
-
-func TestNormalizePowerShellAssignmentOperatorTokensRestoresFileRedirectionOperator(t *testing.T) {
-	lang := &Language{
-		Name: "powershell",
-		SymbolNames: []string{
-			"EOF", "program", "file_redirection_operator", ">",
-		},
-		SymbolMetadata: []SymbolMetadata{
-			{Name: "EOF", Visible: false, Named: false},
-			{Name: "program", Visible: true, Named: true},
-			{Name: "file_redirection_operator", Visible: true, Named: true},
-			{Name: ">", Visible: true, Named: false},
-		},
-	}
-	source := []byte(">")
-	arena := newNodeArena(arenaClassFull)
-	op := newLeafNodeInArena(arena, 2, true, 0, uint32(len(source)), Point{}, Point{Column: uint32(len(source))})
-	root := newParentNodeInArena(arena, 1, true, []*Node{op}, nil, 0)
-
-	normalizePowerShellAssignmentOperatorTokens(root, source, lang)
-
-	if got := op.ChildCount(); got != 1 {
-		t.Fatalf("file_redirection_operator child count = %d, want 1", got)
-	}
-	child := op.Child(0)
-	if child == nil {
-		t.Fatal("file_redirection_operator child = nil")
-	}
-	if got := child.Type(lang); got != ">" {
-		t.Fatalf("file_redirection_operator child type = %q, want >", got)
-	}
-	if child.IsNamed() {
-		t.Fatal("file_redirection_operator child is named")
-	}
-}
-
-func TestNormalizePowerShellAssignmentOperatorTokensRestoresMergingRedirectionOperator(t *testing.T) {
-	lang := &Language{
-		Name: "powershell",
-		SymbolNames: []string{
-			"EOF", "program", "merging_redirection_operator", "2>&1",
-		},
-		SymbolMetadata: []SymbolMetadata{
-			{Name: "EOF", Visible: false, Named: false},
-			{Name: "program", Visible: true, Named: true},
-			{Name: "merging_redirection_operator", Visible: true, Named: true},
-			{Name: "2>&1", Visible: true, Named: false},
-		},
-	}
-	source := []byte("2>&1")
-	arena := newNodeArena(arenaClassFull)
-	op := newLeafNodeInArena(arena, 2, true, 0, uint32(len(source)), Point{}, Point{Column: uint32(len(source))})
-	root := newParentNodeInArena(arena, 1, true, []*Node{op}, nil, 0)
-
-	normalizePowerShellAssignmentOperatorTokens(root, source, lang)
-
-	if got := op.ChildCount(); got != 1 {
-		t.Fatalf("merging_redirection_operator child count = %d, want 1", got)
-	}
-	child := op.Child(0)
-	if child == nil {
-		t.Fatal("merging_redirection_operator child = nil")
-	}
-	if got := child.Type(lang); got != "2>&1" {
-		t.Fatalf("merging_redirection_operator child type = %q, want 2>&1", got)
-	}
-	if child.IsNamed() {
-		t.Fatal("merging_redirection_operator child is named")
-	}
-}
-
-func TestNormalizePowerShellAssignmentOperatorTokensRestoresCommandInvokationOperator(t *testing.T) {
-	lang := &Language{
-		Name: "powershell",
-		SymbolNames: []string{
-			"EOF", "program", "command_invokation_operator", "&",
-		},
-		SymbolMetadata: []SymbolMetadata{
-			{Name: "EOF", Visible: false, Named: false},
-			{Name: "program", Visible: true, Named: true},
-			{Name: "command_invokation_operator", Visible: true, Named: true},
-			{Name: "&", Visible: true, Named: false},
-		},
-	}
-	source := []byte("&")
-	arena := newNodeArena(arenaClassFull)
-	op := newLeafNodeInArena(arena, 2, true, 0, uint32(len(source)), Point{}, Point{Column: uint32(len(source))})
-	root := newParentNodeInArena(arena, 1, true, []*Node{op}, nil, 0)
-
-	normalizePowerShellAssignmentOperatorTokens(root, source, lang)
-
-	if got := op.ChildCount(); got != 1 {
-		t.Fatalf("command_invokation_operator child count = %d, want 1", got)
-	}
-	child := op.Child(0)
-	if child == nil {
-		t.Fatal("command_invokation_operator child = nil")
-	}
-	if got := child.Type(lang); got != "&" {
-		t.Fatalf("command_invokation_operator child type = %q, want &", got)
-	}
-	if child.IsNamed() {
-		t.Fatal("command_invokation_operator child is named")
+	if got, want := enum.endByte, uint32(len(source)); got != want {
+		t.Fatalf("enum.endByte = %d, want %d", got, want)
 	}
 }

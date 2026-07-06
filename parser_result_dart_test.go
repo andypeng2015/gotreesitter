@@ -63,38 +63,21 @@ func TestNormalizeDartCollapsedLeafChildrenRestoresDartWrappers(t *testing.T) {
 
 	normalizeDartCompatibility(root, source, lang)
 
-	assertCollapsedKeywordChild(t, finalNode, lang, "final")
+	// Note: "final_builtin", "base", "negation_operator", "relational_operator",
+	// "nullable_type", and "null_literal" are intentionally NOT asserted here
+	// anymore. "base" is no longer collapsed by the parser at all (see
+	// wrapsSameNamedAnonymousToken's dart carve-out in parser_reduce.go). The
+	// other five are still collapsed by the hand-built tree above, but the
+	// post-hoc patches that used to reconstruct them in
+	// normalizeDartCollapsedLeafChildren have been removed: the reduce engine's
+	// shouldKeepVisibleAnonymousTokenChild now keeps their anonymous token
+	// children unconditionally on real parses (see
+	// TestDartOperatorWrappersKeepTokenChildrenViaEngine and
+	// TestDartNullableTypeAndNullLiteralRestoreAnonymousChildren in grammars/),
+	// so finalNode/negationNode/relOpNode/gtNode/nullableNode/nullNode above
+	// stay untouched by this call.
 	assertCollapsedKeywordChild(t, superNode, lang, "super")
-	assertCollapsedKeywordChild(t, baseNode, lang, "base")
 	assertCollapsedKeywordChild(t, thisNode, lang, "this")
-	assertCollapsedKeywordChild(t, negationNode, lang, "!")
-	assertCollapsedKeywordChild(t, relOpNode, lang, "<")
-	assertCollapsedKeywordChild(t, gtNode, lang, ">")
-	assertCollapsedKeywordChild(t, nullableNode, lang, "?")
-	assertCollapsedKeywordChild(t, nullNode, lang, "null")
-}
-
-func TestNormalizeDartCollapsedLeafChildrenRequiresMatchingSource(t *testing.T) {
-	lang := &Language{
-		Name:        "dart",
-		SymbolNames: []string{"EOF", "program", "final_builtin", "final"},
-		SymbolMetadata: []SymbolMetadata{
-			{Name: "EOF", Visible: false, Named: false},
-			{Name: "program", Visible: true, Named: true},
-			{Name: "final_builtin", Visible: true, Named: true},
-			{Name: "final", Visible: true, Named: false},
-		},
-	}
-	source := []byte("late")
-	arena := newNodeArena(arenaClassFull)
-	finalNode := newLeafNodeInArena(arena, 2, true, 0, 4, Point{}, Point{Column: 4})
-	root := newParentNodeInArena(arena, 1, true, []*Node{finalNode}, nil, 0)
-
-	normalizeDartCompatibility(root, source, lang)
-
-	if got := finalNode.ChildCount(); got != 0 {
-		t.Fatalf("final_builtin child count = %d, want 0 for non-final source", got)
-	}
 }
 
 func TestNormalizeDartComplexTypeArgumentFreeCallRestoresSelector(t *testing.T) {

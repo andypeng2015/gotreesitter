@@ -1,6 +1,7 @@
 package parserresult_test
 
 import (
+	"strings"
 	"testing"
 
 	gotreesitter "github.com/odvcencio/gotreesitter"
@@ -53,6 +54,28 @@ func TestRubyWhenThenStartsAtPatternEnd(t *testing.T) {
 	}
 	if got, want := thenNode.StartByte(), pattern.EndByte(); got != want {
 		t.Fatalf("ruby when then.StartByte = %d, want %d in %s", got, want, whenNode.SExpr(lang))
+	}
+}
+
+func TestRubyInlineWhenThenStartsAtThenKeyword(t *testing.T) {
+	const src = "case message\nwhen Numeric then @driver.text(message.to_s)\nend\n"
+	tree, lang := parseByLanguageName(t, "ruby", src)
+	root := tree.RootNode()
+	if root.HasError() {
+		t.Fatalf("unexpected ruby parse error: %s", root.SExpr(lang))
+	}
+
+	whenNode := findFirstNodeByType(root, lang, "when")
+	if whenNode == nil {
+		t.Fatalf("missing ruby when node: %s", root.SExpr(lang))
+	}
+	thenNode := findDirectChildByType(whenNode, lang, "then")
+	if thenNode == nil {
+		t.Fatalf("missing ruby inline when body: %s", whenNode.SExpr(lang))
+	}
+	want := uint32(strings.Index(src, "then"))
+	if got := thenNode.StartByte(); got != want {
+		t.Fatalf("ruby inline when then.StartByte = %d, want %d in %s", got, want, whenNode.SExpr(lang))
 	}
 }
 

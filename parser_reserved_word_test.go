@@ -104,11 +104,12 @@ func promoteCaseKeyword(lang *Language, source []byte) Token {
 		lexer:    &Lexer{source: source},
 		language: lang,
 	}
-	return d.promoteKeyword(Token{
+	tok, _ := d.promoteKeyword(Token{
 		Symbol:    lang.KeywordCaptureToken,
 		StartByte: 0,
 		EndByte:   uint32(len(source)),
 	})
+	return tok
 }
 
 func TestSQLKeywordPromotionRetriesUppercase(t *testing.T) {
@@ -155,7 +156,8 @@ func TestReservedWordBlocksPromotion(t *testing.T) {
 			StartByte: 0,
 			EndByte:   2,
 		}
-		return d.promoteKeyword(tok)
+		got, _ := d.promoteKeyword(tok)
+		return got
 	}
 
 	// State 1 has ReservedWordSetID=1 which contains KW_IF (symbol 2).
@@ -194,7 +196,7 @@ func TestReservedWordNoReservedWordsArray(t *testing.T) {
 		StartByte: 0,
 		EndByte:   2,
 	}
-	got := d.promoteKeyword(tok)
+	got, _ := d.promoteKeyword(tok)
 	if got.Symbol != 2 {
 		t.Fatalf("empty ReservedWords: got symbol %d, want 2 (KW_IF — promoted)", got.Symbol)
 	}
@@ -220,7 +222,7 @@ func TestReservedWordSetIDZeroDoesNotBlock(t *testing.T) {
 		StartByte: 0,
 		EndByte:   2,
 	}
-	got := d.promoteKeyword(tok)
+	got, _ := d.promoteKeyword(tok)
 	if got.Symbol != 2 {
 		t.Fatalf("setID=0: got symbol %d, want 2 (KW_IF — promoted)", got.Symbol)
 	}

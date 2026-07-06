@@ -43,10 +43,17 @@ func buildLexDFA(ctx context.Context, patterns []TerminalPattern, extraSymbols [
 		modeOffsets[mi] = len(allStates)
 		// Filter patterns to only those valid in this mode.
 		var modePatterns []TerminalPattern
+		modeExtraSet := make(map[int]bool)
 		for _, p := range patterns {
-			if mode.validSymbols[p.SymbolID] || extraSet[p.SymbolID] {
+			if mode.validSymbols[p.SymbolID] {
 				modePatterns = append(modePatterns, p)
+				if extraSet[p.SymbolID] {
+					modeExtraSet[p.SymbolID] = true
+				}
 			}
+		}
+		if len(mode.preferredSymbols) > 0 {
+			modePatterns = preferModePatterns(modePatterns, mode.preferredSymbols)
 		}
 
 		// Build combined NFA for this mode's terminals.
@@ -102,7 +109,7 @@ func buildLexDFA(ctx context.Context, patterns []TerminalPattern, extraSymbols [
 		// reached via non-extras characters (meaning it's not exclusively
 		// reachable through extras chars), we change the accept to skip.
 		if mode.skipWhitespace && len(dfa) > 0 {
-			dfa = fixExtrasOverrideConflicts(dfa, modePatterns, extraSet, skipExtras)
+			dfa = fixExtrasOverrideConflicts(dfa, modePatterns, modeExtraSet, skipExtras)
 		}
 		protectStringOperatorsFromLineComments(dfa, modePatterns)
 
@@ -136,8 +143,27 @@ func buildLexDFA(ctx context.Context, patterns []TerminalPattern, extraSymbols [
 
 // lexModeSpec describes what a lex mode should recognize.
 type lexModeSpec struct {
-	validSymbols   map[int]bool // terminal symbol IDs valid in this mode
-	skipWhitespace bool         // whether to add skip transitions for whitespace
+	validSymbols     map[int]bool // terminal symbol IDs valid in this mode
+	preferredSymbols map[int]bool // symbols directly valid in this mode; win same-span DFA ties
+	skipWhitespace   bool         // whether to add skip transitions for whitespace
+}
+
+func preferModePatterns(patterns []TerminalPattern, preferred map[int]bool) []TerminalPattern {
+	if len(patterns) < 2 || len(preferred) == 0 {
+		return patterns
+	}
+	out := make([]TerminalPattern, 0, len(patterns))
+	for _, pat := range patterns {
+		if preferred[pat.SymbolID] {
+			out = append(out, pat)
+		}
+	}
+	for _, pat := range patterns {
+		if !preferred[pat.SymbolID] {
+			out = append(out, pat)
+		}
+	}
+	return out
 }
 
 // fixExtrasOverrideConflicts fixes DFA states where a non-extras terminal
@@ -1237,40 +1263,6 @@ func pruneImmediateTransitions(dfa []dfaState, immediateSyms map[int]bool) {
 // terminalPatternSymSet returns the set of symbol IDs that have DFA terminal
 // patterns. Used to distinguish dual-role external tokens (which have both a
 // scanner entry and a DFA pattern) from pure-external tokens.
-// patternImmediateTokenSet returns symbol IDs of immediate tokens that are
-// PATTERN-based (catch-all regex patterns like [^@:\s\$]+). String-based
-// IMMTOKENs like ":", "=", "mount" are excluded — they're legitimate tokens
-// even after whitespace.
-func patternImmediateTokenSet(ng *NormalizedGrammar) map[int]bool {
-	m := make(map[int]bool)
-	for _, t := range ng.Terminals {
-		if !t.Immediate {
-			continue
-		}
-		// A terminal is pattern-based if its rule is a RulePattern or contains
-		// patterns (via RuleSeq/RuleChoice wrapping patterns).
-		if ruleContainsPattern(t.Rule) && !isStringOnlyRule(t.Rule) {
-			m[t.SymbolID] = true
-		}
-	}
-	return m
-}
-
-func ruleContainsPattern(r *Rule) bool {
-	if r == nil {
-		return false
-	}
-	if r.Kind == RulePattern {
-		return true
-	}
-	for _, c := range r.Children {
-		if ruleContainsPattern(c) {
-			return true
-		}
-	}
-	return false
-}
-
 func isStringOnlyRule(r *Rule) bool {
 	if r == nil {
 		return false
@@ -1298,7 +1290,94 @@ func terminalPatternSymSet(ng *NormalizedGrammar) map[int]bool {
 	return m
 }
 
+// patternTerminalSymSet returns the set of symbol IDs whose terminal rule is
+// NOT a pure fixed string (i.e. it involves at least one regex/pattern
+// node). Used to gate lex-mode preferredSymbols: a same-length DFA accept
+// tie between two DIFFERENT terminals is only possible when at least one of
+// them is pattern-based — two distinct fixed strings can never match the
+// identical span — so states whose valid symbols are entirely fixed strings
+// don't need (and must not carry) preference-based mode splitting. See
+// computeLexModesWithContext.
+//
+// The "two distinct fixed strings can never tie" half of that invariant does
+// NOT extend to zero-width terminals (a rule that can match the empty
+// string, e.g. the "\x00" EOF-sentinel string terminal some grammars use as
+// a choice alternative, or an explicit blank/optional rule collapsed to a
+// fixed string by expandRegexToRule). A zero-width terminal's accept is a
+// genuine tie with EVERY other terminal valid in that state — including
+// other fixed strings — so it must widen the gate the same way a real
+// pattern symbol does. zeroWidthTerminalSymSet covers that half; callers
+// must treat a state as tie-risky when it contains a symbol from EITHER set.
+func patternTerminalSymSet(ng *NormalizedGrammar) map[int]bool {
+	m := make(map[int]bool, len(ng.Terminals))
+	for _, t := range ng.Terminals {
+		if !isStringOnlyRule(t.Rule) {
+			m[t.SymbolID] = true
+		}
+	}
+	return m
+}
+
+// zeroWidthTerminalSymSet returns the set of symbol IDs whose terminal rule
+// can match the empty string (see terminalRuleCanMatchEmpty — the same
+// predicate assemble.go uses to populate gotreesitter.Language.ZeroWidthTokens).
+// A zero-width terminal trivially ties with any other terminal valid in the
+// same lex-mode state (its accept requires consuming zero characters), so
+// its presence must keep that state's preferredSyms even when every symbol
+// in the state is otherwise classified as a plain fixed string by
+// patternTerminalSymSet. See computeLexModesWithContext.
+func zeroWidthTerminalSymSet(ng *NormalizedGrammar) map[int]bool {
+	m := make(map[int]bool, len(ng.Terminals))
+	for _, t := range ng.Terminals {
+		if terminalRuleCanMatchEmpty(t.Rule) {
+			m[t.SymbolID] = true
+		}
+	}
+	return m
+}
+
 func computeLexModes(
+	stateCount int,
+	tokenCount int,
+	actionLookup func(state, sym int) bool,
+	stringPrefixExtensions map[int][]int,
+	extraSymbols []int,
+	extraChainStateStart int,
+	immediateTokens map[int]bool,
+	externalSymbols []int,
+	wordSymbolID int,
+	keywordSymbols map[int]bool,
+	terminalPatternSyms map[int]bool,
+	followTokens func(state int) []int,
+	missingRecoveryTokens func(state int) []int,
+	suppressAfterWhitespaceSyms map[int]bool,
+	patternTerminals map[int]bool,
+	zeroWidthTerminals map[int]bool,
+) ([]lexModeSpec, []int, []afterWSModeEntry) {
+	modes, stateToMode, afterWSModeMap, _ := computeLexModesWithContext(
+		context.Background(),
+		stateCount,
+		tokenCount,
+		actionLookup,
+		stringPrefixExtensions,
+		extraSymbols,
+		extraChainStateStart,
+		immediateTokens,
+		externalSymbols,
+		wordSymbolID,
+		keywordSymbols,
+		terminalPatternSyms,
+		followTokens,
+		missingRecoveryTokens,
+		suppressAfterWhitespaceSyms,
+		patternTerminals,
+		zeroWidthTerminals,
+	)
+	return modes, stateToMode, afterWSModeMap
+}
+
+func computeLexModesWithContext(
+	ctx context.Context,
 	stateCount int,
 	tokenCount int,
 	actionLookup func(state, sym int) bool,
@@ -1311,8 +1390,14 @@ func computeLexModes(
 	keywordSymbols map[int]bool,
 	terminalPatternSyms map[int]bool, // symbols that have DFA terminal patterns
 	followTokens func(state int) []int, // additional tokens from reduce-follow expansion (may be nil)
-	patternImmediateTokens map[int]bool, // immediate tokens that are PATTERN-based (catch-all)
-) ([]lexModeSpec, []int, []afterWSModeEntry) {
+	missingRecoveryTokens func(state int) []int, // lookaheads needed for missing-token recovery (may be nil)
+	suppressAfterWhitespaceSyms map[int]bool,
+	patternTerminals map[int]bool, // symbols whose rule is NOT a pure fixed string (regex/pattern-shaped terminals); may be nil
+	zeroWidthTerminals map[int]bool, // symbols whose rule can match the empty string (see zeroWidthTerminalSymSet); may be nil
+) ([]lexModeSpec, []int, []afterWSModeEntry, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	extraSet := make(map[int]bool)
 	hasTerminalExtras := false
 	for _, e := range extraSymbols {
@@ -1342,6 +1427,11 @@ func computeLexModes(
 	var afterWSModeMap []afterWSModeEntry
 
 	for state := 0; state < stateCount; state++ {
+		if state&255 == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, nil, nil, err
+			}
+		}
 		isExtraChainState := extraChainStateStart >= 0 && state >= extraChainStateStart
 		// Collect valid terminal symbols for this state.
 		validSyms := make(map[int]bool)
@@ -1352,24 +1442,68 @@ func computeLexModes(
 		// valid. Without this gate the DFA greedily matches a longer prefix
 		// (e.g. "?:" for "?") that the parser has no action for, consuming
 		// too many characters and causing a parse error.
-		directValid := make(map[int]bool) // symbols valid by action or follow
+		directValid := make(map[int]bool)      // symbols valid by action or follow
+		directActionOnly := make(map[int]bool) // symbols with a real action at this exact state (pre-widening)
+		directActionAllImmediate := true
 		for sym := 1; sym < tokenCount; sym++ {
 			if extSet[sym] {
 				continue // skip external tokens
 			}
 			if actionLookup(state, sym) {
 				directValid[sym] = true
+				directActionOnly[sym] = true
+				if !immediateTokens[sym] {
+					directActionAllImmediate = false
+				}
 			}
 		}
-		if followTokens != nil {
+		// A state whose only real (non-widened) actions are all
+		// token.immediate() terminals is a strict immediate-continuation
+		// context (e.g. mid interpreted_string_literal, right after content,
+		// expecting only more content/escape_sequence/the closing quote).
+		// Reduce-follow and missing-token-recovery widening below can pull in
+		// a same-first-character NON-immediate sibling terminal from some
+		// other, unrelated state that happens to share a reduce/recovery
+		// path (e.g. the plain, non-immediate '"' that opens a brand new
+		// string elsewhere in the grammar) even though the current state has
+		// no actual action for it. Once that happens, this state's lex mode
+		// stops being "all immediate", flips skipWhitespace on, and the DFA's
+		// immediate-vs-non-immediate tie-break (which prefers the
+		// non-immediate accept) starts winning for genuinely adjacent input
+		// with no whitespace to skip at all — producing the wrong token
+		// symbol for a byte-for-byte-adjacent match and sending the parser
+		// into unnecessary error recovery. Keep such states strictly
+		// immediate: skip the widening passes for them so their lex mode
+		// stays exactly what the real action table allows.
+		strictImmediateState := len(directActionOnly) > 0 && directActionAllImmediate
+		// Reduce-follow and missing-token recovery widening are parser-main-state
+		// conveniences. Synthetic nonterminal-extra-chain states lex only their
+		// own chain actions; applying main-grammar lookahead widening there is
+		// unnecessary and dominates generation time for grammars with many chains.
+		if followTokens != nil && !isExtraChainState && !strictImmediateState {
 			for _, sym := range followTokens(state) {
-				// Reduce-follow expansion exists to admit the word token in
-				// states where a keyword becomes valid only after reducing a
-				// preceding nonterminal. Widening lex modes with every follow
-				// terminal is both unnecessary and expensive for large grammars.
-				if sym > 0 && sym < tokenCount && !extSet[sym] && keywordSymbols[sym] {
+				// The supplied followTokens function is prefiltered by the
+				// generator to include only terminals that are safe and useful
+				// to lex after a reduce chain. Widening with the full follow set
+				// is expensive for large grammars and can make contextual lexing
+				// less precise.
+				if sym > 0 && sym < tokenCount && !extSet[sym] {
 					directValid[sym] = true
 				}
+			}
+		}
+		preferredSyms := make(map[int]bool, len(directValid))
+		for sym := range directValid {
+			preferredSyms[sym] = true
+		}
+		if missingRecoveryTokens != nil && !isExtraChainState && !strictImmediateState {
+			for _, sym := range missingRecoveryTokens(state) {
+				if sym > 0 && sym < tokenCount && !extSet[sym] {
+					directValid[sym] = true
+				}
+			}
+			if err := ctx.Err(); err != nil {
+				return nil, nil, nil, err
 			}
 		}
 
@@ -1397,7 +1531,12 @@ func computeLexModes(
 		// by the parser, not the lexer. But also include the first-set
 		// terminals of nonterminal extras so the lexer can recognize the
 		// start of nonterminal extra rules (like comment → [;#]...).
-		stateHasTerminalExtras := hasTerminalExtras && !isExtraChainState
+		// Strict-immediate states (see strictImmediateState above) never
+		// admit extras either: token.immediate() means no intervening
+		// extras, and treating whitespace/comments as valid here is what
+		// flips skipWhitespace on and corrupts the immediate-vs-non-immediate
+		// tie-break for byte-adjacent input.
+		stateHasTerminalExtras := hasTerminalExtras && !isExtraChainState && !strictImmediateState
 		for _, e := range extraSymbols {
 			if stateHasTerminalExtras && e > 0 && e < tokenCount {
 				validSyms[e] = true
@@ -1424,7 +1563,46 @@ func computeLexModes(
 		// Otherwise, skip whitespace unless ALL valid tokens are immediate.
 		skipWS := stateHasTerminalExtras && (!hasImmediate || len(validSyms) > countImmediate(validSyms, immediateTokens))
 
-		key := buildModeKey(validSyms, skipWS)
+		// preferModePatterns (see buildLexDFA) only ever changes which
+		// terminal wins a same-length DFA accept tie. Two DISTINCT fixed
+		// string-literal terminals can never tie that way — a literal only
+		// ever matches its own exact text, so nothing else can accept the
+		// identical span unless at least one competing terminal is
+		// pattern-based (a keyword-shaped identifier alias, a numeric
+		// literal, etc.) OR zero-width (a rule that can match the empty
+		// string, e.g. an EOF-sentinel "\x00" string terminal — its accept
+		// requires consuming nothing, so it trivially ties with every other
+		// valid symbol in the state, fixed-string or not). When this
+		// state's valid symbols are ALL fixed strings AND none of them can
+		// match empty, preferredSyms therefore cannot affect DFA behavior
+		// at all, so it must not be allowed to affect mode identity either.
+		// Folding it into the mode key unconditionally (as introduced for
+		// the genuine pattern-vs-pattern tie case) makes every state's own
+		// unwidened direct-action set part of the key — and since that set
+		// is close to unique per LR state by construction, it defeats mode
+		// sharing almost entirely on grammars with many parser states
+		// (most of whose states only ever expect punctuation/keyword
+		// strings next), multiplying the lex-mode count and, downstream,
+		// the compiled DFA state count. Gate preferredSyms on the presence
+		// of at least one real pattern-based symbol OR a zero-width symbol
+		// so the tie-break stays fully correct while states that only ever
+		// differ in which non-zero-width fixed strings they directly
+		// accept — a case where preference never mattered — go back to
+		// sharing lex modes.
+		if len(preferredSyms) > 0 {
+			hasTieRiskSym := false
+			for sym := range validSyms {
+				if patternTerminals[sym] || zeroWidthTerminals[sym] {
+					hasTieRiskSym = true
+					break
+				}
+			}
+			if !hasTieRiskSym {
+				preferredSyms = nil
+			}
+		}
+
+		key := buildModeKey(validSyms, preferredSyms, skipWS)
 
 		if modeIdx, ok := modeMap[key]; ok {
 			stateToMode[state] = modeIdx
@@ -1432,8 +1610,9 @@ func computeLexModes(
 			modeIdx := len(modes)
 			modeMap[key] = modeIdx
 			modes = append(modes, lexModeSpec{
-				validSymbols:   validSyms,
-				skipWhitespace: skipWS,
+				validSymbols:     validSyms,
+				preferredSymbols: preferredSyms,
+				skipWhitespace:   skipWS,
 			})
 			stateToMode[state] = modeIdx
 		}
@@ -1442,7 +1621,7 @@ func computeLexModes(
 		// that overlap (same first character), create an after-whitespace variant
 		// that excludes immediate tokens. This lets STRING keywords win after
 		// whitespace where immediate continuation tokens would otherwise dominate.
-		if hasImmediate && !isExtraChainState {
+		if hasImmediate && !isExtraChainState && !containsAnySymbol(validSyms, suppressAfterWhitespaceSyms) {
 			hasNonImmString := false
 			for sym := range validSyms {
 				if !immediateTokens[sym] && sym > 0 && sym < tokenCount {
@@ -1453,23 +1632,31 @@ func computeLexModes(
 			if hasNonImmString {
 				awsSyms := make(map[int]bool)
 				for sym := range validSyms {
-					// Only exclude pattern-based immediate tokens (catch-alls).
-					// String-based IMMTOKENs like ":", "=", "}" are kept
-					// because they're legitimate after whitespace.
-					if !patternImmediateTokens[sym] {
+					// token.immediate terminals are only valid at the current
+					// lexer position. After consuming layout, drop both
+					// pattern- and string-based immediate symbols so spaced
+					// constructs can fall back to their non-immediate forms.
+					if !immediateTokens[sym] {
 						awsSyms[sym] = true
 					}
 				}
 				if len(awsSyms) > 0 && len(awsSyms) < len(validSyms) {
-					awsKey := buildModeKey(awsSyms, skipWS)
+					awsPreferredSyms := make(map[int]bool, len(preferredSyms))
+					for sym := range preferredSyms {
+						if awsSyms[sym] {
+							awsPreferredSyms[sym] = true
+						}
+					}
+					awsKey := buildModeKey(awsSyms, awsPreferredSyms, skipWS)
 					if awsModeIdx, ok := modeMap[awsKey]; ok {
 						afterWSModeMap = append(afterWSModeMap, afterWSModeEntry{state, awsModeIdx})
 					} else {
 						awsModeIdx := len(modes)
 						modeMap[awsKey] = awsModeIdx
 						modes = append(modes, lexModeSpec{
-							validSymbols:   awsSyms,
-							skipWhitespace: skipWS,
+							validSymbols:     awsSyms,
+							preferredSymbols: awsPreferredSyms,
+							skipWhitespace:   skipWS,
 						})
 						afterWSModeMap = append(afterWSModeMap, afterWSModeEntry{state, awsModeIdx})
 					}
@@ -1478,7 +1665,19 @@ func computeLexModes(
 		}
 	}
 
-	return modes, stateToMode, afterWSModeMap
+	return modes, stateToMode, afterWSModeMap, nil
+}
+
+func containsAnySymbol(syms, needles map[int]bool) bool {
+	if len(syms) == 0 || len(needles) == 0 {
+		return false
+	}
+	for sym := range needles {
+		if syms[sym] {
+			return true
+		}
+	}
+	return false
 }
 
 // afterWSModeEntry maps a parser state to its after-whitespace lex mode index.
@@ -1498,18 +1697,34 @@ func countImmediate(syms map[int]bool, imm map[int]bool) int {
 	return n
 }
 
-func buildModeKey(syms map[int]bool, skip bool) string {
+func buildModeKey(syms, preferred map[int]bool, skip bool) string {
 	sorted := make([]int, 0, len(syms))
 	for s := range syms {
 		sorted = append(sorted, s)
 	}
 	sort.Ints(sorted)
-	buf := make([]byte, len(sorted)*4+1)
+	preferredSorted := make([]int, 0, len(preferred))
+	for s := range preferred {
+		if syms[s] {
+			preferredSorted = append(preferredSorted, s)
+		}
+	}
+	sort.Ints(preferredSorted)
+	buf := make([]byte, len(sorted)*4+1+len(preferredSorted)*4+1)
 	for i, s := range sorted {
 		buf[i*4] = byte(s >> 24)
 		buf[i*4+1] = byte(s >> 16)
 		buf[i*4+2] = byte(s >> 8)
 		buf[i*4+3] = byte(s)
+	}
+	sep := len(sorted) * 4
+	buf[sep] = 0xff
+	base := sep + 1
+	for i, s := range preferredSorted {
+		buf[base+i*4] = byte(s >> 24)
+		buf[base+i*4+1] = byte(s >> 16)
+		buf[base+i*4+2] = byte(s >> 8)
+		buf[base+i*4+3] = byte(s)
 	}
 	if skip {
 		buf[len(buf)-1] = 1

@@ -389,7 +389,7 @@ func TestParseTSXGenericCallUnionTypeArgument(t *testing.T) {
 	}
 }
 
-func TestParseTSXOptionalChainIsLeaf(t *testing.T) {
+func TestParseTSXOptionalChainKeepsTokenChild(t *testing.T) {
 	src := "const value = elements?.concat(wildcards);\n"
 	tree, lang := parseLanguageSample(t, "tsx", src)
 	t.Cleanup(tree.Release)
@@ -408,10 +408,13 @@ func TestParseTSXOptionalChainIsLeaf(t *testing.T) {
 	if node == nil {
 		t.Fatalf("missing optional_chain node: %s", tree.RootNode().SExpr(lang))
 	}
-	// C tree-sitter emits optional_chain as a 0-child leaf; the Go parser
-	// should match after normalization strips any materialized "?." child.
-	if got, want := node.ChildCount(), 0; got != want {
+	// C tree-sitter emits (optional_chain (?.)) — the visible "?." anonymous
+	// token is a child, so childCount==1. The Go parser must match.
+	if got, want := node.ChildCount(), 1; got != want {
 		t.Fatalf("optional_chain child count = %d, want %d; root=%s", got, want, tree.RootNode().SExpr(lang))
+	}
+	if got, want := node.Child(0).Type(lang), "?."; got != want {
+		t.Fatalf("optional_chain child type = %q, want %q; root=%s", got, want, tree.RootNode().SExpr(lang))
 	}
 }
 
@@ -459,6 +462,96 @@ func TestParseTSXTypedArrowParameters(t *testing.T) {
 	}
 	if sexpr := root.SExpr(lang); !strings.Contains(sexpr, "arrow_function") || !strings.Contains(sexpr, "formal_parameters") {
 		t.Fatalf("typed TSX arrow did not preserve formal parameters: %s", sexpr)
+	}
+}
+
+func TestParseTypeScriptTypedArrowParameters(t *testing.T) {
+	src := "const f = (str: string) => str;\n"
+	tree, lang := parseLanguageSample(t, "typescript", src)
+	t.Cleanup(tree.Release)
+
+	root := tree.RootNode()
+	if root.Type(lang) != "program" || root.HasError() {
+		t.Fatalf("typed TypeScript arrow root = %s hasError=%v; tree=%s", root.Type(lang), root.HasError(), root.SExpr(lang))
+	}
+	if sexpr := root.SExpr(lang); !strings.Contains(sexpr, "arrow_function") || !strings.Contains(sexpr, "formal_parameters") {
+		t.Fatalf("typed TypeScript arrow did not preserve formal parameters: %s", sexpr)
+	}
+}
+
+func TestParseTypeScriptNestedDestructuringArrayPattern(t *testing.T) {
+	src := "const { value: [dirPath, { dirName, options, fileNames }] } = result;\n"
+	tree, lang := parseLanguageSample(t, "typescript", src)
+	t.Cleanup(tree.Release)
+
+	root := tree.RootNode()
+	if root.Type(lang) != "program" || root.HasError() {
+		t.Fatalf("nested TypeScript destructuring root = %s hasError=%v; tree=%s", root.Type(lang), root.HasError(), root.SExpr(lang))
+	}
+	sexpr := root.SExpr(lang)
+	for _, want := range []string{"array_pattern", "object_pattern", "shorthand_property_identifier_pattern"} {
+		if !strings.Contains(sexpr, want) {
+			t.Fatalf("nested TypeScript destructuring missing %s: %s", want, sexpr)
+		}
+	}
+	if strings.Contains(sexpr, "non_null_expression") {
+		t.Fatalf("nested TypeScript destructuring retained non_null_expression: %s", sexpr)
+	}
+}
+
+func TestParseTypeScriptDestructuringRefreshPreservesMissingError(t *testing.T) {
+	// The second statement is a genuine missing-token recovery (switch case
+	// with no expression before ':') confirmed against the C tree-sitter
+	// oracle to synthesize a MISSING identifier node. An earlier revision of
+	// this fixture used "const broken = ;" expecting a missing node there,
+	// but the C oracle recovers that shape via a plain ERROR wrapper with no
+	// MISSING node at all, so it could never exercise the HasError-refresh
+	// invariant this test guards (that normalizing the unrelated
+	// destructuring pattern in the first statement must not clear the
+	// HasError bit on a real missing node elsewhere in the tree).
+	src := "const { value: [dirPath, { dirName, options, fileNames }] } = result;\nswitch (x) { case: }\n"
+	lang := grammars.TypescriptLanguage()
+	parser := gotreesitter.NewParser(lang)
+	tree, err := parser.Parse([]byte(src))
+	if err != nil {
+		t.Fatalf("typescript parse failed: %v", err)
+	}
+	t.Cleanup(tree.Release)
+
+	root := tree.RootNode()
+	if root.Type(lang) != "program" || !root.HasError() {
+		t.Fatalf("destructuring with missing token root = %s hasError=%v; tree=%s", root.Type(lang), root.HasError(), root.SExpr(lang))
+	}
+	sexpr := root.SExpr(lang)
+	if !strings.Contains(sexpr, "array_pattern") || !strings.Contains(sexpr, "object_pattern") {
+		t.Fatalf("destructuring normalization did not run: %s", sexpr)
+	}
+	foundMissing := false
+	gotreesitter.Walk(root, func(node *gotreesitter.Node, depth int) gotreesitter.WalkAction {
+		if node.IsMissing() {
+			foundMissing = true
+			if !node.HasError() {
+				t.Fatalf("missing node %s did not preserve HasError; tree=%s", node.Type(lang), root.SExpr(lang))
+			}
+		}
+		return gotreesitter.WalkContinue
+	})
+	if !foundMissing {
+		t.Fatalf("missing-token regression did not produce a missing node: %s", root.SExpr(lang))
+	}
+}
+
+func TestParseTypeScriptDestructuredArrowReturnTypeCallArgument(t *testing.T) {
+	src := "const remainingPaths = arrayFrom(allFileNames.entries(), ([fileName, { isRedirect, isInNodeModules }]): ModulePath => ({ path: fileName, isRedirect, isInNodeModules }));\n"
+	tree, lang := parseLanguageSample(t, "typescript", src)
+	t.Cleanup(tree.Release)
+
+	root := tree.RootNode()
+	if root.Type(lang) != "program" || root.HasError() {
+		t.Fatalf("destructured TypeScript arrow call root = %s hasError=%v; tree=%s", root.Type(lang), root.HasError(), root.SExpr(lang))
+	}
+	if sexpr := root.SExpr(lang); !strings.Contains(sexpr, "arrow_function") || !strings.Contains(sexpr, "array_pattern") || !strings.Contains(sexpr, "type_annotation") {
+		t.Fatalf("destructured TypeScript arrow call did not preserve arrow/type shape: %s", sexpr)
 	}
 }
 

@@ -11,6 +11,37 @@ func applyImportGrammarShapeHints(g *Grammar) {
 		return
 	}
 	switch g.Name {
+	case "elixir":
+		// Elixir operators are also callable operator identifiers. In expression
+		// position, tree-sitter keeps the atom-to-expression reduce live when an
+		// operator literal can also start operator_identifier; otherwise `a ** b`
+		// shifts `**` into operator_identifier and truncates before the RHS.
+		g.PreferExpressionOperatorIdentifierReduces = true
+		// Elixir's call rules use left precedence so a same-line `do` sticks to
+		// the outermost call. Preserve the completed parenthesized-call reduce
+		// in that narrow conflict; otherwise `def f(x) when guard(x) do` lets
+		// the guard call consume the block.
+		g.PreferParenthesizedCallDoBlockReduces = true
+		// Remote calls without explicit arguments (`String.upcase`) must complete
+		// before a following binary operator such as `|>` can attach to the
+		// enclosing expression. Otherwise the operator shifts from the raw
+		// _remote_dot state and the RHS is no longer lexed in expression mode.
+		g.PreferRemoteCallOperatorReduces = true
+		// A completed stab-clause left operand followed by `->` must reduce
+		// before shifting the arrow into stab_clause. Otherwise `acc -> value`
+		// treats `->` as an operator identifier and never builds the clause.
+		g.PreferStabClauseLeftArrowReduces = true
+		// Elixir's quoted-content scanner intentionally declines when both the
+		// interpolating single- and double-quote content tokens are valid. After
+		// `#{...}`, merged external lex rows can expose both variants, making the
+		// normal lexer skip to the closing quote and truncate the quoted node.
+		g.PreferPreciseExternalLexStates = true
+		// The capture grammar uses a hidden pass-through from
+		// _capture_expression to _expression alongside parenthesized capture
+		// operands. C keeps that cc=1 reduce available in operator/dot conflicts;
+		// flattening it away can truncate quoted pipeline expressions before the
+		// following remote call/operator chain.
+		g.PreserveHiddenChoicePassthrough = []string{"_capture_expression"}
 	case "bash":
 		// Bash's external extglob token is intentionally broad. In merged LALR
 		// states, reduce-only lookaheads can otherwise ask the scanner for
@@ -62,6 +93,11 @@ func applyImportGrammarShapeHints(g *Grammar) {
 		// lookaheads. The upstream binary repeat shape keeps those lookaheads
 		// from leaking into plain variable assignment lex modes.
 		g.BinaryRepeatMode = true
+	case "promql":
+		// PromQL's operator grammar relies on hidden pass-through reductions
+		// through _query and _series_matcher to complete higher-precedence
+		// operands before lower-precedence operator shifts.
+		g.PreserveHiddenChoicePassthrough = []string{"_query", "_series_matcher"}
 	}
 }
 

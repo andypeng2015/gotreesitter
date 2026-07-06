@@ -3,12 +3,20 @@ package gotreesitter
 import "testing"
 
 type stubTokenSource struct {
-	tokens []Token
-	i      int
-	state  StateID
+	tokens     []Token
+	i          int
+	state      StateID
+	nextCalls  int
+	skipCalls  int
+	relexTok   Token
+	relexOK    bool
+	canRelex   bool
+	relexSeen  Token
+	relexCalls int
 }
 
 func (s *stubTokenSource) Next() Token {
+	s.nextCalls++
 	if s.i >= len(s.tokens) {
 		return Token{}
 	}
@@ -18,6 +26,7 @@ func (s *stubTokenSource) Next() Token {
 }
 
 func (s *stubTokenSource) SkipToByte(offset uint32) Token {
+	s.skipCalls++
 	for {
 		t := s.Next()
 		if t.Symbol == 0 || t.StartByte >= offset {
@@ -36,6 +45,19 @@ func (s *stubTokenSource) SetParserState(state StateID) {
 
 func (s *stubTokenSource) SetGLRStates(states []StateID) {
 	// stub: no-op
+}
+
+func (s *stubTokenSource) CanRelexFromTokenStart(tok Token) bool {
+	return s.canRelex
+}
+
+func (s *stubTokenSource) RelexFromTokenStart(tok Token) (Token, bool) {
+	s.relexCalls++
+	s.relexSeen = tok
+	if !s.relexOK {
+		return Token{}, false
+	}
+	return s.relexTok, true
 }
 
 func TestNormalizeIncludedRanges(t *testing.T) {
@@ -87,6 +109,120 @@ func TestIncludedRangeTokenSourceDelegatesParserState(t *testing.T) {
 	ts.SetParserState(42)
 	if base.state != 42 {
 		t.Fatalf("delegated parser state: got %d, want 42", base.state)
+	}
+}
+
+// stubErrorModeTokenSource embeds stubTokenSource and additionally implements
+// errorModeLexingTokenSource, mirroring a C-recovery-enabled dfaTokenSource.
+type stubErrorModeTokenSource struct {
+	stubTokenSource
+	errorMode bool
+}
+
+func (s *stubErrorModeTokenSource) lexesErrorModeAtErrorState() bool {
+	return s.errorMode
+}
+
+// TestIncludedRangeTokenSourceForwardsErrorModeLexingCapability pins the
+// wave-1 amendment: an includedRangeTokenSource has no lexing of its own, so
+// it must defer entirely to the base source's errorModeLexingTokenSource
+// answer rather than always reporting false (which would route the C
+// recovery port's engine-side error-mode substitution over the whole
+// document, ignoring the active ranges) or always true.
+func TestIncludedRangeTokenSourceForwardsErrorModeLexingCapability(t *testing.T) {
+	plainBase := &stubTokenSource{tokens: []Token{{}}}
+	plainTS := newIncludedRangeTokenSource(plainBase, []Range{{StartByte: 0, EndByte: 1}}).(*includedRangeTokenSource)
+	if em, ok := TokenSource(plainTS).(errorModeLexingTokenSource); !ok || em.lexesErrorModeAtErrorState() {
+		t.Fatalf("plain base: lexesErrorModeAtErrorState should forward to false (ok=%v)", ok)
+	}
+
+	errModeBase := &stubErrorModeTokenSource{stubTokenSource: stubTokenSource{tokens: []Token{{}}}, errorMode: true}
+	errModeTS := newIncludedRangeTokenSource(errModeBase, []Range{{StartByte: 0, EndByte: 1}}).(*includedRangeTokenSource)
+	em, ok := TokenSource(errModeTS).(errorModeLexingTokenSource)
+	if !ok || !em.lexesErrorModeAtErrorState() {
+		t.Fatalf("error-mode base: lexesErrorModeAtErrorState should forward to true (ok=%v)", ok)
+	}
+}
+
+func TestIncludedRangeTokenSourceRelexRejectsOriginalOutsideRangeWithoutCallingBase(t *testing.T) {
+	base := &stubTokenSource{
+		canRelex: true,
+		relexOK:  true,
+		relexTok: Token{
+			Symbol:     1,
+			StartByte:  0,
+			EndByte:    5,
+			StartPoint: Point{},
+			EndPoint:   Point{Column: 5},
+		},
+	}
+	ts := newIncludedRangeTokenSource(base, []Range{{StartByte: 10, EndByte: 20}}).(*includedRangeTokenSource)
+
+	tok := Token{
+		Symbol:     1,
+		StartByte:  0,
+		EndByte:    5,
+		StartPoint: Point{},
+		EndPoint:   Point{Column: 5},
+	}
+	if got, ok := ts.RelexFromTokenStart(tok); ok {
+		t.Fatalf("RelexFromTokenStart = (%+v, true), want false for original token outside included range", got)
+	}
+	if base.relexCalls != 0 {
+		t.Fatalf("base RelexFromTokenStart calls = %d, want 0", base.relexCalls)
+	}
+	if base.nextCalls != 0 || base.skipCalls != 0 || base.i != 0 {
+		t.Fatalf("rejected relex advanced base: next=%d skip=%d i=%d, want 0/0/0", base.nextCalls, base.skipCalls, base.i)
+	}
+	if ts.idx != 0 {
+		t.Fatalf("rejected relex changed included range index to %d, want 0", ts.idx)
+	}
+}
+
+func TestIncludedRangeTokenSourceRelexRejectsBaseStartChangeWithoutFiltering(t *testing.T) {
+	base := &stubTokenSource{
+		tokens: []Token{
+			{
+				Symbol:     3,
+				StartByte:  12,
+				EndByte:    14,
+				StartPoint: Point{Column: 12},
+				EndPoint:   Point{Column: 14},
+			},
+		},
+		canRelex: true,
+		relexOK:  true,
+		relexTok: Token{
+			Symbol:     2,
+			StartByte:  11,
+			EndByte:    12,
+			StartPoint: Point{Column: 11},
+			EndPoint:   Point{Column: 12},
+		},
+	}
+	ts := newIncludedRangeTokenSource(base, []Range{{StartByte: 10, EndByte: 20}}).(*includedRangeTokenSource)
+
+	tok := Token{
+		Symbol:     1,
+		StartByte:  10,
+		EndByte:    11,
+		StartPoint: Point{Column: 10},
+		EndPoint:   Point{Column: 11},
+	}
+	if got, ok := ts.RelexFromTokenStart(tok); ok {
+		t.Fatalf("RelexFromTokenStart = (%+v, true), want false after base changes start", got)
+	}
+	if base.relexCalls != 1 {
+		t.Fatalf("base RelexFromTokenStart calls = %d, want 1", base.relexCalls)
+	}
+	if base.relexSeen.StartByte != tok.StartByte || base.relexSeen.StartPoint != tok.StartPoint {
+		t.Fatalf("base saw token %+v, want %+v", base.relexSeen, tok)
+	}
+	if base.nextCalls != 0 || base.skipCalls != 0 || base.i != 0 {
+		t.Fatalf("rejected relex advanced base through filtering: next=%d skip=%d i=%d, want 0/0/0", base.nextCalls, base.skipCalls, base.i)
+	}
+	if ts.idx != 0 {
+		t.Fatalf("rejected relex changed included range index to %d, want 0", ts.idx)
 	}
 }
 

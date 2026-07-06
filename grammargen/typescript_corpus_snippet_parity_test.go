@@ -42,6 +42,14 @@ func TestTypeScriptCorpusSnippetParity(t *testing.T) {
 			src:  "import r = X.N;\n",
 		},
 		{
+			name: "type_query_import_call",
+			src:  "type T = typeof import('person');\n",
+		},
+		{
+			name: "indexed_typeof_lookup",
+			src:  "type X1 = typeof Y[keyof typeof Z];\ntype X2 = (typeof Y)[keyof typeof Z];\n",
+		},
+		{
 			name: "module_identifier_expression_statement",
 			src:  "var module;\nmodule;\n",
 		},

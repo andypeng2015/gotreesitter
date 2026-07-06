@@ -271,6 +271,9 @@ func mdiParseTilde(s *mdiState, lexer *gotreesitter.ExternalLexer, validSymbols 
 		tildeCount++
 		lexer.Advance(false)
 	}
+	if tildeCount < 2 {
+		return false
+	}
 
 	lineEnd := lexer.Lookahead() == '\n' || lexer.Lookahead() == '\r' || lexer.Lookahead() == 0
 

@@ -261,7 +261,7 @@ func (ts *CTokenSource) Next() gotreesitter.Token {
 	}
 
 	for {
-		ts.cur.skipSpacesAndTabs() // NOT skipWhitespace — preserve \n
+		ts.cur.skipSpacesTabsAndEscapedNewlines() // NOT skipWhitespace — preserve real line-ending tokens
 		if ts.cur.eof() {
 			ts.done = true
 			return ts.eofToken()

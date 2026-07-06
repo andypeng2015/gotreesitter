@@ -82,14 +82,11 @@ func normalizeReturnedTree(root *Node, source []byte, lang *Language) {
 		return
 	}
 	switch lang.Name {
-	case "go":
-		normalizeGoCompatibility(root, source, lang)
-		normalizeRootEOFNewlineSpan(root, source, lang)
 	case "scala":
-		normalizeScalaTemplateBodyObjectFragments(root, source, lang)
-		normalizeScalaRecoveredObjectTemplateBodies(root, source, lang)
+		normalizeScalaTemplateBodyObjectFragments(root, source, nil, lang)
+		normalizeScalaRecoveredObjectTemplateBodies(root, source, nil, lang)
 		normalizeScalaDefinitionFields(root, source, lang)
-		normalizeScalaTemplateBodyFunctionAnnotations(root, source, lang)
+		normalizeScalaTemplateBodyFunctionAnnotations(root, source, nil, lang)
 		normalizeScalaTemplateBodyFunctionEnds(root, source, lang)
 		normalizeScalaCaseClauseEnds(root, source, lang)
 		normalizeRootEOFNewlineSpan(root, source, lang)
@@ -104,17 +101,45 @@ func shouldNormalizeIncrementalReturnedTree(tree, oldTree *Tree) bool {
 	if tree == nil {
 		return false
 	}
+	if tree.ParseStoppedEarly() {
+		return false
+	}
 	if oldTree == nil {
 		return true
 	}
 	return rawRootOrNil(tree) != rawRootOrNil(oldTree)
 }
 
-func normalizeReturnedIncrementalTree(tree, oldTree *Tree, source []byte, lang *Language) {
+func (p *Parser) normalizeReturnedIncrementalTree(tree, oldTree *Tree, source []byte) {
 	if !shouldNormalizeIncrementalReturnedTree(tree, oldTree) {
 		return
 	}
-	normalizeReturnedTree(rawRootOrNil(tree), source, lang)
+	if tree.resultCompatibilityPending {
+		return
+	}
+	if reason := p.normalizeReturnedTree(rawRootOrNil(tree), source); parseStopReasonIsTerminal(reason) {
+		tree.setParseStopReason(reason)
+		return
+	}
+	finalizeReturnedTreeRootSpan(tree, source)
+}
+
+func shouldNormalizeReturnedTree(tree *Tree) bool {
+	return tree != nil && !tree.ParseStoppedEarly()
+}
+
+func (p *Parser) normalizeReturnedTreeForParse(tree *Tree, source []byte) {
+	if !shouldNormalizeReturnedTree(tree) {
+		return
+	}
+	if tree.resultCompatibilityPending {
+		return
+	}
+	if reason := p.normalizeReturnedTree(rawRootOrNil(tree), source); parseStopReasonIsTerminal(reason) {
+		tree.setParseStopReason(reason)
+		return
+	}
+	finalizeReturnedTreeRootSpan(tree, source)
 }
 
 const forestIncrementalReuseUnsupportedReason = "old tree was built by GSS forest fast path"
@@ -137,12 +162,11 @@ func (p *Parser) tryTokenInvariantReuseForDisabledOldTree(source []byte, oldTree
 		return nil, false
 	}
 	prevFactory := p.reparseFactory
-	p.reparseFactory = p.dfaReparseFactory()
+	p.reparseFactory = nil
 	defer func() {
 		p.reparseFactory = prevFactory
 	}()
-	lexer := NewLexer(p.language.LexStates, source)
-	ts := acquireDFATokenSource(lexer, p.language, p.lookupActionIndex, p.hasKeywordState, p.externalValidByState, p.externalValidMaskByState)
+	ts := p.acquireParserDFATokenSource(source)
 	defer ts.Close()
 	tree, ok := p.tryTokenInvariantLeafEdit(source, oldTree, p.wrapIncludedRanges(ts), timing)
 	if !ok {
@@ -262,29 +286,58 @@ func profileFreshParseFallback(start time.Time, tree *Tree, reason string) Incre
 	return profile
 }
 
-func (p *Parser) normalizeReturnedTree(root *Node, source []byte) {
-	if p != nil && p.noResultCompatibilityBenchmarkOnly {
-		return
+func (p *Parser) normalizeReturnedTree(root *Node, source []byte) ParseStopReason {
+	if p == nil || p.language == nil || root == nil || p.noResultCompatibilityBenchmarkOnly {
+		return ParseStopNone
 	}
-	if reason := p.activeParseStopReason(); parseStopReasonIsActive(reason) {
-		return
+	if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
+		return reason
 	}
-	normalizeReturnedTree(root, source, p.language)
+	normalizeResultCompatibility(root, source, p)
+	return p.parseStopReasonNow()
 }
 
-func (p *Parser) normalizeReturnedParseTree(tree *Tree, source []byte) {
-	if tree == nil || tree.ParseStoppedEarly() {
+func finalizeReturnedTreeRootSpan(tree *Tree, source []byte) {
+	if tree == nil {
 		return
 	}
-	p.normalizeReturnedTree(rawRootOrNil(tree), source)
-	p.applyActiveStopReasonToTree(tree)
+	root := rawRootOrNil(tree)
+	if root == nil {
+		return
+	}
+	rt := tree.parseRuntime
+	if rt.StopReason == ParseStopAccepted {
+		extendRootToAcceptedCleanTail(root, source, rt.ExpectedEOFByte, tree.includedRanges)
+	}
+	rt.RootEndByte = root.endByte
+	rt.Truncated = rt.ExpectedEOFByte > root.endByte
+	tailStart := root.endByte
+	if rt.LastTokenWasEOF && rt.LastTokenEndByte > tailStart && rt.LastTokenEndByte <= rt.ExpectedEOFByte {
+		tailStart = rt.LastTokenEndByte
+	}
+	if rt.Truncated && parserTailAllowsCleanAcceptance(source, tailStart, rt.ExpectedEOFByte, tree.includedRanges) {
+		rt.Truncated = false
+	}
+	tree.setParseRuntime(rt)
 }
 
-func (p *Parser) normalizeReturnedIncrementalTree(tree, oldTree *Tree, source []byte) {
-	if !shouldNormalizeIncrementalReturnedTree(tree, oldTree) {
+func extendRootToAcceptedCleanTail(root *Node, source []byte, expectedEOFByte uint32, included []Range) bool {
+	if root == nil || expectedEOFByte <= root.endByte {
+		return false
+	}
+	if !parserTailAllowsCleanAcceptance(source, root.endByte, expectedEOFByte, included) {
+		return false
+	}
+	extendNodeEndToByte(root, source, expectedEOFByte)
+	return root.endByte >= expectedEOFByte
+}
+
+func extendNodeEndToByte(n *Node, source []byte, endByte uint32) {
+	if n == nil || endByte <= n.endByte || int(endByte) > len(source) {
 		return
 	}
-	p.normalizeReturnedParseTree(tree, source)
+	n.endPoint = advancePointByBytes(n.endPoint, source[n.endByte:endByte])
+	n.endByte = endByte
 }
 
 func (p *Parser) dfaReparseFactory() TokenSourceFactory {
@@ -292,9 +345,28 @@ func (p *Parser) dfaReparseFactory() TokenSourceFactory {
 		return nil
 	}
 	return func(source []byte) (TokenSource, error) {
-		lexer := NewLexer(p.language.LexStates, source)
-		return newDFATokenSourceDirect(lexer, p.language, p.lookupActionIndex, p.hasKeywordState, p.externalValidByState, p.externalValidMaskByState), nil
+		return p.newDFAReparseTokenSource(source), nil
 	}
+}
+
+func (p *Parser) newDFAReparseTokenSource(source []byte) TokenSource {
+	if p == nil || p.language == nil || len(p.language.LexStates) == 0 {
+		return nil
+	}
+	lexer := NewLexer(p.language.LexStates, source)
+	return newDFATokenSourceDirectWithCRecovery(lexer, p.language, p.lookupActionIndexFunc(), p.hasKeywordState, p.externalValidByState, p.externalValidMaskByState, p.errorCostCompetitionEnabled())
+}
+
+// acquireParserDFATokenSource returns a pooled dfaTokenSource wired to p's
+// language tables, reusing the pooled source's retained lexer so steady-state
+// parses allocate neither a token source nor a lexer. The caller must Close()
+// the returned source (Close returns it to the pool), and its lifetime must
+// not extend past that Close. Returns nil when p has no DFA lex tables.
+func (p *Parser) acquireParserDFATokenSource(source []byte) *dfaTokenSource {
+	if p == nil || p.language == nil || len(p.language.LexStates) == 0 {
+		return nil
+	}
+	return acquireDFATokenSourceReusingLexer(source, p.language, p.lookupActionIndexFunc(), p.hasKeywordState, p.externalValidByState, p.externalValidMaskByState, p.errorCostCompetitionEnabled())
 }
 
 func (p *Parser) tokenSourceReparseFactory(ts TokenSource) TokenSourceFactory {
@@ -400,15 +472,31 @@ func (p *Parser) releaseCompatibilityBorrowedArenas() {
 // parseWithSnippetParser runs a recovery snippet parse. timeoutMicros is
 // optional so callers can inherit a parent parser timeout when needed.
 func parseWithSnippetParser(lang *Language, source []byte, timeoutMicros ...uint64) (*Tree, error) {
+	return parseWithSnippetParserInheriting(lang, source, nil, timeoutMicros...)
+}
+
+func parseWithSnippetParserInheriting(lang *Language, source []byte, parent *Parser, timeoutMicros ...uint64) (*Tree, error) {
 	parser := acquireSnippetParser(lang)
 	if parser == nil {
 		return nil, ErrNoLanguage
 	}
 	defer releaseSnippetParser(parser)
-	if len(timeoutMicros) > 0 && timeoutMicros[0] > 0 {
+	if parent != nil {
+		parser.timeoutMicros = parent.remainingTimeoutMicros()
+		parser.cancellationFlag = parent.cancellationFlag
+		if reason := parent.activeParseStopReason(); parseStopReasonIsActive(reason) {
+			parser.parseStoppedReason = reason
+			parser.parseBudgetDepth = 1
+		}
+	}
+	if parent == nil && len(timeoutMicros) > 0 && timeoutMicros[0] > 0 {
 		parser.timeoutMicros = timeoutMicros[0]
 	}
-	return parser.Parse(source)
+	tree, err := parser.Parse(source)
+	if parent != nil && tree != nil && parseStopReasonIsActive(tree.ParseStopReason()) {
+		parent.markActiveParseStopped(tree.ParseStopReason())
+	}
+	return tree, err
 }
 
 type closeableTokenSource interface {
@@ -430,8 +518,8 @@ func (p *Parser) parseWithTokenSource(source []byte, ts TokenSource, reparseFact
 	if ts == nil {
 		return nil, ErrNoTokenSource
 	}
-	endParseBudget := p.enterParseBudget()
-	defer endParseBudget()
+	endBudget := p.beginParseOperationBudget()
+	defer endBudget()
 	p.releaseCompatibilityBorrowedArenas()
 	p.clearRecoveryParser()
 	defer p.clearRecoveryParser()
@@ -451,7 +539,7 @@ func (p *Parser) parseWithTokenSource(source []byte, ts TokenSource, reparseFact
 			tree = p.retryFullParseWithTokenSource(source, ts, initialMaxStacks, deterministicExternalConflicts, tree)
 		}
 	}
-	p.normalizeReturnedParseTree(tree, source)
+	p.normalizeReturnedTreeForParse(tree, source)
 	return tree, nil
 }
 
@@ -462,6 +550,8 @@ func (p *Parser) parseIncrementalWithTokenSource(source []byte, oldTree *Tree, t
 	if ts == nil {
 		return nil, ErrNoTokenSource
 	}
+	endBudget := p.beginParseOperationBudget()
+	defer endBudget()
 	releaseTS := manageTokenSourceLifetime(ts)
 	defer releaseTS()
 	if canReuseUnchangedTree(source, oldTree, p.language) {
@@ -479,6 +569,11 @@ func (p *Parser) parseIncrementalWithTokenSourceChanged(source []byte, oldTree *
 		p.reparseFactory = prevFactory
 	}()
 	tree := p.parseIncrementalInternal(source, oldTree, p.wrapIncludedRanges(ts), nil)
+	// Never hand oldTree to the retry helper: it releases the losing tree,
+	// and oldTree is owned by the caller.
+	if initialMaxStacks := fullParseInitialMaxStacks(p.language, p.maxConflictWidth); tree != oldTree && shouldRetryIncrementalParseAsFull(tree, len(source), initialMaxStacks) {
+		tree = p.retryIncrementalParseAsFullWithTokenSource(source, ts, initialMaxStacks, tree, nil)
+	}
 	p.normalizeReturnedIncrementalTree(tree, oldTree, source)
 	return tree, nil
 }
@@ -679,6 +774,13 @@ type PointSkippableTokenSource interface {
 	SkipToByteWithPoint(offset uint32, pt Point) Token
 }
 
+// tokenSourceRelexer is an internal parser-loop extension for token sources
+// that can re-read a token from its original start after parser state changes.
+type tokenSourceRelexer interface {
+	CanRelexFromTokenStart(tok Token) bool
+	RelexFromTokenStart(tok Token) (Token, bool)
+}
+
 // IncrementalReuseTokenSource is an opt-in marker for custom token sources
 // that are safe for incremental subtree reuse. Implementations must provide
 // stable token boundaries across edits and support deterministic SkipToByte*
@@ -694,6 +796,16 @@ type parserStateTokenSource interface {
 	// can compute valid external symbols as the union across all stacks.
 	// This is critical for grammars with external scanners and GLR conflicts.
 	SetGLRStates(states []StateID)
+}
+
+// errorModeLexingTokenSource is implemented by token sources that honor
+// SetParserState(0) with C-equivalent ERROR-state lexing (LexModes[0], the
+// most permissive mode). The faithful C recovery port uses it to know whether
+// a token lexed while every live stack was absorbing already carries the
+// error-mode identity C's ts_parser__lex would produce (see
+// cRecoverElectionLookaheadSymbol).
+type errorModeLexingTokenSource interface {
+	lexesErrorModeAtErrorState() bool
 }
 
 // stackEntry is a single parser LR-stack entry. The hot path stores real
@@ -719,12 +831,28 @@ func (p *Parser) Parse(source []byte) (*Tree, error) {
 	if err := p.checkDFALexer(); err != nil {
 		return nil, err
 	}
+	endBudget := p.beginParseOperationBudget()
+	defer endBudget()
+	progress := newParseProgressTelemetry(p, len(source), uint32(len(source)), time.Now())
+	if progress.enabled {
+		progress.emit(time.Now(), "parse_entry", 0, 0, Token{}, false, nil, 0, 0, 0, true, 0, 0, "")
+		defer progress.emit(time.Now(), "parse_return", 0, 0, Token{}, false, nil, 0, 0, 0, false, 0, 0, "")
+	}
 	// GSS-forest fast path for languages whose production GLR parse blows up on
 	// deep stack-equivalence (e.g. bash). Returns nil to fall back to the
 	// production parser on any failure, error, or truncation. Off unless
 	// GOT_GLR_FOREST is set; see tryForestFastPath.
+	if progress.enabled {
+		progress.emit(time.Now(), "forest_fast_path_begin", 0, 0, Token{}, false, nil, 0, 0, 0, true, 0, 0, "")
+	}
 	if tree := p.tryForestFastPath(source); tree != nil {
+		if progress.enabled {
+			progress.emit(time.Now(), "forest_fast_path_end", 0, 0, Token{}, false, nil, 0, 0, 0, false, 0, 0, "used=true")
+		}
 		return tree, nil
+	}
+	if progress.enabled {
+		progress.emit(time.Now(), "forest_fast_path_end", 0, 0, Token{}, false, nil, 0, 0, 0, true, 0, 0, "used=false")
 	}
 	endParseBudget := p.enterParseBudget()
 	defer endParseBudget()
@@ -732,29 +860,234 @@ func (p *Parser) Parse(source []byte) (*Tree, error) {
 	p.clearRecoveryParser()
 	defer p.clearRecoveryParser()
 	prevFactory := p.reparseFactory
-	p.reparseFactory = p.dfaReparseFactory()
+	if p.noResultCompatibilityBenchmarkOnly {
+		p.reparseFactory = nil
+	} else {
+		p.reparseFactory = p.dfaReparseFactory()
+	}
 	defer func() {
 		p.reparseFactory = prevFactory
 	}()
-	lexer := NewLexer(p.language.LexStates, source)
-	ts := acquireDFATokenSource(lexer, p.language, p.lookupActionIndex, p.hasKeywordState, p.externalValidByState, p.externalValidMaskByState)
+	if progress.enabled {
+		progress.emit(time.Now(), "token_source_setup_begin", 0, 0, Token{}, false, nil, 0, 0, 0, true, 0, 0, "")
+	}
+	ts := p.acquireParserDFATokenSource(source)
+	if progress.enabled {
+		progress.emit(time.Now(), "token_source_setup_end", 0, 0, Token{}, false, nil, 0, 0, 0, true, 0, 0, "")
+	}
 	if p.noTreeBenchmarkOnly && !p.noTreeCheckpointBenchmarkOnly {
 		ts.usesExternalCheckpoints = false
 	}
 	defer ts.Close()
 	deterministicExternalConflicts := fullParseUsesDeterministicExternalConflicts(p.language)
 	initialMaxStacks := fullParseInitialMaxStacks(p.language, p.maxConflictWidth)
+	if progress.enabled {
+		progress.emit(time.Now(), "parse_internal_begin", 0, 0, Token{}, false, nil, 0, 0, 0, true, 0, 0, fmt.Sprintf("initial_max_stacks=%d deterministic_external_conflicts=%t", initialMaxStacks, deterministicExternalConflicts))
+	}
 	tree := p.parseInternal(source, p.wrapIncludedRanges(ts), nil, nil, arenaClassFull, nil, initialMaxStacks, 0, 0, deterministicExternalConflicts)
+	if progress.enabled {
+		progress.emit(time.Now(), "parse_internal_end", 0, 0, Token{}, false, nil, 0, 0, 0, false, 0, 0, "")
+	}
 	if !p.noTreeBenchmarkOnly {
+		if progress.enabled {
+			progress.emit(time.Now(), "retry_begin", 0, 0, Token{}, false, nil, 0, 0, 0, false, 0, 0, "")
+		}
 		if tree != nil && !tree.ParseStoppedEarly() && !parseStopReasonIsActive(p.activeParseStopReason()) {
 			tree = p.retryFullParseWithDFA(source, initialMaxStacks, deterministicExternalConflicts, tree)
 			if tree != nil && !tree.ParseStoppedEarly() && !parseStopReasonIsActive(p.activeParseStopReason()) && shouldRepeatExternalScannerFullParse(p.language, tree) {
 				tree = p.retryFullParseWithDFA(source, initialMaxStacks, deterministicExternalConflicts, tree)
 			}
 		}
-		p.normalizeReturnedParseTree(tree, source)
+		if progress.enabled {
+			progress.emit(time.Now(), "retry_end", 0, 0, Token{}, false, nil, 0, 0, 0, false, 0, 0, "")
+		}
+		p.normalizeReturnedTreeForParse(tree, source)
+		tree = p.resolveCRecoverySwallowedError(source, tree)
 	}
 	return tree, nil
+}
+
+// resolveCRecoverySwallowedError is a language-agnostic safety net for a
+// defect class in the faithful C error-recovery port (parser_recover_c.go):
+// for a confirmed set of inputs (java/php/gomod malformed-input regressions;
+// see parser_resync_recovery_test.go and
+// grammars/php_parse_regression_test.go,
+// grammars/gomod_parse_regression_test.go) the GLR engine's condense-step
+// cost competition (ts_parser__compare_versions) can select a final result
+// whose lineage discarded C-recovery-owned content in favor of a marker-free
+// sibling, or that itself created a real ERROR node and was never
+// re-validated by another cost competition — see cRecoveryDroppedErrorForClean
+// and cRecoveryUnvalidatedMarker. The real tree-sitter C oracle (verified
+// against the exact pinned grammar commits in grammars/languages.lock) never
+// produces such a marker-free result from a version that needed recovery:
+// every path out of ts_parser__handle_error/ts_parser__recover
+// (recover_to_state, skip_token, recover_eof, missing-token insertion) wraps
+// something in ERROR or MISSING. When that happens and it is the last thing
+// standing between the parse and a clean result, HasError() silently goes
+// false for genuinely malformed input.
+//
+// The check is deliberately narrow and cannot invent new errors or regress
+// existing passing results:
+//   - It fires only when the SELECTED result's own lineage carries the
+//     signal (CRecoveryDroppedErrorForClean, set exclusively in
+//     buildResultFromGLR for the stack that is actually returned — never for
+//     a drop or fork that happened on some other, discarded lineage
+//     elsewhere in the parse) AND the resulting tree is nonetheless
+//     completely clean. Ordinary "recovered cleanly, nothing left over"
+//     results (eds, ledger, authzed, dart, ...) never carry the signal.
+//   - Even then, it only adopts the resync-based fallback's verdict if the
+//     fallback itself completed normally (no timeout/cancellation/truncation)
+//     and its own disagreement stays small in absolute byte size — see
+//     crecoverySwallowedErrorMaxFallbackErrorBytes.
+//
+// In that specific combination this re-parses with the C-recovery gate
+// disabled for this Parser instance (matching GOT_C_RECOVERY=0, i.e. the
+// resync-based engine path that predates the C-recovery default-enablement)
+// and adopts that result only if it actually reports an error; otherwise the
+// original, C-recovery-produced tree is kept unchanged.
+//
+// Scope note: this guarantees HasError() correctness only, not tree shape.
+// The adopted resync fallback can be structurally coarser than what a true,
+// local C-recovery fix would have produced (e.g. the java fixture's adopted
+// tree unwinds much of the method body into top-level ERROR nodes, where the
+// real tree-sitter C oracle produces a narrow (ERROR (type_identifier))) —
+// resync's whole-span ERROR-wrap heuristic (tryOpportunisticTopLevelResyncRecovery)
+// is coarser than C-recovery's local cost competition by design. Fixing that
+// shape gap would require a true local fix inside the C-recovery port itself,
+// which this safety net does not attempt.
+func (p *Parser) resolveCRecoverySwallowedError(source []byte, tree *Tree) *Tree {
+	if p == nil || tree == nil {
+		return tree
+	}
+	if !p.errorCostCompetitionEnabled() {
+		return tree
+	}
+	if p.crecoverySwallowedErrorCheckActive {
+		return tree
+	}
+	if tree.ParseStoppedEarly() {
+		return tree
+	}
+	// Read the signal from the tree's OWN captured ParseRuntime, not the live
+	// p.crecoveryEnteredErrorState/p.crecoveryDroppedErrorForClean parser
+	// fields: parseInternal can run more than once per Parse() call (DFA
+	// retries — see retryFullParseWithDFA), and a discarded retry attempt
+	// would otherwise leak its recovery history into this check even though
+	// it has nothing to do with the tree actually being returned.
+	rt := tree.ParseRuntime()
+	if !rt.CRecoveryEnteredErrorState || !rt.CRecoveryDroppedErrorForClean {
+		// Either this tree never itself hit ts_parser__handle_error, or
+		// recovery resolved cleanly without the selected lineage ever
+		// discarding recovery-owned content for a marker-free sibling.
+		// Nothing to double-check.
+		return tree
+	}
+	root := tree.RootNode()
+	if root == nil || root.HasError() {
+		return tree
+	}
+
+	// defer (not a plain post-call restore) so a panic inside the fallback
+	// Parse call can never leave this Parser instance permanently stuck with
+	// C-recovery disabled.
+	prevGate := p.errorCostCompetition
+	prevCheckActive := p.crecoverySwallowedErrorCheckActive
+	defer func() {
+		p.errorCostCompetition = prevGate
+		p.crecoverySwallowedErrorCheckActive = prevCheckActive
+	}()
+	p.errorCostCompetition = false
+	p.crecoverySwallowedErrorCheckActive = true
+	fallback, err := p.Parse(source)
+	if err != nil || fallback == nil {
+		return tree
+	}
+	markCRecoverySwallowedErrorFallbackAttempted(tree)
+	// A caller-shared timeout/cancellation can trip while the (slower)
+	// resync fallback is running. Adopting a truncated fallback tree with
+	// err == nil would be worse than the swallowed-error bug this safety net
+	// exists to fix, so reject it outright and keep the original result.
+	if fallback.ParseStoppedEarly() || parseStopReasonIsActive(p.activeParseStopReason()) {
+		fallback.Release()
+		return tree
+	}
+	fallbackRoot := fallback.RootNode()
+	if fallbackRoot == nil || !fallbackRoot.HasError() {
+		// The resync-based path agrees the input is clean (or itself
+		// couldn't build a root); keep the original C-recovery result.
+		fallback.Release()
+		return tree
+	}
+	// The resync-based path disagrees, but resync is a coarser, whole-span
+	// ERROR-wrap heuristic (see tryOpportunisticTopLevelResyncRecovery) that
+	// is known to sometimes unwind a large, otherwise-locally-recoverable
+	// span into one ERROR instead of the narrow local recovery C-recovery's
+	// cost competition would have produced — exactly why C-recovery owns
+	// these dead ends by default for highly ambiguous grammars (kotlin's
+	// generic-vs-comparison forks are the confirmed example: resync there
+	// also disagrees, but by unwinding hundreds of bytes of a legitimately
+	// valid, deeply nested lambda expression). Only trust resync's verdict
+	// when its own ERROR/MISSING content stays small in absolute size: the
+	// confirmed defect-class fixtures (java/php/gomod) all fit within a few
+	// dozen bytes — a single malformed token or directive — while resync's
+	// destructive whole-span unwinds run into the hundreds of bytes. A
+	// fraction-of-source threshold does not separate these (java's own
+	// malformed method body is itself a large fraction of its short test
+	// source), so this is deliberately an absolute bound.
+	if errorByteCoverage(fallbackRoot) > crecoverySwallowedErrorMaxFallbackErrorBytes {
+		fallback.Release()
+		return tree
+	}
+	markCRecoverySwallowedErrorFallbackAttempted(fallback)
+	tree.Release()
+	return fallback
+}
+
+// markCRecoverySwallowedErrorFallbackAttempted stamps t's ParseRuntime with
+// CRecoverySwallowedErrorFallbackAttempted=true. Diagnostic bookkeeping only;
+// see the field doc comment in tree.go.
+func markCRecoverySwallowedErrorFallbackAttempted(t *Tree) {
+	if t == nil {
+		return
+	}
+	rt := t.ParseRuntime()
+	rt.CRecoverySwallowedErrorFallbackAttempted = true
+	t.setParseRuntime(rt)
+}
+
+// crecoverySwallowedErrorMaxFallbackErrorBytes bounds how many source bytes
+// the resync fallback's own ERROR/MISSING content may cover before
+// resolveCRecoverySwallowedError distrusts it as too coarse to adopt. Tuned
+// against the confirmed defect-class fixtures — java 44 bytes, gomod 5 bytes,
+// php 1 byte (a zero-width MISSING plus its immediate span) — versus the
+// confirmed destructive resync unwind on ambiguous kotlin input (285 bytes on
+// a 371-byte source). Kept well below that gap.
+const crecoverySwallowedErrorMaxFallbackErrorBytes = 128
+
+// errorByteCoverage returns the number of source bytes covered by the
+// outermost ERROR/MISSING nodes under root (children of an ERROR/MISSING
+// node are not double-counted; their span is already included).
+func errorByteCoverage(root *Node) uint32 {
+	if root == nil {
+		return 0
+	}
+	var covered uint32
+	var walk func(n *Node)
+	walk = func(n *Node) {
+		if n == nil {
+			return
+		}
+		if n.IsError() || n.IsMissing() {
+			span := n.EndByte() - n.StartByte()
+			covered += span
+			return
+		}
+		for i := 0; i < n.ChildCount(); i++ {
+			walk(n.Child(i))
+		}
+	}
+	walk(root)
+	return covered
 }
 
 // ParseStrict is like Parse, but returns ErrParseStoppedEarly when parsing
@@ -808,10 +1141,16 @@ func (p *Parser) ParseNoResultCompatibilityBenchmarkOnly(source []byte) (*Tree, 
 	if p == nil {
 		return nil, ErrNoLanguage
 	}
-	prev := p.noResultCompatibilityBenchmarkOnly
+	prevNoResult := p.noResultCompatibilityBenchmarkOnly
+	prevNoTree := p.noTreeBenchmarkOnly
+	prevCheckpoints := p.noTreeCheckpointBenchmarkOnly
 	p.noResultCompatibilityBenchmarkOnly = true
+	p.noTreeBenchmarkOnly = true
+	p.noTreeCheckpointBenchmarkOnly = false
 	defer func() {
-		p.noResultCompatibilityBenchmarkOnly = prev
+		p.noResultCompatibilityBenchmarkOnly = prevNoResult
+		p.noTreeBenchmarkOnly = prevNoTree
+		p.noTreeCheckpointBenchmarkOnly = prevCheckpoints
 	}()
 	return p.Parse(source)
 }
@@ -882,6 +1221,11 @@ func (p *Parser) ParseWithTokenSourceFactory(source []byte, factory TokenSourceF
 	if factory == nil {
 		return nil, ErrNoTokenSourceFactory
 	}
+	if err := p.checkLanguageCompatible(); err != nil {
+		return nil, err
+	}
+	endBudget := p.beginParseOperationBudget()
+	defer endBudget()
 	ts, err := factory(source)
 	if err != nil {
 		return nil, err
@@ -905,6 +1249,8 @@ func (p *Parser) ParseIncremental(source []byte, oldTree *Tree) (*Tree, error) {
 	if canReuseUnchangedTree(source, oldTree, p.language) {
 		return oldTree, nil
 	}
+	endBudget := p.beginParseOperationBudget()
+	defer endBudget()
 	return p.parseIncrementalChanged(source, oldTree)
 }
 
@@ -921,12 +1267,11 @@ func (p *Parser) parseIncrementalChanged(source []byte, oldTree *Tree) (*Tree, e
 		return nil, err
 	}
 	prevFactory := p.reparseFactory
-	p.reparseFactory = p.dfaReparseFactory()
+	p.reparseFactory = nil
 	defer func() {
 		p.reparseFactory = prevFactory
 	}()
-	lexer := NewLexer(p.language.LexStates, source)
-	ts := acquireDFATokenSource(lexer, p.language, p.lookupActionIndex, p.hasKeywordState, p.externalValidByState, p.externalValidMaskByState)
+	ts := p.acquireParserDFATokenSource(source)
 	defer ts.Close()
 	tree := p.parseIncrementalInternal(source, oldTree, p.wrapIncludedRanges(ts), nil)
 	p.normalizeReturnedIncrementalTree(tree, oldTree, source)
@@ -1002,6 +1347,11 @@ func (p *Parser) ParseIncrementalWithTokenSourceFactory(source []byte, oldTree *
 	if factory == nil {
 		return nil, ErrNoTokenSourceFactory
 	}
+	if err := p.checkLanguageCompatible(); err != nil {
+		return nil, err
+	}
+	endBudget := p.beginParseOperationBudget()
+	defer endBudget()
 	ts, err := factory(source)
 	if err != nil {
 		return nil, err
@@ -1034,6 +1384,8 @@ func (p *Parser) ParseIncrementalProfiled(source []byte, oldTree *Tree) (*Tree, 
 	if canReuseUnchangedTree(source, oldTree, p.language) {
 		return oldTree, IncrementalParseProfile{}, nil
 	}
+	endBudget := p.beginParseOperationBudget()
+	defer endBudget()
 	return p.parseIncrementalChangedProfiled(source, oldTree)
 }
 
@@ -1053,12 +1405,11 @@ func (p *Parser) parseIncrementalChangedProfiled(source []byte, oldTree *Tree) (
 		return nil, IncrementalParseProfile{}, err
 	}
 	prevFactory := p.reparseFactory
-	p.reparseFactory = p.dfaReparseFactory()
+	p.reparseFactory = nil
 	defer func() {
 		p.reparseFactory = prevFactory
 	}()
-	lexer := NewLexer(p.language.LexStates, source)
-	ts := acquireDFATokenSource(lexer, p.language, p.lookupActionIndex, p.hasKeywordState, p.externalValidByState, p.externalValidMaskByState)
+	ts := p.acquireParserDFATokenSource(source)
 	defer ts.Close()
 	timing := &incrementalParseTiming{}
 	tree := p.parseIncrementalInternal(source, oldTree, p.wrapIncludedRanges(ts), timing)
@@ -1072,6 +1423,8 @@ func (p *Parser) ParseIncrementalWithTokenSourceProfiled(source []byte, oldTree 
 	if err := p.checkLanguageCompatible(); err != nil {
 		return nil, IncrementalParseProfile{}, err
 	}
+	endBudget := p.beginParseOperationBudget()
+	defer endBudget()
 	releaseTS := manageTokenSourceLifetime(ts)
 	defer releaseTS()
 	if canReuseUnchangedTree(source, oldTree, p.language) {
@@ -1090,6 +1443,11 @@ func (p *Parser) parseIncrementalWithTokenSourceChangedProfiled(source []byte, o
 	}()
 	timing := &incrementalParseTiming{}
 	tree := p.parseIncrementalInternal(source, oldTree, p.wrapIncludedRanges(ts), timing)
+	// Never hand oldTree to the retry helper: it releases the losing tree,
+	// and oldTree is owned by the caller.
+	if initialMaxStacks := fullParseInitialMaxStacks(p.language, p.maxConflictWidth); tree != oldTree && shouldRetryIncrementalParseAsFull(tree, len(source), initialMaxStacks) {
+		tree = p.retryIncrementalParseAsFullWithTokenSource(source, ts, initialMaxStacks, tree, timing)
+	}
 	p.normalizeReturnedIncrementalTree(tree, oldTree, source)
 	return tree, timing.toProfile(), nil
 }

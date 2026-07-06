@@ -1,9 +1,12 @@
 package gotreesitter
 
 import (
+	"bytes"
 	"unicode/utf8"
 	"unsafe"
 )
+
+var utf8BOM = []byte{0xef, 0xbb, 0xbf}
 
 // Point is a row/column position in source text.
 type Point struct {
@@ -23,6 +26,11 @@ type Token struct {
 	// NoLookahead marks a synthetic EOF used to force EOF-table reductions
 	// without consuming input, matching tree-sitter's lex_state = -1.
 	NoLookahead bool
+	// ExternalScannerToken marks tokens produced by an external scanner.
+	// ExternalScannerStartByte is the byte offset where that scanner call
+	// began, before scanner-side skip advances moved StartByte forward.
+	ExternalScannerToken     bool
+	ExternalScannerStartByte uint32
 }
 
 func bytesToStringNoCopy(b []byte) string {
@@ -42,6 +50,31 @@ type Lexer struct {
 	col             uint32
 	immediateTokens []bool // symbol IDs that are token.immediate(); rejected after whitespace skip
 	zeroWidthTokens []bool // symbol IDs whose terminal pattern can intentionally match empty input
+
+	// Set by scan on failure: where the token attempt began after the DFA
+	// consumed skip (whitespace) transitions. errorRunToken uses this so an
+	// unlexable run starts after legitimately skipped whitespace, like C.
+	failTokenStartPos int
+	failTokenStartRow uint32
+	failTokenStartCol uint32
+
+	// The grammar's most permissive lex state (LexModes[0], C's ERROR_STATE
+	// mode). NextWithErrorRuns only emits an error-run token when even this
+	// state cannot lex at a position — mirroring C, which retries failed
+	// lexes in error mode before skipping characters into an error subtree.
+	errorRunLexState    uint32
+	hasErrorRunLexState bool
+
+	// errorModeRetry enables the full C ts_parser__lex failure behavior for
+	// NextWithErrorRuns (faithful C error-recovery port, parser_recover_c.go):
+	// when the requested lex state fails, re-lex from the call's start
+	// position in errorRunLexState and return THAT token — C switches
+	// lex_mode to the ERROR_STATE mode and continues, surfacing real (often
+	// invisible) tokens like scheme's block_comment_token1 which the recovery
+	// then absorbs as hidden error-region leaves. Without the flag, a failed
+	// scan falls through to the error-run check / silent skip exactly as
+	// before.
+	errorModeRetry bool
 }
 
 // NewLexer creates a new Lexer that will tokenize source using the given
@@ -57,6 +90,25 @@ func NewLexer(states []LexState, source []byte) *Lexer {
 // It automatically skips tokens from states where Skip=true (whitespace).
 // Returns a zero-Symbol token with StartByte==EndByte at EOF.
 func (l *Lexer) Next(startState uint32) Token {
+	return l.next(startState, false)
+}
+
+// NextWithErrorRuns behaves like Next, except that bytes for which no
+// accepting DFA state exists are not silently dropped: the whole unlexable
+// run is consumed and returned as an errorSymbol token. This mirrors C
+// ts_parser__lex, which surfaces skipped characters as an error subtree —
+// the run starts after any whitespace the DFA legitimately skipped and ends
+// at the first position where a token can be lexed (or EOF).
+func (l *Lexer) NextWithErrorRuns(startState uint32) Token {
+	return l.next(startState, true)
+}
+
+func (l *Lexer) next(startState uint32, emitErrorRuns bool) Token {
+	l.skipLeadingBOM()
+	// C ts_parser__lex resets to the lex call's start position (before any
+	// whitespace the failed attempt skipped) when it switches to error-mode
+	// lexing; capture it for the errorModeRetry branch below.
+	callStartPos, callStartRow, callStartCol := l.pos, l.row, l.col
 	for {
 		// EOF check.
 		if l.pos >= len(l.source) {
@@ -86,8 +138,79 @@ func (l *Lexer) Next(startState uint32) Token {
 			return tok
 		}
 
+		if emitErrorRuns && l.hasErrorRunLexState && l.errorModeRetry && startState != l.errorRunLexState {
+			// Faithful C error-recovery port: ts_parser__lex retries a failed
+			// lex in the ERROR_STATE mode (LexModes[0]) from the call's start
+			// position and returns its token; characters are skipped into an
+			// errorSymbol run only when even error mode cannot lex. The
+			// recursive call has startState == errorRunLexState, so it takes
+			// the error-run branch below on failure instead of recursing.
+			l.pos, l.row, l.col = callStartPos, callStartRow, callStartCol
+			return l.next(l.errorRunLexState, true)
+		}
+		if emitErrorRuns && l.hasErrorRunLexState && !l.canLexAt(l.errorRunLexState, tokenStartPos, tokenStartRow, tokenStartCol) {
+			return l.errorRunToken()
+		}
 		// No accepting state was found. Skip one rune as error recovery.
 		l.skipOneRune()
+	}
+}
+
+func (l *Lexer) skipLeadingBOM() {
+	if l == nil || l.pos != 0 || !bytes.HasPrefix(l.source, utf8BOM) {
+		return
+	}
+	l.pos = len(utf8BOM)
+	l.col = uint32(len(utf8BOM))
+}
+
+// canLexAt reports whether the DFA can lex a token (or whitespace skip)
+// starting at the given position, without moving the lexer.
+func (l *Lexer) canLexAt(lexState uint32, pos int, row, col uint32) bool {
+	savedPos, savedRow, savedCol := l.pos, l.row, l.col
+	_, ok := l.scan(lexState, pos, row, col)
+	l.pos, l.row, l.col = savedPos, savedRow, savedCol
+	return ok
+}
+
+// errorRunToken consumes the unlexable run beginning at the last failed
+// scan's token start (i.e. after any whitespace the DFA skipped) and returns
+// it as an errorSymbol token. The run ends at the first position where the
+// error-mode lex state can lex again, matching C's character-by-character
+// error skipping.
+func (l *Lexer) errorRunToken() Token {
+	// Position the lexer at the real error start: scan records where the
+	// token attempt began after consuming skip (whitespace) transitions.
+	if l.failTokenStartPos > l.pos && l.failTokenStartPos <= len(l.source) {
+		l.pos = l.failTokenStartPos
+		l.row = l.failTokenStartRow
+		l.col = l.failTokenStartCol
+	}
+	if l.pos >= len(l.source) {
+		// Only whitespace remained: this is end-of-input, not an error run.
+		return Token{
+			StartByte:  uint32(l.pos),
+			EndByte:    uint32(l.pos),
+			StartPoint: Point{Row: l.row, Column: l.col},
+			EndPoint:   Point{Row: l.row, Column: l.col},
+		}
+	}
+	startPos, startRow, startCol := l.pos, l.row, l.col
+
+	l.skipOneRune()
+	for l.pos < len(l.source) {
+		if l.canLexAt(l.errorRunLexState, l.pos, l.row, l.col) {
+			break
+		}
+		l.skipOneRune()
+	}
+	return Token{
+		Symbol:     errorSymbol,
+		Text:       bytesToStringNoCopy(l.source[startPos:l.pos]),
+		StartByte:  uint32(startPos),
+		EndByte:    uint32(l.pos),
+		StartPoint: Point{Row: startRow, Column: startCol},
+		EndPoint:   Point{Row: l.row, Column: l.col},
 	}
 }
 
@@ -217,7 +340,35 @@ func (l *Lexer) scan(startState uint32, startPos int, startRow, startCol uint32)
 		curState = nextState
 	}
 
+	if acceptPos < 0 && eofHops > 0 {
+		// The DFA walk reached true EOF mid-scan and exhausted the per-state
+		// EOF-transition chain (tree-sitter's universal "if (eof) ADVANCE(...)"
+		// escape hatch, e.g. C case87 -> case99 in a compiled grammar's ts_lex)
+		// without any state along the way registering a real accept. In C
+		// tree-sitter, the chain's terminal state always calls
+		// ACCEPT_TOKEN(ts_builtin_sym_end) before END_STATE(), so a partially
+		// matched multi-character token (like AWK's "\\\n" line-continuation
+		// extras, which SKIPs the backslash before discovering there's no
+		// following newline) is silently absorbed as trivia at true EOF
+		// instead of failing the lex. Mirror that: accept an empty/skip token
+		// at the position reached (after any SKIP-consumed prefix). This only
+		// fires when nothing else was accepted along the path, so it can't
+		// override a real token match (e.g. an identifier ending at EOF
+		// accepts before its state's EOF check would ever run).
+		acceptPos = scanPos
+		acceptRow = scanRow
+		acceptCol = scanCol
+		acceptStartPos = tokenStartPos
+		acceptStartRow = tokenStartRow
+		acceptStartCol = tokenStartCol
+		acceptSymbol = 0
+		acceptSkip = true
+	}
+
 	if acceptPos < 0 {
+		l.failTokenStartPos = tokenStartPos
+		l.failTokenStartRow = tokenStartRow
+		l.failTokenStartCol = tokenStartCol
 		return Token{}, false
 	}
 

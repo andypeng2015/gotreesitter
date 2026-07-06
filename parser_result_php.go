@@ -1,68 +1,148 @@
 package gotreesitter
 
 func normalizePHPCompatibility(root *Node, source []byte, parser *Parser, lang *Language) {
-	normalizePHPCollapsedModifierChildren(root, source, lang)
 	normalizePHPSingletonTypeWrappers(root, lang)
+	normalizePHPListLiteralDestructuringTargets(root, lang)
 	normalizePHPStaticFunctionFragments(root, source, parser, lang)
 }
 
-func normalizePHPCollapsedModifierChildren(root *Node, source []byte, lang *Language) {
-	if root == nil || lang == nil || lang.Name != "php" || len(source) == 0 {
+// normalizePHPListLiteralDestructuringTargets retypes array_creation_expression
+// nodes that sit in destructuring-target positions into list_literal, matching
+// tree-sitter-c.
+//
+// In the C grammar the assignment_expression `left` field and the foreach value
+// position only accept `_variable | list_literal`; an array literal there is
+// always parsed as `_array_destructing` (aliased `list_literal`) with its
+// elements as bare children. Go's GLR keeps the array_creation_expression /
+// array_element_initializer interpretation for some of these inputs (notably
+// `key => value` and pair-valued foreach elements), so retype + unwrap to match
+// C byte-for-byte.
+func normalizePHPListLiteralDestructuringTargets(root *Node, lang *Language) {
+	if root == nil || lang == nil || lang.Name != "php" {
 		return
 	}
-	staticParent, staticParentOK := phpNamedSymbol(lang, "static_modifier")
-	staticChild, staticChildOK := phpAnonymousSymbol(lang, "static")
-	abstractParent, abstractParentOK := phpNamedSymbol(lang, "abstract_modifier")
-	abstractChild, abstractChildOK := phpAnonymousSymbol(lang, "abstract")
-	finalParent, finalParentOK := phpNamedSymbol(lang, "final_modifier")
-	finalChild, finalChildOK := phpAnonymousSymbol(lang, "final")
-	readonlyParent, readonlyParentOK := phpNamedSymbol(lang, "readonly_modifier")
-	readonlyChild, readonlyChildOK := phpAnonymousSymbol(lang, "readonly")
-	visibilityParent, visibilityParentOK := phpNamedSymbol(lang, "visibility_modifier")
-	publicChild, publicChildOK := phpAnonymousSymbol(lang, "public")
-	protectedChild, protectedChildOK := phpAnonymousSymbol(lang, "protected")
-	privateChild, privateChildOK := phpAnonymousSymbol(lang, "private")
+	arraySym, arrayOK := symbolByName(lang, "array_creation_expression")
+	listSym, listNamed, listOK := symbolMeta(lang, "list_literal")
+	initSym, initOK := symbolByName(lang, "array_element_initializer")
+	asSym, asOK := phpAnonymousSymbol(lang, "as")
+	if !arrayOK || !listOK || !initOK || !asOK {
+		return
+	}
 
-	walkResultTree(root, func(n *Node) {
-		if n == nil || resultChildCount(n) != 0 || int(n.startByte) > len(source) || int(n.endByte) > len(source) || n.startByte > n.endByte {
+	retype := func(arr *Node) {
+		if arr == nil || arr.symbol != arraySym {
 			return
 		}
-		switch n.symbol {
-		case staticParent:
-			if staticParentOK && staticChildOK && phpNodeSourceEquals(n, source, "static") {
-				phpRestoreCollapsedModifierChild(n, staticChild, lang)
+		phpRetypeArrayToListLiteral(arr, listSym, listNamed, initSym, lang)
+	}
+
+	walkResultTree(root, func(n *Node) {
+		switch n.Type(lang) {
+		case "assignment_expression":
+			retype(phpAssignmentLeft(n, lang))
+		case "foreach_statement":
+			value := phpForeachValueChild(n, asSym)
+			if value == nil {
+				return
 			}
-		case abstractParent:
-			if abstractParentOK && abstractChildOK && phpNodeSourceEquals(n, source, "abstract") {
-				phpRestoreCollapsedModifierChild(n, abstractChild, lang)
+			if value.Type(lang) == "pair" {
+				retype(phpPairValue(value))
+				return
 			}
-		case finalParent:
-			if finalParentOK && finalChildOK && phpNodeSourceEquals(n, source, "final") {
-				phpRestoreCollapsedModifierChild(n, finalChild, lang)
-			}
-		case readonlyParent:
-			if readonlyParentOK && readonlyChildOK && phpNodeSourceEquals(n, source, "readonly") {
-				phpRestoreCollapsedModifierChild(n, readonlyChild, lang)
-			}
-		case visibilityParent:
-			switch {
-			case visibilityParentOK && publicChildOK && phpNodeSourceEquals(n, source, "public"):
-				phpRestoreCollapsedModifierChild(n, publicChild, lang)
-			case visibilityParentOK && protectedChildOK && phpNodeSourceEquals(n, source, "protected"):
-				phpRestoreCollapsedModifierChild(n, protectedChild, lang)
-			case visibilityParentOK && privateChildOK && phpNodeSourceEquals(n, source, "private"):
-				phpRestoreCollapsedModifierChild(n, privateChild, lang)
-			}
+			retype(value)
 		}
 	})
 }
 
-func phpNamedSymbol(lang *Language, name string) (Symbol, bool) {
-	sym, ok := lang.symbolByNameAndNamed(name, true)
-	if ok {
-		return sym, true
+// phpAssignmentLeft returns the child of an assignment_expression carrying the
+// `left` field.
+func phpAssignmentLeft(n *Node, lang *Language) *Node {
+	if n == nil {
+		return nil
 	}
-	return symbolByName(lang, name)
+	leftField, ok := lang.FieldByName("left")
+	if !ok {
+		return nil
+	}
+	count := resultChildCount(n)
+	children := resultChildSliceForMutation(n)
+	for i := 0; i < count && i < len(n.fieldIDs); i++ {
+		if n.fieldIDs[i] == leftField && i < len(children) {
+			return children[i]
+		}
+	}
+	return nil
+}
+
+// phpForeachValueChild returns the named child of a foreach_statement that holds
+// the loop value, i.e. the first named child following the anonymous `as` token.
+func phpForeachValueChild(n *Node, asSym Symbol) *Node {
+	if n == nil {
+		return nil
+	}
+	count := resultChildCount(n)
+	sawAs := false
+	for i := 0; i < count; i++ {
+		child := resultChildAt(n, i)
+		if child == nil {
+			continue
+		}
+		if !sawAs {
+			if child.symbol == asSym {
+				sawAs = true
+			}
+			continue
+		}
+		if child.IsNamed() {
+			return child
+		}
+	}
+	return nil
+}
+
+// phpPairValue returns the value side (last named child) of a foreach `pair`.
+func phpPairValue(pair *Node) *Node {
+	if pair == nil {
+		return nil
+	}
+	count := resultChildCount(pair)
+	for i := count - 1; i >= 0; i-- {
+		child := resultChildAt(pair, i)
+		if child != nil && child.IsNamed() {
+			return child
+		}
+	}
+	return nil
+}
+
+// phpRetypeArrayToListLiteral converts an array_creation_expression node into a
+// list_literal in place, unwrapping each array_element_initializer child so its
+// inner nodes become direct children (matching C's _array_destructing shape).
+func phpRetypeArrayToListLiteral(arr *Node, listSym Symbol, listNamed bool, initSym Symbol, lang *Language) {
+	if arr == nil {
+		return
+	}
+	children := resultChildSliceForMutation(arr)
+	out := make([]*Node, 0, len(children))
+	unwrapped := false
+	for _, child := range children {
+		if child == nil {
+			out = append(out, child)
+			continue
+		}
+		if child.symbol == initSym {
+			inner := resultChildSliceForMutation(child)
+			out = append(out, inner...)
+			unwrapped = true
+			continue
+		}
+		out = append(out, child)
+	}
+	arr.symbol = listSym
+	arr.setNamed(listNamed)
+	if unwrapped {
+		replaceNodeChildrenUnfielded(arr, cloneNodeSliceInArena(arr.ownerArena, out))
+	}
 }
 
 func phpAnonymousSymbol(lang *Language, name string) (Symbol, bool) {
@@ -71,26 +151,6 @@ func phpAnonymousSymbol(lang *Language, name string) (Symbol, bool) {
 		return sym, true
 	}
 	return symbolByName(lang, name)
-}
-
-func phpNodeSourceEquals(n *Node, source []byte, want string) bool {
-	if n == nil || int(n.endByte) > len(source) || n.startByte > n.endByte || int(n.endByte-n.startByte) != len(want) {
-		return false
-	}
-	got := source[n.startByte:n.endByte]
-	for i := range got {
-		if got[i] != want[i] {
-			return false
-		}
-	}
-	return true
-}
-
-func phpRestoreCollapsedModifierChild(n *Node, childSym Symbol, lang *Language) {
-	child := newLeafNodeInArena(n.ownerArena, childSym, symbolIsNamed(lang, childSym), n.startByte, n.endByte, n.startPoint, n.endPoint)
-	child.parent = n
-	child.childIndex = 0
-	n.children = cloneNodeSliceInArena(n.ownerArena, []*Node{child})
 }
 
 func normalizePHPSingletonTypeWrappers(root *Node, lang *Language) {
@@ -715,7 +775,7 @@ func phpReparsedTopLevelSuffix(source []byte, start uint32, parser *Parser, lang
 	wrapped := make([]byte, 0, len(prefix)+len(source)-int(start))
 	wrapped = append(wrapped, prefix...)
 	wrapped = append(wrapped, source[start:]...)
-	tree, err := parseWithSnippetParser(lang, wrapped)
+	tree, err := parseWithSnippetParserInheriting(lang, wrapped, parser)
 	if err != nil || tree == nil || tree.RootNode() == nil {
 		return nil, false
 	}

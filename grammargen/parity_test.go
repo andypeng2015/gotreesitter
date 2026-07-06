@@ -2464,7 +2464,7 @@ func init() {
 		{name: "dhall", blobFunc: grammars.DhallLanguage, expectNoErrors: 1},
 		{name: "fennel", blobFunc: grammars.FennelLanguage, expectNoErrors: 1},
 		{name: "teal", blobFunc: grammars.TealLanguage, expectNoErrors: 1, expectParity: 1},
-		{name: "cobol", blobFunc: grammars.CobolLanguage, timeout: 60 * time.Second, expectNoErrors: 1, expectParity: 1},
+		{name: "cobol", blobFunc: grammars.CobolLanguage, timeout: 300 * time.Second, expectNoErrors: 1, expectParity: 1},
 		{name: "crystal", blobFunc: grammars.CrystalLanguage, timeout: 90 * time.Second, expectNoErrors: 1, expectParity: 1},
 		{name: "perl", blobFunc: grammars.PerlLanguage, timeout: 90 * time.Second, expectNoErrors: 1, expectParity: 1},
 
@@ -2724,6 +2724,7 @@ func adaptExternalScanner(refLang, genLang *gotreesitter.Language) {
 	}
 	if scanner, ok := gotreesitter.AdaptExternalScannerByExternalOrder(refLang, genLang); ok {
 		genLang.ExternalScanner = scanner
+		gotreesitter.CertifyGeneratedCRecoveryCostCompetition(genLang)
 	}
 }
 

@@ -96,3 +96,76 @@ func TestEmbeddedReduceChainHints(t *testing.T) {
 		})
 	}
 }
+
+func TestDecodeLanguageBlobDataInfersGeneratedRepeatAuxMetadata(t *testing.T) {
+	lang := &gotreesitter.Language{
+		TokenCount: 2,
+		SymbolNames: []string{
+			"end",
+			"token_repeat1",
+			"module_repeat1",
+			"visible_repeat2",
+			"named_repeat3",
+		},
+		SymbolMetadata: []gotreesitter.SymbolMetadata{
+			{Name: "end", Named: true},
+			{},
+			{},
+			{Visible: true},
+			{Named: true},
+		},
+	}
+
+	decoded, err := decodeLanguageBlobData("tiny.bin", encodeLanguageBlobForTest(t, lang))
+	if err != nil {
+		t.Fatalf("decodeLanguageBlobData: %v", err)
+	}
+	if !decoded.SymbolMetadata[2].GeneratedRepeatAux {
+		t.Fatal("decodeLanguageBlobData did not infer GeneratedRepeatAux for invisible anonymous module_repeat1")
+	}
+	for _, idx := range []int{1, 3, 4} {
+		if decoded.SymbolMetadata[idx].GeneratedRepeatAux {
+			t.Fatalf("SymbolMetadata[%d].GeneratedRepeatAux = true, want false", idx)
+		}
+	}
+}
+
+func TestDhallUnicodeAnonymousSymbolNamesDecodeOnLoad(t *testing.T) {
+	t.Cleanup(func() { PurgeEmbeddedLanguageCache() })
+
+	lang := DhallLanguage()
+	sym, ok := lang.SymbolByName("\u2192")
+	if !ok {
+		t.Fatal("DhallLanguage missing decoded anonymous arrow symbol")
+	}
+	if int(sym) >= len(lang.SymbolNames) {
+		t.Fatalf("arrow symbol %d out of SymbolNames range %d", sym, len(lang.SymbolNames))
+	}
+	if got := lang.SymbolNames[sym]; got != "\u2192" {
+		t.Fatalf("SymbolNames[%d] = %q, want decoded arrow", sym, got)
+	}
+	if int(sym) >= len(lang.SymbolMetadata) {
+		t.Fatalf("arrow symbol %d out of SymbolMetadata range %d", sym, len(lang.SymbolMetadata))
+	}
+	meta := lang.SymbolMetadata[sym]
+	if meta.Name != "\u2192" || !meta.Visible || meta.Named {
+		t.Fatalf("arrow metadata = %+v, want visible anonymous decoded arrow", meta)
+	}
+	if _, ok := lang.SymbolByName(`\u2192`); ok {
+		t.Fatal("DhallLanguage still exposes escaped arrow symbol name")
+	}
+}
+
+func TestDecodeDhallAnonymousUnicodeEscapesPreservesInvalidEscapes(t *testing.T) {
+	cases := []string{
+		`\uZZZZ`,
+		`\u219`,
+		`\uD83D`,
+		`\u{}`,
+	}
+	for _, tc := range cases {
+		if got := decodeDhallAnonymousUnicodeEscapes(tc); got != tc {
+			t.Fatalf("decodeDhallAnonymousUnicodeEscapes(%q) = %q, want unchanged", tc, got)
+		}
+	}
+}

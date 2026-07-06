@@ -26,8 +26,14 @@ func TestExtendGrammarCopiesImportMetadata(t *testing.T) {
 	base.BinaryRepeatMode = true
 	base.FlattenGeneratedRepeatAux = true
 	base.ReuseRepeatAuxForParents = []string{"program", "statement_list"}
+	base.PreferExpressionOperatorIdentifierReduces = true
+	base.PreferParenthesizedCallDoBlockReduces = true
+	base.PreferRemoteCallOperatorReduces = true
+	base.PreferStabClauseLeftArrowReduces = true
+	base.PreferPreciseExternalLexStates = true
 	base.ChoiceLiftThreshold = 16
 	base.ExactPrefixStates = 2048
+	base.PreserveHiddenChoicePassthrough = []string{"_capture_expression"}
 	base.Test("identifier", "abc", "")
 
 	extended := ExtendGrammar("extended", base, func(g *Grammar) {
@@ -47,6 +53,21 @@ func TestExtendGrammarCopiesImportMetadata(t *testing.T) {
 	if !extended.FlattenGeneratedRepeatAux {
 		t.Fatalf("extension did not inherit generated repeat flattening flag")
 	}
+	if !extended.PreferExpressionOperatorIdentifierReduces {
+		t.Fatalf("extension did not inherit operator-identifier reduce preference flag")
+	}
+	if !extended.PreferParenthesizedCallDoBlockReduces {
+		t.Fatalf("extension did not inherit parenthesized-call do-block reduce preference flag")
+	}
+	if !extended.PreferRemoteCallOperatorReduces {
+		t.Fatalf("extension did not inherit remote-call operator reduce preference flag")
+	}
+	if !extended.PreferStabClauseLeftArrowReduces {
+		t.Fatalf("extension did not inherit stab-clause-left arrow reduce preference flag")
+	}
+	if !extended.PreferPreciseExternalLexStates {
+		t.Fatalf("extension did not inherit precise external lex-state preference flag")
+	}
 	if !slices.Equal(extended.ReuseRepeatAuxForParents, []string{"program", "statement_list"}) {
 		t.Fatalf("ReuseRepeatAuxForParents = %v, want [program statement_list]", extended.ReuseRepeatAuxForParents)
 	}
@@ -55,6 +76,9 @@ func TestExtendGrammarCopiesImportMetadata(t *testing.T) {
 	}
 	if extended.ExactPrefixStates != 2048 {
 		t.Fatalf("ExactPrefixStates = %d, want 2048", extended.ExactPrefixStates)
+	}
+	if !slices.Equal(extended.PreserveHiddenChoicePassthrough, []string{"_capture_expression"}) {
+		t.Fatalf("PreserveHiddenChoicePassthrough = %v, want [_capture_expression]", extended.PreserveHiddenChoicePassthrough)
 	}
 	if got := extended.Word; got != "identifier" {
 		t.Fatalf("Word = %q, want identifier", got)
@@ -100,8 +124,14 @@ func TestEmitGrammarGoIncludesImportMetadata(t *testing.T) {
 	g.BinaryRepeatMode = true
 	g.FlattenGeneratedRepeatAux = true
 	g.ReuseRepeatAuxForParents = []string{"program"}
+	g.PreferExpressionOperatorIdentifierReduces = true
+	g.PreferParenthesizedCallDoBlockReduces = true
+	g.PreferRemoteCallOperatorReduces = true
+	g.PreferStabClauseLeftArrowReduces = true
+	g.PreferPreciseExternalLexStates = true
 	g.ChoiceLiftThreshold = 8
 	g.ExactPrefixStates = 2048
+	g.PreserveHiddenChoicePassthrough = []string{"_capture_expression"}
 	g.Test("valid identifier", "abc", "(program (identifier))")
 	g.TestError("invalid identifier", "123")
 
@@ -119,14 +149,36 @@ func TestEmitGrammarGoIncludesImportMetadata(t *testing.T) {
 		"g.FlattenGeneratedRepeatAux = true",
 		"g.ReuseRepeatAuxForParents = []string{",
 		"\"program\"",
+		"g.PreferExpressionOperatorIdentifierReduces = true",
+		"g.PreferParenthesizedCallDoBlockReduces = true",
+		"g.PreferRemoteCallOperatorReduces = true",
+		"g.PreferStabClauseLeftArrowReduces = true",
+		"g.PreferPreciseExternalLexStates = true",
 		"g.ChoiceLiftThreshold = 8",
 		"g.ExactPrefixStates = 2048",
+		"g.PreserveHiddenChoicePassthrough = []string{",
+		"\"_capture_expression\"",
 		"g.Test(\"valid identifier\", \"abc\", \"(program (identifier))\")",
 		"g.TestError(\"invalid identifier\", \"123\")",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("emitted source missing %q:\n%s", want, text)
 		}
+	}
+}
+
+func TestExpandInlineRulesPreservesHiddenChoicePassthrough(t *testing.T) {
+	g := NewGrammar("metadata")
+	g.Define("program", Sym("inline_rule"))
+	g.Define("inline_rule", Sym("_capture_expression"))
+	g.Define("_capture_expression", Choice(Sym("identifier"), Seq(Sym("&"), Sym("identifier"))))
+	g.Define("identifier", Pat(`[a-z]+`))
+	g.SetInline("inline_rule")
+	g.PreserveHiddenChoicePassthrough = []string{"_capture_expression"}
+
+	expanded := expandInlineRules(g)
+	if !slices.Equal(expanded.PreserveHiddenChoicePassthrough, []string{"_capture_expression"}) {
+		t.Fatalf("PreserveHiddenChoicePassthrough = %v, want [_capture_expression]", expanded.PreserveHiddenChoicePassthrough)
 	}
 }
 

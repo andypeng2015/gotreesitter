@@ -4,10 +4,60 @@ func normalizeElixirCompatibility(root *Node, source []byte, lang *Language) {
 	if root == nil || lang == nil || lang.Name != "elixir" {
 		return
 	}
+	normalizeElixirNewlineBeforeCommentExtras(root, lang)
 	normalizeElixirNestedCallTargetFields(root, lang)
 	normalizeElixirCollapsedLiteralChildren(root, source, lang)
 	normalizeElixirMapContentKeywordPairs(root, lang)
 	normalizeElixirMapContentBinaryOperators(root, lang)
+}
+
+func normalizeElixirNewlineBeforeCommentExtras(root *Node, lang *Language) {
+	if root == nil || lang == nil || lang.Name != "elixir" {
+		return
+	}
+	newlineSym, ok := symbolByName(lang, "_newline_before_comment")
+	if !ok {
+		return
+	}
+	walkResultTree(root, func(n *Node) {
+		if n == nil || resultChildCount(n) == 0 {
+			return
+		}
+		view := resultMutableChildrenForMutation(n)
+		if view.hasFinalChildRefs() {
+			changed := false
+			for i := 0; i < view.Len(); i++ {
+				entry, ok := view.Entry(i)
+				if ok && stackEntryNodeSymbol(entry) == newlineSym {
+					changed = true
+					break
+				}
+			}
+			if changed {
+				view.FilterFinalRefs(func(_ int, entry stackEntry) bool {
+					return stackEntryNodeSymbol(entry) != newlineSym
+				})
+			}
+			return
+		}
+		children := resultChildSliceForMutation(n)
+		filtered := children[:0]
+		changed := false
+		for _, child := range children {
+			if child == nil {
+				changed = true
+				continue
+			}
+			if child.symbol == newlineSym {
+				changed = true
+				continue
+			}
+			filtered = append(filtered, child)
+		}
+		if changed {
+			replaceNodeChildrenUnfielded(n, cloneNodeSliceIfArena(n.ownerArena, filtered))
+		}
+	})
 }
 
 func normalizeElixirNestedCallTargetFields(root *Node, lang *Language) {
@@ -32,7 +82,6 @@ func normalizeElixirNestedCallTargetFields(root *Node, lang *Language) {
 }
 
 func normalizeElixirCollapsedLiteralChildren(root *Node, source []byte, lang *Language) {
-	normalizeCollapsedNamedLeafChildrenBySource(root, source, lang, "boolean", "true", "false")
 	normalizeCollapsedNamedLeafChildrenBySource(root, source, lang, "nil", "nil")
 }
 

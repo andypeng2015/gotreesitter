@@ -13,15 +13,17 @@ import (
 // BuildLanguage materializes a runtime language directly from extracted parser data.
 func BuildLanguage(g *ExtractedGrammar) *gotreesitter.Language {
 	lang := &gotreesitter.Language{
-		Name:               g.Name,
-		SymbolCount:        uint32(g.SymbolCount),
-		TokenCount:         uint32(g.TokenCount),
-		ExternalTokenCount: uint32(g.ExternalTokenCount),
-		StateCount:         uint32(g.StateCount),
-		LargeStateCount:    uint32(g.LargeStateCount),
-		FieldCount:         uint32(g.FieldCount),
-		ProductionIDCount:  uint32(g.ProductionIDCount),
-		InitialState:       1,
+		Name:                                     g.Name,
+		SymbolCount:                              uint32(g.SymbolCount),
+		TokenCount:                               uint32(g.TokenCount),
+		ExternalTokenCount:                       uint32(g.ExternalTokenCount),
+		StateCount:                               uint32(g.StateCount),
+		LargeStateCount:                          uint32(g.LargeStateCount),
+		FieldCount:                               uint32(g.FieldCount),
+		ProductionIDCount:                        uint32(g.ProductionIDCount),
+		InitialState:                             1,
+		CRecoveryCostCompetitionCapable:          g.CRecoveryCostCompetitionCapable,
+		CRecoveryCostCompetitionEnabledByDefault: g.CRecoveryCostCompetitionEnabledByDefault,
 	}
 
 	if len(g.SymbolNames) > 0 {
@@ -163,7 +165,50 @@ func BuildLanguage(g *ExtractedGrammar) *gotreesitter.Language {
 		}
 	}
 
+	gotreesitter.InferGeneratedRepeatAuxMetadata(lang)
+	lang.ConflictPolicies = buildConflictPolicies(g, lang)
+
 	return lang
+}
+
+func buildConflictPolicies(g *ExtractedGrammar, lang *gotreesitter.Language) []gotreesitter.ConflictPolicy {
+	if g == nil || lang == nil || len(g.ConflictPolicies) == 0 {
+		return nil
+	}
+	policies := make([]gotreesitter.ConflictPolicy, 0, len(g.ConflictPolicies))
+	for _, policy := range g.ConflictPolicies {
+		if policy.Kind != "repetition_shift" || policy.State < 0 || policy.Lookahead < 0 {
+			continue
+		}
+		reduceSymbols := make([]gotreesitter.Symbol, 0, len(policy.ReduceSymbols))
+		reject := false
+		for _, sym := range policy.ReduceSymbols {
+			if sym < 0 {
+				reject = true
+				break
+			}
+			runtimeSym := gotreesitter.Symbol(sym)
+			if languageSymbolIsGeneratedRepeatAux(lang, runtimeSym) {
+				reject = true
+				break
+			}
+			reduceSymbols = append(reduceSymbols, runtimeSym)
+		}
+		if reject {
+			continue
+		}
+		policies = append(policies, gotreesitter.ConflictPolicy{
+			State:         gotreesitter.StateID(policy.State),
+			Lookahead:     gotreesitter.Symbol(policy.Lookahead),
+			Kind:          gotreesitter.ConflictPolicyRepetitionShift,
+			ReduceSymbols: reduceSymbols,
+		})
+	}
+	return policies
+}
+
+func languageSymbolIsGeneratedRepeatAux(lang *gotreesitter.Language, sym gotreesitter.Symbol) bool {
+	return lang != nil && int(sym) >= 0 && int(sym) < len(lang.SymbolMetadata) && lang.SymbolMetadata[sym].GeneratedRepeatAux
 }
 
 func buildParseActions(groups []ActionGroup) []gotreesitter.ParseActionEntry {

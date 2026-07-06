@@ -51,3 +51,26 @@ func TestCSharpNestedMemberAccessQualifiedLeftParity(t *testing.T) {
 	tc := parityCase{name: "c_sharp", source: string(src)}
 	runParityCase(t, tc, "nested-member-access-qualified-left", src)
 }
+
+func TestCSharpImplicitObjectCreationArgumentParity(t *testing.T) {
+	src := []byte(`class C { void M(System.Action<object, string> onUpdate){ onUpdate(new(null, "Deployment failed")); } }
+`)
+	tc := parityCase{name: "c_sharp", source: string(src)}
+	runParityCase(t, tc, "implicit-object-creation-argument", src)
+}
+
+func TestCSharpIsPatternConditionalExpressionParity(t *testing.T) {
+	src := []byte(`class C { string M(string outputDir, string jsonPath, object context){ var path = outputDir is null ? PathHelper.GetBicepparamOutputPath(jsonPath) : FileHelper.GetResultFilePath(context, outputDir); return path; } }
+`)
+	tc := parityCase{name: "c_sharp", source: string(src)}
+	runParityCase(t, tc, "is-pattern-conditional-expression", src)
+}
+
+func TestCSharpGenericBaseListParity(t *testing.T) {
+	src := []byte(`public class CliResultAssertions : ReferenceTypeAssertions<CliResult, CliResultAssertions>
+{
+}
+`)
+	tc := parityCase{name: "c_sharp", source: string(src)}
+	runParityCase(t, tc, "generic-base-list", src)
+}

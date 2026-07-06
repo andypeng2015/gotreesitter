@@ -26,14 +26,8 @@ import (
 //	if(x){}y=z -> clean (the `{}` binds to the `if`; only a standalone block breaks)
 //
 // Minimal reproducer: `{a}b=c`.
-//
-// SKIPPED until the block-vs-object-pattern disambiguation is fixed in the GLR
-// engine / JS normalization layer. Remove the t.Skip line to validate the fix.
 func TestJavaScriptBlockThenAssignmentParsesClean(t *testing.T) {
-	t.Skip("known bug #111: `{a}b=c` block-then-simple-assignment GLR conflict; remove to validate fix")
-
-	lang := grammars.JavascriptLanguage()
-	cases := []struct {
+	assertBlockThenAssignmentParsesClean(t, grammars.JavascriptLanguage(), []struct {
 		name string
 		src  string
 	}{
@@ -48,7 +42,37 @@ func TestJavaScriptBlockThenAssignmentParsesClean(t *testing.T) {
 		{"explicit_semicolon", `{a};b=c`},
 		{"if_block", `if(x){}y=z`},
 		{"call_after_block", `{a}b()`},
-	}
+	})
+}
+
+func TestTypeScriptBlockThenAssignmentParsesClean(t *testing.T) {
+	assertBlockThenAssignmentParsesClean(t, grammars.TypescriptLanguage(), []struct {
+		name string
+		src  string
+	}{
+		{"minimal", `{a}b=c`},
+		{"member_target", `{a}b.c=d`},
+		{"path_value", `{a}b="/v1/users"`},
+	})
+}
+
+func TestTSXBlockThenAssignmentParsesClean(t *testing.T) {
+	assertBlockThenAssignmentParsesClean(t, grammars.TsxLanguage(), []struct {
+		name string
+		src  string
+	}{
+		{"minimal", `{a}b=c`},
+		{"member_target", `{a}b.c=d`},
+		{"path_value", `{a}b="/v1/users"`},
+	})
+}
+
+func assertBlockThenAssignmentParsesClean(t *testing.T, lang *gts.Language, cases []struct {
+	name string
+	src  string
+}) {
+	t.Helper()
+
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			tree, err := gts.NewParser(lang).Parse([]byte(tc.src))

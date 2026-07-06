@@ -2,6 +2,63 @@ package grammargen
 
 import "testing"
 
+func TestEscapeAnonymousNameDecodesUnicodeEscapes(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "fixed arrow", in: `\u2192`, want: "→"},
+		{name: "braced lambda", in: `\u{03BB}`, want: "λ"},
+		{name: "decoded question still escaped", in: `\u003F`, want: `\?`},
+		{name: "literal question still escaped", in: "?", want: `\?`},
+		{name: "surrogate pair", in: `\uD83D\uDE00`, want: "😀"},
+		{name: "invalid fixed escape", in: `\uZZZZ`, want: `\uZZZZ`},
+		{name: "incomplete fixed escape", in: `\u219`, want: `\u219`},
+		{name: "unpaired high surrogate", in: `\uD83D`, want: `\uD83D`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := escapeAnonymousName(tt.in); got != tt.want {
+				t.Fatalf("escapeAnonymousName(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNormalizeUsesDecodedUnicodeAnonymousDisplayName(t *testing.T) {
+	g := NewGrammar("unicode_anonymous_display")
+	g.Define("source_file", Seq(
+		Str(`\u2192`),
+		Str(`\u003F`),
+	))
+
+	ng, err := Normalize(g)
+	if err != nil {
+		t.Fatalf("normalize: %v", err)
+	}
+
+	foundArrow := false
+	foundQuestion := false
+	for _, sym := range ng.Symbols {
+		switch sym.Name {
+		case "→":
+			foundArrow = true
+		case `\?`:
+			foundQuestion = true
+		case `\u2192`, `\u003F`:
+			t.Fatalf("found undecoded anonymous display name %q", sym.Name)
+		}
+	}
+	if !foundArrow {
+		t.Fatal("missing decoded arrow anonymous display name")
+	}
+	if !foundQuestion {
+		t.Fatal("missing decoded+escaped question anonymous display name")
+	}
+}
+
 func TestNormalizeSeparatesAnonymousStringAndPatternTerminals(t *testing.T) {
 	g := NewGrammar("terminal_collision")
 	g.Define("source_file", Seq(
@@ -39,6 +96,70 @@ func TestNormalizeSeparatesAnonymousStringAndPatternTerminals(t *testing.T) {
 	}
 	if len(collisionSymIDs) != 2 {
 		t.Fatalf("expected 2 distinct terminals named %q, got %d", ".*", len(collisionSymIDs))
+	}
+}
+
+func TestNormalizeWrapsSharedStringOnlyNamedTokenWithAnonymousLiteral(t *testing.T) {
+	g := NewGrammar("string_token_collision")
+	g.Define("source_file", Choice(
+		Str("import"),
+		Sym("import"),
+	))
+	g.Define("import", Token(Str("import")))
+
+	ng, err := Normalize(g)
+	if err != nil {
+		t.Fatalf("normalize: %v", err)
+	}
+
+	anonID := -1
+	importID := -1
+	sourceID := -1
+	for id, sym := range ng.Symbols {
+		switch {
+		case sym.Name == "source_file":
+			sourceID = id
+		case sym.Name == "import" && sym.Kind == SymbolTerminal && !sym.Named:
+			anonID = id
+		case sym.Name == "import" && sym.Kind == SymbolNonterminal && sym.Named:
+			importID = id
+		case sym.Name == "import" && sym.Kind == SymbolNamedToken:
+			t.Fatalf("shared string-only token was registered as duplicate terminal: symbol %d", id)
+		}
+	}
+	if anonID < 0 {
+		t.Fatal("missing anonymous literal terminal for import")
+	}
+	if importID < 0 {
+		t.Fatal("missing import wrapper nonterminal")
+	}
+
+	hasImportWrapperProduction := false
+	for _, prod := range ng.Productions {
+		if prod.LHS == importID && len(prod.RHS) == 1 && prod.RHS[0] == anonID {
+			hasImportWrapperProduction = true
+			break
+		}
+	}
+	if !hasImportWrapperProduction {
+		t.Fatal("missing import wrapper production over anonymous literal")
+	}
+
+	hasAnonProduction := false
+	hasImportProduction := false
+	for _, prod := range ng.Productions {
+		if prod.LHS != sourceID || len(prod.RHS) != 1 {
+			continue
+		}
+		switch prod.RHS[0] {
+		case anonID:
+			hasAnonProduction = true
+		case importID:
+			hasImportProduction = true
+		}
+	}
+	if !hasAnonProduction || !hasImportProduction {
+		t.Fatalf("source_file productions missing literal/wrapper refs: anonymous=%v import=%v", hasAnonProduction, hasImportProduction)
 	}
 }
 

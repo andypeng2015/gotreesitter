@@ -1,6 +1,9 @@
 package grammargen
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 func TestSplitKernelLookaheadsForTransitionUsesRetainedFollowSet(t *testing.T) {
 	follow := newBitset(8)
@@ -66,7 +69,7 @@ func TestLocalLR1Rebuild(t *testing.T) {
 	prov := ctx.provenance
 
 	// Run conflict resolution with diagnostics.
-	diags, err := resolveConflictsWithDiag(tables, ng, prov)
+	diags, _, err := resolveConflictsWithDiag(context.Background(), tables, ng, prov)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +93,7 @@ func TestLocalLR1Rebuild(t *testing.T) {
 	t.Logf("split %d states", splitCount)
 
 	// After splitting, re-resolve conflicts — should have fewer GLR entries.
-	diagsAfter, err := resolveConflictsWithDiag(tables, ng, prov)
+	diagsAfter, _, err := resolveConflictsWithDiag(context.Background(), tables, ng, prov)
 	if err != nil {
 		t.Fatal(err)
 	}
