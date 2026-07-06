@@ -141,12 +141,22 @@ type glrMergeScratch struct {
 	stackEquivCache   []glrStackEquivCacheEntry
 	frontierHashCache []glrStackFrontierHashCacheEntry
 	cErrorCost        map[*Node]glrCErrorCostEntry
-	materializing     map[*gssNode]glrMaterializingShapeHash
+	shapePrefixCache  []glrShapePrefixCacheEntry
+	shapePrefixEpoch  uint32
+	shapePrefixBytes  int64
 	cleanZeroEpoch    uint32
 	cleanZeroScan     uint32
 	cleanZeroCache    map[*gssNode]gssCleanZeroErrorCacheEntry
+	cleanZeroFront    []glrCleanZeroFrontCacheEntry
+	cleanZeroBytes    int64
 	cleanZeroStack    []*gssNode
 	cleanZeroVisited  []*gssNode
+	// preflight + mergeSeen are pooled per-scratch so the GSS merge can-phase
+	// stops allocating a preflight object plus several maps per merge attempt
+	// (the dominant profile cost on low-stack GLR grammars like json — maps
+	// were rebuilt every canMergeNodes call).
+	preflight         *gssMainPreflight
+	mergeSeen         map[gssMergePair]bool
 	pythonShallow     bool
 	budgetBytes       int64
 	resultBytes       int64
@@ -162,9 +172,49 @@ type glrCErrorCostEntry struct {
 	cost uint32
 }
 
+// glrMaterializingShapeHash is, per GSS node, the rolling materializing
+// shape hash of the spine prefix root..node (inclusive) plus the number of
+// materializing entries in that prefix. Cached in the set-associative
+// glrMergeScratch.shapePrefixCache, keyed by (node pointer, shapePrefixEpoch).
+// An entry stays valid until the epoch is bumped (bumpShapePrefixEpoch). The
+// epoch is bumped on every mutation that can change a live node's root->head
+// prefix hash:
+//   - the start of each parse epoch (beginEquivEpoch);
+//   - a successful GSS main merge that rewrites link 0 of surviving nodes, both
+//     the collapse-phase merge (tryGSSMainMergeResult) and the dispatch-time
+//     merge (tryGSSMainMergeForParser via gssMainMerge -> setGSSMainLink);
+//   - retargetStackEntryPayload rewriting a spine node's parseState in place at
+//     its reduce call sites (parseState feeds gssEntryHash, which the prefix
+//     rolls in).
+//
+// Prefix caching makes the per-head shape hash O(new entries) instead of
+// O(full spine), which is what made the merge attempt loop super-linear on
+// large clean files (python cliff RCA 2026-07).
 type glrMaterializingShapeHash struct {
-	hash uint64
-	ok   bool
+	hash  uint64
+	count uint32
+}
+
+// glrShapePrefixCacheEntry is one slot of the pointer-keyed 2-way
+// set-associative materializing-shape prefix cache (same layout discipline as
+// frontierHashCache — a Go map here was the top profile cost on wide-GLR
+// python inputs).
+type glrShapePrefixCacheEntry struct {
+	node   uintptr
+	epoch  uint32
+	prefix glrMaterializingShapeHash
+}
+
+// glrCleanZeroFrontCacheEntry is one slot of the pointer-keyed 2-way
+// set-associative front cache for gssNodeCleanZeroErrorAllLinksWithScratch
+// results. The map cache (cleanZeroCache) stays authoritative — it also holds
+// DFS scan bookkeeping — but the hot repeated lookups (cost fast path +
+// gssMainCanMergeWithScratch, several per merge attempt) hit this array
+// first. clean is only valid when epoch matches the scratch cleanZeroEpoch.
+type glrCleanZeroFrontCacheEntry struct {
+	node  uintptr
+	epoch uint32
+	clean bool
 }
 
 type glrMergeKey struct {
@@ -715,52 +765,72 @@ func stackMaterializingShapeHash(s glrStack) (uint64, bool) {
 }
 
 func stackMaterializingShapeHashWithScratch(scratch *glrMergeScratch, s glrStack) (uint64, bool) {
-	if len(s.entries) == 0 && s.gss.head != nil && scratch != nil {
-		if cached, ok := scratch.materializing[s.gss.head]; ok {
-			return cached.hash, cached.ok
+	if len(s.entries) == 0 {
+		if s.gss.head == nil {
+			return 0, false
 		}
+		prefix := gssMaterializingShapePrefix(scratch, s.gss.head)
+		return finalizeMaterializingShapeHash(prefix)
 	}
 
 	h := gssHashSeed
-	count := 0
-	if len(s.entries) > 0 {
-		for i := range s.entries {
-			if !stackEntryMaterializesForResult(s.entries[i]) {
-				continue
-			}
-			h = gssEntryHash(h, s.entries[i])
-			count++
+	count := uint32(0)
+	for i := range s.entries {
+		if !stackEntryMaterializesForResult(s.entries[i]) {
+			continue
 		}
-	} else {
-		for n := s.gss.head; n != nil; n = n.prev {
-			if !stackEntryMaterializesForResult(n.entry) {
-				continue
-			}
-			h = gssEntryHash(h, n.entry)
-			count++
-		}
+		h = gssEntryHash(h, s.entries[i])
+		count++
 	}
-	if count == 0 {
-		if len(s.entries) == 0 && s.gss.head != nil && scratch != nil {
-			if scratch.materializing == nil {
-				scratch.materializing = make(map[*gssNode]glrMaterializingShapeHash)
-			}
-			scratch.materializing[s.gss.head] = glrMaterializingShapeHash{}
-		}
+	return finalizeMaterializingShapeHash(glrMaterializingShapeHash{hash: h, count: count})
+}
+
+func finalizeMaterializingShapeHash(prefix glrMaterializingShapeHash) (uint64, bool) {
+	if prefix.count == 0 {
 		return 0, false
 	}
-	h ^= uint64(count)
+	h := prefix.hash
+	h ^= uint64(prefix.count)
 	h *= gssHashPrime
 	if h == 0 {
 		h = 1
 	}
-	if len(s.entries) == 0 && s.gss.head != nil && scratch != nil {
-		if scratch.materializing == nil {
-			scratch.materializing = make(map[*gssNode]glrMaterializingShapeHash)
-		}
-		scratch.materializing[s.gss.head] = glrMaterializingShapeHash{hash: h, ok: true}
-	}
 	return h, true
+}
+
+// gssMaterializingShapePrefix returns the rolling materializing shape hash of
+// the spine root..n along the primary (link 0) chain, memoizing every prefix
+// in scratch.shapePrefixCache so a fresh head only pays for its own new
+// entries. The rolling direction is root->head (matching the s.entries path
+// and gssNodeHash) so shared prefixes are reusable across heads and tokens.
+func gssMaterializingShapePrefix(scratch *glrMergeScratch, n *gssNode) glrMaterializingShapeHash {
+	if n == nil {
+		return glrMaterializingShapeHash{hash: gssHashSeed}
+	}
+	if cached, ok := lookupShapePrefixCache(scratch, n); ok {
+		return cached
+	}
+	var local [32]*gssNode
+	pending := local[:0]
+	prefix := glrMaterializingShapeHash{hash: gssHashSeed}
+	for cur := n; cur != nil; cur = cur.prev {
+		if cached, ok := lookupShapePrefixCache(scratch, cur); ok {
+			prefix = cached
+			break
+		}
+		pending = append(pending, cur)
+	}
+	for i := len(pending) - 1; i >= 0; i-- {
+		cur := pending[i]
+		if stackEntryMaterializesForResult(cur.entry) {
+			prefix = glrMaterializingShapeHash{
+				hash:  gssEntryHash(prefix.hash, cur.entry),
+				count: prefix.count + 1,
+			}
+		}
+		storeShapePrefixCache(scratch, cur, prefix)
+	}
+	return prefix
 }
 
 func gssStacksHaveDistinctMaterializingShapes(a, b *glrStack) bool {
@@ -802,6 +872,15 @@ const (
 	// cache: it only covers live stack heads encountered during merge bucketing.
 	glrStackFrontierHashCacheSize     = 4096
 	glrStackFrontierHashCacheSetCount = glrStackFrontierHashCacheSize / 2
+	// glrShapePrefixCache covers every live spine node of every live stack (not
+	// just heads): wide-GLR python inputs keep ~1.5K stacks × ~12 spine nodes
+	// live at once, so this is sized like the node-equivalence cache.
+	glrShapePrefixCacheSize     = 16384
+	glrShapePrefixCacheSetCount = glrShapePrefixCacheSize / 2
+	// glrCleanZeroFrontCache fronts the map-based cleanZeroCache for the
+	// merge-attempt hot path (see glrCleanZeroFrontCacheEntry).
+	glrCleanZeroFrontCacheSize     = 16384
+	glrCleanZeroFrontCacheSetCount = glrCleanZeroFrontCacheSize / 2
 	// Depth is part of the cache key. Keep it bounded so large recursive
 	// comparisons cannot alias through a narrowing conversion.
 	glrNodeEquivCacheMaxDepth = 1<<16 - 1
@@ -828,11 +907,7 @@ func (s *glrMergeScratch) beginEquivEpoch() {
 	} else if len(s.cErrorCost) > 0 {
 		clear(s.cErrorCost)
 	}
-	if len(s.materializing) > maxRetainedMergeResultCap {
-		s.materializing = nil
-	} else if len(s.materializing) > 0 {
-		clear(s.materializing)
-	}
+	s.bumpShapePrefixEpoch()
 	if len(s.equivCache) == 0 {
 		s.equivCache = make([]glrNodeEquivCacheEntry, glrNodeEquivCacheSize)
 		s.equivCacheBytes = glrNodeEquivCacheBytesForCap(cap(s.equivCache))
@@ -958,9 +1033,131 @@ func (s *glrMergeScratch) beginCleanZeroEpoch() {
 	}
 	if s.cleanZeroEpoch == ^uint32(0) {
 		clear(s.cleanZeroCache)
+		clear(s.cleanZeroFront)
 		s.cleanZeroEpoch = 0
 	}
 	s.cleanZeroEpoch++
+}
+
+// ensureMergeHotCaches provisions the fixed-size merge-attempt caches. Called
+// only for persistent (pooled, per-parse) scratches so their cost amortizes
+// across the whole parse; one-shot local scratches never allocate these.
+func (s *glrMergeScratch) ensureMergeHotCaches() {
+	if s == nil {
+		return
+	}
+	if len(s.shapePrefixCache) == 0 {
+		s.shapePrefixCache = make([]glrShapePrefixCacheEntry, glrShapePrefixCacheSize)
+		s.shapePrefixBytes = int64(cap(s.shapePrefixCache)) * int64(unsafe.Sizeof(glrShapePrefixCacheEntry{}))
+	}
+	if len(s.cleanZeroFront) == 0 {
+		s.cleanZeroFront = make([]glrCleanZeroFrontCacheEntry, glrCleanZeroFrontCacheSize)
+		s.cleanZeroBytes = int64(cap(s.cleanZeroFront)) * int64(unsafe.Sizeof(glrCleanZeroFrontCacheEntry{}))
+	}
+}
+
+// bumpShapePrefixEpoch invalidates every cached materializing-shape prefix in
+// O(1). Called when a GSS main merge rewrites links (stale prefixes) and at
+// the start of each parse epoch.
+func (s *glrMergeScratch) bumpShapePrefixEpoch() {
+	if s == nil {
+		return
+	}
+	if s.shapePrefixEpoch == ^uint32(0) {
+		clear(s.shapePrefixCache)
+		s.shapePrefixEpoch = 0
+	}
+	s.shapePrefixEpoch++
+}
+
+func lookupShapePrefixCache(scratch *glrMergeScratch, n *gssNode) (glrMaterializingShapeHash, bool) {
+	if scratch == nil || len(scratch.shapePrefixCache) == 0 || scratch.shapePrefixEpoch == 0 || n == nil {
+		return glrMaterializingShapeHash{}, false
+	}
+	p := uintptr(unsafe.Pointer(n))
+	idx := shapePrefixCacheIndex(p)
+	primary := &scratch.shapePrefixCache[idx]
+	if primary.epoch == scratch.shapePrefixEpoch && primary.node == p {
+		return primary.prefix, true
+	}
+	victim := &scratch.shapePrefixCache[idx+1]
+	if victim.epoch == scratch.shapePrefixEpoch && victim.node == p {
+		*primary, *victim = *victim, *primary
+		return primary.prefix, true
+	}
+	return glrMaterializingShapeHash{}, false
+}
+
+// storeShapePrefixCache never allocates: the backing array is provisioned only
+// for persistent parse scratches (ensureMergeHotCaches). One-shot local
+// scratches (mergeStacks, diagnostics) skip caching rather than paying a
+// 384KiB zeroed allocation per call — that allocation pattern showed up as a
+// GC/memclr storm on the C# per-member recovery path.
+func storeShapePrefixCache(scratch *glrMergeScratch, n *gssNode, prefix glrMaterializingShapeHash) {
+	if scratch == nil || scratch.shapePrefixEpoch == 0 || n == nil || len(scratch.shapePrefixCache) == 0 {
+		return
+	}
+	p := uintptr(unsafe.Pointer(n))
+	idx := shapePrefixCacheIndex(p)
+	scratch.shapePrefixCache[idx+1] = scratch.shapePrefixCache[idx]
+	scratch.shapePrefixCache[idx] = glrShapePrefixCacheEntry{
+		node:   p,
+		epoch:  scratch.shapePrefixEpoch,
+		prefix: prefix,
+	}
+}
+
+func shapePrefixCacheIndex(p uintptr) int {
+	h := uint64(p)
+	h ^= h >> 33
+	h *= 0xff51afd7ed558ccd
+	h ^= h >> 33
+	h *= 0xc4ceb9fe1a85ec53
+	h ^= h >> 33
+	return int(h&uint64(glrShapePrefixCacheSetCount-1)) << 1
+}
+
+func lookupCleanZeroFrontCache(scratch *glrMergeScratch, n *gssNode) (bool, bool) {
+	if scratch == nil || len(scratch.cleanZeroFront) == 0 || scratch.cleanZeroEpoch == 0 || n == nil {
+		return false, false
+	}
+	p := uintptr(unsafe.Pointer(n))
+	idx := cleanZeroFrontCacheIndex(p)
+	primary := &scratch.cleanZeroFront[idx]
+	if primary.epoch == scratch.cleanZeroEpoch && primary.node == p {
+		return primary.clean, true
+	}
+	victim := &scratch.cleanZeroFront[idx+1]
+	if victim.epoch == scratch.cleanZeroEpoch && victim.node == p {
+		*primary, *victim = *victim, *primary
+		return primary.clean, true
+	}
+	return false, false
+}
+
+// storeCleanZeroFrontCache never allocates (see storeShapePrefixCache).
+func storeCleanZeroFrontCache(scratch *glrMergeScratch, n *gssNode, clean bool) {
+	if scratch == nil || scratch.cleanZeroEpoch == 0 || n == nil || len(scratch.cleanZeroFront) == 0 {
+		return
+	}
+	p := uintptr(unsafe.Pointer(n))
+	idx := cleanZeroFrontCacheIndex(p)
+	scratch.cleanZeroFront[idx+1] = scratch.cleanZeroFront[idx]
+	scratch.cleanZeroFront[idx] = glrCleanZeroFrontCacheEntry{
+		node:  p,
+		epoch: scratch.cleanZeroEpoch,
+		clean: clean,
+	}
+}
+
+func cleanZeroFrontCacheIndex(p uintptr) int {
+	h := uint64(p)
+	h ^= h >> 33
+	h *= 0xff51afd7ed558ccd
+	h ^= h >> 33
+	h *= 0xc4ceb9fe1a85ec53
+	h ^= h >> 33
+	return int(h&uint64(glrCleanZeroFrontCacheSetCount-1)) << 1
 }
 
 func lookupNodeEquivCache(scratch *glrMergeScratch, a, b *Node, depth int) (bool, bool) {
@@ -1381,6 +1578,50 @@ func cRecoverTraceInteresting(a, b glrStack) bool {
 	return a.cRec != nil || b.cRec != nil || a.cRecoverMissingGroup != nil || b.cRecoverMissingGroup != nil
 }
 
+// cStackCleanZeroErrorCostForMerge is an exact fast path for
+// cStackErrorCostForMergeWithScratch (parser_recover_c.go). When every subtree
+// reachable from the stack head is provably error/missing-free — via the same
+// epoch-managed all-links clean-zero cache gssMainCanMergeWithScratch already
+// trusts for real merges — the walked per-subtree sum is exactly zero (every
+// cost source in cNodeErrorCostLang requires an errorSymbol node, a missing
+// node, or a hasError subtree, all of which force the entry's clean-zero check
+// false). Only the per-stack aux terms remain; they MUST mirror the tail of
+// cStackErrorCostForMergeWithScratch. ok=false means "not provably clean":
+// callers fall back to the full walk, so this can never change a cost value.
+//
+// This matters because on clean parses of large real files the full walk is
+// O(spine length) map lookups per call and runs ~100x per token from the merge
+// attempt loop, which made the cost competition super-linear in file size
+// (python cliff RCA 2026-07).
+func cStackCleanZeroErrorCostForMerge(scratch *glrMergeScratch, s *glrStack) (uint32, bool) {
+	if s == nil {
+		return 0, true
+	}
+	if scratch == nil || len(s.entries) != 0 || s.gss.head == nil {
+		return 0, false
+	}
+	if !gssNodeCleanZeroErrorAllLinksWithScratch(scratch, s.gss.head) {
+		return 0, false
+	}
+	var cost uint32
+	if s.cPaused || (s.cRec != nil && s.cRec.openErr == nil) {
+		cost += cErrCostPerRecovery
+	}
+	if s.cRec != nil && s.cRec.extraRecoveries > 0 {
+		cost += cErrCostPerRecovery * uint32(s.cRec.extraRecoveries)
+	}
+	return cost, true
+}
+
+// cStackErrorCostForMergeCached returns cStackErrorCostForMergeWithScratch's
+// value, preferring the exact clean-zero fast path.
+func cStackErrorCostForMergeCached(scratch *glrMergeScratch, lang *Language, s *glrStack) uint32 {
+	if cost, ok := cStackCleanZeroErrorCostForMerge(scratch, s); ok {
+		return cost
+	}
+	return cStackErrorCostForMergeWithScratch(scratch, lang, s)
+}
+
 func cRecoveryMergeCostsDiffer(scratch *glrMergeScratch, a, b *glrStack) bool {
 	if scratch == nil || !scratch.cRecoveryCost || a == nil || b == nil {
 		return false
@@ -1388,11 +1629,22 @@ func cRecoveryMergeCostsDiffer(scratch *glrMergeScratch, a, b *glrStack) bool {
 	if !stacksHeaderEquivalent(*a, *b) {
 		return false
 	}
-	return cStackErrorCostForMergeWithScratch(scratch, scratch.language, a) != cStackErrorCostForMergeWithScratch(scratch, scratch.language, b)
+	return cStackErrorCostForMergeCached(scratch, scratch.language, a) != cStackErrorCostForMergeCached(scratch, scratch.language, b)
 }
 
 func cRecoveryMergeCostsDifferForParser(p *Parser, a, b *glrStack) bool {
 	if p == nil || !p.errorCostCompetitionEnabled() {
+		return false
+	}
+	// Sticky per-parse gate: before anything cost-relevant has happened this
+	// pass every stack's error cost is provably zero, so the costs cannot
+	// differ (see crecoveryCostCompetitionRelevant). The pair-local recovery
+	// state check keeps this function sound for callers that construct
+	// paused/recovering stacks directly (unit tests, future call sites)
+	// without having gone through the dispatch flip sites.
+	if !p.crecoveryCostCompetitionRelevant &&
+		!(a != nil && (a.cPaused || a.cRec != nil)) &&
+		!(b != nil && (b.cPaused || b.cRec != nil)) {
 		return false
 	}
 	scratch := glrMergeScratch{
@@ -2428,7 +2680,16 @@ func tryGSSMainMergeForParser(p *Parser, a, b *glrStack) bool {
 	if !gssMainCanMergeForParser(p, a, b) {
 		return false
 	}
-	return gssMainMerge(a, b)
+	merged := gssMainMerge(a, b)
+	if merged && p != nil {
+		// Mirror tryGSSMainMergeResult (bumpShapePrefixEpoch above): a successful
+		// main merge rewrites link 0 (setGSSMainLink) of surviving nodes during
+		// dispatch, so every root->head shape prefix cached in the active merge
+		// scratch may now be stale. p.mergeScratch is nil outside a parse and
+		// bumpShapePrefixEpoch is nil-safe.
+		p.mergeScratch.bumpShapePrefixEpoch()
+	}
+	return merged
 }
 
 func gssMainCanMergeWithScratch(scratch *glrMergeScratch, a, b *glrStack) bool {
@@ -2487,28 +2748,61 @@ func gssNodeCanReach(from, target *gssNode) bool {
 	if from == nil || target == nil {
 		return false
 	}
-	seen := make(map[*gssNode]bool)
-	var walk func(*gssNode) bool
-	walk = func(cur *gssNode) bool {
-		if cur == nil {
-			return false
+	if from == target {
+		return true
+	}
+	// Iterative DFS with a small linear visited set: these walks are almost
+	// always tiny, and the per-call map this used to allocate was a top
+	// profile cost on merge-heavy grammars (rust). Falls back to a map only
+	// for pathologically large link graphs.
+	var stackLocal [64]*gssNode
+	var visitedLocal [64]*gssNode
+	stack := stackLocal[:0]
+	visited := visitedLocal[:0]
+	var visitedMap map[*gssNode]bool
+	isVisited := func(n *gssNode) bool {
+		if visitedMap != nil {
+			return visitedMap[n]
 		}
-		if cur == target {
-			return true
-		}
-		if seen[cur] {
-			return false
-		}
-		seen[cur] = true
-		for i := 0; i < cur.linkCount(); i++ {
-			prev, _ := cur.link(i)
-			if walk(prev) {
+		for _, v := range visited {
+			if v == n {
 				return true
 			}
 		}
 		return false
 	}
-	return walk(from)
+	markVisited := func(n *gssNode) {
+		if visitedMap != nil {
+			visitedMap[n] = true
+			return
+		}
+		if len(visited) == cap(visited) && len(visited) >= len(visitedLocal) {
+			visitedMap = make(map[*gssNode]bool, 2*len(visited))
+			for _, v := range visited {
+				visitedMap[v] = true
+			}
+			visitedMap[n] = true
+			return
+		}
+		visited = append(visited, n)
+	}
+	stack = append(stack, from)
+	for len(stack) > 0 {
+		cur := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if cur == nil || isVisited(cur) {
+			continue
+		}
+		if cur == target {
+			return true
+		}
+		markVisited(cur)
+		for i := 0; i < cur.linkCount(); i++ {
+			prev, _ := cur.link(i)
+			stack = append(stack, prev)
+		}
+	}
+	return false
 }
 
 func gssNodeUniformByteOffset(n *gssNode, seen map[*gssNode]bool) (uint32, bool) {
@@ -2561,7 +2855,11 @@ func gssNodeCleanZeroErrorAllLinksWithScratch(scratch *glrMergeScratch, n *gssNo
 	if scratch.cleanZeroEpoch == 0 {
 		scratch.beginCleanZeroEpoch()
 	}
+	if clean, ok := lookupCleanZeroFrontCache(scratch, n); ok {
+		return clean
+	}
 	if entry, ok := scratch.cleanZeroCache[n]; ok && entry.resultEpoch == scratch.cleanZeroEpoch {
+		storeCleanZeroFrontCache(scratch, n, entry.clean)
 		return entry.clean
 	}
 	if scratch.cleanZeroCache == nil {
@@ -2590,6 +2888,7 @@ func gssNodeCleanZeroErrorAllLinksWithScratch(scratch *glrMergeScratch, n *gssNo
 		if ok && entry.resultEpoch == scratch.cleanZeroEpoch {
 			if !entry.clean {
 				scratch.cleanZeroCache[n] = gssCleanZeroErrorCacheEntry{resultEpoch: scratch.cleanZeroEpoch, clean: false}
+				storeCleanZeroFrontCache(scratch, n, false)
 				scratch.cleanZeroStack = stack[:0]
 				scratch.cleanZeroVisited = visited[:0]
 				return false
@@ -2608,6 +2907,7 @@ func gssNodeCleanZeroErrorAllLinksWithScratch(scratch *glrMergeScratch, n *gssNo
 				(stackEntryNodeHasError(linkEntry) || stackEntryNodeIsMissing(linkEntry) || stackEntryNodeSymbol(linkEntry) == errorSymbol) {
 				scratch.cleanZeroCache[cur] = gssCleanZeroErrorCacheEntry{resultEpoch: scratch.cleanZeroEpoch, clean: false}
 				scratch.cleanZeroCache[n] = gssCleanZeroErrorCacheEntry{resultEpoch: scratch.cleanZeroEpoch, clean: false}
+				storeCleanZeroFrontCache(scratch, n, false)
 				scratch.cleanZeroStack = stack[:0]
 				scratch.cleanZeroVisited = visited[:0]
 				return false
@@ -2618,6 +2918,7 @@ func gssNodeCleanZeroErrorAllLinksWithScratch(scratch *glrMergeScratch, n *gssNo
 	for _, node := range visited {
 		scratch.cleanZeroCache[node] = gssCleanZeroErrorCacheEntry{resultEpoch: scratch.cleanZeroEpoch, clean: true}
 	}
+	storeCleanZeroFrontCache(scratch, n, true)
 	scratch.cleanZeroStack = stack[:0]
 	scratch.cleanZeroVisited = visited[:0]
 	return true
@@ -2742,6 +3043,15 @@ type gssMainPreflight struct {
 	cleanSeen   map[*gssNode]bool
 	cleanStack  []*gssNode
 	cleanVisit  []*gssNode
+	// scratch, when non-nil, lets the preflight consult the parse-long
+	// clean-zero caches instead of rebuilding a private verdict map per
+	// preflight (valid only while no virtual links exist — virtual links can
+	// change a node's all-links cleanliness mid-simulation).
+	scratch *glrMergeScratch
+	// offsetSeen is a reusable scratch map for uniformByteOffset walks
+	// (cleared per use) so pooled preflights stop allocating two maps per
+	// nodesCanMerge call.
+	offsetSeen map[*gssNode]bool
 }
 
 const maxGSSPreflightReachCacheEntries = 32768
@@ -2770,7 +3080,72 @@ func newGSSMainPreflight(seen map[gssMergePair]bool) *gssMainPreflight {
 	}
 }
 
+// acquirePreflightForScratch returns the scratch's pooled preflight, reset to
+// the same observable state a fresh newGSSMainPreflight(seen) would have for
+// an EMPTY seen map: all simulation caches invalidated (cleared), no virtual
+// links, strict reachability. The pooled instance additionally carries
+// scratch so cleanZeroErrorAllLinks can use the parse-long clean-zero caches
+// while no virtual links exist. Callers must not retain the returned
+// preflight beyond the current can-phase.
+func acquirePreflightForScratch(scratch *glrMergeScratch) *gssMainPreflight {
+	if scratch == nil {
+		return newGSSMainPreflight(nil)
+	}
+	pf := scratch.preflight
+	if pf == nil {
+		pf = &gssMainPreflight{
+			virtualLink: make(map[*gssNode][]gssMainLink),
+			reachStrict: true,
+			reachEpoch:  1,
+		}
+		scratch.preflight = pf
+	}
+	if pf.seen == nil {
+		pf.seen = make(map[gssMergePair]bool, 16)
+	} else if len(pf.seen) > 0 {
+		clear(pf.seen)
+	}
+	if len(pf.virtualLink) > 0 {
+		clear(pf.virtualLink)
+	}
+	if len(pf.reachCache) > 0 {
+		clear(pf.reachCache)
+	}
+	if len(pf.reachSeen) > 0 {
+		clear(pf.reachSeen)
+	}
+	if len(pf.cleanCache) > 0 {
+		clear(pf.cleanCache)
+	}
+	if len(pf.cleanSeen) > 0 {
+		clear(pf.cleanSeen)
+	}
+	pf.reachStrict = true
+	pf.reachEpoch = 1
+	pf.scratch = scratch
+	return pf
+}
+
+// acquireMergeSeenForScratch returns the scratch's pooled (cleared) seen map
+// for the GSS merge mutate phase, matching a fresh make(map[gssMergePair]bool).
+func acquireMergeSeenForScratch(scratch *glrMergeScratch) map[gssMergePair]bool {
+	if scratch == nil {
+		return make(map[gssMergePair]bool)
+	}
+	if scratch.mergeSeen == nil {
+		scratch.mergeSeen = make(map[gssMergePair]bool, 16)
+	} else if len(scratch.mergeSeen) > 0 {
+		clear(scratch.mergeSeen)
+	}
+	return scratch.mergeSeen
+}
+
 func (p *gssMainPreflight) linkCount(n *gssNode) int {
+	if len(p.virtualLink) == 0 {
+		// Fast path: no virtual links anywhere, skip the per-node map lookup
+		// (this runs once per node visit in every preflight DFS).
+		return n.linkCount()
+	}
 	return n.linkCount() + len(p.virtualLink[n])
 }
 
@@ -2899,6 +3274,13 @@ func (p *gssMainPreflight) cleanZeroErrorAllLinks(n *gssNode) bool {
 	if n == nil {
 		return true
 	}
+	if p.scratch != nil && len(p.virtualLink) == 0 {
+		// With no virtual links the preflight's link view is exactly the real
+		// graph, so the parse-long clean-zero caches give the same verdict the
+		// private DFS below would compute — without rebuilding a per-preflight
+		// verdict map every merge attempt.
+		return gssNodeCleanZeroErrorAllLinksWithScratch(p.scratch, n)
+	}
 	if p.cleanCache != nil {
 		if entry, ok := p.cleanCache[n]; ok {
 			if !entry.clean {
@@ -3017,9 +3399,21 @@ func (p *gssMainPreflight) nodesCanMerge(a, b *gssNode) bool {
 	if !p.cleanZeroErrorAllLinks(a) || !p.cleanZeroErrorAllLinks(b) {
 		return false
 	}
-	aOffset, aOK := p.uniformByteOffset(a, make(map[*gssNode]bool))
-	bOffset, bOK := p.uniformByteOffset(b, make(map[*gssNode]bool))
+	aOffset, aOK := p.uniformByteOffset(a, p.acquireOffsetSeen())
+	bOffset, bOK := p.uniformByteOffset(b, p.acquireOffsetSeen())
 	return aOK && bOK && aOffset == bOffset
+}
+
+// acquireOffsetSeen returns the preflight's reusable (cleared) cycle-guard map
+// for a single uniformByteOffset walk. Both walks in nodesCanMerge complete
+// before any re-entrant preflight call, so one map suffices.
+func (p *gssMainPreflight) acquireOffsetSeen() map[*gssNode]bool {
+	if p.offsetSeen == nil {
+		p.offsetSeen = make(map[*gssNode]bool, 16)
+	} else if len(p.offsetSeen) > 0 {
+		clear(p.offsetSeen)
+	}
+	return p.offsetSeen
 }
 
 func gssMainCanAddLinkSeen(n *gssNode, prev *gssNode, entry stackEntry, seen map[gssMergePair]bool) bool {
@@ -3236,6 +3630,14 @@ func gssMainMergeNodesSeenMutate(a, b *gssNode, seen map[gssMergePair]bool) bool
 }
 
 func gssMainMerge(a, b *glrStack) bool {
+	return gssMainMergeWithScratch(nil, a, b)
+}
+
+// gssMainMergeWithScratch is gssMainMerge with a pooled preflight + seen map
+// when scratch is non-nil: the can-phase and mutate-phase each get a cleared
+// reusable map instead of freshly allocated ones (identical observable
+// semantics — gssMainMergeNodes always started both phases with empty maps).
+func gssMainMergeWithScratch(scratch *glrMergeScratch, a, b *glrStack) bool {
 	ah, bh := a.gss.head, b.gss.head
 	if ah == nil || bh == nil {
 		return false
@@ -3243,7 +3645,14 @@ func gssMainMerge(a, b *glrStack) bool {
 	if ah == bh {
 		return true
 	}
-	return gssMainMergeNodes(ah, bh)
+	if scratch == nil {
+		return gssMainMergeNodes(ah, bh)
+	}
+	pf := acquirePreflightForScratch(scratch)
+	if !pf.canMergeNodes(ah, bh) {
+		return false
+	}
+	return gssMainMergeNodesSeenMutate(ah, bh, acquireMergeSeenForScratch(scratch))
 }
 
 func tryGSSMainMergeResult(scratch *glrMergeScratch, result []glrStack, idx int, stack *glrStack) (merged bool, attempted bool) {
@@ -3261,9 +3670,11 @@ func tryGSSMainMergeResult(scratch *glrMergeScratch, result []glrStack, idx int,
 		gssStacksHaveDistinctMaterializingShapesWithScratch(scratch, &result[idx], stack) {
 		return false, true
 	}
-	merged = gssMainMerge(&result[idx], stack)
-	if merged && scratch != nil && len(scratch.materializing) > 0 {
-		clear(scratch.materializing)
+	merged = gssMainMergeWithScratch(scratch, &result[idx], stack)
+	if merged && scratch != nil {
+		// A successful main merge can rewrite link 0 (prev/entry) of surviving
+		// nodes (setGSSMainLink), so every cached spine prefix may be stale.
+		scratch.bumpShapePrefixEpoch()
 	}
 	return merged, true
 }
@@ -3343,14 +3754,14 @@ func cRecoveryCostClassForSlot(scratch *glrMergeScratch, result []glrStack, slot
 	if scratch == nil || !scratch.cRecoveryCost || slot == nil || stack == nil || mergeSlotTrackedCount(slot) == 0 {
 		return -1, false
 	}
-	candidateCost := cStackErrorCostForMergeWithScratch(scratch, scratch.language, stack)
+	candidateCost := cStackErrorCostForMergeCached(scratch, scratch.language, stack)
 	sawDifferentCost := false
 	for j, n := 0, mergeSlotTrackedCount(slot); j < n; j++ {
 		idx := mergeSlotIndexAt(slot, j)
 		if idx < 0 || idx >= len(result) || !stacksHeaderEquivalent(result[idx], *stack) {
 			continue
 		}
-		if cStackErrorCostForMergeWithScratch(scratch, scratch.language, &result[idx]) == candidateCost {
+		if cStackErrorCostForMergeCached(scratch, scratch.language, &result[idx]) == candidateCost {
 			return idx, false
 		}
 		sawDifferentCost = true
@@ -3362,13 +3773,13 @@ func cRecoveryCostClassForSlice(scratch *glrMergeScratch, result []glrStack, key
 	if scratch == nil || !scratch.cRecoveryCost || stack == nil {
 		return -1, false
 	}
-	candidateCost := cStackErrorCostForMergeWithScratch(scratch, scratch.language, stack)
+	candidateCost := cStackErrorCostForMergeCached(scratch, scratch.language, stack)
 	sawDifferentCost := false
 	for j := range result {
 		if mergeKeyForStack(result[j]) != key || !stacksHeaderEquivalent(result[j], *stack) {
 			continue
 		}
-		if cStackErrorCostForMergeWithScratch(scratch, scratch.language, &result[j]) == candidateCost {
+		if cStackErrorCostForMergeCached(scratch, scratch.language, &result[j]) == candidateCost {
 			return j, false
 		}
 		sawDifferentCost = true
@@ -4235,7 +4646,7 @@ func (s *glrMergeScratch) allocatedBytes() int64 {
 	if s == nil {
 		return 0
 	}
-	return s.resultBytes + s.slotBytes + s.largeSlotBytes + s.equivCacheBytes + s.stackEquivBytes + s.frontierHashBytes
+	return s.resultBytes + s.slotBytes + s.largeSlotBytes + s.equivCacheBytes + s.stackEquivBytes + s.frontierHashBytes + s.shapePrefixBytes + s.cleanZeroBytes
 }
 
 func (s *glrMergeScratch) reset() {
@@ -4275,11 +4686,17 @@ func (s *glrMergeScratch) reset() {
 	} else if len(s.cErrorCost) > 0 {
 		clear(s.cErrorCost)
 	}
-	if len(s.materializing) > maxRetainedMergeResultCap {
-		s.materializing = nil
-	} else if len(s.materializing) > 0 {
-		clear(s.materializing)
+	// shapePrefixEpoch is intentionally NOT reset here: like equivEpoch it
+	// increases monotonically across parses so retained array entries can never
+	// alias into a fresh parse (reset would restart the epoch at 1 and collide
+	// with surviving epoch-1 entries once gss slab pointers get reused).
+	s.shapePrefixBytes = int64(cap(s.shapePrefixCache)) * int64(unsafe.Sizeof(glrShapePrefixCacheEntry{}))
+	// cleanZeroEpoch (below) restarts at 0 per reset, so the epoch-validated
+	// front array MUST be cleared or stale entries could match a future epoch.
+	if len(s.cleanZeroFront) > 0 {
+		clear(s.cleanZeroFront)
 	}
+	s.cleanZeroBytes = int64(cap(s.cleanZeroFront)) * int64(unsafe.Sizeof(glrCleanZeroFrontCacheEntry{}))
 	if len(s.cleanZeroCache) > 0 {
 		clear(s.cleanZeroCache)
 	}

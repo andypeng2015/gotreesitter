@@ -595,9 +595,32 @@ type conflictReduceFrontierSeed struct {
 	afterDepth  int
 }
 
-func (p *Parser) completeConflictReduceFrontier(source []byte, s *glrStack, tok Token, seed conflictReduceFrontierSeed, allocBranchOrder func() uint64, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, deferParentLinks bool, trackChildErrors *bool) {
+func (p *Parser) completeConflictReduceFrontier(source []byte, s *glrStack, tok Token, seed conflictReduceFrontierSeed, liveStacks, maxLiveStacks int, allocBranchOrder func() uint64, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, deferParentLinks bool, trackChildErrors *bool) {
 	if p == nil || p.language == nil || tok.NoLookahead || s == nil || s.dead || s.accepted || s.shifted || s.cPaused {
 		return
+	}
+	// Mirror of the C runtime's version-window discipline
+	// (MAX_VERSION_COUNT + MAX_VERSION_COUNT_OVERFLOW): C never creates a new
+	// stack version once the version pool is saturated — the current version
+	// simply keeps reducing without forking. This port's boundary merge/cull
+	// enforces the same window (maxStacks + fullParseGLRStackOverflow) only
+	// BETWEEN iterations, so a single token's conflict-reduce frontier walk
+	// could admit one transient shifted fork per pending spine frame with no
+	// population bound at all (observed: 6 survivors x 258-step walks = 1548
+	// transient stacks and O(n^2) node allocation on union-list-shaped
+	// sources). Once the live population (dispatch stacks plus already-queued
+	// pending forks) has reached the same cull-engagement threshold the
+	// boundary discipline uses, stop CREATING new frontier forks; the walk
+	// itself continues reducing in place, and the stacks such forks would
+	// have duplicated are exactly the ones the next boundary cull retains.
+	// maxLiveStacks <= 0 disables the gate (incremental and c_sharp arenas,
+	// where glrStackCullTrigger returns maxStacks with no overflow window and
+	// culling historically engages immediately).
+	frontierForkAdmissible := func() bool {
+		if maxLiveStacks <= 0 {
+			return true
+		}
+		return liveStacks+len(p.pendingFrontierForkStacks)+len(p.pendingForkStacks) < maxLiveStacks
 	}
 	if seed.action.Type != ParseActionReduce || seed.beforeDepth == 0 || seed.afterDepth == 0 {
 		return
@@ -680,7 +703,7 @@ func (p *Parser) completeConflictReduceFrontier(source []byte, s *glrStack, tok 
 		}
 		terminalAppended := false
 		_, terminalAlreadyForked := terminalForkedReduces[currentReduceKey]
-		if !terminalAlreadyForked {
+		if !terminalAlreadyForked && frontierForkAdmissible() {
 			switch terminal.Type {
 			case ParseActionShift:
 				fork := s.cloneWithScratch(gssScratch)
@@ -780,6 +803,11 @@ func (p *Parser) completeConflictReduceFrontier(source []byte, s *glrStack, tok 
 }
 
 func (p *Parser) pushOrExtendErrorNode(s *glrStack, state StateID, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) {
+	if p != nil {
+		// An ERROR node is entering a stack: costs can be nonzero from here on
+		// (sticky per-parse gate, see crecoveryCostCompetitionRelevant).
+		p.crecoveryCostCompetitionRelevant = true
+	}
 	if s != nil {
 		top := stackEntryNode(s.top())
 		if top != nil &&
@@ -824,6 +852,10 @@ func (p *Parser) pushOrExtendErrorNode(s *glrStack, state StateID, tok Token, no
 // the run becomes an ERROR leaf that is EXTRA — present in the tree but
 // transparent to production arity — and parsing resumes in the same state.
 func (p *Parser) pushLexErrorRunLeaf(s *glrStack, state StateID, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) {
+	if p != nil {
+		// See pushOrExtendErrorNode: error content makes costs relevant.
+		p.crecoveryCostCompetitionRelevant = true
+	}
 	leaf := newLeafNodeInArena(arena, errorSymbol, true,
 		tok.StartByte, tok.EndByte, tok.StartPoint, tok.EndPoint)
 	leaf.setHasError(true)
@@ -842,6 +874,9 @@ func (p *Parser) pushLexErrorRunLeaf(s *glrStack, state StateID, tok Token, node
 			top.endPoint = tok.EndPoint
 			top.setHasError(true)
 			nodeBumpEquivVersion(top)
+			if debugRecoveryCycleChecks {
+				debugRecoveryCheckNodeAcyclic(p, arena, "lex-error-run-extend", top)
+			}
 			if s.byteOffset < top.endByte {
 				s.byteOffset = top.endByte
 			}
@@ -977,7 +1012,10 @@ func (p *Parser) tryNearestActionStateRecovery(s *glrStack, tok Token, nodeCount
 	if !s.truncate(depth - recoverIdx) {
 		return false
 	}
-	errNode := newParentNodeInArena(arena, errorSymbol, true, errChildren, nil, 0)
+	// See newRecoveryParentNodeInArena: popped fragments can be transient
+	// reduce parents whose .parent field is the result-time materializer's
+	// map; eager link wiring here would link this ERROR under itself.
+	errNode := p.newRecoveryParentNodeInArena(arena, errorSymbol, true, errChildren, 0)
 	errNode.setHasError(true)
 	errNode.setExtra(true)
 	nodeBumpEquivVersion(errNode)
@@ -1279,7 +1317,10 @@ func (p *Parser) tryResyncErrorRecoveryMode(source []byte, s *glrStack, tok Toke
 		tokLeaf.setExternalScannerToken(tok.ExternalScannerToken)
 		errChildren = append(errChildren, tokLeaf)
 	}
-	errNode := newParentNodeInArena(arena, errorSymbol, true, errChildren, nil, 0)
+	// See newRecoveryParentNodeInArena: popped fragments can be transient
+	// reduce parents whose .parent field is the result-time materializer's
+	// map; eager link wiring here would link this ERROR under itself.
+	errNode := p.newRecoveryParentNodeInArena(arena, errorSymbol, true, errChildren, 0)
 	errNode.setHasError(true)
 	nodeBumpEquivVersion(errNode)
 	if perfCountersEnabled {
@@ -4529,12 +4570,21 @@ func (p *Parser) tryPushPendingNoFieldParent(s *glrStack, act ParseAction, tok T
 		return true
 	}
 	p.pushStackPendingParent(s, targetState, parent, entryScratch, gssScratch)
+	retargeted := false
 	for i := reducedEnd; i < trailingEnd; i++ {
 		extra, ok := retargetStackEntryPayload(entries[i], targetState)
 		if !ok {
 			continue
 		}
+		retargeted = true
 		p.pushStackEntry(s, extra, entryScratch, gssScratch)
+	}
+	if retargeted {
+		// retargetStackEntryPayload rewrote a spine node's parseState in place,
+		// which feeds gssEntryHash and thus every cached root->head shape prefix
+		// rolling through that node; invalidate the prefix cache (see glr.go
+		// glrMaterializingShapeHash doc). p.mergeScratch is nil-safe.
+		p.mergeScratch.bumpShapePrefixEpoch()
 	}
 	if nodeCount != nil {
 		*nodeCount = *nodeCount + 1
@@ -4637,12 +4687,21 @@ func (p *Parser) tryPushPendingDirectFieldParent(s *glrStack, act ParseAction, t
 		return true
 	}
 	p.pushStackPendingParent(s, targetState, parent, entryScratch, gssScratch)
+	retargeted := false
 	for i := reducedEnd; i < trailingEnd; i++ {
 		extra, ok := retargetStackEntryPayload(entries[i], targetState)
 		if !ok {
 			continue
 		}
+		retargeted = true
 		p.pushStackEntry(s, extra, entryScratch, gssScratch)
+	}
+	if retargeted {
+		// retargetStackEntryPayload rewrote a spine node's parseState in place,
+		// which feeds gssEntryHash and thus every cached root->head shape prefix
+		// rolling through that node; invalidate the prefix cache (see glr.go
+		// glrMaterializingShapeHash doc). p.mergeScratch is nil-safe.
+		p.mergeScratch.bumpShapePrefixEpoch()
 	}
 	if nodeCount != nil {
 		*nodeCount = *nodeCount + 1
@@ -7022,12 +7081,21 @@ func (p *Parser) pushNoTreeReduceNode(s *glrStack, act ParseAction, tok Token, a
 	parent.preGotoState = topState
 	parent.parseState = targetState
 	p.pushStackNoTreeNode(s, targetState, parent, entryScratch, gssScratch)
+	retargeted := false
 	for i := trailingStart; i < trailingEnd; i++ {
 		extra, ok := retargetStackEntryPayload(entries[i], targetState)
 		if !ok {
 			continue
 		}
+		retargeted = true
 		p.pushStackEntry(s, extra, entryScratch, gssScratch)
+	}
+	if retargeted {
+		// retargetStackEntryPayload rewrote a spine node's parseState in place,
+		// which feeds gssEntryHash and thus every cached root->head shape prefix
+		// rolling through that node; invalidate the prefix cache (see glr.go
+		// glrMaterializingShapeHash doc). p.mergeScratch is nil-safe.
+		p.mergeScratch.bumpShapePrefixEpoch()
 	}
 	if nodeCount != nil {
 		*nodeCount = *nodeCount + 1
@@ -7177,12 +7245,21 @@ func (p *Parser) pushCollapsedUnaryReduceEntry(s *glrStack, act ParseAction, tok
 	setStackEntryRawShapeRef(&child, rawShape)
 	addStackEntryDynamicPrecedence(&child, act.DynamicPrecedence)
 	p.pushStackEntry(s, child, entryScratch, gssScratch)
+	retargeted := false
 	for i := trailingStart; i < trailingEnd; i++ {
 		extra, ok := retargetStackEntryPayload(entries[i], targetState)
 		if !ok {
 			continue
 		}
+		retargeted = true
 		p.pushStackEntry(s, extra, entryScratch, gssScratch)
+	}
+	if retargeted {
+		// retargetStackEntryPayload rewrote a spine node's parseState in place,
+		// which feeds gssEntryHash and thus every cached root->head shape prefix
+		// rolling through that node; invalidate the prefix cache (see glr.go
+		// glrMaterializingShapeHash doc). p.mergeScratch is nil-safe.
+		p.mergeScratch.bumpShapePrefixEpoch()
 	}
 }
 

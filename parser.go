@@ -51,21 +51,21 @@ type Parser struct {
 	// burndown can triage dead-ends without re-instrumenting. Set on the parser
 	// (not package globals) so concurrent parsers don't race. Cleared at the
 	// start of each forest parse.
-	forestDeclineByte                   uint32
-	forestDeclineSym                    Symbol
-	forestDeclineReason                 string
-	forestDeclineStates                 []StateID
-	hasRecoverState                     []bool
-	hasRecoverSymbol                    []bool
-	recoverByState                      [][]recoverSymbolAction
-	hasKeywordState                     []bool
+	forestDeclineByte   uint32
+	forestDeclineSym    Symbol
+	forestDeclineReason string
+	forestDeclineStates []StateID
+	hasRecoverState     []bool
+	hasRecoverSymbol    []bool
+	recoverByState      [][]recoverSymbolAction
+	hasKeywordState     []bool
 	// lookupActionIndexFn caches the bound-method closure for
 	// lookupActionIndex. Passing p.lookupActionIndex directly at token-source
 	// construction sites allocates a fresh 16-byte closure per parse; the
 	// bound method only captures p (tables are re-read at call time), so one
 	// closure stays valid for the parser's whole lifetime, including language
 	// changes. See lookupActionIndexFunc (parser_tables.go).
-	lookupActionIndexFn func(state StateID, sym Symbol) uint16
+	lookupActionIndexFn                 func(state StateID, sym Symbol) uint16
 	typeScriptPropertyIdentifierSymbol  Symbol
 	typeScriptIdentifierSymbol          Symbol
 	typeScriptHasPropertyIdentifier     bool
@@ -145,6 +145,26 @@ type Parser struct {
 	// candidates routinely settles back to a legitimately clean tree without
 	// ever being "re-validated", so it must not be treated as suspicious.
 	crecoveryHandleErrorSingleStack bool
+	// crecoveryCostCompetitionRelevant gates the C-recovery merge cost walks
+	// (cRecoveryMergeCostsDiffer / cRecoveryCostClassForSlot/Slice via
+	// scratch.merge.cRecoveryCost): until something cost-relevant happens in
+	// THIS parse pass, every stack's error cost is provably zero, so the cost
+	// competition cannot change any merge outcome and the O(spine) cost walks
+	// per merge candidate are pure tax. It starts false for a fresh full parse
+	// and flips sticky-true on the first event that can make costs nonzero or
+	// unequal: a stack pausing (cPaused), cHandleError running, an
+	// error/missing node being pushed, or — conservatively — any parse that
+	// can REUSE subtrees from an old tree (reused subtrees may already carry
+	// error nodes without any new pause this pass). Reset alongside
+	// crecoveryEnteredErrorState in parseInternal.
+	crecoveryCostCompetitionRelevant bool
+	// fullParseRetryPassesTaken counts retry-ladder passes run during the
+	// current top-level parse operation (reset at the public parse entry
+	// funnels). retryFullParse stops launching passes once it reaches
+	// fullParseRetryMaxTotalPasses — a hard bound that, unlike the ladder's
+	// wall-clock deadline, holds even when the caller never configured
+	// SetTimeoutMicros.
+	fullParseRetryPassesTaken int
 	// cRecoverSharedTokenErrorModeLexed records whether the CURRENT shared
 	// token was produced by C-equivalent error-mode lexing (the DFA token
 	// source lexing with the ERROR-state primary because every live stack is
@@ -177,41 +197,48 @@ type Parser struct {
 	// where the deep stack-equivalence merge dominates and shared-leaf pointer
 	// identity short-circuits it (measured: swift 4.0x, bash 1.9x). Net-neutral
 	// or slightly negative on fast languages (go +4.9%), so it stays per-language.
-	leafInternByLang                    bool
-	forceRawSpanTable                   []bool
-	spanExtendingInvisibleSymbols       []bool
-	nonSpanExtendingInvisibleSymbols    []bool
-	aliasPreservedWrapperSymbols        []bool
-	included                            []Range
-	logger                              ParserLogger
-	glrTrace                            bool // verbose GLR stack tracing
-	ambiguityProfile                    *AmbiguityProfile
-	maxConflictWidth                    int // widest N-way conflict in the parse table
-	timeoutMicros                       uint64
-	cancellationFlag                    *uint32
-	parseBudgetDepth                    int
-	parseDeadline                       time.Time
-	parseStoppedReason                  ParseStopReason
-	denseLimit                          int
-	smallBase                           int
-	smallLookup                         [][]smallActionPair
-	smallTokenLookup                    [][]uint16
-	externalValidByState                [][]uint16
-	externalValidMaskByState            []uint64
-	hasExtraChainActions                bool
-	classifiedActions                   []classifiedParseAction
-	reduceChainHints                    []reduceChainHint
-	reduceChainHintByState              []int
-	reduceAliasSeq                      [][]Symbol
-	aliasTargetSymbol                   []bool
-	keepSameNamedAnonChildSymbol        []bool
-	sharedAnonymousTokenSymbol          []bool
-	reduceHasFields                     []bool
-	reduceFieldPlans                    []reduceFieldPlan
-	fieldIDScratch                      []FieldID
-	fieldInheritedScratch               []bool
-	fieldConflictedScratch              []bool
-	reduceScratch                       *reduceBuildScratch
+	leafInternByLang                 bool
+	forceRawSpanTable                []bool
+	spanExtendingInvisibleSymbols    []bool
+	nonSpanExtendingInvisibleSymbols []bool
+	aliasPreservedWrapperSymbols     []bool
+	included                         []Range
+	logger                           ParserLogger
+	glrTrace                         bool // verbose GLR stack tracing
+	ambiguityProfile                 *AmbiguityProfile
+	maxConflictWidth                 int // widest N-way conflict in the parse table
+	timeoutMicros                    uint64
+	cancellationFlag                 *uint32
+	parseBudgetDepth                 int
+	parseDeadline                    time.Time
+	parseStoppedReason               ParseStopReason
+	denseLimit                       int
+	smallBase                        int
+	smallLookup                      [][]smallActionPair
+	smallTokenLookup                 [][]uint16
+	externalValidByState             [][]uint16
+	externalValidMaskByState         []uint64
+	hasExtraChainActions             bool
+	classifiedActions                []classifiedParseAction
+	reduceChainHints                 []reduceChainHint
+	reduceChainHintByState           []int
+	reduceAliasSeq                   [][]Symbol
+	aliasTargetSymbol                []bool
+	keepSameNamedAnonChildSymbol     []bool
+	sharedAnonymousTokenSymbol       []bool
+	reduceHasFields                  []bool
+	reduceFieldPlans                 []reduceFieldPlan
+	fieldIDScratch                   []FieldID
+	fieldInheritedScratch            []bool
+	fieldConflictedScratch           []bool
+	reduceScratch                    *reduceBuildScratch
+	// mergeScratch points at the active parse's scratch.merge for the duration
+	// of parseInternal (set alongside reduceScratch, cleared on return). It lets
+	// dispatch-time helpers that only carry *Parser — tryGSSMainMergeForParser
+	// and the retargetStackEntryPayload reduce sites — invalidate the
+	// materializing-shape prefix cache when they rewrite a spine node's
+	// root->head prefix. nil outside a parse; bumpShapePrefixEpoch is nil-safe.
+	mergeScratch                        *glrMergeScratch
 	noTreeBenchmarkOnly                 bool
 	noTreeCheckpointBenchmarkOnly       bool
 	compactNoTreeShiftLeaves            bool
@@ -1896,6 +1923,7 @@ func (p *Parser) tryInsertMissingSingleShift(source []byte, s *glrStack, tok Tok
 		}
 	}
 
+	p.crecoveryCostCompetitionRelevant = true // missing-token insertion makes costs relevant
 	missingTok := Token{
 		Symbol:     candidateSym,
 		StartByte:  tok.StartByte,
@@ -2438,6 +2466,7 @@ func (p *Parser) tryInsertMissingSingleShiftAtEOF(s *glrStack, tok Token, nodeCo
 		return false
 	}
 
+	p.crecoveryCostCompetitionRelevant = true // missing-token insertion makes costs relevant
 	missingTok := Token{
 		Symbol:     candidateSym,
 		StartByte:  tok.StartByte,
@@ -2502,7 +2531,7 @@ func (p *Parser) tryRecoverTrailingEOFSuffix(s *glrStack, tok Token, nodeCount *
 					trimRecoveryWhitespaceTail(n, source)
 				}
 			}
-			nodes, recovered := appendTrailingEOFRecoveryNodes(nodes, entries, cut, tok, arena, nodeCount)
+			nodes, recovered := p.appendTrailingEOFRecoveryNodes(nodes, entries, cut, tok, arena, nodeCount)
 			if recovered || insertedMissing || cut > firstDrop {
 				return nodes, true
 			}
@@ -2569,7 +2598,21 @@ func (p *Parser) trailingEOFNodesFromPrefix(prefix glrStack) []*Node {
 	return nodes
 }
 
-func appendTrailingEOFRecoveryNodes(nodes []*Node, entries []stackEntry, cut int, tok Token, arena *nodeArena, nodeCount *int) ([]*Node, bool) {
+// appendTrailingEOFRecoveryNodes wraps the first dropped non-extra trailing
+// stack payload in an ERROR node during trailing-EOF suffix recovery. This is
+// issue #110's actual construction path: on a fresh parse `trailing` can be a
+// TRANSIENT reduce parent (a transientParentScratch slab node), whose .parent
+// field doubles as the result-time materializer's {nil: unvisited, self:
+// in-progress, other: arena clone} sentinel. The old eager-link-wiring
+// constructor (newParentNodeInArena → populateParentNode → setNodeParentLink)
+// corrupted that sentinel, so materializeTransientParentNodes then linked this
+// ERROR wrapper under itself — the cyclic-transient-tree defect that
+// stripResultTreeSelfCycles was left to mask. Route through
+// newRecoveryParentNodeInArena, which skips eager wiring while transient parents
+// are active (finalizeResultRoot wires links from the root anyway) and keeps the
+// eager-wiring constructor for incremental parses. See parser_recover_c.go and
+// parser_recover_cycle_internal_test.go for the mechanism and pins.
+func (p *Parser) appendTrailingEOFRecoveryNodes(nodes []*Node, entries []stackEntry, cut int, tok Token, arena *nodeArena, nodeCount *int) ([]*Node, bool) {
 	recovered := false
 	for i := cut; i < len(entries); i++ {
 		trailing := stackEntryNode(entries[i])
@@ -2580,7 +2623,7 @@ func appendTrailingEOFRecoveryNodes(nodes []*Node, entries []stackEntry, cut int
 			continue
 		}
 		if !recovered && !trailing.isExtra() {
-			errNode := newParentNodeInArena(arena, errorSymbol, true, []*Node{trailing}, nil, 0)
+			errNode := p.newRecoveryParentNodeInArena(arena, errorSymbol, true, []*Node{trailing}, 0)
 			errNode.setHasError(true)
 			errNode.setExtra(true)
 			nodes = append(nodes, errNode)
@@ -3699,12 +3742,14 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	transientReduceParents := p.configureParseScratch(scratch, source, reuse, oldTree, arenaClass, deferParentLinks)
 	defer releaseParserScratch(scratch, deferParentLinks)
 	p.reduceScratch = &scratch.reduce
+	p.mergeScratch = &scratch.merge
 	if transientReduceParents {
 		p.reduceScratch.transientParents = &scratch.transientParents
 		p.reduceScratch.transientChildren = &scratch.transientChildren
 	}
 	defer func() {
 		p.reduceScratch = nil
+		p.mergeScratch = nil
 	}()
 	scratch.audit.beginParse()
 	scratch.merge.audit = nil
@@ -3720,6 +3765,10 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		}
 		p.crecoveryEnteredErrorState = false
 		p.crecoveryDroppedErrorForClean = false
+		// Cost walks stay gated off until this pass proves costs can be
+		// nonzero; parses that may reuse old-tree subtrees start relevant
+		// because reused subtrees can already carry error nodes.
+		p.crecoveryCostCompetitionRelevant = reuse != nil || oldTree != nil
 		p.cRecoverSharedTokenErrorModeLexed = false
 		p.cRecoverCustomResyncActive = false
 		p.cRecoverCustomResyncByte = 0
@@ -4120,6 +4169,26 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			stopReason = ParseStopNoStacksAlive
 			tree = replaceWithOwnedErrorTree(tree, stopReason)
 		}
+		// C-recovery wrap/unwrap cycles can leave stale hasError bits on
+		// ancestors whose error content resolved losslessly (see
+		// reconcileStaleHasErrorFlags). Repair before the runtime is stamped so
+		// the retry ladder and callers see C-derived truth. Gated to passes
+		// where the recovery machinery actually ran; the walk itself only
+		// happens when the root still claims an error.
+		//
+		// SAFETY: only for ACCEPTED, EOF-covering trees. On a truncated or
+		// stopped-early tree "no ERROR node inside" does not mean "no error"
+		// — the error can be exactly the reason the parse stopped (the
+		// _pydecimal.py swallowed-error class: Go truncates at 64K with
+		// hasError=false where C reports hasError=true). Clearing there
+		// would widen that class; an accepted tree spanning expected EOF
+		// with zero ERROR/MISSING descendants is the only case where
+		// hasError=false is definitionally C-correct.
+		if tree != nil && p.crecoveryEnteredErrorState && stopReason == ParseStopAccepted {
+			if root := tree.root; root != nil && root.hasError() && root.endByte >= expectedEOFByte {
+				reconcileStaleHasErrorFlags(root, 0)
+			}
+		}
 		scratch.audit.finishParse(stacks)
 		captureArenaStats()
 		captureScratchStats()
@@ -4257,6 +4326,16 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	maxIter := caps.maxIter
 	maxDepth := caps.maxDepth
 	maxNodes := caps.maxNodes
+	// Population cap for transient conflict-frontier fork admission
+	// (completeConflictReduceFrontier): active exactly where the boundary
+	// cull's overflow window exists (full parses outside c_sharp, where
+	// glrStackCullTrigger returns maxStacks+fullParseGLRStackOverflow).
+	// Zero disables the gate so incremental and c_sharp behavior is
+	// unchanged.
+	frontierForkPopulationCap := 0
+	if maxStackCullTrigger > maxStacks {
+		frontierForkPopulationCap = maxStackCullTrigger
+	}
 	parseRuntime.IterationLimit = maxIter
 	parseRuntime.StackDepthLimit = maxDepth
 	parseRuntime.NodeLimit = maxNodes
@@ -4767,6 +4846,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					// condense step decides (ts_parser__handle_error skips the
 					// strategy-1 scan for error lookaheads and absorbs it).
 					s.cPaused = true
+					p.crecoveryCostCompetitionRelevant = true
 					if actionTiming != nil {
 						ns := recordNoActionTiming()
 						actionTiming.actionNoActionErrorNanos += ns
@@ -4819,6 +4899,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 						// the condense step resumes via ts_parser__handle_error
 						// whose recover_eof wraps the stack in an ERROR root.
 						s.cPaused = true
+						p.crecoveryCostCompetitionRelevant = true
 						if actionTiming != nil {
 							ns := recordNoActionTiming()
 							actionTiming.actionNoActionErrorNanos += ns
@@ -4922,6 +5003,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 						fmt.Printf("  stack[%d] C-PAUSED: no action for sym=%d in state=%d\n", si, tok.Symbol, currentState)
 					}
 					s.cPaused = true
+					p.crecoveryCostCompetitionRelevant = true
 					if actionTiming != nil {
 						ns := recordNoActionTiming()
 						actionTiming.actionNoActionErrorNanos += ns
@@ -5079,7 +5161,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 							afterState:  actionAfterState,
 							afterByte:   actionAfterByte,
 							afterDepth:  actionAfterDepth,
-						}, allocBranchOrder, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
+						}, len(stacks), frontierForkPopulationCap, allocBranchOrder, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
 						traceFrontier(si, s, traceFrontierResult(actionAfterState, actionAfterByte, actionAfterDepth, s))
 					}
 					drainPendingForkStacks()
@@ -5133,7 +5215,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 							afterState:  actionAfterState,
 							afterByte:   actionAfterByte,
 							afterDepth:  actionAfterDepth,
-						}, allocBranchOrder, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
+						}, len(stacks), frontierForkPopulationCap, allocBranchOrder, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
 						traceFrontier(si, s, traceFrontierResult(actionAfterState, actionAfterByte, actionAfterDepth, s))
 					}
 					drainPendingForkStacks()
@@ -5169,7 +5251,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 									afterState:  actionAfterState,
 									afterByte:   actionAfterByte,
 									afterDepth:  actionAfterDepth,
-								}, allocBranchOrder, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
+								}, len(stacks), frontierForkPopulationCap, allocBranchOrder, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
 								frontier := traceFrontierResult(actionAfterState, actionAfterByte, actionAfterDepth, &fork)
 								traceAppend("conflict-fork", si, ai, len(actions), actions[ai], &fork, frontier)
 							} else {
@@ -5218,7 +5300,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 						afterState:  actionAfterState,
 						afterByte:   actionAfterByte,
 						afterDepth:  actionAfterDepth,
-					}, allocBranchOrder, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
+					}, len(stacks), frontierForkPopulationCap, allocBranchOrder, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
 					traceFrontier(si, s, traceFrontierResult(actionAfterState, actionAfterByte, actionAfterDepth, s))
 				}
 				if p.glrTrace {
@@ -5777,6 +5859,7 @@ func (p *Parser) configureParseScratch(scratch *parserScratch, source []byte, re
 		p.transientChildren = nil
 	}
 	scratch.merge.beginEquivEpoch()
+	scratch.merge.ensureMergeHotCaches()
 	transientReduceParents := p.shouldUseTransientReduceParents(source, reuse, oldTree, arenaClass)
 	p.transientReduceScratchNoAlias = p.transientReduceChildren && transientReduceParents && parseShouldUseTransientReduceScratchNoAlias(len(source))
 	scratch.merge.pythonShallow = p.language != nil && p.language.Name == "python" && len(source) <= 512*1024
@@ -5929,14 +6012,6 @@ func javaFullParseNeedsAnnotationDeclarationMergeWidth(lang *Language, source []
 }
 
 func (p *Parser) tuneParseGLRCaps(maxStacks, mergePerKeyCap int, reuse *reuseCursor) (int, int) {
-	if reuse == nil && p.language != nil && p.language.Name == "bash" {
-		if maxStacks < 256 {
-			maxStacks = 256
-		}
-		if mergePerKeyCap < 256 {
-			mergePerKeyCap = 256
-		}
-	}
 	if reuse == nil && p.language != nil && p.language.Name == "c_sharp" && mergePerKeyCap < 16 {
 		mergePerKeyCap = 16
 	}
@@ -6003,7 +6078,11 @@ func (p *Parser) prepareParseStacksForIteration(stacks []glrStack, scratch *pars
 	}
 	scratch.merge.language = p.language
 	scratch.merge.trace = p.glrTrace
-	scratch.merge.cRecoveryCost = p.errorCostCompetitionEnabled()
+	// Sticky per-parse gate: before anything cost-relevant has happened this
+	// pass (see crecoveryCostCompetitionRelevant), every stack's error cost is
+	// provably zero and the merge cost competition cannot change any outcome,
+	// so skip its O(spine) walks entirely on the clean prefix of the parse.
+	scratch.merge.cRecoveryCost = p.errorCostCompetitionEnabled() && p.crecoveryCostCompetitionRelevant
 	scratch.merge.deferExactDedupe = languageDefersExactDedupe(p.language, p.noTreeBenchmarkOnly)
 	scratch.merge.frontierMergeHash = p.usesGenericFrontierMergeHash()
 	if p.ambiguityProfile != nil {
@@ -6465,10 +6544,26 @@ func currentRelexStateStackEligible(s *glrStack) bool {
 }
 
 func (p *Parser) usesPrimaryExternalScannerStateForGLR() bool {
-	return p != nil &&
-		p.language != nil &&
-		(p.language.Name == "yaml" || p.language.Name == "c_sharp") &&
-		p.language.ExternalScanner != nil
+	if p == nil || p.language == nil || p.language.ExternalScanner == nil {
+		return false
+	}
+	switch p.language.Name {
+	case "yaml":
+		return true
+	case "c_sharp":
+		// Pin to the primary stack only while the blob lacks a precise
+		// ExternalLexStates table: the union path over-approximates external
+		// validity and corrupts the stateful interpolation scanner. With the
+		// precise table registered, the per-row scored path
+		// (nextGLRScoredExternalToken) lexes each distinct external lex state
+		// like C does per version, and MUST see all stack states — pinning
+		// here starves interpolation-hole stacks of interpolation_close_brace
+		// whenever the primary stack is a competing non-hole interpretation
+		// (observed: DeclaredTypeManager.cs `{nameof(...)}` hole close at
+		// byte 30694 arriving as a plain `}` and detonating recovery).
+		return len(p.language.ExternalLexStates) == 0
+	}
+	return false
 }
 
 func clearGLRStateTokenSource(stateful parserStateTokenSource, scratch *parserScratch) {
@@ -7775,7 +7870,7 @@ func compareStackCullKeys(lang *Language, a, b stackCullKey) int {
 		}
 	}
 	if a.depth != b.depth {
-		if lang != nil && (lang.Name == "bash" || lang.Name == "python") {
+		if lang != nil && lang.Name == "python" {
 			if a.depth < b.depth {
 				return 1
 			}

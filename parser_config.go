@@ -115,6 +115,14 @@ func parseMaxMergePerKeyEnvConfigured() bool {
 	return strings.TrimSpace(os.Getenv("GOT_GLR_MAX_MERGE_PER_KEY")) != ""
 }
 
+// parseMaxGLRStacksEnvConfigured reports whether GOT_GLR_MAX_STACKS was set
+// explicitly. An explicit survivor cap is a diagnostic/experiment contract:
+// the retry ladder must treat it as a true ceiling instead of silently
+// widening past it (fullParseRetryMaxStacksOverride).
+func parseMaxGLRStacksEnvConfigured() bool {
+	return strings.TrimSpace(os.Getenv("GOT_GLR_MAX_STACKS")) != ""
+}
+
 // glrFaithfulCapOneMerge (GOT_FAITHFUL_CONDENSE=1) makes cap-one condense
 // preserve same-key tie readings through multi-link GSS nodes. It defaults off
 // while the faithful GLR path is validated.

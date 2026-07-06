@@ -2,6 +2,8 @@ package gotreesitter
 
 import (
 	"bytes"
+	"fmt"
+	"os"
 	"time"
 )
 
@@ -65,6 +67,18 @@ const (
 	// Keep retry widening bounded to avoid runaway memory growth on very large
 	// malformed inputs. Callers can still override via GOT_GLR_MAX_STACKS.
 	fullParseRetryMaxSourceBytes = 1 << 20 // 1 MiB
+	// fullParseRetryMaxTotalPasses hard-bounds the number of retry passes a
+	// single top-level parse operation may run, independent of any wall-clock
+	// budget (the retryDeadline in retryFullParse is a no-op when the caller
+	// never sets SetTimeoutMicros — the common case). The deepest legitimate
+	// ladder is ~5 passes per retryFullParse invocation and at most a few
+	// invocations per operation (main round + external-scanner repeat +
+	// incremental->full fallback), so 24 leaves >2x headroom while making
+	// runaway repetition (c_sharp was observed running 1076 passes on a
+	// pass-1 parse failure, 2026-07 cliff campaign) structurally impossible.
+	// Retries are best-effort improvements: when the budget is exhausted the
+	// incumbent best tree is returned, never a worse result.
+	fullParseRetryMaxTotalPasses = 24
 )
 
 type resettableTokenSource interface {
@@ -109,7 +123,7 @@ func shouldRetryAcceptedErrorParse(tree *Tree, sourceLen int, initialMaxStacks i
 	return rt.MaxStacksSeen >= initialMaxStacks
 }
 
-func shouldRetryStackPressureCleanFullParse(tree *Tree, sourceLen int, initialMaxStacks int) bool {
+func shouldRetryStackPressureCleanFullParse(tree *Tree, sourceLen int, _ int) bool {
 	if tree == nil {
 		return false
 	}
@@ -130,13 +144,17 @@ func shouldRetryStackPressureCleanFullParse(tree *Tree, sourceLen int, initialMa
 	if rt.Truncated && rt.StopReason != ParseStopAccepted {
 		return false
 	}
-	if initialMaxStacks <= 0 {
-		initialMaxStacks = maxGLRStacks
-	}
-	if rt.GlobalCullStacksIn > rt.GlobalCullStacksOut {
-		return true
-	}
-	return rt.MaxStacksSeen >= initialMaxStacks+fullParseGLRStackOverflow
+	// Only ACTUAL eviction justifies a clean-tree re-parse: the global cap
+	// cull dropped live stacks, so the C-correct interpretation may have
+	// been discarded. The old second arm (MaxStacksSeen >= cap+overflow)
+	// fired on mere transient pre-merge bloom — python's clean parses hit
+	// it on essentially every real file (MaxStacksSeen >= 12 always),
+	// buying a guaranteed second full pass (universal ~2x clean-parse tax,
+	// 2026-07 cliff campaign) for a tree that was never at risk: when the
+	// cull never dropped anything, no lineage was lost and the first clean
+	// tree is already the parse's honest answer (also closer to C's
+	// single-pass semantics).
+	return rt.GlobalCullStacksIn > rt.GlobalCullStacksOut
 }
 
 func shouldRetryNodeLimitParse(tree *Tree, sourceLen int) bool {
@@ -369,9 +387,17 @@ func effectiveFullParseInitialMaxStacks(lang *Language, initialMaxStacks int) in
 	}
 	switch lang.Name {
 	case "bash":
-		if initialMaxStacks < 256 {
-			initialMaxStacks = 256
-		}
+		// bash's historical 256 floor (arrived 2026-03-07 in a C#-focused
+		// commit, no bash rationale recorded) was removed by the 2026-07
+		// cliff campaign. It papered over the real defect — the bash branch
+		// of compareStackCullKeys preferred SHALLOWER stacks, so under cull
+		// pressure the deeper accept-capable lineage was evicted at ANY cap
+		// (2..256 all ended in an EOF mass-pause + whole-file recovery wrap;
+		// only 512 survived) — while multiplying every survivor-count cost
+		// by 32x. With the cull ordering fixed, the global default parses
+		// the bash corpus clean and byte-shape-identical to the pinned C
+		// oracle (small__release.sh 46s -> well under 1s; medium__clean-old.sh
+		// 17-20s -> ~50ms), and all bash regression tests pass unwidened.
 	case "css", "scss":
 		// Large stylesheet corpora spend most of their time churning on the
 		// same RS conflicts without needing a wide steady-state stack budget.
@@ -902,7 +928,22 @@ func effectiveParseMergePerKeyCap(lang *Language, mergePerKeyCap int, incrementa
 }
 
 func typescriptFullParseCanUseTightMergeCap(sourceLen ...int) bool {
-	return len(sourceLen) == 0 || sourceLen[0] <= 64*1024
+	// The tight cap applies uniformly regardless of file size. This function
+	// previously disengaged the cap above 64KB ("large parser.ts-class sources
+	// need the wider default to avoid expensive recovery/result paths",
+	// 719cbe90), which created a size-threshold discontinuity: the wide
+	// six-survivor budget retains redundant unreduced-spine survivors whose
+	// conflict-reduce frontier walk re-forks their entire pending spine at
+	// every statement boundary (O(n) transient forks per token, O(n^2) node
+	// allocation over the file). Union-type-list-shaped .d.ts sources crossed
+	// from "parses in milliseconds" at 64KB-epsilon to "memory_budget with
+	// 1548 transient stacks" at 64KB+epsilon. The tight cap is what prevents
+	// those survivors from being retained in the first place; typed-arrow and
+	// destructured-arrow sources still widen through the dedicated gates in
+	// configureParseCaps, and accepted-error retries still widen through
+	// fullParseRetryMergePerKeyOverride.
+	_ = sourceLen
+	return true
 }
 
 func dartIncrementalFallbackCanUseTightMergeCap(sourceLen ...int) bool {
@@ -1028,7 +1069,6 @@ func typeScriptSourceHasDestructuredArrowReturnType(source []byte) bool {
 	}
 }
 
-
 func fullParseUsesDeterministicExternalConflicts(lang *Language) bool {
 	return lang != nil &&
 		lang.ExternalScanner != nil &&
@@ -1052,6 +1092,12 @@ func shouldRepeatExternalScannerFullParse(lang *Language, tree *Tree) bool {
 }
 
 func fullParseRetryMaxStacksOverride(tree *Tree, sourceLen int, initialMaxStacks int) int {
+	// An explicit GOT_GLR_MAX_STACKS is a true ceiling: diagnostics and
+	// experiments depend on the survivor cap actually holding, and the
+	// widening below silently defeated it (2026-07 cliff campaign finding).
+	if parseMaxGLRStacksEnvConfigured() {
+		return 0
+	}
 	retryMaxStacks := fullParseRetryMaxGLRStacks
 	if tree != nil && tree.language != nil && tree.language.Name == "java" {
 		retryMaxStacks = javaFullParseRetryMaxGLRStacks
@@ -1207,6 +1253,13 @@ func (p *Parser) retryFullParse(source []byte, initialMaxStacks int, tree *Tree,
 		if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
 			return true
 		}
+		// Hard pass-count bound, independent of any wall-clock budget (which
+		// is a no-op without SetTimeoutMicros — see the KNOWN GAP below).
+		// Counted per top-level parse operation across every retryFullParse
+		// invocation; see fullParseRetryMaxTotalPasses.
+		if p != nil && p.fullParseRetryPassesTaken >= fullParseRetryMaxTotalPasses {
+			return true
+		}
 		// KNOWN GAP (tracked, not fixed here): when the caller never
 		// configures a timeout (p.timeoutMicros == 0, the default for a
 		// freshly constructed Parser and for every test/benchmark helper in
@@ -1277,16 +1330,48 @@ func (p *Parser) retryFullParse(source []byte, initialMaxStacks int, tree *Tree,
 	}
 
 	structuralResyncRetry := shouldRetryFullParse(tree, len(source))
+	retryDebug := os.Getenv("GOT_RETRY_DEBUG") == "1"
+	if retryDebug {
+		rt := tree.ParseRuntime()
+		fmt.Fprintf(os.Stderr, "RETRYDBG entry stop=%v truncated=%v hasErr=%v maxStacksSeen=%d stacksOverride=%d nodesOverride=%d structResync=%v\n",
+			rt.StopReason, rt.Truncated, retryTreeHasError(tree), rt.MaxStacksSeen, maxStacksOverride, maxNodesOverride, structuralResyncRetry)
+	}
 	runRetryAttempt := func(maxStacks int, maxMergePerKeyOverride int, maxNodes int) *Tree {
-		if !structuralResyncRetry || p == nil || p.forceCleanRetryPass {
-			return runRetry(maxStacks, maxMergePerKeyOverride, maxNodes)
+		if p != nil {
+			if p.fullParseRetryPassesTaken >= fullParseRetryMaxTotalPasses {
+				// Budget exhausted: a nil candidate is a no-op for every
+				// caller (replaceBest ignores nil), so the incumbent best
+				// tree flows through unchanged.
+				return nil
+			}
+			p.fullParseRetryPassesTaken++
 		}
-		prev := p.retryStructuralTopLevelResync
-		p.retryStructuralTopLevelResync = true
-		defer func() {
-			p.retryStructuralTopLevelResync = prev
-		}()
-		return runRetry(maxStacks, maxMergePerKeyOverride, maxNodes)
+		var t0 time.Time
+		if retryDebug {
+			t0 = time.Now()
+		}
+		var result *Tree
+		if !structuralResyncRetry || p == nil || p.forceCleanRetryPass {
+			result = runRetry(maxStacks, maxMergePerKeyOverride, maxNodes)
+		} else {
+			prev := p.retryStructuralTopLevelResync
+			p.retryStructuralTopLevelResync = true
+			defer func() {
+				p.retryStructuralTopLevelResync = prev
+			}()
+			result = runRetry(maxStacks, maxMergePerKeyOverride, maxNodes)
+		}
+		if retryDebug {
+			stop := ParseStopNone
+			hasErr := true
+			if result != nil {
+				stop = result.ParseRuntime().StopReason
+				hasErr = retryTreeHasError(result)
+			}
+			fmt.Fprintf(os.Stderr, "RETRYDBG pass maxStacks=%d mergePerKey=%d maxNodes=%d took=%v stop=%v hasErr=%v forceClean=%v\n",
+				maxStacks, maxMergePerKeyOverride, maxNodes, time.Since(t0), stop, hasErr, p != nil && p.forceCleanRetryPass)
+		}
+		return result
 	}
 
 	bestTree := tree

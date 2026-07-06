@@ -1470,6 +1470,74 @@ func (p *Parser) forestEOFRecoveryCouldCompete(idx *gssForestIndex, arena *nodeA
 	return false
 }
 
+// forestAcceptedIsCleanCompleteParse reports whether the forest's chosen accept
+// candidate is a genuinely CLEAN, complete parse of the whole input — the case
+// for which the EOF-recovery-competition probe (forestEOFRecoveryCouldCompete)
+// is provably unnecessary. It verifies three cheap, independent conditions:
+//
+//  1. Zero recovery cost along the accept path (accepted.errorCost == 0). Forest
+//     errorCost is a PATH cost: a reduce carries its predecessor's errorCost
+//     (coalesce ... popTo.errorCost) and only a recovery step ever raises it (by
+//     at least a skipped-token width; ERROR_COST_PER_RECOVERY at the stack
+//     level). Zero therefore means no recovery happened anywhere on the path —
+//     no skipped input, no error region, no missing insertion.
+//  2. No ERROR/MISSING nodes: the materialized start-symbol root (built eagerly
+//     at reduce time; reached here by the same walk collectForestRootAndExtras
+//     uses, skipping trailing extras) has its has-error flag clear.
+//     populateParentNode ORs every child's flag up and every ERROR/MISSING leaf
+//     sets it, so a clear root flag proves the whole subtree is error-free.
+//  3. Full input span: the accept (chosen for MAX coverage, with trailing extras
+//     coalesced above it) reaches the last non-whitespace byte. Trailing
+//     whitespace/newlines are inter-token trivia outside any node span, so they
+//     are excluded from the bound — the same end rule tryForestFastPath applies.
+//
+// For such a tree the C finished_tree comparison is decisive and needs no probe:
+// ts_parser selects the finished version with the LOWEST error_cost, and every
+// recovery costs at least ERROR_COST_PER_RECOVERY (cErrCostPerRecovery = 500),
+// so a cost-0 accept is unbeatable — the probe's question ("could some EOF
+// recovery have competed?") is definitionally "no". Callers gate the probe on
+// !this so a clean accept dispatches straight through instead of declining.
+func (p *Parser) forestAcceptedIsCleanCompleteParse(arena *nodeArena, accepted *gssForestNode, source []byte) bool {
+	// (1) zero recovery cost — the C-model master signal.
+	if accepted == nil || accepted.errorCost != 0 {
+		return false
+	}
+	// (3) full input span up to the last non-whitespace byte.
+	end := len(source)
+	for end > 0 {
+		switch source[end-1] {
+		case ' ', '\t', '\r', '\n':
+			end--
+			continue
+		}
+		break
+	}
+	if accepted.byteOffset < uint32(end) {
+		return false
+	}
+	// (2) no ERROR/MISSING nodes: walk to the start-symbol root (skipping any
+	// trailing extras stacked above the accept, as collectForestRootAndExtras
+	// does) and require its propagated has-error flag to be clear.
+	var root *Node
+	for cur := accepted; cur != nil; {
+		link := cur.bestAcceptedRootResultLink(p, arena)
+		if link == nil {
+			return false
+		}
+		n := (*Node)(link.subtree.node)
+		if n.isExtra() {
+			cur = link.prev
+			continue
+		}
+		root = n
+		break
+	}
+	if root == nil || root.hasError() {
+		return false
+	}
+	return true
+}
+
 func forestPreserveRootVisibleContainerAlternatives(p *Parser, arena *nodeArena, root *Node, alternatives *forestAlternativeIndex) bool {
 	if p == nil || p.language == nil || root == nil || alternatives == nil || resultChildCount(root) == 0 {
 		return false
@@ -1828,6 +1896,18 @@ func (p *Parser) collectForestErrorRoot(idx *gssForestIndex, arena *nodeArena) *
 		// forest recovery selection.
 		rootSym = errorSymbol
 	}
+	// Eager parent-link wiring is safe here (unlike the C-recovery ERROR wrappers
+	// fixed via newRecoveryParentNodeInArena): the forest path cannot corrupt the
+	// transient-parent sentinel because it never allocates transient parents.
+	// parseForest swaps p.reduceScratch to a zero-valued forestReduceScratch for
+	// the whole forest parse (glr_forest.go ~:2366-2368, transientParents left
+	// nil), and newReduceParentNode only routes to transientParents.allocParent
+	// (the slab node whose .parent doubles as the materializer sentinel) when
+	// transientParents != nil (parser_reduce.go ~:6660). So every `frags` node
+	// built during this forest parse is an ordinary arena/leaf node with a real
+	// parent link — there is no {nil/self/other} sentinel to clobber. This
+	// collectForestErrorRoot site is the only production caller and runs inside
+	// that swap's dynamic extent (glr_forest.go ~:2927).
 	root := newParentNodeInArena(arena, rootSym, true, frags, nil, 0)
 	if hasErr {
 		root.setHasError(true)
@@ -2816,7 +2896,23 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte, captureExternalChe
 		}
 
 		if eof {
-			if accepted != nil && (recoverActive || p.errorCostCompetitionEnabled()) && p.forestEOFRecoveryCouldCompete(&curIndex, arena, tok.StartByte, !recoverActive) {
+			// A genuinely CLEAN forest accept (zero recovery cost, no ERROR/MISSING
+			// nodes, full input span) is unbeatable in C's finished_tree selection:
+			// ts_parser picks the lowest-error_cost finished version and every
+			// recovery costs at least ERROR_COST_PER_RECOVERY (500), so no EOF
+			// recovery could compete with a cost-0 accept — forestEOFRecoveryCould-
+			// Compete would always answer "no". Skip that probe for such accepts on
+			// the !recoverActive languages (bash/c_sharp/cmake/... — every forest
+			// language whose accept is required to be error-free), whose outer
+			// tryForestFastPath still declines on any root.HasError() as a safety
+			// net. recoverActive languages keep the conservative probe: their outer
+			// path intentionally accepts error-bearing roots (that HasError net is
+			// disabled for them) and forest-vs-production materialization parity on
+			// their newly forest-routed clean files is not covered by the local
+			// corpus here — the C argument is airtight, but we stay conservative.
+			cleanAcceptBeatsRecovery := !recoverActive &&
+				p.forestAcceptedIsCleanCompleteParse(arena, accepted, source)
+			if accepted != nil && !cleanAcceptBeatsRecovery && (recoverActive || p.errorCostCompetitionEnabled()) && p.forestEOFRecoveryCouldCompete(&curIndex, arena, tok.StartByte, !recoverActive) {
 				p.recordForestDecline(forestDeclineEOFRecoveryConflict, tok, nil)
 				if progress.enabled {
 					progress.emit(time.Now(), "forest_decline", iter, tokens, tok, true, nil, 0, 0, 0, false, 0, 0,

@@ -1759,8 +1759,15 @@ func TestResolveParseMaxStacks(t *testing.T) {
 }
 
 func TestEffectiveFullParseInitialMaxStacks(t *testing.T) {
-	if got := effectiveFullParseInitialMaxStacks(&Language{Name: "bash"}, maxGLRStacks); got != 256 {
-		t.Fatalf("effectiveFullParseInitialMaxStacks(bash) = %d, want 256", got)
+	// bash's historical 256 floor was removed by the 2026-07 cliff campaign:
+	// it papered over the shallow-depth cull ordering evicting the accept
+	// lineage (see compareStackCullKeys), cost every bash full parse 256
+	// survivors x 256 merge-per-key, and did not even prevent the defect
+	// (first pass still error-wrapped at caps 2..256). With the cull fix the
+	// global default parses the bash corpus clean and byte-shape-identical to
+	// the pinned C oracle.
+	if got := effectiveFullParseInitialMaxStacks(&Language{Name: "bash"}, maxGLRStacks); got != maxGLRStacks {
+		t.Fatalf("effectiveFullParseInitialMaxStacks(bash) = %d, want %d (global default)", got, maxGLRStacks)
 	}
 	if got := effectiveFullParseInitialMaxStacks(&Language{Name: "css"}, maxGLRStacks); got != 2 {
 		t.Fatalf("effectiveFullParseInitialMaxStacks(css) = %d, want 2", got)
@@ -1908,14 +1915,18 @@ func TestEffectiveParseMergePerKeyCap(t *testing.T) {
 	if got := effectiveParseMergePerKeyCap(&Language{Name: "typescript"}, maxStacksPerMergeKey, false); got != 1 {
 		t.Fatalf("effectiveParseMergePerKeyCap(typescript, default, full) = %d, want 1", got)
 	}
-	if got := effectiveParseMergePerKeyCap(&Language{Name: "typescript"}, maxStacksPerMergeKey, false, 128*1024); got != maxStacksPerMergeKey {
-		t.Fatalf("effectiveParseMergePerKeyCap(typescript, large default, full) = %d, want %d", got, maxStacksPerMergeKey)
+	// The tight TypeScript cap applies uniformly regardless of source size:
+	// the former >64KB disengagement retained redundant unreduced-spine
+	// survivors whose frontier walks exploded transient stack population on
+	// large union-list .d.ts sources (intra-token population explosion).
+	if got := effectiveParseMergePerKeyCap(&Language{Name: "typescript"}, maxStacksPerMergeKey, false, 128*1024); got != 1 {
+		t.Fatalf("effectiveParseMergePerKeyCap(typescript, large default, full) = %d, want 1", got)
 	}
 	if got := effectiveParseMergePerKeyCap(&Language{Name: "tsx"}, maxStacksPerMergeKey, false); got != 1 {
 		t.Fatalf("effectiveParseMergePerKeyCap(tsx, default, full) = %d, want 1", got)
 	}
-	if got := effectiveParseMergePerKeyCap(&Language{Name: "tsx"}, maxStacksPerMergeKey, false, 128*1024); got != maxStacksPerMergeKey {
-		t.Fatalf("effectiveParseMergePerKeyCap(tsx, large default, full) = %d, want %d", got, maxStacksPerMergeKey)
+	if got := effectiveParseMergePerKeyCap(&Language{Name: "tsx"}, maxStacksPerMergeKey, false, 128*1024); got != 1 {
+		t.Fatalf("effectiveParseMergePerKeyCap(tsx, large default, full) = %d, want 1", got)
 	}
 	if got := effectiveParseMergePerKeyCap(&Language{Name: "java"}, maxStacksPerMergeKey, false); got != 1 {
 		t.Fatalf("effectiveParseMergePerKeyCap(java, default, full) = %d, want 1", got)
@@ -2124,18 +2135,24 @@ func TestEffectiveParseMergePerKeyCapGoFaithfulCondense(t *testing.T) {
 	}
 }
 
-func TestConfigureParseCapsTypedArrowDoesNotLowerLargeTypeScriptCap(t *testing.T) {
+func TestConfigureParseCapsTypedArrowKeepsTypedArrowWidthOnLargeTypeScript(t *testing.T) {
 	t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "")
 	ResetParseEnvConfigCacheForTests()
 	defer ResetParseEnvConfigCacheForTests()
 
+	// TypeScript's tight full-parse merge cap now applies uniformly regardless
+	// of source size (the former >64KB disengagement caused the intra-token
+	// population explosion on large union-list sources). A large typed-arrow
+	// source therefore gets the same typed-arrow minimum width (2) that small
+	// typed-arrow sources have always used, rather than the former wide
+	// default of maxStacksPerMergeKey.
 	source := []byte(strings.Repeat("const filler = 1;\n", 8192) + "const f = (str: string) => str;\n")
 	parser := &Parser{language: &Language{Name: "typescript"}}
 	var scratch parserScratch
 
 	caps := parser.configureParseCaps(source, nil, arenaClassFull, &scratch, 0, 0, 0)
-	if caps.mergePerKeyCap != maxStacksPerMergeKey {
-		t.Fatalf("configureParseCaps(large TypeScript typed arrow) merge cap = %d, want %d", caps.mergePerKeyCap, maxStacksPerMergeKey)
+	if caps.mergePerKeyCap != 2 {
+		t.Fatalf("configureParseCaps(large TypeScript typed arrow) merge cap = %d, want 2", caps.mergePerKeyCap)
 	}
 
 	caps = parser.configureParseCaps(source, nil, arenaClassFull, &scratch, 0, 0, -4)

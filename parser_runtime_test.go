@@ -281,7 +281,7 @@ func TestConflictReduceFrontierCompletesSingleShift(t *testing.T) {
 	}
 
 	nextBranchOrder := uint64(99)
-	parser.completeConflictReduceFrontier(nil, &stack, tok, seed, func() uint64 {
+	parser.completeConflictReduceFrontier(nil, &stack, tok, seed, 1, 0, func() uint64 {
 		order := nextBranchOrder
 		nextBranchOrder++
 		return order
@@ -331,7 +331,7 @@ func TestConflictReduceFrontierDegenerateSameReduceShiftCompletes(t *testing.T) 
 	seed := applyConflictFrontierReduceForTest(parser, &stack, reduce, tok, &anyReduced, &nodeCount, arena, &entries, &gss, &tmp, &trackChildErrors)
 
 	nextBranchOrder := uint64(99)
-	parser.completeConflictReduceFrontier(nil, &stack, tok, seed, func() uint64 {
+	parser.completeConflictReduceFrontier(nil, &stack, tok, seed, 1, 0, func() uint64 {
 		order := nextBranchOrder
 		nextBranchOrder++
 		return order
@@ -421,7 +421,7 @@ func TestConflictReduceFrontierSameHeaderFirstReduceStaysLive(t *testing.T) {
 		afterDepth:  2,
 	}
 
-	parser.completeConflictReduceFrontier([]byte("xxb"), &stack, tok, seed, nil, &anyReduced, &nodeCount, arena, &entries, &gss, &tmp, false, &trackChildErrors)
+	parser.completeConflictReduceFrontier([]byte("xxb"), &stack, tok, seed, 1, 0, nil, &anyReduced, &nodeCount, arena, &entries, &gss, &tmp, false, &trackChildErrors)
 	if stack.dead {
 		t.Fatal("same-header first reduce killed original branch")
 	}
@@ -505,7 +505,7 @@ func TestConflictReduceFrontierDepthChangingSameReduceDoesNotFakeDuplicate(t *te
 		t.Fatalf("after seed reduce state = %d, want %d", got, want)
 	}
 
-	parser.completeConflictReduceFrontier(nil, &stack, tok, seed, nil, &anyReduced, &nodeCount, arena, &entries, &gss, &tmp, false, &trackChildErrors)
+	parser.completeConflictReduceFrontier(nil, &stack, tok, seed, 1, 0, nil, &anyReduced, &nodeCount, arena, &entries, &gss, &tmp, false, &trackChildErrors)
 	if stack.dead {
 		t.Fatal("depth-changing frontier reduce killed stack")
 	}
@@ -627,7 +627,7 @@ func TestConflictReduceFrontierDoesNotCollapseOtherReduceShift(t *testing.T) {
 	reduce := lang.ParseActions[6].Actions[0]
 	seed := applyConflictFrontierReduceForTest(parser, &stack, reduce, tok, &anyReduced, &nodeCount, arena, &entries, &gss, &tmp, &trackChildErrors)
 
-	parser.completeConflictReduceFrontier(nil, &stack, tok, seed, nil, &anyReduced, &nodeCount, arena, &entries, &gss, &tmp, false, &trackChildErrors)
+	parser.completeConflictReduceFrontier(nil, &stack, tok, seed, 1, 0, nil, &anyReduced, &nodeCount, arena, &entries, &gss, &tmp, false, &trackChildErrors)
 	if stack.dead {
 		t.Fatal("frontier completion killed stack")
 	}
@@ -658,7 +658,7 @@ func TestConflictReduceFrontierRecoverMarksTokenConsumed(t *testing.T) {
 	reduce := lang.ParseActions[6].Actions[0]
 	seed := applyConflictFrontierReduceForTest(parser, &stack, reduce, tok, &anyReduced, &nodeCount, arena, &entries, &gss, &tmp, &trackChildErrors)
 
-	parser.completeConflictReduceFrontier(nil, &stack, tok, seed, nil, &anyReduced, &nodeCount, arena, &entries, &gss, &tmp, false, &trackChildErrors)
+	parser.completeConflictReduceFrontier(nil, &stack, tok, seed, 1, 0, nil, &anyReduced, &nodeCount, arena, &entries, &gss, &tmp, false, &trackChildErrors)
 	if !stack.dead {
 		t.Fatal("frontier recover same-reduce cycle left original branch live")
 	}

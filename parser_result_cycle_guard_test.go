@@ -1,6 +1,9 @@
 package gotreesitter
 
-import "testing"
+import (
+	"sync/atomic"
+	"testing"
+)
 
 func TestStripResultTreeSelfCycles(t *testing.T) {
 	x := &Node{}
@@ -45,6 +48,42 @@ func TestStripResultTreeSelfCycles(t *testing.T) {
 	}
 	if len(y.fieldSources) != 1 || y.fieldSources[0] != fieldSourceInherited {
 		t.Fatalf("fieldSources after cycle strip = %v, want inherited source", y.fieldSources)
+	}
+}
+
+// TestStripResultTreeSelfCyclesIsObservable pins the #110 band-aid conversion:
+// the strip is no longer silent. A clean tree leaves the counter untouched;
+// every dropped self/ancestor back-edge bumps debugResultTreeSelfCyclesStripped
+// so a future sentinel-corruption regression surfaces instead of being masked.
+func TestStripResultTreeSelfCyclesIsObservable(t *testing.T) {
+	leaf := &Node{}
+	mid := &Node{children: []*Node{leaf}}
+	root := &Node{children: []*Node{mid}}
+	before := atomic.LoadUint64(&debugResultTreeSelfCyclesStripped)
+	stripResultTreeSelfCycles(root)
+	if atomic.LoadUint64(&debugResultTreeSelfCyclesStripped) != before {
+		t.Fatalf("clean tree bumped the strip counter: %d -> %d", before, atomic.LoadUint64(&debugResultTreeSelfCyclesStripped))
+	}
+
+	self := &Node{}
+	self.children = []*Node{self}
+	before = atomic.LoadUint64(&debugResultTreeSelfCyclesStripped)
+	stripResultTreeSelfCycles(self)
+	if len(self.children) != 0 {
+		t.Fatalf("self-edge not stripped; children=%v", self.children)
+	}
+	if atomic.LoadUint64(&debugResultTreeSelfCyclesStripped) != before+1 {
+		t.Fatalf("self-cycle strip counter = %d, want %d", atomic.LoadUint64(&debugResultTreeSelfCyclesStripped), before+1)
+	}
+
+	a := &Node{}
+	b := &Node{}
+	a.children = []*Node{b}
+	b.children = []*Node{a}
+	before = atomic.LoadUint64(&debugResultTreeSelfCyclesStripped)
+	stripResultTreeSelfCycles(a)
+	if atomic.LoadUint64(&debugResultTreeSelfCyclesStripped) != before+1 {
+		t.Fatalf("ancestor back-edge strip counter = %d, want %d", atomic.LoadUint64(&debugResultTreeSelfCyclesStripped), before+1)
 	}
 }
 
