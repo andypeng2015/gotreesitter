@@ -1731,6 +1731,10 @@ func (p *Parser) cHandleError(stacks *[]glrStack, si int, source []byte, tok Tok
 	// actual suspicion signal is cRecoveryDroppedErrorForClean, scoped to the
 	// selected result's own lineage in buildResultFromGLR.
 	p.crecoveryEnteredErrorState = true
+	// Recovery machinery is running: stack error costs can now be nonzero, so
+	// the merge cost competition must run its walks from here on (sticky
+	// per-parse gate, see crecoveryCostCompetitionRelevant).
+	p.crecoveryCostCompetitionRelevant = true
 	// s is re-entering recovery, so whatever marker content it may already
 	// carry from an earlier cRecoverToState fork or condense-drop win (see
 	// cRecoveryUnvalidatedMarker) is about to be re-accounted for by this
@@ -1826,6 +1830,13 @@ func (p *Parser) cHandleError(stacks *[]glrStack, si int, source []byte, tok Tok
 	for vi := range versions {
 		v := &versions[vi]
 		entries := cStackEntriesTopFirst(v, gssScratch)
+		if debugRecoveryCycleChecks {
+			for ei := range entries {
+				if entries[ei].node != nil {
+					debugRecoveryCheckAcyclic(p, arena, fmt.Sprintf("handle-error-version-%d-spine-%d", vi, ei), entries[ei])
+				}
+			}
+		}
 		v.cRec = &cRecoverState{summary: p.cRecordSummary(entries), group: group, groupOrder: vi}
 		v.cRecoverMissingGroup = nil
 	}
@@ -2243,7 +2254,7 @@ func (p *Parser) cRecoverEOFAccept(v *glrStack, tok Token, nodeCount *int, arena
 		// only invisible (hidden-symbol) subtrees flatten.
 		children = p.cAppendVisibleSplice(children, n)
 	}
-	root := newParentNodeInArena(arena, errorSymbol, true, children, nil, 0)
+	root := p.newRecoveryParentNodeInArena(arena, errorSymbol, true, children, 0)
 	if rawFirst != nil {
 		cSetNodeSpan(root, rawFirst.startByte, rawLast.endByte, rawFirst.startPoint, rawLast.endPoint)
 	} else {
@@ -2264,6 +2275,9 @@ func (p *Parser) cRecoverEOFAccept(v *glrStack, tok Token, nodeCount *int, arena
 	v.cRec = nil
 	v.cRecoverMissingGroup = nil
 	p.pushStackNode(v, 1, root, entryScratch, gssScratch)
+	if debugRecoveryCycleChecks {
+		debugRecoveryCheckNodeAcyclic(p, arena, "recover-eof-accept-root", root)
+	}
 	v.accepted = true
 	v.shifted = true
 }
@@ -2418,7 +2432,7 @@ func (p *Parser) cRecoverToState(v *glrStack, depth int, goal StateID, arena *no
 	}
 
 	if rawFirst != nil {
-		errNode := newParentNodeInArena(arena, errorSymbol, true, children, nil, 0)
+		errNode := p.newRecoveryParentNodeInArena(arena, errorSymbol, true, children, 0)
 		cSetNodeSpan(errNode, rawFirst.startByte, rawLast.endByte, rawFirst.startPoint, rawLast.endPoint)
 		errNode.setHasError(true)
 		errNode.setExtra(true)
@@ -2459,6 +2473,9 @@ func (p *Parser) cRecoverToState(v *glrStack, depth int, goal StateID, arena *no
 			fork.cRecoveryUnvalidatedMarker = true
 		}
 		p.pushStackNode(&fork, goal, errNode, entryScratch, gssScratch)
+		if debugRecoveryCycleChecks {
+			debugRecoveryCheckNodeAcyclic(p, arena, "recover-to-state-wrap", errNode)
+		}
 	}
 	for _, ex := range trailing {
 		p.pushStackNode(&fork, goal, ex, entryScratch, gssScratch)
@@ -2508,6 +2525,9 @@ func (p *Parser) cAbsorbTokenIntoError(v *glrStack, tok Token, nodeCount *int, a
 			rec.openErr.endByte = tok.EndByte
 			rec.openErr.endPoint = tok.EndPoint
 			nodeBumpEquivVersion(rec.openErr)
+			if debugRecoveryCycleChecks {
+				debugRecoveryCheckNodeAcyclic(p, arena, "absorb-extend-top", rec.openErr)
+			}
 			if v.byteOffset < tok.EndByte {
 				v.byteOffset = tok.EndByte
 			}
@@ -2544,6 +2564,9 @@ func (p *Parser) cAbsorbTokenIntoError(v *glrStack, tok Token, nodeCount *int, a
 				rec.openErr.endByte = tok.EndByte
 				rec.openErr.endPoint = tok.EndPoint
 				nodeBumpEquivVersion(rec.openErr)
+				if debugRecoveryCycleChecks {
+					debugRecoveryCheckNodeAcyclic(p, arena, "absorb-fold-extras", rec.openErr)
+				}
 				if v.byteOffset < tok.EndByte {
 					v.byteOffset = tok.EndByte
 				}
@@ -2559,7 +2582,7 @@ func (p *Parser) cAbsorbTokenIntoError(v *glrStack, tok Token, nodeCount *int, a
 	if leaf != nil {
 		errChildren = []*Node{leaf}
 	}
-	errNode := newParentNodeInArena(arena, errorSymbol, true, errChildren, nil, 0)
+	errNode := p.newRecoveryParentNodeInArena(arena, errorSymbol, true, errChildren, 0)
 	cSetNodeSpan(errNode, tok.StartByte, tok.EndByte, tok.StartPoint, tok.EndPoint)
 	errNode.setHasError(true)
 	errNode.parseState = cErrorState
@@ -2570,6 +2593,9 @@ func (p *Parser) cAbsorbTokenIntoError(v *glrStack, tok Token, nodeCount *int, a
 	p.pushStackNode(v, cErrorState, errNode, entryScratch, gssScratch)
 	if rec != nil {
 		rec.openErr = errNode
+	}
+	if debugRecoveryCycleChecks {
+		debugRecoveryCheckNodeAcyclic(p, arena, "absorb-new-region", errNode)
 	}
 	if nodeCount != nil {
 		*nodeCount = *nodeCount + 2
@@ -2642,6 +2668,15 @@ func (p *Parser) cCondenseAndResume(stacks []glrStack, source []byte, tok Token,
 			break
 		}
 	}
+	if debugRecoveryCycleChecks && relevant {
+		for i := range stacks {
+			if stacks[i].dead {
+				continue
+			}
+			entries := cStackEntriesTopFirst(&stacks[i], gssScratch)
+			debugRecoveryCheckSpineAcyclic(p, arena, fmt.Sprintf("condense-stack-%d-byte-%d", i, stacks[i].byteOffset), entries)
+		}
+	}
 	if !relevant {
 		return stacks, false, tok
 	}
@@ -2707,12 +2742,45 @@ func (p *Parser) cCondenseAndResume(stacks []glrStack, source []byte, tok Token,
 		}
 	}
 	if len(stacks) > cRecoverMaxVersionCount {
-		if p.glrTrace {
-			for i := cRecoverMaxVersionCount; i < len(stacks); i++ {
+		// C's ts_parser__condense_stack MERGES merge-equivalent versions
+		// (ts_stack_merge: same head state, byte position, error cost, and
+		// external scanner state) during the pairwise loop, BEFORE the
+		// MAX_VERSION_COUNT truncation — the surviving histories live on as
+		// extra links of the merged GSS head. So C's cap only ever counts
+		// DISTINCT (state, position, cost) versions. This port keeps
+		// merge-equivalent stacks as separate versions (each carrying one of
+		// the histories C would fold into links), so a raw positional
+		// truncation at cRecoverMaxVersionCount can kill every copy of a
+		// distinct grammar interpretation while retaining redundant
+		// duplicates of another. Observed on c_sharp (precise-ELS election,
+		// DeclaredTypeManager.cs): six merge-equivalent missing-group stacks
+		// + a 2-way `.` shift conflict forked 6->12, and the positional trim
+		// kept the six duplicates of one interpretation while dropping all
+		// six copies of the other — misparsing a switch-expression arm
+		// (`DeclaredSymbol declaredSymbol => ErrorType.Create(...)`, line
+		// 578) that the C oracle parses clean. Enforce the version window
+		// the way C effectively does: bound the number of DISTINCT merge
+		// keys at cRecoverMaxVersionCount (dropping all stacks of the
+		// least-promising excess keys), and leave same-key duplicates — C's
+		// merged links — to the engine's own boundary merge/cull population
+		// discipline.
+		keyRanks := make(map[cCondenseVersionKey]int, len(stacks))
+		for i := 0; i < len(stacks); i++ {
+			key := p.cCondenseVersionKeyFor(&stacks[i])
+			rank, seen := keyRanks[key]
+			if !seen {
+				rank = len(keyRanks)
+				keyRanks[key] = rank
+			}
+			if rank < cRecoverMaxVersionCount {
+				continue
+			}
+			if p.glrTrace {
 				p.traceCCondenseTrim(i, stacks[i])
 			}
+			stacks = append(stacks[:i], stacks[i+1:]...)
+			i--
 		}
-		stacks = stacks[:cRecoverMaxVersionCount]
 	}
 
 	// Resume the best paused version; remove the rest (C condense tail).
@@ -2832,6 +2900,42 @@ func cRecoverVersionsSameGroup(a, b glrStack) bool {
 		a.cRec.group == b.cRec.group
 }
 
+// cCondenseVersionKey identifies a stack version group under C's
+// ts_stack_can_merge (stack.c): active status, head state, byte position,
+// and error cost. C additionally requires equal external scanner state; this
+// port's lockstep token loop keeps all live stacks on the same lookahead, so
+// same-byte heads share the token source's external state by construction.
+// Port-conservative extras C does not key on: dynamic-precedence score
+// (score breaks final-selection ties here, so unequal-score stacks are not
+// interchangeable), shifted phase, and recovery-group identity (cRec.group /
+// cRecoverMissingGroup pointers).
+type cCondenseVersionKey struct {
+	state        StateID
+	byteOffset   uint32
+	cost         uint32
+	score        int
+	shifted      bool
+	paused       bool
+	recGroup     *cRecGroup
+	missingGroup *cRecGroup
+}
+
+func (p *Parser) cCondenseVersionKeyFor(s *glrStack) cCondenseVersionKey {
+	key := cCondenseVersionKey{
+		state:        s.top().state,
+		byteOffset:   s.byteOffset,
+		cost:         p.cStackErrorCost(s),
+		score:        s.score,
+		shifted:      s.shifted,
+		paused:       s.cPaused,
+		missingGroup: s.cRecoverMissingGroup,
+	}
+	if s.cRec != nil {
+		key.recGroup = s.cRec.group
+	}
+	return key
+}
+
 func cRecoverVersionShouldStayBefore(a, b glrStack) bool {
 	if a.dead || b.dead || a.accepted || b.accepted {
 		return false
@@ -2901,7 +3005,7 @@ func (p *Parser) cAcceptRootRebuild(s *glrStack, arena *nodeArena, entryScratch 
 	for _, n := range nodes[rootIdx+1:] {
 		children = p.cAppendVisibleSplice(children, n)
 	}
-	root := newParentNodeInArena(arena, cand.symbol, p.isNamedSymbol(cand.symbol), children, nil, 0)
+	root := p.newRecoveryParentNodeInArena(arena, cand.symbol, p.isNamedSymbol(cand.symbol), children, 0)
 	root.rawShape = captureRawShapeForNodeSlice(arena, cand.symbol, cand.productionID, children)
 	root.dynamicPrecedence = nodeSliceDynamicPrecedence(children)
 	first, last := nodes[0], nodes[len(nodes)-1]
@@ -2921,6 +3025,9 @@ func (p *Parser) cAcceptRootRebuild(s *glrStack, arena *nodeArena, entryScratch 
 		return
 	}
 	p.pushStackNode(s, 1, root, entryScratch, gssScratch)
+	if debugRecoveryCycleChecks {
+		debugRecoveryCheckNodeAcyclic(p, arena, "accept-root-rebuild", root)
+	}
 }
 
 func nodeSliceDynamicPrecedence(children []*Node) int32 {
@@ -2972,4 +3079,35 @@ func (p *Parser) cTreeErrorCost(t *Tree) uint32 {
 
 func traceCRecoverToState(state StateID, depth int) {
 	fmt.Printf("      -> C-RECOVER-TO-STATE state=%d depth=%d\n", state, depth)
+}
+
+// newRecoveryParentNodeInArena builds a recovery-construction parent node
+// (ERROR wrappers, recover_to_state splice wrappers, EOF-accept and
+// accept-rebuild roots) without corrupting the transient-parent sentinel.
+//
+// Recovery parents wrap children materialized straight off stack entries. In
+// the fresh-parse regime those children can be TRANSIENT reduce parents
+// (transientParentScratch slab nodes), whose .parent field doubles as the
+// result-time materializer's {nil: unvisited, self: in-progress, other: arena
+// clone} map (transient_parents.go materializeNodesUntil /
+// transientReplacement). Wiring eager parent links into such a child — what
+// newParentNodeInArena's populateParentNode does — corrupts that map:
+// materializeNodesUntil then skips the child as "already cloned", and
+// transientReplacement substitutes the child's TREE PARENT for the child,
+// linking the new parent under itself. That self back-edge is the
+// cyclic-transient-tree defect: every subsequent full-tree walk
+// (wireParentLinksWithScratchUntil, the walkResultTree normalizer family)
+// hangs or stack-overflows (go zerrors_windows.go truncations with recovery
+// engaged; the trailing-EOF shape of issue #110).
+//
+// Transient parents only exist on fresh parses (shouldUseTransientReduceParents
+// requires reuse == nil && oldTree == nil), and exactly those parses wire
+// parent links from the root in finalizeResultRoot — so skipping eager wiring
+// there loses nothing. Incremental parses never allocate transient parents and
+// skip the finalize wiring; they keep the eager-wiring constructor.
+func (p *Parser) newRecoveryParentNodeInArena(arena *nodeArena, sym Symbol, named bool, children []*Node, productionID uint16) *Node {
+	if p != nil && p.reduceScratch != nil && p.reduceScratch.transientParents != nil {
+		return newParentNodeInArenaNoLinksWithFieldSources(arena, sym, named, children, nil, nil, productionID, true)
+	}
+	return newParentNodeInArena(arena, sym, named, children, nil, productionID)
 }

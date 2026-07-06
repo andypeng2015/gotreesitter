@@ -520,6 +520,7 @@ func (p *Parser) parseWithTokenSource(source []byte, ts TokenSource, reparseFact
 	}
 	endBudget := p.beginParseOperationBudget()
 	defer endBudget()
+	p.fullParseRetryPassesTaken = 0
 	p.releaseCompatibilityBorrowedArenas()
 	p.clearRecoveryParser()
 	defer p.clearRecoveryParser()
@@ -563,6 +564,7 @@ func (p *Parser) parseIncrementalWithTokenSource(source []byte, oldTree *Tree, t
 func (p *Parser) parseIncrementalWithTokenSourceChanged(source []byte, oldTree *Tree, ts TokenSource, reparseFactory TokenSourceFactory) (*Tree, error) {
 	endParseBudget := p.enterParseBudget()
 	defer endParseBudget()
+	p.fullParseRetryPassesTaken = 0
 	prevFactory := p.reparseFactory
 	p.reparseFactory = reparseFactory
 	defer func() {
@@ -833,6 +835,7 @@ func (p *Parser) Parse(source []byte) (*Tree, error) {
 	}
 	endBudget := p.beginParseOperationBudget()
 	defer endBudget()
+	p.fullParseRetryPassesTaken = 0
 	progress := newParseProgressTelemetry(p, len(source), uint32(len(source)), time.Now())
 	if progress.enabled {
 		progress.emit(time.Now(), "parse_entry", 0, 0, Token{}, false, nil, 0, 0, 0, true, 0, 0, "")
@@ -1257,6 +1260,7 @@ func (p *Parser) ParseIncremental(source []byte, oldTree *Tree) (*Tree, error) {
 func (p *Parser) parseIncrementalChanged(source []byte, oldTree *Tree) (*Tree, error) {
 	endParseBudget := p.enterParseBudget()
 	defer endParseBudget()
+	p.fullParseRetryPassesTaken = 0
 	if oldTreeDisablesIncrementalReuse(oldTree) {
 		if tree, ok := p.tryTokenInvariantReuseForDisabledOldTree(source, oldTree, nil); ok {
 			return tree, nil
@@ -1392,6 +1396,7 @@ func (p *Parser) ParseIncrementalProfiled(source []byte, oldTree *Tree) (*Tree, 
 func (p *Parser) parseIncrementalChangedProfiled(source []byte, oldTree *Tree) (*Tree, IncrementalParseProfile, error) {
 	endParseBudget := p.enterParseBudget()
 	defer endParseBudget()
+	p.fullParseRetryPassesTaken = 0
 	if oldTreeDisablesIncrementalReuse(oldTree) {
 		timing := &incrementalParseTiming{}
 		if tree, ok := p.tryTokenInvariantReuseForDisabledOldTree(source, oldTree, timing); ok {
@@ -1436,6 +1441,7 @@ func (p *Parser) ParseIncrementalWithTokenSourceProfiled(source []byte, oldTree 
 func (p *Parser) parseIncrementalWithTokenSourceChangedProfiled(source []byte, oldTree *Tree, ts TokenSource) (*Tree, IncrementalParseProfile, error) {
 	endParseBudget := p.enterParseBudget()
 	defer endParseBudget()
+	p.fullParseRetryPassesTaken = 0
 	prevFactory := p.reparseFactory
 	p.reparseFactory = p.tokenSourceReparseFactory(ts)
 	defer func() {

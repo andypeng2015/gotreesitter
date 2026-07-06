@@ -1,6 +1,9 @@
 package gotreesitter
 
-import "bytes"
+import (
+	"bytes"
+	"math"
+)
 
 const goSemicolonContainerSymbolCount = 11
 
@@ -99,23 +102,76 @@ func normalizeGoDotLeafChildrenWithStop(root *Node, source []byte, lang *Languag
 		return ParseStopNone
 	}
 	childNamed := symbolIsNamed(lang, childSym)
+	// Fast path: descend with no per-node dedup bookkeeping. A well-formed tree
+	// never re-pushes a node, so this terminates in O(nodes) and is byte-for-byte
+	// the original walk. A pop budget guards against a recovery-mode transient
+	// tree that is a DAG/cycle (the same *Node reachable via many parents or a
+	// back-edge), which would otherwise re-push shared nodes along every path —
+	// a ~6.5k-node recovered const block was observed re-pushing the same nodes
+	// ~200M times (17B child-count calls). Exceeding the budget triggers a single
+	// deduped retry that bounds the walk to distinct nodes.
+	reason, completed := walkGoDotLeaves(root, source, poller, parentSym, childSym, childNamed, nil)
+	if completed {
+		return reason
+	}
+	return firstReturnReason(walkGoDotLeaves(root, source, poller, parentSym, childSym, childNamed, make(map[*Node]struct{})))
+}
+
+// firstReturnReason adapts a (ParseStopReason, bool) result to a single reason.
+func firstReturnReason(reason ParseStopReason, _ bool) ParseStopReason { return reason }
+
+// walkGoDotLeaves performs the dot-leaf DFS. seen == nil selects the zero-
+// overhead fast path guarded by a pop budget (returns completed=false if the
+// budget is exceeded, signalling a pathological transient graph); a non-nil seen
+// map deduplicates pushes so every distinct node is descended exactly once,
+// which always terminates and — because the rewrite and descent depend only on
+// node identity — is idempotent, yielding output identical to the well-formed
+// fast path.
+func walkGoDotLeaves(root *Node, source []byte, poller *parseStopPoller, parentSym, childSym Symbol, childNamed bool, seen map[*Node]struct{}) (ParseStopReason, bool) {
 	// Iterative DFS with an explicit stack: source trees can nest or chain
 	// deeply enough that callback recursion overflows the goroutine stack
 	// (fatal, unrecoverable) — see issue #110.
+	budget := goNormalizerPopBudget(len(source))
+	pops := 0
 	stack := []*Node{root}
+	if seen != nil {
+		seen[root] = struct{}{}
+	}
 	push := func(n *Node) {
-		if n != nil {
-			stack = append(stack, n)
+		if n == nil {
+			return
 		}
+		if seen != nil {
+			if _, ok := seen[n]; ok {
+				return
+			}
+			seen[n] = struct{}{}
+		}
+		stack = append(stack, n)
 	}
 	for len(stack) > 0 {
 		if reason := poller.poll(); parseStopReasonIsActive(reason) {
-			return reason
+			return reason, true
 		}
 		n := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
-		childCount := resultChildCount(n)
-		if n.symbol == parentSym && childCount == 0 {
+		if seen == nil {
+			pops++
+			if pops > budget {
+				return ParseStopNone, false
+			}
+		}
+		// Only a childless "dot" parent is ever rewritten, so the child count
+		// is only needed for that check (and for the cold non-final-refs push
+		// below). Deriving it lazily keeps the common case — any non-dot node,
+		// which is the overwhelming majority on wide flat sibling lists such as
+		// a giant const block — off the per-node resultChildCount /
+		// nodeChildCountNoMaterialize path entirely; those nodes go straight to
+		// pushing children via the representation-appropriate fast path. The
+		// walk output is unchanged: the dense branch already iterates
+		// n.children directly and the final-refs branch already uses
+		// view.Len(); neither consumed the hoisted count.
+		if n.symbol == parentSym && resultChildCount(n) == 0 {
 			normalizeGoDotLeafNode(n, source, childSym, childNamed)
 			continue
 		}
@@ -127,6 +183,7 @@ func normalizeGoDotLeafChildrenWithStop(root *Node, source []byte, lang *Languag
 		}
 		view := resultMutableChildrenForMutation(n)
 		if !view.hasFinalChildRefs() {
+			childCount := resultChildCount(n)
 			for i := 0; i < childCount; i++ {
 				push(resultChildAt(n, i))
 			}
@@ -143,7 +200,29 @@ func normalizeGoDotLeafChildrenWithStop(root *Node, source []byte, lang *Languag
 			push(resultChildAt(n, i))
 		}
 	}
-	return poller.pollNow()
+	return poller.pollNow(), true
+}
+
+// goNormalizerPopBudget bounds the fast-path DFS pop count. A well-formed go
+// tree has far fewer than this many nodes (the node count is a small multiple of
+// the token count, itself bounded by the source length), so the budget is never
+// reached on legitimate input; it only trips on a cyclic/DAG transient tree,
+// where it caps wasted work at O(len(source)) before the deduped retry.
+//
+// The arithmetic runs in int64 and clamps to math.MaxInt before narrowing back
+// to int: on a 32-bit platform (int is 32 bits) a >33MB source would otherwise
+// overflow 64*(sourceLen+1) past math.MaxInt32 and wrap negative, making every
+// pops > budget check trivially true (or false, depending on the wrapped
+// sign) instead of acting as an actual budget. Clamping preserves the intended
+// "practically unbounded for legitimate input" semantics on both platforms;
+// on 64-bit the clamp is unreachable for any realistic source length, so the
+// constant's behavior there is unchanged.
+func goNormalizerPopBudget(sourceLen int) int {
+	budget := 64*(int64(sourceLen)+1) + 1<<16
+	if budget > int64(math.MaxInt) {
+		return math.MaxInt
+	}
+	return int(budget)
 }
 
 func normalizeGoDotLeafNode(n *Node, source []byte, childSym Symbol, childNamed bool) {
@@ -217,18 +296,51 @@ func (s goCompatibilitySymbols) isStatementList(sym Symbol) bool {
 	return (s.statementList != 0 && sym == s.statementList) || (s.statementListTail != 0 && sym == s.statementListTail)
 }
 
+type goCompatSubtreeFrame struct {
+	node *Node
+	exit bool
+}
+
 func normalizeGoCompatibilitySubtreeWithStop(n *Node, source []byte, syms goCompatibilitySymbols, flags goCompatibilitySourceFlags, incrementalRanges []Range, poller *parseStopPoller) ParseStopReason {
-	type frame struct {
-		node *Node
-		exit bool
-	}
 	if n == nil {
 		return ParseStopNone
 	}
-	stack := []frame{{node: n}}
+	// Fast path (no dedup) with a pop budget, then a deduped retry if the budget
+	// trips — same rationale as normalizeGoDotLeafChildrenWithStop. Every per-node
+	// mutation here (semicolon-drop, sibling-boundary and trailing-extra span
+	// adjustment) is idempotent and keyed on node identity, so descending each
+	// distinct node once matches the well-formed fast path byte-for-byte.
+	reason, completed := walkGoCompatSubtree(n, source, syms, flags, incrementalRanges, poller, nil)
+	if completed {
+		return reason
+	}
+	return firstReturnReason(walkGoCompatSubtree(n, source, syms, flags, incrementalRanges, poller, make(map[*Node]struct{})))
+}
+
+func walkGoCompatSubtree(root *Node, source []byte, syms goCompatibilitySymbols, flags goCompatibilitySourceFlags, incrementalRanges []Range, poller *parseStopPoller, seen map[*Node]struct{}) (ParseStopReason, bool) {
+	budget := goNormalizerPopBudget(len(source))
+	pops := 0
+	stack := []goCompatSubtreeFrame{{node: root}}
+	if seen != nil {
+		seen[root] = struct{}{}
+	}
+	// Exit frames re-enqueue an already-seen node deliberately and are never
+	// deduped; only child entry frames consult seen.
+	pushChild := func(c *Node) {
+		if c == nil {
+			return
+		}
+		if seen != nil {
+			if _, ok := seen[c]; ok {
+				return
+			}
+			seen[c] = struct{}{}
+		}
+		stack = append(stack, goCompatSubtreeFrame{node: c})
+	}
 	for len(stack) > 0 {
 		if reason := poller.poll(); parseStopReasonIsActive(reason) {
-			return reason
+			return reason, true
 		}
 		top := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
@@ -242,6 +354,12 @@ func normalizeGoCompatibilitySubtreeWithStop(n *Node, source []byte, syms goComp
 			}
 			continue
 		}
+		if seen == nil {
+			pops++
+			if pops > budget {
+				return ParseStopNone, false
+			}
+		}
 		if !goNodeOverlapsAnyRange(n, incrementalRanges) {
 			continue
 		}
@@ -252,10 +370,10 @@ func normalizeGoCompatibilitySubtreeWithStop(n *Node, source []byte, syms goComp
 				normalizeGoAdjacentSiblingBoundaries(n, source, syms)
 			}
 		}
-		stack = append(stack, frame{node: n, exit: true})
+		stack = append(stack, goCompatSubtreeFrame{node: n, exit: true})
 		if n.ownerArena == nil || n.childIndex > finalChildSidecarIndexBase {
 			for i := len(n.children) - 1; i >= 0; i-- {
-				stack = append(stack, frame{node: n.children[i]})
+				pushChild(n.children[i])
 			}
 			continue
 		}
@@ -266,15 +384,15 @@ func normalizeGoCompatibilitySubtreeWithStop(n *Node, source []byte, syms goComp
 				if !ok || stackEntryNodeChildCount(entry) == 0 {
 					continue
 				}
-				stack = append(stack, frame{node: resultChildAt(n, i)})
+				pushChild(resultChildAt(n, i))
 			}
 		} else {
 			for i := childCount - 1; i >= 0; i-- {
-				stack = append(stack, frame{node: resultChildAt(n, i)})
+				pushChild(resultChildAt(n, i))
 			}
 		}
 	}
-	return poller.pollNow()
+	return poller.pollNow(), true
 }
 
 func goNodeOverlapsAnyRange(n *Node, ranges []Range) bool {

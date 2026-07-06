@@ -393,7 +393,20 @@ func (b *resultRootBuild) syntheticRootReplayLexGapToken(frame syntheticRootRepl
 		return Token{}, false
 	}
 	lexer := NewLexer(b.lang.LexStates, b.source)
-	ts := newDFATokenSourceDirect(lexer, b.lang, b.parser.lookupActionIndex, b.parser.hasKeywordState, b.parser.externalValidByState, b.parser.externalValidMaskByState)
+	// Gate this gap-token lexer on the language-level C-recovery answer rather
+	// than the live b.parser.errorCostCompetition flag. resolveCRecoverySwallowedError
+	// (parser_api.go) temporarily forces p.errorCostCompetition = false around its
+	// fallback comparison re-parse, so reading the parser flag here would flip the
+	// gap-token error-mode lexing inside that window. b.lang is always
+	// b.parser.language (see newResultRootBuild) and errorCostCompetitionLanguage is
+	// a pure function of the language (p.errorCostCompetition is initialized from it
+	// at NewParser), so it is the stable constant this replay needs — identical to
+	// the parser flag outside the fallback window, and exactly the behavior this
+	// path had before it was switched to read the mutable cached flag. Gap-token
+	// replay only runs during synthetic-root reconstruction, off the steady-state
+	// token loop, so the DiagnoseCRecoveryGate scan behind it stays out of the hot
+	// path.
+	ts := newDFATokenSourceDirectWithCRecovery(lexer, b.lang, b.parser.lookupActionIndex, b.parser.hasKeywordState, b.parser.externalValidByState, b.parser.externalValidMaskByState, errorCostCompetitionLanguage(b.lang))
 	defer ts.Close()
 	ts.SetParserState(frame.states[len(frame.states)-1])
 	ts.SeekTokenFrontier(startByte, startPoint)

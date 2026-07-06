@@ -11,6 +11,50 @@ import (
 // and nodeArena state directly. Public-API parser-result regressions live in
 // parser_result_test, while source fixtures belong under testdata.
 
+// reconcileStaleHasErrorFlags repairs hasError bits that no longer match the
+// subtree contents after C-recovery wrap/unwrap cycles. During recovery a
+// stack's nodes legitimately carry hasError while an open ERROR region exists;
+// when the region later resolves losslessly (the absorbed content re-reduces
+// into ordinary productions and the ERROR wrapper is spliced away), ancestor
+// flags set during the wrapped phase can be left behind. C cannot represent
+// this state: ts_subtree_has_error is DERIVED (error_cost > 0, which only
+// ERROR and MISSING subtrees contribute), so a tree with no ERROR/MISSING
+// descendant is definitionally HasError=false. A stale root flag is not
+// cosmetic — the retry ladder's treeParseClean/shouldRetryAcceptedErrorParse
+// read it and will run every widened retry pass on an already-clean parse
+// (bash cliff RCA 2026-07: 46s for a 657-byte file, ~7 wasted full passes).
+//
+// Clear-only by design: a node whose flag is set but whose subtree carries no
+// ERROR/MISSING is repaired; under-set flags are left alone (some language
+// normalizers deliberately leave repaired regions unflagged). Subtrees deeper
+// than maxTreeWalkDepth keep their existing claim (never cleared unverified).
+// Returns whether the subtree truly contains an error.
+func reconcileStaleHasErrorFlags(n *Node, depth int) bool {
+	if n == nil {
+		return false
+	}
+	if n.symbol == errorSymbol || n.isMissing() {
+		return true
+	}
+	if depth >= maxTreeWalkDepth {
+		return n.hasError()
+	}
+	has := false
+	// Materializing accessors: recovery-produced spines can still hold
+	// unmaterialized child forms here, and a no-materialize count would skip
+	// exactly the subtrees this repair exists for.
+	for i, count := 0, nodeChildCount(n); i < count; i++ {
+		// No early exit: every stale sibling flag gets repaired.
+		if reconcileStaleHasErrorFlags(resultChildAt(n, i), depth+1) {
+			has = true
+		}
+	}
+	if !has && n.hasError() {
+		n.setHasError(false)
+	}
+	return has
+}
+
 type parseMaterializationTiming struct {
 	resultSelectionNanos               int64
 	transientParentMaterializeNanos    int64

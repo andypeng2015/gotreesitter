@@ -2928,11 +2928,16 @@ func TestTryGSSMainMergeResultClearsMaterializingCache(t *testing.T) {
 
 	var scratch glrMergeScratch
 	scratch.beginEquivEpoch()
+	scratch.ensureMergeHotCaches()
 	if gssStacksHaveDistinctMaterializingShapesWithScratch(&scratch, &left, &right) {
 		t.Fatalf("test setup produced distinct materializing shapes")
 	}
-	if len(scratch.materializing) == 0 {
-		t.Fatalf("test setup did not populate materializing cache")
+	if len(scratch.shapePrefixCache) == 0 {
+		t.Fatalf("test setup did not populate materializing shape prefix cache")
+	}
+	epochBefore := scratch.shapePrefixEpoch
+	if _, hit := lookupShapePrefixCache(&scratch, left.gss.head); !hit {
+		t.Fatalf("test setup did not cache the left head's shape prefix")
 	}
 
 	result := []glrStack{left}
@@ -2940,8 +2945,111 @@ func TestTryGSSMainMergeResultClearsMaterializingCache(t *testing.T) {
 	if !attempted || !merged {
 		t.Fatalf("GSS merge attempted=%v merged=%v, want true/true", attempted, merged)
 	}
-	if len(scratch.materializing) != 0 {
-		t.Fatalf("materializing cache entries after successful merge = %d, want 0", len(scratch.materializing))
+	if scratch.shapePrefixEpoch == epochBefore {
+		t.Fatalf("shape prefix epoch not bumped after successful merge (still %d): stale spine prefixes would survive link rewrites", epochBefore)
+	}
+	if _, hit := lookupShapePrefixCache(&scratch, left.gss.head); hit {
+		t.Fatalf("stale shape prefix still readable after successful merge")
+	}
+}
+
+func TestTryGSSMainMergeForParserBumpsShapePrefixEpoch(t *testing.T) {
+	// Cross-token invalidation guard for the DISPATCH-time GSS main merge
+	// (reached through tryGSSMainMergeForParser from parser_reduce /
+	// parser_recover_c). Like the collapse-phase tryGSSMainMergeResult, a
+	// successful merge rewrites link 0 of surviving nodes (setGSSMainLink), so
+	// cached root->head shape prefixes in the active merge scratch must be
+	// invalidated or the materializing-shape gate compares stale hashes on the
+	// next token.
+	var gssScratch gssScratch
+	node := NewLeafNode(11, true, 0, 5, Point{}, Point{Column: 5})
+	entries := []stackEntry{{state: 1}, newStackEntryNode(7, node)}
+	left := glrStack{
+		gss:        buildGSSStack(entries, &gssScratch),
+		byteOffset: 5,
+	}
+	right := glrStack{
+		gss:        buildGSSStack(entries, &gssScratch),
+		byteOffset: 5,
+	}
+
+	var scratch glrMergeScratch
+	scratch.beginEquivEpoch()
+	scratch.ensureMergeHotCaches()
+	if gssStacksHaveDistinctMaterializingShapesWithScratch(&scratch, &left, &right) {
+		t.Fatalf("test setup produced distinct materializing shapes")
+	}
+	epochBefore := scratch.shapePrefixEpoch
+	if _, hit := lookupShapePrefixCache(&scratch, left.gss.head); !hit {
+		t.Fatalf("test setup did not cache the left head's shape prefix")
+	}
+
+	// tryGSSMainMergeForParser only carries *Parser; the fix reaches the active
+	// scratch through p.mergeScratch, exactly as parseInternal wires it.
+	p := &Parser{mergeScratch: &scratch}
+	if !tryGSSMainMergeForParser(p, &left, &right) {
+		t.Fatalf("dispatch-time GSS main merge did not merge")
+	}
+	if scratch.shapePrefixEpoch == epochBefore {
+		t.Fatalf("shape prefix epoch not bumped after dispatch-time merge (still %d): stale spine prefixes would survive link rewrites", epochBefore)
+	}
+	if _, hit := lookupShapePrefixCache(&scratch, left.gss.head); hit {
+		t.Fatalf("stale shape prefix still readable after dispatch-time merge")
+	}
+}
+
+func TestRetargetStackEntryPayloadParseStateFeedsShapePrefixCache(t *testing.T) {
+	// Locks the invariant behind the retargetStackEntryPayload reduce-site epoch
+	// bumps: parseState feeds gssEntryHash, which the root->head shape prefix
+	// rolls in, so the pointer-keyed prefix cache keeps serving the pre-retarget
+	// hash until the epoch is bumped. Without the reduce-site bump the
+	// materializing-shape gate would read the stale prefix on the next token.
+	var gssScratch gssScratch
+	node := NewLeafNode(11, true, 0, 5, Point{}, Point{Column: 5})
+	node.parseState = 7
+	entries := []stackEntry{{state: 1}, newStackEntryNode(7, node)}
+	stack := glrStack{
+		gss:        buildGSSStack(entries, &gssScratch),
+		byteOffset: 5,
+	}
+
+	var scratch glrMergeScratch
+	scratch.beginEquivEpoch()
+	scratch.ensureMergeHotCaches()
+
+	hashBefore, ok := stackMaterializingShapeHashWithScratch(&scratch, stack)
+	if !ok {
+		t.Fatalf("could not compute initial materializing shape hash")
+	}
+	head := stack.gss.head
+	if _, hit := lookupShapePrefixCache(&scratch, head); !hit {
+		t.Fatalf("test setup did not cache the head's shape prefix")
+	}
+
+	// Retarget the head payload in place, exactly as the reduce sites do.
+	got, ok := retargetStackEntryPayload(head.entry, 99)
+	if !ok {
+		t.Fatalf("retarget of head payload failed")
+	}
+	head.entry = got
+	if node.parseState != 99 {
+		t.Fatalf("retarget did not rewrite the shared node's parseState: got %d", node.parseState)
+	}
+
+	// Same epoch: the cache still serves the pre-retarget hash.
+	if staleHash, ok := stackMaterializingShapeHashWithScratch(&scratch, stack); !ok || staleHash != hashBefore {
+		t.Fatalf("expected stale cached hash %d before invalidation, got %d (ok=%v)", hashBefore, staleHash, ok)
+	}
+
+	// The reduce-site fix bumps the epoch; the gate must then observe the fresh
+	// parseState.
+	scratch.bumpShapePrefixEpoch()
+	freshHash, ok := stackMaterializingShapeHashWithScratch(&scratch, stack)
+	if !ok {
+		t.Fatalf("could not recompute materializing shape hash")
+	}
+	if freshHash == hashBefore {
+		t.Fatalf("shape hash unchanged after parseState retarget + epoch bump (%d): stale prefix survived", hashBefore)
 	}
 }
 
