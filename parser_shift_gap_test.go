@@ -596,6 +596,137 @@ func buildSkippedRealGapLanguage() *Language {
 	return lang
 }
 
+// TestSkippedRealGapContinuesSeparatedList directly exercises
+// skippedRealGapContinuesSeparatedList (and, transitively,
+// stateDeterministicNonExtraShift) against a synthetic language, isolating
+// each guard clause in turn: only a sole stack whose top is an anonymous
+// separator terminal with a real span, followed by a lookahead whose state
+// has exactly one non-extra shift action, should report true.
+func TestSkippedRealGapContinuesSeparatedList(t *testing.T) {
+	const (
+		symComma  Symbol = 1
+		symNumber Symbol = 2
+		symList   Symbol = 3
+	)
+	const (
+		stateDeterministicShift StateID = 1
+		stateExtraShiftOnly     StateID = 2
+		stateAmbiguousActions   StateID = 3
+	)
+
+	lang := buildSkippedRealGapSeparatedListLanguage()
+	parser := NewParser(lang)
+
+	// The real lookahead is identical across every case; only the stack top
+	// and the state used to look up its action vary.
+	lookahead := Token{
+		Symbol:     symNumber,
+		StartByte:  4,
+		EndByte:    5,
+		StartPoint: Point{Column: 4},
+		EndPoint:   Point{Column: 5},
+	}
+
+	push := func(state StateID, top *Node) *glrStack {
+		var entryScratch glrEntryScratch
+		var gssScratch gssScratch
+		stack := newGLRStackWithScratch(state, &entryScratch)
+		parser.pushStackNode(&stack, state, top, &entryScratch, &gssScratch)
+		return &stack
+	}
+
+	t.Run("a) anonymous separator with deterministic shift continuation", func(t *testing.T) {
+		comma := NewLeafNode(symComma, false, 1, 2, Point{Column: 1}, Point{Column: 2})
+		stack := push(stateDeterministicShift, comma)
+		if !parser.skippedRealGapContinuesSeparatedList(stack, stateDeterministicShift, lookahead) {
+			t.Fatal("skippedRealGapContinuesSeparatedList = false, want true for anonymous separator with a deterministic non-extra shift lookahead")
+		}
+	})
+
+	t.Run("b) named top leaf is excluded", func(t *testing.T) {
+		number := NewLeafNode(symNumber, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+		stack := push(stateDeterministicShift, number)
+		if parser.skippedRealGapContinuesSeparatedList(stack, stateDeterministicShift, lookahead) {
+			t.Fatal("skippedRealGapContinuesSeparatedList = true, want false for a named top leaf")
+		}
+	})
+
+	t.Run("c) reduced nonterminal top is excluded", func(t *testing.T) {
+		child := NewLeafNode(symComma, false, 1, 2, Point{Column: 1}, Point{Column: 2})
+		list := NewParentNode(symList, true, []*Node{child}, nil, 0)
+		stack := push(stateDeterministicShift, list)
+		if parser.skippedRealGapContinuesSeparatedList(stack, stateDeterministicShift, lookahead) {
+			t.Fatal("skippedRealGapContinuesSeparatedList = true, want false for a reduced (non-leaf) top")
+		}
+	})
+
+	t.Run("d) lookahead whose only action is an extra shift is excluded", func(t *testing.T) {
+		comma := NewLeafNode(symComma, false, 1, 2, Point{Column: 1}, Point{Column: 2})
+		stack := push(stateExtraShiftOnly, comma)
+		if parser.skippedRealGapContinuesSeparatedList(stack, stateExtraShiftOnly, lookahead) {
+			t.Fatal("skippedRealGapContinuesSeparatedList = true, want false when the only lookahead action is an extra shift")
+		}
+	})
+
+	t.Run("e) lookahead with multiple actions is excluded", func(t *testing.T) {
+		comma := NewLeafNode(symComma, false, 1, 2, Point{Column: 1}, Point{Column: 2})
+		stack := push(stateAmbiguousActions, comma)
+		if parser.skippedRealGapContinuesSeparatedList(stack, stateAmbiguousActions, lookahead) {
+			t.Fatal("skippedRealGapContinuesSeparatedList = true, want false when the lookahead state has more than one action")
+		}
+	})
+}
+
+// buildSkippedRealGapSeparatedListLanguage is a minimal synthetic language for
+// exercising skippedRealGapContinuesSeparatedList's guard clauses in
+// isolation: symbol 1 (",") is an anonymous separator terminal, symbol 2
+// (NUMBER) is a named terminal used both as a named-leaf fixture and as the
+// shared lookahead symbol, and symbol 3 ("list") is a nonterminal used as a
+// reduced-top fixture. States 1-3 give the lookahead symbol a single
+// non-extra shift, a single extra shift, and two conflicting actions,
+// respectively; state 0 is unused.
+func buildSkippedRealGapSeparatedListLanguage() *Language {
+	return &Language{
+		Name:              "skipped_real_gap_separated_list",
+		SymbolCount:       4,
+		TokenCount:        3,
+		StateCount:        4,
+		ProductionIDCount: 1,
+		SymbolNames:       []string{"EOF", ",", "NUMBER", "list"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF", Visible: false, Named: false},
+			{Name: ",", Visible: true, Named: false},
+			{Name: "NUMBER", Visible: true, Named: true},
+			{Name: "list", Visible: true, Named: true},
+		},
+		FieldNames: []string{""},
+		ParseActions: []ParseActionEntry{
+			// 0: no action
+			{Actions: nil},
+			// 1: single, non-extra shift on NUMBER (deterministic continuation)
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 0}}},
+			// 2: single, EXTRA shift on NUMBER (trivia-style attachment only)
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 0, Extra: true}}},
+			// 3: two actions on NUMBER (ambiguous/conflicted lookahead)
+			{Actions: []ParseAction{
+				{Type: ParseActionShift, State: 0},
+				{Type: ParseActionReduce, Symbol: 3, ChildCount: 1, ProductionID: 0},
+			}},
+		},
+		// Columns: EOF(0), ","(1), NUMBER(2), list(3)
+		ParseTable: [][]uint16{
+			{0, 0, 0, 0}, // state 0: unused
+			{0, 0, 1, 0}, // state 1: deterministic non-extra shift on NUMBER
+			{0, 0, 2, 0}, // state 2: EXTRA-only shift on NUMBER
+			{0, 0, 3, 0}, // state 3: ambiguous (2 actions) on NUMBER
+		},
+		LexModes: []LexMode{
+			{LexState: 0}, {LexState: 0}, {LexState: 0}, {LexState: 0},
+		},
+		LexStates: []LexState{{Default: -1, EOF: -1}},
+	}
+}
+
 type recoverCommentGapTokenSource struct {
 	src []byte
 	pos int

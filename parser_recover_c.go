@@ -771,13 +771,26 @@ type cRecoverState struct {
 	// state — the C "ERROR_STATE head with NULL subtree" shape, which costs an
 	// extra ERROR_COST_PER_RECOVERY in ts_stack_error_cost.
 	openErr *Node
+	// extraRecoveries counts the additional error segments C opens while this
+	// version keeps absorbing: an unlexable-run (ERROR-token) lookahead has no
+	// action in the ERROR_STATE table row, so C pauses AGAIN mid-absorption,
+	// and the condense→handle_error resume pushes a fresh NULL discontinuity
+	// before the run is skipped (parser.c detect_error → handle_error). Each
+	// such segment starts a new error_repeat nest whose own
+	// ERROR_COST_PER_RECOVERY is baked into the stack subtree costs — and is
+	// stripped again when a strategy-1 fork wraps the segments in a recovered
+	// ERROR node (summarize_children excludes error_repeat child costs). The
+	// engine's single flat open region charges its 500 once, so the extra
+	// per-segment recoveries are tracked here; forks drop cRec and with it
+	// these charges, exactly like C.
+	extraRecoveries int
 }
 
 func (r *cRecoverState) clone() *cRecoverState {
 	if r == nil {
 		return nil
 	}
-	cp := &cRecoverState{openErr: r.openErr, group: r.group, groupOrder: r.groupOrder}
+	cp := &cRecoverState{openErr: r.openErr, group: r.group, groupOrder: r.groupOrder, extraRecoveries: r.extraRecoveries}
 	if len(r.summary) > 0 {
 		cp.summary = append([]cStackSummaryEntry(nil), r.summary...)
 	}
@@ -878,6 +891,18 @@ func (p *Parser) cNodeVisibleSubtreeCount(n *Node) int {
 // once per ERROR node. Go nodes carry no padding either; an ERROR node's span
 // already starts at its first real token, matching the C "size excludes
 // padding" rule for the common case.
+//
+// Childless ERROR children are C's unlexable-run ERROR *tokens*
+// (ts_subtree_new_error leaves): their subtree error_cost is 0 in C — the
+// bytes are charged once via the enclosing error_repeat/ERROR node's size —
+// so their own-node cost must not be added into a parent. They DO count as
+// one skipped tree: C wraps each in an error_repeat whose visible_child_count
+// (which has no childless-error exclusion) feeds the enclosing node's
+// ERROR_COST_PER_SKIPPED_TREE bonus (subtree.c summarize_children). The
+// flattened engine representation charges the +100 directly. A childless
+// ERROR node reached as a stack entry (an open region whose only content is
+// invisible) keeps its own 500+bytes charge, matching the C error_repeat
+// wrapper around an invisible token.
 func cNodeErrorCostLang(lang *Language, n *Node) uint32 {
 	if n == nil {
 		return 0
@@ -887,14 +912,15 @@ func cNodeErrorCostLang(lang *Language, n *Node) uint32 {
 	}
 	var cost uint32
 	for _, c := range n.children {
+		if c != nil && c.symbol == errorSymbol && len(c.children) == 0 {
+			// C ERROR leaf: subtree error_cost 0.
+			continue
+		}
 		cost += cNodeErrorCostLang(lang, c)
 	}
 	if n.symbol == errorSymbol {
 		for _, c := range n.children {
 			if c == nil || c.isExtra() {
-				continue
-			}
-			if c.symbol == errorSymbol && len(c.children) == 0 {
 				continue
 			}
 			if cSymbolVisibleLang(lang, c.symbol) {
@@ -936,14 +962,15 @@ func cNodeErrorCostLangWithScratch(scratch *glrMergeScratch, lang *Language, n *
 	}
 	var cost uint32
 	for _, c := range n.children {
+		if c != nil && c.symbol == errorSymbol && len(c.children) == 0 {
+			// C ERROR leaf: subtree error_cost 0 (see cNodeErrorCostLang).
+			continue
+		}
 		cost += cNodeErrorCostLangWithScratch(scratch, lang, c)
 	}
 	if n.symbol == errorSymbol {
 		for _, c := range n.children {
 			if c == nil || c.isExtra() {
-				continue
-			}
-			if c.symbol == errorSymbol && len(c.children) == 0 {
 				continue
 			}
 			if cSymbolVisibleLang(lang, c.symbol) {
@@ -999,15 +1026,16 @@ func (p *Parser) cNodeErrorCost(n *Node) uint32 {
 	}
 	var cost uint32
 	for _, c := range n.children {
+		if c != nil && c.symbol == errorSymbol && len(c.children) == 0 {
+			// C ERROR leaf: subtree error_cost 0 (see cNodeErrorCostLang).
+			continue
+		}
 		cost += p.cNodeErrorCost(c)
 	}
 	if n.symbol == errorSymbol {
 		lang := p.language
 		for _, c := range n.children {
 			if c == nil || c.isExtra() {
-				continue
-			}
-			if c.symbol == errorSymbol && len(c.children) == 0 {
 				continue
 			}
 			if cSymbolVisibleLang(lang, c.symbol) {
@@ -1062,6 +1090,11 @@ func (p *Parser) cStackErrorCost(s *glrStack) uint32 {
 	if s.cPaused || (s.cRec != nil && s.cRec.openErr == nil) {
 		cost += cErrCostPerRecovery
 	}
+	if s.cRec != nil && s.cRec.extraRecoveries > 0 {
+		// Extra error_repeat segments opened by unlexable-run re-pauses
+		// (see cRecoverState.extraRecoveries).
+		cost += cErrCostPerRecovery * uint32(s.cRec.extraRecoveries)
+	}
 	return cost
 }
 
@@ -1090,6 +1123,11 @@ func cStackErrorCostForMergeWithScratch(scratch *glrMergeScratch, lang *Language
 	}
 	if s.cPaused || (s.cRec != nil && s.cRec.openErr == nil) {
 		cost += cErrCostPerRecovery
+	}
+	if s.cRec != nil && s.cRec.extraRecoveries > 0 {
+		// Extra error_repeat segments opened by unlexable-run re-pauses
+		// (see cRecoverState.extraRecoveries).
+		cost += cErrCostPerRecovery * uint32(s.cRec.extraRecoveries)
 	}
 	return cost
 }
@@ -1893,6 +1931,16 @@ func (p *Parser) cRecover(stacks *[]glrStack, v *glrStack, source []byte, tok To
 	if tok.Symbol == 0 && tok.StartByte == tok.EndByte {
 		p.cRecoverEOFAccept(v, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
 		return cRecConsumed, forked
+	}
+
+	// An unlexable-run lookahead while the region already holds content re-runs
+	// C's pause→handle_error cycle (no action for the ERROR symbol in the
+	// ERROR_STATE row): a fresh NULL discontinuity opens a new error_repeat
+	// segment costing one more ERROR_COST_PER_RECOVERY. C's skip-token cost
+	// gate below already sees that marker's cost (ts_stack_error_cost of the
+	// resumed version), so bump before computing newCost.
+	if tok.Symbol == errorSymbol && rec.openErr != nil {
+		rec.extraRecoveries++
 	}
 
 	// Do not skip the token if doing so would clearly be worse than some

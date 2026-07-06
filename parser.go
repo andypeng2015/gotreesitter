@@ -3336,9 +3336,87 @@ func realShiftGapIsParserPadding(source []byte, s *glrStack, tok Token) bool {
 	return realTokenAttachmentGapIsParserPadding(source, s, tok)
 }
 
+// skippedRealGapContinuesSeparatedList reports whether the sole active stack is
+// mid-production immediately after an anonymous separator terminal (e.g. a comma
+// in a separated list) and the real lookahead continues that production. In that
+// position, covering a lexer-skipped stray with a STRUCTURAL error node would
+// insert it between the separator and the next element and corrupt the pending
+// reduction; the correct behavior is to shift across the uncovered gap (as the
+// parser did before the shift-gap guard existed) without materializing any node
+// for the stray, so the skipped bytes stay interior to the covering
+// production's span and total-span invariants hold. That is parse-time
+// behavior only: the stray now lands in no leaf's span, so leaf-level parity
+// with C tree-sitter — which represents such a stray as an EXTRA error
+// transparent to the production — currently depends on a per-language
+// post-parse normalizer re-materializing it (today only
+// normalizeJuliaTrailingCommaAssignmentTuple, dispatched from
+// parser_result_compat.go's language switch). Emitting the EXTRA error
+// directly at parse time, so every language gets it without a bespoke
+// normalizer, is the tracked follow-up.
+func (p *Parser) skippedRealGapContinuesSeparatedList(s *glrStack, state StateID, tok Token) bool {
+	if p == nil || s == nil || tok.Symbol == 0 || tok.Symbol == errorSymbol || tok.Missing || tok.NoLookahead {
+		return false
+	}
+	top := stackEntryNode(s.top())
+	if top == nil || top.symbol == errorSymbol || top.isMissing() || len(top.children) != 0 {
+		return false
+	}
+	// The just-shifted top must be an anonymous (hidden) terminal with a real
+	// span — the separator position where a structural error breaks the
+	// enclosing production. Named leaves (identifiers, literals) and reduced
+	// nonterminals are excluded so ordinary gap materialization is unaffected.
+	if p.isNamedSymbol(top.symbol) || top.startByte >= top.endByte {
+		return false
+	}
+	// The real lookahead must continue the production via a single, NON-extra
+	// shift. Extra-shift lookaheads (trivia/comment tokens attached transparently)
+	// and recover/ambiguous entries must still take ordinary gap materialization.
+	return p.stateDeterministicNonExtraShift(state, tok.Symbol)
+}
+
+// stateDeterministicNonExtraShift reports whether state has exactly one action
+// for sym and it is a plain (non-extra) shift.
+func (p *Parser) stateDeterministicNonExtraShift(state StateID, sym Symbol) bool {
+	if p == nil || p.language == nil {
+		return false
+	}
+	idx := p.lookupActionIndex(state, sym)
+	if idx == 0 || int(idx) >= len(p.language.ParseActions) {
+		return false
+	}
+	actions := p.language.ParseActions[idx].Actions
+	if len(actions) != 1 {
+		return false
+	}
+	return actions[0].Type == ParseActionShift && !actions[0].Extra
+}
+
 func (p *Parser) tryMaterializeSkippedRealGap(source []byte, s *glrStack, state StateID, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) bool {
 	if s == nil || tok.StartByte <= s.byteOffset || realTokenAttachmentGapIsParserPadding(source, s, tok) {
 		return false
+	}
+	// A stray token that the lexer skipped mid-production (immediately after an
+	// anonymous separator terminal, e.g. a comma in a separated list) must not be
+	// covered by a STRUCTURAL error node here: inserting one between the
+	// separator and the next element corrupts the pending reduction and collapses
+	// the enclosing construct into a flat ERROR. The parser has a concrete shift
+	// for the real lookahead that continues the production, so advance across the
+	// uncovered gap (restoring the pre-guard shift-across behavior) without
+	// materializing a node for the stray: the skipped bytes stay interior to the
+	// covering production's span, so total-span invariants hold, but they now sit
+	// in no leaf's span. Leaf-level parity with C tree-sitter's transparent
+	// EXTRA-error representation of such strays depends on a per-language
+	// post-parse normalizer re-materializing the stray afterward (today only
+	// normalizeJuliaTrailingCommaAssignmentTuple, dispatched from
+	// parser_result_compat.go's language switch); emitting the EXTRA error here
+	// at parse time instead, for every language, is the tracked follow-up.
+	if p.skippedRealGapContinuesSeparatedList(s, state, tok) {
+		if p.glrTrace {
+			fmt.Printf("    SHIFT-ACROSS skipped real gap (mid-list separator): gap=%d..%d before tok=%d..%d\n",
+				s.byteOffset, tok.StartByte, tok.StartByte, tok.EndByte)
+		}
+		s.byteOffset = tok.StartByte
+		return true
 	}
 	if p.tryExtendHiddenTrailingErrorAcrossSkippedRealGap(source, s, tok, nodeCount, arena, trackChildErrors) {
 		return s.byteOffset == tok.StartByte
@@ -5444,6 +5522,30 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					needToken = true
 				}
 			}
+		}
+
+		// C parity: ts_parser__condense_stack runs after EVERY advance round.
+		// A strategy-1 recovery fork created during this round's dispatch
+		// shifts the current token in the terminal-frontier block above —
+		// AFTER the main condense gate already ran with allShifted=false — so
+		// the post-shift cost competition must be re-checked here. This is the
+		// round where C kills the absorbing version the moment the recovered
+		// fork advances cleanly past the elected token (compare_versions
+		// in-error vs clean → TakeRight; e.g. the FIDL versioned-layout
+		// recovery chain). No stack is paused at this point (paused stacks
+		// have shifted=false), so the resume tail inside is a no-op.
+		if condenseErrorCostEnabled && !condenseRan && condenseRelevant &&
+			anyReduced && !tok.NoLookahead &&
+			allLiveUnacceptedStacksShifted(stacks) {
+			var resumed bool
+			condenseRan = true
+			stacks, resumed, tok = p.cCondenseAndResume(stacks, source, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors)
+			condenseResumed = resumed
+			if resumed {
+				anyReduced = true
+			}
+			stopDiagCondenseRan = condenseRan
+			stopDiagCondenseResumed = condenseResumed
 		}
 
 		// After processing all stacks: determine whether to advance the
