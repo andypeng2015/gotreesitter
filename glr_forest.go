@@ -185,6 +185,18 @@ func forestProgressExtra(frontier, work, nextFrontier []*gssForestNode, curIndex
 // and validation in packages that attach external scanners (e.g. grammars) can
 // drive it; not part of the stable API.
 func (p *Parser) ParseForestExperimental(source []byte) (*Tree, bool) {
+	// Every other public parse entry point (parser_api.go: Parse,
+	// ParseWithTokenSource, ParseIncremental...) establishes the
+	// timeout/cancellation deadline via enterParseBudget before doing any
+	// work. This is a standalone entry point (out-of-tree benchmarks/
+	// validation call it directly, not just via the internal tryForestFastPath
+	// dispatch which already runs inside a caller's budget), so without this
+	// call SetTimeoutMicros/cancellation would never even compute a deadline
+	// for a bare ParseForestExperimental call. Safe to nest: enterParseBudget
+	// only (re)computes the deadline at depth 0, so calling this from within
+	// an already-budgeted Parse() (were that ever wired up) would not reset it.
+	endBudget := p.enterParseBudget()
+	defer endBudget()
 	arena := acquireNodeArena(arenaClassFull)
 	root, ok := p.parseForest(arena, source, true)
 	if !ok || root == nil {
@@ -723,6 +735,63 @@ func coalesceForestWithRawAndAlternatives(p *Parser, arena *nodeArena, index *gs
 	// symbol+span, so the dedup applies to node entries only.
 	if entry.kind == stackEntryKindNode && entry.node != nil {
 		esym, estart, eend := entrySymSpan(entry)
+		// A HIDDEN symbol (SymbolMetadata.Visible == false: generated repeat/seq
+		// auxiliaries like `array_repeat1`/`_string_content`, and hidden
+		// supertypes like `_value`) never itself appears in the final tree —
+		// tree-sitter always splices its children into the enclosing visible
+		// parent in place of the hidden node. Two candidates that share the
+		// same predecessor AND the same (symbol, span) therefore cover the
+		// exact same already-shifted token run and MUST flatten to the exact
+		// same sequence of visible descendants, no matter how that run's
+		// internal reduces happened to bracket it (e.g. the binary
+		// `X_repeat1 -> X_repeat1 X_repeat1 | ...` grouping ambiguity, or a
+		// supertype rebuilt over a not-yet-stable child). Their raw shapes can
+		// still legitimately differ (different internal nesting), but that
+		// difference can never surface, so skip the exact raw-shape gate for
+		// them below. Without this, every internal regrouping mints a "new"
+		// link at the SAME (prev, symbol, span) slot (since
+		// forestRawStackEntriesExactEqual correctly reports them as
+		// raw-different), burning the small per-node link cap on redundant
+		// duplicates instead of the genuinely distinct (different start, i.e.
+		// different coverage) alternatives a later reduce needs to complete
+		// the parse — silently forcing an otherwise-valid parse into a dead
+		// end once a repeat/string long enough to re-trigger the ambiguity a
+		// few times fills the cap with copies of itself (json arrays of 3+
+		// items whose last element is a multi-escape string, forest_test
+		// dead_end at the closing `]`).
+		// Only relax the gate when visibility is actually KNOWN (a real
+		// Language with SymbolMetadata) and says hidden — symbolIsVisible
+		// returns false for an unknown/nil language too, which must NOT be
+		// read as "hidden": that would apply this relaxation to every symbol
+		// whenever language metadata is unavailable (e.g. unit tests that
+		// coalesce raw *Node fixtures directly against a bare *Parser{}),
+		// collapsing genuinely raw-distinct alternatives the caller expected
+		// to keep as separate links.
+		//
+		// Proven premise / what this does NOT cover: "shape never surfaces"
+		// is exact for the case actually handled here — two links already tied
+		// on (prev, symbol, span), where prev identity means both cover the
+		// SAME already-shifted token run, so tree-sitter's hidden-node splice
+		// recovers the identical flattened visible-descendant sequence
+		// regardless of internal bracketing. It is NOT a general claim that
+		// every hidden symbol is safe to collapse across different prev/score/
+		// errorCost — only the exact-tie case here relies on it, and the
+		// scoring paths above/below this branch (forestResultLinkCompare,
+		// forestDedupTieReplace) are left untouched for every other case.
+		// Verified empirically (2026-07, local corpus + cgo tree-sitter-C
+		// oracle, TestForestCorpusParity/TestForestVsCOracleParity): the
+		// languages/files this widens dispatch for (cmake, css, scss, c_sharp,
+		// javascript, bash) that showed forest-vs-production divergence all
+		// matched the C oracle byte-for-byte (0 errs) — the divergence was
+		// production silently truncating, not this gate picking a wrong
+		// alternative. The one genuine forest-vs-C divergence found in the
+		// sweep (python `not in`/`is not` compound-token leaf span, off by the
+		// leading space) reproduces identically with this whole hunk reverted
+		// to the original HEAD (pre-existing, unrelated to hidden-symbol
+		// dedup — see forest_gap_rejection_test.go / the cap-eviction tiebreak
+		// in forestCapReplacementIndex below for the mechanism that made this
+		// specific python file reachable enough to expose it).
+		hiddenSym := p != nil && p.language != nil && !symbolIsVisible(p.language, esym)
 		for i := range node.links {
 			l := &node.links[i]
 			if l.prev != prev || l.subtree.kind != stackEntryKindNode {
@@ -733,7 +802,7 @@ func coalesceForestWithRawAndAlternatives(p *Parser, arena *nodeArena, index *gs
 				continue
 			}
 			rawEqual := true
-			if p != nil && arena != nil {
+			if !hiddenSym && p != nil && arena != nil {
 				switch forestRawStackEntriesExactEqual(arena, entry, l.subtree) {
 				case forestRawEqual:
 					rawEqual = true
@@ -750,7 +819,39 @@ func coalesceForestWithRawAndAlternatives(p *Parser, arena *nodeArena, index *gs
 			// rebuild their parents from the winner.
 			replaced := false
 			candidate := gssLink{prev: prev, prevDirty: forestNodeDirty(prev), subtree: entry, score: score, errorCost: errorCost}
-			if forestResultLinkCompare(p, arena, node, &candidate, len(node.links), l, i) > 0 {
+			switch {
+			case hiddenSym:
+				// forestResultLinkCompare and forestDedupTieReplace both fall
+				// back to raw-shape/subtree-height comparisons to break exact
+				// score+errorCost ties — a meaningful tiebreak for a VISIBLE
+				// node's competing shapes, but for a hidden node any shape is
+				// equally correct (it never surfaces), so that fallback just
+				// picks arbitrarily between this arrival and the resident.
+				// Every re-derivation of the same (prev, symbol, span) is a
+				// FRESH Node (never raw-equal to the last one per the gate
+				// above), so an arbitrary tiebreak swaps in place on every
+				// single re-derivation, marking the node dirty and forcing
+				// every consumer that already built from the resident to
+				// rebuild — which can itself re-derive this same slot again,
+				// live-locking the reduce worklist (C#'s wider/more ambiguous
+				// GLR dispatch blew forestReduceVisitCap on a 16-class
+				// benchmark once this path started firing for its hidden
+				// declaration-list aux symbols). Comparing on score/errorCost
+				// ALONE and treating an exact tie as a no-op keeps a settled
+				// hidden link stable across repeated re-derivations instead of
+				// thrashing; a real improvement (lower error cost, or higher
+				// score at equal cost) still replaces it.
+				if errorCost < l.errorCost || (errorCost == l.errorCost && score > l.score) {
+					oldScore := l.score
+					*l = candidate
+					forestRecordAlternative(alternatives, entry, node)
+					if oldScore == node.minLinkScore {
+						forestRefreshMinLinkScore(node)
+					}
+					node.dirty++
+					replaced = true
+				}
+			case forestResultLinkCompare(p, arena, node, &candidate, len(node.links), l, i) > 0:
 				oldScore := l.score
 				*l = candidate
 				forestRecordAlternative(alternatives, entry, node)
@@ -759,7 +860,7 @@ func coalesceForestWithRawAndAlternatives(p *Parser, arena *nodeArena, index *gs
 				}
 				node.dirty++
 				replaced = true
-			} else if score == l.score && forestDedupTieReplace(entry, l.subtree) {
+			case score == l.score && forestDedupTieReplace(entry, l.subtree):
 				l.subtree = entry
 				node.dirty++
 				replaced = true
@@ -815,8 +916,49 @@ func forestCapReplacementIndex(p *Parser, arena *nodeArena, node *gssForestNode,
 	if node == nil || candidate == nil || len(node.links) == 0 {
 		return 0, false
 	}
+	// A hidden symbol's shape never surfaces in the final tree (see the
+	// same-span dedup branch above), so when a candidate ties a resident on
+	// BOTH errorCost and score, there is no principled winner between them —
+	// falling through to forestResultLinkCompare's raw-shape/height/order
+	// tiebreak just picks arbitrarily, and since forestCapReplacementIndex is
+	// consulted on every subsequent re-derivation of the same capped slot,
+	// "arbitrary" becomes "alternates forever": each swap dirties node,
+	// forcing every consumer that already built from the loser to re-derive,
+	// which can regenerate an equally-tied candidate and swap back. Observed
+	// hitting forestReduceVisitCap on python's module_repeat1 (two DIFFERENT
+	// spans tied at score=0/errorCost=0 fighting for the same capped slot for
+	// 500+ reduce events, 47 tokens in). Treating the tie as a stable
+	// no-op (keep the incumbent) removes the oscillation the same way the
+	// dedup branch's tie-as-no-op does; a real difference in errorCost or
+	// score still replaces normally.
+	//
+	// Weaker premise than the dedup branch above, by design: this function is
+	// also consulted for candidates with a DIFFERENT (start,end) span than the
+	// resident (forestWorstSameRawBucketLink/forestWorstDuplicateRawBucketLink
+	// and the "worst" search below both scan every existing link regardless of
+	// span), so "same already-shifted token run" is not guaranteed here the
+	// way prev-identity guarantees it above — two different partitions of a
+	// repeat, tied in score, are not provably interchangeable in the general
+	// case, only empirically so on every corpus file this was checked against
+	// (see the dedup branch's comment for the validation run: corpus parity +
+	// cgo tree-sitter-C oracle across cmake/css/scss/c_sharp/bash/awk/erlang/
+	// javascript/python, plus TestForestGapRejection 3/3 under both
+	// GOT_C_RECOVERY modes). If a future corpus expansion surfaces a
+	// genuine divergence traceable to this specific tie-no-op (unlike the
+	// python compound-keyword-span one already ruled out as pre-existing and
+	// unrelated), narrow it to the exact bucket the caller already found via
+	// forestWorstSameRawBucketLink (same raw shape) rather than the plain
+	// same-symbol/tied-score condition used here.
+	hiddenSym := false
+	if p != nil && p.language != nil && candidate.subtree.kind == stackEntryKindNode && candidate.subtree.node != nil {
+		esym, _, _ := entrySymSpan(candidate.subtree)
+		hiddenSym = !symbolIsVisible(p.language, esym)
+	}
 	if p != nil && arena != nil {
 		if same, idx := forestWorstSameRawBucketLink(p, arena, node, candidate); same {
+			if hiddenSym && candidate.errorCost == node.links[idx].errorCost && candidate.score == node.links[idx].score {
+				return idx, false
+			}
 			return idx, forestResultLinkCompare(p, arena, node, candidate, candidateOrder, &node.links[idx], idx) > 0
 		}
 		if idx, ok := forestWorstDuplicateRawBucketLink(p, arena, node); ok {
@@ -828,6 +970,9 @@ func forestCapReplacementIndex(p *Parser, arena *nodeArena, node *gssForestNode,
 		if forestResultLinkCompare(p, arena, node, &node.links[i], i, &node.links[worst], worst) < 0 {
 			worst = i
 		}
+	}
+	if hiddenSym && candidate.errorCost == node.links[worst].errorCost && candidate.score == node.links[worst].score {
+		return worst, false
 	}
 	return worst, forestResultLinkCompare(p, arena, node, candidate, candidateOrder, &node.links[worst], worst) > 0
 }
@@ -1132,13 +1277,69 @@ func forestNodeBestLinearStack(p *Parser, arena *nodeArena, node *gssForestNode)
 	}, true
 }
 
-func (p *Parser) forestEOFRecoveryCouldCompete(idx *gssForestIndex, arena *nodeArena, eofByte uint32) bool {
+// forestEOFRecoveryCouldCompete decides whether the forest's accepted path at
+// EOF has a competing recovery interpretation nearby that production's cost
+// competition might prefer instead. relaxForCleanAcceptLanguages should be the
+// SAME (recoverActive || errorCostCompetitionEnabled()) test the caller
+// already gates this call on, narrowed to exclude recoverActive: it is true
+// only when this parse's dispatch reason is the errorCostCompetitionEnabled()
+// half of that OR (bash and friends — languages where the forest only ever
+// dispatches a CLEAN, error-free accept; tryForestFastPath rejects any
+// root.HasError() result outright for non-recover languages). The
+// unvalidated-marker bypass below is verified (TestForestDispatchReportsAcceptedRuntime,
+// TestExternalScannerTokenInvariantLeafReuse/bash_number, byte-range parity
+// sweeps) ONLY for that clean-accept case. For recoverActive languages
+// (languageWantsForestRecover: authzed/make/csv/fish/racket/tlaplus/
+// beancount/agda/org/ledger/yuck/json5/commonlisp/vimdoc) the forest's OWN
+// accepted path can itself already be an error-bearing recovery, and the
+// question this probe answers shifts from "does any recovery beat a clean
+// accept" (which the marker's swallowed-error premise covers) to "does a
+// DIFFERENT recovery beat OUR recovery" — a genuinely different comparison
+// the marker was never validated against, and local corpus coverage for
+// those languages (only `make`, 1 file) is too thin to validate empirically.
+// So for those languages this keeps the original, unconditionally-conservative
+// behavior (any structurally-reachable pop-back declines the forest).
+func (p *Parser) forestEOFRecoveryCouldCompete(idx *gssForestIndex, arena *nodeArena, eofByte uint32, relaxForCleanAcceptLanguages bool) bool {
 	if p == nil || idx == nil || idx.len() == 0 {
 		return false
 	}
 	var gssScratch gssScratch
 	var entryScratch glrEntryScratch
 	trackChildErrors := false
+	// cRecoverToState (parser_recover_c.go) tags a freshly-recovered fork with
+	// cRecoveryUnvalidatedMarker exactly when (a) p.crecoveryHandleErrorSingleStack
+	// is set and (b) the popped/recovered span is small (<=
+	// crecoverySwallowedErrorMaxFallbackErrorBytes) — production's own signal
+	// for "this pop-back is the confirmed swallowed-error pattern: reachable
+	// by construction, but never actually beats a clean accept" (see
+	// buildResultFromGLR/hasCleanSiblingAtSamePosition in parser_result.go:
+	// the marker only ever feeds a diagnostic counter, never the actual
+	// stack-selection result — cStackErrorCost-based comparison still always
+	// prefers the clean, error-free accept). p.crecoveryHandleErrorSingleStack
+	// is only ever set from production's real cHandleError dispatch
+	// (len(*stacks)==1), which this forest-only probe never runs, so it
+	// defaults to false and the marker never fires here — every reachable
+	// pop-back reads as a genuine competitor, declining the forest fast path
+	// for ordinary, syntactically valid input purely because SOME
+	// structurally-reachable recovery exists (true of most non-trivial
+	// parses; a fresh GLR table almost always has a nearby recover-capable
+	// state). The forest has no independent []glrStack of its own — every
+	// candidate it checks here is, by construction, "the whole probe" in the
+	// same sense production's single-stack case is — so prime the flag for
+	// the duration of this probe (restored after, so it never leaks into the
+	// real production dispatch this same *Parser runs on ParseForestExperimental's
+	// fallback) and trust the span-size half of the gate to keep this narrow:
+	// a small recovered span behaves exactly like the confirmed swallowed-error
+	// class production already treats as non-competing, while a large one
+	// still returns true below and declines as before. Only do this priming
+	// for the validated clean-accept case; recoverActive languages keep
+	// p.crecoveryHandleErrorSingleStack (and hence the marker) untouched, so
+	// it stays false and every reachable pop-back still declines as before.
+	if relaxForCleanAcceptLanguages {
+		prevSingleStack := p.crecoveryHandleErrorSingleStack
+		p.crecoveryHandleErrorSingleStack = true
+		defer func() { p.crecoveryHandleErrorSingleStack = prevSingleStack }()
+	}
 	for i := range idx.entries {
 		node := idx.entries[i].node
 		if node == nil || node.byteOffset != eofByte {
@@ -1157,9 +1358,14 @@ func (p *Parser) forestEOFRecoveryCouldCompete(idx *gssForestIndex, arena *nodeA
 			if p.lookupActionIndex(entry.state, 0) == 0 {
 				continue
 			}
-			if _, ok := p.cRecoverToState(&stack, entry.depth, entry.state, arena, &entryScratch, &gssScratch, &trackChildErrors); ok {
-				return true
+			fork, ok := p.cRecoverToState(&stack, entry.depth, entry.state, arena, &entryScratch, &gssScratch, &trackChildErrors)
+			if !ok {
+				continue
 			}
+			if relaxForCleanAcceptLanguages && fork.cRecoveryUnvalidatedMarker {
+				continue
+			}
+			return true
 		}
 	}
 	return false
@@ -2003,6 +2209,36 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte, captureExternalChe
 	// false) and the production parser re-runs and reports ParseStopMemoryBudget.
 	arena.setBudget(parseMemoryBudgetForParser(p, len(source)))
 
+	// Honor the same caller-configured timeout/cancellation the production
+	// loop enforces (parser.go's `for iter := ...` checks p.parseStopReasonNow()
+	// every iteration). Until this, the forest had NO deadline/cancellation
+	// awareness at all — SetTimeoutMicros/cancellation were silently
+	// unenforceable for any forest-dispatched language, and the forest's only
+	// safety valves (forestReduceStepCap/forestReduceVisitCap/
+	// forestWorklistVisitCap) do not bound wall-clock time: a pathological
+	// shape (e.g. a wide/deeply-ambiguous C# designer-generated block) can sit
+	// reprocessing the same token position for many seconds on only a few
+	// hundred reduce-visits, never tripping those caps. stopPoller mirrors
+	// parseStopPoller: pollNow() (unmasked) once per TOKEN below, cheap enough
+	// at that frequency; poll() (masked to every 1024 calls, parser_timeout.go)
+	// inside the reduce/coalesce worklist loop, which can iterate far more
+	// often than once per token on an ambiguous shape. Declining here (rather
+	// than fabricating a forest-side timeout tree) means the two forest entry
+	// points behave differently on a timeout/cancellation decline, matching
+	// what each already does for every OTHER decline reason: tryForestFastPath
+	// (the real p.Parse() dispatch, parser_api.go) just returns nil to its
+	// caller, which falls through to the normal production loop — that loop's
+	// own enterParseBudget-established deadline is the SAME one (nesting, not
+	// reset), so its very first p.parseStopReasonNow() check fires immediately
+	// and returns a proper ParseStopTimeout/ParseStopCancelled tree cheaply.
+	// ParseForestExperimental's fallback, by contrast, only re-runs production
+	// internally for forestDeclineEOFRecoveryConflict specifically (see below);
+	// a timeout/cancellation decline reason does not match that string, so it
+	// takes the plain `return nil, false` path with no internal fallback
+	// attempt at all — callers of that standalone entry point get a bare
+	// failure on timeout, not a production retry.
+	stopPoller := parseStopPoller{check: p.activeParseStopCheck()}
+
 	// Per-step scratch reused across every token (cleared, not reallocated): the
 	// allocation/GC of fresh maps+slices each step dominated the profile.
 	curIndex := newGSSForestIndex(16)
@@ -2034,6 +2270,20 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte, captureExternalChe
 			if progress.enabled {
 				progress.emit(time.Now(), "forest_decline", iter, tokens, Token{}, false, nil, 0, 0, 0, false, 0, 0,
 					forestProgressExtra(frontier, work, nextFrontier, curIndex, nextIndex, processEpoch, recoverCount, reducer, nil, "decline_reason=budget"))
+			}
+			return nil, false
+		}
+		if reason := stopPoller.pollNow(); parseStopReasonIsTerminal(reason) {
+			// Timeout/cancellation: decline so the caller's already-established
+			// deadline is honored by whichever path re-checks it next (the
+			// ParseForestExperimental fallback's p.Parse(source), or the
+			// production loop this same *Parser is already inside when
+			// dispatched via tryForestFastPath) instead of the forest silently
+			// running unbounded.
+			p.recordForestDecline(string(reason), Token{StartByte: frontier[len(frontier)-1].byteOffset}, nil)
+			if progress.enabled {
+				progress.emit(time.Now(), "forest_decline", iter, tokens, Token{}, false, nil, 0, 0, 0, false, 0, 0,
+					forestProgressExtra(frontier, work, nextFrontier, curIndex, nextIndex, processEpoch, recoverCount, reducer, nil, "decline_reason="+string(reason)))
 			}
 			return nil, false
 		}
@@ -2106,6 +2356,21 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte, captureExternalChe
 					progress.emit(time.Now(), "forest_decline", iter, tokens, tok, true, nil, 0, 0, 0, false, 0, 0,
 						forestProgressExtra(frontier, work, nextFrontier, curIndex, nextIndex, processEpoch, recoverCount, reducer, accepted,
 							fmt.Sprintf("decline_reason=worklist-cap work_visits=%d work_cap=%d", workVisits, forestWorklistVisitCap)))
+				}
+				return nil, false
+			}
+			// Masked (every 1024 calls, parser_timeout.go) so a hot worklist
+			// doesn't pay a time.Now() per visit: this loop can run far more
+			// than once per token on an ambiguous shape, unlike the per-token
+			// pollNow() above.
+			if reason := stopPoller.poll(); parseStopReasonIsTerminal(reason) {
+				reducer.capped = true
+				reducer.capReason = string(reason)
+				p.recordForestDecline(string(reason), tok, nil)
+				if progress.enabled {
+					progress.emit(time.Now(), "forest_decline", iter, tokens, tok, true, nil, 0, 0, 0, false, 0, 0,
+						forestProgressExtra(frontier, work, nextFrontier, curIndex, nextIndex, processEpoch, recoverCount, reducer, accepted,
+							"decline_reason="+string(reason)))
 				}
 				return nil, false
 			}
@@ -2439,7 +2704,7 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte, captureExternalChe
 		}
 
 		if eof {
-			if accepted != nil && (recoverActive || p.errorCostCompetitionEnabled()) && p.forestEOFRecoveryCouldCompete(&curIndex, arena, tok.StartByte) {
+			if accepted != nil && (recoverActive || p.errorCostCompetitionEnabled()) && p.forestEOFRecoveryCouldCompete(&curIndex, arena, tok.StartByte, !recoverActive) {
 				p.recordForestDecline(forestDeclineEOFRecoveryConflict, tok, nil)
 				if progress.enabled {
 					progress.emit(time.Now(), "forest_decline", iter, tokens, tok, true, nil, 0, 0, 0, false, 0, 0,
