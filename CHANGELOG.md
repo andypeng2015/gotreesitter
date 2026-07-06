@@ -16,6 +16,130 @@ for tags and release notes while still in `0.x`.
   (`GTS_TIERS_REQUIRE_ZERO_IV=1` makes the release scan block on any
   non-parity-clean grammar).
 
+## [0.21.0] - 2026-07-06
+
+The engine release. The generalized GLR parser core — a C-faithful error
+recovery engine plus a GSS-forest fast path — replaces the v0.20.x
+per-language recovery approximations as the default runtime. Error recovery
+for 123 elected grammars now reproduces C tree-sitter's decisions
+(strategy-1 election order, per-stack-version error-mode lexing identity,
+error-cost model, and condense scheduling were each verified
+decision-for-decision against an instrumented tree-sitter v0.25.0 oracle).
+The campaign branch's full correctness backlog — 42 known failing tests at
+its peak — is zero in this release, and the root test suite dropped from
+~340s to ~62s along the way.
+
+### Changed
+
+- **Error-tree shapes for elected languages now match C tree-sitter** in many
+  previously divergent constructs: PHP static named functions, the authzed
+  recovery family, Angular non-null assertions, FIDL versioned layout
+  modifiers, Julia trailing-comma assignment tuples, doxygen comment blocks,
+  and Go range-with-function-literal bodies, among others. Downstreams that
+  pinned the old (non-C) error shapes for these languages will see diffs on
+  upgrade — the new shapes are the C-oracle-verified ones.
+- **Go grammar: real automatic-semicolon insertion** via an external scanner
+  (`_automatic_semicolon`), replacing the grammar-level approximation. Fixes
+  the byte-strict ASI parity gap; spurious-`HasError` files on a large real
+  repo walk dropped 436 → 17.
+- The strategy-1 recovery election was rewritten to C's order and cost basis
+  (merged-version m0 basis, finished-tree-first cost checks, missing-token
+  versions created before the recover pass, shiftable originals preserved as
+  their own paths, record-time dedup), and ordinary reduces no longer
+  dissolve extra ERROR carriers (C keeps every popped subtree).
+- Recovery-time lookahead identity: the engine now lexes error-mode
+  lookaheads per stack version like C (`LexModes[0]` at ERROR_STATE),
+  including an engine-side error-mode relex for custom token sources, with
+  the capability forwarded through included-range wrappers.
+
+### Fixed
+
+- Conflict-policy metadata inference no longer vetoes hand-written
+  repeat-boundary conflict resolvers for embedded languages. The veto —
+  intended only for grammargen-generated grammars — silently disabled the
+  C#, Java, C, Rust, TypeScript, PHP, Python (and more) resolvers; C#
+  designer-style files forked ~32 GLR stacks per statement and exhausted the
+  arena (2064 stacks); they now parse with 1 stack well under the 500ms
+  test budget.
+- Forest engine: hidden-symbol dedup starvation and a cap-eviction tie
+  livelock no longer force dead-end declines on valid input (bash/CMake/JSON
+  repeat-heavy shapes; python `module_repeat1` worklist blowup); the
+  EOF-recovery competition probe no longer declines ordinary clean input;
+  and `Parser.SetTimeoutMicros` is now enforced inside the forest path
+  (previously unenforceable for forest-dispatched languages).
+- Forest cap-eviction comparisons no longer walk full subtrees per
+  comparison (O(bytes²) on repetitive inputs): raw-shape content
+  fingerprints, dirty-keyed resident caches, and exact per-node error-rank
+  memoization take C# designer-style n=300 from ~1.9s to ~282ms in the
+  forest path.
+- Root spans no longer shrink when a hidden childless leaf vanishes during
+  invisible-root-child flattening (doxygen whole-block comment shapes).
+- The authzed hand-written lexer emits `_whitespace` extra tokens like C's
+  generated lexer instead of silently skipping horizontal whitespace, fixing
+  a 1-byte recovery-anchor divergence.
+- The doxygen whole-block-comment ERROR normalizer no longer collapses
+  recovered structure (highlight queries produce results again); a
+  recovered-structure guard scopes the collapse to genuinely empty ERROR
+  trees.
+- Trailing-trivia trimming is gated on symbol visibility again (a
+  generalization had dropped the guard, breaking field-mapping
+  preservation).
+- Skipped-real-gap recovery: a stray token dropped by the lexer
+  mid-production (Julia `f(a,b) = c[d]` tuple assignments) no longer
+  corrupts the enclosing production or kills the stack; C's nested shape is
+  restored.
+- Seven grammars that regressed from parity-clean during campaign
+  development (cmake, git_config, git_rebase, regex, ruby, tsx, twig) were
+  re-measured: six healed by the engine fixes and are locked with
+  oracle-verified regression-pin tests; regex's remaining hidden-child
+  divergence is pinned with a self-healing skip and tracked.
+- CI: the full `-race` suite now actually runs for non-draft PRs without
+  panicking Go's default per-package timeout (`-timeout 35m -p 1`, 60m job
+  budget); wall-clock boundedness contracts skip under `-race`
+  (instrumentation-slowdown measurement, not parser boundedness);
+  `./grammargen` runs as a non-blocking visibility step until its
+  enumerated pre-existing backlog (stale markdown blob, two Dart parity
+  gaps) is burned down.
+
+### Added
+
+- `docs/authoring-languages.md` — adding a language without forking:
+  grammar.json → grammargen → blob → `Register`/`RegisterExtension`/taproot,
+  the `wantsForest` opt-in, generator budgets, and blob provenance
+  discipline.
+- `docs/external-scanners.md` — when a grammar needs an external scanner and
+  the Go porting contract (emit extras, C-EOF behavior, error-mode lexing,
+  token-source responsibilities), with Pawn's five externals as the worked
+  case study.
+- Oracle-verified clean-regression pin tests for seven grammars
+  (`grammars/clean_regression_pins_test.go`).
+
+### Performance
+
+- Full-parse memory (Go grammar contract benchmark): **−91% B/op, −80%
+  allocs/op** vs the pre-campaign baseline.
+- Incremental single-byte edit: **0 B/op, 0 allocs/op** (baseline was 176 B /
+  3 allocs) at CPU parity (~1.4μs on CI hardware; ~70× faster than native C
+  on the same workload). The external-scanner leaf-fastpath bailout
+  introduced by ASI was replaced with a pooled verification source, and
+  per-parse lexer/closure allocations were pooled away.
+- Full-parse CPU is microarchitecture-dependent vs the pre-campaign
+  baseline: −20% on modern desktop cores, +17% on 2-core CI-runner hardware
+  (the engine parses Go via the production path instead of the retired
+  forest dispatch, plus real ASI lexing at ~7-9%). The CI perf contract was
+  rebased to the v0.21.0 engine; the runner-side delta is accepted and
+  tracked for reclamation.
+- No-edit reparse: ~7.5ns, 0 allocs (within the CI gate threshold vs
+  baseline).
+- Root test suite wall-clock: ~340s → ~62s (the two C# boundedness tests no
+  longer burn 100-200s each before failing).
+
+## [0.20.9] - 2026-07-02
+
+Patch release recovering C# large-namespace method/type declarations and the
+Swift ternary/conditional operator, both via post-parse source recovery
+passes, plus a CI stability fix for the new C# recovery test under `-race`.
+
 ### Fixed
 
 - Large C# files whose class body is shredded by a cumulative GLR failure (e.g.
@@ -31,7 +155,7 @@ for tags and release notes while still in `0.x`.
   Each reparse is a single small snippet capped by size and count and honors the
   parser timeout, so the anti-OOM guarantees from #64/#98/#106 are preserved and
   the whole-file 4096-byte gate is unchanged. `JsonTextReader.cs` now recovers 68
-  methods (was 0) and `JsonReader.cs` 41 (was 0) (#136).
+  methods (was 0) and `JsonReader.cs` 41 (was 0). Thanks @richardwooding (#136, #138).
 - Swift ternary/conditional operator (`cond ? a : b`) now recovers instead of
   dropping `? a : b` into an `ERROR` node in every position. The runtime Swift
   blob never fired the `ternary_expression` reduction, so any function containing
@@ -41,7 +165,18 @@ for tags and release notes while still in `0.x`.
   `? if_true : if_false` tail blanked so the condition parses in place, then
   splicing a synthesised node with the upstream `condition`/`if_true`/`if_false`
   layout. The rewrite is accepted only when the result is error-free and
-  byte-faithful, so non-ternary code is never affected (#135).
+  byte-faithful, so non-ternary code is never affected. Thanks @richardwooding
+  (#135, #137).
+
+### CI
+
+- `TestCSharpLargeShreddedNamespaceRecoversMethods` now skips under `go test
+  -race`: the per-member bounded recovery reparses each class member as its
+  own small GLR parse, which normally finishes well inside the parser's
+  timeout budget, but race-detector instrumentation slows the same work enough
+  to trip the parser's internal wall-clock timeout. Non-race coverage keeps
+  the full recovery assertions; mirrors the existing Scala realworld-recovery
+  `-race` skip.
 
 ## [0.20.8] - 2026-07-01
 

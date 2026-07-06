@@ -452,6 +452,14 @@ All shipped highlight and tags queries compile (`156/156` highlight, `69/69` tag
 
 ## Adding a language
 
+> Adding a language to your own project does **not** require forking this
+> repo or following the in-tree steps below. See
+> [docs/authoring-languages.md](docs/authoring-languages.md) for the
+> out-of-tree pipeline (grammar.json → blob → `LoadLanguage` /
+> `RegisterExtension`) and
+> [docs/external-scanners.md](docs/external-scanners.md) for external
+> scanners in Go. The steps below are for grammars embedded in this repo.
+
 1. Add the grammar repo to `grammars/languages.manifest`
 2. Refresh pinned refs in `grammars/languages.lock`:
    `go run ./cmd/grammar_updater -lock grammars/languages.lock -write -report grammars/grammar_updates.json`
