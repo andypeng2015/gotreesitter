@@ -336,7 +336,17 @@ func TestNonterminalExtraChainRuntimeKeepsSiblingCommentStartAsBlockText(t *test
 			if block == nil || block.Type(report.Language) != "block_comment" {
 				t.Fatalf("first child = %v, want block_comment; tree=%s", block, safeSExpr(root, report.Language, 16))
 			}
-			wantSpans := [][2]uint32{{0, 2}, {2, 5}, {5, 8}}
+			// Span pins follow C tree-sitter reporting: a token's span never
+			// includes its leading padding (whitespace between chain tokens), so
+			// block children may have byte gaps at padding positions. The
+			// original contiguous pins ({2,5},{5,8}) encoded the padding-target
+			// widening added by e22008cf and deliberately reverted the same day
+			// by 9c82a09b ("Fix hidden padding to prevent span widening"), which
+			// unit-pins this exact shape in
+			// TestFlattenedGeneratedRepeatPaddingDoesNotWidenAnonymousLeaf:
+			// an anonymous leaf ("//") under a generated repeat aux must NOT
+			// absorb preceding padding.
+			wantSpans := [][2]uint32{{0, 2}, {3, 5}, {6, 8}}
 			if got := block.ChildCount(); got != len(wantSpans) {
 				t.Fatalf("block_comment child count = %d, want %d; tree=%s", got, len(wantSpans), safeSExpr(root, report.Language, 16))
 			}
@@ -547,9 +557,14 @@ func TestNonterminalExtraChainExternalStartsShareEntryChain(t *testing.T) {
 		t.Fatalf("expected one external symbol, got %v", ng.ExternalSymbols)
 	}
 	startSym := ng.ExternalSymbols[0]
-	bSyms := diagFindAllSymbols(ng, "b")
+	// Since 38955032 ("promote plain visible string rules to named tokens"),
+	// a rule whose whole body is a bare string (second = "b") IS the token,
+	// named after the rule — matching tree-sitter C conventions. There is no
+	// separate anonymous "b" terminal anymore, so locate the structural shift
+	// via the promoted "second" token instead.
+	bSyms := diagFindAllSymbols(ng, "second")
 	if len(bSyms) != 1 {
-		t.Fatalf("expected one b symbol, got %v", bSyms)
+		t.Fatalf("expected one second token symbol, got %v", bSyms)
 	}
 
 	bState := -1
