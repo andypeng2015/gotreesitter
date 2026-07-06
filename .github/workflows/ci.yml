@@ -306,11 +306,17 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           DRAFT_PR: ${{ github.event.pull_request.draft }}
           PERF_LEGACY_BASE_SHA: 7a29f591d7fcc54b3d0639b3e38a1bacd8fcb386
-          # Forest-default parsing intentionally moved the Go full-parse
-          # allocation/RSS profile while improving wall time. Gate PRs against
-          # the accepted forest release-bucket contract, and keep the PR-base
-          # comparison below as non-blocking diagnostic output.
-          PERF_BENCH_CONTRACT_BASE_SHA: 143936b2a62b44eb779dda835b09abe0c26cc6d5
+          # Contract rebased for the v0.21.0 engine (second rebase; the first
+          # accepted the forest-default profile move). The generalized
+          # GLR+C-recovery engine deliberately changed the Go full-parse
+          # path (go held out of forest defaults, ASI external scanner,
+          # recovery hooks): B/op −91%, allocs −80%, incremental at parity
+          # with 0 allocs everywhere; full-parse ns is microarchitecture-
+          # dependent vs the old path (−20% on modern cores, +17% on 2-core
+          # CI runners) and the runner-side delta is consciously accepted —
+          # reclaim tracked in the post-v0.21.0 ledger. Gate future PRs
+          # against this engine's profile, not the retired one's.
+          PERF_BENCH_CONTRACT_BASE_SHA: 1e2e96f185d6a1e5261677d3bee4ff2b69731f07
         run: |
           set -euo pipefail
 
