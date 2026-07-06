@@ -11,6 +11,14 @@ import (
 )
 
 func TestCSharpDesignerStyleBlockStaysBounded(t *testing.T) {
+	if raceEnabled {
+		// The contract here is wall-clock boundedness under a real 500ms
+		// budget; the race detector's ~10x instrumentation slowdown makes the
+		// forest attempt consume the budget before production can accept, so
+		// the assertion measures the detector, not the parser. Non-race runs
+		// keep the boundedness contract enforced.
+		t.Skip("wall-clock budget contract is not meaningful under -race instrumentation")
+	}
 	src := csharpSyntheticDesignerSource(300)
 	parser := gotreesitter.NewParser(grammars.CSharpLanguage())
 	parser.SetTimeoutMicros(500_000)
