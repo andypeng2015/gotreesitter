@@ -56,10 +56,15 @@ const (
 
 const (
 	// C parser.c MAX_VERSION_COUNT / MAX_SUMMARY_DEPTH / MAX_COST_DIFFERENCE.
-	cRecoverMaxVersionCount     = 6
-	cRecoverMaxSummaryDepth     = 16
-	cRecoverMaxCostDifference   = 18 * cErrCostPerSkippedTree
-	cRecoverMaxReduceIterations = 1024
+	cRecoverMaxVersionCount = 6
+	cRecoverMaxSummaryDepth = 16
+	// cRecoverMaxCostDifference: 18*ERROR_COST_PER_SKIPPED_TREE matches
+	// tree-sitter v0.25.0 (parser.c:83 — the oracle cgo_harness links and this
+	// port was verified against). Older tree-sitter releases (v0.24 and
+	// v0.20.x) used 16*ERROR_COST_PER_SKIPPED_TREE; do NOT "correct" this back
+	// to 16 — that would silently break oracle parity against the pinned
+	// runtime.
+	cRecoverMaxCostDifference = 18 * cErrCostPerSkippedTree
 	// cErrorState is the C ERROR_STATE: the generated tables' recover row.
 	cErrorState = StateID(0)
 )
@@ -466,6 +471,264 @@ func languageHasPreciseExternalLexStates(lang *Language) bool {
 
 func (p *Parser) errorCostCompetitionEnabled() bool {
 	return p != nil && p.errorCostCompetition && !p.noTreeBenchmarkOnly && !p.noTreeCheckpointBenchmarkOnly
+}
+
+// cRecoverAcquireToken is the token-acquisition front door for the faithful C
+// recovery port. C lexes each stack version with its own state's lex mode, so
+// a version absorbing at ERROR_STATE receives error-mode lookaheads
+// (LexModes[0], most permissive, longest match — often hidden catch-all
+// tokens spanning many bytes). The DFA token source honors that contract via
+// SetParserState(0); custom TokenSources generally do not, which makes every
+// downstream recovery decision (strategy-1 elections, absorption spans,
+// error-region children) diverge from C. When every live stack is absorbing
+// and the source cannot lex error mode itself, lex the token with the
+// engine's own DFA from the group position and resynchronize the custom
+// source afterwards (SkipToByte) once normal parsing resumes.
+func (p *Parser) cRecoverAcquireToken(ts TokenSource, stacks []glrStack, source []byte) Token {
+	if !p.errorCostCompetitionEnabled() {
+		return ts.Next()
+	}
+	p.cRecoverCustomSourceEligible = p.cRecoverCustomSourceEligibleFor(ts, source)
+	if tok, ok := p.cRecoverInternalErrorModeToken(ts, stacks, source); ok {
+		return tok
+	}
+	if p.cRecoverCustomResyncActive {
+		p.cRecoverCustomResyncActive = false
+		if skipper, ok := ts.(interface{ SkipToByte(uint32) Token }); ok {
+			return skipper.SkipToByte(p.cRecoverCustomResyncByte)
+		}
+	}
+	return ts.Next()
+}
+
+// cRecoverCustomSourceEligibleFor reports whether the engine may substitute
+// its own DFA lexing for this source during C recovery: a custom source that
+// does not itself lex error mode, supports SkipToByte resynchronization, on a
+// grammar whose tables carry the lex surface and no external scanner.
+func (p *Parser) cRecoverCustomSourceEligibleFor(ts TokenSource, source []byte) bool {
+	if len(source) == 0 {
+		return false
+	}
+	if em, ok := ts.(errorModeLexingTokenSource); ok && em.lexesErrorModeAtErrorState() {
+		return false
+	}
+	if _, ok := ts.(interface{ SkipToByte(uint32) Token }); !ok {
+		return false
+	}
+	lang := p.language
+	if lang == nil || len(lang.LexModes) == 0 || len(lang.LexStates) == 0 {
+		return false
+	}
+	if lang.ExternalScanner != nil || len(lang.ExternalSymbols) > 0 {
+		return false
+	}
+	ls := lang.LexModes[0].LexStateIndex()
+	return ls != noLookaheadLexState && int(ls) < len(lang.LexStates)
+}
+
+// cRecoverResumeLookahead ports the error-mode half of ts_parser__lex for the
+// pause lookahead of a custom (non-DFA) token source. In C the lookahead that
+// triggers detect_error is already the product of the in-lex fallback chain:
+// the paused state's own lex mode first, then the ERROR-state mode, then the
+// skipped-character error subtree. A custom source that only lexes
+// normal-mode tokens hands handle_error/recover a lookahead C would never see
+// at this position (authzed: int_literal "1" where C's error-mode DFA lexes a
+// 13-byte hidden string-content run). When the paused state's own DFA mode
+// cannot lex here — C's fallback trigger — substitute the ERROR-mode token
+// and schedule the source resync.
+func (p *Parser) cRecoverResumeLookahead(source []byte, s *glrStack, tok Token) (Token, bool) {
+	if !p.cRecoverCustomSourceEligible || p.cRecoverSharedTokenErrorModeLexed {
+		return tok, false
+	}
+	if tok.Symbol == 0 || tok.Symbol == errorSymbol || tok.Missing || tok.NoLookahead {
+		return tok, false
+	}
+	if s == nil || int(s.byteOffset) >= len(source) {
+		return tok, false
+	}
+	lang := p.language
+	state := s.top().state
+	if int(state) >= len(lang.LexModes) {
+		return tok, false
+	}
+	stateLS := lang.LexModes[state].LexStateIndex()
+	errLS := lang.LexModes[0].LexStateIndex()
+	if stateLS != noLookaheadLexState && int(stateLS) < len(lang.LexStates) {
+		// C's fallback trigger: the state's own lex mode finds NO token at
+		// the version position (whitespace skips permitted first). If it
+		// lexes something — or cleanly reaches EOF — C's pause lookahead is a
+		// normal-mode token and the source's token stands.
+		probe := Lexer{
+			states:          lang.LexStates,
+			asciiTable:      lang.LexAsciiTable(),
+			source:          source,
+			pos:             int(s.byteOffset),
+			immediateTokens: lang.ImmediateTokens,
+			zeroWidthTokens: lang.ZeroWidthTokens,
+		}
+		stateLexFails := false
+		for {
+			if probe.pos >= len(source) {
+				break
+			}
+			startPos := probe.pos
+			t2, ok := probe.scan(uint32(stateLS), probe.pos, probe.row, probe.col)
+			if !ok {
+				stateLexFails = true
+				break
+			}
+			if t2.Symbol == 0 {
+				if probe.pos <= startPos {
+					break
+				}
+				continue
+			}
+			// C shifts extra tokens (whitespace/comments) in place and lexes
+			// again from the same state; only a non-extra token proves the
+			// state's mode can lex here.
+			if p.cRecoverStateShiftsExtra(state, t2.Symbol) {
+				if probe.pos <= startPos {
+					break
+				}
+				continue
+			}
+			break
+		}
+		if !stateLexFails {
+			return tok, false
+		}
+	}
+	pt := cStackPosPoint(s)
+	lx := Lexer{
+		states:              lang.LexStates,
+		asciiTable:          lang.LexAsciiTable(),
+		source:              source,
+		pos:                 int(s.byteOffset),
+		row:                 pt.Row,
+		col:                 pt.Column,
+		immediateTokens:     lang.ImmediateTokens,
+		zeroWidthTokens:     lang.ZeroWidthTokens,
+		errorRunLexState:    uint32(errLS),
+		hasErrorRunLexState: true,
+	}
+	relexed := lx.NextWithErrorRuns(uint32(errLS))
+	if relexed.Symbol == tok.Symbol && relexed.StartByte == tok.StartByte && relexed.EndByte == tok.EndByte {
+		return tok, false
+	}
+	p.cRecoverSharedTokenErrorModeLexed = true
+	p.cRecoverCustomResyncActive = true
+	p.cRecoverCustomResyncByte = relexed.EndByte
+	return relexed, true
+}
+
+// cRecoverInternalErrorModeToken produces a C error-mode lookahead with the
+// engine's own DFA when (a) the gate is on, (b) every live stack is an
+// absorbing group member (C: the merged version is in ERROR_STATE, so C's
+// lex uses the error mode), (c) the active source does not itself lex error
+// mode, and (d) the source supports SkipToByte resynchronization. Grammars
+// with an external scanner surface keep the shared source untouched — C
+// consults the external scanner during error-mode lexing and the internal
+// DFA cannot emulate that.
+func (p *Parser) cRecoverInternalErrorModeToken(ts TokenSource, stacks []glrStack, source []byte) (Token, bool) {
+	if len(source) == 0 || len(stacks) == 0 {
+		return Token{}, false
+	}
+	if em, ok := ts.(errorModeLexingTokenSource); ok && em.lexesErrorModeAtErrorState() {
+		return Token{}, false
+	}
+	if _, ok := ts.(interface{ SkipToByte(uint32) Token }); !ok {
+		return Token{}, false
+	}
+	lang := p.language
+	if lang == nil || len(lang.LexModes) == 0 || len(lang.LexStates) == 0 {
+		return Token{}, false
+	}
+	if lang.ExternalScanner != nil || len(lang.ExternalSymbols) > 0 {
+		return Token{}, false
+	}
+	ls := lang.LexModes[0].LexStateIndex()
+	if ls == noLookaheadLexState || int(ls) >= len(lang.LexStates) {
+		return Token{}, false
+	}
+	pos := uint32(0)
+	var posPoint Point
+	sawAbsorbing := false
+	for i := range stacks {
+		if stacks[i].dead || stacks[i].accepted {
+			continue
+		}
+		if stacks[i].cRec == nil || stacks[i].top().state != cErrorState {
+			// A live normally-parsing stack drives the lex in its own mode;
+			// C's per-version independence degrades to the shared normal
+			// token here (see cRecoverElectionLookaheadSymbol for the
+			// election-side compensation).
+			return Token{}, false
+		}
+		sawAbsorbing = true
+		if stacks[i].byteOffset >= pos {
+			pos = stacks[i].byteOffset
+			posPoint = cStackPosPoint(&stacks[i])
+		}
+	}
+	if !sawAbsorbing || int(pos) > len(source) {
+		return Token{}, false
+	}
+	lx := Lexer{
+		states:              lang.LexStates,
+		asciiTable:          lang.LexAsciiTable(),
+		source:              source,
+		pos:                 int(pos),
+		row:                 posPoint.Row,
+		col:                 posPoint.Column,
+		immediateTokens:     lang.ImmediateTokens,
+		zeroWidthTokens:     lang.ZeroWidthTokens,
+		errorRunLexState:    uint32(ls),
+		hasErrorRunLexState: true,
+	}
+	tok := lx.NextWithErrorRuns(uint32(ls))
+	// The shared token now carries the C error-mode identity; the election
+	// can trust it directly.
+	p.cRecoverSharedTokenErrorModeLexed = true
+	p.cRecoverCustomResyncActive = true
+	p.cRecoverCustomResyncByte = tok.EndByte
+	return tok, true
+}
+
+// cRecoverStateShiftsExtra reports whether sym's last action in state is an
+// extra shift (C: the token lexes and shifts in place without leaving state).
+func (p *Parser) cRecoverStateShiftsExtra(state StateID, sym Symbol) bool {
+	idx := p.lookupActionIndex(state, sym)
+	if idx == 0 || int(idx) >= len(p.language.ParseActions) {
+		return false
+	}
+	actions := p.language.ParseActions[idx].Actions
+	if len(actions) == 0 {
+		return false
+	}
+	last := actions[len(actions)-1]
+	return last.Type == ParseActionShift && last.Extra
+}
+
+// cStackPosPoint mirrors cStackPosRow for full points: the end point of the
+// topmost node-bearing entry.
+func cStackPosPoint(s *glrStack) Point {
+	if s == nil {
+		return Point{}
+	}
+	if len(s.entries) > 0 {
+		for i := len(s.entries) - 1; i >= 0; i-- {
+			if stackEntryHasNode(s.entries[i]) {
+				return stackEntryNodeEndPoint(s.entries[i])
+			}
+		}
+		return Point{}
+	}
+	for gn := s.gss.head; gn != nil; gn = gn.prev {
+		if stackEntryHasNode(gn.entry) {
+			return stackEntryNodeEndPoint(gn.entry)
+		}
+	}
+	return Point{}
 }
 
 // cStackSummaryEntry mirrors C StackSummaryEntry (stack.h): a (depth, state)
@@ -989,20 +1252,33 @@ func (p *Parser) cBetterVersionExists(stacks []glrStack, self int, isInError boo
 		nodeCount: p.cNodeCountSinceError(&stacks[self]),
 	}
 	for i := range stacks {
-		if i == self || stacks[i].dead || stacks[i].byteOffset < pos {
+		if i == self || stacks[i].dead {
 			continue
 		}
-		// C removes accepted versions from the pool (their tree is stashed
-		// for select_tree); they are not competitors here.
+		// C removes accepted versions from the pool and stashes their tree in
+		// finished_tree, which better_version_exists checks FIRST and
+		// position-independently: any finished result at least as cheap as
+		// the hypothetical cost makes the candidate clearly worse
+		// (parser.c: `if (finished_tree && error_cost(finished_tree) <= cost)
+		// return true`). Without this an absorbing version elects an EOF
+		// strategy-1 recovery C would never attempt once a cheaper result
+		// has already been accepted.
 		if stacks[i].accepted {
+			if p.cStackErrorCost(&stacks[i]) <= cost {
+				return true
+			}
+			continue
+		}
+		if stacks[i].byteOffset < pos {
 			continue
 		}
 		if group != nil && stacks[i].cRec != nil && stacks[i].cRec.group == group {
 			continue
 		}
-		if group != nil && stacks[i].cRecoverMissingGroup == group {
-			continue
-		}
+		// NOTE: missing-token versions born from this group's handle_error are
+		// genuine competitors in C (ts_parser__better_version_exists loops
+		// every live version, and the missing version is created BEFORE
+		// ts_parser__recover runs); they are deliberately NOT excluded here.
 		st := p.cVersionStatus(&stacks[i])
 		switch cCompareVersions(status, st) {
 		case cErrorComparisonTakeRight:
@@ -1195,18 +1471,15 @@ func (p *Parser) cDoAllPotentialReductions(source []byte, start glrStack, lookah
 			// version or produces no surviving version.
 			lastReduction = actionReductionVersion
 		}
-		if anyLookahead && lastReduction >= 0 && iter < cRecoverMaxReduceIterations {
-			if hasShift {
-				canShift = true
-			}
-			// During handle_error's close-in-progress pass, continue chasing
-			// reduction results even when this state can shift some token. The
-			// shift is not necessarily the current lookahead, and retaining every
-			// intermediate shiftable version inflates the recovery summary depth.
-			versions[v] = versions[lastReduction]
-			versions = append(versions[:lastReduction], versions[lastReduction+1:]...)
-			continue
-		}
+		// C (ts_parser__do_all_potential_reductions): a version whose state can
+		// shift SOME token is kept as its own path — even during the
+		// handle_error ANY-lookahead pass — and its reduction results remain
+		// separate versions. Replacing the shiftable original with its
+		// reduction loses the C merged version's original-shape path and with
+		// it the summary entries C's strategy-1 scan elects (authzed stray
+		// backtick: C recovers to the pre-reduction state 8 at depth 1 and
+		// closes binary_expression with the \n lookahead; without this path
+		// the election lands in a deeper state and the caveat never closes).
 		if hasShift {
 			canShift = true
 		} else if lastReduction >= 0 && iter < cRecoverMaxVersionCount {
@@ -1525,10 +1798,25 @@ func (p *Parser) cHandleError(stacks *[]glrStack, si int, source []byte, tok Tok
 		*stacks = append(*stacks, versions[vi])
 	}
 
+	// C creates the missing-token version INSIDE handle_error, before
+	// ts_parser__recover runs, so recover's would-merge guard sees it:
+	// a summary entry whose (state, position) the missing version already
+	// occupies is skipped, sending the election to a deeper entry (php
+	// `static function a() {}` in context: the missing-";" version sits at
+	// the expression-statement state, so C pops through the preceding
+	// function_definition instead of recovering into that state). Append
+	// the missing versions before the recover pass for the same visibility.
+	needsRedispatch := false
+	for vi := range missingVersions {
+		missingVersions[vi].branchOrder = (*stacks)[si].branchOrder
+		missingVersions[vi].cRecoverMissingGroup = group
+		*stacks = append(*stacks, missingVersions[vi])
+		needsRedispatch = true
+	}
+
 	// 4. Run recover for the current lookahead across the absorbing group.
 	// Recover may fork one strategy-1 candidate (which must act on this
 	// token), absorb the token on each member, or halt members.
-	needsRedispatch := false
 	outcome := cRecoverOutcome(cRecConsumed)
 	first := true
 	for i := 0; i < len(*stacks); i++ {
@@ -1547,13 +1835,6 @@ func (p *Parser) cHandleError(stacks *[]glrStack, si int, source []byte, tok Tok
 		} else if res == cRecHalted {
 			v.dead = true
 		}
-	}
-
-	for vi := range missingVersions {
-		missingVersions[vi].branchOrder = (*stacks)[si].branchOrder
-		missingVersions[vi].cRecoverMissingGroup = group
-		*stacks = append(*stacks, missingVersions[vi])
-		needsRedispatch = true
 	}
 	return outcome, needsRedispatch
 }
@@ -1591,7 +1872,7 @@ func (p *Parser) cRecover(stacks *[]glrStack, v *glrStack, source []byte, tok To
 			g.electionDone = true
 			g.electionTokenStart = tok.StartByte
 			g.electionTokenSymbol = tok.Symbol
-			didRecover, forked = p.cRecoverStrategy1Election(stacks, g, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
+			didRecover, forked = p.cRecoverStrategy1Election(stacks, g, source, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
 			// Re-resolve v: the fork append may have reallocated the slice.
 			if vIndex >= 0 {
 				v = &(*stacks)[vIndex]
@@ -1626,7 +1907,15 @@ func (p *Parser) cRecover(stacks *[]glrStack, v *glrStack, source []byte, tok To
 	}
 	newCost := p.cStackErrorCost(v) + cErrCostPerSkippedTree +
 		tokBytes*cErrCostPerSkippedChar + tokRows*cErrCostPerSkippedLine
-	if vIndex >= 0 && p.cBetterVersionExists(*stacks, vIndex, true, newCost) {
+	// C (parser.c ts_parser__recover skip-token gate, parser.c:1346) hardcodes
+	// is_in_error=false for this check — not ts_subtree_is_error(lookahead).
+	// Passing true here (for error-run lookaheads) made the absorbing version
+	// compare under the aggressive in-error rules and die as soon as any
+	// recovered fork was marginally cheaper; C keeps the absorber alive (php
+	// `static function`: C's absorber survives to EOF and its lineage
+	// provides the final `(program php_tag (ERROR ...) compound_statement)`
+	// shape).
+	if vIndex >= 0 && p.cBetterVersionExists(*stacks, vIndex, false, newCost) {
 		v.dead = true
 		return cRecHalted, forked
 	}
@@ -1661,12 +1950,89 @@ func (p *Parser) cEffectiveVersionCount(stacks []glrStack, group *cRecGroup) int
 	return count
 }
 
+// cRecoverElectionLookaheadSymbol returns the lookahead symbol C's
+// ts_parser__recover strategy-1 summary scan would test. C lexes each stack
+// version with its own state's lex mode: an absorbing version sits at
+// ERROR_STATE, so its lookahead comes from LexModes[0] (the most permissive
+// mode, longest match). This engine lexes ONE shared token per iteration,
+// preferring a live normally-parsing stack's state, so during mixed
+// normal/absorbing phases the shared token can carry an identity the
+// error-mode DFA never produces at the group position (php's context-split
+// "(" tokens: the normal-mode id has actions in the anonymous-function state,
+// the error-mode id does not). Judging election validity with the shared
+// identity generates recovery forks C cannot generate — the over-localized
+// recovery-shape family. Re-lex the group position in error mode and use
+// THAT identity for the election.
+//
+// Approximations, documented: the relex is internal-DFA only (C also offers
+// the error-mode external scanner first) and skips keyword capture
+// post-processing. EOF, wide unlexable runs and missing tokens keep the
+// shared symbol (C: `end` / error-subtree lookaheads — the caller's guards
+// handle those). When the shared token was already produced by error-mode
+// lexing (DFA source with every live stack absorbing) the relex is skipped.
+func (p *Parser) cRecoverElectionLookaheadSymbol(source []byte, member *glrStack, tok Token) Symbol {
+	if tok.Symbol == 0 || tok.Symbol == errorSymbol || tok.Missing {
+		return tok.Symbol
+	}
+	if p == nil || p.language == nil || member == nil || len(source) == 0 {
+		return tok.Symbol
+	}
+	if p.cRecoverSharedTokenErrorModeLexed {
+		return tok.Symbol
+	}
+	lang := p.language
+	if len(lang.LexModes) == 0 || len(lang.LexStates) == 0 {
+		return tok.Symbol
+	}
+	ls := lang.LexModes[0].LexStateIndex()
+	if ls == noLookaheadLexState || int(ls) >= len(lang.LexStates) {
+		return tok.Symbol
+	}
+	pos := member.byteOffset
+	if pos > tok.StartByte {
+		// The shared token begins before the group position (should not
+		// happen for the current token); trust the shared identity.
+		return tok.Symbol
+	}
+	if int(pos) >= len(source) {
+		return tok.Symbol
+	}
+	lx := Lexer{
+		states:              lang.LexStates,
+		asciiTable:          lang.LexAsciiTable(),
+		source:              source,
+		pos:                 int(pos),
+		row:                 cStackPosRow(member),
+		immediateTokens:     lang.ImmediateTokens,
+		zeroWidthTokens:     lang.ZeroWidthTokens,
+		errorRunLexState:    uint32(ls),
+		hasErrorRunLexState: true,
+	}
+	relexed := lx.NextWithErrorRuns(uint32(ls))
+	if relexed.Symbol == 0 && relexed.StartByte == relexed.EndByte {
+		// Whitespace-only tail: C would see `end` here while the shared
+		// token disagrees; don't fabricate an EOF election.
+		return tok.Symbol
+	}
+	return relexed.Symbol
+}
+
 // cRecoverStrategy1Election runs the C summary scan once per token across all
 // absorbing group members, in C's merged-summary order: depth-major, member
 // order minor (ts_stack_record_summary's breadth-first traversal of the
 // merged version's paths), deduped on (depth, state). At most one fork is
 // created, owned by the member whose path carried the elected entry.
-func (p *Parser) cRecoverStrategy1Election(stacks *[]glrStack, group *cRecGroup, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) (didRecover, forked bool) {
+//
+// C semantics preserved deliberately (parser.c ts_parser__recover):
+//   - position / error cost / node-count-since-error come from the ONE merged
+//     C version — this engine's first group member (m0);
+//   - each summary entry that passes the state / position / would-merge
+//     guards is cost-checked BEFORE the lookahead-validity check, and a
+//     better existing version ABORTS the whole scan (C `break`), even when
+//     the lookahead would have had no actions in that entry's state;
+//   - entries are deduped on (depth, state) at first encounter, mirroring
+//     ts_stack_record_summary's record-time dedup across the merged paths.
+func (p *Parser) cRecoverStrategy1Election(stacks *[]glrStack, group *cRecGroup, source []byte, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) (didRecover, forked bool) {
 	// C runs the summary scan for every non-error lookahead INCLUDING the EOF
 	// token (parser.c ts_parser__recover: `summary && !ts_subtree_is_error`).
 	// EOF election is what lets C pop the open error region to a state where
@@ -1693,6 +2059,25 @@ func (p *Parser) cRecoverStrategy1Election(stacks *[]glrStack, group *cRecGroup,
 		return false, false
 	}
 	cSortRecoverMembersByGroupOrder((*stacks), members)
+	// C computes position, error cost and node-count-since-error once for the
+	// single merged version; m0 is this engine's stand-in for it.
+	m0 := members[0]
+	pos := (*stacks)[m0].byteOffset
+	curCost := p.cStackErrorCost(&(*stacks)[m0])
+	curRow := cStackPosRow(&(*stacks)[m0])
+	depthBump := 0
+	if p.cNodeCountSinceError(&(*stacks)[m0]) > 0 {
+		// C: the open error region occupies one extra non-extra slot above
+		// the recorded summary.
+		depthBump = 1
+	}
+	// C's absorbing version lexes its own lookahead in error mode; judge the
+	// election with that identity, not the shared normal-mode token's.
+	electionSym := p.cRecoverElectionLookaheadSymbol(source, &(*stacks)[m0], tok)
+	if electionSym == errorSymbol {
+		// C skips strategy 1 for error-subtree lookaheads.
+		return false, false
+	}
 	type seenKey struct {
 		depth int
 		state StateID
@@ -1711,15 +2096,9 @@ func (p *Parser) cRecoverStrategy1Election(stacks *[]glrStack, group *cRecGroup,
 				if seen[key] {
 					continue
 				}
-				pos := (*stacks)[mi].byteOffset
+				seen[key] = true
 				if entry.posBytes == pos {
 					continue
-				}
-				depthBump := 0
-				if p.cNodeCountSinceError(&(*stacks)[mi]) > 0 {
-					// C: the open error region occupies one extra non-extra slot above
-					// the recorded summary.
-					depthBump = 1
 				}
 				depth := entry.depth + depthBump
 				// Do not recover in ways that create redundant stack versions.
@@ -1736,20 +2115,21 @@ func (p *Parser) cRecoverStrategy1Election(stacks *[]glrStack, group *cRecGroup,
 				if wouldMerge {
 					continue
 				}
-				if p.lookupActionIndex(entry.state, tok.Symbol) == 0 {
-					continue
-				}
-				curCost := p.cStackErrorCost(&(*stacks)[mi])
-				curRow := cStackPosRow(&(*stacks)[mi])
+				// C: the cost check runs for every surviving entry — BEFORE
+				// the lookahead-validity check — and a better version aborts
+				// the entire scan (parser.c `break`), falling through to
+				// strategy 2.
 				newCost := curCost +
 					uint32(entry.depth)*cErrCostPerSkippedTree +
 					(pos-entry.posBytes)*cErrCostPerSkippedChar +
 					(curRow-entry.posRow)*cErrCostPerSkippedLine
-				if p.cBetterVersionExists(*stacks, mi, false, newCost) {
+				if p.cBetterVersionExists(*stacks, m0, false, newCost) {
 					return false, false
 				}
+				if p.lookupActionIndex(entry.state, electionSym) == 0 {
+					continue
+				}
 				if fork, ok := p.cRecoverToState(&(*stacks)[mi], depth, entry.state, arena, entryScratch, gssScratch, trackChildErrors); ok {
-					seen[key] = true
 					fork.branchOrder = (*stacks)[mi].branchOrder
 					*stacks = append(*stacks, fork)
 					if nodeCount != nil {
@@ -1811,7 +2191,9 @@ func (p *Parser) cRecoverEOFAccept(v *glrStack, tok Token, nodeCount *int, arena
 			children = append(children, n.children...)
 			continue
 		}
-		children = p.cAppendRecoveryVisibleSplice(children, n, arena)
+		// C parity: recover_eof/accept keep closed ERROR subtrees as-is;
+		// only invisible (hidden-symbol) subtrees flatten.
+		children = p.cAppendVisibleSplice(children, n)
 	}
 	root := newParentNodeInArena(arena, errorSymbol, true, children, nil, 0)
 	if rawFirst != nil {
@@ -1873,163 +2255,6 @@ func (p *Parser) cAppendVisibleSplice(dst []*Node, n *Node) []*Node {
 		dst = p.cAppendVisibleSplice(dst, c)
 	}
 	return dst
-}
-
-func (p *Parser) cRecoveryVisibleSpliceCandidate(n *Node) bool {
-	if !p.errorCostCompetitionEnabled() ||
-		n == nil ||
-		n.symbol != errorSymbol ||
-		!n.isExtra() ||
-		n.isMissing() ||
-		len(n.children) == 0 {
-		return false
-	}
-	for _, child := range n.children {
-		if child == nil ||
-			child.symbol == errorSymbol ||
-			child.isExtra() ||
-			child.isMissing() ||
-			!p.cSymbolVisible(child.symbol) {
-			return false
-		}
-	}
-	return true
-}
-
-func (p *Parser) cRecoveryVisibleSpliceSignature(n *Node) (ProductionSignature, bool) {
-	if p == nil || p.language == nil || len(p.language.ProductionSignatures) == 0 {
-		return ProductionSignature{}, false
-	}
-	match := -1
-	for i := range p.language.ProductionSignatures {
-		sig := p.language.ProductionSignatures[i]
-		if !p.cSymbolVisible(sig.LHS) || len(sig.RHS) != len(n.children) {
-			continue
-		}
-		matches := true
-		for j, rhs := range sig.RHS {
-			if !p.cRecoverySignatureChildMatches(rhs, n.children[j]) {
-				matches = false
-				break
-			}
-		}
-		if !matches {
-			continue
-		}
-		if match >= 0 {
-			return ProductionSignature{}, false
-		}
-		match = i
-	}
-	if match < 0 {
-		return ProductionSignature{}, false
-	}
-	if !p.cRecoverySignatureProductionSafe(p.language.ProductionSignatures[match].ProductionID) {
-		return ProductionSignature{}, false
-	}
-	return p.language.ProductionSignatures[match], true
-}
-
-func (p *Parser) cRecoverySignatureChildMatches(rhs Symbol, child *Node) bool {
-	if p == nil || p.language == nil || child == nil {
-		return false
-	}
-	if p.cRecoverySignatureChildMatchesDirect(rhs, child.symbol) {
-		return true
-	}
-	if int(rhs) >= len(p.language.HiddenChoicePassthroughSymbols) ||
-		!p.language.HiddenChoicePassthroughSymbols[rhs] {
-		return false
-	}
-	for i := range p.language.ProductionSignatures {
-		sig := p.language.ProductionSignatures[i]
-		if sig.LHS != rhs || len(sig.RHS) != 1 {
-			continue
-		}
-		if p.cRecoverySignatureChildMatchesDirect(sig.RHS[0], child.symbol) {
-			return true
-		}
-	}
-	return false
-}
-
-func (p *Parser) cRecoverySignatureChildMatchesDirect(rhs, child Symbol) bool {
-	if rhs == child {
-		return true
-	}
-	if p == nil || p.language == nil {
-		return false
-	}
-	for _, subtype := range p.language.SupertypeChildren(rhs) {
-		if subtype == child {
-			return true
-		}
-	}
-	return false
-}
-
-func (p *Parser) cRecoverySignatureProductionSafe(productionID uint16) bool {
-	if p == nil || p.language == nil {
-		return false
-	}
-	idx := int(productionID)
-	if idx < len(p.language.FieldMapSlices) && p.language.FieldMapSlices[idx][1] != 0 {
-		return false
-	}
-	if idx < len(p.language.AliasSequences) && len(p.language.AliasSequences[idx]) != 0 {
-		return false
-	}
-	return true
-}
-
-func (p *Parser) cRecoveryVisibleSpliceCount(n *Node) (int, bool) {
-	if !p.cRecoveryVisibleSpliceCandidate(n) {
-		return 0, false
-	}
-	if _, ok := p.cRecoveryVisibleSpliceSignature(n); ok {
-		return 1, true
-	}
-	return len(n.children), true
-}
-
-func (p *Parser) cRecoveryVisibleSpliceSignatureNode(n *Node, arena *nodeArena) *Node {
-	if arena == nil {
-		return nil
-	}
-	sig, ok := p.cRecoveryVisibleSpliceSignature(n)
-	if !ok {
-		return nil
-	}
-	children := arena.allocNodeSliceNoClear(len(n.children))
-	copy(children, n.children)
-	parent := newParentNodeInArena(arena, sig.LHS, p.isNamedSymbol(sig.LHS), children, nil, sig.ProductionID)
-	parent.preGotoState = n.preGotoState
-	parent.parseState = n.parseState
-	if n.preGotoState != 0 {
-		if gotoState := p.lookupGoto(n.preGotoState, sig.LHS); gotoState != 0 {
-			parent.parseState = gotoState
-		}
-	}
-	parent.rawShape = captureRawShapeForNodeSlice(arena, sig.LHS, sig.ProductionID, children)
-	nodeBumpEquivVersion(parent)
-	return parent
-}
-
-func (p *Parser) cRecoveryVisibleSpliceChildren(n *Node, arena *nodeArena) ([]*Node, bool) {
-	if !p.cRecoveryVisibleSpliceCandidate(n) {
-		return nil, false
-	}
-	if wrapped := p.cRecoveryVisibleSpliceSignatureNode(n, arena); wrapped != nil {
-		return []*Node{wrapped}, true
-	}
-	return n.children, true
-}
-
-func (p *Parser) cAppendRecoveryVisibleSplice(dst []*Node, n *Node, arena *nodeArena) []*Node {
-	if children, ok := p.cRecoveryVisibleSpliceChildren(n, arena); ok {
-		return append(dst, children...)
-	}
-	return p.cAppendVisibleSplice(dst, n)
 }
 
 // cSetNodeSpan pins a recovery node's span explicitly: C error regions span
@@ -2116,7 +2341,10 @@ func (p *Parser) cRecoverToState(v *glrStack, depth int, goal StateID, arena *no
 			children = append(children, n.children...)
 			continue
 		}
-		children = p.cAppendRecoveryVisibleSplice(children, n, arena)
+		// C parity: popped closed subtrees (ERROR carriers included) keep
+		// their identity inside the new ERROR; only invisible subtrees
+		// flatten.
+		children = p.cAppendVisibleSplice(children, n)
 	}
 
 	fork := v.cloneWithScratch(gssScratch)
@@ -2353,10 +2581,12 @@ func (p *Parser) isGraphQLRecoveryTripleQuote(sym Symbol) bool {
 // job of the regular mergeStacks pass. Only runs when some stack is paused or
 // in the error state, so clean parses keep today's behavior exactly.
 //
-// Returns the condensed slice and whether new versions need to re-dispatch
+// Returns the condensed slice, whether new versions need to re-dispatch
 // the current token (strategy-1 forks / missing-token versions created by a
-// resumed handle_error).
-func (p *Parser) cCondenseAndResume(stacks []glrStack, source []byte, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) ([]glrStack, bool) {
+// resumed handle_error), and the possibly error-mode-relexed current token
+// (see cRecoverResumeLookahead) which the caller must adopt so redispatched
+// versions act on the same lookahead the resumed group consumed.
+func (p *Parser) cCondenseAndResume(stacks []glrStack, source []byte, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) ([]glrStack, bool, Token) {
 	relevant := false
 	for i := range stacks {
 		if stacks[i].cPaused || stacks[i].cRec != nil || stacks[i].cRecoverMissingGroup != nil {
@@ -2365,7 +2595,7 @@ func (p *Parser) cCondenseAndResume(stacks []glrStack, source []byte, tok Token,
 		}
 	}
 	if !relevant {
-		return stacks, false
+		return stacks, false, tok
 	}
 	// Drop dead versions first (C removes halted versions in condense).
 	// Accepted versions have left the pool in C (ts_parser__accept stashes
@@ -2467,6 +2697,17 @@ func (p *Parser) cCondenseAndResume(stacks []glrStack, source []byte, tok Token,
 			if p.glrTrace {
 				fmt.Printf("      -> C-RESUME stack=%d state=%d byte=%d\n", i, stacks[i].top().state, stacks[i].byteOffset)
 			}
+			// C's pause lookahead already went through ts_parser__lex's
+			// error-mode fallback; a custom source's normal-mode token must
+			// be substituted the same way before handle_error consumes it.
+			if replacement, replaced := p.cRecoverResumeLookahead(source, &stacks[i], tok); replaced {
+				if p.glrTrace {
+					fmt.Printf("      -> C-RESUME-RELEX sym=%d [%d-%d] -> sym=%d [%d-%d]\n",
+						tok.Symbol, tok.StartByte, tok.EndByte,
+						replacement.Symbol, replacement.StartByte, replacement.EndByte)
+				}
+				tok = replacement
+			}
 			outcome, redispatch := p.cHandleError(&stacks, i, source, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
 			if redispatch {
 				needsRedispatch = true
@@ -2485,7 +2726,7 @@ func (p *Parser) cCondenseAndResume(stacks []glrStack, source []byte, tok Token,
 		i--
 	}
 	stacks = append(stacks, acceptedStacks...)
-	return stacks, needsRedispatch
+	return stacks, needsRedispatch, tok
 }
 
 func (p *Parser) traceCCondenseDrop(reason string, dropIndex, keepIndex int, drop, keep glrStack, dropStatus, keepStatus cErrorStatus) {

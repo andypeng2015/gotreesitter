@@ -1063,7 +1063,7 @@ func TestTrimTrailingExtraTriviaRootFiltersFinalRefsWithoutDrain(t *testing.T) {
 	if root == nil {
 		t.Fatal("root = nil")
 	}
-	trimTrailingExtraTriviaRoot(root, []byte("a "))
+	trimTrailingExtraTriviaRoot(root, []byte("a "), nil)
 	if got := arena.finalChildRefsMaterializedParents; got != 0 {
 		t.Fatalf("final child ref range materialized parents = %d, want 0", got)
 	}
@@ -4274,9 +4274,14 @@ func TestStackEquivalentForTypeScriptChecksNonFrontierChildren(t *testing.T) {
 
 	aNode := buildNode(3)
 	bNode := buildNode(4)
-	if !stackEntryNodesEquivalentFrontierWithScratch(nil, aNode, bNode, stackEquivalentFrontierDepthLimit) {
-		t.Fatal("test setup expected frontier equivalence to miss the earlier-child mismatch")
-	}
+	// Precondition reconciled with 061b67f9, which deliberately strengthened
+	// the small-subtree frontier heuristic
+	// (TestAliasSequenceFrontierEquivalenceChecksAllSmallSemanticChildren now
+	// requires it to CATCH structurally-identical early-child mismatches).
+	// The frontier fast path may therefore either miss or catch this
+	// mismatch; the load-bearing assertion below is only that full
+	// TypeScript stack equivalence rejects the merge.
+	_ = stackEntryNodesEquivalentFrontierWithScratch(nil, aNode, bNode, stackEquivalentFrontierDepthLimit)
 
 	a := glrStack{entries: []stackEntry{{state: 1}, newStackEntryNode(2, aNode)}, byteOffset: 10}
 	b := glrStack{entries: []stackEntry{{state: 1}, newStackEntryNode(2, bNode)}, byteOffset: 10}

@@ -112,6 +112,38 @@ func TestIncludedRangeTokenSourceDelegatesParserState(t *testing.T) {
 	}
 }
 
+// stubErrorModeTokenSource embeds stubTokenSource and additionally implements
+// errorModeLexingTokenSource, mirroring a C-recovery-enabled dfaTokenSource.
+type stubErrorModeTokenSource struct {
+	stubTokenSource
+	errorMode bool
+}
+
+func (s *stubErrorModeTokenSource) lexesErrorModeAtErrorState() bool {
+	return s.errorMode
+}
+
+// TestIncludedRangeTokenSourceForwardsErrorModeLexingCapability pins the
+// wave-1 amendment: an includedRangeTokenSource has no lexing of its own, so
+// it must defer entirely to the base source's errorModeLexingTokenSource
+// answer rather than always reporting false (which would route the C
+// recovery port's engine-side error-mode substitution over the whole
+// document, ignoring the active ranges) or always true.
+func TestIncludedRangeTokenSourceForwardsErrorModeLexingCapability(t *testing.T) {
+	plainBase := &stubTokenSource{tokens: []Token{{}}}
+	plainTS := newIncludedRangeTokenSource(plainBase, []Range{{StartByte: 0, EndByte: 1}}).(*includedRangeTokenSource)
+	if em, ok := TokenSource(plainTS).(errorModeLexingTokenSource); !ok || em.lexesErrorModeAtErrorState() {
+		t.Fatalf("plain base: lexesErrorModeAtErrorState should forward to false (ok=%v)", ok)
+	}
+
+	errModeBase := &stubErrorModeTokenSource{stubTokenSource: stubTokenSource{tokens: []Token{{}}}, errorMode: true}
+	errModeTS := newIncludedRangeTokenSource(errModeBase, []Range{{StartByte: 0, EndByte: 1}}).(*includedRangeTokenSource)
+	em, ok := TokenSource(errModeTS).(errorModeLexingTokenSource)
+	if !ok || !em.lexesErrorModeAtErrorState() {
+		t.Fatalf("error-mode base: lexesErrorModeAtErrorState should forward to true (ok=%v)", ok)
+	}
+}
+
 func TestIncludedRangeTokenSourceRelexRejectsOriginalOutsideRangeWithoutCallingBase(t *testing.T) {
 	base := &stubTokenSource{
 		canRelex: true,

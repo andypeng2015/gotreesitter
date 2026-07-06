@@ -636,6 +636,13 @@ func (d *dfaTokenSource) SetParserState(state StateID) {
 	d.state = state
 }
 
+// lexesErrorModeAtErrorState reports that this source lexes SetParserState(0)
+// tokens with the grammar's ERROR-state mode (LexModes[0]) when the faithful
+// C recovery port is active — C-equivalent error-mode lookaheads.
+func (d *dfaTokenSource) lexesErrorModeAtErrorState() bool {
+	return d != nil && d.cRecoveryEnabled
+}
+
 func (d *dfaTokenSource) SetGLRStates(states []StateID) {
 	d.glrStates = states
 }

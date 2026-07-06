@@ -156,7 +156,21 @@ func TestCStackPosRowUsesCompactEntryPoint(t *testing.T) {
 	}
 }
 
-func TestCAppendVisibleSpliceRecoverySplicesExtraErrorCarrier(t *testing.T) {
+// TestCAppendVisibleSpliceRecoveryPreservesExtraErrorCarrier pins C parity
+// for ordinary (non-recovery) reduce/splice paths around an extra ERROR
+// carrier: cAppendVisibleSplice never dissolves an ERROR node (only invisible
+// hidden-symbol subtrees flatten), and an ordinary reduce keeps a popped extra
+// ERROR carrier as a direct child — the C oracle's `program` for php's
+// `static function a() {}` carries `(ERROR ...)` as a direct child, and an
+// earlier (reverted) mechanism that dissolved it here dropped both the
+// HasError bit and the error cost. The wave-1 investigation additionally
+// found that the production-signature rewrapping this test used to pin
+// (cAppendRecoveryVisibleSplice and its cRecoveryVisibleSplice* helpers) is
+// itself NOT what C does — C's ts_parser__reduce/recover_to_state never
+// reconstruct a synthesized production node over an ERROR carrier's
+// children — so that cluster was deleted as production-dead, C-incorrect
+// code rather than kept "for coverage".
+func TestCAppendVisibleSpliceRecoveryPreservesExtraErrorCarrier(t *testing.T) {
 	lang := &Language{
 		TokenCount:  1,
 		StateCount:  3,
@@ -170,16 +184,6 @@ func TestCAppendVisibleSpliceRecoverySplicesExtraErrorCarrier(t *testing.T) {
 		},
 	}
 	parser := &Parser{language: lang, errorCostCompetition: true}
-	langWithSignatures := func(signatures []ProductionSignature) *Language {
-		return &Language{
-			TokenCount:           lang.TokenCount,
-			StateCount:           lang.StateCount,
-			SymbolCount:          lang.SymbolCount,
-			SymbolMetadata:       lang.SymbolMetadata,
-			SymbolNames:          lang.SymbolNames,
-			ProductionSignatures: signatures,
-		}
-	}
 	arena := acquireNodeArena(arenaClassFull)
 	defer arena.Release()
 
@@ -192,22 +196,6 @@ func TestCAppendVisibleSpliceRecoverySplicesExtraErrorCarrier(t *testing.T) {
 	carrier.setExtra(true)
 	carrier.setHasError(true)
 
-	got := parser.cAppendRecoveryVisibleSplice(nil, carrier, arena)
-	if len(got) != 2 || got[0] != armA || got[1] != armB {
-		t.Fatalf("recovery splice = %#v, want match arms", got)
-	}
-	if !got[1].hasError() {
-		t.Fatal("spliced child hasError was cleared")
-	}
-
-	ordinary := newLeafNodeInArena(arena, errorSymbol, true, 4, 5, Point{Column: 4}, Point{Column: 5})
-	ordinary.setExtra(true)
-	ordinary.setHasError(true)
-	got = parser.cAppendRecoveryVisibleSplice(nil, ordinary, arena)
-	if len(got) != 1 || got[0] != ordinary {
-		t.Fatalf("leaf ERROR splice = %#v, want preserved ERROR", got)
-	}
-
 	preserved := parser.cAppendVisibleSplice(nil, carrier)
 	if len(preserved) != 1 || preserved[0] != carrier {
 		t.Fatalf("ordinary visible splice = %#v, want ERROR carrier preserved", preserved)
@@ -219,210 +207,30 @@ func TestCAppendVisibleSpliceRecoverySplicesExtraErrorCarrier(t *testing.T) {
 		newStackEntryNode(1, right),
 	}
 	children, _, _ := parser.buildReduceChildren(entries, 0, len(entries), 2, 4, 0, arena)
-	if len(children) != 4 {
-		t.Fatalf("reduced child count = %d, want 4", len(children))
+	if len(children) != 3 {
+		t.Fatalf("reduced child count = %d, want 3", len(children))
 	}
-	if children[0] != left || children[1] != armA || children[2] != armB || children[3] != right {
-		t.Fatalf("reduced children = %#v, want left/arms/right", children)
+	if children[0] != left || children[1] != carrier || children[2] != right {
+		t.Fatalf("reduced children = %#v, want left/carrier/right", children)
 	}
-	if !children[2].hasError() {
-		t.Fatal("reduced spliced child hasError was cleared")
-	}
-
-	wrappedLang := langWithSignatures([]ProductionSignature{{
-		LHS:          4,
-		ProductionID: 7,
-		RHS:          []Symbol{2, 3},
-	}})
-	wrappedParser := &Parser{language: wrappedLang, errorCostCompetition: true}
-	cleanA := newLeafNodeInArena(arena, 2, true, 10, 11, Point{Column: 10}, Point{Column: 11})
-	cleanB := newLeafNodeInArena(arena, 3, true, 11, 12, Point{Column: 11}, Point{Column: 12})
-	wrapCarrier := newParentNodeInArena(arena, errorSymbol, true, []*Node{cleanA, cleanB}, nil, 0)
-	wrapCarrier.setExtra(true)
-	wrapCarrier.setHasError(true)
-
-	if count, ok := wrappedParser.cRecoveryVisibleSpliceCount(wrapCarrier); !ok || count != 1 {
-		t.Fatalf("signature splice count = %d, %v, want 1, true", count, ok)
-	}
-	got = wrappedParser.cAppendRecoveryVisibleSplice(nil, wrapCarrier, arena)
-	if len(got) != 1 || got[0].symbol != 4 {
-		t.Fatalf("signature recovery splice = %#v, want match_block wrapper", got)
-	}
-	wrapper := got[0]
-	if wrapper.productionID != 7 {
-		t.Fatalf("wrapper productionID = %d, want 7", wrapper.productionID)
-	}
-	if len(wrapper.children) != 2 || wrapper.children[0] != cleanA || wrapper.children[1] != cleanB {
-		t.Fatalf("wrapper children = %#v, want cleanA/cleanB", wrapper.children)
-	}
-	if wrapper.hasError() {
-		t.Fatal("wrapper inherited carrier hasError; want child-only error propagation")
-	}
-
-	entries = []stackEntry{
-		newStackEntryNode(1, left),
-		newStackEntryNode(1, wrapCarrier),
-		newStackEntryNode(1, right),
-	}
-	children, _, _ = wrappedParser.buildReduceChildren(entries, 0, len(entries), 2, 4, 0, arena)
-	if len(children) != 3 || children[0] != left || children[1].symbol != 4 || children[2] != right {
-		t.Fatalf("signature reduced children = %#v, want left/wrapper/right", children)
-	}
-
-	ambiguousLang := langWithSignatures([]ProductionSignature{
-		{LHS: 4, ProductionID: 7, RHS: []Symbol{2, 3}},
-		{LHS: 1, ProductionID: 8, RHS: []Symbol{2, 3}},
-	})
-	ambiguousParser := &Parser{language: ambiguousLang, errorCostCompetition: true}
-	ambigA := newLeafNodeInArena(arena, 2, true, 20, 21, Point{Column: 20}, Point{Column: 21})
-	ambigB := newLeafNodeInArena(arena, 3, true, 21, 22, Point{Column: 21}, Point{Column: 22})
-	ambigCarrier := newParentNodeInArena(arena, errorSymbol, true, []*Node{ambigA, ambigB}, nil, 0)
-	ambigCarrier.setExtra(true)
-	ambigCarrier.setHasError(true)
-	if count, ok := ambiguousParser.cRecoveryVisibleSpliceCount(ambigCarrier); !ok || count != 2 {
-		t.Fatalf("ambiguous splice count = %d, %v, want 2, true", count, ok)
-	}
-	got = ambiguousParser.cAppendRecoveryVisibleSplice(nil, ambigCarrier, arena)
-	if len(got) != 2 || got[0] != ambigA || got[1] != ambigB {
-		t.Fatalf("ambiguous recovery splice = %#v, want flattened children", got)
+	if !children[1].hasError() {
+		t.Fatal("reduced ERROR carrier hasError was cleared")
 	}
 }
-func TestCRecoveryVisibleSpliceSignatureMatchesGeneratedMetadata(t *testing.T) {
-	baseLang := func() *Language {
-		return &Language{
-			TokenCount:  1,
-			StateCount:  3,
-			SymbolCount: 7,
-			SymbolMetadata: []SymbolMetadata{
-				{Name: "end", Visible: true, Named: true},
-				{Name: "brace", Visible: true, Named: true},
-				{Name: "expr", Visible: true, Named: true},
-				{Name: "tail", Visible: true, Named: true},
-				{Name: "parent", Visible: true, Named: true},
-				{Name: "_expression", Visible: false, Named: true, Supertype: true},
-				{Name: "_primary", Visible: false, Named: true},
-			},
-			SymbolNames: []string{"end", "brace", "expr", "tail", "parent", "_expression", "_primary"},
-		}
-	}
-	parserFor := func(lang *Language) *Parser {
-		return &Parser{language: lang, errorCostCompetition: true}
-	}
-	carrierFor := func(arena *nodeArena, leftSym, rightSym Symbol) (*Node, *Node, *Node) {
-		left := newLeafNodeInArena(arena, leftSym, true, 0, 1, Point{}, Point{Column: 1})
-		right := newLeafNodeInArena(arena, rightSym, true, 1, 2, Point{Column: 1}, Point{Column: 2})
-		carrier := newParentNodeInArena(arena, errorSymbol, true, []*Node{left, right}, nil, 0)
-		carrier.setExtra(true)
-		carrier.setHasError(true)
-		return carrier, left, right
-	}
-
-	t.Run("supertype RHS matches visible subtype", func(t *testing.T) {
-		arena := acquireNodeArena(arenaClassFull)
-		defer arena.Release()
-		lang := baseLang()
-		lang.SupertypeSymbols = []Symbol{5}
-		lang.SupertypeMapSlices = make([][2]uint16, 7)
-		lang.SupertypeMapSlices[5] = [2]uint16{0, 1}
-		lang.SupertypeMapEntries = []Symbol{2}
-		lang.ProductionSignatures = []ProductionSignature{{LHS: 4, ProductionID: 7, RHS: []Symbol{5, 3}}}
-		carrier, left, right := carrierFor(arena, 2, 3)
-
-		got := parserFor(lang).cAppendRecoveryVisibleSplice(nil, carrier, arena)
-		if len(got) != 1 || got[0].symbol != 4 {
-			t.Fatalf("supertype recovery splice = %#v, want parent wrapper", got)
-		}
-		if len(got[0].children) != 2 || got[0].children[0] != left || got[0].children[1] != right {
-			t.Fatalf("supertype wrapper children = %#v, want left/right", got[0].children)
-		}
-	})
-
-	t.Run("ambiguous supertype signatures flatten", func(t *testing.T) {
-		arena := acquireNodeArena(arenaClassFull)
-		defer arena.Release()
-		lang := baseLang()
-		lang.SupertypeSymbols = []Symbol{5}
-		lang.SupertypeMapSlices = make([][2]uint16, 7)
-		lang.SupertypeMapSlices[5] = [2]uint16{0, 1}
-		lang.SupertypeMapEntries = []Symbol{2}
-		lang.ProductionSignatures = []ProductionSignature{
-			{LHS: 4, ProductionID: 7, RHS: []Symbol{5, 3}},
-			{LHS: 1, ProductionID: 8, RHS: []Symbol{5, 3}},
-		}
-		carrier, left, right := carrierFor(arena, 2, 3)
-
-		got := parserFor(lang).cAppendRecoveryVisibleSplice(nil, carrier, arena)
-		if len(got) != 2 || got[0] != left || got[1] != right {
-			t.Fatalf("ambiguous supertype splice = %#v, want flattened children", got)
-		}
-	})
-
-	t.Run("hidden passthrough RHS matches visible child", func(t *testing.T) {
-		arena := acquireNodeArena(arenaClassFull)
-		defer arena.Release()
-		lang := baseLang()
-		lang.HiddenChoicePassthroughSymbols = make([]bool, 7)
-		lang.HiddenChoicePassthroughSymbols[6] = true
-		lang.ProductionSignatures = []ProductionSignature{
-			{LHS: 6, ProductionID: 1, RHS: []Symbol{2}},
-			{LHS: 4, ProductionID: 7, RHS: []Symbol{6, 3}},
-		}
-		carrier, _, _ := carrierFor(arena, 2, 3)
-
-		got := parserFor(lang).cAppendRecoveryVisibleSplice(nil, carrier, arena)
-		if len(got) != 1 || got[0].symbol != 4 {
-			t.Fatalf("hidden passthrough splice = %#v, want parent wrapper", got)
-		}
-	})
-
-	t.Run("unmarked hidden RHS flattens", func(t *testing.T) {
-		arena := acquireNodeArena(arenaClassFull)
-		defer arena.Release()
-		lang := baseLang()
-		lang.ProductionSignatures = []ProductionSignature{
-			{LHS: 6, ProductionID: 1, RHS: []Symbol{2}},
-			{LHS: 4, ProductionID: 7, RHS: []Symbol{6, 3}},
-		}
-		carrier, left, right := carrierFor(arena, 2, 3)
-
-		got := parserFor(lang).cAppendRecoveryVisibleSplice(nil, carrier, arena)
-		if len(got) != 2 || got[0] != left || got[1] != right {
-			t.Fatalf("unmarked hidden splice = %#v, want flattened children", got)
-		}
-	})
-
-	t.Run("fielded signature flattens", func(t *testing.T) {
-		arena := acquireNodeArena(arenaClassFull)
-		defer arena.Release()
-		lang := baseLang()
-		lang.FieldMapSlices = make([][2]uint16, 8)
-		lang.FieldMapSlices[7] = [2]uint16{0, 1}
-		lang.FieldMapEntries = []FieldMapEntry{{FieldID: 1, ChildIndex: 0}}
-		lang.ProductionSignatures = []ProductionSignature{{LHS: 4, ProductionID: 7, RHS: []Symbol{2, 3}}}
-		carrier, left, right := carrierFor(arena, 2, 3)
-
-		got := parserFor(lang).cAppendRecoveryVisibleSplice(nil, carrier, arena)
-		if len(got) != 2 || got[0] != left || got[1] != right {
-			t.Fatalf("fielded signature splice = %#v, want flattened children", got)
-		}
-	})
-
-	t.Run("aliased signature flattens", func(t *testing.T) {
-		arena := acquireNodeArena(arenaClassFull)
-		defer arena.Release()
-		lang := baseLang()
-		lang.AliasSequences = make([][]Symbol, 8)
-		lang.AliasSequences[7] = []Symbol{1, 0}
-		lang.ProductionSignatures = []ProductionSignature{{LHS: 4, ProductionID: 7, RHS: []Symbol{2, 3}}}
-		carrier, left, right := carrierFor(arena, 2, 3)
-
-		got := parserFor(lang).cAppendRecoveryVisibleSplice(nil, carrier, arena)
-		if len(got) != 2 || got[0] != left || got[1] != right {
-			t.Fatalf("aliased signature splice = %#v, want flattened children", got)
-		}
-	})
-}
-func TestCRecoverStrategy1ElectionRetriesDuplicateEntryForNextMember(t *testing.T) {
+// TestCRecoverStrategy1ElectionDedupesDuplicateEntryAcrossMembers pins the C
+// semantics of the merged-version summary: ts_stack_record_summary dedupes
+// (depth, state) pairs across the merged paths at RECORD time, and
+// ts_parser__recover reads position/cost from the ONE merged version (m0 in
+// this port), not each member's own byteOffset.
+//
+// Caveat (both guards fire independently here): this fixture's duplicate
+// entry's posBytes(5) equals m0's own position(5), so the m0-position-equality
+// guard (`entry.posBytes == pos`) ALSO produces no-fork on its own, regardless
+// of the seen-key dedup — stack1's own byteOffset(10) is irrelevant because
+// position is read from m0, not the member being scanned. This test therefore
+// pins the m0-position basis; it does not, by itself, isolate the
+// record-time dedup from that guard (both independently veto the fork here).
+func TestCRecoverStrategy1ElectionDedupesDuplicateEntryAcrossMembers(t *testing.T) {
 	parser := cRecoveryElectionTestParser()
 	arena := acquireNodeArena(arenaClassFull)
 	defer arena.Release()
@@ -434,22 +242,12 @@ func TestCRecoverStrategy1ElectionRetriesDuplicateEntryForNextMember(t *testing.
 		cRecoveryElectionStack(arena, 2, 3, 10, group, 1, []cStackSummaryEntry{entry}),
 	}
 	nodeCount := 0
-	didRecover, forked := parser.cRecoverStrategy1Election(&stacks, group, Token{Symbol: 1}, &nodeCount, arena, nil, nil, nil)
-	if !didRecover || !forked {
-		t.Fatalf("strategy 1 election = didRecover %v forked %v, want true/true", didRecover, forked)
+	didRecover, forked := parser.cRecoverStrategy1Election(&stacks, group, nil, Token{Symbol: 1}, &nodeCount, arena, nil, nil, nil)
+	if didRecover || forked {
+		t.Fatalf("strategy 1 election = didRecover %v forked %v, want false/false (entry position equals the merged version position; duplicate entries dedupe at first encounter)", didRecover, forked)
 	}
-	if len(stacks) != 3 {
-		t.Fatalf("stack count = %d, want recovered fork appended", len(stacks))
-	}
-	fork := stacks[2]
-	if fork.cRec != nil {
-		t.Fatal("recovered fork still has cRec state")
-	}
-	if got := fork.top().state; got != StateID(2) {
-		t.Fatalf("recovered fork top state = %d, want 2", got)
-	}
-	if n := stackEntryNode(fork.top()); n == nil || n.symbol != errorSymbol {
-		t.Fatalf("recovered fork top node = %v, want ERROR node", n)
+	if len(stacks) != 2 {
+		t.Fatalf("stack count = %d, want no fork appended", len(stacks))
 	}
 }
 
@@ -467,7 +265,7 @@ func TestCRecoverStrategy1ElectionIgnoresBetterVersionForNoActionEntry(t *testin
 		cRecoveryElectionPlainStack(arena, 4, 4, 2500),
 	}
 	nodeCount := 0
-	didRecover, forked := parser.cRecoverStrategy1Election(&stacks, group, Token{Symbol: 1}, &nodeCount, arena, nil, nil, nil)
+	didRecover, forked := parser.cRecoverStrategy1Election(&stacks, group, nil, Token{Symbol: 1}, &nodeCount, arena, nil, nil, nil)
 	if !didRecover || !forked {
 		t.Fatalf("strategy 1 election = didRecover %v forked %v, want true/true", didRecover, forked)
 	}
@@ -479,7 +277,14 @@ func TestCRecoverStrategy1ElectionIgnoresBetterVersionForNoActionEntry(t *testin
 	}
 }
 
-func TestCRecoverStrategy1ElectionUsesOwnerMemberForBetterVersionCost(t *testing.T) {
+// TestCRecoverStrategy1ElectionUsesMergedVersionCostBasis pins C's cost basis
+// for the strategy-1 scan: parser.c ts_parser__recover computes position and
+// current_error_cost ONCE for the single merged error-state version (this
+// engine's first group member). A candidate entry whose hypothetical recovery
+// is clearly worse than an existing version aborts the whole scan (C `break`),
+// even when a later member's engine-local byte offset would have produced a
+// cheaper-looking cost.
+func TestCRecoverStrategy1ElectionUsesMergedVersionCostBasis(t *testing.T) {
 	parser := cRecoveryElectionTestParser()
 	arena := acquireNodeArena(arenaClassFull)
 	defer arena.Release()
@@ -492,15 +297,12 @@ func TestCRecoverStrategy1ElectionUsesOwnerMemberForBetterVersionCost(t *testing
 		cRecoveryElectionPlainStack(arena, 4, 4, 2500),
 	}
 	nodeCount := 0
-	didRecover, forked := parser.cRecoverStrategy1Election(&stacks, group, Token{Symbol: 1}, &nodeCount, arena, nil, nil, nil)
-	if !didRecover || !forked {
-		t.Fatalf("strategy 1 election = didRecover %v forked %v, want true/true", didRecover, forked)
+	didRecover, forked := parser.cRecoverStrategy1Election(&stacks, group, nil, Token{Symbol: 1}, &nodeCount, arena, nil, nil, nil)
+	if didRecover || forked {
+		t.Fatalf("strategy 1 election = didRecover %v forked %v, want false/false (merged-version cost makes the entry clearly worse than the clean sibling, aborting the scan)", didRecover, forked)
 	}
-	if len(stacks) != 4 {
-		t.Fatalf("stack count = %d, want recovered fork appended", len(stacks))
-	}
-	if got := stacks[3].top().state; got != StateID(2) {
-		t.Fatalf("recovered fork top state = %d, want 2", got)
+	if len(stacks) != 3 {
+		t.Fatalf("stack count = %d, want no fork appended", len(stacks))
 	}
 }
 
@@ -750,7 +552,16 @@ func newCRecoverySyntheticReduceParser() *Parser {
 	return &Parser{language: lang, denseLimit: len(lang.ParseTable)}
 }
 
-func TestCDoAllPotentialReductionsChasesAnyLookaheadReductionsWithShift(t *testing.T) {
+// TestCDoAllPotentialReductionsKeepsShiftableOriginalWithReductionFork pins
+// C's version bookkeeping (parser.c ts_parser__do_all_potential_reductions):
+// a version whose state has a non-extra shift action for SOME token is KEPT
+// as its own path, and its reduction results become separate versions —
+// `if (has_shift_action) can_shift = true; else if (reduction_version ...)
+// renumber`. Replacing the shiftable original with its reduction drops the
+// merged version's original-shape path and the summary entries C's
+// strategy-1 scan elects from it (authzed stray backtick: the (depth 1,
+// pre-reduction state) entry closes binary_expression on the newline).
+func TestCDoAllPotentialReductionsKeepsShiftableOriginalWithReductionFork(t *testing.T) {
 	lang := &Language{
 		TokenCount:  2,
 		StateCount:  10,
@@ -794,16 +605,19 @@ func TestCDoAllPotentialReductionsChasesAnyLookaheadReductionsWithShift(t *testi
 	nodeCount := 0
 	versions, canShift := parser.cDoAllPotentialReductions(nil, start, 0, true, Token{}, &nodeCount, arena, nil, nil, nil)
 	if !canShift {
-		t.Fatal("canShift = false, want true from the shiftable intermediate state")
+		t.Fatal("canShift = false, want true from the shiftable original state")
 	}
-	if len(versions) != 1 {
-		t.Fatalf("version count = %d, want reduction chased in place", len(versions))
+	if len(versions) != 2 {
+		t.Fatalf("version count = %d, want shiftable original retained alongside its reduction fork", len(versions))
 	}
-	if got := versions[0].top().state; got != StateID(9) {
-		t.Fatalf("top state = %d, want reduced goto state 9", got)
+	if got := versions[0].top().state; got != StateID(3) {
+		t.Fatalf("original top state = %d, want pre-reduction state 3 kept", got)
 	}
-	if top := versions[0].top(); !stackEntryHasNode(top) || stackEntryNode(top).symbol != 4 {
-		t.Fatalf("top entry = %+v, want reduced parent symbol", top)
+	if got := versions[1].top().state; got != StateID(9) {
+		t.Fatalf("reduction fork top state = %d, want reduced goto state 9", got)
+	}
+	if top := versions[1].top(); !stackEntryHasNode(top) || stackEntryNode(top).symbol != 4 {
+		t.Fatalf("reduction fork top entry = %+v, want reduced parent symbol", top)
 	}
 }
 func TestCDoAllPotentialReductionsDistinguishesEOFFromAnyLookahead(t *testing.T) {
@@ -940,7 +754,7 @@ func TestCCondenseAndResumeComparesMissingGroupStacks(t *testing.T) {
 	}
 
 	var nodeCount int
-	condensed, resumed := parser.cCondenseAndResume([]glrStack{missing, clean}, nil, Token{Symbol: 1}, &nodeCount, nil, nil, nil, nil)
+	condensed, resumed, _ := parser.cCondenseAndResume([]glrStack{missing, clean}, nil, Token{Symbol: 1}, &nodeCount, nil, nil, nil, nil)
 	if resumed {
 		t.Fatal("cCondenseAndResume resumed without paused/error-state versions")
 	}

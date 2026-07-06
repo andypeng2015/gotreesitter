@@ -63,7 +63,17 @@ func lastNonTriviaByteEnd(source []byte) uint32 {
 	return 0
 }
 
-func trimTrailingExtraTriviaRoot(root *Node, source []byte) {
+// trimTrailingExtraTriviaRoot drops a trailing extra child that is pure
+// whitespace AND hidden (SymbolMetadata.Visible == false) from the root,
+// widening the root's own span to still cover it instead. It targets grammars
+// whose extras rule captures raw whitespace as its own (unnamed, invisible)
+// token: tree-sitter C never surfaces that as a distinct trailing child, only
+// as span coverage. A VISIBLE extra (e.g. an anonymous-but-shown punctuation
+// token used as a stand-in "extra" in a synthetic fixture, or any grammar that
+// deliberately gives its trivia a visible node type) is intentionally shown in
+// the tree, so it is left alone even when its bytes happen to be whitespace —
+// only the hidden case is the "never really a node" pattern this normalizes.
+func trimTrailingExtraTriviaRoot(root *Node, source []byte, lang *Language) {
 	view := resultMutableChildrenForMutation(root)
 	childCount := view.Len()
 	if root == nil || childCount == 0 || len(source) == 0 {
@@ -72,6 +82,9 @@ func trimTrailingExtraTriviaRoot(root *Node, source []byte) {
 	if view.hasFinalChildRefs() {
 		last, ok := view.Entry(childCount - 1)
 		if !ok || !stackEntryNodeIsExtra(last) || stackEntryNodeChildCount(last) != 0 {
+			return
+		}
+		if symbolIsVisible(lang, stackEntryNodeSymbol(last)) {
 			return
 		}
 		start := stackEntryNodeStartByte(last)
@@ -89,6 +102,9 @@ func trimTrailingExtraTriviaRoot(root *Node, source []byte) {
 	}
 	last := resultChildAt(root, childCount-1)
 	if last == nil || !last.IsExtra() || resultChildCount(last) != 0 {
+		return
+	}
+	if symbolIsVisible(lang, last.symbol) {
 		return
 	}
 	if last.startByte >= last.endByte || last.endByte != root.endByte || int(last.endByte) > len(source) {

@@ -787,6 +787,16 @@ type parserStateTokenSource interface {
 	SetGLRStates(states []StateID)
 }
 
+// errorModeLexingTokenSource is implemented by token sources that honor
+// SetParserState(0) with C-equivalent ERROR-state lexing (LexModes[0], the
+// most permissive mode). The faithful C recovery port uses it to know whether
+// a token lexed while every live stack was absorbing already carries the
+// error-mode identity C's ts_parser__lex would produce (see
+// cRecoverElectionLookaheadSymbol).
+type errorModeLexingTokenSource interface {
+	lexesErrorModeAtErrorState() bool
+}
+
 // stackEntry is a single parser LR-stack entry. The hot path stores real
 // public tree nodes directly; compact parse modes can tag the same 16-byte slot
 // as a noTreeNode, compact leaf, or pending-parent payload.

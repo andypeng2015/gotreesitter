@@ -71,6 +71,23 @@ func (s *includedRangeTokenSource) SetGLRStates(states []StateID) {
 	}
 }
 
+// lexesErrorModeAtErrorState forwards to the base source's answer. The C
+// recovery port (parser_recover_c.go) uses this to decide whether it may
+// safely trust a SetParserState(0) token's identity as C-equivalent
+// error-mode lookahead, or must substitute its own raw-source Lexer. An
+// included-range wrapper has no lexing of its own — it only filters the
+// base's tokens against the active ranges — so it must defer entirely to the
+// base: answering true unconditionally (or synthesizing lexing) would let the
+// C-recovery engine-side error-mode substitution run its Lexer over the
+// WHOLE underlying document, ignoring the active ranges, which C never does.
+func (s *includedRangeTokenSource) lexesErrorModeAtErrorState() bool {
+	if s == nil || s.base == nil {
+		return false
+	}
+	em, ok := s.base.(errorModeLexingTokenSource)
+	return ok && em.lexesErrorModeAtErrorState()
+}
+
 func (s *includedRangeTokenSource) SupportsIncrementalReuse() bool {
 	if s == nil || s.base == nil {
 		return false

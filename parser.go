@@ -138,6 +138,25 @@ type Parser struct {
 	// candidates routinely settles back to a legitimately clean tree without
 	// ever being "re-validated", so it must not be treated as suspicious.
 	crecoveryHandleErrorSingleStack bool
+	// cRecoverSharedTokenErrorModeLexed records whether the CURRENT shared
+	// token was produced by C-equivalent error-mode lexing (the DFA token
+	// source lexing with the ERROR-state primary because every live stack is
+	// absorbing). When true, cRecoverElectionLookaheadSymbol trusts the shared
+	// token's identity instead of re-lexing — the DFA source's error-mode lex
+	// includes external-scanner and keyword handling the internal relex lacks.
+	// Refreshed by updateParserStateTokenSource before each token acquisition.
+	cRecoverSharedTokenErrorModeLexed bool
+	// cRecoverCustomResyncActive/-Byte track a custom (non-DFA) token source
+	// that has been bypassed by cRecoverInternalErrorModeToken while every
+	// live stack absorbed in the C error state: once a normally-parsing stack
+	// exists again, the source is resynchronized with SkipToByte to the end
+	// of the last internally lexed token.
+	cRecoverCustomResyncActive bool
+	cRecoverCustomResyncByte   uint32
+	// cRecoverCustomSourceEligible caches, per token acquisition, whether the
+	// active source qualifies for engine-side error-mode substitution (see
+	// cRecoverCustomSourceEligibleFor).
+	cRecoverCustomSourceEligible bool
 	// cNodeMemo caches per-subtree error cost and visible node count for the
 	// gated recovery, keyed on (node pointer, equivVersion) — the engine
 	// analogue of C's SubtreeHeapData.error_cost/visible_descendant_count
@@ -3612,6 +3631,9 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		}
 		p.crecoveryEnteredErrorState = false
 		p.crecoveryDroppedErrorForClean = false
+		p.cRecoverSharedTokenErrorModeLexed = false
+		p.cRecoverCustomResyncActive = false
+		p.cRecoverCustomResyncByte = 0
 	}
 	trackChildErrors := !deferParentLinks
 
@@ -4256,10 +4278,10 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			}
 			if phaseTiming {
 				tokenStart := time.Now()
-				tok = ts.Next()
+				tok = p.cRecoverAcquireToken(ts, stacks, source)
 				tokenNextNanos += time.Since(tokenStart).Nanoseconds()
 			} else {
-				tok = ts.Next()
+				tok = p.cRecoverAcquireToken(ts, stacks, source)
 			}
 			if progress.enabled {
 				progress.emit(time.Now(), "token_end", iterationsUsed, perfTokensConsumed+1, tok, true, stacks, maxStacksSeen, nodeCount, peakStackDepth, needToken, singleStackIterations, multiStackIterations, "")
@@ -5277,7 +5299,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		if condenseErrorCostEnabled && (!anyReduced || condenseEOFRecovery || condenseShiftedRecovery) {
 			var resumed bool
 			condenseRan = true
-			stacks, resumed = p.cCondenseAndResume(stacks, source, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors)
+			stacks, resumed, tok = p.cCondenseAndResume(stacks, source, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors)
 			condenseResumed = resumed
 			if resumed {
 				anyReduced = true
@@ -6204,6 +6226,7 @@ func bestRetryRecoveryStack(stacks []glrStack) int {
 }
 
 func (p *Parser) updateParserStateTokenSource(ts TokenSource, stacks []glrStack, scratch *parserScratch) {
+	p.cRecoverSharedTokenErrorModeLexed = false
 	stateful, ok := ts.(parserStateTokenSource)
 	if !ok || len(stacks) == 0 {
 		return
@@ -6229,6 +6252,14 @@ func (p *Parser) updateParserStateTokenSource(ts TokenSource, stacks []glrStack,
 			primary = stacks[si].top().state
 			excludeAbsorbing = true
 			break
+		}
+		if primary == cErrorState {
+			if em, ok := ts.(errorModeLexingTokenSource); ok && em.lexesErrorModeAtErrorState() {
+				// Every live stack is absorbing and the source will lex this
+				// token with the ERROR-state mode — C-equivalent error-mode
+				// lookahead; the strategy-1 election can trust it directly.
+				p.cRecoverSharedTokenErrorModeLexed = true
+			}
 		}
 	}
 	stateful.SetParserState(primary)

@@ -12,18 +12,18 @@ func normalizeCommentTrailingExtraTrivia(root *Node, source []byte, lang *Langua
 	if root == nil || lang == nil || lang.Name != "comment" || root.Type(lang) != "source" {
 		return
 	}
-	trimTrailingExtraTriviaRoot(root, source)
+	trimTrailingExtraTriviaRoot(root, source, lang)
 }
 
 func normalizePascalTrailingExtraTrivia(root *Node, source []byte, lang *Language) {
 	if root == nil || lang == nil || lang.Name != "pascal" || root.Type(lang) != "root" {
 		return
 	}
-	trimTrailingExtraTriviaRoot(root, source)
+	trimTrailingExtraTriviaRoot(root, source, lang)
 }
 
 func normalizeRSTTopLevelSectionEnd(root *Node, source []byte, lang *Language) {
-	trimTrailingExtraTriviaRoot(root, source)
+	trimTrailingExtraTriviaRoot(root, source, lang)
 	shrinkFirstTopLevelChildEndToLastNonTrivia(root, source, lang, "rst", "document", "section", false)
 }
 

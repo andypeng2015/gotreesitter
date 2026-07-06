@@ -5716,12 +5716,11 @@ func (p *Parser) buildReduceChildrenAllVisible(entries []stackEntry, start, end,
 		if n == nil {
 			continue
 		}
-		if parentVisible {
-			if count, ok := p.cRecoveryVisibleSpliceCount(n); ok {
-				visibleCount += count
-				continue
-			}
-		}
+		// C parity (ts_parser__reduce): popped subtrees — including extra
+		// ERROR carriers produced by recover_to_state — become children
+		// as-is. Reduces never dissolve an ERROR node; doing so drops the
+		// error cost and HasError bit C keeps (php `static function a()`:
+		// C's `program` keeps (ERROR ...) as a direct child).
 		effectiveSymbol := n.symbol
 		if !n.isExtra() {
 			if structuralChildIndex < len(aliasSeq) {
@@ -5762,12 +5761,6 @@ func (p *Parser) buildReduceChildrenAllVisible(entries []stackEntry, start, end,
 		n := stackEntryNode(entries[i])
 		if n == nil {
 			continue
-		}
-		if parentVisible {
-			if spliced, ok := p.cRecoveryVisibleSpliceChildren(n, arena); ok {
-				out += copy(children[out:], spliced)
-				continue
-			}
 		}
 		var fid FieldID
 		inherited := false
@@ -5862,12 +5855,6 @@ func (p *Parser) buildReduceChildrenNoAliasNoFieldsPlanned(entries []stackEntry,
 		if n == nil {
 			continue
 		}
-		if parentVisible {
-			if count, ok := p.cRecoveryVisibleSpliceCount(n); ok {
-				visibleCount += count
-				continue
-			}
-		}
 		visible := true
 		if idx := int(n.symbol); idx < len(symbolMeta) {
 			visible = symbolMeta[n.symbol].Visible
@@ -5896,12 +5883,6 @@ func (p *Parser) buildReduceChildrenNoAliasNoFieldsPlanned(entries []stackEntry,
 			if n == nil {
 				continue
 			}
-			if parentVisible {
-				if spliced, ok := p.cRecoveryVisibleSpliceChildren(n, arena); ok {
-					out += copy(children[out:], spliced)
-					continue
-				}
-			}
 			children[out] = n
 			out++
 		}
@@ -5927,14 +5908,6 @@ func (p *Parser) buildReduceChildrenNoAliasNoFieldsPlanned(entries []stackEntry,
 		n := stackEntryNode(entries[i])
 		if n == nil {
 			continue
-		}
-		if parentVisible {
-			if spliced, ok := p.cRecoveryVisibleSpliceChildren(n, arena); ok {
-				for _, child := range spliced {
-					scratch.appendNode(child)
-				}
-				continue
-			}
 		}
 		visible := true
 		if idx := int(n.symbol); idx < len(symbolMeta) {
@@ -6044,15 +6017,6 @@ func (p *Parser) appendReduceChildrenToScratch(scratch *reduceBuildScratch, entr
 
 func (p *Parser) appendReduceChildItemToScratch(scratch *reduceBuildScratch, item reduceChildBuildItem, rawFieldIDs []FieldID, nextStructuralChildIndex int, parentVisible bool, symbolMeta []SymbolMetadata, havePadding bool, paddingStartByte uint32, paddingStartPoint Point, paddingSource *Node, arena *nodeArena) (int, int) {
 	n := item.node
-	if parentVisible {
-		if children, ok := p.cRecoveryVisibleSpliceChildren(n, arena); ok {
-			start := len(scratch.nodes)
-			for _, child := range children {
-				scratch.appendNode(child)
-			}
-			return start, len(scratch.nodes)
-		}
-	}
 	if symbolVisibleForPending(n.symbol, symbolMeta) {
 		if havePadding && flattenedHiddenSiblingPaddingTarget(n, paddingSource, symbolMeta) && paddingStartByte < n.startByte {
 			n = cloneNodeInArena(arena, n)
