@@ -59,6 +59,13 @@ type Parser struct {
 	hasRecoverSymbol                    []bool
 	recoverByState                      [][]recoverSymbolAction
 	hasKeywordState                     []bool
+	// lookupActionIndexFn caches the bound-method closure for
+	// lookupActionIndex. Passing p.lookupActionIndex directly at token-source
+	// construction sites allocates a fresh 16-byte closure per parse; the
+	// bound method only captures p (tables are re-read at call time), so one
+	// closure stays valid for the parser's whole lifetime, including language
+	// changes. See lookupActionIndexFunc (parser_tables.go).
+	lookupActionIndexFn func(state StateID, sym Symbol) uint16
 	typeScriptPropertyIdentifierSymbol  Symbol
 	typeScriptIdentifierSymbol          Symbol
 	typeScriptHasPropertyIdentifier     bool
@@ -1261,6 +1268,10 @@ func NewParser(lang *Language) *Parser {
 		} else {
 			p.denseLimit = len(lang.ParseTable)
 		}
+		// Bind the cached action-lookup closure eagerly at language-config
+		// time so lookupActionIndexFunc's lazy fallback never races, even in
+		// the (unsupported) shared-Parser case.
+		p.lookupActionIndexFn = p.lookupActionIndex
 		p.smallBase = int(lang.LargeStateCount)
 		if len(lang.SmallParseTableMap) > 0 && len(lang.SmallParseTable) > 0 {
 			p.smallTokenLookup = buildSmallTokenLookup(lang)

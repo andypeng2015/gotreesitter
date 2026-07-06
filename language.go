@@ -390,6 +390,18 @@ type Language struct {
 	publicAnonymousSymbolMap []Symbol // internal symbol -> canonical public anonymous symbol
 	fieldNameMap             map[string]FieldID
 
+	// Shape masks over the names of ANONYMOUS token symbols, built alongside
+	// tokenSymbolNameMap. anonTokenNameFirstByteMask has the bit for the first
+	// byte of each such name; anonTokenNameLenMask has bit min(len,64)-1 for
+	// each such name's byte length. anonymousTokenNameShapePossible uses them
+	// as an exact pre-filter: when either bit for a candidate text is clear,
+	// no anonymous token symbol's name can equal that text, so per-token
+	// literal-promotion probes (promoteActiveLiteralForCurrentState) can skip
+	// the string-map lookup entirely. A set bit proves nothing — callers fall
+	// through to the full lookup — so the filter can never change results.
+	anonTokenNameFirstByteMask [4]uint64
+	anonTokenNameLenMask       uint64
+
 	symbolMapOnce sync.Once
 	fieldMapOnce  sync.Once
 
@@ -822,6 +834,32 @@ func (l *Language) TokenSymbolsByName(name string) []Symbol {
 	return l.tokenSymbolNameMap[name]
 }
 
+// anonymousTokenNameShapePossible reports whether some ANONYMOUS token
+// symbol's name could equal text, judged only by text's first byte and byte
+// length against the masks built in buildSymbolMaps. false is definitive (no
+// anonymous token symbol is named text); true only means "possible" and the
+// caller must still do the exact lookup. Used as an allocation-free hot-path
+// pre-filter by promoteActiveLiteralForCurrentState, where the overwhelmingly
+// common inputs are ordinary identifiers that match no literal name.
+func (l *Language) anonymousTokenNameShapePossible(text string) bool {
+	if l == nil {
+		return false
+	}
+	if len(text) == 0 {
+		return false
+	}
+	l.buildSymbolMaps()
+	lenBit := len(text) - 1
+	if lenBit > 63 {
+		lenBit = 63
+	}
+	if l.anonTokenNameLenMask&(1<<uint(lenBit)) == 0 {
+		return false
+	}
+	b := text[0]
+	return l.anonTokenNameFirstByteMask[b>>6]&(1<<(b&63)) != 0
+}
+
 // PublicSymbol maps an internal symbol to its canonical public form.
 // Multiple internal symbols may share the same visible name (e.g.
 // HTML's _start_tag_name and _end_tag_name both display as "tag_name").
@@ -905,6 +943,14 @@ func (l *Language) buildSymbolMaps() {
 			}
 			if i < tokenCount {
 				l.tokenSymbolNameMap[sn] = append(l.tokenSymbolNameMap[sn], sym)
+				if !named {
+					l.anonTokenNameFirstByteMask[sn[0]>>6] |= 1 << (sn[0] & 63)
+					lenBit := len(sn) - 1
+					if lenBit > 63 {
+						lenBit = 63
+					}
+					l.anonTokenNameLenMask |= 1 << uint(lenBit)
+				}
 			}
 		}
 		for i, sn := range l.SymbolNames {

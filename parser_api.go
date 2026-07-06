@@ -166,8 +166,7 @@ func (p *Parser) tryTokenInvariantReuseForDisabledOldTree(source []byte, oldTree
 	defer func() {
 		p.reparseFactory = prevFactory
 	}()
-	lexer := NewLexer(p.language.LexStates, source)
-	ts := acquireDFATokenSourceWithCRecovery(lexer, p.language, p.lookupActionIndex, p.hasKeywordState, p.externalValidByState, p.externalValidMaskByState, p.errorCostCompetitionEnabled())
+	ts := p.acquireParserDFATokenSource(source)
 	defer ts.Close()
 	tree, ok := p.tryTokenInvariantLeafEdit(source, oldTree, p.wrapIncludedRanges(ts), timing)
 	if !ok {
@@ -355,7 +354,19 @@ func (p *Parser) newDFAReparseTokenSource(source []byte) TokenSource {
 		return nil
 	}
 	lexer := NewLexer(p.language.LexStates, source)
-	return newDFATokenSourceDirectWithCRecovery(lexer, p.language, p.lookupActionIndex, p.hasKeywordState, p.externalValidByState, p.externalValidMaskByState, p.errorCostCompetitionEnabled())
+	return newDFATokenSourceDirectWithCRecovery(lexer, p.language, p.lookupActionIndexFunc(), p.hasKeywordState, p.externalValidByState, p.externalValidMaskByState, p.errorCostCompetitionEnabled())
+}
+
+// acquireParserDFATokenSource returns a pooled dfaTokenSource wired to p's
+// language tables, reusing the pooled source's retained lexer so steady-state
+// parses allocate neither a token source nor a lexer. The caller must Close()
+// the returned source (Close returns it to the pool), and its lifetime must
+// not extend past that Close. Returns nil when p has no DFA lex tables.
+func (p *Parser) acquireParserDFATokenSource(source []byte) *dfaTokenSource {
+	if p == nil || p.language == nil || len(p.language.LexStates) == 0 {
+		return nil
+	}
+	return acquireDFATokenSourceReusingLexer(source, p.language, p.lookupActionIndexFunc(), p.hasKeywordState, p.externalValidByState, p.externalValidMaskByState, p.errorCostCompetitionEnabled())
 }
 
 func (p *Parser) tokenSourceReparseFactory(ts TokenSource) TokenSourceFactory {
@@ -860,8 +871,7 @@ func (p *Parser) Parse(source []byte) (*Tree, error) {
 	if progress.enabled {
 		progress.emit(time.Now(), "token_source_setup_begin", 0, 0, Token{}, false, nil, 0, 0, 0, true, 0, 0, "")
 	}
-	lexer := NewLexer(p.language.LexStates, source)
-	ts := acquireDFATokenSourceWithCRecovery(lexer, p.language, p.lookupActionIndex, p.hasKeywordState, p.externalValidByState, p.externalValidMaskByState, p.errorCostCompetitionEnabled())
+	ts := p.acquireParserDFATokenSource(source)
 	if progress.enabled {
 		progress.emit(time.Now(), "token_source_setup_end", 0, 0, Token{}, false, nil, 0, 0, 0, true, 0, 0, "")
 	}
@@ -1261,8 +1271,7 @@ func (p *Parser) parseIncrementalChanged(source []byte, oldTree *Tree) (*Tree, e
 	defer func() {
 		p.reparseFactory = prevFactory
 	}()
-	lexer := NewLexer(p.language.LexStates, source)
-	ts := acquireDFATokenSourceWithCRecovery(lexer, p.language, p.lookupActionIndex, p.hasKeywordState, p.externalValidByState, p.externalValidMaskByState, p.errorCostCompetitionEnabled())
+	ts := p.acquireParserDFATokenSource(source)
 	defer ts.Close()
 	tree := p.parseIncrementalInternal(source, oldTree, p.wrapIncludedRanges(ts), nil)
 	p.normalizeReturnedIncrementalTree(tree, oldTree, source)
@@ -1400,8 +1409,7 @@ func (p *Parser) parseIncrementalChangedProfiled(source []byte, oldTree *Tree) (
 	defer func() {
 		p.reparseFactory = prevFactory
 	}()
-	lexer := NewLexer(p.language.LexStates, source)
-	ts := acquireDFATokenSourceWithCRecovery(lexer, p.language, p.lookupActionIndex, p.hasKeywordState, p.externalValidByState, p.externalValidMaskByState, p.errorCostCompetitionEnabled())
+	ts := p.acquireParserDFATokenSource(source)
 	defer ts.Close()
 	timing := &incrementalParseTiming{}
 	tree := p.parseIncrementalInternal(source, oldTree, p.wrapIncludedRanges(ts), timing)

@@ -90,6 +90,14 @@ type dfaTokenSource struct {
 	// noPool skips pool return on Close; set for token sources whose lifetime
 	// is nested inside an active parse (e.g. recovery reparsing).
 	noPool bool
+
+	// ownedLexer is a private Lexer retained across pool cycles for
+	// parser-internal construction sites (acquireDFATokenSourceReusingLexer),
+	// so steady-state parses do not allocate a fresh Lexer per parse. It never
+	// escapes the token source: Close zeroes its contents (dropping the source
+	// reference) but keeps the allocation for the next pooled acquire. Callers
+	// that pass their own lexer simply leave it unused.
+	ownedLexer *Lexer
 }
 
 const maxConsecutiveZeroWidthTokens = 4
@@ -217,6 +225,27 @@ func acquireDFATokenSourceWithCRecovery(lexer *Lexer, language *Language, lookup
 	return ts
 }
 
+// acquireDFATokenSourceReusingLexer is acquireDFATokenSourceWithCRecovery for
+// parser-internal construction sites that would otherwise allocate a fresh
+// Lexer per parse: it reuses the pooled token source's retained ownedLexer
+// (creating it on first use) and re-initializes it in place with exactly the
+// state NewLexer would have set. Steady-state acquires therefore allocate
+// neither the token source nor the lexer. The caller must Close() the
+// returned source; Close zeroes the retained lexer and returns both to the
+// pool.
+func acquireDFATokenSourceReusingLexer(source []byte, language *Language, lookupActionIndex func(state StateID, sym Symbol) uint16, hasKeywordState []bool, externalValidByState [][]uint16, externalValidMaskByState []uint64, cRecoveryEnabled bool) *dfaTokenSource {
+	ts := dfaTokenSourcePool.Get().(*dfaTokenSource)
+	resetPooledDFATokenSource(ts)
+	lexer := ts.ownedLexer
+	if lexer == nil {
+		lexer = &Lexer{}
+		ts.ownedLexer = lexer
+	}
+	*lexer = Lexer{states: language.LexStates, source: source}
+	initDFATokenSourceWithCRecovery(ts, lexer, language, lookupActionIndex, hasKeywordState, externalValidByState, externalValidMaskByState, cRecoveryEnabled)
+	return ts
+}
+
 func resetPooledDFATokenSource(ts *dfaTokenSource) {
 	if ts == nil {
 		return
@@ -232,11 +261,13 @@ func resetPooledDFATokenSource(ts *dfaTokenSource) {
 	savedMasked := ts.maskedScratch[:0]
 	savedSQLKeywordScratch := ts.sqlKeywordScratch[:0]
 	savedExtZeroTried := ts.extZeroTried[:0]
+	savedOwnedLexer := ts.ownedLexer
 	*ts = dfaTokenSource{
 		extZeroPos:             -1,
 		zeroWidthPos:           -1,
 		bashArithmeticCachePos: -1,
 	}
+	ts.ownedLexer = savedOwnedLexer
 	ts.externalValid = savedExternalValid
 	ts.externalTokenStart = savedExternalTokenStart
 	ts.externalTokenEnd = savedExternalTokenEnd
@@ -383,6 +414,12 @@ func (d *dfaTokenSource) Close() {
 	if d.language != nil && d.language.ExternalScanner != nil && d.externalPayload != nil {
 		d.language.ExternalScanner.Destroy(d.externalPayload)
 		d.externalPayload = nil
+	}
+	if d.ownedLexer != nil {
+		// Keep the allocation for the next pooled acquire, but zero the
+		// contents so no source bytes or table slices stay pinned while the
+		// token source sits in the pool.
+		*d.ownedLexer = Lexer{}
 	}
 	d.lexer = nil
 	d.language = nil
@@ -3973,6 +4010,14 @@ func (d *dfaTokenSource) promoteActiveLiteralForCurrentState(tok Token, scanStar
 			return tok
 		}
 		text = bytesToStringNoCopy(d.lexer.source[start:end])
+	}
+	// Exact shape pre-filter: promotion below requires an ANONYMOUS token
+	// symbol whose name equals text (the loop skips Named candidates and
+	// name-mismatched candidates). When no anonymous token name shares text's
+	// first byte and length, that is impossible, so skip the per-token
+	// string-map lookup — the dominant cost for ordinary identifiers.
+	if !d.language.anonymousTokenNameShapePossible(text) {
+		return tok
 	}
 	if text == "" || !isIdentifierLikeLiteralText(text) || d.symbolName(tok.Symbol) == text {
 		return tok

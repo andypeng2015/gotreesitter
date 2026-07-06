@@ -222,6 +222,19 @@ func (p *Parser) lookupAction(state StateID, sym Symbol) *ParseActionEntry {
 	return nil
 }
 
+// lookupActionIndexFunc returns a cached bound-method closure for
+// lookupActionIndex. Token-source construction happens per parse; using this
+// instead of `p.lookupActionIndex` avoids allocating a fresh method-value
+// closure each time. The closure captures only p, and lookupActionIndex reads
+// p.denseLimit/p.language at call time, so caching is safe across language
+// changes.
+func (p *Parser) lookupActionIndexFunc() func(state StateID, sym Symbol) uint16 {
+	if p.lookupActionIndexFn == nil {
+		p.lookupActionIndexFn = p.lookupActionIndex
+	}
+	return p.lookupActionIndexFn
+}
+
 // lookupActionIndex returns the parse action index for (state, symbol).
 // Returns 0 (the error/no-action entry) if not found.
 func (p *Parser) lookupActionIndex(state StateID, sym Symbol) uint16 {

@@ -840,10 +840,16 @@ func (p *Parser) scanLeafTokenWithFreshSource(source []byte, leaf *Node, allowDF
 		if !allowDFA {
 			return Token{}, false
 		}
-		fresh = p.newDFAReparseTokenSource(source)
-		if fresh == nil {
+		// Pooled + lexer-reusing: this scan runs on the clean incremental
+		// fast path (token-invariant single-leaf edits), so it must not
+		// allocate a fresh token source + lexer per parse. The source's
+		// lifetime is strictly local (released via manageTokenSourceLifetime
+		// below, which returns it to the pool).
+		dfaFresh := p.acquireParserDFATokenSource(source)
+		if dfaFresh == nil {
 			return Token{}, false
 		}
+		fresh = dfaFresh
 	}
 	release := manageTokenSourceLifetime(fresh)
 	defer release()
