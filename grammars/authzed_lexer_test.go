@@ -339,8 +339,34 @@ func TestAuthzedTokenSourceIncrementalRetryHandlesAssociativityFirstByteToggle(t
 	defer incrOriginal.Release()
 	requireCompleteAuthzedTreeForTest(t, incrOriginal, src)
 	assertAuthzedNodeShapeEqual(t, lang, incrOriginal.RootNode(), freshOriginal.RootNode(), "root")
-	if got, want := profile.ReuseUnsupportedReason, "incremental_parse_full_retry"; got != want {
-		t.Fatalf("incremental fallback reason = %q, want %q", got, want)
+	// Independently corroborate the recursive shape check with an
+	// S-expression text comparison (named-node type/nesting) against a
+	// genuine from-scratch parse of src. Both must agree that the
+	// associativity-sensitive recovery (the mixed +/- "combined1"/
+	// "combined2" permissions require precedence disambiguation the grammar
+	// resolves via an ERROR production) round-trips identically after the
+	// detour through the toggled-first-byte "edited" parse.
+	if got, want := incrOriginal.RootNode().SExpr(lang), freshOriginal.RootNode().SExpr(lang); got != want {
+		t.Fatalf("incremental reparse SExpr diverges from fresh parse:\n incr:  %s\n fresh: %s", got, want)
+	}
+	// Prior to the C-faithful error-recovery fix, the incremental dispatch
+	// could not resolve this associativity-sensitive recovery on its own
+	// (toggling the first byte away from and back to the "definition"
+	// keyword invalidates essentially the whole tree) and fell back to a
+	// full re-parse, which set ReuseUnsupportedReason to
+	// "incremental_parse_full_retry". Recovery now succeeds directly inside
+	// the incremental dispatch, so no full retry is triggered:
+	// ReuseUnsupported stays false and the reason is empty. The shape/SExpr
+	// checks above (plus ProfileReuseRejectHasError/ReuseRejectAncestorDirty
+	// accounting showing the dirtied span was correctly NOT reused) are what
+	// actually guard against a stale/incorrect-reuse regression here; this
+	// just pins the (now empty) retry bookkeeping so a regression back to
+	// the old fallback path would be caught too.
+	if profile.ReuseUnsupported {
+		t.Fatalf("incremental parse unexpectedly fell back to full retry (reason=%q); C-faithful recovery should resolve this directly", profile.ReuseUnsupportedReason)
+	}
+	if got, want := profile.ReuseUnsupportedReason, ""; got != want {
+		t.Fatalf("incremental fallback reason = %q, want %q (no full retry expected)", got, want)
 	}
 }
 

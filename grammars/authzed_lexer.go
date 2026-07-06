@@ -307,8 +307,18 @@ func (ts *AuthzedTokenSource) Next() gotreesitter.Token {
 	}
 
 	for {
-		// Skip only spaces and tabs (NOT newlines — they are significant tokens)
+		// Horizontal whitespace (spaces/tabs/CR/form-feed) is an explicit `_whitespace`
+		// extra token in the authzed grammar (extras: [comment, _whitespace]).
+		// C lexes it and shifts it as an extra, which advances the parser
+		// position BEFORE any error-mode re-lex. Emit it the same way instead
+		// of silently skipping, so error recovery re-lexes at the true content
+		// byte (matching C's ERROR span). Newlines stay significant tokens.
+		wsStart := ts.cur.offset
+		wsStartPt := ts.cur.point()
 		ts.cur.skipSpacesAndTabs()
+		if ts.cur.offset > wsStart && ts.whitespaceSym != 0 {
+			return makeToken(ts.whitespaceSym, ts.src, wsStart, ts.cur.offset, wsStartPt, ts.cur.point())
+		}
 
 		if ts.cur.eof() {
 			if !ts.eofNullDone && ts.nullSym != 0 && ts.hasAction(ts.nullSym) {

@@ -213,8 +213,9 @@ func TestGeneratedRepeatBoundaryConflictBypassesDispatchShortcut(t *testing.T) {
 		{name: "dart", state: 596, tok: 1},
 	} {
 		lang := &Language{
-			Name:        tc.name,
-			SymbolNames: []string{"end", "identifier", "def", "module_repeat1"},
+			Name:                  tc.name,
+			GeneratedByGrammargen: true,
+			SymbolNames:           []string{"end", "identifier", "def", "module_repeat1"},
 			SymbolMetadata: []SymbolMetadata{
 				{Name: "end"},
 				{Name: "identifier"},
@@ -238,8 +239,9 @@ func TestGeneratedRepeatBoundaryConflictBypassesDispatchShortcut(t *testing.T) {
 
 func TestGeneratedRepeatBoundaryConflictRequiresGeneratedReduce(t *testing.T) {
 	lang := &Language{
-		Name:        "python",
-		SymbolNames: []string{"end", "identifier", "module_repeat1"},
+		Name:                  "python",
+		GeneratedByGrammargen: true,
+		SymbolNames:           []string{"end", "identifier", "module_repeat1"},
 		SymbolMetadata: []SymbolMetadata{
 			{Name: "end"},
 			{Name: "identifier"},
@@ -257,8 +259,9 @@ func TestGeneratedRepeatBoundaryConflictRequiresGeneratedReduce(t *testing.T) {
 
 func TestGeneratedRepeatBoundaryConflictAllowsMixedReduces(t *testing.T) {
 	lang := &Language{
-		Name:        "python",
-		SymbolNames: []string{"end", "identifier", "module_repeat1", "statement"},
+		Name:                  "python",
+		GeneratedByGrammargen: true,
+		SymbolNames:           []string{"end", "identifier", "module_repeat1", "statement"},
 		SymbolMetadata: []SymbolMetadata{
 			{Name: "end"},
 			{Name: "identifier"},

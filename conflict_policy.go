@@ -178,6 +178,24 @@ func generatedRepeatBoundaryConflict(lang *Language, actions []ParseAction) bool
 	if lang == nil || len(actions) < 2 {
 		return false
 	}
+	// The repeat-boundary rejection exists so grammargen-generated grammars
+	// without an explicit ConflictPolicy fork instead of trusting hand-written
+	// per-language shortcuts that were never tuned for them. Embedded blobs
+	// (c_sharp, java, c, ...) get GeneratedRepeatAux retrofitted by
+	// InferGeneratedRepeatAuxMetadata (load_language.go / embedded_loader.go),
+	// but their repeat-boundary conflicts are exactly what the per-language
+	// deterministic choices below were written for; rejecting here disables
+	// those choices and the GLR loop forks on every repetition boundary
+	// (C# designer-style blocks grew live stacks linearly with input size:
+	// MaxStacksSeen 2064 at 300 statements, arena exhaustion, never accepts).
+	// Scope the rejection to languages that actually rely on generated
+	// policies. For grammargen languages this is a no-op: both call sites
+	// (deterministicConflictChoiceForDispatch below, forestResolveConflict in
+	// parser.go) check GeneratedByGrammargen immediately after this predicate
+	// and bail out identically.
+	if !lang.GeneratedByGrammargen && len(lang.ConflictPolicies) == 0 {
+		return false
+	}
 	shiftFound := false
 	generatedReduceFound := false
 	for _, act := range actions {

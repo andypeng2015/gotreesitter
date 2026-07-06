@@ -1388,6 +1388,22 @@ func flattenInvisibleRootChildren(root *Node, arena *nodeArena, lang *Language) 
 	if !changed {
 		return root
 	}
+	// Capture the pre-flatten span before mutating: an invisible (hidden,
+	// non-extra) LEAF child contributes zero substitute children when
+	// flattened (appendFlattenedInvisibleRootChildWalk's recursion has
+	// nothing to inline for a childless node), so it can vanish from the
+	// output entirely. populateParentNode (via replaceNodeChildrenUnfielded
+	// below) then recomputes root's span strictly from whatever children
+	// survive, silently SHRINKING the root below the real content it
+	// structurally absorbed — e.g. a trailing invisible token dropped this
+	// way took the root's endByte from the true end-of-input back to the
+	// last surviving (visible or extra-wrapped) child's end. A hidden node's
+	// bytes are still part of its parent's span in tree-sitter C even though
+	// the node itself never appears in the concrete tree; widen (never
+	// shrink) back to the original extent afterward to preserve that
+	// invariant.
+	origStartByte, origEndByte := root.startByte, root.endByte
+	origStartPoint, origEndPoint := root.startPoint, root.endPoint
 	children := resultChildSliceForMutation(root)
 	out := make([]*Node, 0, len(children))
 	for _, child := range children {
@@ -1402,6 +1418,7 @@ func flattenInvisibleRootChildren(root *Node, arena *nodeArena, lang *Language) 
 		out = buf
 	}
 	replaceNodeChildrenUnfielded(root, out)
+	widenNodeSpanToChildSpan(root, origStartByte, origEndByte, origStartPoint, origEndPoint)
 	return root
 }
 
