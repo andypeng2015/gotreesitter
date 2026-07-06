@@ -23,7 +23,9 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # 60m: the full -race suite (non-draft PRs) needs ~30-40m on 2-core
+    # runners with -p 1; see the Test step's comment.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
@@ -42,7 +44,14 @@ jobs:
 
       - name: Test
         if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
-        run: go test ./... -race -count=1
+        # -timeout 35m: the root package alone needs ~11m under -race on a
+        # fast box and more on 2-core runners; Go's default 10m per-package
+        # timeout panics the test binary mid-run (dumping in-flight tests as
+        # spurious FAILs). -p 1: package binaries otherwise run concurrently,
+        # and on 2 cores under ~10x race instrumentation that contention
+        # flips wall-clock-sensitive tests; sequential packages keep timing
+        # honest at the cost of wall time (covered by the 60m job budget).
+        run: go test ./... -race -count=1 -timeout 35m -p 1
 
       - name: Draft PR Focused Tests
         if: github.event_name == 'pull_request' && github.event.pull_request.draft == true

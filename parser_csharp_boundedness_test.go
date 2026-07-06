@@ -48,6 +48,13 @@ func TestCSharpDesignerStyleBlockStaysBounded(t *testing.T) {
 }
 
 func TestCSharpCJKPartialClassesStayBounded(t *testing.T) {
+	if raceEnabled {
+		// Same rationale as TestCSharpDesignerStyleBlockStaysBounded above:
+		// the 500ms wall-clock budget measures the race detector's ~10x
+		// instrumentation slowdown (and CI runner contention), not the
+		// parser's boundedness. Non-race runs keep the contract enforced.
+		t.Skip("wall-clock budget contract is not meaningful under -race instrumentation")
+	}
 	src := csharpSyntheticCJKNamespaceSource(120)
 	parser := gotreesitter.NewParser(grammars.CSharpLanguage())
 	parser.SetTimeoutMicros(500_000)
