@@ -2,11 +2,36 @@ package grammargen
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 
 	"github.com/odvcencio/gotreesitter"
 )
+
+// maxUint16Index is the largest value that fits in the uint16 index/ID fields
+// grammargen writes into a Language: parse-action group indices (ParseTable /
+// SmallParseTable values), field-map and supertype-map offsets, reserved-word
+// set IDs, external-lex-state row indices, and parse-table state IDs. A naive
+// uint16(n) conversion of a larger value silently wraps and produces a
+// valid-looking but WRONG table — generation "succeeds" and the corruption only
+// surfaces later as mysterious downstream parse failures. checkUint16Index
+// turns that worst-case silent wrap into a hard generation error instead.
+const maxUint16Index = math.MaxUint16 // 65535
+
+// checkUint16Index reports an actionable error when value cannot be stored in
+// the uint16 table slot named by field. grammarName identifies the offending
+// grammar so a downstream author is not left chasing a corrupted table.
+func checkUint16Index(grammarName, field string, value int) error {
+	if value > maxUint16Index {
+		return fmt.Errorf(
+			"grammar %q: %s index %d exceeds the uint16 table limit of %d; "+
+				"the grammar is too large to encode with this parser ABI — reduce its "+
+				"rule/alias/state count or split it into smaller grammars",
+			grammarName, field, value, maxUint16Index)
+	}
+	return nil
+}
 
 // pipeReduceLHSIsRowBoundary reports whether the _pipe_table_line_ending reduce
 // action reduces to a pipe-table delimiter-row or body-data-row nonterminal — a
@@ -132,10 +157,14 @@ func assemble(
 	}
 	lang.ConflictPolicies = buildConflictPolicies(tables, ng)
 
-	buildReservedWordTables(lang, ng)
+	if err := buildReservedWordTables(lang, ng); err != nil {
+		return nil, err
+	}
 
 	// Build field map tables.
-	buildFieldMaps(lang, ng)
+	if err := buildFieldMaps(lang, ng); err != nil {
+		return nil, err
+	}
 	buildProductionSignatures(lang, ng)
 
 	// Supertype symbols.
@@ -153,7 +182,9 @@ func assemble(
 			lang.ExternalSymbols[i] = gotreesitter.Symbol(s)
 		}
 		// Build ExternalLexStates validity table.
-		buildExternalLexStates(lang, tables, ng)
+		if err := buildExternalLexStates(lang, tables, ng); err != nil {
+			return nil, err
+		}
 	}
 
 	gotreesitter.RepairNoLookaheadLexModes(lang)
@@ -194,7 +225,9 @@ func assemble(
 	buildAliasSequences(lang, ng)
 
 	// Supertype map.
-	buildSupertypeMap(lang, ng)
+	if err := buildSupertypeMap(lang, ng); err != nil {
+		return nil, err
+	}
 
 	certifyGeneratedCRecoveryCostCompetition(lang)
 
@@ -253,9 +286,9 @@ func buildHiddenChoicePassthroughSymbols(ng *NormalizedGrammar, symbolCount int)
 	return out
 }
 
-func buildReservedWordTables(lang *gotreesitter.Language, ng *NormalizedGrammar) {
+func buildReservedWordTables(lang *gotreesitter.Language, ng *NormalizedGrammar) error {
 	if lang == nil || ng == nil || ng.WordSymbolID == 0 || len(ng.ReservedWordSets) == 0 {
-		return
+		return nil
 	}
 
 	// grammar.json's first reserved set is the global set. Tree-sitter derives
@@ -268,7 +301,7 @@ func buildReservedWordTables(lang *gotreesitter.Language, ng *NormalizedGrammar)
 		}
 	}
 	if len(base) == 0 {
-		return
+		return nil
 	}
 
 	serializedSets := map[string]uint16{"": 0}
@@ -293,6 +326,9 @@ func buildReservedWordTables(lang *gotreesitter.Language, ng *NormalizedGrammar)
 		key := serializeReservedWordSet(reserved)
 		setID, ok := serializedSets[key]
 		if !ok {
+			if err := checkUint16Index(ng.GrammarName, "reserved word set", len(uniqueSets)); err != nil {
+				return err
+			}
 			setID = uint16(len(uniqueSets))
 			serializedSets[key] = setID
 			uniqueSets = append(uniqueSets, reserved)
@@ -301,7 +337,7 @@ func buildReservedWordTables(lang *gotreesitter.Language, ng *NormalizedGrammar)
 	}
 
 	if len(uniqueSets) <= 1 {
-		return
+		return nil
 	}
 
 	maxSetSize := 0
@@ -311,7 +347,7 @@ func buildReservedWordTables(lang *gotreesitter.Language, ng *NormalizedGrammar)
 		}
 	}
 	if maxSetSize == 0 {
-		return
+		return nil
 	}
 
 	lang.ReservedWords = make([]gotreesitter.Symbol, len(uniqueSets)*maxSetSize)
@@ -323,6 +359,7 @@ func buildReservedWordTables(lang *gotreesitter.Language, ng *NormalizedGrammar)
 	if lang.LanguageVersion < 15 {
 		lang.LanguageVersion = 15
 	}
+	return nil
 }
 
 func stateNeedsReservedWords(lang *gotreesitter.Language, state gotreesitter.StateID, wordSym gotreesitter.Symbol, keywordSymbols []int) bool {
@@ -469,6 +506,10 @@ func buildParseTables(
 		return string(buf)
 	}
 
+	// indexErr captures the first uint16 overflow encountered while assigning
+	// parse-action group indices. The closure cannot return an error, so it
+	// records one here; buildParseTables checks it after the table is built.
+	var indexErr error
 	getOrAddActionGroup := func(acts []lrAction) uint16 {
 		if len(acts) == 0 {
 			return 0
@@ -478,6 +519,12 @@ func buildParseTables(
 			return uint16(idx)
 		}
 		idx := len(parseActions)
+		if err := checkUint16Index(ng.GrammarName, "parse action group", idx); err != nil {
+			if indexErr == nil {
+				indexErr = err
+			}
+			return 0
+		}
 		actionGroupMap[key] = idx
 
 		entry := gotreesitter.ParseActionEntry{}
@@ -521,6 +568,9 @@ func buildParseTables(
 				Type:  gotreesitter.ParseActionShift,
 				Extra: true,
 			}},
+		}
+		if err := checkUint16Index(ng.GrammarName, "extra shift action", len(parseActions)); err != nil {
+			return err
 		}
 		extraShiftIdx = uint16(len(parseActions))
 		parseActions = append(parseActions, extraEntry)
@@ -570,6 +620,13 @@ func buildParseTables(
 				row[sym] = uint16(gotos[sym])
 			}
 		}
+	}
+
+	// A parse-action group index overflowed uint16 while filling the table
+	// above (the closure could not return the error itself). Fail hard now
+	// rather than shipping a silently-wrapped, corrupted table.
+	if indexErr != nil {
+		return indexErr
 	}
 
 	// Determine which states should be dense vs sparse.
@@ -629,6 +686,13 @@ func buildParseTables(
 	// Remap: state 0 in our LR construction = initial state = should be state 1.
 	// We need to insert an empty state 0 for error recovery.
 	newStateCount := tables.StateCount + 1 // +1 for error recovery state 0
+	// Gotos and remapped shift targets are stored as uint16 in ParseTable /
+	// SmallParseTable, so the highest state ID (newStateCount-1) must fit.
+	// lr.go bounds states against uint32 for the general builder, which leaves
+	// this narrower table encoding unguarded — close that gap here.
+	if err := checkUint16Index(ng.GrammarName, "parse table state", newStateCount-1); err != nil {
+		return err
+	}
 	stateRemap := make([]int, tables.StateCount)
 	for i := range stateRemap {
 		stateRemap[i] = i + 1 // shift everything up by 1
@@ -804,9 +868,9 @@ func productionSignatureKey(prod Production) string {
 }
 
 // buildFieldMaps constructs FieldMapSlices and FieldMapEntries.
-func buildFieldMaps(lang *gotreesitter.Language, ng *NormalizedGrammar) {
+func buildFieldMaps(lang *gotreesitter.Language, ng *NormalizedGrammar) error {
 	if len(ng.FieldNames) <= 1 {
-		return // no fields
+		return nil // no fields
 	}
 
 	maxProdID := 0
@@ -823,7 +887,7 @@ func buildFieldMaps(lang *gotreesitter.Language, ng *NormalizedGrammar) {
 		if len(prod.Fields) == 0 {
 			continue
 		}
-		start := uint16(len(entries))
+		start := len(entries)
 		for _, fa := range prod.Fields {
 			fid, ok := ng.fieldID(fa.FieldName)
 			if !ok {
@@ -834,22 +898,29 @@ func buildFieldMaps(lang *gotreesitter.Language, ng *NormalizedGrammar) {
 				ChildIndex: uint8(fa.ChildIndex),
 			})
 		}
-		count := uint16(len(entries)) - start
+		count := len(entries) - start
 		if count > 0 {
-			lang.FieldMapSlices[prod.ProductionID] = [2]uint16{start, count}
+			if err := checkUint16Index(ng.GrammarName, "field map entry", start); err != nil {
+				return err
+			}
+			if err := checkUint16Index(ng.GrammarName, "field map count", count); err != nil {
+				return err
+			}
+			lang.FieldMapSlices[prod.ProductionID] = [2]uint16{uint16(start), uint16(count)}
 		}
 	}
 
 	lang.FieldMapEntries = entries
+	return nil
 }
 
 // buildExternalLexStates builds the ExternalLexStates validity table and sets
 // ExternalLexState on each LexMode entry. Each unique set of valid external
 // tokens gets its own row. Row 0 is always all-false.
-func buildExternalLexStates(lang *gotreesitter.Language, tables *LRTables, ng *NormalizedGrammar) {
+func buildExternalLexStates(lang *gotreesitter.Language, tables *LRTables, ng *NormalizedGrammar) error {
 	extCount := len(ng.ExternalSymbols)
 	if extCount == 0 {
-		return
+		return nil
 	}
 
 	// Build external symbol set for quick lookup.
@@ -1104,6 +1175,9 @@ func buildExternalLexStates(lang *gotreesitter.Language, tables *LRTables, ng *N
 		key := serializeBoolRow(row)
 		rowIdx, exists := rowMap[key]
 		if !exists {
+			if err := checkUint16Index(ng.GrammarName, "external lex state row", len(rows)); err != nil {
+				return err
+			}
 			rowIdx = len(rows)
 			rowMap[key] = rowIdx
 			rows = append(rows, row)
@@ -1115,6 +1189,7 @@ func buildExternalLexStates(lang *gotreesitter.Language, tables *LRTables, ng *N
 	}
 
 	lang.ExternalLexStates = rows
+	return nil
 }
 
 func serializeBoolRow(row []bool) string {
@@ -1480,9 +1555,9 @@ func buildAliasSequences(lang *gotreesitter.Language, ng *NormalizedGrammar) {
 // buildSupertypeMap builds SupertypeMapSlices and SupertypeMapEntries from
 // the grammar's supertype declarations. A supertype's children are the symbols
 // that appear in its rule's Choice alternatives.
-func buildSupertypeMap(lang *gotreesitter.Language, ng *NormalizedGrammar) {
+func buildSupertypeMap(lang *gotreesitter.Language, ng *NormalizedGrammar) error {
 	if len(ng.Supertypes) == 0 {
-		return
+		return nil
 	}
 
 	// Collect children for each supertype: the direct LHS symbols of productions
@@ -1507,10 +1582,17 @@ func buildSupertypeMap(lang *gotreesitter.Language, ng *NormalizedGrammar) {
 		if len(children) == 0 || stID >= symbolCount {
 			continue
 		}
+		if err := checkUint16Index(ng.GrammarName, "supertype map entry", len(entries)); err != nil {
+			return err
+		}
+		if err := checkUint16Index(ng.GrammarName, "supertype map count", len(children)); err != nil {
+			return err
+		}
 		start := uint16(len(entries))
 		entries = append(entries, children...)
 		lang.SupertypeMapSlices[stID] = [2]uint16{start, uint16(len(children))}
 	}
 
 	lang.SupertypeMapEntries = entries
+	return nil
 }
