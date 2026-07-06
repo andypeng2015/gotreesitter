@@ -607,6 +607,70 @@ type gssForestNode struct {
 	processedEpoch int32
 	processedDirty int32
 	noExtraDepth   uint8
+	// dupBucket*/worst* memoize the two residents-vs-residents scans
+	// forestCapReplacementIndex runs when a capped node's links have no
+	// candidate-matching bucket: forestWorstDuplicateRawBucketLink (is any
+	// existing link an exact raw-shape duplicate of another) and the
+	// residents-only "current worst link" search. Neither depends on the
+	// incoming candidate — both are pure functions of node.links' current
+	// content — so they are valid until dirty next advances (see the dirty
+	// field's doc comment: links only change when dirty advances). Without
+	// this, a capped node that keeps losing to new candidates (never
+	// replacing a link, so dirty never moves) reruns both O(cap) / O(cap^2)
+	// scans on every single insertion attempt; on shapes with many
+	// raw-distinct alternatives competing for one slot (e.g. C#
+	// designer-style repeated-statement blocks), attempt volume can be much
+	// larger than actual replacement volume.
+	dupBucketValid bool
+	dupBucketDirty int32
+	dupBucketIdx   int8
+	worstValid     bool
+	worstDirty     int32
+	worstIdx       int8
+}
+
+// cachedDuplicateBucketLink returns forestWorstDuplicateRawBucketLink's result
+// for node's current link content, computing and caching it on first use (or
+// after node.dirty has advanced since the last cached computation).
+func (node *gssForestNode) cachedDuplicateBucketLink(p *Parser, arena *nodeArena) (int, bool) {
+	if node == nil {
+		return 0, false
+	}
+	if node.dupBucketValid && node.dupBucketDirty == node.dirty {
+		if node.dupBucketIdx < 0 {
+			return 0, false
+		}
+		return int(node.dupBucketIdx), true
+	}
+	idx, ok := forestWorstDuplicateRawBucketLink(p, arena, node)
+	node.dupBucketDirty = node.dirty
+	node.dupBucketValid = true
+	if ok {
+		node.dupBucketIdx = int8(idx)
+	} else {
+		node.dupBucketIdx = -1
+	}
+	return idx, ok
+}
+
+// cachedWorstResidentLink returns the index of the current worst link among
+// node's residents (ignoring any incoming candidate), computing and caching
+// it on first use (or after node.dirty has advanced since the last cached
+// computation). Requires len(node.links) > 0.
+func (node *gssForestNode) cachedWorstResidentLink(p *Parser, arena *nodeArena) int {
+	if node.worstValid && node.worstDirty == node.dirty {
+		return int(node.worstIdx)
+	}
+	worst := 0
+	for i := 1; i < len(node.links); i++ {
+		if forestResultLinkCompare(p, arena, node, &node.links[i], i, &node.links[worst], worst) < 0 {
+			worst = i
+		}
+	}
+	node.worstDirty = node.dirty
+	node.worstValid = true
+	node.worstIdx = int8(worst)
+	return worst
 }
 
 // coalesceForest merges a parse reaching (state, byteOffset) with subtree `entry`
@@ -642,6 +706,28 @@ type forestAlternativeSlotKey struct {
 type forestAlternativeSlot struct {
 	node *gssForestNode
 	prev *gssForestNode
+}
+
+// forestAlternativeIndexCapacityForSource sizes the alternative-index maps'
+// initial capacity from the source length instead of a fixed guess: a fixed
+// 1024 undersizes larger, ambiguity-heavy inputs (e.g. C# designer-style
+// blocks of hundreds of near-identical statements record one nodes/slots
+// entry per direct-reduce child touched), forcing several map-growth/rehash
+// cycles over the parse. One entry per ~8 source bytes is a rough, cheap
+// upper-bound estimate (grammars with denser ambiguity still just cost a few
+// extra rehashes, not a correctness issue either way — this is a capacity
+// hint, not a limit).
+func forestAlternativeIndexCapacityForSource(sourceLen int) int {
+	const minCapacity = 1024
+	const maxCapacity = 1 << 20
+	capacity := sourceLen / 8
+	if capacity < minCapacity {
+		return minCapacity
+	}
+	if capacity > maxCapacity {
+		return maxCapacity
+	}
+	return capacity
 }
 
 func newForestAlternativeIndex(capacity int) *forestAlternativeIndex {
@@ -961,16 +1047,18 @@ func forestCapReplacementIndex(p *Parser, arena *nodeArena, node *gssForestNode,
 			}
 			return idx, forestResultLinkCompare(p, arena, node, candidate, candidateOrder, &node.links[idx], idx) > 0
 		}
-		if idx, ok := forestWorstDuplicateRawBucketLink(p, arena, node); ok {
+		// forestWorstDuplicateRawBucketLink depends only on node.links' own
+		// content (no candidate parameter) — cache it per gssForestNode.dirty
+		// so repeated losing candidates at an already-saturated node don't
+		// re-scan all O(cap^2) resident pairs each time (see cachedDuplicate
+		// BucketLink's doc comment).
+		if idx, ok := node.cachedDuplicateBucketLink(p, arena); ok {
 			return idx, true
 		}
 	}
-	worst := 0
-	for i := 1; i < len(node.links); i++ {
-		if forestResultLinkCompare(p, arena, node, &node.links[i], i, &node.links[worst], worst) < 0 {
-			worst = i
-		}
-	}
+	// The residents-only "current worst link" search is likewise independent
+	// of candidate — cache it the same way (see cachedWorstResidentLink).
+	worst := node.cachedWorstResidentLink(p, arena)
 	if hiddenSym && candidate.errorCost == node.links[worst].errorCost && candidate.score == node.links[worst].score {
 		return worst, false
 	}
@@ -1066,6 +1154,17 @@ func forestRawShapesExactEqualRec(arena *nodeArena, a, b *rawShape, depth int) f
 		return forestRawUnknown
 	}
 	if a.symbol != b.symbol || a.productionID != b.productionID || a.childCount != b.childCount {
+		return forestRawDifferent
+	}
+	if a.contentHash != b.contentHash {
+		// contentHash folds in strictly more than this function inspects
+		// (symbol, productionID, childCount, and every descendant's symbol,
+		// span and contentHash — see rawShapeComputeContentHash), so a
+		// mismatch proves the subtrees differ somewhere without descending.
+		// This is the fast path on shapes with many raw-distinct alternatives
+		// (the common case here): only a genuine hash MATCH falls through to
+		// the walk below, which still runs unchanged as the exact,
+		// collision-proof source of truth.
 		return forestRawDifferent
 	}
 	aChildren := arena.rawShapeChildren(a)
@@ -2099,6 +2198,19 @@ func (s *gssForestNodeSlab) alloc(state StateID, byteOffset uint32, _ int, error
 	n.processedEpoch = 0
 	n.processedDirty = 0
 	n.noExtraDepth = 0
+	// dupBucket*/worst* are pure caches keyed off n.dirty (see their doc
+	// comment above): resetForRelease's clear() currently zeroes these too,
+	// so this is defense-in-depth, not a behavior change today. Reset them
+	// explicitly here so a future resetForRelease optimization (e.g. skipping
+	// clear() for slots known not to need it) can't reintroduce a stale
+	// dupBucketValid/worstValid hit against a different parse's dirty
+	// sequence (cross-parse ABA on a pooled, reused gssForestNode).
+	n.dupBucketValid = false
+	n.dupBucketDirty = 0
+	n.dupBucketIdx = 0
+	n.worstValid = false
+	n.worstDirty = 0
+	n.worstIdx = 0
 	return n
 }
 
@@ -2244,7 +2356,7 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte, captureExternalChe
 	curIndex := newGSSForestIndex(16)
 	nextIndex := newGSSForestIndex(16)
 	var work, nextFrontier, relex []*gssForestNode
-	alternatives := newForestAlternativeIndex(1024)
+	alternatives := newForestAlternativeIndex(forestAlternativeIndexCapacityForSource(len(source)))
 	processEpoch := int32(0)
 	noLookaheadSteps := 0
 	recoverCount := 0

@@ -3043,12 +3043,70 @@ func (p *Parser) compareRawStackEntriesRec(arena *nodeArena, a, b stackEntry, de
 		if !aok {
 			continue
 		}
+		if rawStackEntryChildPairHashEqual(arena, achild, bchild) {
+			// Bottom-up fingerprint match (see rawShape.contentHash /
+			// rawShapeComputeContentHash): this child's subtree is treated as
+			// interchangeable with its counterpart under the same
+			// negligible-collision hash tradeoff documented on
+			// rawStackEntryChildPairHashEqual, so the recursive comparison
+			// below is skipped rather than re-walked. This is what keeps this
+			// comparison (used both for raw-shape tie-break ordering and, via
+			// the forest link-cap eviction path, for scoring every new
+			// alternative against capped residents) bounded on shapes with a
+			// long shared prefix — e.g. C# designer-style blocks of hundreds
+			// of near-identical `this.fieldN = ...;` statements, where each
+			// reduce compares the whole accumulated statement list against a
+			// candidate that differs only in its newest, still-being-parsed
+			// statement.
+			continue
+		}
 		cmp := p.compareRawStackEntriesRec(arena, achild, bchild, depth+1)
 		if cmp != 0 {
 			return cmp
 		}
 	}
 	return 0
+}
+
+// rawStackEntryChildPairHashEqual reports whether a and b are TREATED AS
+// equal (cmp==0) under compareRawStackEntriesRec, in O(1) and without walking
+// their subtrees. This is not a proof of equality — it is a probabilistic
+// shortcut: it requires BOTH sides to carry a captured raw shape with
+// matching symbol, childCount and contentHash (see
+// rawShapeComputeContentHash), AND matching start/end spans on the entries
+// themselves, and then accepts that combination as sufficient. contentHash is
+// a 64-bit FNV-1a fingerprint, so a match here carries the same
+// negligible-collision (~2^-64) risk of a false positive that the package's
+// existing GSS merge-key hashing already accepts for equivalence decisions
+// (see rawShapeComputeContentHash's doc comment, and gssHashSeed/
+// gssHashPrime in glr_gss.go) — it is deliberately NOT re-verified by the
+// exact recursive walk. Should a collision ever occur, its only effect is on
+// this comparison's caller (raw-shape tie-break ordering and forest link-cap
+// eviction scoring): two subtrees that are not actually identical could be
+// treated as interchangeable for ambiguity/ordering purposes. It can never
+// affect memory safety — this result only feeds comparison/ordering
+// decisions, never indexing, allocation, or bounds. The span check exists
+// because compareRawStackEntriesRec's "generated repeat aux" tie-break reads
+// the live entry's own span rather than shape data; requiring equal spans
+// here falsifies that tie-break's precondition
+// (stackEntryNodeEndByte(a) != stackEntryNodeEndByte(b)), so skipping is safe
+// whether or not the symbol is a generated-repeat-aux nonterminal.
+func rawStackEntryChildPairHashEqual(arena *nodeArena, a, b stackEntry) bool {
+	if arena == nil {
+		return false
+	}
+	aShape, aHasShape := rawShapeForStackEntry(arena, a)
+	if !aHasShape {
+		return false
+	}
+	bShape, bHasShape := rawShapeForStackEntry(arena, b)
+	if !bHasShape {
+		return false
+	}
+	if aShape.symbol != bShape.symbol || aShape.childCount != bShape.childCount || aShape.contentHash != bShape.contentHash {
+		return false
+	}
+	return stackEntryNodeStartByte(a) == stackEntryNodeStartByte(b) && stackEntryNodeEndByte(a) == stackEntryNodeEndByte(b)
 }
 
 func (p *Parser) symbolIsGeneratedRepeatAux(sym Symbol) bool {

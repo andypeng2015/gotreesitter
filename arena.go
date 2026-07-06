@@ -248,6 +248,32 @@ type nodeArena struct {
 	pendingParentRejectedFieldsHiddenChildPlainOne   uint64
 	pendingParentRejectedFieldsHiddenChildPlainMany  uint64
 	pendingParentRejectedFieldsHiddenChildWithFields uint64
+
+	// nodeErrorRankMemo/pendingParentErrorRankMemo memoize
+	// computeStackEntryErrorRank (parser_result.go) per node identity: an
+	// exact cache (never a heuristic — a miss always falls back to the same
+	// recursive computation the uncached path would run), so it cannot change
+	// any result, only avoid re-deriving it. Node entries are additionally
+	// keyed by equivVersion because a Node CAN mutate while it is still the
+	// top of a live stack (pushOrExtendErrorNode/pushLexErrorRunLeaf extend an
+	// open ERROR run and bump equivVersion each time — the same invalidation
+	// signal parser_recover_c.go's cNodeMemo already relies on); a version
+	// mismatch is a cache miss, never a stale hit. pendingParent has no
+	// equivVersion field and, once its child entries are filled at
+	// construction, is never mutated again, so pointer identity alone is
+	// enough there. Both maps are per-arena rather than per-Parser because
+	// nodeArena is already threaded through every caller that needs this
+	// (stackEntryResultErrorRank/stackCompareForResultSelectionWithRawShape/
+	// forestResultLinkCompareWithRawShape), avoiding a Parser struct change.
+	// Cleared in reset() because arena node slabs — and therefore these
+	// pointers — are reused across parses on the same arena.
+	nodeErrorRankMemo          map[*Node]nodeErrorRankMemoEntry
+	pendingParentErrorRankMemo map[*pendingParent]int8
+}
+
+type nodeErrorRankMemoEntry struct {
+	ver  uint32
+	rank int8
 }
 
 type nodeSlab struct {
@@ -505,6 +531,16 @@ func (a *nodeArena) reset() {
 	a.internLeaves.reset()
 	a.internLeavesFull.reset()
 	a.internShiftLeafObserved = 0
+	// Node/pendingParent slab memory is reused across parses on this arena
+	// (only `used`/slab cursors reset above, not the backing storage), so a
+	// stale entry from a previous parse could otherwise alias a
+	// structurally-different node at the same address in the next parse. Drop
+	// both maps rather than clear-in-place: they are allocated lazily on
+	// first use (see cachedStackEntryErrorRank, parser_result.go) and most
+	// parses never populate them at all (only reached via the
+	// !skipErrorRank / forest link-cap comparison paths).
+	a.nodeErrorRankMemo = nil
+	a.pendingParentErrorRankMemo = nil
 }
 
 func (a *nodeArena) resetPrimaryNodes() {

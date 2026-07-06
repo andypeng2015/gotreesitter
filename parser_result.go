@@ -813,23 +813,98 @@ func stackEntryResultErrorRank(entry stackEntry, arena *nodeArena, rank *int) {
 	if rank == nil || *rank == 2 || !stackEntryMaterializesForResult(entry) {
 		return
 	}
-	if stackEntryNodeSymbol(entry) == errorSymbol {
-		*rank = 2
-		return
+	if r := cachedStackEntryErrorRank(entry, arena); r > *rank {
+		*rank = r
 	}
-	if stackEntryNodeHasError(entry) && *rank == 0 {
-		*rank = 1
+}
+
+// cachedStackEntryErrorRank returns entry's own error-rank contribution (0, 1,
+// or 2), independent of any outer accumulator: it is a pure function of
+// entry's subtree, computing exactly what computeStackEntryErrorRank always
+// computed for entry in isolation. (The shared *rank accumulator threaded
+// through stackEntryResultErrorRank/stackResultErrorRank only takes the max
+// across sibling top-level entries and early-exits their outer loop once 2 is
+// reached — it never changes what a GIVEN entry's own subtree contributes, so
+// caching that per-entry contribution here cannot change any caller's final
+// result.)
+//
+// Node and pendingParent entries are the only kinds that can have children
+// (stackEntryNodeChildCount is 0 for every other kind), so they are the only
+// ones memoized — on the arena, not a heuristic gate: a cache miss always
+// falls back to computeStackEntryErrorRank, the same recursive walk that ran
+// unconditionally before this cache existed. This is what keeps forest
+// link-cap eviction scoring (glr_forest.go forestCapReplacementIndex) from
+// re-walking whole shared-prefix subtrees per comparison on shapes with many
+// raw-distinct alternatives (e.g. C# designer-style repeated-statement
+// blocks): once a given (sub)tree's rank is known, every later comparison
+// that references the same node reuses it in O(1). See
+// nodeErrorRankMemo/pendingParentErrorRankMemo's doc comment (arena.go) for
+// why Node needs equivVersion-keying and pendingParent does not.
+func cachedStackEntryErrorRank(entry stackEntry, arena *nodeArena) int {
+	if n := stackEntryNode(entry); n != nil {
+		if arena != nil {
+			if e, ok := arena.nodeErrorRankMemo[n]; ok && e.ver == n.equivVersion {
+				return int(e.rank)
+			}
+		}
+		rank := computeStackEntryErrorRank(entry, arena)
+		if arena != nil {
+			if arena.nodeErrorRankMemo == nil {
+				arena.nodeErrorRankMemo = make(map[*Node]nodeErrorRankMemoEntry, 256)
+			}
+			arena.nodeErrorRankMemo[n] = nodeErrorRankMemoEntry{ver: n.equivVersion, rank: int8(rank)}
+		}
+		return rank
+	}
+	if pp := stackEntryPendingParent(entry); pp != nil {
+		if arena != nil {
+			if r, ok := arena.pendingParentErrorRankMemo[pp]; ok {
+				return int(r)
+			}
+		}
+		rank := computeStackEntryErrorRank(entry, arena)
+		if arena != nil {
+			if arena.pendingParentErrorRankMemo == nil {
+				arena.pendingParentErrorRankMemo = make(map[*pendingParent]int8, 256)
+			}
+			arena.pendingParentErrorRankMemo[pp] = int8(rank)
+		}
+		return rank
+	}
+	// Every other kind (noTreeNode/compactFullLeaf/nil) has no children (see
+	// stackEntryNodeChildCount), so computing its rank is already O(1);
+	// caching would cost more than it saves.
+	return computeStackEntryErrorRank(entry, arena)
+}
+
+// computeStackEntryErrorRank is the recursive computation
+// cachedStackEntryErrorRank memoizes: unchanged in substance from the
+// original uncached stackEntryResultErrorRank body, so every cache miss (and
+// every leaf, which is never cached) still runs exactly this logic.
+func computeStackEntryErrorRank(entry stackEntry, arena *nodeArena) int {
+	if !stackEntryMaterializesForResult(entry) {
+		return 0
+	}
+	if stackEntryNodeSymbol(entry) == errorSymbol {
+		return 2
+	}
+	rank := 0
+	if stackEntryNodeHasError(entry) {
+		rank = 1
 	}
 	for i := 0; i < stackEntryNodeChildCount(entry); i++ {
 		child, ok := stackEntryAliasChild(entry, arena, i)
 		if !ok {
 			continue
 		}
-		stackEntryResultErrorRank(child, arena, rank)
-		if *rank == 2 {
-			return
+		if r := cachedStackEntryErrorRank(child, arena); r > rank {
+			rank = r
+		}
+		if rank == 2 {
+			break
 		}
 	}
+	return rank
 }
 
 func compareAcceptedStackAliasPreference(p *Parser, arena *nodeArena, a, b glrStack) int {

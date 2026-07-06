@@ -12,6 +12,48 @@ type rawShape struct {
 	childRange   rawShapeChildRange
 	childCount   uint16
 	flags        nodeFlags
+	// contentHash is a bottom-up structural fingerprint over (symbol,
+	// productionID, childCount) plus every child's (symbol, span, and — when
+	// the child itself has a captured raw shape — the child's own
+	// contentHash). Computed once in captureRawShape, when the shape is
+	// captured (children are always captured strictly before their parent, so
+	// every child's contentHash is already populated — this is one linear
+	// pass, not a recursive walk).
+	//
+	// The two existing consumers trust this hash in OPPOSITE directions:
+	//
+	//   - forestRawShapesExactEqualRec (glr_forest.go) trusts a MISMATCH: a
+	//     different hash proves the two shapes are not exactly
+	//     interchangeable (the contrapositive of "equal inputs hash
+	//     equally"), so it fast-rejects without a walk. A MATCH is never
+	//     trusted by itself — it still falls through to the existing exact
+	//     recursive walk as a collision safety net. So this consumer's use of
+	//     the hash never changes what it returns, only whether a fast-reject
+	//     or a full walk produces that answer; it is a provably
+	//     answer-preserving optimization.
+	//
+	//   - rawStackEntryChildPairHashEqual (parser_reduce.go, feeding
+	//     compareRawStackEntriesRec) trusts a MATCH: hash equality plus
+	//     matching symbol/childCount/span is treated as sufficient on its own
+	//     to skip the walk and declare the pair equal, with no fallback
+	//     verification. This is a probabilistic shortcut, not a proof (see
+	//     that function's doc comment) — it accepts the same
+	//     negligible-collision (~2^-64 FNV-1a) tradeoff already used for this
+	//     package's GSS merge-key hashing (see rawShapeComputeContentHash
+	//     below and glr_gss.go). A MISMATCH there falls through to the real
+	//     recursive comparison, unaffected. This direction is the inverse of
+	//     forestRawShapesExactEqualRec's, so a hash collision could change
+	//     this consumer's answer for one child pair; the effect is limited to
+	//     ambiguity tie-break/ordering choices and never touches memory
+	//     safety.
+	//
+	// See the forest link-cap eviction path (glr_forest.go
+	// forestCapReplacementIndex): on shapes with a long shared prefix (e.g.
+	// C# designer-style repeated-statement blocks), that path re-derives the
+	// same "is this exactly the resident's shape" question for every new
+	// alternative, and without this fingerprint each question re-walks the
+	// whole accumulated subtree.
+	contentHash uint64
 }
 
 type rawShapeChild struct {
@@ -167,7 +209,50 @@ func (p *Parser) captureRawShape(arena *nodeArena, symbol Symbol, productionID u
 		out++
 	}
 	shape.childRange = childRange
+	shape.contentHash = rawShapeComputeContentHash(arena, symbol, productionID, uint16(count), children[:out])
 	return ref
+}
+
+// rawShapeComputeContentHash builds the bottom-up structural fingerprint
+// documented on rawShape.contentHash. It folds in the same fields the exact
+// raw-shape comparators inspect (symbol, productionID, childCount, and per
+// child: whether it has a node, its symbol, its span, and — recursively —
+// its own already-computed contentHash when it has a captured shape,
+// otherwise its own child count as a coarse stand-in for a leaf's shape).
+// Reusing the package's existing 64-bit FNV-1a combiner (gssHashSeed/
+// gssHashPrime/gssNilNodeSentinel, glr_gss.go) keeps this consistent with the
+// GSS merge-key hashing that already accepts the same negligible-collision
+// tradeoff for equivalence decisions.
+func rawShapeComputeContentHash(arena *nodeArena, symbol Symbol, productionID uint16, childCount uint16, children []rawShapeChild) uint64 {
+	h := gssHashSeed
+	h ^= uint64(symbol)
+	h *= gssHashPrime
+	h ^= uint64(productionID)
+	h *= gssHashPrime
+	h ^= uint64(childCount)
+	h *= gssHashPrime
+	for i := range children {
+		entry := children[i].entry
+		if !stackEntryHasNode(entry) {
+			h ^= gssNilNodeSentinel
+			h *= gssHashPrime
+			continue
+		}
+		h ^= uint64(stackEntryNodeSymbol(entry))
+		h *= gssHashPrime
+		h ^= (uint64(stackEntryNodeStartByte(entry)) << 32) | uint64(stackEntryNodeEndByte(entry))
+		h *= gssHashPrime
+		if ref := children[i].shapeRef; ref != 0 && arena != nil {
+			if childShape, ok := arena.rawShapeForRef(ref); ok {
+				h ^= childShape.contentHash
+				h *= gssHashPrime
+				continue
+			}
+		}
+		h ^= uint64(stackEntryNodeChildCount(entry))
+		h *= gssHashPrime
+	}
+	return h
 }
 
 func stackEntryRawShapeRef(entry stackEntry) rawShapeRef {
