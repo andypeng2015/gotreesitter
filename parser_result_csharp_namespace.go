@@ -46,17 +46,17 @@ func csharpBuildRecoveredNamespaceDeclarationFromErrorRoot(errRoot *Node, source
 	// produce before it died, which for large real-world files can be a small
 	// prefix of the body (or nothing at all — a pure GLR dead end leaves no
 	// children to recover from downstream of that point). Try two purely
-	// source-based, bounded reconstructions of the whole body too — the primary
-	// driver (csharpRecoverNamespaceBodyMembersFromSource, which additionally
-	// covers struct/interface/enum shells and preprocessor-skipped spans) and
-	// the Alt driver (csharpRecoverNamespaceBodyMembersFromSourceAlt, upstream
-	// #138, whose per-member wrapped reparse recovers strictly more methods on
-	// some real-world files) — and keep whichever of all three candidates
-	// recovers the most (csharpChooseRecoveredNamespaceMembers). Remove these
-	// fallbacks once the GLR engine gains real mid-parse error recovery (see
-	// #136).
-	sourceMembers, sourceOK := csharpRecoverNamespaceBodyMembersFromSource(source, openBrace, uint32(closeBrace), p, lang, arena)
+	// source-based, bounded reconstructions of the whole body too. On large
+	// namespace bodies, try the Alt driver first and skip the primary driver only
+	// when Alt clearly beats the children-based recovery; this avoids a second
+	// whole-body member-reparse pass on Bicep-sized files while preserving the
+	// primary driver's extra coverage for smaller or marginal cases.
+	var sourceMembers []*Node
+	sourceOK := false
 	altMembers, altOK := csharpRecoverNamespaceBodyMembersFromSourceAlt(source, openBrace, uint32(closeBrace), p, arena)
+	if !csharpLargeNamespaceAltRecoveryCanSkipPrimary(end-start, members, ok, altMembers, altOK, lang) {
+		sourceMembers, sourceOK = csharpRecoverNamespaceBodyMembersFromSource(source, openBrace, uint32(closeBrace), p, lang, arena)
+	}
 	if best, bestOK := csharpChooseRecoveredNamespaceMembers(lang,
 		csharpRecoveredMembersCandidate{members: members, ok: ok},
 		csharpRecoveredMembersCandidate{members: sourceMembers, ok: sourceOK},
@@ -269,6 +269,35 @@ var csharpRecoveredDeclarationNodeTypes = map[string]bool{
 type csharpRecoveredDeclarationStats struct {
 	total   int
 	methods int
+}
+
+const (
+	csharpLargeNamespaceRecoveryBodyBytes     = 64 * 1024
+	csharpLargeNamespaceAltMethodWinThreshold = 8
+	csharpLargeNamespaceAltTotalWinThreshold  = 16
+)
+
+func csharpLargeNamespaceAltRecoveryCanSkipPrimary(spanBytes uint32, childMembers []*Node, childOK bool, altMembers []*Node, altOK bool, lang *Language) bool {
+	if spanBytes < csharpLargeNamespaceRecoveryBodyBytes || lang == nil || !altOK || len(altMembers) == 0 {
+		return false
+	}
+	childStats := csharpRecoveredDeclarationStats{}
+	if childOK && len(childMembers) > 0 {
+		childStats = csharpCountRecoveredDeclarationNodes(childMembers, lang)
+	}
+	altStats := csharpCountRecoveredDeclarationNodes(altMembers, lang)
+	return csharpLargeNamespaceAltStatsCanSkipPrimary(spanBytes, childStats, altStats)
+}
+
+func csharpLargeNamespaceAltStatsCanSkipPrimary(spanBytes uint32, childStats, altStats csharpRecoveredDeclarationStats) bool {
+	if spanBytes < csharpLargeNamespaceRecoveryBodyBytes {
+		return false
+	}
+	if !csharpPreferRecoveredDeclarations(altStats, childStats) {
+		return false
+	}
+	return altStats.methods >= childStats.methods+csharpLargeNamespaceAltMethodWinThreshold ||
+		altStats.total >= childStats.total+csharpLargeNamespaceAltTotalWinThreshold
 }
 
 // csharpCountRecoveredDeclarationNodes recursively tallies declaration-shaped
