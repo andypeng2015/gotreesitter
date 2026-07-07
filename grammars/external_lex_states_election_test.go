@@ -25,6 +25,7 @@ func TestExternalLexStatesDefaultElectionInventory(t *testing.T) {
 		{name: "elm", load: ElmLanguage},
 		{name: "hack", load: HackLanguage},
 		{name: "hlsl", load: HlslLanguage},
+		{name: "janet", load: JanetLanguage},
 		{name: "jsdoc", load: JsdocLanguage},
 		{name: "jsonnet", load: JsonnetLanguage},
 		{name: "just", load: JustLanguage},

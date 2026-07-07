@@ -1189,14 +1189,14 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 9/11, trunc=1, errTree=1, panics=0; previous CLEAN row was stale: mypy-style continuation recovery normalized for both residual witnesses; bounded cgo oracle parity medianRatio=3.98x, verified 2026-06-12"
   },
   {
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": ".janet",
    "grammar": "janet",
    "has_external_scanner": true,
    "parity": "40/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "CLEAN",
    "tier_notes": "in ratchet"
   },
@@ -2474,8 +2474,8 @@
   }
  ],
  "histogram": {
-  "blocked_missing_precise_els": 93,
-  "default_elected": 25,
+  "blocked_missing_precise_els": 92,
+  "default_elected": 26,
   "not_applicable_no_external_scanner": 87,
   "staged_precise_els": 1
  },
@@ -2514,7 +2514,7 @@
   "staged_precise_els": "A precise ExternalLexStates table exists behind an opt-in build tag or explicit staging policy; default election is intentionally disabled."
  },
  "summary": {
-  "default_external_lex_state_count": 25,
+  "default_external_lex_state_count": 26,
   "external_scanner_count": 119,
   "grammar_count": 206,
   "staged_external_lex_state_count": 1

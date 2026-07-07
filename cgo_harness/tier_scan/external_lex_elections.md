@@ -12,14 +12,14 @@ scanner.
 | --- | ---: |
 | grammars | 206 |
 | registered external scanners | 119 |
-| default precise ExternalLexStates tables | 25 |
+| default precise ExternalLexStates tables | 26 |
 | staged precise ExternalLexStates tables | 1 |
 
 | status | count |
 | --- | ---: |
-| default elected | 25 |
+| default elected | 26 |
 | staged precise ELS | 1 |
-| blocked: missing precise ELS | 93 |
+| blocked: missing precise ELS | 92 |
 | not applicable: no external scanner | 87 |
 
 ## Verification Receipts
@@ -54,6 +54,7 @@ scanner.
 | `elm` | default elected | IV-unknown | 0/8 | yes | yes | no | `.elm` |
 | `hack` | default elected | IV-unknown | 38/40 | yes | yes | no | `.hack,.hh` |
 | `hlsl` | default elected | IV-unknown | 35/40 | yes | yes | no | `.fx,.hlsl` |
+| `janet` | default elected | CLEAN | 40/40 | yes | yes | no | `.janet` |
 | `jsdoc` | default elected | IV-unknown | 13/40 | yes | yes | no | `.jsdoc` |
 | `jsonnet` | default elected | IV-recovery? | 39/40 | yes | yes | no | `.jsonnet,.libsonnet` |
 | `just` | default elected | IV-unknown | 2/8 | yes | yes | no | `.just,justfile` |
@@ -105,7 +106,6 @@ scanner.
 | `haxe` | blocked: missing precise ELS | IV-recovery | 10/40 | yes | no | no | `.hx` |
 | `hcl` | blocked: missing precise ELS | IV-perf | unmeasured | yes | no | no | `.hcl,.tf,.tfvars` |
 | `html` | blocked: missing precise ELS | IV-recovery | 0/40 | yes | no | no | `.htm,.html` |
-| `janet` | blocked: missing precise ELS | CLEAN | 40/40 | yes | no | no | `.janet` |
 | `julia` | blocked: missing precise ELS | IV-recovery | unmeasured | yes | no | no | `.jl` |
 | `kdl` | blocked: missing precise ELS | IV-recovery | 11/40 | yes | no | no | `.kdl` |
 | `kotlin` | blocked: missing precise ELS | IV-unknown | 22/40 | yes | no | no | `.kt,.kts` |
