@@ -1,6 +1,8 @@
 package grammars
 
 import (
+	"encoding/json"
+	"os"
 	"testing"
 
 	"github.com/odvcencio/gotreesitter"
@@ -38,7 +40,16 @@ func TestExternalLexStatesDefaultElectionInventory(t *testing.T) {
 		{name: "yaml", load: YamlLanguage},
 	}
 
+	ledgerDefaults := readDefaultElectionLedger(t)
+	if got, want := len(ledgerDefaults), len(tests); got != want {
+		t.Fatalf("ledger default_elected count = %d, want %d test cases", got, want)
+	}
+	seen := make(map[string]bool, len(tests))
 	for _, tt := range tests {
+		if !ledgerDefaults[tt.name] {
+			t.Fatalf("%q is in default election test cases but not default_elected in ledger", tt.name)
+		}
+		seen[tt.name] = true
 		t.Run(tt.name, func(t *testing.T) {
 			if got := len(LookupExternalLexStates(tt.name)); got == 0 {
 				t.Fatalf("LookupExternalLexStates(%q) returned no rows", tt.name)
@@ -63,4 +74,33 @@ func TestExternalLexStatesDefaultElectionInventory(t *testing.T) {
 			}
 		})
 	}
+	for name := range ledgerDefaults {
+		if !seen[name] {
+			t.Fatalf("%q is default_elected in ledger but missing from test cases", name)
+		}
+	}
+}
+
+func readDefaultElectionLedger(t *testing.T) map[string]bool {
+	t.Helper()
+	data, err := os.ReadFile("../cgo_harness/tier_scan/external_lex_elections.json")
+	if err != nil {
+		t.Fatalf("read external lex election ledger: %v", err)
+	}
+	var doc struct {
+		Grammars []struct {
+			Grammar string `json:"grammar"`
+			Status  string `json:"status"`
+		} `json:"grammars"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatalf("decode external lex election ledger: %v", err)
+	}
+	out := make(map[string]bool)
+	for _, row := range doc.Grammars {
+		if row.Status == "default_elected" {
+			out[row.Grammar] = true
+		}
+	}
+	return out
 }

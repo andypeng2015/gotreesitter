@@ -105,23 +105,35 @@ def registered_scanners():
     return names
 
 
+def extract_go_map_literal(text, marker):
+    start = text.find(marker)
+    if start < 0:
+        return ""
+    brace = text.find("{", start)
+    if brace < 0:
+        return ""
+    depth = 0
+    for pos in range(brace, len(text)):
+        if text[pos] == "{":
+            depth += 1
+        elif text[pos] == "}":
+            depth -= 1
+            if depth == 0:
+                return text[brace : pos + 1]
+    raise SystemExit(f"unterminated Go map literal after marker {marker!r}")
+
+
 def default_external_lex_states():
     names = set()
     for path in GRAMMARS_DIR.glob("*_external_lex_states_gen.go"):
-        names.add(path.name.removesuffix("_external_lex_states_gen.go"))
         text = path.read_text(encoding="utf-8")
         names.update(re.findall(r'RegisterExternalLexStates\("([^"]+)"', text))
 
     zzz = GRAMMARS_DIR / "zzz_scanner_attachments.go"
     if zzz.exists():
         text = zzz.read_text(encoding="utf-8")
-        marker = "externalLexStates := map[string][][]bool{"
-        start = text.find(marker)
-        if start >= 0:
-            end = text.find("// Register scanners", start)
-            if end < 0:
-                end = len(text)
-            names.update(re.findall(r'^\s*"([^"]+)":', text[start:end], re.M))
+        map_text = extract_go_map_literal(text, "externalLexStates := map[string][][]bool")
+        names.update(re.findall(r'^\s*"([^"]+)":', map_text, re.M))
     return names
 
 
