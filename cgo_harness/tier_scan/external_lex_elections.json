@@ -1345,14 +1345,14 @@
    "tier_notes": "pins at upstream HEAD; C at same pin parses corpus clean \u2014 runtime fidelity, not version (oak 2026-06-10)"
   },
   {
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": ".kt,.kts",
    "grammar": "kotlin",
    "has_external_scanner": true,
    "parity": "22/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-unknown",
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 22/40, trunc=7, errTree=18, panics=0; previous CLEAN row was stale: Kotlin C-recovery election preserves ReactorPlaysScrabble.kt's class/member envelope; recovered generic call suffix and direct parenthesized type-argument normalizers clear the remaining local call shapes. D-tier C-oracle parity verified 2026-06-13 with no divergences, truncation, error trees, or panics."
   },
@@ -1513,14 +1513,14 @@
    "tier_notes": "ext=meson.build; faithful C error-cost version competition (see spec)"
   },
   {
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": ".mojo,.\ud83d\udd25",
    "grammar": "mojo",
    "has_external_scanner": true,
    "parity": "29/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery?",
    "tier_notes": "post-repin residual"
   },
@@ -1729,14 +1729,14 @@
    "tier_notes": "in ratchet; verified after willow shape fixes"
   },
   {
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": ".ps1,.psd1,.psm1",
    "grammar": "powershell",
    "has_external_scanner": true,
    "parity": "22/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery?",
    "tier_notes": "PowerShell invocation target path_command_name plus enum keyword span compatibility clears 4 files with zero new divergers; remaining gaps are recovery/root span and command/statement-list shape"
   },
@@ -1921,14 +1921,14 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 8/9, trunc=0, errTree=0, panics=0; previous CLEAN row was stale: in ratchet; first IV-recovery clear via faithful C-recovery port (errorCostCompetitionLanguage gate)"
   },
   {
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": ".res,.resi",
    "grammar": "rescript",
    "has_external_scanner": true,
    "parity": "24/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery?",
    "tier_notes": "Rescript value_identifier_path alias normalization cleared clean-root shape residuals; remaining 11/40 are Go root ERROR vs C source_file with trunc=0/panics=0, requiring faithful C error-cost version competition"
   },
@@ -2474,8 +2474,8 @@
   }
  ],
  "histogram": {
-  "blocked_missing_precise_els": 69,
-  "default_elected": 49,
+  "blocked_missing_precise_els": 65,
+  "default_elected": 53,
   "not_applicable_no_external_scanner": 87,
   "staged_precise_els": 1
  },
@@ -2514,7 +2514,7 @@
   "staged_precise_els": "A precise ExternalLexStates table exists behind an opt-in build tag or explicit staging policy; default election is intentionally disabled."
  },
  "summary": {
-  "default_external_lex_state_count": 49,
+  "default_external_lex_state_count": 53,
   "external_scanner_count": 119,
   "grammar_count": 206,
   "staged_external_lex_state_count": 1
