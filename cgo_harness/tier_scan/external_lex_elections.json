@@ -397,14 +397,14 @@
    "tier_notes": "faithful C error-cost version competition (see spec); sampled full-integrity wringer 20260623 on args.h shows baseline/stack2 nonmatch with goStop=no_stacks_alive, Go translation_unit 0:641 vs C 0:7192, rootErr both true, lastTokenEnd 652/expectedEOF 7192, so witness includes truncation/pre-recovery overlay"
   },
   {
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": ".cr",
    "grammar": "crystal",
    "has_external_scanner": true,
    "parity": "unmeasured",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-shape?",
    "tier_notes": "cap=2 landed (was unmeasurable: markd entities.cr 111KB uniform hash literal never finishes at default cap >240s, 95% CPU in glr.go merge-equiv frontier rescans, ~2x input -> ~25x time; cap2 parses it in ~130ms); Crystal hash/named_tuple opening-brace compatibility pass cleared decode.cr, entities.cr, legacy.cr, renderer.cr, and history.cr with no new file-level divergers. MEASURE-DTIER N=40: medianRatio 5.42x aggRatio 18.34x trunc=0 panics=0; remaining 21 div not stack-budget: ERROR-root where C parses clean (spec_helper.cr go-cc=17 c-cc=7, html_entities.cr, node.cr; 18 errTree) plus tuple/inline hash span residuals and recovery shape gaps."
   },
@@ -685,14 +685,14 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: unmeasured (timeout external); scan metadata oom_killed=true, use as diagnostic evidence; previous CLEAN row was stale: in ratchet"
   },
   {
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": ".ex,.exs",
    "grammar": "elixir",
    "has_external_scanner": true,
    "parity": "unmeasured",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery",
    "tier_notes": "Elixir _newline_before_comment extra filtering lifted 0/40 to 9/40 (Docker C-oracle 2026-06-12); remaining 31 are dominated by Go ERROR/root fragmentation where C parses source clean (27 errTree), 3 no_stacks_alive truncations, plus one accepted span-shape residual (engine.ex body starts at 3676 vs C 3667). Representative smart_engine_test.exs: C closes fn -> body as anonymous_function while Go treats end as identifier and cascades into quoted-string recovery."
   },
@@ -745,14 +745,14 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 28/40, trunc=0, errTree=2, panics=0; previous CLEAN row was stale: enforce const int formal-parameter compatibility normalization clears declMethod.txt (verified 2026-06-11)"
   },
   {
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": ".app,.app.src,.erl,.escript,.hrl,.xrl,.yrl",
    "grammar": "erlang",
    "has_external_scanner": true,
    "parity": "unmeasured",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery",
    "tier_notes": "binary_SUITE memory-budget trunc; bif_SUITE replacement-clause ambiguity-selection cleared 2026-06-12"
   },
@@ -1297,14 +1297,14 @@
    "tier_notes": "canonical-frame demotion (one-time reset)"
   },
   {
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": ".jl",
    "grammar": "julia",
    "has_external_scanner": true,
    "parity": "unmeasured",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery",
    "tier_notes": "Julia macro argument juxtaposition, single-row index vector, bracket comprehension, and trailing-comma tuple recovery normalization clear reinfer.jl, verify.jl, and optimize.jl; remaining residuals are broad ERROR-root recovery divergences and 2 truncations"
   },
@@ -2474,8 +2474,8 @@
   }
  ],
  "histogram": {
-  "blocked_missing_precise_els": 33,
-  "default_elected": 85,
+  "blocked_missing_precise_els": 29,
+  "default_elected": 89,
   "not_applicable_no_external_scanner": 87,
   "staged_precise_els": 1
  },
@@ -2514,7 +2514,7 @@
   "staged_precise_els": "A precise ExternalLexStates table exists behind an opt-in build tag or explicit staging policy; default election is intentionally disabled."
  },
  "summary": {
-  "default_external_lex_state_count": 85,
+  "default_external_lex_state_count": 89,
   "external_scanner_count": 119,
   "grammar_count": 206,
   "staged_external_lex_state_count": 1

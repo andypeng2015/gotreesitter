@@ -12,14 +12,14 @@ scanner.
 | --- | ---: |
 | grammars | 206 |
 | registered external scanners | 119 |
-| default precise ExternalLexStates tables | 85 |
+| default precise ExternalLexStates tables | 89 |
 | staged precise ExternalLexStates tables | 1 |
 
 | status | count |
 | --- | ---: |
-| default elected | 85 |
+| default elected | 89 |
 | staged precise ELS | 1 |
-| blocked: missing precise ELS | 33 |
+| blocked: missing precise ELS | 29 |
 | not applicable: no external scanner | 87 |
 
 ## Verification Receipts
@@ -55,6 +55,7 @@ scanner.
 | `cmake` | default elected | CLEAN | 40/40 | yes | yes | no | `.cmake,.cmake.in` |
 | `cooklang` | default elected | IV-recovery | 0/3 | yes | yes | no | `.cook` |
 | `cpp` | default elected | IV-recovery | 9/40 | yes | yes | no | `.cc,.cpp,.cxx,.h,.hh,.hpp,.hxx` |
+| `crystal` | default elected | IV-shape? | unmeasured | yes | yes | no | `.cr` |
 | `css` | default elected | IV-unknown | 37/40 | yes | yes | no | `.css` |
 | `cuda` | default elected | IV-recovery? | 21/40 | yes | yes | no | `.cu,.cuh` |
 | `cue` | default elected | IV-unknown | 39/40 | yes | yes | no | `.cue` |
@@ -65,7 +66,9 @@ scanner.
 | `dtd` | default elected | IV-unknown | 0/3 | yes | yes | no | `.dtd` |
 | `earthfile` | default elected | IV-recovery? | 0/40 | yes | yes | no | `earthfile` |
 | `editorconfig` | default elected | CLEAN | 40/40 | yes | yes | no | `.editorconfig` |
+| `elixir` | default elected | IV-recovery | unmeasured | yes | yes | no | `.ex,.exs` |
 | `elm` | default elected | IV-unknown | 0/8 | yes | yes | no | `.elm` |
+| `erlang` | default elected | IV-recovery | unmeasured | yes | yes | no | `.app,.app.src,.erl,.escript,.hrl,.xrl,.yrl` |
 | `fennel` | default elected | IV-recovery? | 15/40 | yes | yes | no | `.fnl` |
 | `firrtl` | default elected | IV-recovery? | 12/27 | yes | yes | no | `.fir` |
 | `foam` | default elected | CLEAN | 40/40 | yes | yes | no | `.foam` |
@@ -81,6 +84,7 @@ scanner.
 | `janet` | default elected | CLEAN | 40/40 | yes | yes | no | `.janet` |
 | `jsdoc` | default elected | IV-unknown | 13/40 | yes | yes | no | `.jsdoc` |
 | `jsonnet` | default elected | IV-recovery? | 39/40 | yes | yes | no | `.jsonnet,.libsonnet` |
+| `julia` | default elected | IV-recovery | unmeasured | yes | yes | no | `.jl` |
 | `just` | default elected | IV-unknown | 2/8 | yes | yes | no | `.just,justfile` |
 | `kconfig` | default elected | IV-recovery? | 18/40 | yes | yes | no | `kconfig` |
 | `kdl` | default elected | IV-recovery | 11/40 | yes | yes | no | `.kdl` |
@@ -129,19 +133,15 @@ scanner.
 | `agda` | blocked: missing precise ELS | IV-scanner | 2/40 | yes | no | no | `.agda` |
 | `cobol` | blocked: missing precise ELS | IV-version | 0/40 | yes | no | no | `.cbl,.cob,.cpy` |
 | `comment` | blocked: missing precise ELS | IV-perf | unmeasured | yes | no | no | `.txt` |
-| `crystal` | blocked: missing precise ELS | IV-shape? | unmeasured | yes | no | no | `.cr` |
 | `dhall` | blocked: missing precise ELS | IV-unknown | 15/40 | yes | no | no | `.dhall` |
 | `djot` | blocked: missing precise ELS | IV-scanner? | unmeasured | yes | no | no | `.dj,.djot` |
 | `doxygen` | blocked: missing precise ELS | IV-unknown | 20/40 | yes | no | no | `.dox,.doxygen` |
-| `elixir` | blocked: missing precise ELS | IV-recovery | unmeasured | yes | no | no | `.ex,.exs` |
-| `erlang` | blocked: missing precise ELS | IV-recovery | unmeasured | yes | no | no | `.app,.app.src,.erl,.escript,.hrl,.xrl,.yrl` |
 | `fish` | blocked: missing precise ELS | IV-perf | unmeasured | yes | no | no | `.fish` |
 | `fsharp` | blocked: missing precise ELS | IV-perf | unmeasured | yes | no | no | `.fs,.fsi,.fsx` |
 | `go` | blocked: missing precise ELS | IV-unknown | 25/40 | yes | no | no | `.go` |
 | `godot_resource` | blocked: missing precise ELS | IV-perf | unmeasured | yes | no | no | `.tres,.tscn` |
 | `haskell` | blocked: missing precise ELS | IV-scanner | unmeasured | yes | no | no | `.hs,.lhs` |
 | `hcl` | blocked: missing precise ELS | IV-perf | unmeasured | yes | no | no | `.hcl,.tf,.tfvars` |
-| `julia` | blocked: missing precise ELS | IV-recovery | unmeasured | yes | no | no | `.jl` |
 | `markdown` | blocked: missing precise ELS | IV-unknown | 0/40 | yes | no | no | `.md` |
 | `markdown_inline` | blocked: missing precise ELS | IV-perf | unmeasured | yes | no | no | `.md` |
 | `nginx` | blocked: missing precise ELS | IV-unknown | 0/1 | yes | no | no | `.nginx,.nginxconf,.vhost,nginx.conf` |
