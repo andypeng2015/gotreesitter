@@ -1224,6 +1224,71 @@ func TestShouldRunInitialFullParseMergeRetry(t *testing.T) {
 	if !shouldRunInitialFullParseMergeRetry(tree) {
 		t.Fatal("shouldRunInitialFullParseMergeRetry(no_stacks_alive) = false, want true")
 	}
+	tree = &Tree{
+		language: &Language{Name: "c_sharp"},
+		root: &Node{
+			endByte: 128,
+			flags:   nodeFlagHasError,
+		},
+		parseRuntime: ParseRuntime{
+			StopReason:      ParseStopAccepted,
+			ExpectedEOFByte: 128,
+			RootEndByte:     128,
+			MaxStacksSeen:   64,
+		},
+	}
+	if shouldRunInitialFullParseMergeRetry(tree) {
+		t.Fatal("shouldRunInitialFullParseMergeRetry(c_sharp accepted error) = true, want false")
+	}
+	tree.parseRuntime.Truncated = true
+	if !shouldRunInitialFullParseMergeRetry(tree) {
+		t.Fatal("shouldRunInitialFullParseMergeRetry(c_sharp truncated accepted error) = false, want true")
+	}
+}
+
+func TestCSharpAcceptedErrorTreeCanUseNamespaceRecovery(t *testing.T) {
+	source := []byte("using X;\nnamespace N { class C { } }\n")
+	nsStart := uint32(bytes.Index(source, []byte("namespace")))
+	nsEnd := uint32(bytes.LastIndexByte(source, '}') + 1)
+	if nsStart == 0 || nsEnd == 0 {
+		t.Fatal("test source does not contain expected namespace span")
+	}
+	lang := &Language{
+		Name:        "c_sharp",
+		SymbolNames: []string{"EOF", "compilation_unit", "namespace_declaration"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF"},
+			{Name: "compilation_unit", Visible: true, Named: true},
+			{Name: "namespace_declaration", Visible: true, Named: true},
+		},
+	}
+	arena := newNodeArena(arenaClassFull)
+	namespace := newLeafNodeInArena(arena, 2, true, nsStart, nsEnd, Point{}, Point{})
+	namespace.setHasError(true)
+	root := newParentNodeInArena(arena, 1, true, []*Node{namespace}, nil, 0)
+	tree := &Tree{
+		language: lang,
+		root:     root,
+		parseRuntime: ParseRuntime{
+			StopReason:      ParseStopAccepted,
+			ExpectedEOFByte: uint32(len(source)),
+			RootEndByte:     uint32(len(source)),
+			MaxStacksSeen:   64,
+		},
+	}
+
+	if !csharpAcceptedErrorTreeCanUseNamespaceRecovery(tree, source) {
+		t.Fatal("csharpAcceptedErrorTreeCanUseNamespaceRecovery = false, want true")
+	}
+	tree.parseRuntime.Truncated = true
+	if csharpAcceptedErrorTreeCanUseNamespaceRecovery(tree, source) {
+		t.Fatal("csharpAcceptedErrorTreeCanUseNamespaceRecovery(truncated) = true, want false")
+	}
+	tree.parseRuntime.Truncated = false
+	root.ownerArena = nil
+	if csharpAcceptedErrorTreeCanUseNamespaceRecovery(tree, source) {
+		t.Fatal("csharpAcceptedErrorTreeCanUseNamespaceRecovery(no arena) = true, want false")
+	}
 }
 
 func TestCppAcceptedErrorRetrySkipsCompleteTree(t *testing.T) {

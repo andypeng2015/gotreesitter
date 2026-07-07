@@ -1246,7 +1246,23 @@ func shouldRunInitialFullParseMergeRetry(tree *Tree) bool {
 	// node cap plus a larger merge bucket. Keep merge-per-key retries available
 	// after a widened node-budget pass if the parser still proves ambiguity-
 	// bound, but skip the dead intermediate pass up front.
-	return tree.ParseRuntime().StopReason != ParseStopNodeLimit
+	rt := tree.ParseRuntime()
+	if rt.StopReason == ParseStopNodeLimit {
+		return false
+	}
+	if tree.language != nil && tree.language.Name == "c_sharp" &&
+		rt.StopReason == ParseStopAccepted &&
+		retryTreeHasError(tree) &&
+		!rt.Truncated &&
+		!rt.TokenSourceEOFEarly {
+		// Large C# namespace bodies that accept with an error under the narrow
+		// first-pass stack cap have repeatedly spent close to a second in this
+		// same-stack merge retry without clearing the error. The existing clean
+		// widened-stack retry is the next useful pass; keep later merge retries
+		// available if that widened pass still returns an error.
+		return false
+	}
+	return true
 }
 
 func (p *Parser) retryFullParse(source []byte, initialMaxStacks int, tree *Tree, runRetry fullParseRetryRunner) *Tree {
@@ -1351,6 +1367,11 @@ func (p *Parser) retryFullParse(source []byte, initialMaxStacks int, tree *Tree,
 		rt := tree.ParseRuntime()
 		fmt.Fprintf(os.Stderr, "RETRYDBG entry stop=%v truncated=%v hasErr=%v maxStacksSeen=%d stacksOverride=%d nodesOverride=%d structResync=%v\n",
 			rt.StopReason, rt.Truncated, retryTreeHasError(tree), rt.MaxStacksSeen, maxStacksOverride, maxNodesOverride, structuralResyncRetry)
+	}
+	// C# namespace recovery can clear this exact accepted-error shape during
+	// normal result compatibility; avoid paying the full retry ladder first.
+	if csharpAcceptedErrorTreeCanUseNamespaceRecovery(tree, source) {
+		return tree
 	}
 	runRetryAttempt := func(maxStacks int, maxMergePerKeyOverride int, maxNodes int) *Tree {
 		if p != nil {
