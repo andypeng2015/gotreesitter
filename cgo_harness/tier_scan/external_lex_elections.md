@@ -12,14 +12,14 @@ scanner.
 | --- | ---: |
 | grammars | 206 |
 | registered external scanners | 119 |
-| default precise ExternalLexStates tables | 44 |
+| default precise ExternalLexStates tables | 49 |
 | staged precise ExternalLexStates tables | 1 |
 
 | status | count |
 | --- | ---: |
-| default elected | 44 |
+| default elected | 49 |
 | staged precise ELS | 1 |
-| blocked: missing precise ELS | 74 |
+| blocked: missing precise ELS | 69 |
 | not applicable: no external scanner | 87 |
 
 ## Verification Receipts
@@ -59,7 +59,9 @@ scanner.
 | `elm` | default elected | IV-unknown | 0/8 | yes | yes | no | `.elm` |
 | `foam` | default elected | CLEAN | 40/40 | yes | yes | no | `.foam` |
 | `fortran` | default elected | CLEAN | 40/40 | yes | yes | no | `.f,.f03,.f08,.f90,.f95` |
+| `gdscript` | default elected | IV-unknown | 39/40 | yes | yes | no | `.gd` |
 | `gitcommit` | default elected | CLEAN | 13/13 | yes | yes | no | `commit_editmsg` |
+| `gleam` | default elected | IV-unknown | 39/40 | yes | yes | no | `.gleam` |
 | `gn` | default elected | CLEAN | 40/40 | yes | yes | no | `.gn,.gni` |
 | `hack` | default elected | IV-unknown | 38/40 | yes | yes | no | `.hack,.hh` |
 | `hlsl` | default elected | IV-unknown | 35/40 | yes | yes | no | `.fx,.hlsl` |
@@ -71,6 +73,7 @@ scanner.
 | `lua` | default elected | CLEAN | 40/40 | yes | yes | no | `.lua` |
 | `luau` | default elected | IV-perf | unmeasured | yes | yes | no | `.luau` |
 | `nickel` | default elected | CLEAN | 40/40 | yes | yes | no | `.ncl` |
+| `php` | default elected | IV-unknown | 36/40 | yes | yes | no | `.php` |
 | `pkl` | default elected | CLEAN | 40/40 | yes | yes | no | `.pkl` |
 | `python` | default elected | IV-unknown | 6/40 | yes | yes | no | `.py` |
 | `r` | default elected | CLEAN | 40/40 | yes | yes | no | `.r` |
@@ -78,8 +81,10 @@ scanner.
 | `ruby` | default elected | CLEAN | 40/40 | yes | yes | no | `.rb` |
 | `scss` | default elected | IV-recovery? | 6/40 | yes | yes | no | `.scss` |
 | `squirrel` | default elected | CLEAN | 40/40 | yes | yes | no | `.nut` |
+| `starlark` | default elected | IV-unknown | 34/40 | yes | yes | no | `.bzl,.star` |
 | `svelte` | default elected | IV-unknown | 8/40 | yes | yes | no | `.svelte` |
 | `tablegen` | default elected | CLEAN | 40/40 | yes | yes | no | `.td` |
+| `templ` | default elected | IV-recovery? | 31/40 | yes | yes | no | `.templ` |
 | `tsx` | default elected | CLEAN | 40/40 | yes | yes | no | `.tsx` |
 | `vue` | default elected | CLEAN | 40/40 | yes | yes | no | `.vue` |
 | `wgsl` | default elected | IV-recovery | 21/40 | yes | yes | no | `.wgsl` |
@@ -107,8 +112,6 @@ scanner.
 | `firrtl` | blocked: missing precise ELS | IV-recovery? | 12/27 | yes | no | no | `.fir` |
 | `fish` | blocked: missing precise ELS | IV-perf | unmeasured | yes | no | no | `.fish` |
 | `fsharp` | blocked: missing precise ELS | IV-perf | unmeasured | yes | no | no | `.fs,.fsi,.fsx` |
-| `gdscript` | blocked: missing precise ELS | IV-unknown | 39/40 | yes | no | no | `.gd` |
-| `gleam` | blocked: missing precise ELS | IV-unknown | 39/40 | yes | no | no | `.gleam` |
 | `go` | blocked: missing precise ELS | IV-unknown | 25/40 | yes | no | no | `.go` |
 | `godot_resource` | blocked: missing precise ELS | IV-perf | unmeasured | yes | no | no | `.tres,.tscn` |
 | `haskell` | blocked: missing precise ELS | IV-scanner | unmeasured | yes | no | no | `.hs,.lhs` |
@@ -134,7 +137,6 @@ scanner.
 | `odin` | blocked: missing precise ELS | IV-recovery? | 1/40 | yes | no | no | `.odin` |
 | `org` | blocked: missing precise ELS | IV-recovery? | 1/6 | yes | no | no | `.org` |
 | `perl` | blocked: missing precise ELS | IV-recovery? | unmeasured | yes | no | no | `.pl,.pm` |
-| `php` | blocked: missing precise ELS | IV-unknown | 36/40 | yes | no | no | `.php` |
 | `powershell` | blocked: missing precise ELS | IV-recovery? | 22/40 | yes | no | no | `.ps1,.psd1,.psm1` |
 | `properties` | blocked: missing precise ELS | IV-perf | unmeasured | yes | no | no | `.properties` |
 | `pug` | blocked: missing precise ELS | IV-recovery? | 0/40 | yes | no | no | `.jade,.pug` |
@@ -145,11 +147,9 @@ scanner.
 | `rust` | blocked: missing precise ELS | IV-recovery? | 11/40 | yes | no | no | `.rs` |
 | `scala` | blocked: missing precise ELS | IV-recovery? | 5/40 | yes | no | no | `.scala` |
 | `sql` | blocked: missing precise ELS | IV-recovery? | 8/40 | yes | no | no | `.sql` |
-| `starlark` | blocked: missing precise ELS | IV-unknown | 34/40 | yes | no | no | `.bzl,.star` |
 | `swift` | blocked: missing precise ELS | IV-recovery? | 0/40 | yes | no | no | `.swift` |
 | `tcl` | blocked: missing precise ELS | IV-recovery? | unmeasured | yes | no | no | `.tcl` |
 | `teal` | blocked: missing precise ELS | IV-recovery? | 8/40 | yes | no | no | `.tl` |
-| `templ` | blocked: missing precise ELS | IV-recovery? | 31/40 | yes | no | no | `.templ` |
 | `tlaplus` | blocked: missing precise ELS | IV-perf | unmeasured | yes | no | no | `.tla` |
 | `toml` | blocked: missing precise ELS | IV-unknown | 8/11 | yes | no | no | `.toml` |
 | `typescript` | blocked: missing precise ELS | IV-perf | unmeasured | yes | no | no | `.ts` |

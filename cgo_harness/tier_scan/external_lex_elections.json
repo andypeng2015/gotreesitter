@@ -877,14 +877,14 @@
    "tier_notes": "timeout-or-fail at 1200s canonical budget"
   },
   {
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": ".gd",
    "grammar": "gdscript",
    "has_external_scanner": true,
    "parity": "39/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-unknown",
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 39/40, trunc=0, errTree=0, panics=0; previous CLEAN row was stale: repeatable zero-width _dedent in DFA external loop guard; scanner token order aligned with upstream C (verified 2026-06-11)"
   },
@@ -949,14 +949,14 @@
    "tier_notes": "in ratchet"
   },
   {
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": ".gleam",
    "grammar": "gleam",
    "has_external_scanner": true,
    "parity": "39/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-unknown",
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 39/40, trunc=0, errTree=0, panics=0; previous CLEAN row was stale: in ratchet"
   },
@@ -1705,14 +1705,14 @@
    "tier_notes": "faithful C error-cost version competition (see spec)"
   },
   {
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": ".php",
    "grammar": "php",
    "has_external_scanner": true,
    "parity": "36/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-unknown",
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 36/40, trunc=4, errTree=4, panics=0; previous CLEAN row was stale: in ratchet"
   },
@@ -2101,14 +2101,14 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 1/2, trunc=1, errTree=0, panics=0; previous CLEAN row was stale: C-recovery gate promoted; tiny lock-filtered corpus clean (verified 2026-06-11)"
   },
   {
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": ".bzl,.star",
    "grammar": "starlark",
    "has_external_scanner": true,
    "parity": "34/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-unknown",
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 34/40, trunc=0, errTree=1, panics=0; previous CLEAN row was stale: in ratchet"
   },
@@ -2173,14 +2173,14 @@
    "tier_notes": "faithful C error-cost version competition (see spec)"
   },
   {
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": ".templ",
    "grammar": "templ",
    "has_external_scanner": true,
    "parity": "31/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery?",
    "tier_notes": "dangling quote tag_start attribute compatibility normalization cleared the last local shape residual; remaining 5/40 are broad root ERROR recovery cases; Docker D-tier verified 2026-06-13 with trunc=0 panics=0"
   },
@@ -2474,8 +2474,8 @@
   }
  ],
  "histogram": {
-  "blocked_missing_precise_els": 74,
-  "default_elected": 44,
+  "blocked_missing_precise_els": 69,
+  "default_elected": 49,
   "not_applicable_no_external_scanner": 87,
   "staged_precise_els": 1
  },
@@ -2514,7 +2514,7 @@
   "staged_precise_els": "A precise ExternalLexStates table exists behind an opt-in build tag or explicit staging policy; default election is intentionally disabled."
  },
  "summary": {
-  "default_external_lex_state_count": 44,
+  "default_external_lex_state_count": 49,
   "external_scanner_count": 119,
   "grammar_count": 206,
   "staged_external_lex_state_count": 1
