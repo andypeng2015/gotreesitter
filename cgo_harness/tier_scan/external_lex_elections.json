@@ -1657,14 +1657,14 @@
    "tier_notes": "faithful C error-cost version competition (see spec)"
   },
   {
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": ".org",
    "grammar": "org",
    "has_external_scanner": true,
    "parity": "1/6",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery?",
    "tier_notes": "faithful C error-cost version competition (see spec)"
   },
@@ -1825,14 +1825,14 @@
    "tier_notes": "in ratchet"
   },
   {
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": ".purs",
    "grammar": "purescript",
    "has_external_scanner": true,
    "parity": "1/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery?",
    "tier_notes": "faithful C error-cost version competition (see spec)"
   },
@@ -1981,14 +1981,14 @@
    "tier_notes": "in ratchet; inline Ruby when-then body StartByte normalized to C oracle"
   },
   {
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": ".rs",
    "grammar": "rust",
    "has_external_scanner": true,
    "parity": "11/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery?",
    "tier_notes": "faithful C error-cost version competition (see spec)"
   },
@@ -2317,14 +2317,14 @@
    "tier_notes": "nested list item result normalization verified 2026-06-12; zero-width group comma normalization cleared docs/components/section.typ 2026-06-13; residuals: docs/components/example.typ root ERROR vs C source_file plus 4 truncations"
   },
   {
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": ".tal",
    "grammar": "uxntal",
    "has_external_scanner": true,
    "parity": "0/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery?",
    "tier_notes": "faithful C error-cost version competition (see spec)"
   },
@@ -2474,8 +2474,8 @@
   }
  ],
  "histogram": {
-  "blocked_missing_precise_els": 46,
-  "default_elected": 72,
+  "blocked_missing_precise_els": 42,
+  "default_elected": 76,
   "not_applicable_no_external_scanner": 87,
   "staged_precise_els": 1
  },
@@ -2514,7 +2514,7 @@
   "staged_precise_els": "A precise ExternalLexStates table exists behind an opt-in build tag or explicit staging policy; default election is intentionally disabled."
  },
  "summary": {
-  "default_external_lex_state_count": 72,
+  "default_external_lex_state_count": 76,
   "external_scanner_count": 119,
   "grammar_count": 206,
   "staged_external_lex_state_count": 1

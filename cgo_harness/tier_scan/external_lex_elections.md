@@ -12,14 +12,14 @@ scanner.
 | --- | ---: |
 | grammars | 206 |
 | registered external scanners | 119 |
-| default precise ExternalLexStates tables | 72 |
+| default precise ExternalLexStates tables | 76 |
 | staged precise ExternalLexStates tables | 1 |
 
 | status | count |
 | --- | ---: |
-| default elected | 72 |
+| default elected | 76 |
 | staged precise ELS | 1 |
-| blocked: missing precise ELS | 46 |
+| blocked: missing precise ELS | 42 |
 | not applicable: no external scanner | 87 |
 
 ## Verification Receipts
@@ -90,15 +90,18 @@ scanner.
 | `nickel` | default elected | CLEAN | 40/40 | yes | yes | no | `.ncl` |
 | `nushell` | default elected | IV-recovery? | 7/40 | yes | yes | no | `.nu` |
 | `odin` | default elected | IV-recovery? | 1/40 | yes | yes | no | `.odin` |
+| `org` | default elected | IV-recovery? | 1/6 | yes | yes | no | `.org` |
 | `php` | default elected | IV-unknown | 36/40 | yes | yes | no | `.php` |
 | `pkl` | default elected | CLEAN | 40/40 | yes | yes | no | `.pkl` |
 | `powershell` | default elected | IV-recovery? | 22/40 | yes | yes | no | `.ps1,.psd1,.psm1` |
 | `pug` | default elected | IV-recovery? | 0/40 | yes | yes | no | `.jade,.pug` |
+| `purescript` | default elected | IV-recovery? | 1/40 | yes | yes | no | `.purs` |
 | `python` | default elected | IV-unknown | 6/40 | yes | yes | no | `.py` |
 | `r` | default elected | CLEAN | 40/40 | yes | yes | no | `.r` |
 | `rescript` | default elected | IV-recovery? | 24/40 | yes | yes | no | `.res,.resi` |
 | `ron` | default elected | CLEAN | 40/40 | yes | yes | no | `.ron` |
 | `ruby` | default elected | CLEAN | 40/40 | yes | yes | no | `.rb` |
+| `rust` | default elected | IV-recovery? | 11/40 | yes | yes | no | `.rs` |
 | `scala` | default elected | IV-recovery? | 5/40 | yes | yes | no | `.scala` |
 | `scss` | default elected | IV-recovery? | 6/40 | yes | yes | no | `.scss` |
 | `sql` | default elected | IV-recovery? | 8/40 | yes | yes | no | `.sql` |
@@ -109,6 +112,7 @@ scanner.
 | `teal` | default elected | IV-recovery? | 8/40 | yes | yes | no | `.tl` |
 | `templ` | default elected | IV-recovery? | 31/40 | yes | yes | no | `.templ` |
 | `tsx` | default elected | CLEAN | 40/40 | yes | yes | no | `.tsx` |
+| `uxntal` | default elected | IV-recovery? | 0/40 | yes | yes | no | `.tal` |
 | `vue` | default elected | CLEAN | 40/40 | yes | yes | no | `.vue` |
 | `wgsl` | default elected | IV-recovery | 21/40 | yes | yes | no | `.wgsl` |
 | `yaml` | default elected | CLEAN | 40/40 | yes | yes | no | `.yaml,.yml` |
@@ -141,20 +145,16 @@ scanner.
 | `nix` | blocked: missing precise ELS | IV-perf | unmeasured | yes | no | no | `.nix` |
 | `norg` | blocked: missing precise ELS | IV-scanner | 0/2 | yes | no | no | `.norg` |
 | `ocaml` | blocked: missing precise ELS | IV-unknown | 12/40 | yes | no | no | `.ml,.mli` |
-| `org` | blocked: missing precise ELS | IV-recovery? | 1/6 | yes | no | no | `.org` |
 | `perl` | blocked: missing precise ELS | IV-recovery? | unmeasured | yes | no | no | `.pl,.pm` |
 | `properties` | blocked: missing precise ELS | IV-perf | unmeasured | yes | no | no | `.properties` |
-| `purescript` | blocked: missing precise ELS | IV-recovery? | 1/40 | yes | no | no | `.purs` |
 | `racket` | blocked: missing precise ELS | IV-unknown | 2/40 | yes | no | no | `.rkt` |
 | `rst` | blocked: missing precise ELS | IV-perf | unmeasured | yes | no | no | `.rst` |
-| `rust` | blocked: missing precise ELS | IV-recovery? | 11/40 | yes | no | no | `.rs` |
 | `swift` | blocked: missing precise ELS | IV-recovery? | 0/40 | yes | no | no | `.swift` |
 | `tcl` | blocked: missing precise ELS | IV-recovery? | unmeasured | yes | no | no | `.tcl` |
 | `tlaplus` | blocked: missing precise ELS | IV-perf | unmeasured | yes | no | no | `.tla` |
 | `toml` | blocked: missing precise ELS | IV-unknown | 8/11 | yes | no | no | `.toml` |
 | `typescript` | blocked: missing precise ELS | IV-perf | unmeasured | yes | no | no | `.ts` |
 | `typst` | blocked: missing precise ELS | IV-recovery? | unmeasured | yes | no | no | `.typ` |
-| `uxntal` | blocked: missing precise ELS | IV-recovery? | 0/40 | yes | no | no | `.tal` |
 | `vhdl` | blocked: missing precise ELS | IV-recovery? | unmeasured | yes | no | no | `.vhd,.vhdl` |
 | `wolfram` | blocked: missing precise ELS | IV-unknown | 0/11 | yes | no | no | `.m,.nb,.wl` |
 | `xml` | blocked: missing precise ELS | IV-unknown | 1/40 | yes | no | no | `.xml` |
