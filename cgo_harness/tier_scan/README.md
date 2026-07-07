@@ -256,6 +256,32 @@ Each run writes compact progress and restart state into the output directory:
 | `diagnostic_summary.json` | Derived diagnostic report from `summarize_scan.py`: MEASURE-DTIER signature buckets, generalized diagnostic families, slow non-clean measured grammars, unmeasured evidence, stale classification hints, and separate parity sample-size notes for diagnostic scans whose `GTS_TIER_SCAN_N` differs from the TSV baseline. Diagnostic families use scan telemetry only and include labels such as `timeout_fanout_perf`, `truncation_budget_frontier`, `recovery_error_cost`, `accepted_shape_materialization`, `scanner_token_accounting`, `unclear_needs_diagnostic`, `clean`, and `clean_but_slow_perf`; runtime evidence includes parsed `stopReason`, `rootErr`, `tokens=0` accepted divergence counts, `maxStacks`, structured `comparisonDiagnostic` first-diff/root-shape/error evidence, and last progress for unmeasured rows when present. |
 | `diagnostic_summary.md` | Markdown rendering of `diagnostic_summary.json` for quick scan review. |
 
+## Wave 4 external-lex-state election ledger
+
+`external_lex_elections.{json,md}` is the Wave 4 control-plane ledger for
+all 206 grammars. It derives its grammar universe from `exts.tsv`, external
+scanner support from the grammar scanner registries, precise ExternalLexStates
+coverage from generated/staged lex-state tables, and current parity status
+from `tier_classification.tsv`.
+
+Regenerate after scanner or ExternalLexStates changes:
+
+```bash
+python3 cgo_harness/tier_scan/gen_external_lex_elections.py
+```
+
+Check committed outputs without rewriting them:
+
+```bash
+python3 cgo_harness/tier_scan/gen_external_lex_elections.py --check
+```
+
+The ledger statuses are intentionally stricter than the tier table: a grammar
+can be parity-clean and still be `blocked_missing_precise_els` if it has a Go
+external scanner but no precise ExternalLexStates table registered or staged
+yet. That means Wave 4 has not certified its external-scanner C-recovery
+election path, even if ordinary corpus parity is currently clean.
+
 During a grammar measurement, the scan emits `HEARTBEAT` rows to both
 `progress.log` and `status.tsv` every `GTS_TIER_SCAN_HEARTBEAT` seconds
 (default `60`). Set `GTS_TIER_SCAN_HEARTBEAT=0` to disable them. Heartbeat
