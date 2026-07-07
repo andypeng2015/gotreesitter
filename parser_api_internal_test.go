@@ -280,6 +280,13 @@ func TestGeneratedRepeatBoundaryConflictAllowsMixedReduces(t *testing.T) {
 }
 
 func TestDeterministicConflictChoiceKeepsNonGeneratedShortcut(t *testing.T) {
+	// Wave-2b: the php state-2 SHIFT-preferring shortcut is retired in favor
+	// of the global C repetition-skip fold (cRepetitionSkipConflictChoice,
+	// C parser.c:1625 `if (action.shift.repetition) break;`). The contract
+	// pinned here is the fold's: an error-free lineage takes the single
+	// REDUCE deterministically (C folds and re-dispatches the same
+	// lookahead); without a stack (nil = no lineage evidence) dispatch makes
+	// no deterministic choice and the GLR fork stands.
 	lang := &Language{
 		Name:        "php",
 		SymbolNames: []string{"end", "namespace", "\\", "name", "use", "new", "program_repeat1"},
@@ -298,12 +305,20 @@ func TestDeterministicConflictChoiceKeepsNonGeneratedShortcut(t *testing.T) {
 		{Type: ParseActionShift, State: 1846, Repetition: true},
 	}
 	parser := &Parser{language: lang}
-	chosen, ok := parser.deterministicConflictChoiceForDispatch(nil, nil, Token{Symbol: 1}, 2, actions, 2, nil)
-	if !ok {
-		t.Fatal("deterministicConflictChoiceForDispatch = false, want non-generated PHP shortcut")
+	if chosen, ok := parser.deterministicConflictChoiceForDispatch(nil, nil, Token{Symbol: 1}, 2, actions, 2, nil); ok {
+		t.Fatalf("deterministicConflictChoiceForDispatch picked %+v with nil stack, want GLR fork", chosen)
 	}
-	if chosen.Type != ParseActionShift || chosen.State != 1846 || !chosen.Repetition {
-		t.Fatalf("deterministicConflictChoiceForDispatch picked %+v, want repetition shift", chosen)
+	cleanStack := &glrStack{}
+	chosen, ok := parser.deterministicConflictChoiceForDispatch(nil, cleanStack, Token{Symbol: 1}, 2, actions, 2, nil)
+	if !ok {
+		t.Fatal("deterministicConflictChoiceForDispatch = false for clean lineage, want global repetition-skip fold")
+	}
+	if chosen.Type != ParseActionReduce || chosen.Symbol != 6 {
+		t.Fatalf("deterministicConflictChoiceForDispatch picked %+v, want program_repeat1 reduce (C repetition-skip fold)", chosen)
+	}
+	erroredStack := &glrStack{cEverErrored: true}
+	if chosen, ok := parser.deterministicConflictChoiceForDispatch(nil, erroredStack, Token{Symbol: 1}, 2, actions, 2, nil); ok {
+		t.Fatalf("deterministicConflictChoiceForDispatch picked %+v on wreckage lineage, want GLR fork", chosen)
 	}
 }
 

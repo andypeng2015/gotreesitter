@@ -115,6 +115,7 @@ func (p *Parser) normalizeReturnedIncrementalTree(tree, oldTree *Tree, source []
 		return
 	}
 	if tree.resultCompatibilityPending {
+		finalizeDeferredReturnedTreeTruncation(tree, source)
 		return
 	}
 	if reason := p.normalizeReturnedTree(rawRootOrNil(tree), source); parseStopReasonIsTerminal(reason) {
@@ -133,6 +134,7 @@ func (p *Parser) normalizeReturnedTreeForParse(tree *Tree, source []byte) {
 		return
 	}
 	if tree.resultCompatibilityPending {
+		finalizeDeferredReturnedTreeTruncation(tree, source)
 		return
 	}
 	if reason := p.normalizeReturnedTree(rawRootOrNil(tree), source); parseStopReasonIsTerminal(reason) {
@@ -140,6 +142,28 @@ func (p *Parser) normalizeReturnedTreeForParse(tree *Tree, source []byte) {
 		return
 	}
 	finalizeReturnedTreeRootSpan(tree, source)
+}
+
+// finalizeDeferredReturnedTreeTruncation enforces the silent-truncation contract
+// for a returned tree whose result-compatibility normalization is deferred
+// (ini/typescript/tsx via shouldDeferResultCompatibility). finalizeReturnedTreeRootSpan
+// is skipped for these trees, so without this a truncated typescript parse
+// (checker.ts / dom.generated.d.ts) returns a SILENT prefix-only program root
+// (root.HasError()==false, ParseStoppedEarly()==false). The deferred trees
+// already carry a correct rt.Truncated (recordParseRuntimeRootStats computes it,
+// trivia tail included); only the consumer-visible HasError signal is missing.
+// Clean deferred trees (rt.Truncated==false, the common typescript path) are
+// untouched and keep their lazy compat.
+func finalizeDeferredReturnedTreeTruncation(tree *Tree, _ []byte) {
+	if tree == nil || !tree.parseRuntime.Truncated {
+		return
+	}
+	// Flush the deferred compat normalization first (only for the rare truncated
+	// case) so the HasError mark lands on the final normalized root and cannot be
+	// dropped if a normalizer rebuilds the root. ensureResultCompatibility clears
+	// resultCompatibilityPending.
+	tree.ensureResultCompatibility()
+	markTruncatedTreeHasError(tree.parseRuntime, rawRootOrNil(tree))
 }
 
 const forestIncrementalReuseUnsupportedReason = "old tree was built by GSS forest fast path"
@@ -318,7 +342,38 @@ func finalizeReturnedTreeRootSpan(tree *Tree, source []byte) {
 	if rt.Truncated && parserTailAllowsCleanAcceptance(source, tailStart, rt.ExpectedEOFByte, tree.includedRanges) {
 		rt.Truncated = false
 	}
+	markTruncatedTreeHasError(rt, root)
 	tree.setParseRuntime(rt)
+}
+
+// markTruncatedTreeHasError repairs the wave2b SILENT-TRUNCATION contract: a
+// returned tree whose root does not span the input (rt.Truncated, a real
+// non-trivia tail) MUST carry a reliable, consumer-visible error signal. C's
+// recovery guarantees its returned tree always spans the input and reports
+// HasError() for these inputs (the C-oracle confirms every one of the 14 known
+// members has a full-span C root; 7 are ERROR-bearing). When our GLR frontier
+// dies mid-file (ParseStopNoStacksAlive) after the live stack already reduced to
+// a clean start symbol, we return a prefix-only root with hasError=false and
+// ParseStoppedEarly()==false — the swallowed-error class (crystal string.cr,
+// typescript checker.ts / dom.generated.d.ts; the _pydecimal.py family). The
+// tree is definitionally erroneous (real source past root.EndByte was dropped),
+// so surface root.HasError()==true. The tree is left honestly TRUNCATED (root
+// span unchanged, rt.Truncated preserved) — matching the established contract
+// that a non-clean tail is never silently extended
+// (TestFinalizeReturnedTreeRootSpanDoesNotExtendNonCleanTail); making the whole
+// span cover the input is the GLR/dispatch layer's job (siblings), not the
+// result-reporting layer's.
+//
+// Only ever SETS the flag (never clears): a truncated tree that already reports
+// HasError (11 of the 14 members) is untouched. Trivia-only tails already
+// cleared rt.Truncated above, and early-stop trees (node_limit / memory_budget /
+// timeout) never reach this finalizer, so hard budget aborts keep their honest
+// Truncated flag without a synthetic error mark.
+func markTruncatedTreeHasError(rt ParseRuntime, root *Node) {
+	if !rt.Truncated || root == nil || root.hasError() {
+		return
+	}
+	root.setHasError(true)
 }
 
 func extendRootToAcceptedCleanTail(root *Node, source []byte, expectedEOFByte uint32, included []Range) bool {

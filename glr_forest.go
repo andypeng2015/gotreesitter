@@ -2580,6 +2580,28 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte, captureExternalChe
 
 			nodeActions := p.actionsForParseState(node.state, tok.Symbol, lang.ParseActions)
 			nodeActions = p.forestResolveConflict(node.state, tok, nodeActions)
+			// C's global repetition-skip fold, mirrored into the forest engine.
+			// Production's deterministicConflictChoiceForDispatch resolves a
+			// {1 repetition-marked SHIFT, 1 REDUCE} conflict by taking the REDUCE
+			// (C's ts_parser__advance runs `if (action.shift.repetition) break;`,
+			// parser.c) — a deterministic, lossless fold of the list spine, not a
+			// fork. forestResolveConflict did NOT carry this fold, so a long
+			// repeated list (a bash `program` is repeat($._statement)) forked at
+			// every statement boundary, building an O(n^2) GSS frontier, and
+			// reached EOF with only mid-list lineages surviving — none in a
+			// list-closed (accept) state — declining eof_no_root
+			// (medium__install.sh: forest reached EOF with 2 non-accepting stacks
+			// while tree-sitter-C parses the file clean). Applying the same fold
+			// lets the forest close the list and accept, byte-matching C. Gated to
+			// non-recover forest lineages: with error recovery the repetition-shift
+			// arm can be the branch the recovery cost competition keeps (the php
+			// comma-list wreckage lesson in conflict_policy.go), so recover-active
+			// languages keep the ordinary GLR fork.
+			if !recoverActive && len(nodeActions) > 1 {
+				if folded, ok := singleReduceAgainstRepetitionShiftConflictChoice(nodeActions); ok {
+					nodeActions = p.forestSingletonActions(folded)
+				}
+			}
 			if progress.enabled {
 				reduceActions, shiftActions, acceptActions := 0, 0, 0
 				for _, act := range nodeActions {

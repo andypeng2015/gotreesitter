@@ -2,6 +2,7 @@ package gotreesitter
 
 import (
 	"fmt"
+	"os"
 	"unsafe"
 )
 
@@ -154,12 +155,17 @@ type glrMergeScratch struct {
 	equivEpoch        uint32
 	equivCache        []glrNodeEquivCacheEntry
 	stackEquivCache   []glrStackEquivCacheEntry
+	spineEquivCache   []glrSpineEquivCacheEntry
 	frontierHashCache []glrStackFrontierHashCacheEntry
 	cErrorCost        map[*Node]glrCErrorCostEntry
 	// cPrefixPath is the descent scratch for merge-side GSS prefix-aggregate
 	// fills (cStackPrefixCostForMerge, parser_recover_c.go); the aggregates
 	// live on gssNode, validated against gssPrefixAggGen.
-	cPrefixPath      []*gssNode
+	cPrefixPath []*gssNode
+	// spineVisit is the reusable descent scratch for the spine-equality memo
+	// (gssSpineEqualMemo): the pairs walked before the deciding position, so the
+	// single computed answer can be back-filled to every shallower spine pair.
+	spineVisit       []spinePairKey
 	shapePrefixCache []glrShapePrefixCacheEntry
 	shapePrefixEpoch uint32
 	shapePrefixBytes int64
@@ -183,6 +189,7 @@ type glrMergeScratch struct {
 	largeSlotBytes    int64
 	equivCacheBytes   int64
 	stackEquivBytes   int64
+	spineEquivBytes   int64
 	frontierHashBytes int64
 }
 
@@ -274,6 +281,22 @@ type glrNodeEquivCacheEntry struct {
 type glrStackEquivCacheEntry struct {
 	a      uintptr
 	b      uintptr
+	epoch  uint32
+	result bool
+}
+
+// glrSpineEquivCacheEntry is one slot of the pointer-keyed 2-way set-
+// associative spine-equality memo. Key: the ordered gssNode pointer pair.
+// Validity: epoch (per-parse) plus both prev-chain prefix fingerprints
+// (gssNode.hash). A hit requires the pointers AND both fingerprints to match,
+// so recycled slab pointers (fresh hash on allocNode) and in-place prefix
+// mutations (hash reset to 0 then recomputed at the mutation sites) both force
+// a miss rather than a stale answer.
+type glrSpineEquivCacheEntry struct {
+	a      uintptr
+	b      uintptr
+	aHash  uint64
+	bHash  uint64
 	epoch  uint32
 	result bool
 }
@@ -889,6 +912,21 @@ const (
 	// GLR-heavy grammars such as Dart.
 	glrStackEquivCacheSize     = 4096
 	glrStackEquivCacheSetCount = glrStackEquivCacheSize / 2
+	// glrSpineEquivCacheSize memoizes per-(node,node) GSS spine-equality — the
+	// answer "are the two sub-stacks rooted at an and bn fully equivalent from
+	// here to the root?" — checked at every spine position during a
+	// gssStacksEqual walk (not just the head pair, which is new every token and
+	// so rarely repeats). Unlike the epoch-only stackEquivCache, each entry
+	// carries the prev-chain prefix fingerprint (gssNode.hash) of both nodes and
+	// is valid only while both fingerprints are unchanged. gssNode.hash is a
+	// Merkle-style prefix hash (hash(prev.hash, entry)), so it captures exactly
+	// the data spine-equality depends on: an entry is the full-walk answer iff
+	// both fingerprints match. This survives the ~2 gssPrefixAggGen bumps/token
+	// (frontier merges) because deep spine nodes are not relinked and keep their
+	// hash — the choke-point invalidation that resets the global gen leaves the
+	// unchanged deep-spine fingerprints intact (wave-2b merge-equiv bucket).
+	glrSpineEquivCacheSize     = 16384
+	glrSpineEquivCacheSetCount = glrSpineEquivCacheSize / 2
 	// glrStackFrontierHashCache memoizes the Perl-only frontier merge hash for
 	// immutable GSS heads. It is intentionally smaller than the node-equivalence
 	// cache: it only covers live stack heads encountered during merge bucketing.
@@ -920,6 +958,7 @@ func (s *glrMergeScratch) beginEquivEpoch() {
 	if s.equivEpoch == ^uint32(0) {
 		clear(s.equivCache)
 		clear(s.stackEquivCache)
+		clear(s.spineEquivCache)
 		clear(s.frontierHashCache)
 		s.equivEpoch = 0
 	}
@@ -934,6 +973,11 @@ func (s *glrMergeScratch) beginEquivEpoch() {
 		s.equivCache = make([]glrNodeEquivCacheEntry, glrNodeEquivCacheSize)
 		s.equivCacheBytes = glrNodeEquivCacheBytesForCap(cap(s.equivCache))
 	}
+	// spineEquivCache is provisioned only for persistent parse scratches
+	// (ensureMergeHotCaches), matching shapePrefixCache: one-shot local scratches
+	// (standalone mergeStacks, diagnostics) skip spine memoization rather than
+	// paying a 640KiB zeroed allocation per call. The lookup/store guards on an
+	// empty backing array make that a correct no-memo fallback.
 }
 
 func stackFrontierHashCacheIndex(p uintptr) int {
@@ -1049,6 +1093,133 @@ func storeGSSStackEquivCache(scratch *glrMergeScratch, a, b *gssNode, result boo
 	}
 }
 
+// debugMergeEquiv, when set (GOT_DEBUG_MERGE_EQUIV=1), makes gssStacksEqual
+// recompute every answer with the spine memo bypassed and loudly report any
+// divergence — the house env-gated correctness assertion pattern (mirrors
+// GOT_DEBUG_RECOVERY_INCREMENTAL_COST / GOT_DEBUG_RECOVERY_CYCLES). Zero cost
+// when unset.
+var debugMergeEquiv = os.Getenv("GOT_DEBUG_MERGE_EQUIV") == "1"
+
+// debugMergeEquivStats, when set (GOT_DEBUG_MERGE_EQUIV_STATS=1), accumulates
+// spine-memo lookup/hit/store counters (single-threaded parse; plain adds).
+var debugMergeEquivStats = os.Getenv("GOT_DEBUG_MERGE_EQUIV_STATS") == "1"
+
+// mergeEquivMemoEnabled gates the spine-equality memo. Default on; set
+// GOT_DISABLE_MERGE_EQUIV_MEMO=1 to fall back to the original memo-free walk
+// (A/B measurement only — the memo is answer-exact, verified by
+// GOT_DEBUG_MERGE_EQUIV).
+var mergeEquivMemoEnabled = os.Getenv("GOT_DISABLE_MERGE_EQUIV_MEMO") != "1"
+
+var (
+	debugSpineMemoLookups    uint64
+	debugSpineMemoHits       uint64
+	debugSpineMemoStores     uint64
+	debugMergeEquivChecks    uint64
+	debugMergeEquivDiverge   uint64
+	debugMergeEquivReportsLt = 20
+)
+
+// DebugSpineMemoStats returns (lookups, hits, stores) for the spine-equality
+// memo since process start. Measurement helper (wave-2b); only populated when
+// GOT_DEBUG_MERGE_EQUIV_STATS=1.
+func DebugSpineMemoStats() (uint64, uint64, uint64) {
+	return debugSpineMemoLookups, debugSpineMemoHits, debugSpineMemoStores
+}
+
+// DebugMergeEquivAssertStats returns (checks, divergences) for the spine-memo
+// correctness assertion. Nonzero divergences mean the memo answer differed from
+// the full walk (a bug). Only populated when GOT_DEBUG_MERGE_EQUIV=1.
+func DebugMergeEquivAssertStats() (uint64, uint64) {
+	return debugMergeEquivChecks, debugMergeEquivDiverge
+}
+
+func spineEquivCacheIndex(ap, bp uintptr) int {
+	x := uint64(ap)
+	y := uint64(bp)
+	h := x ^ (y + 0x9e3779b97f4a7c15 + (x << 6) + (x >> 2))
+	h ^= (x >> 5) * 0x85ebca6b
+	h ^= (y >> 3) * 0xc2b2ae35
+	return int(h&uint64(glrSpineEquivCacheSetCount-1)) << 1
+}
+
+// lookupSpineEquivCache returns the memoized "spine-from-(a) equals spine-from-
+// (b)" answer when both nodes' prev-chain prefix fingerprints are unchanged
+// since the entry was stored. A hit is exactly the full-walk answer (the
+// fingerprint captures every field the walk compares), so it cannot change a
+// merge decision.
+func lookupSpineEquivCache(scratch *glrMergeScratch, a, b *gssNode) (bool, bool) {
+	if scratch == nil || len(scratch.spineEquivCache) == 0 || scratch.equivEpoch == 0 {
+		return false, false
+	}
+	if a == nil || b == nil || a.hash == 0 || b.hash == 0 {
+		return false, false
+	}
+	ap, bp, ok := orderedGSSNodePair(a, b)
+	if !ok {
+		return false, false
+	}
+	aHash, bHash := a.hash, b.hash
+	if ap != uintptr(unsafe.Pointer(a)) {
+		// orderedGSSNodePair swapped: keep fingerprints paired with pointers.
+		aHash, bHash = b.hash, a.hash
+	}
+	if debugMergeEquivStats {
+		debugSpineMemoLookups++
+	}
+	idx := spineEquivCacheIndex(ap, bp)
+	primary := &scratch.spineEquivCache[idx]
+	if primary.epoch == scratch.equivEpoch && primary.a == ap && primary.b == bp &&
+		primary.aHash == aHash && primary.bHash == bHash {
+		if debugMergeEquivStats {
+			debugSpineMemoHits++
+		}
+		return primary.result, true
+	}
+	victim := &scratch.spineEquivCache[idx+1]
+	if victim.epoch == scratch.equivEpoch && victim.a == ap && victim.b == bp &&
+		victim.aHash == aHash && victim.bHash == bHash {
+		*primary, *victim = *victim, *primary
+		if debugMergeEquivStats {
+			debugSpineMemoHits++
+		}
+		return primary.result, true
+	}
+	return false, false
+}
+
+// storeSpineEquivCache never allocates the backing array (see
+// storeShapePrefixCache); one-shot scratches without provisioned caches simply
+// skip memoization.
+func storeSpineEquivCache(scratch *glrMergeScratch, a, b *gssNode, result bool) {
+	if scratch == nil || scratch.equivEpoch == 0 || len(scratch.spineEquivCache) == 0 {
+		return
+	}
+	if a == nil || b == nil || a.hash == 0 || b.hash == 0 {
+		return
+	}
+	ap, bp, ok := orderedGSSNodePair(a, b)
+	if !ok {
+		return
+	}
+	aHash, bHash := a.hash, b.hash
+	if ap != uintptr(unsafe.Pointer(a)) {
+		aHash, bHash = b.hash, a.hash
+	}
+	if debugMergeEquivStats {
+		debugSpineMemoStores++
+	}
+	idx := spineEquivCacheIndex(ap, bp)
+	scratch.spineEquivCache[idx+1] = scratch.spineEquivCache[idx]
+	scratch.spineEquivCache[idx] = glrSpineEquivCacheEntry{
+		a:      ap,
+		b:      bp,
+		aHash:  aHash,
+		bHash:  bHash,
+		epoch:  scratch.equivEpoch,
+		result: result,
+	}
+}
+
 func (s *glrMergeScratch) beginCleanZeroEpoch() {
 	if s == nil {
 		return
@@ -1075,6 +1246,10 @@ func (s *glrMergeScratch) ensureMergeHotCaches() {
 	if len(s.cleanZeroFront) == 0 {
 		s.cleanZeroFront = make([]glrCleanZeroFrontCacheEntry, glrCleanZeroFrontCacheSize)
 		s.cleanZeroBytes = int64(cap(s.cleanZeroFront)) * int64(unsafe.Sizeof(glrCleanZeroFrontCacheEntry{}))
+	}
+	if len(s.spineEquivCache) == 0 {
+		s.spineEquivCache = make([]glrSpineEquivCacheEntry, glrSpineEquivCacheSize)
+		s.spineEquivBytes = glrSpineEquivCacheBytesForCap(cap(s.spineEquivCache))
 	}
 }
 
@@ -1429,6 +1604,90 @@ func gssStacksEqualForLanguage(lang *Language, a, b gssStack) bool {
 	return gssStacksEqualForLanguageWithScratch(nil, lang, a, b)
 }
 
+type spinePairKey struct {
+	a *gssNode
+	b *gssNode
+}
+
+// gssSpineEqualMemo walks the two spines top-down, consulting the spine-equality
+// memo at every position. On the first memoized pair the whole remaining spine
+// answer is known, so the walk stops. It is the iterative twin of the original
+// gssStacksEqual loop (equal answer for equal inputs) plus back-fill: the walk
+// visits pairs (p0,p1,..,pd) before it decides at depth d (convergence,
+// state/payload mismatch, or a memo hit); every shallower pair shares that same
+// answer because they all carry the identical deciding suffix, so one computed
+// verdict is stored for all of them. Iterative (not recursive) to keep the Go
+// stack O(1) on deep spines.
+func gssSpineEqualMemo(scratch *glrMergeScratch, lang *Language, headA, headB *gssNode) bool {
+	if scratch == nil {
+		return gssSpineEqualRaw(scratch, lang, headA, headB)
+	}
+	visited := scratch.spineVisit[:0]
+	result := true
+	for an, bn := headA, headB; an != nil && bn != nil; an, bn = an.prev, bn.prev {
+		if an == bn {
+			result = true
+			break
+		}
+		if res, ok := lookupSpineEquivCache(scratch, an, bn); ok {
+			storeSpineEquivVisited(scratch, visited, res)
+			scratch.spineVisit = visited
+			return res
+		}
+		if an.entry.state != bn.entry.state {
+			visited = append(visited, spinePairKey{an, bn})
+			result = false
+			break
+		}
+		if !stackEntryPayloadsEquivalentForLanguageWithScratch(scratch, lang, an.entry, bn.entry) {
+			visited = append(visited, spinePairKey{an, bn})
+			result = false
+			break
+		}
+		visited = append(visited, spinePairKey{an, bn})
+	}
+	storeSpineEquivVisited(scratch, visited, result)
+	scratch.spineVisit = visited
+	return result
+}
+
+func storeSpineEquivVisited(scratch *glrMergeScratch, visited []spinePairKey, result bool) {
+	for i := range visited {
+		storeSpineEquivCache(scratch, visited[i].a, visited[i].b, result)
+	}
+}
+
+// gssSpineEqualRaw reproduces the original memo-free spine walk. Used only by
+// the GOT_DEBUG_MERGE_EQUIV assertion to confirm the memo answer is exact.
+func gssSpineEqualRaw(scratch *glrMergeScratch, lang *Language, headA, headB *gssNode) bool {
+	for an, bn := headA, headB; an != nil && bn != nil; an, bn = an.prev, bn.prev {
+		if an == bn {
+			return true
+		}
+		if an.entry.state != bn.entry.state {
+			return false
+		}
+		if !stackEntryPayloadsEquivalentForLanguageWithScratch(scratch, lang, an.entry, bn.entry) {
+			return false
+		}
+	}
+	return true
+}
+
+func debugCheckSpineEquiv(scratch *glrMergeScratch, lang *Language, headA, headB *gssNode, got bool) {
+	debugMergeEquivChecks++
+	want := gssSpineEqualRaw(scratch, lang, headA, headB)
+	if want == got {
+		return
+	}
+	debugMergeEquivDiverge++
+	if debugMergeEquivReportsLt > 0 {
+		debugMergeEquivReportsLt--
+		fmt.Fprintf(os.Stderr,
+			"MERGE-EQUIV divergence: headA=%p headB=%p memo=%v full=%v\n", headA, headB, got, want)
+	}
+}
+
 func gssStacksEqualForLanguageWithScratch(scratch *glrMergeScratch, lang *Language, a, b gssStack) bool {
 	if a.head == b.head {
 		return true
@@ -1453,22 +1712,17 @@ func gssStacksEqualForLanguageWithScratch(scratch *glrMergeScratch, lang *Langua
 	}
 	audit := activeEquivAudit(scratch)
 	if audit == nil {
-		for an, bn := a.head, b.head; an != nil && bn != nil; an, bn = an.prev, bn.prev {
-			if an == bn {
-				storeGSSStackEquivCache(scratch, a.head, b.head, true)
-				return true
-			}
-			if an.entry.state != bn.entry.state {
-				storeGSSStackEquivCache(scratch, a.head, b.head, false)
-				return false
-			}
-			if !stackEntryPayloadsEquivalentForLanguageWithScratch(scratch, lang, an.entry, bn.entry) {
-				storeGSSStackEquivCache(scratch, a.head, b.head, false)
-				return false
-			}
+		if !mergeEquivMemoEnabled {
+			res := gssSpineEqualRaw(scratch, lang, a.head, b.head)
+			storeGSSStackEquivCache(scratch, a.head, b.head, res)
+			return res
 		}
-		storeGSSStackEquivCache(scratch, a.head, b.head, true)
-		return true
+		res := gssSpineEqualMemo(scratch, lang, a.head, b.head)
+		if debugMergeEquiv {
+			debugCheckSpineEquiv(scratch, lang, a.head, b.head, res)
+		}
+		storeGSSStackEquivCache(scratch, a.head, b.head, res)
+		return res
 	}
 	for an, bn, depthFromTop := a.head, b.head, 0; an != nil && bn != nil; an, bn, depthFromTop = an.prev, bn.prev, depthFromTop+1 {
 		if an == bn {
@@ -4685,7 +4939,7 @@ func (s *glrMergeScratch) allocatedBytes() int64 {
 	if s == nil {
 		return 0
 	}
-	return s.resultBytes + s.slotBytes + s.largeSlotBytes + s.equivCacheBytes + s.stackEquivBytes + s.frontierHashBytes + s.shapePrefixBytes + s.cleanZeroBytes
+	return s.resultBytes + s.slotBytes + s.largeSlotBytes + s.equivCacheBytes + s.stackEquivBytes + s.spineEquivBytes + s.frontierHashBytes + s.shapePrefixBytes + s.cleanZeroBytes
 }
 
 func (s *glrMergeScratch) reset() {
@@ -4718,6 +4972,7 @@ func (s *glrMergeScratch) reset() {
 	}
 	s.equivCacheBytes = glrNodeEquivCacheBytesForCap(cap(s.equivCache))
 	s.stackEquivBytes = glrStackEquivCacheBytesForCap(cap(s.stackEquivCache))
+	s.spineEquivBytes = glrSpineEquivCacheBytesForCap(cap(s.spineEquivCache))
 	s.frontierHashBytes = glrStackFrontierHashCacheBytesForCap(cap(s.frontierHashCache))
 	s.frontierMergeHash = false
 	if len(s.cErrorCost) > maxRetainedMergeResultCap {
@@ -4794,6 +5049,13 @@ func glrStackEquivCacheBytesForCap(n int) int64 {
 		return 0
 	}
 	return int64(n) * int64(unsafe.Sizeof(glrStackEquivCacheEntry{}))
+}
+
+func glrSpineEquivCacheBytesForCap(n int) int64 {
+	if n <= 0 {
+		return 0
+	}
+	return int64(n) * int64(unsafe.Sizeof(glrSpineEquivCacheEntry{}))
 }
 
 func glrStackFrontierHashCacheBytesForCap(n int) int64 {
