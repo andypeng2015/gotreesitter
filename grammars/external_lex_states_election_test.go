@@ -116,6 +116,9 @@ func TestExternalLexStatesDefaultElectionInventory(t *testing.T) {
 				t.Fatalf("LookupExternalLexStates(%q) returned no rows", tt.name)
 			}
 			lang := tt.load()
+			if lang == nil {
+				t.Fatal("language loader returned nil")
+			}
 			if lang.ExternalScanner == nil {
 				t.Fatal("ExternalScanner is nil")
 			}
@@ -167,6 +170,9 @@ func TestExternalLexStatesRecoveryElectionOptOutInventory(t *testing.T) {
 				t.Fatalf("LookupExternalLexStates(%q) returned no rows", tt.name)
 			}
 			lang := tt.load()
+			if lang == nil {
+				t.Fatal("language loader returned nil")
+			}
 			diag := gotreesitter.DiagnoseCRecoveryGate(lang)
 			if !diag.Supported {
 				t.Fatalf("DiagnoseCRecoveryGate rejected language: %s", diag.Reason)
