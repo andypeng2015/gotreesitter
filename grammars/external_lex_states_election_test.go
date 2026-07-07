@@ -55,6 +55,9 @@ func TestExternalLexStatesDefaultElectionInventory(t *testing.T) {
 				t.Fatalf("LookupExternalLexStates(%q) returned no rows", tt.name)
 			}
 			lang := tt.load()
+			if lang == nil {
+				t.Fatal("language loader returned nil")
+			}
 			if lang.ExternalScanner == nil {
 				t.Fatal("ExternalScanner is nil")
 			}
