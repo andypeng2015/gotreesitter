@@ -172,6 +172,13 @@ func (p *Parser) cRepetitionSkipConflictChoice(s *glrStack, actions []ParseActio
 	return singleReduceAgainstRepetitionShiftConflictChoice(actions)
 }
 
+func (p *Parser) cRepetitionSkipForestConflictChoice(recoverActive bool, actions []ParseAction) (ParseAction, bool) {
+	if p == nil || p.language == nil || cRepetitionSkipOptOut[p.language.Name] || recoverActive {
+		return ParseAction{}, false
+	}
+	return singleReduceAgainstRepetitionShiftConflictChoice(actions)
+}
+
 func (p *Parser) deterministicConflictChoiceForDispatch(source []byte, s *glrStack, tok Token, currentState StateID, actions []ParseAction, maxStacksSeen int, reuse *reuseCursor) (ParseAction, bool) {
 	if p == nil || p.language == nil {
 		return ParseAction{}, false

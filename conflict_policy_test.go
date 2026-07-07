@@ -396,6 +396,31 @@ func TestForestResolveConflictDotLegacyUsesStateAndLookahead(t *testing.T) {
 	}
 }
 
+func TestCRepetitionSkipForestConflictChoiceHonorsOptOutAndRecoveryGate(t *testing.T) {
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 3, ChildCount: 2},
+		{Type: ParseActionShift, State: 99, Repetition: true},
+	}
+
+	parser := NewParser(&Language{Name: "bash"})
+	chosen, ok := parser.cRepetitionSkipForestConflictChoice(false, actions)
+	if !ok {
+		t.Fatal("cRepetitionSkipForestConflictChoice = false for non-recover non-opt-out language, want fold")
+	}
+	if chosen.Type != ParseActionReduce || chosen.Symbol != 3 {
+		t.Fatalf("cRepetitionSkipForestConflictChoice picked %+v, want reduce", chosen)
+	}
+
+	if chosen, ok := parser.cRepetitionSkipForestConflictChoice(true, actions); ok {
+		t.Fatalf("cRepetitionSkipForestConflictChoice picked %+v while recovery-active, want GLR fork", chosen)
+	}
+
+	parser = NewParser(&Language{Name: "dart"})
+	if chosen, ok := parser.cRepetitionSkipForestConflictChoice(false, actions); ok {
+		t.Fatalf("cRepetitionSkipForestConflictChoice picked %+v for opt-out language, want GLR fork", chosen)
+	}
+}
+
 func TestConflictPolicyGobRoundTrip(t *testing.T) {
 	lang := &Language{
 		Name:             "synthetic_policy_test",
