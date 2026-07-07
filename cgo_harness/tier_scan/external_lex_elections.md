@@ -13,19 +13,19 @@ scanner.
 | grammars | 206 |
 | registered external scanners | 119 |
 | default precise ExternalLexStates tables | 89 |
-| staged precise ExternalLexStates tables | 1 |
+| staged precise ExternalLexStates tables | 2 |
 
 | status | count |
 | --- | ---: |
 | default elected | 89 |
-| staged precise ELS | 1 |
-| blocked: missing precise ELS | 29 |
+| staged precise ELS | 2 |
+| blocked: missing precise ELS | 28 |
 | not applicable: no external scanner | 87 |
 
 ## Verification Receipts
 
 - `default_elected`: Docker: wave4-external-lex-election-inventory-test-v2; TestExternalLexStatesDefaultElectionInventory
-- `staged_precise_els`: Docker: wave4-javascript-precise-els-staged-test; TestJavascriptExternalLexStatesRegression (-tags javascript_precise_els); TestJavascriptExternalLexStatesRemainStagedByDefault
+- `staged_precise_els`: Docker: wave4-javascript-precise-els-staged-test; TestJavascriptExternalLexStatesRegression (-tags javascript_precise_els); TestJavascriptExternalLexStatesRemainStagedByDefault; Docker: wave4-cobol-precise-els-staged-test; TestCobolExternalLexStatesRegression (-tags cobol_precise_els); TestCobolExternalLexStatesRemainStagedByDefault
 - `sample_c_oracle_smoke`: Docker: wave4-external-lex-smoke-20260707T1928; angular/python/yaml clean; scss/wgsl classified recovery/error-shape IV
 - `wave3_inventory`: Docker: wave3-tier-plan-206; 206 visited; 202 planned files; 4 planned-empty
 
@@ -129,9 +129,9 @@ scanner.
 | `vue` | default elected | CLEAN | 40/40 | yes | yes | no | `.vue` |
 | `wgsl` | default elected | IV-recovery | 21/40 | yes | yes | no | `.wgsl` |
 | `yaml` | default elected | CLEAN | 40/40 | yes | yes | no | `.yaml,.yml` |
+| `cobol` | staged precise ELS | IV-version | 0/40 | yes | no | yes | `.cbl,.cob,.cpy` |
 | `javascript` | staged precise ELS | CLEAN | 40/40 | yes | no | yes | `.cjs,.js,.mjs` |
 | `agda` | blocked: missing precise ELS | IV-scanner | 2/40 | yes | no | no | `.agda` |
-| `cobol` | blocked: missing precise ELS | IV-version | 0/40 | yes | no | no | `.cbl,.cob,.cpy` |
 | `comment` | blocked: missing precise ELS | IV-perf | unmeasured | yes | no | no | `.txt` |
 | `dhall` | blocked: missing precise ELS | IV-unknown | 15/40 | yes | no | no | `.dhall` |
 | `djot` | blocked: missing precise ELS | IV-scanner? | unmeasured | yes | no | no | `.dj,.djot` |

@@ -49,6 +49,9 @@ RECEIPTS = {
         "Docker: wave4-javascript-precise-els-staged-test",
         "TestJavascriptExternalLexStatesRegression (-tags javascript_precise_els)",
         "TestJavascriptExternalLexStatesRemainStagedByDefault",
+        "Docker: wave4-cobol-precise-els-staged-test",
+        "TestCobolExternalLexStatesRegression (-tags cobol_precise_els)",
+        "TestCobolExternalLexStatesRemainStagedByDefault",
     ],
     "sample_c_oracle_smoke": [
         "Docker: wave4-external-lex-smoke-20260707T1928",

@@ -318,11 +318,11 @@
    "grammar": "cobol",
    "has_external_scanner": true,
    "parity": "0/40",
-   "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "staged_external_lex_states": true,
+   "status": "staged_precise_els",
+   "status_label": "staged precise ELS",
    "tier_classification": "IV-version",
-   "tier_notes": "corpus is CICS/embedded-SQL COBOL the pinned grammar doesn't support \u2014 12/12 sampled root-ERROR in C too (maple)"
+   "tier_notes": "corpus is CICS/embedded-SQL COBOL the pinned grammar doesn't support \u2014 12/12 sampled root-ERROR in C too (maple); precise ELS is staged because default election timed out in C recovery on BBANK10P.cbl before oracle comparison (wave4-cobol-retry-smoke-20260707T204922Z); default staged smoke completes as characterized Tier IV 0/1 with no timeout (wave4-cobol-default-smoke-20260707T210009Z)"
   },
   {
    "default_external_lex_states": false,
@@ -2474,10 +2474,10 @@
   }
  ],
  "histogram": {
-  "blocked_missing_precise_els": 29,
+  "blocked_missing_precise_els": 28,
   "default_elected": 89,
   "not_applicable_no_external_scanner": 87,
-  "staged_precise_els": 1
+  "staged_precise_els": 2
  },
  "receipts": {
   "default_elected": [
@@ -2491,7 +2491,10 @@
   "staged_precise_els": [
    "Docker: wave4-javascript-precise-els-staged-test",
    "TestJavascriptExternalLexStatesRegression (-tags javascript_precise_els)",
-   "TestJavascriptExternalLexStatesRemainStagedByDefault"
+   "TestJavascriptExternalLexStatesRemainStagedByDefault",
+   "Docker: wave4-cobol-precise-els-staged-test",
+   "TestCobolExternalLexStatesRegression (-tags cobol_precise_els)",
+   "TestCobolExternalLexStatesRemainStagedByDefault"
   ],
   "wave3_inventory": [
    "Docker: wave3-tier-plan-206",
@@ -2517,7 +2520,7 @@
   "default_external_lex_state_count": 89,
   "external_scanner_count": 119,
   "grammar_count": 206,
-  "staged_external_lex_state_count": 1
+  "staged_external_lex_state_count": 2
  },
  "wave": "wave4-external-lex-state-elections"
 }
