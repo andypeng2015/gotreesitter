@@ -181,14 +181,14 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 35/40, trunc=5, errTree=3, panics=0; previous CLEAN row was stale: BitBake recovered shell-function/function-flag shape normalization cleared remaining 3 residuals; Docker D-tier C-oracle parity verified 2026-06-13"
   },
   {
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": ".blade.php",
    "grammar": "blade",
    "has_external_scanner": true,
    "parity": "unmeasured",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery?",
    "tier_notes": "ext=.blade.php; faithful C error-cost version competition (see spec)"
   },
@@ -565,14 +565,14 @@
    "tier_notes": "ext=.dj,.djot; 0/40 with 39 truncations (node_limit persists at stack cap 2: 8.4KB file blows the node budget); markdown-class inline ambiguity \u2014 re-port stateful external scanner from pinned upstream; also IV-perf component (maple)"
   },
   {
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": ".dockerfile,dockerfile",
    "grammar": "dockerfile",
    "has_external_scanner": true,
    "parity": "unmeasured",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery?",
    "tier_notes": "ext=Dockerfile,.dockerfile; faithful C error-cost version competition (see spec)"
   },
@@ -1561,14 +1561,14 @@
    "tier_notes": "in ratchet"
   },
   {
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": ".nim,.nims",
    "grammar": "nim",
    "has_external_scanner": true,
    "parity": "unmeasured",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery?",
    "tier_notes": "faithful C error-cost version competition (see spec)"
   },
@@ -2149,14 +2149,14 @@
    "tier_notes": "in ratchet"
   },
   {
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": ".tcl",
    "grammar": "tcl",
    "has_external_scanner": true,
    "parity": "unmeasured",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery?",
    "tier_notes": "faithful C error-cost version competition (see spec)"
   },
@@ -2353,14 +2353,14 @@
    "tier_notes": "faithful C error-cost version competition (see spec)"
   },
   {
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": ".vhd,.vhdl",
    "grammar": "vhdl",
    "has_external_scanner": true,
    "parity": "unmeasured",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery?",
    "tier_notes": "faithful C error-cost version competition (see spec)"
   },
@@ -2474,8 +2474,8 @@
   }
  ],
  "histogram": {
-  "blocked_missing_precise_els": 42,
-  "default_elected": 76,
+  "blocked_missing_precise_els": 37,
+  "default_elected": 81,
   "not_applicable_no_external_scanner": 87,
   "staged_precise_els": 1
  },
@@ -2514,7 +2514,7 @@
   "staged_precise_els": "A precise ExternalLexStates table exists behind an opt-in build tag or explicit staging policy; default election is intentionally disabled."
  },
  "summary": {
-  "default_external_lex_state_count": 76,
+  "default_external_lex_state_count": 81,
   "external_scanner_count": 119,
   "grammar_count": 206,
   "staged_external_lex_state_count": 1
