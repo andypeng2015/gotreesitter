@@ -16,6 +16,20 @@ type gssNode struct {
 	// extraLinks holds links 1..k after a gated lossless condense merge. The
 	// inline (prev, entry) pair remains link 0.
 	extraLinks []gssMainLink
+
+	// Prefix aggregates for the C-recovery cost competition: the cumulative
+	// error cost / visible subtree count of the link-0 prev chain root..this
+	// node inclusive — the port of C StackNode.error_cost / node_count
+	// maintained at push (stack.c stack_node_new), read O(1) by
+	// ts_stack_error_cost (stack.c:493). Valid only while the matching gen
+	// field equals gssPrefixAggGen (parser_recover_c.go); allocNode resets the
+	// gens to 0 (never valid — the counter starts at 1). aggCost is filled by
+	// both the parser-side and merge-side walks (identical math); aggVis only
+	// by the parser side, hence the separate gen.
+	aggGen    uint64
+	aggVisGen uint64
+	aggCost   uint32
+	aggVis    int32
 }
 
 type gssMainLink struct {
@@ -375,6 +389,8 @@ func (s *gssScratch) allocNode(entry stackEntry, prev *gssNode, depth int) *gssN
 			n.depth = depth
 			n.hash = hash
 			n.extraLinks = nil
+			n.aggGen = 0
+			n.aggVisGen = 0
 			return n
 		}
 	}
@@ -426,6 +442,8 @@ func (s *gssScratch) allocNodeSlow(entry stackEntry, prev *gssNode, depth int, h
 		n.depth = depth
 		n.hash = hash
 		n.extraLinks = nil
+		n.aggGen = 0
+		n.aggVisGen = 0
 		if s.audit != nil {
 			s.audit.recordGSSAlloc(n)
 		}

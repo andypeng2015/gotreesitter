@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync/atomic"
 	"unicode"
 )
 
@@ -198,9 +199,125 @@ type CRecoveryGateDiagnostics struct {
 	ExternalLexStateMinLen int
 }
 
+// cRecoveryGateCacheKey fingerprints every input DiagnoseCRecoveryGate reads:
+// presence/lengths of the table surface plus the backing-array identity of
+// each slice whose contents feed the validation. Language tables are immutable
+// after decode; the only supported post-load mutations (external scanner and
+// ExternalLexStates attach via AttachLanguageSupport / RegisterExternalScanner)
+// swap whole slices or flip presence, which changes this key. Equal keys
+// therefore imply an identical diagnosis, so the memo is answer-preserving.
+//
+// WARNING (test authors): the fingerprint captures each slice's backing-array
+// identity (&ParseTable[0], &ParseActions[0], ...) plus its length — NOT its
+// contents. An in-place cell/row poke (e.g. lang.ParseTable[i] = v, or mutating
+// a ParseActionEntry's Actions in place) leaves both the base pointer and the
+// length unchanged, so the key is unchanged and DiagnoseCRecoveryGate returns
+// the STALE memoized diagnosis. To force a re-diagnosis, whole-swap the slice
+// (lang.ParseTable = newSlice) or construct a fresh Language. This aliasing was
+// flagged by review A as a memo-staleness footgun for gate tests.
+type cRecoveryGateCacheKey struct {
+	initialState       StateID
+	stateCount         uint32
+	symbolCount        uint32
+	tokenCount         uint32
+	externalTokenCount uint32
+
+	symbolMetadataLen     int
+	symbolNamesLen        int
+	parseActionsLen       int
+	lexModesLen           int
+	lexStatesLen          int
+	parseTableLen         int
+	smallParseTableLen    int
+	smallParseTableMapLen int
+
+	hasExternalScanner     bool
+	externalSymbolsLen     int
+	externalLexStatesLen   int
+	externalLexStateMinLen int
+
+	parseTablePtr         *[]uint16
+	smallParseTablePtr    *uint16
+	smallParseTableMapPtr *uint32
+	parseActionsPtr       *ParseActionEntry
+	lexModesPtr           *LexMode
+	externalSymbolsPtr    *Symbol
+	externalLexStatesPtr  *[]bool
+}
+
+type cRecoveryGateCacheEntry struct {
+	key  cRecoveryGateCacheKey
+	diag CRecoveryGateDiagnostics
+}
+
+func cRecoveryGateCacheKeyFor(lang *Language) cRecoveryGateCacheKey {
+	key := cRecoveryGateCacheKey{
+		initialState:       lang.InitialState,
+		stateCount:         lang.StateCount,
+		symbolCount:        lang.SymbolCount,
+		tokenCount:         lang.TokenCount,
+		externalTokenCount: lang.ExternalTokenCount,
+
+		symbolMetadataLen:     len(lang.SymbolMetadata),
+		symbolNamesLen:        len(lang.SymbolNames),
+		parseActionsLen:       len(lang.ParseActions),
+		lexModesLen:           len(lang.LexModes),
+		lexStatesLen:          len(lang.LexStates),
+		parseTableLen:         len(lang.ParseTable),
+		smallParseTableLen:    len(lang.SmallParseTable),
+		smallParseTableMapLen: len(lang.SmallParseTableMap),
+
+		hasExternalScanner:     lang.ExternalScanner != nil,
+		externalSymbolsLen:     len(lang.ExternalSymbols),
+		externalLexStatesLen:   len(lang.ExternalLexStates),
+		externalLexStateMinLen: externalLexStateMinLen(lang),
+	}
+	if len(lang.ParseTable) > 0 {
+		key.parseTablePtr = &lang.ParseTable[0]
+	}
+	if len(lang.SmallParseTable) > 0 {
+		key.smallParseTablePtr = &lang.SmallParseTable[0]
+	}
+	if len(lang.SmallParseTableMap) > 0 {
+		key.smallParseTableMapPtr = &lang.SmallParseTableMap[0]
+	}
+	if len(lang.ParseActions) > 0 {
+		key.parseActionsPtr = &lang.ParseActions[0]
+	}
+	if len(lang.LexModes) > 0 {
+		key.lexModesPtr = &lang.LexModes[0]
+	}
+	if len(lang.ExternalSymbols) > 0 {
+		key.externalSymbolsPtr = &lang.ExternalSymbols[0]
+	}
+	if len(lang.ExternalLexStates) > 0 {
+		key.externalLexStatesPtr = &lang.ExternalLexStates[0]
+	}
+	return key
+}
+
 // DiagnoseCRecoveryGate validates the runtime table surface required by the
 // faithful C recovery-cost competition path and returns the first failure.
+//
+// The full validation scans every parse-table row, so the result is memoized
+// per Language behind an input fingerprint (cRecoveryGateCacheKey): callers on
+// parse-adjacent paths (errorCostCompetitionLanguage via gap-token replay and
+// token-source construction) would otherwise redo an O(tables) scan per call,
+// which measurably dominated error-heavy parses.
 func DiagnoseCRecoveryGate(lang *Language) CRecoveryGateDiagnostics {
+	if lang == nil {
+		return CRecoveryGateDiagnostics{Reason: "nil language"}
+	}
+	key := cRecoveryGateCacheKeyFor(lang)
+	if e := lang.cRecoveryGateCache.Load(); e != nil && e.key == key {
+		return e.diag
+	}
+	diag := diagnoseCRecoveryGateUncached(lang)
+	lang.cRecoveryGateCache.Store(&cRecoveryGateCacheEntry{key: key, diag: diag})
+	return diag
+}
+
+func diagnoseCRecoveryGateUncached(lang *Language) CRecoveryGateDiagnostics {
 	if lang == nil {
 		return CRecoveryGateDiagnostics{Reason: "nil language"}
 	}
@@ -1008,6 +1125,203 @@ type cNodeMemoEntry struct {
 	hasVis   bool
 }
 
+// ---------------------------------------------------------------------------
+// Open-error-region incremental cost maintenance
+//
+// While an error region is OPEN, every absorb appends children to the same
+// ERROR node and bumps its equivVersion, invalidating the (node, equivVersion)
+// memo entries above. Re-deriving the region's aggregates then costs
+// O(len(children)) per lookup, and the cost competitions / condense keys /
+// merge comparisons look the region up several times per token — O(n^2)
+// across the region (the c_sharp Bicep witness class).
+//
+// C never pays this: stack.c stack_node_new maintains error_cost as a
+// monotonic accumulator on push ("node->error_cost = previous_node->error_cost;
+// ... node->error_cost += ts_subtree_error_cost(subtree);", stack.c:163-172 in
+// the pinned tree-sitter), and ts_stack_error_cost (stack.c:493) reads it in
+// O(1). The helpers below restore that shape for the port: an absorb ADDS its
+// known delta (subtree cost + ERROR_COST_PER_SKIPPED_TREE charges + span
+// growth) to the region's memoized aggregates instead of leaving them stale.
+// Every write is answer-preserving: it stores exactly what a full walk at the
+// new version would compute (assertable under
+// GOT_DEBUG_RECOVERY_INCREMENTAL_COST=1), and any mutation path that does NOT
+// go through these helpers simply leaves the entry stale, falling back to
+// today's full recompute.
+// ---------------------------------------------------------------------------
+
+// debugRecoveryIncrementalCost enables the env-gated incremental-vs-full-walk
+// assertion (GOT_DEBUG_RECOVERY_INCREMENTAL_COST=1), mirroring the
+// GOT_DEBUG_RECOVERY_CYCLES pattern: zero overhead when unset, loud stderr
+// (budgeted) plus counters when a divergence is found.
+var debugRecoveryIncrementalCost = os.Getenv("GOT_DEBUG_RECOVERY_INCREMENTAL_COST") == "1"
+
+var debugRecoveryIncrementalCostReportsLeft = 8
+var debugRecoveryIncrementalCostDivergences uint64
+var debugRecoveryIncrementalCostChecks uint64
+
+// debugRecoveryIncrementalCostReport wires the otherwise write-only
+// checks/divergences counters into observable output: a one-line summary of the
+// env-gated incremental-vs-full aggregate assertions
+// (GOT_DEBUG_RECOVERY_INCREMENTAL_COST=1), covering both the aggCost and the new
+// aggVis walks. Called once at parse end (parseInternal). The counters are
+// process-cumulative (they back a process-global report budget), so a
+// single-parse witness run shows exactly that parse's totals; checks>0 confirms
+// the assertions actually ran and divergences==0 confirms every memoized
+// aggregate matched its full walk. Per-divergence detail (budgeted to
+// debugRecoveryIncrementalCostReportsLeft) is printed at the divergence sites.
+func debugRecoveryIncrementalCostReport() {
+	if !debugRecoveryIncrementalCost || debugRecoveryIncrementalCostChecks == 0 {
+		return
+	}
+	fmt.Fprintf(os.Stderr,
+		"RECOVERY-INCREMENTAL-COST summary: checks=%d divergences=%d\n",
+		debugRecoveryIncrementalCostChecks, debugRecoveryIncrementalCostDivergences)
+}
+
+// cErrRegionSpanCost returns the span-derived portion of an ERROR node's own
+// error cost (the ERROR_COST_PER_SKIPPED_CHAR / _LINE terms), excluding the
+// per-recovery constant and all child-derived terms.
+func cErrRegionSpanCost(n *Node) uint32 {
+	var bytes, rows uint32
+	if n.endByte > n.startByte {
+		bytes = n.endByte - n.startByte
+	}
+	if n.endPoint.Row > n.startPoint.Row {
+		rows = n.endPoint.Row - n.startPoint.Row
+	}
+	return cErrCostPerSkippedChar*bytes + cErrCostPerSkippedLine*rows
+}
+
+// cErrRegionAbsorbPre captures an open ERROR region's memoized aggregates
+// before an absorb mutates it. Capture MUST happen before any children/span
+// mutation; apply cErrRegionPostAbsorb after the mutation and the
+// nodeBumpEquivVersion call.
+type cErrRegionAbsorbPre struct {
+	node     *Node
+	cost     uint32
+	vis      int
+	spanCost uint32
+	valid    bool
+}
+
+func (p *Parser) cErrRegionPreAbsorb(n *Node) cErrRegionAbsorbPre {
+	if p == nil || p.cNodeMemo == nil || p.language == nil || n == nil {
+		return cErrRegionAbsorbPre{}
+	}
+	if n.symbol != errorSymbol || (n.isMissing() && len(n.children) == 0) {
+		return cErrRegionAbsorbPre{}
+	}
+	// Route through the standard memoized walks so the delta base is exactly
+	// the full-walk answer at the pre-absorb version (O(1) once warm).
+	return cErrRegionAbsorbPre{
+		node:     n,
+		cost:     p.cNodeErrorCost(n),
+		vis:      p.cNodeVisibleSubtreeCount(n),
+		spanCost: cErrRegionSpanCost(n),
+		valid:    true,
+	}
+}
+
+// cErrRegionPostAbsorb updates the region's memo entries for its NEW
+// equivVersion from the captured pre-state plus the absorb delta: the span
+// growth and, per appended child, its (finished, memoized) subtree cost, its
+// skipped-tree charge, and its visible-subtree count. The child terms mirror
+// cNodeErrorCostLang's ERROR-node summarization exactly; the primed values are
+// what a full walk at the new version returns.
+func (p *Parser) cErrRegionPostAbsorb(pre cErrRegionAbsorbPre, added ...*Node) {
+	if !pre.valid || p == nil || p.cNodeMemo == nil {
+		return
+	}
+	n := pre.node
+	lang := p.language
+	cost := pre.cost - pre.spanCost + cErrRegionSpanCost(n)
+	vis := pre.vis
+	for _, c := range added {
+		if c == nil {
+			continue
+		}
+		vis += p.cNodeVisibleSubtreeCount(c)
+		if !(c.symbol == errorSymbol && len(c.children) == 0) {
+			// C ERROR leaf children keep subtree error_cost 0 (see
+			// cNodeErrorCostLang); everything else contributes its own cost.
+			cost += p.cNodeErrorCost(c)
+		}
+		if !c.isExtra() {
+			if cSymbolVisibleLang(lang, c.symbol) {
+				cost += cErrCostPerSkippedTree
+			} else if len(c.children) > 0 {
+				cost += cErrCostPerSkippedTree * uint32(cNodeVisibleChildCountLang(lang, c))
+			}
+		}
+	}
+	if debugRecoveryIncrementalCost {
+		p.debugCheckErrRegionIncremental(n, cost, vis)
+	}
+	p.cNodeMemo[n] = cNodeMemoEntry{
+		ver:      n.equivVersion,
+		cost:     cost,
+		visCount: vis,
+		hasCost:  true,
+		hasVis:   true,
+	}
+	if ms := p.mergeScratch; ms != nil {
+		if ms.cErrorCost == nil {
+			ms.cErrorCost = make(map[*Node]glrCErrorCostEntry)
+		}
+		ms.cErrorCost[n] = glrCErrorCostEntry{ver: n.equivVersion, cost: cost}
+	}
+}
+
+// cErrRegionPrime warms both memo families for a freshly created (or freshly
+// bumped) region node via the standard full walks — O(children) once, so the
+// per-token lookups that follow are O(1) until the next absorb re-primes.
+func (p *Parser) cErrRegionPrime(n *Node) {
+	if p == nil || p.cNodeMemo == nil || p.language == nil || n == nil {
+		return
+	}
+	cost := p.cNodeErrorCost(n)
+	p.cNodeVisibleSubtreeCount(n)
+	if ms := p.mergeScratch; ms != nil {
+		if ms.cErrorCost == nil {
+			ms.cErrorCost = make(map[*Node]glrCErrorCostEntry)
+		}
+		ms.cErrorCost[n] = glrCErrorCostEntry{ver: n.equivVersion, cost: cost}
+	}
+}
+
+// cNodeVisibleSubtreeCountUncachedLang is the memo-free mirror of
+// cNodeVisibleSubtreeCount, used only by the debug assertion so a poisoned
+// memo cannot mask itself.
+func cNodeVisibleSubtreeCountUncachedLang(lang *Language, n *Node) int {
+	if n == nil {
+		return 0
+	}
+	count := 0
+	if cSymbolVisibleLang(lang, n.symbol) {
+		count++
+	}
+	for _, c := range n.children {
+		count += cNodeVisibleSubtreeCountUncachedLang(lang, c)
+	}
+	return count
+}
+
+func (p *Parser) debugCheckErrRegionIncremental(n *Node, cost uint32, vis int) {
+	debugRecoveryIncrementalCostChecks++
+	fullCost := cNodeErrorCostLang(p.language, n)
+	fullVis := cNodeVisibleSubtreeCountUncachedLang(p.language, n)
+	if fullCost == cost && fullVis == vis {
+		return
+	}
+	debugRecoveryIncrementalCostDivergences++
+	if debugRecoveryIncrementalCostReportsLeft > 0 {
+		debugRecoveryIncrementalCostReportsLeft--
+		fmt.Fprintf(os.Stderr,
+			"RECOVERY-INCREMENTAL-COST divergence: node=%p sym=%d ver=%d span=[%d,%d) children=%d incremental(cost=%d vis=%d) full(cost=%d vis=%d)\n",
+			n, n.symbol, n.equivVersion, n.startByte, n.endByte, len(n.children), cost, vis, fullCost, fullVis)
+	}
+}
+
 func (p *Parser) cNodeErrorCost(n *Node) uint32 {
 	if p == nil {
 		return 0
@@ -1064,6 +1378,157 @@ func (p *Parser) cNodeErrorCost(n *Node) uint32 {
 	return cost
 }
 
+// ---------------------------------------------------------------------------
+// GSS prefix aggregates: O(1) ts_stack_error_cost / node_count reads
+//
+// C maintains error_cost and node_count as monotonic accumulators on each
+// stack node at push time (stack.c stack_node_new: "node->error_cost =
+// previous_node->error_cost; ... += ts_subtree_error_cost(subtree);",
+// stack.c:163-172 pinned), so ts_stack_error_cost (stack.c:493) and
+// ts_stack_node_count_since_error (stack.c:504) are O(1) per call. The port
+// re-summed the whole prev chain per call — O(depth) — and the condense /
+// merge / competition paths issue hundreds of such calls per token, which
+// dominates error-region parses even with warm per-node memos.
+//
+// The on-node aggregates below (gssNode.aggGen/aggCost/aggVisGen/aggVis)
+// restore C's shape: per gssNode, the cumulative aggregates of the prev-chain
+// prefix root..node inclusive. gssNode prev/entry links are write-once at
+// allocation except setGSSMainLink (link-0 rewrite), and node payload
+// contents mutate only through nodeBumpEquivVersion call sites; both choke
+// points bump gssPrefixAggGen, so an aggregate with a matching generation is
+// exactly the full-walk answer. allocNode zeroes the gens on every (possibly
+// slab-recycled) node and the generation counter starts at 1, so stale or
+// fresh nodes can never validate.
+// ---------------------------------------------------------------------------
+
+// gssPrefixAggGen is the global invalidation generation for the GSS prefix
+// aggregates stored on gssNode (aggGen/aggCost/aggVisGen/aggVis). Bumped by
+// nodeBumpEquivVersion (any in-place node content mutation, tree.go) and
+// setGSSMainLink link-0 rewrites (glr.go). Global rather than per-parser
+// because nodeBumpEquivVersion has no parser in scope; cross-parser
+// over-invalidation only costs a rebuild, never staleness. Initialized to 1
+// so the zero value of gssNode.aggGen / aggVisGen (fresh or slab-cleared
+// nodes) can never validate.
+var gssPrefixAggGen atomic.Uint64
+
+func init() {
+	gssPrefixAggGen.Store(1)
+}
+
+// cStackPrefixAgg returns the cumulative (error cost, visible subtree count)
+// of head's prev chain, filling the on-node aggregates bottom-up from the
+// deepest still-valid node — O(new or invalidated suffix), O(1) steady-state.
+func (p *Parser) cStackPrefixAgg(head *gssNode) (uint32, int) {
+	gen := gssPrefixAggGen.Load()
+	var cost uint32
+	var vis int32
+	path := p.cPrefixPath[:0]
+	gn := head
+	for gn != nil {
+		if gn.aggGen == gen && gn.aggVisGen == gen {
+			cost, vis = gn.aggCost, gn.aggVis
+			break
+		}
+		path = append(path, gn)
+		gn = gn.prev
+	}
+	for i := len(path) - 1; i >= 0; i-- {
+		gn := path[i]
+		if n := stackEntryNode(gn.entry); n != nil {
+			cost += p.cNodeErrorCost(n)
+			vis += int32(p.cNodeVisibleSubtreeCount(n))
+		}
+		gn.aggGen = gen
+		gn.aggVisGen = gen
+		gn.aggCost = cost
+		gn.aggVis = vis
+	}
+	p.cPrefixPath = path
+	return cost, int(vis)
+}
+
+// cStackPrefixCostForMerge is the merge-scratch twin of cStackPrefixAgg. It
+// fills cost only (the merge side has no memoized visible-count walk), so it
+// leaves aggVisGen untouched; the cost value is identical to the parser-side
+// fill, letting both sides share aggCost.
+func cStackPrefixCostForMerge(scratch *glrMergeScratch, lang *Language, head *gssNode) uint32 {
+	gen := gssPrefixAggGen.Load()
+	var cost uint32
+	path := scratch.cPrefixPath[:0]
+	gn := head
+	for gn != nil {
+		if gn.aggGen == gen {
+			cost = gn.aggCost
+			break
+		}
+		path = append(path, gn)
+		gn = gn.prev
+	}
+	for i := len(path) - 1; i >= 0; i-- {
+		gn := path[i]
+		if n := stackEntryNode(gn.entry); n != nil {
+			cost += cNodeErrorCostLangWithScratch(scratch, lang, n)
+		}
+		gn.aggGen = gen
+		gn.aggCost = cost
+	}
+	scratch.cPrefixPath = path
+	return cost
+}
+
+// debugCheckStackPrefixCostLang re-derives the chain sum without any cache
+// (GOT_DEBUG_RECOVERY_INCREMENTAL_COST=1 only).
+func debugCheckStackPrefixCostLang(lang *Language, head *gssNode, got uint32, label string) {
+	debugRecoveryIncrementalCostChecks++
+	var want uint32
+	for gn := head; gn != nil; gn = gn.prev {
+		if n := stackEntryNode(gn.entry); n != nil {
+			want += cNodeErrorCostLang(lang, n)
+		}
+	}
+	if want == got {
+		return
+	}
+	debugRecoveryIncrementalCostDivergences++
+	if debugRecoveryIncrementalCostReportsLeft > 0 {
+		debugRecoveryIncrementalCostReportsLeft--
+		fmt.Fprintf(os.Stderr,
+			"RECOVERY-PREFIX-AGG divergence (%s): head=%p cached=%d full=%d\n", label, head, got, want)
+	}
+}
+
+func (p *Parser) debugCheckStackPrefixAgg(head *gssNode, gotCost uint32, gotVis int) {
+	debugCheckStackPrefixCostLang(p.language, head, gotCost, "parser")
+	debugCheckStackPrefixVisLang(p.language, head, gotVis, "parser")
+}
+
+// debugCheckStackPrefixVisLang is the visible-subtree-count twin of
+// debugCheckStackPrefixCostLang: it re-derives the cumulative visible node
+// count of head's prev chain without any cache (via the uncached per-node walk
+// so a poisoned cNodeMemo cannot mask itself) and compares it against the
+// memoized aggVis the same way the cost check guards aggCost. A divergence here
+// means cStackCumulativeNodeCount / cNodeCountSinceError — and thus the php
+// baseline gate — would read a corrupt count.
+// (GOT_DEBUG_RECOVERY_INCREMENTAL_COST=1 only.)
+func debugCheckStackPrefixVisLang(lang *Language, head *gssNode, got int, label string) {
+	debugRecoveryIncrementalCostChecks++
+	var want int
+	for gn := head; gn != nil; gn = gn.prev {
+		if n := stackEntryNode(gn.entry); n != nil {
+			want += cNodeVisibleSubtreeCountUncachedLang(lang, n)
+		}
+	}
+	if want == got {
+		return
+	}
+	debugRecoveryIncrementalCostDivergences++
+	if debugRecoveryIncrementalCostReportsLeft > 0 {
+		debugRecoveryIncrementalCostReportsLeft--
+		fmt.Fprintf(os.Stderr,
+			"RECOVERY-PREFIX-AGG-VIS divergence (%s): head=%p cached=%d full=%d\n", label, head, got, want)
+	}
+}
+
 // cStackErrorCost ports ts_stack_error_cost: the accumulated error cost of
 // every subtree on the stack, plus one open recovery when the version just
 // entered the error state and has not absorbed anything yet (the C
@@ -1073,18 +1538,23 @@ func (p *Parser) cStackErrorCost(s *glrStack) uint32 {
 		return 0
 	}
 	var cost uint32
-	walk := func(n *Node) {
-		if n != nil {
-			cost += p.cNodeErrorCost(n)
-		}
-	}
 	if len(s.entries) > 0 {
 		for i := range s.entries {
-			walk(stackEntryNode(s.entries[i]))
+			if n := stackEntryNode(s.entries[i]); n != nil {
+				cost += p.cNodeErrorCost(n)
+			}
+		}
+	} else if p != nil && p.cNodeMemo != nil && s.gss.head != nil {
+		var vis int
+		cost, vis = p.cStackPrefixAgg(s.gss.head)
+		if debugRecoveryIncrementalCost {
+			p.debugCheckStackPrefixAgg(s.gss.head, cost, vis)
 		}
 	} else {
 		for gn := s.gss.head; gn != nil; gn = gn.prev {
-			walk(stackEntryNode(gn.entry))
+			if n := stackEntryNode(gn.entry); n != nil {
+				cost += p.cNodeErrorCost(n)
+			}
 		}
 	}
 	if s.cPaused || (s.cRec != nil && s.cRec.openErr == nil) {
@@ -1107,18 +1577,22 @@ func cStackErrorCostForMergeWithScratch(scratch *glrMergeScratch, lang *Language
 		return 0
 	}
 	var cost uint32
-	walk := func(n *Node) {
-		if n != nil {
-			cost += cNodeErrorCostLangWithScratch(scratch, lang, n)
-		}
-	}
 	if len(s.entries) > 0 {
 		for i := range s.entries {
-			walk(stackEntryNode(s.entries[i]))
+			if n := stackEntryNode(s.entries[i]); n != nil {
+				cost += cNodeErrorCostLangWithScratch(scratch, lang, n)
+			}
+		}
+	} else if scratch != nil && s.gss.head != nil {
+		cost = cStackPrefixCostForMerge(scratch, lang, s.gss.head)
+		if debugRecoveryIncrementalCost {
+			debugCheckStackPrefixCostLang(lang, s.gss.head, cost, "merge")
 		}
 	} else {
 		for gn := s.gss.head; gn != nil; gn = gn.prev {
-			walk(stackEntryNode(gn.entry))
+			if n := stackEntryNode(gn.entry); n != nil {
+				cost += cNodeErrorCostLangWithScratch(scratch, lang, n)
+			}
 		}
 	}
 	if s.cPaused || (s.cRec != nil && s.cRec.openErr == nil) {
@@ -1141,19 +1615,28 @@ func (p *Parser) cStackCumulativeNodeCount(s *glrStack) int {
 		return 0
 	}
 	count := 0
-	walk := func(e stackEntry) {
-		if n := stackEntryNode(e); n != nil {
-			count += p.cNodeVisibleSubtreeCount(n)
-		}
-	}
 	if len(s.entries) > 0 {
 		for i := range s.entries {
-			walk(s.entries[i])
+			if n := stackEntryNode(s.entries[i]); n != nil {
+				count += p.cNodeVisibleSubtreeCount(n)
+			}
+		}
+		return count
+	}
+	if p != nil && p.cNodeMemo != nil && s.gss.head != nil {
+		var cost uint32
+		cost, count = p.cStackPrefixAgg(s.gss.head)
+		if debugRecoveryIncrementalCost {
+			// Verify the memoized aggVis (this cumulative-count path is where the
+			// php baseline gate ultimately reads it) against a full uncached walk.
+			p.debugCheckStackPrefixAgg(s.gss.head, cost, count)
 		}
 		return count
 	}
 	for gn := s.gss.head; gn != nil; gn = gn.prev {
-		walk(gn.entry)
+		if n := stackEntryNode(gn.entry); n != nil {
+			count += p.cNodeVisibleSubtreeCount(n)
+		}
 	}
 	return count
 }
@@ -1167,6 +1650,12 @@ func (p *Parser) cApplyMergedErrorGroupBaseline(versions []glrStack) int {
 	}
 	for vi := range versions {
 		versions[vi].cNodeBaseline = groupBaseline
+		// Writing a node-count baseline is definitionally an error-state entry;
+		// set the sticky wreckage bit alongside it so the (untrustworthy — it can
+		// be written as 0 here, or clamped back to 0 by cNodeCountSinceError)
+		// baseline can never be the sole evidence the php gate relies on. See
+		// glrStack.cEverErrored.
+		versions[vi].cEverErrored = true
 	}
 	return groupBaseline
 }
@@ -1723,6 +2212,14 @@ func (p *Parser) cTerminalNextState(state StateID, sym Symbol) (StateID, ParseAc
 func (p *Parser) cHandleError(stacks *[]glrStack, si int, source []byte, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) (cRecoverOutcome, bool) {
 	s := &(*stacks)[si]
 	s.cPaused = false
+	// Sticky per-stack wreckage bit: this lineage is entering C error handling.
+	// Unlike cRec/cPaused/cNodeBaseline (all of which a later recovery resets to
+	// pristine values), cEverErrored never clears, so the php comma-list gate can
+	// tell "recovered wreckage that now looks clean" from "provably never
+	// errored". Setting it at the funnel entry means every downstream version
+	// (s.clone() below, its reduction/missing forks, and *s = versions[0])
+	// inherits it via clone()/cloneWithScratch(). See glrStack.cEverErrored.
+	s.cEverErrored = true
 	// cHandleError running is NOT proof the input is malformed — LALR table
 	// limitations routinely drive well-formed input into a momentary
 	// no-action point that step 1 below (cDoAllPotentialReductions) resolves
@@ -2414,6 +2911,13 @@ func (p *Parser) cRecoverToState(v *glrStack, depth int, goal StateID, arena *no
 	fork.cRecoverMissingGroup = nil
 	fork.dead = false
 	fork.shifted = false
+	// This recovered fork clears cRec (above) and may later reset its baseline,
+	// but it still descends from error wreckage and is about to wrap popped
+	// content in a real ERROR node. Keep the sticky bit set so it cannot pass
+	// the php gate two tokens later looking pristine. cloneWithScratch already
+	// copied it from v; this is the belt-and-suspenders entry-funnel site. See
+	// glrStack.cEverErrored.
+	fork.cEverErrored = true
 	keepDepth := len(entries) - cut
 	if !fork.truncate(keepDepth) {
 		return glrStack{}, false
@@ -2521,10 +3025,12 @@ func (p *Parser) cAbsorbTokenIntoError(v *glrStack, tok Token, nodeCount *int, a
 	if rec != nil && rec.openErr != nil {
 		top := stackEntryNode(v.top())
 		if top == rec.openErr {
+			pre := p.cErrRegionPreAbsorb(rec.openErr)
 			rec.openErr.children = appendLeaf(rec.openErr.children)
 			rec.openErr.endByte = tok.EndByte
 			rec.openErr.endPoint = tok.EndPoint
 			nodeBumpEquivVersion(rec.openErr)
+			p.cErrRegionPostAbsorb(pre, leaf)
 			if debugRecoveryCycleChecks {
 				debugRecoveryCheckNodeAcyclic(p, arena, "absorb-extend-top", rec.openErr)
 			}
@@ -2559,11 +3065,17 @@ func (p *Parser) cAbsorbTokenIntoError(v *glrStack, tok Token, nodeCount *int, a
 				extras = p.cAppendVisibleSplice(extras, n)
 			}
 			if found && v.truncate(len(entries)-above) {
+				pre := p.cErrRegionPreAbsorb(rec.openErr)
 				rec.openErr.children = append(rec.openErr.children, extras...)
 				rec.openErr.children = appendLeaf(rec.openErr.children)
 				rec.openErr.endByte = tok.EndByte
 				rec.openErr.endPoint = tok.EndPoint
 				nodeBumpEquivVersion(rec.openErr)
+				added := extras
+				if leaf != nil {
+					added = append(added, leaf)
+				}
+				p.cErrRegionPostAbsorb(pre, added...)
 				if debugRecoveryCycleChecks {
 					debugRecoveryCheckNodeAcyclic(p, arena, "absorb-fold-extras", rec.openErr)
 				}
@@ -2594,6 +3106,7 @@ func (p *Parser) cAbsorbTokenIntoError(v *glrStack, tok Token, nodeCount *int, a
 	if rec != nil {
 		rec.openErr = errNode
 	}
+	p.cErrRegionPrime(errNode)
 	if debugRecoveryCycleChecks {
 		debugRecoveryCheckNodeAcyclic(p, arena, "absorb-new-region", errNode)
 	}

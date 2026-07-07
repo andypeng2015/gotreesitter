@@ -3,12 +3,16 @@
 package grammars
 
 import (
+	"slices"
 	"testing"
 
 	gotreesitter "github.com/odvcencio/gotreesitter"
 )
 
-func TestRustExternalScannerBindsGeneratedExternalSymbolsByName(t *testing.T) {
+func TestRustExternalScannerBindsExternalSymbolsPositionally(t *testing.T) {
+	// Positional binding: external index i binds to scanner token i. The duplicate
+	// "string_content" externals (indices 0 and 3) bind to their positional tokens
+	// naturally, with no name-based disambiguation.
 	lang := rustExternalBindingTestLanguage(
 		"string_content",
 		"_raw_string_literal_start",
@@ -21,33 +25,27 @@ func TestRustExternalScannerBindsGeneratedExternalSymbolsByName(t *testing.T) {
 	if !ok {
 		t.Fatalf("RustExternalScanner binding type = %T, want RustExternalScanner", RustExternalScanner{}.ExternalScannerForLanguage(lang))
 	}
-	if got, want := scanner.externalToToken[0], rustTokStringContent; got != want {
-		t.Fatalf("regular string_content external mapped to token %d, want %d", got, want)
-	}
-	if got, want := scanner.externalToToken[1], rustTokRawStringStart; got != want {
-		t.Fatalf("raw-string-start external mapped to token %d, want %d", got, want)
-	}
-	if got, want := scanner.externalToToken[2], rustTokRawStringContent; got != want {
-		t.Fatalf("raw string_content external mapped to token %d, want %d", got, want)
+	if got, want := scanner.externalToToken, []int{0, 1, 2, 3, 4}; !slices.Equal(got, want) {
+		t.Fatalf("rust externalToToken = %v, want %v", got, want)
 	}
 	if got, want := scanner.symbols[rustTokStringContent], gotreesitter.Symbol(1); got != want {
-		t.Fatalf("string_content result symbol = %d, want shifted symbol %d", got, want)
+		t.Fatalf("token 0 (string-content) result symbol = %d, want %d", got, want)
 	}
-	if got, want := scanner.symbols[rustTokRawStringStart], gotreesitter.Symbol(2); got != want {
-		t.Fatalf("raw-string-start result symbol = %d, want shifted symbol %d", got, want)
+	if got, want := scanner.symbols[rustTokRawStringContent], gotreesitter.Symbol(4); got != want {
+		t.Fatalf("token 3 (raw string-content) result symbol = %d, want %d", got, want)
 	}
 
 	validExternal := []bool{false, true, false, false, true}
 	var semanticValid [rustTokenCount]bool
 	validSemantic := scanner.remapValidSymbols(validExternal, &semanticValid)
-	if validSemantic[rustTokStringClose] {
-		t.Fatalf("missing string-close external became valid after remap: %v", validSemantic)
+	if !validSemantic[rustTokStringClose] {
+		t.Fatalf("external index 1 did not map to token 1 (string-close): %v", validSemantic)
 	}
-	if !validSemantic[rustTokRawStringStart] {
-		t.Fatalf("raw-string-start external did not become valid semantic token: %v", validSemantic)
+	if !validSemantic[rustTokRawStringEnd] {
+		t.Fatalf("external index 4 did not map to token 4 (raw-string-end): %v", validSemantic)
 	}
-	if !validSemantic[rustTokFloatLiteral] {
-		t.Fatalf("float external did not become valid semantic token: %v", validSemantic)
+	if validSemantic[rustTokRawStringStart] {
+		t.Fatalf("token 2 (raw-string-start) unexpectedly valid: %v", validSemantic)
 	}
 }
 

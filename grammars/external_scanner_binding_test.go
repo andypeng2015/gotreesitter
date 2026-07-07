@@ -58,7 +58,10 @@ func TestKotlinSwiftExternalScannerSpecs(t *testing.T) {
 	}
 }
 
-func TestLanguageBoundExternalScannersBindBySymbolName(t *testing.T) {
+func TestLanguageBoundExternalScannersBindPositionally(t *testing.T) {
+	// Positional binding: external index i binds to scanner token i for every
+	// provenance. These synthetic languages present a shuffled subset of the real
+	// externals; positional binding maps them by position, not by symbol name.
 	kotlinLang := externalBindingTestLanguage(
 		"_extension_only",
 		"_import_dot",
@@ -69,12 +72,13 @@ func TestLanguageBoundExternalScannersBindBySymbolName(t *testing.T) {
 	if !ok {
 		t.Fatalf("KotlinExternalScanner binding type = %T, want KotlinExternalScanner", KotlinExternalScanner{}.ExternalScannerForLanguage(kotlinLang))
 	}
-	if got, want := kotlinScanner.externalToToken[0], -1; got != want {
-		t.Fatalf("kotlin extension-only external mapped to token %d, want %d", got, want)
+	if got, want := kotlinScanner.externalToToken, []int{0, 1, 2, 3}; !slices.Equal(got, want) {
+		t.Fatalf("kotlin externalToToken = %v, want %v", got, want)
 	}
-	if got, want := kotlinScanner.externalToToken[1], kotlinTokImportDot; got != want {
-		t.Fatalf("kotlin import-dot external mapped to token %d, want %d", got, want)
-	}
+	// safe_nav sits at external index 2 == scanner token index 2, so positional
+	// binding lands it on kotlinTokSafeNav with its real symbol (3 here). By-name
+	// binding dropped this slot for the real grammar because the Language display
+	// name is "\?." rather than the spec rule name "safe_nav".
 	if got, want := kotlinScanner.externalToToken[2], kotlinTokSafeNav; got != want {
 		t.Fatalf("kotlin safe-nav external mapped to token %d, want %d", got, want)
 	}
@@ -91,21 +95,15 @@ func TestLanguageBoundExternalScannersBindBySymbolName(t *testing.T) {
 	if !ok {
 		t.Fatalf("SwiftExternalScanner binding type = %T, want SwiftExternalScanner", SwiftExternalScanner{}.ExternalScannerForLanguage(swiftLang))
 	}
-	if got, want := swiftScanner.externalToToken[0], swtTokFakeTryBang; got != want {
-		t.Fatalf("swift fake-try-bang external mapped to token %d, want %d", got, want)
+	if got, want := swiftScanner.externalToToken, []int{0, 1, 2}; !slices.Equal(got, want) {
+		t.Fatalf("swift externalToToken = %v, want %v", got, want)
 	}
-	if got, want := swiftScanner.externalToToken[1], swtTokElseKeyword; got != want {
-		t.Fatalf("swift else external mapped to token %d, want %d", got, want)
-	}
-	if got, want := swiftScanner.externalToToken[2], swtTokDirectiveElse; got != want {
-		t.Fatalf("swift directive-else external mapped to token %d, want %d", got, want)
-	}
-	if got, want := swiftScanner.symbols[swtTokDirectiveElse], gotreesitter.Symbol(3); got != want {
-		t.Fatalf("swift directive-else result symbol = %d, want %d", got, want)
+	if got, want := swiftScanner.symbols[2], gotreesitter.Symbol(3); got != want {
+		t.Fatalf("swift token-2 result symbol = %d, want %d", got, want)
 	}
 }
 
-func TestExternalScannerBindingFallbackUsesUnmappedExternalSymbols(t *testing.T) {
+func TestExternalScannerBindingBindsPositionally(t *testing.T) {
 	lang := externalBindingTestLanguage(
 		"",
 		"named_two",
@@ -122,21 +120,26 @@ func TestExternalScannerBindingFallbackUsesUnmappedExternalSymbols(t *testing.T)
 		symbols[tokenIdx] = sym
 	})
 
-	if got, want := externalToToken, []int{0, 2, 1}; !slices.Equal(got, want) {
+	// External index i binds to token i; empty and mismatched Language names do
+	// not change the mapping.
+	if got, want := externalToToken, []int{0, 1, 2}; !slices.Equal(got, want) {
 		t.Fatalf("externalToToken = %v, want %v", got, want)
 	}
 	if got, want := symbols[0], gotreesitter.Symbol(1); got != want {
-		t.Fatalf("fallback token 0 symbol = %d, want %d", got, want)
+		t.Fatalf("token 0 symbol = %d, want %d", got, want)
 	}
-	if got, want := symbols[1], gotreesitter.Symbol(3); got != want {
-		t.Fatalf("fallback token 1 symbol = %d, want %d", got, want)
+	if got, want := symbols[1], gotreesitter.Symbol(2); got != want {
+		t.Fatalf("token 1 symbol = %d, want %d", got, want)
 	}
-	if got, want := symbols[2], gotreesitter.Symbol(2); got != want {
-		t.Fatalf("named token 2 symbol = %d, want %d", got, want)
+	if got, want := symbols[2], gotreesitter.Symbol(3); got != want {
+		t.Fatalf("token 2 symbol = %d, want %d", got, want)
 	}
 }
 
-func TestExternalScannerBindingDoesNotFallbackForNamedMismatch(t *testing.T) {
+func TestExternalScannerBindingPositionalRecordsNameDrift(t *testing.T) {
+	// Positional binding ignores name disagreement (the old algorithm left these
+	// unbound as [-1, 2, -1]); every disagreeing index is recorded as drift so a
+	// genuine spec/grammar ordering skew is observable instead of silent.
 	lang := externalBindingTestLanguage(
 		"alias_zero",
 		"named_two",
@@ -149,53 +152,108 @@ func TestExternalScannerBindingDoesNotFallbackForNamedMismatch(t *testing.T) {
 	}
 
 	symbols := make([]gotreesitter.Symbol, len(names))
+	externalBindingDriftBeginCapture()
+	t.Cleanup(func() { externalBindingDriftEndCapture() })
 	externalToToken := bindExternalScannerSymbolNames(lang, names, func(tokenIdx int, sym gotreesitter.Symbol) {
 		symbols[tokenIdx] = sym
 	})
-
-	if got, want := externalToToken, []int{-1, 2, -1}; !slices.Equal(got, want) {
-		t.Fatalf("externalToToken = %v, want %v", got, want)
-	}
-	if got, want := symbols[0], gotreesitter.Symbol(0); got != want {
-		t.Fatalf("unmatched token 0 symbol = %d, want %d", got, want)
-	}
-	if got, want := symbols[1], gotreesitter.Symbol(0); got != want {
-		t.Fatalf("unmatched token 1 symbol = %d, want %d", got, want)
-	}
-	if got, want := symbols[2], gotreesitter.Symbol(2); got != want {
-		t.Fatalf("named token 2 symbol = %d, want %d", got, want)
-	}
-}
-
-func TestExternalScannerBindingFallbackKeepsGeneratedOrderAliases(t *testing.T) {
-	lang := externalBindingTestLanguage(
-		"alias_zero",
-		"alias_one",
-		"alias_two",
-	)
-	lang.GeneratedByGrammargen = true
-	names := []string{
-		"scanner_zero",
-		"scanner_one",
-		"scanner_two",
-	}
-
-	symbols := make([]gotreesitter.Symbol, len(names))
-	externalToToken := bindExternalScannerSymbolNames(lang, names, func(tokenIdx int, sym gotreesitter.Symbol) {
-		symbols[tokenIdx] = sym
-	})
+	drift := externalBindingDriftEndCapture()
 
 	if got, want := externalToToken, []int{0, 1, 2}; !slices.Equal(got, want) {
 		t.Fatalf("externalToToken = %v, want %v", got, want)
 	}
 	if got, want := symbols[0], gotreesitter.Symbol(1); got != want {
-		t.Fatalf("generated alias token 0 symbol = %d, want %d", got, want)
+		t.Fatalf("token 0 symbol = %d, want %d", got, want)
 	}
 	if got, want := symbols[1], gotreesitter.Symbol(2); got != want {
-		t.Fatalf("generated alias token 1 symbol = %d, want %d", got, want)
+		t.Fatalf("token 1 symbol = %d, want %d", got, want)
 	}
 	if got, want := symbols[2], gotreesitter.Symbol(3); got != want {
-		t.Fatalf("generated alias token 2 symbol = %d, want %d", got, want)
+		t.Fatalf("token 2 symbol = %d, want %d", got, want)
+	}
+	if len(drift) != 3 {
+		t.Fatalf("drift entries = %d (%v), want 3 (every index disagrees)", len(drift), drift)
+	}
+}
+
+// TestExternalBindingDriftFiresOnMismatchSilentOnAligned and
+// TestExternalBindingLengthMismatchBindsMin live in this file, rather than in
+// external_scanner_positional_binding_test.go (gated !grammar_subset only),
+// because neither depends on any real language: both exercise
+// bindExternalScannerSymbolNames purely through the synthetic
+// externalBindingTestLanguage fixture below. This file's broader tag keeps them
+// visible to grammar_subset builds that select kotlin+swift.
+
+// TestExternalBindingDriftFiresOnMismatchSilentOnAligned verifies the
+// verification-only drift signal: aligned specs are silent, name disagreements are
+// recorded (with their index), and empty Language names never drift.
+func TestExternalBindingDriftFiresOnMismatchSilentOnAligned(t *testing.T) {
+	totalBefore := externalBindingDriftTotal()
+
+	// Aligned: Language symbol names match spec names at every index -> no drift.
+	aligned := externalBindingTestLanguage("alpha", "beta", "gamma")
+	externalBindingDriftBeginCapture()
+	t.Cleanup(func() { externalBindingDriftEndCapture() })
+	bindExternalScannerSymbolNames(aligned, []string{"alpha", "beta", "gamma"}, func(int, gotreesitter.Symbol) {})
+	if drift := externalBindingDriftEndCapture(); len(drift) != 0 {
+		t.Fatalf("aligned spec produced drift: %v", drift)
+	}
+
+	// Skewed at indices 0 and 2; index 1 matches.
+	skewed := externalBindingTestLanguage("alpha", "beta", "gamma")
+	externalBindingDriftBeginCapture()
+	t.Cleanup(func() { externalBindingDriftEndCapture() })
+	bindExternalScannerSymbolNames(skewed, []string{"ALPHA", "beta", "GAMMA"}, func(int, gotreesitter.Symbol) {})
+	drift := externalBindingDriftEndCapture()
+	if len(drift) != 2 {
+		t.Fatalf("skewed spec drift = %d (%v), want 2", len(drift), drift)
+	}
+	if drift[0].Index != 0 || drift[1].Index != 2 {
+		t.Fatalf("drift indices = %v, want [0 2]", drift)
+	}
+	if drift[0].Got != "alpha" || drift[0].Want != "ALPHA" {
+		t.Fatalf("drift[0] = %+v, want got=alpha want=ALPHA", drift[0])
+	}
+
+	// Empty Language names cannot be verified and never drift.
+	unnamed := externalBindingTestLanguage("", "", "")
+	externalBindingDriftBeginCapture()
+	t.Cleanup(func() { externalBindingDriftEndCapture() })
+	bindExternalScannerSymbolNames(unnamed, []string{"a", "b", "c"}, func(int, gotreesitter.Symbol) {})
+	if drift := externalBindingDriftEndCapture(); len(drift) != 0 {
+		t.Fatalf("empty Language names produced drift: %v", drift)
+	}
+
+	// The process-wide counter tracks every disagreement; only the skewed bind
+	// above contributed (two indices). This test is non-parallel, so no other
+	// binder call overlaps this delta.
+	if got := externalBindingDriftTotal() - totalBefore; got != 2 {
+		t.Fatalf("drift counter delta = %d, want 2", got)
+	}
+}
+
+// TestExternalBindingLengthMismatchBindsMin documents the length-mismatch contract:
+// bind min(externals, specTokens); surplus scanner tokens keep defaults (never
+// bound), surplus externals stay -1.
+func TestExternalBindingLengthMismatchBindsMin(t *testing.T) {
+	// Spec longer than externals: only the first len(externals) tokens are bound.
+	lang := externalBindingTestLanguage("a", "b")
+	var boundTokens []int
+	ett := bindExternalScannerSymbolNames(lang, []string{"a", "b", "c", "d"}, func(tok int, _ gotreesitter.Symbol) {
+		boundTokens = append(boundTokens, tok)
+	})
+	if got, want := ett, []int{0, 1}; !slices.Equal(got, want) {
+		t.Fatalf("spec-longer externalToToken = %v, want %v", got, want)
+	}
+	if got, want := boundTokens, []int{0, 1}; !slices.Equal(got, want) {
+		t.Fatalf("spec-longer bound tokens = %v, want %v", got, want)
+	}
+
+	// Externals longer than spec: surplus externals stay unbound (-1).
+	lang2 := externalBindingTestLanguage("a", "b", "c", "d")
+	ett2 := bindExternalScannerSymbolNames(lang2, []string{"a", "b"}, func(int, gotreesitter.Symbol) {})
+	if got, want := ett2, []int{0, 1, -1, -1}; !slices.Equal(got, want) {
+		t.Fatalf("externals-longer externalToToken = %v, want %v", got, want)
 	}
 }
 

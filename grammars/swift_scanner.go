@@ -48,39 +48,39 @@ const (
 
 // Concrete symbol IDs from the generated Swift grammar ExternalSymbols.
 const (
-	swtSymBlockComment              gotreesitter.Symbol = 180
-	swtSymRawStrPart                gotreesitter.Symbol = 181
-	swtSymRawStrContinuingIndicator gotreesitter.Symbol = 182
-	swtSymRawStrEndPart             gotreesitter.Symbol = 183
-	swtSymImplicitSemi              gotreesitter.Symbol = 184
-	swtSymExplicitSemi              gotreesitter.Symbol = 185
-	swtSymArrowOperator             gotreesitter.Symbol = 186
-	swtSymDotOperator               gotreesitter.Symbol = 187
-	swtSymConjunctionOperator       gotreesitter.Symbol = 188
-	swtSymDisjunctionOperator       gotreesitter.Symbol = 189
-	swtSymNilCoalescingOperator     gotreesitter.Symbol = 190
-	swtSymEqualSign                 gotreesitter.Symbol = 191
-	swtSymEqEq                      gotreesitter.Symbol = 192
-	swtSymPlusThenWs                gotreesitter.Symbol = 193
-	swtSymMinusThenWs               gotreesitter.Symbol = 194
-	swtSymBang                      gotreesitter.Symbol = 195
-	swtSymThrowsKeyword             gotreesitter.Symbol = 196
-	swtSymRethrowsKeyword           gotreesitter.Symbol = 197
-	swtSymDefaultKeyword            gotreesitter.Symbol = 198
-	swtSymWhereKeyword              gotreesitter.Symbol = 199
-	swtSymElseKeyword               gotreesitter.Symbol = 200
-	swtSymCatchKeyword              gotreesitter.Symbol = 201
-	swtSymAsKeyword                 gotreesitter.Symbol = 202
-	swtSymAsQuest                   gotreesitter.Symbol = 203
-	swtSymAsBang                    gotreesitter.Symbol = 204
-	swtSymAsyncKeyword              gotreesitter.Symbol = 205
-	swtSymCustomOperator            gotreesitter.Symbol = 206
-	swtSymHashSymbol                gotreesitter.Symbol = 207
-	swtSymDirectiveIf               gotreesitter.Symbol = 208
-	swtSymDirectiveElseif           gotreesitter.Symbol = 209
-	swtSymDirectiveElse             gotreesitter.Symbol = 530
-	swtSymDirectiveEndif            gotreesitter.Symbol = 211
-	swtSymFakeTryBang               gotreesitter.Symbol = 212
+	swtSymBlockComment              gotreesitter.Symbol = 190
+	swtSymRawStrPart                gotreesitter.Symbol = 191
+	swtSymRawStrContinuingIndicator gotreesitter.Symbol = 192
+	swtSymRawStrEndPart             gotreesitter.Symbol = 193
+	swtSymImplicitSemi              gotreesitter.Symbol = 194
+	swtSymExplicitSemi              gotreesitter.Symbol = 195
+	swtSymArrowOperator             gotreesitter.Symbol = 196
+	swtSymDotOperator               gotreesitter.Symbol = 197
+	swtSymConjunctionOperator       gotreesitter.Symbol = 198
+	swtSymDisjunctionOperator       gotreesitter.Symbol = 199
+	swtSymNilCoalescingOperator     gotreesitter.Symbol = 200
+	swtSymEqualSign                 gotreesitter.Symbol = 201
+	swtSymEqEq                      gotreesitter.Symbol = 202
+	swtSymPlusThenWs                gotreesitter.Symbol = 203
+	swtSymMinusThenWs               gotreesitter.Symbol = 204
+	swtSymBang                      gotreesitter.Symbol = 205
+	swtSymThrowsKeyword             gotreesitter.Symbol = 206
+	swtSymRethrowsKeyword           gotreesitter.Symbol = 207
+	swtSymDefaultKeyword            gotreesitter.Symbol = 208
+	swtSymWhereKeyword              gotreesitter.Symbol = 209
+	swtSymElseKeyword               gotreesitter.Symbol = 210
+	swtSymCatchKeyword              gotreesitter.Symbol = 211
+	swtSymAsKeyword                 gotreesitter.Symbol = 212
+	swtSymAsQuest                   gotreesitter.Symbol = 213
+	swtSymAsBang                    gotreesitter.Symbol = 214
+	swtSymAsyncKeyword              gotreesitter.Symbol = 215
+	swtSymCustomOperator            gotreesitter.Symbol = 216
+	swtSymHashSymbol                gotreesitter.Symbol = 217
+	swtSymDirectiveIf               gotreesitter.Symbol = 218
+	swtSymDirectiveElseif           gotreesitter.Symbol = 219
+	swtSymDirectiveElse             gotreesitter.Symbol = 220
+	swtSymDirectiveEndif            gotreesitter.Symbol = 221
+	swtSymFakeTryBang               gotreesitter.Symbol = 222
 )
 
 // swtDefaultSymTable maps token indexes to concrete ts2go symbol IDs.

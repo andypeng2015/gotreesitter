@@ -141,6 +141,22 @@ func (p *Parser) deterministicConflictChoiceForDispatch(source []byte, s *glrSta
 	case "r":
 		chosen, ok = rRepetitionShiftConflictChoice(p.language, currentState, actions)
 	case "php":
+		// Stack-scoped error gate: only lineages that never entered the C
+		// error state take the deterministic comma list-repeat fold. The sticky
+		// !cEverErrored bit is the airtight signal; cNodeBaseline==0 is NOT —
+		// cApplyMergedErrorGroupBaseline can write a 0 baseline (error entered at
+		// cumulative count 0), the cNodeCountSinceError clamp can rewrite a
+		// baseline back to 0 after a pop-below-everything, and cRecoverToState
+		// clears cRec on the recovered fork, so a wreckage-carrying lineage could
+		// pass the old baseline==0 gate two tokens later. The !cPaused check is
+		// still required: pausing precedes the cHandleError entry that sets
+		// cEverErrored. See phpCommaListRepeatConflictChoice for why
+		// wreckage-descended lineages must keep the ordinary GLR fork here.
+		if s != nil && s.cRec == nil && !s.cPaused && s.cRecoverMissingGroup == nil && !s.cEverErrored {
+			if next, ok := phpCommaListRepeatConflictChoice(p.language, tok, actions); ok {
+				return next, true
+			}
+		}
 		chosen, ok = phpRepetitionShiftConflictChoice(p.language, tok, currentState, actions)
 	case "perl":
 		chosen, ok = perlRepetitionShiftConflictChoice(p.language, currentState, actions)
