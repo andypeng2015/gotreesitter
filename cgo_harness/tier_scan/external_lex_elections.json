@@ -49,14 +49,14 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 39/40, trunc=0, errTree=0, panics=0; previous CLEAN row was stale: Apex generic local declarations and .class literal compatibility normalized to C oracle; Docker parity verified 2026-06-11"
   },
   {
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": ".ino",
    "grammar": "arduino",
    "has_external_scanner": true,
    "parity": "40/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "CLEAN",
    "tier_notes": "in ratchet"
   },
@@ -73,14 +73,14 @@
    "tier_notes": "faithful C error-cost version competition (see spec)"
   },
   {
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": ".astro",
    "grammar": "astro",
    "has_external_scanner": true,
    "parity": "40/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "CLEAN",
    "tier_notes": "in ratchet"
   },
@@ -133,14 +133,14 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 39/40, trunc=1, errTree=0, panics=0; previous CLEAN row was stale: in ratchet"
   },
   {
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": ".bean,.beancount",
    "grammar": "beancount",
    "has_external_scanner": true,
    "parity": "3/3",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "CLEAN",
    "tier_notes": "latest wringer cgo_harness/harness_out/wringer_beancount_all_root_tail_20260623T192449/wringer_summary.json closed clean 3/3 with family_counts {clean:3}; resolved by generalized accepted clean-tail forest/root finalization fix, superseding prior accepted-shape/root-child materialization residual"
   },
@@ -301,14 +301,14 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: unmeasured (timeout external); scan metadata oom_killed=true, use as diagnostic evidence; previous CLEAN row was stale: in ratchet"
   },
   {
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": ".cmake,.cmake.in",
    "grammar": "cmake",
    "has_external_scanner": true,
    "parity": "40/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "CLEAN",
    "tier_notes": "in ratchet"
   },
@@ -637,14 +637,14 @@
    "tier_notes": "ext=.ebnf; faithful C error-cost version competition (see spec)"
   },
   {
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": ".editorconfig",
    "grammar": "editorconfig",
    "has_external_scanner": true,
    "parity": "40/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "CLEAN",
    "tier_notes": "in ratchet"
   },
@@ -829,14 +829,14 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: unmeasured (timeout external); scan metadata oom_killed=true, use as diagnostic evidence; previous CLEAN row was stale: in ratchet"
   },
   {
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": ".foam",
    "grammar": "foam",
    "has_external_scanner": true,
    "parity": "40/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "CLEAN",
    "tier_notes": "in ratchet"
   },
@@ -853,14 +853,14 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: unmeasured (timeout external); scan metadata oom_killed=true, use as diagnostic evidence; previous CLEAN row was stale: in ratchet; cap=2 plus root-leading-trivia normalization and missing end_definition recovery for unterminated word_definition (verified 2026-06-11)"
   },
   {
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": ".f,.f03,.f08,.f90,.f95",
    "grammar": "fortran",
    "has_external_scanner": true,
    "parity": "40/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "CLEAN",
    "tier_notes": "in ratchet"
   },
@@ -925,14 +925,14 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 9/10, trunc=0, errTree=0, panics=0; previous CLEAN row was stale: in ratchet"
   },
   {
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": "commit_editmsg",
    "grammar": "gitcommit",
    "has_external_scanner": true,
    "parity": "13/13",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "CLEAN",
    "tier_notes": "in ratchet"
   },
@@ -973,14 +973,14 @@
    "tier_notes": "faithful C error-cost version competition (see spec)"
   },
   {
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": ".gn,.gni",
    "grammar": "gn",
    "has_external_scanner": true,
    "parity": "40/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "CLEAN",
    "tier_notes": "in ratchet; scanner aligned with upstream C (maple)"
   },
@@ -1549,14 +1549,14 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 0/1, trunc=0, errTree=0, panics=0; previous CLEAN row was stale: in ratchet"
   },
   {
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": ".ncl",
    "grammar": "nickel",
    "has_external_scanner": true,
    "parity": "40/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "CLEAN",
    "tier_notes": "in ratchet"
   },
@@ -1717,14 +1717,14 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 36/40, trunc=4, errTree=4, panics=0; previous CLEAN row was stale: in ratchet"
   },
   {
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": ".pkl",
    "grammar": "pkl",
    "has_external_scanner": true,
    "parity": "40/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "CLEAN",
    "tier_notes": "in ratchet; verified after willow shape fixes"
   },
@@ -1861,14 +1861,14 @@
    "tier_notes": "in ratchet; verified after willow shape fixes"
   },
   {
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": ".r",
    "grammar": "r",
    "has_external_scanner": true,
    "parity": "40/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "CLEAN",
    "tier_notes": "in ratchet; verified after willow shape fixes"
   },
@@ -1945,14 +1945,14 @@
    "tier_notes": "Robot escaped nested variable normalization cleared one C error-shape residual; remaining 11/40 require faithful C error-cost version competition (see spec)"
   },
   {
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": ".ron",
    "grammar": "ron",
    "has_external_scanner": true,
    "parity": "40/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "CLEAN",
    "tier_notes": "in ratchet"
   },
@@ -1969,14 +1969,14 @@
    "tier_notes": "timeout-or-fail at 1200s canonical budget"
   },
   {
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": ".rb",
    "grammar": "ruby",
    "has_external_scanner": true,
    "parity": "40/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "CLEAN",
    "tier_notes": "in ratchet; inline Ruby when-then body StartByte normalized to C oracle"
   },
@@ -2077,14 +2077,14 @@
    "tier_notes": "faithful C error-cost version competition (see spec)"
   },
   {
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": ".nut",
    "grammar": "squirrel",
    "has_external_scanner": true,
    "parity": "40/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "CLEAN",
    "tier_notes": "in ratchet"
   },
@@ -2137,14 +2137,14 @@
    "tier_notes": "faithful C error-cost version competition (see spec)"
   },
   {
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": ".td",
    "grammar": "tablegen",
    "has_external_scanner": true,
    "parity": "40/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "CLEAN",
    "tier_notes": "in ratchet"
   },
@@ -2257,14 +2257,14 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 8/11, trunc=0, errTree=0, panics=0; previous CLEAN row was stale: in ratchet"
   },
   {
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": ".tsx",
    "grammar": "tsx",
    "has_external_scanner": true,
    "parity": "40/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "CLEAN",
    "tier_notes": "in ratchet"
   },
@@ -2377,14 +2377,14 @@
    "tier_notes": "ext=.txt; faithful C error-cost version competition (see spec)"
   },
   {
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": ".vue",
    "grammar": "vue",
    "has_external_scanner": true,
    "parity": "40/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "CLEAN",
    "tier_notes": "in ratchet"
   },
@@ -2474,8 +2474,8 @@
   }
  ],
  "histogram": {
-  "blocked_missing_precise_els": 92,
-  "default_elected": 26,
+  "blocked_missing_precise_els": 74,
+  "default_elected": 44,
   "not_applicable_no_external_scanner": 87,
   "staged_precise_els": 1
  },
@@ -2514,7 +2514,7 @@
   "staged_precise_els": "A precise ExternalLexStates table exists behind an opt-in build tag or explicit staging policy; default election is intentionally disabled."
  },
  "summary": {
-  "default_external_lex_state_count": 26,
+  "default_external_lex_state_count": 44,
   "external_scanner_count": 119,
   "grammar_count": 206,
   "staged_external_lex_state_count": 1
