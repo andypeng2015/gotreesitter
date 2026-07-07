@@ -12,14 +12,14 @@ scanner.
 | --- | ---: |
 | grammars | 206 |
 | registered external scanners | 119 |
-| default precise ExternalLexStates tables | 81 |
+| default precise ExternalLexStates tables | 85 |
 | staged precise ExternalLexStates tables | 1 |
 
 | status | count |
 | --- | ---: |
-| default elected | 81 |
+| default elected | 85 |
 | staged precise ELS | 1 |
-| blocked: missing precise ELS | 37 |
+| blocked: missing precise ELS | 33 |
 | not applicable: no external scanner | 87 |
 
 ## Verification Receipts
@@ -54,10 +54,13 @@ scanner.
 | `cairo` | default elected | IV-recovery? | 1/40 | yes | yes | no | `.cairo` |
 | `cmake` | default elected | CLEAN | 40/40 | yes | yes | no | `.cmake,.cmake.in` |
 | `cooklang` | default elected | IV-recovery | 0/3 | yes | yes | no | `.cook` |
+| `cpp` | default elected | IV-recovery | 9/40 | yes | yes | no | `.cc,.cpp,.cxx,.h,.hh,.hpp,.hxx` |
 | `css` | default elected | IV-unknown | 37/40 | yes | yes | no | `.css` |
 | `cuda` | default elected | IV-recovery? | 21/40 | yes | yes | no | `.cu,.cuh` |
 | `cue` | default elected | IV-unknown | 39/40 | yes | yes | no | `.cue` |
+| `d` | default elected | IV-recovery? | unmeasured | yes | yes | no | `.d,.di` |
 | `dart` | default elected | IV-recovery? | 0/40 | yes | yes | no | `.dart` |
+| `disassembly` | default elected | IV-version | 0/40 | yes | yes | no | `.dis,.dump` |
 | `dockerfile` | default elected | IV-recovery? | unmeasured | yes | yes | no | `.dockerfile,dockerfile` |
 | `dtd` | default elected | IV-unknown | 0/3 | yes | yes | no | `.dtd` |
 | `earthfile` | default elected | IV-recovery? | 0/40 | yes | yes | no | `earthfile` |
@@ -116,6 +119,7 @@ scanner.
 | `teal` | default elected | IV-recovery? | 8/40 | yes | yes | no | `.tl` |
 | `templ` | default elected | IV-recovery? | 31/40 | yes | yes | no | `.templ` |
 | `tsx` | default elected | CLEAN | 40/40 | yes | yes | no | `.tsx` |
+| `typst` | default elected | IV-recovery? | unmeasured | yes | yes | no | `.typ` |
 | `uxntal` | default elected | IV-recovery? | 0/40 | yes | yes | no | `.tal` |
 | `vhdl` | default elected | IV-recovery? | unmeasured | yes | yes | no | `.vhd,.vhdl` |
 | `vue` | default elected | CLEAN | 40/40 | yes | yes | no | `.vue` |
@@ -125,11 +129,8 @@ scanner.
 | `agda` | blocked: missing precise ELS | IV-scanner | 2/40 | yes | no | no | `.agda` |
 | `cobol` | blocked: missing precise ELS | IV-version | 0/40 | yes | no | no | `.cbl,.cob,.cpy` |
 | `comment` | blocked: missing precise ELS | IV-perf | unmeasured | yes | no | no | `.txt` |
-| `cpp` | blocked: missing precise ELS | IV-recovery | 9/40 | yes | no | no | `.cc,.cpp,.cxx,.h,.hh,.hpp,.hxx` |
 | `crystal` | blocked: missing precise ELS | IV-shape? | unmeasured | yes | no | no | `.cr` |
-| `d` | blocked: missing precise ELS | IV-recovery? | unmeasured | yes | no | no | `.d,.di` |
 | `dhall` | blocked: missing precise ELS | IV-unknown | 15/40 | yes | no | no | `.dhall` |
-| `disassembly` | blocked: missing precise ELS | IV-version | 0/40 | yes | no | no | `.dis,.dump` |
 | `djot` | blocked: missing precise ELS | IV-scanner? | unmeasured | yes | no | no | `.dj,.djot` |
 | `doxygen` | blocked: missing precise ELS | IV-unknown | 20/40 | yes | no | no | `.dox,.doxygen` |
 | `elixir` | blocked: missing precise ELS | IV-recovery | unmeasured | yes | no | no | `.ex,.exs` |
@@ -155,7 +156,6 @@ scanner.
 | `tlaplus` | blocked: missing precise ELS | IV-perf | unmeasured | yes | no | no | `.tla` |
 | `toml` | blocked: missing precise ELS | IV-unknown | 8/11 | yes | no | no | `.toml` |
 | `typescript` | blocked: missing precise ELS | IV-perf | unmeasured | yes | no | no | `.ts` |
-| `typst` | blocked: missing precise ELS | IV-recovery? | unmeasured | yes | no | no | `.typ` |
 | `wolfram` | blocked: missing precise ELS | IV-unknown | 0/11 | yes | no | no | `.m,.nb,.wl` |
 | `xml` | blocked: missing precise ELS | IV-unknown | 1/40 | yes | no | no | `.xml` |
 | `yuck` | blocked: missing precise ELS | IV-unknown | 1/2 | yes | no | no | `.yuck` |

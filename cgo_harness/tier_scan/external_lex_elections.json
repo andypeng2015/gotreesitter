@@ -385,14 +385,14 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 9/10, trunc=1, errTree=0, panics=0; previous CLEAN row was stale: null literal leaf child normalized to C oracle"
   },
   {
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": ".cc,.cpp,.cxx,.h,.hh,.hpp,.hxx",
    "grammar": "cpp",
    "has_external_scanner": true,
    "parity": "9/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery",
    "tier_notes": "faithful C error-cost version competition (see spec); sampled full-integrity wringer 20260623 on args.h shows baseline/stack2 nonmatch with goStop=no_stacks_alive, Go translation_unit 0:641 vs C 0:7192, rootErr both true, lastTokenEnd 652/expectedEOF 7192, so witness includes truncation/pre-recovery overlay"
   },
@@ -469,14 +469,14 @@
    "tier_notes": "ext=.cylc; faithful C error-cost version competition (see spec)"
   },
   {
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": ".d,.di",
    "grammar": "d",
    "has_external_scanner": true,
    "parity": "unmeasured",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery?",
    "tier_notes": "ext=.d; faithful C error-cost version competition (see spec)"
   },
@@ -541,14 +541,14 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: unmeasured (timeout external); scan metadata oom_killed=true, use as diagnostic evidence; previous CLEAN row was stale: in ratchet"
   },
   {
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": ".dis,.dump",
    "grammar": "disassembly",
    "has_external_scanner": true,
    "parity": "0/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-version",
    "tier_notes": "German-locale riscv objdump corpus the grammar doesn't model \u2014 10/10 C-error (maple)"
   },
@@ -2305,14 +2305,14 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: unmeasured (timeout external); scan metadata oom_killed=true, use as diagnostic evidence; previous CLEAN row was stale: typed-arrow merge cap selection and destructuring-pattern normalization; verified 2026-06-12"
   },
   {
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": ".typ",
    "grammar": "typst",
    "has_external_scanner": true,
    "parity": "unmeasured",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery?",
    "tier_notes": "nested list item result normalization verified 2026-06-12; zero-width group comma normalization cleared docs/components/section.typ 2026-06-13; residuals: docs/components/example.typ root ERROR vs C source_file plus 4 truncations"
   },
@@ -2474,8 +2474,8 @@
   }
  ],
  "histogram": {
-  "blocked_missing_precise_els": 37,
-  "default_elected": 81,
+  "blocked_missing_precise_els": 33,
+  "default_elected": 85,
   "not_applicable_no_external_scanner": 87,
   "staged_precise_els": 1
  },
@@ -2514,7 +2514,7 @@
   "staged_precise_els": "A precise ExternalLexStates table exists behind an opt-in build tag or explicit staging policy; default election is intentionally disabled."
  },
  "summary": {
-  "default_external_lex_state_count": 81,
+  "default_external_lex_state_count": 85,
   "external_scanner_count": 119,
   "grammar_count": 206,
   "staged_external_lex_state_count": 1
