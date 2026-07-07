@@ -1081,14 +1081,14 @@
    "tier_notes": "layout scanner, deep port needed (maple)"
   },
   {
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": ".hx",
    "grammar": "haxe",
    "has_external_scanner": true,
    "parity": "10/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery",
    "tier_notes": "pins at upstream HEAD; C at same pin parses corpus clean \u2014 runtime fidelity, not version (oak 2026-06-10)"
   },
@@ -1333,14 +1333,14 @@
    "tier_notes": "ext=Kconfig; faithful C error-cost version competition (see spec)"
   },
   {
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": ".kdl",
    "grammar": "kdl",
    "has_external_scanner": true,
    "parity": "11/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery",
    "tier_notes": "pins at upstream HEAD; C at same pin parses corpus clean \u2014 runtime fidelity, not version (oak 2026-06-10)"
   },
@@ -1369,14 +1369,14 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 2/4, trunc=1, errTree=1, panics=0; previous CLEAN row was stale: in ratchet; ledger date-suffix and year-directive recovery normalization"
   },
   {
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": ".less",
    "grammar": "less",
    "has_external_scanner": true,
    "parity": "10/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery?",
    "tier_notes": "faithful C error-cost version competition (see spec)"
   },
@@ -2065,14 +2065,14 @@
    "tier_notes": "in ratchet"
   },
   {
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": ".sql",
    "grammar": "sql",
    "has_external_scanner": true,
    "parity": "8/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery?",
    "tier_notes": "faithful C error-cost version competition (see spec)"
   },
@@ -2161,14 +2161,14 @@
    "tier_notes": "faithful C error-cost version competition (see spec)"
   },
   {
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": ".tl",
    "grammar": "teal",
    "has_external_scanner": true,
    "parity": "8/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery?",
    "tier_notes": "faithful C error-cost version competition (see spec)"
   },
@@ -2474,8 +2474,8 @@
   }
  ],
  "histogram": {
-  "blocked_missing_precise_els": 60,
-  "default_elected": 58,
+  "blocked_missing_precise_els": 55,
+  "default_elected": 63,
   "not_applicable_no_external_scanner": 87,
   "staged_precise_els": 1
  },
@@ -2514,7 +2514,7 @@
   "staged_precise_els": "A precise ExternalLexStates table exists behind an opt-in build tag or explicit staging policy; default election is intentionally disabled."
  },
  "summary": {
-  "default_external_lex_state_count": 58,
+  "default_external_lex_state_count": 63,
   "external_scanner_count": 119,
   "grammar_count": 206,
   "staged_external_lex_state_count": 1
