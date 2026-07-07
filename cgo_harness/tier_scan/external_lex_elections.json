@@ -433,14 +433,14 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: unmeasured (timeout external); scan metadata oom_killed=true, use as diagnostic evidence; previous CLEAN row was stale: in ratchet; wringer-csv-progress-baseline-20260623T163446Z confirms forward-progress forest_reduce_parent_end timeout on co2-concentration.csv, 107 parser progress rows, last reduce_symbol=16 parent_span=0..9647 with advancing tokens and zero stacks, pointing at forest reduce parent/materialization throughput; sampled full-integrity wringer 20260623 closed the baseline/stack2/firstdiff timeout plan and latest timeout progress is forest_reduce_visit_begin at iter=tokens 1831, token 7622..7632, frontier_len=1, work_len=49, reducer_visits=82, reduce_symbol=16, child_count=2, no_extras=true"
   },
   {
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": ".cu,.cuh",
    "grammar": "cuda",
    "has_external_scanner": true,
    "parity": "21/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery?",
    "tier_notes": "ext=.cu,.cuh; faithful C error-cost version competition (see spec)"
   },
@@ -781,14 +781,14 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 39/40, trunc=0, errTree=0, panics=0; previous CLEAN row was stale: in ratchet"
   },
   {
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": ".fnl",
    "grammar": "fennel",
    "has_external_scanner": true,
    "parity": "15/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery?",
    "tier_notes": "ext=.fnl; faithful C error-cost version competition (see spec)"
   },
@@ -805,14 +805,14 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 37/40, trunc=1, errTree=0, panics=0; previous CLEAN row was stale: versioned layout modifiers normalized to C oracle recovery shape"
   },
   {
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": ".fir",
    "grammar": "firrtl",
    "has_external_scanner": true,
    "parity": "12/27",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery?",
    "tier_notes": "ext=.fir; faithful C error-cost version competition (see spec)"
   },
@@ -1393,14 +1393,14 @@
    "tier_notes": "C-recovery plus Linkerscript-local result normalization lifts baseline 1/40 to 21/40 with a strict subset of divergers and no truncation/panic (Docker 2026-06-14); residuals are root/section child-count and nested ERROR-vs-call recovery shape differences."
   },
   {
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": ".liquid",
    "grammar": "liquid",
    "has_external_scanner": true,
    "parity": "11/36",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery?",
    "tier_notes": "faithful C error-cost version competition (see spec)"
   },
@@ -1525,14 +1525,14 @@
    "tier_notes": "post-repin residual"
   },
   {
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": ".move",
    "grammar": "move",
    "has_external_scanner": true,
    "parity": "14/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery?",
    "tier_notes": "post-repo-switch residual"
   },
@@ -2474,8 +2474,8 @@
   }
  ],
  "histogram": {
-  "blocked_missing_precise_els": 65,
-  "default_elected": 53,
+  "blocked_missing_precise_els": 60,
+  "default_elected": 58,
   "not_applicable_no_external_scanner": 87,
   "staged_precise_els": 1
  },
@@ -2514,7 +2514,7 @@
   "staged_precise_els": "A precise ExternalLexStates table exists behind an opt-in build tag or explicit staging policy; default election is intentionally disabled."
  },
  "summary": {
-  "default_external_lex_state_count": 53,
+  "default_external_lex_state_count": 58,
   "external_scanner_count": 119,
   "grammar_count": 206,
   "staged_external_lex_state_count": 1
