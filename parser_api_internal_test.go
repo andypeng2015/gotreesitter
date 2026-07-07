@@ -2628,6 +2628,36 @@ func TestParseFullArenaInitialNodeCapacityScalesForLargeSources(t *testing.T) {
 	}
 }
 
+func TestParseFullArenaNodeCapacityCapsLargeTypeScriptFourslashCommentFixture(t *testing.T) {
+	source := []byte("/// <reference path=\"fourslash.ts\" />\n////var route = [")
+	source = append(source, bytes.Repeat([]byte("[51.1,-0.2],"), 1024*1024/12)...)
+	source = append(source, []byte("];\nverify.completions({ marker: \"\", excludes: [\"\"] });\n")...)
+
+	got := parseFullArenaNodeCapacityForSource(source, &Language{Name: "typescript"}, 0)
+	if got != typeScriptFourslashLargeCommentArenaNodeCap {
+		t.Fatalf("parseFullArenaNodeCapacityForSource(fourslash) = %d, want %d", got, typeScriptFourslashLargeCommentArenaNodeCap)
+	}
+}
+
+func TestParseFullArenaNodeCapacityKeepsLargeSourceFloorForNonFourslash(t *testing.T) {
+	source := bytes.Repeat([]byte("let x = 1;\n"), 128*1024)
+	got := parseFullArenaNodeCapacityForSource(source, &Language{Name: "typescript"}, 0)
+	want := parseFullArenaNodeCapacity(len(source), 0)
+	if got != want {
+		t.Fatalf("parseFullArenaNodeCapacityForSource(non-fourslash) = %d, want %d", got, want)
+	}
+}
+
+func TestParseFullArenaNodeCapacityKeepsLargeSourceFloorForOtherLanguages(t *testing.T) {
+	source := []byte("/// <reference path=\"fourslash.ts\" />\n////var route = [")
+	source = append(source, bytes.Repeat([]byte("[51.1,-0.2],"), 1024*1024/12)...)
+	got := parseFullArenaNodeCapacityForSource(source, &Language{Name: "python"}, 0)
+	want := parseFullArenaNodeCapacity(len(source), 0)
+	if got != want {
+		t.Fatalf("parseFullArenaNodeCapacityForSource(other lang) = %d, want %d", got, want)
+	}
+}
+
 func TestParseFullArenaInitialNodeCapacityPreallocatesMediumSources(t *testing.T) {
 	sourceLen := 192 * 1024
 	got := parseFullArenaInitialNodeCapacity(sourceLen)

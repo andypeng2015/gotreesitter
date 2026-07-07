@@ -1,6 +1,9 @@
 package gotreesitter
 
-import "sync/atomic"
+import (
+	"bytes"
+	"sync/atomic"
+)
 
 func parseIterations(sourceLen int) int {
 	return max(10_000, sourceLen*30)
@@ -102,6 +105,30 @@ func parseFullArenaNodeCapacity(sourceLen, hint int) int {
 		return max(target, limit)
 	}
 	return max(target, hint)
+}
+
+const typeScriptFourslashLargeCommentArenaNodeCap = 64 * 1024
+
+func parseFullArenaNodeCapacityForSource(source []byte, lang *Language, hint int) int {
+	target := parseFullArenaNodeCapacity(len(source), hint)
+	if !typeScriptLargeFourslashSource(source, lang) || target <= typeScriptFourslashLargeCommentArenaNodeCap {
+		return target
+	}
+	return max(nodeCapacityForClass(arenaClassFull), typeScriptFourslashLargeCommentArenaNodeCap)
+}
+
+func typeScriptLargeFourslashSource(source []byte, lang *Language) bool {
+	if lang == nil || len(source) < 1024*1024 {
+		return false
+	}
+	switch lang.Name {
+	case "typescript", "tsx":
+	default:
+		return false
+	}
+	prefixLen := min(len(source), 8192)
+	prefix := source[:prefixLen]
+	return bytes.Contains(prefix, []byte("fourslash.ts")) && bytes.Contains(prefix, []byte("\n////"))
 }
 
 func parseFullArenaHintLimit(sourceLen int) int {
