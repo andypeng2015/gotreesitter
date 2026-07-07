@@ -481,14 +481,14 @@
    "tier_notes": "ext=.d; faithful C error-cost version competition (see spec)"
   },
   {
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": ".dart",
    "grammar": "dart",
    "has_external_scanner": true,
    "parity": "0/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery?",
    "tier_notes": "ext=.dart; faithful C error-cost version competition (see spec)"
   },
@@ -613,14 +613,14 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 0/3, trunc=3, errTree=2, panics=0; previous CLEAN row was stale: tiny curated DTD corpus clean after C recovery election plus `%entity;` elementdecl recovery-shape normalization (verified 2026-06-11)"
   },
   {
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": "earthfile",
    "grammar": "earthfile",
    "has_external_scanner": true,
    "parity": "0/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery?",
    "tier_notes": "ext=Earthfile; faithful C error-cost version competition (see spec)"
   },
@@ -1129,14 +1129,14 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 35/40, trunc=2, errTree=3, panics=0; previous CLEAN row was stale: C recovery election plus HLSL result-shape compatibility normalization clears default cgo oracle gate (verified 2026-06-12)"
   },
   {
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": ".htm,.html",
    "grammar": "html",
    "has_external_scanner": true,
    "parity": "0/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery",
    "tier_notes": "faithful C error-cost version competition (see spec)"
   },
@@ -1801,14 +1801,14 @@
    "tier_notes": "faithful C error-cost version competition clears unittest_custom_options_proto3.proto with strict subset/no new divergers; remains Tier IV because residual parse-incorrect errTree files remain"
   },
   {
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": ".jade,.pug",
    "grammar": "pug",
    "has_external_scanner": true,
    "parity": "0/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery?",
    "tier_notes": "faithful C error-cost version competition (see spec)"
   },
@@ -2474,8 +2474,8 @@
   }
  ],
  "histogram": {
-  "blocked_missing_precise_els": 50,
-  "default_elected": 68,
+  "blocked_missing_precise_els": 46,
+  "default_elected": 72,
   "not_applicable_no_external_scanner": 87,
   "staged_precise_els": 1
  },
@@ -2514,7 +2514,7 @@
   "staged_precise_els": "A precise ExternalLexStates table exists behind an opt-in build tag or explicit staging policy; default election is intentionally disabled."
  },
  "summary": {
-  "default_external_lex_state_count": 68,
+  "default_external_lex_state_count": 72,
   "external_scanner_count": 119,
   "grammar_count": 206,
   "staged_external_lex_state_count": 1
