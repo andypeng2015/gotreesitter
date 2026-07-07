@@ -45,6 +45,21 @@ const (
 	// a 100+ MB arena in the pool indefinitely, consumed by every subsequent
 	// parse on that goroutine.
 	maxRetainedFullArenaBytes = 128 * 1024 * 1024
+
+	// maxOverflowSlabGrowthBytes bounds geometric overflow-slab growth. Overflow
+	// slabs double for cheap amortization on small/medium parses, but unbounded
+	// doubling makes the final backing slab of a very large parse as large as
+	// everything allocated before it combined: up to ~half of that last slab is
+	// never used. Because the per-parse memory budget is charged against slab
+	// *capacity* (allocatedBytes), not live usage, that speculative doubled tail
+	// could trip the budget hundreds of MB before the live tree actually reached
+	// it — the deterministic asm.js-class arena exhaustion (box2d.js /
+	// lua_binarytrees.js: enormous flat trees whose last doubled node slab is
+	// added in one budget-blowing step). Past this ceiling slabs grow linearly,
+	// so peak capacity — and the budget charge — tracks live usage within one
+	// ceiling-sized slab. This mirrors the fixed-size slab strategy already used
+	// for pendingParent / rawShape / full-parse pendingChildEntry slabs.
+	maxOverflowSlabGrowthBytes = 8 * 1024 * 1024
 )
 
 type arenaClass uint8
@@ -1101,7 +1116,7 @@ func (a *nodeArena) allocNodeSlow() *Node {
 	for i := a.nodeSlabCursor; ; i++ {
 		if i >= len(a.nodeSlabs) {
 			lastCap := len(a.nodeSlabs[len(a.nodeSlabs)-1].data)
-			capacity := max(lastCap*2, minArenaNodeCap)
+			capacity := boundedNextSlabCap(lastCap, minArenaNodeCap, int(unsafe.Sizeof(Node{})))
 			a.nodeSlabs = append(a.nodeSlabs, nodeSlab{data: make([]Node, capacity)})
 			a.allocatedBytes += nodeBytesForCap(capacity)
 		}
@@ -1136,7 +1151,7 @@ func (a *nodeArena) allocNoTreeNode() *noTreeNode {
 	for i := a.noTreeNodeSlabCursor; ; i++ {
 		if i >= len(a.noTreeNodeSlabs) {
 			lastCap := len(a.noTreeNodeSlabs[len(a.noTreeNodeSlabs)-1].data)
-			capacity := max(lastCap*2, minArenaNodeCap)
+			capacity := boundedNextSlabCap(lastCap, minArenaNodeCap, int(unsafe.Sizeof(noTreeNode{})))
 			a.noTreeNodeSlabs = append(a.noTreeNodeSlabs, noTreeNodeSlab{data: make([]noTreeNode, capacity)})
 			a.allocatedBytes += noTreeNodeBytesForCap(capacity)
 		}
@@ -1171,7 +1186,7 @@ func (a *nodeArena) allocCompactFullLeaf() *compactFullLeaf {
 	for i := a.compactFullLeafSlabCursor; ; i++ {
 		if i >= len(a.compactFullLeafSlabs) {
 			lastCap := len(a.compactFullLeafSlabs[len(a.compactFullLeafSlabs)-1].data)
-			capacity := max(lastCap*2, minArenaNodeCap)
+			capacity := boundedNextSlabCap(lastCap, minArenaNodeCap, int(unsafe.Sizeof(compactFullLeaf{})))
 			a.compactFullLeafSlabs = append(a.compactFullLeafSlabs, compactFullLeafSlab{data: make([]compactFullLeaf, capacity)})
 			a.allocatedBytes += compactFullLeafBytesForCap(capacity)
 		}
@@ -1317,7 +1332,7 @@ func (a *nodeArena) allocRawShapeChildren(n int) rawShapeChildRange {
 	for i := a.rawShapeChildSlabCursor; ; i++ {
 		if i >= len(a.rawShapeChildSlabs) {
 			lastCap := len(a.rawShapeChildSlabs[len(a.rawShapeChildSlabs)-1].data)
-			capacity := max(lastCap*2, n)
+			capacity := boundedNextSlabCap(lastCap, n, int(unsafe.Sizeof(rawShapeChild{})))
 			a.rawShapeChildSlabs = append(a.rawShapeChildSlabs, rawShapeChildSlab{data: make([]rawShapeChild, capacity)})
 			a.allocatedBytes += rawShapeChildBytesForCap(capacity)
 		}
@@ -1334,7 +1349,13 @@ func (a *nodeArena) allocRawShapeChildren(n int) rawShapeChildRange {
 
 func nextPendingChildEntrySlabCap(class arenaClass, lastCap, min int) int {
 	if class != arenaClassFull {
-		return max(lastCap*2, min)
+		// Bound the incremental-class geometric tail with the same 8 MB ceiling
+		// as the node/leaf overflow slabs (boundedNextSlabCap): double until the
+		// ceiling, then grow linearly, while still satisfying an oversized single
+		// request (min = slotCount for a wide reduce) via exact-fit. The
+		// arenaClassFull path already uses a fixed default-sized overflow slab
+		// (never doubles) — the strategy that fixed the box2d/asm.js exhaustion.
+		return boundedNextSlabCap(lastCap, min, int(unsafe.Sizeof(pendingChildEntry{})))
 	}
 	return max(defaultPendingChildEntrySlabCap(class), min)
 }
@@ -1355,7 +1376,7 @@ func (a *nodeArena) allocCompactCheckpointLeaf() *compactCheckpointLeaf {
 	for i := a.compactCheckpointLeafSlabCursor; ; i++ {
 		if i >= len(a.compactCheckpointLeafSlabs) {
 			lastCap := len(a.compactCheckpointLeafSlabs[len(a.compactCheckpointLeafSlabs)-1].data)
-			capacity := max(lastCap*2, minArenaNodeCap)
+			capacity := boundedNextSlabCap(lastCap, minArenaNodeCap, int(unsafe.Sizeof(compactCheckpointLeaf{})))
 			a.compactCheckpointLeafSlabs = append(a.compactCheckpointLeafSlabs, compactCheckpointLeafSlab{data: make([]compactCheckpointLeaf, capacity)})
 			a.allocatedBytes += compactCheckpointLeafBytesForCap(capacity)
 		}
@@ -1587,6 +1608,35 @@ func nodeCapacityForClass(class arenaClass) int {
 		return nodeCapacityForBytes(incrementalArenaSlab)
 	}
 	return nodeCapacityForBytes(fullParseArenaSlab)
+}
+
+// boundedNextSlabCap returns the capacity for the next geometric overflow slab
+// of an element type sized elemSize bytes. Slabs double (cheap amortization for
+// small/medium parses) until doubling would exceed maxOverflowSlabGrowthBytes,
+// after which they grow linearly at that ceiling. minReq guarantees room for a
+// single variable-length request (e.g. a wide rawShapeChild range) that is
+// itself larger than the ceiling. Bounding the geometric tail keeps peak slab
+// capacity — and therefore the per-parse memory-budget charge levied against
+// allocatedBytes — tracking live usage within one ceiling-sized slab instead of
+// overshooting by up to ~50% of the largest slab. See maxOverflowSlabGrowthBytes.
+func boundedNextSlabCap(lastCap, minReq, elemSize int) int {
+	next := lastCap * 2
+	if elemSize > 0 {
+		ceiling := maxOverflowSlabGrowthBytes / elemSize
+		if ceiling < minArenaNodeCap {
+			ceiling = minArenaNodeCap
+		}
+		if next > ceiling {
+			next = ceiling
+		}
+	}
+	if next < minReq {
+		next = minReq
+	}
+	if next < minArenaNodeCap {
+		next = minArenaNodeCap
+	}
+	return next
 }
 
 func nodeBytesForCap(n int) int64 {
