@@ -694,8 +694,9 @@ func coalesceForestWithRaw(p *Parser, arena *nodeArena, index *gssForestIndex, s
 }
 
 type forestAlternativeIndex struct {
-	nodes map[*Node]*gssForestNode
-	slots map[forestAlternativeSlotKey]forestAlternativeSlot
+	nodes   map[*Node]*gssForestNode
+	byStart map[uint32][]*Node
+	slots   map[forestAlternativeSlotKey]forestAlternativeSlot
 }
 
 type forestAlternativeSlotKey struct {
@@ -732,8 +733,9 @@ func forestAlternativeIndexCapacityForSource(sourceLen int) int {
 
 func newForestAlternativeIndex(capacity int) *forestAlternativeIndex {
 	return &forestAlternativeIndex{
-		nodes: make(map[*Node]*gssForestNode, capacity),
-		slots: make(map[forestAlternativeSlotKey]forestAlternativeSlot, capacity),
+		nodes:   make(map[*Node]*gssForestNode, capacity),
+		byStart: make(map[uint32][]*Node, max(16, capacity/4)),
+		slots:   make(map[forestAlternativeSlotKey]forestAlternativeSlot, capacity),
 	}
 }
 
@@ -742,8 +744,29 @@ func forestRecordAlternative(alternatives *forestAlternativeIndex, entry stackEn
 		return
 	}
 	if n := stackEntryNode(entry); n != nil {
+		if _, exists := alternatives.nodes[n]; !exists {
+			if alternatives.byStart == nil {
+				alternatives.byStart = make(map[uint32][]*Node, 16)
+			}
+			alternatives.byStart[n.startByte] = append(alternatives.byStart[n.startByte], n)
+		}
 		alternatives.nodes[n] = node
 	}
+}
+
+func forestAlternativeCandidatesStartingAt(alternatives *forestAlternativeIndex, startByte uint32) []*Node {
+	if alternatives == nil {
+		return nil
+	}
+	if len(alternatives.byStart) == 0 && len(alternatives.nodes) > 0 {
+		alternatives.byStart = make(map[uint32][]*Node, max(16, len(alternatives.nodes)/4))
+		for n := range alternatives.nodes {
+			if n != nil {
+				alternatives.byStart[n.startByte] = append(alternatives.byStart[n.startByte], n)
+			}
+		}
+	}
+	return alternatives.byStart[startByte]
 }
 
 func forestRecordParentChildAlternatives(alternatives *forestAlternativeIndex, parent *Node, children []*Node, rawEntries []stackEntry) {
@@ -1575,11 +1598,8 @@ func forestRootVisibleContainerAlternativeForSlice(p *Parser, arena *nodeArena, 
 	childCount := resultChildCount(root)
 	var best *Node
 	bestEnd := 0
-	for candidate := range alternatives.nodes {
+	for _, candidate := range forestAlternativeCandidatesStartingAt(alternatives, first.startByte) {
 		if !forestVisibleNamedStructuralContainer(p, candidate) || candidate.isExtra() || candidate.isMissing() {
-			continue
-		}
-		if candidate.startByte != first.startByte {
 			continue
 		}
 		for end := childCount; end > start; end-- {

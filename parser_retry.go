@@ -114,6 +114,17 @@ func shouldRetryAcceptedErrorParse(tree *Tree, sourceLen int, initialMaxStacks i
 	if rt.StopReason != ParseStopAccepted || rt.Truncated || rt.TokenSourceEOFEarly {
 		return false
 	}
+	if tree.language != nil && tree.language.Name == "bash" {
+		// Bash uses the forest path for clean large-file parses; if production
+		// accepts a full-span error-bearing tree after the forest declines, the
+		// accepted-error retry has repeatedly proven to be wasted work on real
+		// corpus witnesses (for example git's t9300 fast-import script remains
+		// an error-bearing, C-divergent full-span tree while paying multiple
+		// full reparse passes). Keep structural/no-stack/node-limit retries
+		// available, but do not chase an accepted-error Bash tree that already
+		// reached EOF.
+		return false
+	}
 	if tree.language != nil && tree.language.Name == "cpp" {
 		return false
 	}
@@ -1196,6 +1207,11 @@ func fullParseRetryMergePerKeyOverride(tree *Tree, sourceLen int, initialMaxStac
 		return -4
 	}
 	if tree.language != nil && tree.language.Name == "cpp" &&
+		rt.StopReason == ParseStopAccepted && retryTreeHasError(tree) &&
+		!rt.Truncated && !rt.TokenSourceEOFEarly {
+		return 0
+	}
+	if tree.language != nil && tree.language.Name == "bash" &&
 		rt.StopReason == ParseStopAccepted && retryTreeHasError(tree) &&
 		!rt.Truncated && !rt.TokenSourceEOFEarly {
 		return 0
