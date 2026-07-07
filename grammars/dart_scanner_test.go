@@ -3,12 +3,15 @@
 package grammars
 
 import (
+	"slices"
 	"testing"
 
 	gotreesitter "github.com/odvcencio/gotreesitter"
 )
 
-func TestDartExternalScannerBindsShiftedExternalSymbolsByName(t *testing.T) {
+func TestDartExternalScannerBindsExternalSymbolsPositionally(t *testing.T) {
+	// Positional binding: external index i binds to scanner token i. The Language
+	// names here are a shuffled subset; positional binding maps by position.
 	lang := dartExternalBindingTestLanguage(
 		"_extension_only",
 		"_documentation_block_comment",
@@ -21,33 +24,22 @@ func TestDartExternalScannerBindsShiftedExternalSymbolsByName(t *testing.T) {
 	if !ok {
 		t.Fatalf("DartExternalScanner binding type = %T, want DartExternalScanner", DartExternalScanner{}.ExternalScannerForLanguage(lang))
 	}
-	if got, want := scanner.externalToToken[0], -1; got != want {
-		t.Fatalf("extension-only external mapped to token %d, want %d", got, want)
+	if got, want := scanner.externalToToken, []int{0, 1, 2, 3, 4}; !slices.Equal(got, want) {
+		t.Fatalf("dart externalToToken = %v, want %v", got, want)
 	}
-	if got, want := scanner.externalToToken[1], dartTokDocBlockComment; got != want {
-		t.Fatalf("doc-comment external mapped to token %d, want %d", got, want)
-	}
-	if got, want := scanner.externalToToken[2], dartTokTemplateCharsRawSlash; got != want {
-		t.Fatalf("raw-slash external mapped to token %d, want %d", got, want)
-	}
-	if got, want := scanner.externalToToken[3], dartTokTemplateCharsDouble; got != want {
-		t.Fatalf("template-double external mapped to token %d, want %d", got, want)
-	}
-	if got, want := scanner.symbols[dartTokTemplateCharsDouble], gotreesitter.Symbol(4); got != want {
-		t.Fatalf("template-double result symbol = %d, want %d", got, want)
-	}
-	if got, want := scanner.symbols[dartTokDocBlockComment], gotreesitter.Symbol(2); got != want {
-		t.Fatalf("doc-comment result symbol = %d, want %d", got, want)
+	// External index 3 -> scanner token 3 (single-single template chars), symbol 4.
+	if got, want := scanner.symbols[dartTokTemplateCharsSingleSingle], gotreesitter.Symbol(4); got != want {
+		t.Fatalf("token 3 result symbol = %d, want %d", got, want)
 	}
 
 	validExternal := []bool{false, false, false, true, false}
 	var semanticValid [dartTokenCount]bool
 	validSemantic := scanner.remapValidSymbols(validExternal, &semanticValid)
-	if !validSemantic[dartTokTemplateCharsDouble] {
-		t.Fatalf("shifted template-double external did not become valid semantic token: %v", validSemantic)
+	if !validSemantic[dartTokTemplateCharsSingleSingle] {
+		t.Fatalf("external index 3 did not become valid semantic token 3: %v", validSemantic)
 	}
 	if got, want := dartTemplateResultSymbol(validSemantic, scanner.symbolTable()), gotreesitter.Symbol(4); got != want {
-		t.Fatalf("template scanner result symbol = %d, want shifted symbol %d", got, want)
+		t.Fatalf("template scanner result symbol = %d, want %d", got, want)
 	}
 }
 

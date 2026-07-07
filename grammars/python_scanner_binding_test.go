@@ -35,7 +35,9 @@ func TestPythonExternalScannerSpec(t *testing.T) {
 	}
 }
 
-func TestPythonExternalScannerBindsShiftedExternalSymbolsByName(t *testing.T) {
+func TestPythonExternalScannerBindsExternalSymbolsPositionally(t *testing.T) {
+	// Positional binding: external index i binds to scanner token i. The Language
+	// names here are a shuffled subset; positional binding maps by position.
 	lang := pythonExternalBindingTestLanguage(
 		"_extension_only",
 		"escape_interpolation",
@@ -48,30 +50,21 @@ func TestPythonExternalScannerBindsShiftedExternalSymbolsByName(t *testing.T) {
 	if !ok {
 		t.Fatalf("PythonExternalScanner binding type = %T, want PythonExternalScanner", PythonExternalScanner{}.ExternalScannerForLanguage(lang))
 	}
-	if got, want := scanner.externalToToken[0], -1; got != want {
-		t.Fatalf("extension-only external mapped to token %d, want %d", got, want)
+	if got, want := scanner.externalToToken, []int{0, 1, 2, 3, 4}; !slices.Equal(got, want) {
+		t.Fatalf("python externalToToken = %v, want %v", got, want)
 	}
-	if got, want := scanner.externalToToken[1], pyTokEscapeInterpolation; got != want {
-		t.Fatalf("escape-interpolation external mapped to token %d, want %d", got, want)
+	if got, want := scanner.externalToToken[1], pyTokIndent; got != want {
+		t.Fatalf("external index 1 mapped to token %d, want %d", got, want)
 	}
-	if got, want := scanner.externalToToken[2], pyTokIndent; got != want {
-		t.Fatalf("indent external mapped to token %d, want %d", got, want)
-	}
-	if got, want := scanner.externalToToken[3], pyTokStringStart; got != want {
-		t.Fatalf("string-start external mapped to token %d, want %d", got, want)
-	}
-	if got, want := scanner.externalToToken[4], pyTokNewline; got != want {
-		t.Fatalf("newline external mapped to token %d, want %d", got, want)
-	}
-	if got, want := scanner.symbols[pyTokEscapeInterpolation], gotreesitter.Symbol(2); got != want {
-		t.Fatalf("escape-interpolation result symbol = %d, want %d", got, want)
+	if got, want := scanner.symbols[pyTokIndent], gotreesitter.Symbol(2); got != want {
+		t.Fatalf("token 1 result symbol = %d, want %d", got, want)
 	}
 
 	validExternal := []bool{false, true, false, false, false}
 	var semanticValid [pyTokenCount]bool
 	validSemantic := scanner.remapValidSymbols(validExternal, &semanticValid)
-	if !validSemantic[pyTokEscapeInterpolation] {
-		t.Fatalf("shifted escape-interpolation external did not become valid semantic token: %v", validSemantic)
+	if !validSemantic[pyTokIndent] {
+		t.Fatalf("external index 1 did not become valid semantic token 1: %v", validSemantic)
 	}
 }
 

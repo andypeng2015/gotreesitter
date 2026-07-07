@@ -25,18 +25,18 @@ const (
 
 // Concrete symbol IDs from the checked-in Python grammar ExternalSymbols.
 const (
-	pySymNewline             gotreesitter.Symbol = 102
-	pySymIndent              gotreesitter.Symbol = 103
-	pySymDedent              gotreesitter.Symbol = 104
-	pySymStringStart         gotreesitter.Symbol = 105
-	pySymStringContent       gotreesitter.Symbol = 106
-	pySymEscapeInterpolation gotreesitter.Symbol = 107
-	pySymStringEnd           gotreesitter.Symbol = 108
+	pySymNewline             gotreesitter.Symbol = 101
+	pySymIndent              gotreesitter.Symbol = 102
+	pySymDedent              gotreesitter.Symbol = 103
+	pySymStringStart         gotreesitter.Symbol = 104
+	pySymStringContent       gotreesitter.Symbol = 105
+	pySymEscapeInterpolation gotreesitter.Symbol = 106
+	pySymStringEnd           gotreesitter.Symbol = 107
 	pySymComment             gotreesitter.Symbol = 99
-	pySymCloseBracket        gotreesitter.Symbol = 46
-	pySymCloseParen          gotreesitter.Symbol = 7
-	pySymCloseBrace          gotreesitter.Symbol = 52
-	pySymExcept              gotreesitter.Symbol = 35
+	pySymCloseBracket        gotreesitter.Symbol = 47
+	pySymCloseParen          gotreesitter.Symbol = 8
+	pySymCloseBrace          gotreesitter.Symbol = 53
+	pySymExcept              gotreesitter.Symbol = 33
 )
 
 var pyDefaultSymTable = [pyTokenCount]gotreesitter.Symbol{
