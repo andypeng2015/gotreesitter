@@ -241,14 +241,14 @@
    "tier_notes": "ext=Caddyfile; faithful C error-cost version competition (see spec)"
   },
   {
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": ".cairo",
    "grammar": "cairo",
    "has_external_scanner": true,
    "parity": "1/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery?",
    "tier_notes": "ext=.cairo; faithful C error-cost version competition (see spec)"
   },
@@ -1477,14 +1477,14 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: unmeasured (timeout external); scan metadata oom_killed=true, use as diagnostic evidence; previous CLEAN row was stale: Single-tilde link destinations stay literal so docs/src/index.md no longer truncates; Docker D-tier C-oracle parity verified 2026-06-13"
   },
   {
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": ".m,.mat",
    "grammar": "matlab",
    "has_external_scanner": true,
    "parity": "4/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery?",
    "tier_notes": "faithful C error-cost version competition (see spec)"
   },
@@ -1609,14 +1609,14 @@
    "tier_notes": "mixed scanner/version, 2-file corpus (maple); sampled full-integrity wringer 20260623 on cheatsheet.norg shows nonmatch with goStop=no_stacks_alive, Go document 0:381 vs C 0:5382, no errors, high baseline maxStacks 164, stack2 lowers observed max but still nonmatches, so scanner row has truncation/node-budget overlay"
   },
   {
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": ".nu",
    "grammar": "nushell",
    "has_external_scanner": true,
    "parity": "7/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery?",
    "tier_notes": "faithful C error-cost version competition (see spec)"
   },
@@ -1645,14 +1645,14 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 12/40, trunc=0, errTree=0, panics=0; previous CLEAN row was stale: in ratchet"
   },
   {
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": ".odin",
    "grammar": "odin",
    "has_external_scanner": true,
    "parity": "1/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery?",
    "tier_notes": "faithful C error-cost version competition (see spec)"
   },
@@ -1993,14 +1993,14 @@
    "tier_notes": "faithful C error-cost version competition (see spec)"
   },
   {
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": ".scala",
    "grammar": "scala",
    "has_external_scanner": true,
    "parity": "5/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery?",
    "tier_notes": "faithful C error-cost version competition (see spec)"
   },
@@ -2474,8 +2474,8 @@
   }
  ],
  "histogram": {
-  "blocked_missing_precise_els": 55,
-  "default_elected": 63,
+  "blocked_missing_precise_els": 50,
+  "default_elected": 68,
   "not_applicable_no_external_scanner": 87,
   "staged_precise_els": 1
  },
@@ -2514,7 +2514,7 @@
   "staged_precise_els": "A precise ExternalLexStates table exists behind an opt-in build tag or explicit staging policy; default election is intentionally disabled."
  },
  "summary": {
-  "default_external_lex_state_count": 63,
+  "default_external_lex_state_count": 68,
   "external_scanner_count": 119,
   "grammar_count": 206,
   "staged_external_lex_state_count": 1
