@@ -8,6 +8,7 @@ package gotreesitter
 import (
 	"slices"
 	"sync"
+	"sync/atomic"
 	"unsafe"
 )
 
@@ -418,6 +419,13 @@ type Language struct {
 	keywordPrefilterOnce sync.Once
 	zeroWidthInfo        languageZeroWidthInfo
 	zeroWidthInfoOnce    sync.Once
+
+	// cRecoveryGateCache memoizes DiagnoseCRecoveryGate (parser_recover_c.go),
+	// which otherwise re-scans the full parse tables on every call. The entry
+	// is keyed by a fingerprint of every input the diagnosis reads, so
+	// post-load mutations (external scanner / ExternalLexStates attach)
+	// invalidate it. See cRecoveryGateCacheKeyFor.
+	cRecoveryGateCache atomic.Pointer[cRecoveryGateCacheEntry]
 }
 
 type symbolNameNamedKey struct {

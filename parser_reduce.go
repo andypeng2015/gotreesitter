@@ -869,11 +869,18 @@ func (p *Parser) pushLexErrorRunLeaf(s *glrStack, state StateID, tok Token, node
 			len(top.children) > 0 &&
 			top.parseState == state &&
 			tok.StartByte >= top.endByte {
+			// Incremental open-region cost: an unlexable-run extend is the
+			// same append-only mutation as a recovery absorb, so keep the
+			// (node, equivVersion) memo warm instead of forcing an
+			// O(len(children)) rewalk per skipped token (see
+			// cErrRegionPostAbsorb, parser_recover_c.go).
+			pre := p.cErrRegionPreAbsorb(top)
 			top.children = append(top.children, leaf)
 			top.endByte = tok.EndByte
 			top.endPoint = tok.EndPoint
 			top.setHasError(true)
 			nodeBumpEquivVersion(top)
+			p.cErrRegionPostAbsorb(pre, leaf)
 			if debugRecoveryCycleChecks {
 				debugRecoveryCheckNodeAcyclic(p, arena, "lex-error-run-extend", top)
 			}

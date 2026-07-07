@@ -62,6 +62,21 @@ type glrStack struct {
 	// cumulative visible-node count when the error discontinuity was last
 	// pushed. Zero for stacks that never entered the C error state.
 	cNodeBaseline int
+	// cEverErrored is a sticky per-stack bit: true once this lineage has entered
+	// C's error handling at any point, even if it later recovered to a clean tree
+	// with cRec cleared and cNodeBaseline reset (or clamped) back to zero. Unlike
+	// cRec/cPaused/cNodeBaseline — every one of which a recovered fork can
+	// legitimately reset to its pristine value — this bit never clears, so a gate
+	// that must distinguish "provably never touched recovery" from "recovered
+	// wreckage that now looks pristine" (the php comma-list gate in
+	// conflict_policy.go) can rely on it where cNodeBaseline==0 is not airtight
+	// (a baseline can be written or clamped back to 0). Set at every C-error
+	// entry funnel (cHandleError entry, cApplyMergedErrorGroupBaseline,
+	// cRecoverToState fork creation), propagated by clone()/cloneWithScratch(),
+	// and OR-merged at the two GSS merge choke points (tryGSSMainMergeResult,
+	// tryGSSMainMergeForParser) so a clean survivor cannot shed a merged-in
+	// wreckage lineage's history.
+	cEverErrored bool
 	// cRecoveryUnvalidatedMarker is set on this lineage in exactly one place:
 	// cRecoverToState (parser_recover_c.go), the moment it creates a real
 	// ERROR node wrapping popped content (strategy 1 of ts_parser__recover),
@@ -141,16 +156,20 @@ type glrMergeScratch struct {
 	stackEquivCache   []glrStackEquivCacheEntry
 	frontierHashCache []glrStackFrontierHashCacheEntry
 	cErrorCost        map[*Node]glrCErrorCostEntry
-	shapePrefixCache  []glrShapePrefixCacheEntry
-	shapePrefixEpoch  uint32
-	shapePrefixBytes  int64
-	cleanZeroEpoch    uint32
-	cleanZeroScan     uint32
-	cleanZeroCache    map[*gssNode]gssCleanZeroErrorCacheEntry
-	cleanZeroFront    []glrCleanZeroFrontCacheEntry
-	cleanZeroBytes    int64
-	cleanZeroStack    []*gssNode
-	cleanZeroVisited  []*gssNode
+	// cPrefixPath is the descent scratch for merge-side GSS prefix-aggregate
+	// fills (cStackPrefixCostForMerge, parser_recover_c.go); the aggregates
+	// live on gssNode, validated against gssPrefixAggGen.
+	cPrefixPath      []*gssNode
+	shapePrefixCache []glrShapePrefixCacheEntry
+	shapePrefixEpoch uint32
+	shapePrefixBytes int64
+	cleanZeroEpoch   uint32
+	cleanZeroScan    uint32
+	cleanZeroCache   map[*gssNode]gssCleanZeroErrorCacheEntry
+	cleanZeroFront   []glrCleanZeroFrontCacheEntry
+	cleanZeroBytes   int64
+	cleanZeroStack   []*gssNode
+	cleanZeroVisited []*gssNode
 	// preflight + mergeSeen are pooled per-scratch so the GSS merge can-phase
 	// stops allocating a preflight object plus several maps per merge attempt
 	// (the dominant profile cost on low-stack GLR grammars like json — maps
@@ -371,6 +390,7 @@ func (s *glrStack) clone() glrStack {
 			cRecoverMissingGroup:       s.cRecoverMissingGroup,
 			cNodeBaseline:              s.cNodeBaseline,
 			cRecoveryUnvalidatedMarker: s.cRecoveryUnvalidatedMarker,
+			cEverErrored:               s.cEverErrored,
 		}
 	}
 	s.ensureGSS(nil)
@@ -386,6 +406,7 @@ func (s *glrStack) clone() glrStack {
 		cRecoverMissingGroup:       s.cRecoverMissingGroup,
 		cNodeBaseline:              s.cNodeBaseline,
 		cRecoveryUnvalidatedMarker: s.cRecoveryUnvalidatedMarker,
+		cEverErrored:               s.cEverErrored,
 	}
 }
 
@@ -403,6 +424,7 @@ func (s *glrStack) cloneWithScratch(scratch *gssScratch) glrStack {
 		cRecoverMissingGroup:       s.cRecoverMissingGroup,
 		cNodeBaseline:              s.cNodeBaseline,
 		cRecoveryUnvalidatedMarker: s.cRecoveryUnvalidatedMarker,
+		cEverErrored:               s.cEverErrored,
 	}
 }
 
@@ -2681,13 +2703,20 @@ func tryGSSMainMergeForParser(p *Parser, a, b *glrStack) bool {
 		return false
 	}
 	merged := gssMainMerge(a, b)
-	if merged && p != nil {
-		// Mirror tryGSSMainMergeResult (bumpShapePrefixEpoch above): a successful
-		// main merge rewrites link 0 (setGSSMainLink) of surviving nodes during
-		// dispatch, so every root->head shape prefix cached in the active merge
-		// scratch may now be stale. p.mergeScratch is nil outside a parse and
-		// bumpShapePrefixEpoch is nil-safe.
-		p.mergeScratch.bumpShapePrefixEpoch()
+	if merged {
+		// a survives and absorbs b, so OR the sticky wreckage bit: cEverErrored
+		// is lineage history, not current shape, and a clean survivor must not
+		// shed a merged-in recovered-wreckage lineage's error history (see
+		// glrStack.cEverErrored / tryGSSMainMergeResult).
+		a.cEverErrored = a.cEverErrored || b.cEverErrored
+		if p != nil {
+			// Mirror tryGSSMainMergeResult (bumpShapePrefixEpoch above): a successful
+			// main merge rewrites link 0 (setGSSMainLink) of surviving nodes during
+			// dispatch, so every root->head shape prefix cached in the active merge
+			// scratch may now be stale. p.mergeScratch is nil outside a parse and
+			// bumpShapePrefixEpoch is nil-safe.
+			p.mergeScratch.bumpShapePrefixEpoch()
+		}
 	}
 	return merged
 }
@@ -3011,6 +3040,10 @@ func stackEntryNodesEquivalentIgnoringDynamic(a, b *Node) bool {
 
 func setGSSMainLink(n *gssNode, i int, prev *gssNode, entry stackEntry) {
 	if i == 0 {
+		// Rewriting link 0 changes n's prev chain and payload, so every
+		// cached GSS prefix aggregate at or above n is stale (see
+		// gssPrefixAggGen, parser_recover_c.go).
+		gssPrefixAggGen.Add(1)
 		n.prev = prev
 		n.entry = entry
 		return
@@ -3671,10 +3704,16 @@ func tryGSSMainMergeResult(scratch *glrMergeScratch, result []glrStack, idx int,
 		return false, true
 	}
 	merged = gssMainMergeWithScratch(scratch, &result[idx], stack)
-	if merged && scratch != nil {
-		// A successful main merge can rewrite link 0 (prev/entry) of surviving
-		// nodes (setGSSMainLink), so every cached spine prefix may be stale.
-		scratch.bumpShapePrefixEpoch()
+	if merged {
+		// result[idx] survives and absorbs stack, so OR the sticky wreckage bit:
+		// a clean survivor that merges a recovered-wreckage lineage must inherit
+		// its error history (see glrStack.cEverErrored / tryGSSMainMergeForParser).
+		result[idx].cEverErrored = result[idx].cEverErrored || stack.cEverErrored
+		if scratch != nil {
+			// A successful main merge can rewrite link 0 (prev/entry) of surviving
+			// nodes (setGSSMainLink), so every cached spine prefix may be stale.
+			scratch.bumpShapePrefixEpoch()
+		}
 	}
 	return merged, true
 }

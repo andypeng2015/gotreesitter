@@ -115,6 +115,12 @@ func nodeBumpEquivVersion(n *Node) {
 	if n.equivVersion == 0 {
 		n.equivVersion = 1
 	}
+	// Any in-place node mutation can change the node's error cost / visible
+	// count, which invalidates every cached GSS prefix aggregate that may sum
+	// over it (see gssPrefixAggGen, parser_recover_c.go). Bumping the global
+	// generation here — the single choke point for content mutations — keeps
+	// those caches exact without enumerating mutation sites.
+	gssPrefixAggGen.Add(1)
 }
 
 func defaultFieldSourcesInArena(arena *nodeArena, fieldIDs []FieldID) []uint8 {
