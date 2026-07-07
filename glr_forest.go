@@ -2617,8 +2617,8 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte, captureExternalChe
 			// arm can be the branch the recovery cost competition keeps (the php
 			// comma-list wreckage lesson in conflict_policy.go), so recover-active
 			// languages keep the ordinary GLR fork.
-			if !recoverActive && len(nodeActions) > 1 {
-				if folded, ok := singleReduceAgainstRepetitionShiftConflictChoice(nodeActions); ok {
+			if len(nodeActions) > 1 {
+				if folded, ok := p.cRepetitionSkipForestConflictChoice(recoverActive, nodeActions); ok {
 					nodeActions = p.forestSingletonActions(folded)
 				}
 			}

@@ -1,6 +1,8 @@
 package grammars
 
 import (
+	"encoding/json"
+	"os"
 	"testing"
 
 	"github.com/odvcencio/gotreesitter"
@@ -25,7 +27,6 @@ func TestExternalLexStatesDefaultElectionInventory(t *testing.T) {
 		{name: "cairo", load: CairoLanguage},
 		{name: "cmake", load: CmakeLanguage},
 		{name: "cooklang", load: CooklangLanguage},
-		{name: "cpp", load: CppLanguage},
 		{name: "crystal", load: CrystalLanguage},
 		{name: "css", load: CssLanguage},
 		{name: "cue", load: CueLanguage},
@@ -51,11 +52,9 @@ func TestExternalLexStatesDefaultElectionInventory(t *testing.T) {
 		{name: "hack", load: HackLanguage},
 		{name: "haxe", load: HaxeLanguage},
 		{name: "hlsl", load: HlslLanguage},
-		{name: "html", load: HtmlLanguage},
 		{name: "janet", load: JanetLanguage},
 		{name: "jsdoc", load: JsdocLanguage},
 		{name: "jsonnet", load: JsonnetLanguage},
-		{name: "julia", load: JuliaLanguage},
 		{name: "just", load: JustLanguage},
 		{name: "kconfig", load: KconfigLanguage},
 		{name: "kdl", load: KdlLanguage},
@@ -102,7 +101,16 @@ func TestExternalLexStatesDefaultElectionInventory(t *testing.T) {
 		{name: "yaml", load: YamlLanguage},
 	}
 
+	ledgerDefaults := readDefaultElectionLedger(t)
+	if got, want := len(ledgerDefaults), len(tests); got != want {
+		t.Fatalf("ledger default_elected count = %d, want %d test cases", got, want)
+	}
+	seen := make(map[string]bool, len(tests))
 	for _, tt := range tests {
+		if !ledgerDefaults[tt.name] {
+			t.Fatalf("%q is in default election test cases but not default_elected in ledger", tt.name)
+		}
+		seen[tt.name] = true
 		t.Run(tt.name, func(t *testing.T) {
 			if got := len(LookupExternalLexStates(tt.name)); got == 0 {
 				t.Fatalf("LookupExternalLexStates(%q) returned no rows", tt.name)
@@ -127,4 +135,85 @@ func TestExternalLexStatesDefaultElectionInventory(t *testing.T) {
 			}
 		})
 	}
+	for name := range ledgerDefaults {
+		if !seen[name] {
+			t.Fatalf("%q is default_elected in ledger but missing from test cases", name)
+		}
+	}
+}
+
+func TestExternalLexStatesRecoveryElectionOptOutInventory(t *testing.T) {
+	tests := []struct {
+		name string
+		load func() *gotreesitter.Language
+	}{
+		{name: "cpp", load: CppLanguage},
+		{name: "html", load: HtmlLanguage},
+		{name: "julia", load: JuliaLanguage},
+	}
+
+	ledger := readElectionLedger(t)
+	for _, tt := range tests {
+		row, ok := ledger[tt.name]
+		if !ok {
+			t.Fatalf("%q missing from external lex election ledger", tt.name)
+		}
+		if row.Status != "staged_precise_els" || !row.CRecoveryDefaultOptOut {
+			t.Fatalf("%q ledger row status=%q opt_out=%v, want staged_precise_els opt_out=true",
+				tt.name, row.Status, row.CRecoveryDefaultOptOut)
+		}
+		t.Run(tt.name, func(t *testing.T) {
+			if got := len(LookupExternalLexStates(tt.name)); got == 0 {
+				t.Fatalf("LookupExternalLexStates(%q) returned no rows", tt.name)
+			}
+			lang := tt.load()
+			diag := gotreesitter.DiagnoseCRecoveryGate(lang)
+			if !diag.Supported {
+				t.Fatalf("DiagnoseCRecoveryGate rejected language: %s", diag.Reason)
+			}
+			if !lang.CRecoveryCostCompetitionCapable {
+				t.Fatalf("%q C recovery capability not retained", tt.name)
+			}
+			if lang.CRecoveryCostCompetitionEnabledByDefault {
+				t.Fatalf("%q C recovery election default-enabled despite opt-out", tt.name)
+			}
+		})
+	}
+}
+
+type externalLexElectionRow struct {
+	Grammar                string `json:"grammar"`
+	Status                 string `json:"status"`
+	CRecoveryDefaultOptOut bool   `json:"c_recovery_default_opt_out"`
+}
+
+func readElectionLedger(t *testing.T) map[string]externalLexElectionRow {
+	t.Helper()
+	data, err := os.ReadFile("../cgo_harness/tier_scan/external_lex_elections.json")
+	if err != nil {
+		t.Fatalf("read external lex election ledger: %v", err)
+	}
+	var doc struct {
+		Grammars []externalLexElectionRow `json:"grammars"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatalf("decode external lex election ledger: %v", err)
+	}
+	out := make(map[string]externalLexElectionRow, len(doc.Grammars))
+	for _, row := range doc.Grammars {
+		out[row.Grammar] = row
+	}
+	return out
+}
+
+func readDefaultElectionLedger(t *testing.T) map[string]bool {
+	t.Helper()
+	rows := readElectionLedger(t)
+	out := make(map[string]bool)
+	for _, row := range rows {
+		if row.Status == "default_elected" {
+			out[row.Grammar] = true
+		}
+	}
+	return out
 }

@@ -1,4 +1,4 @@
-//go:build cobol_precise_els
+//go:build cobol_precise_els && (!grammar_subset || grammar_subset_cobol)
 
 package grammars
 

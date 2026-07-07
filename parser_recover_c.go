@@ -428,7 +428,19 @@ func generatedCRecoveryDefaultSafe(lang *Language) bool {
 	if !langHasExternalRecoverySurface(lang) {
 		return true
 	}
+	if cRecoveryDefaultOptOut(lang.Name) {
+		return false
+	}
 	return lang.ExternalScanner != nil && externalLexStatesCRecoveryFailure(lang) == ""
+}
+
+func cRecoveryDefaultOptOut(name string) bool {
+	switch name {
+	case "cpp", "html", "julia":
+		return true
+	default:
+		return false
+	}
 }
 
 func languageParseTablesValidForCRecovery(lang *Language) bool {

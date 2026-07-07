@@ -119,6 +119,35 @@ func TestCRecoveryGateRequiresExternalLexStatesForExternalScanners(t *testing.T)
 	}
 }
 
+func TestCRecoveryGateDefaultOptOutKeepsCapability(t *testing.T) {
+	t.Setenv("GOT_C_RECOVERY", "")
+	lang := cRecoveryGateLanguage()
+	lang.Name = "cpp"
+	lang.ExternalScanner = cRecoveryGateScanner{}
+	lang.ExternalSymbols = []Symbol{1}
+	lang.ExternalTokenCount = 1
+	lang.ExternalLexStates = [][]bool{{false}, {true}}
+
+	diag := CertifyCRecoveryCostCompetition(lang)
+	if !diag.Supported || diag.Reason != "" {
+		t.Fatalf("diagnostic rejected valid opt-out language: supported=%v reason=%q", diag.Supported, diag.Reason)
+	}
+	if !lang.CRecoveryCostCompetitionCapable {
+		t.Fatal("opt-out language did not keep C recovery capability")
+	}
+	if lang.CRecoveryCostCompetitionEnabledByDefault {
+		t.Fatal("opt-out language default-enabled C recovery")
+	}
+	if errorCostCompetitionLanguage(lang) {
+		t.Fatal("opt-out language enabled C recovery without env override")
+	}
+
+	t.Setenv("GOT_C_RECOVERY", "cpp")
+	if !errorCostCompetitionLanguage(lang) {
+		t.Fatal("opt-out language did not force-enable via GOT_C_RECOVERY")
+	}
+}
+
 func TestCRecoveryGateDiagnosticsExternalLexStateFailures(t *testing.T) {
 	lang := cRecoveryGateLanguage()
 	lang.ExternalScanner = cRecoveryGateScanner{}
