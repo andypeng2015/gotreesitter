@@ -24,6 +24,9 @@ func normalizeCCompatibilityWithParser(root *Node, source []byte, p *Parser, lan
 		run("c_top_level_item_wrappers", func() {
 			normalizeCTopLevelItemWrappers(root, lang)
 		})
+		run("cpp_malformed_class_function_definition", func() {
+			normalizeCppMalformedClassFunctionDefinition(root, source, lang)
+		})
 		run("c_preprocessor_directive_shapes", func() {
 			normalizeCPreprocessorDirectiveShapes(root, source, lang)
 		})
@@ -54,6 +57,7 @@ func normalizeCCompatibilityWithParser(root *Node, source []byte, p *Parser, lan
 	normalizeCTranslationUnitRoot(root, lang)
 	normalizeCRecoveredTopLevelChunks(root, source, p, lang)
 	normalizeCTopLevelItemWrappers(root, lang)
+	normalizeCppMalformedClassFunctionDefinition(root, source, lang)
 	normalizeCPreprocessorDirectiveShapes(root, source, lang)
 	normalizeCFusedDeclVariadicWalk(root, source, lang)
 	normalizeCSizeofUnknownTypeIdentifiers(root, source, lang)

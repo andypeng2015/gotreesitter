@@ -92,8 +92,17 @@ func TestCTreeDumpDiag(t *testing.T) {
 	if goLang == nil {
 		t.Fatalf("%s: not in grammars.AllLanguages", name)
 	}
-	gp := gts.NewParser(goLang)
-	gt, _ := gp.Parse(src)
+	var gt *gts.Tree
+	if os.Getenv("REPRO_GO_BACKEND") == "registry" {
+		var parseErr error
+		gt, _, parseErr = parseWithGo(parityCase{name: name, source: string(src)}, src, nil)
+		if parseErr != nil {
+			t.Fatalf("go registry parse failed: %v", parseErr)
+		}
+	} else {
+		gp := gts.NewParser(goLang)
+		gt, _ = gp.Parse(src)
+	}
 	if gt == nil || gt.RootNode() == nil {
 		t.Fatalf("go parse failed")
 	}
