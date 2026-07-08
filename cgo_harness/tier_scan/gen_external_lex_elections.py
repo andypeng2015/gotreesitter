@@ -53,14 +53,13 @@ RECEIPTS = {
     "default_elected": [
         "Docker: wave4-external-lex-election-inventory-test-v2",
         "TestExternalLexStatesDefaultElectionInventory",
+        "Docker: wave4-cobol-default-precise-els",
+        "TestCobolExternalLexStatesDefaultElection",
     ],
     "staged_precise_els": [
         "Docker: wave4-javascript-precise-els-staged-test",
         "TestJavascriptExternalLexStatesRegression (-tags javascript_precise_els)",
         "TestJavascriptExternalLexStatesRemainStagedByDefault",
-        "Docker: wave4-cobol-precise-els-staged-test",
-        "TestCobolExternalLexStatesRegression (-tags cobol_precise_els)",
-        "TestCobolExternalLexStatesRemainStagedByDefault",
         "TestExternalLexStatesRecoveryElectionOptOutInventory",
     ],
     "sample_c_oracle_smoke": [

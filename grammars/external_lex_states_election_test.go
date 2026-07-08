@@ -26,6 +26,7 @@ func TestExternalLexStatesDefaultElectionInventory(t *testing.T) {
 		{name: "caddy", load: CaddyLanguage},
 		{name: "cairo", load: CairoLanguage},
 		{name: "cmake", load: CmakeLanguage},
+		{name: "cobol", load: CobolLanguage},
 		{name: "cooklang", load: CooklangLanguage},
 		{name: "crystal", load: CrystalLanguage},
 		{name: "css", load: CssLanguage},

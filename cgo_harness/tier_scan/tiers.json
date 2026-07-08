@@ -1,6 +1,6 @@
 {
- "generated": "2026-07-08T14:21:56Z",
- "commit": "9904836c",
+ "generated": "2026-07-08T14:59:05Z",
+ "commit": "5939704d",
  "version": "unreleased",
  "tier_rules": {
   "I": "parity-clean and <=1.5x C full-parse, cold <=5ms, blob <=150KB",
@@ -197,9 +197,9 @@
   {
    "grammar": "cobol",
    "tier": "IV",
-   "iv_cause": "IV-version",
-   "parity": "0/40",
-   "notes": "Wave 4 precise-ELS path no longer times out and matches C on BBANK10P.cbl (Docker wave4-cobol-bbank10p-child-preserve: parityMatch=1/1, trunc=0, diverge=0); generated Cobol gates are clean at 40/40 for both direct C parity (20260708_071502-focus-cobol) and real-corpus parity (20260708T141502Z). Published tier remains IV-version because precise ELS is still staged and the default tier runner reports 0/40 with cRecoveryGateReason=external_scanner_requires_precise_externallexstates (wave4-cobol-tier40-docker: trunc=38, errTree=38, diverge=40); do not ratchet Cobol CLEAN until default election or tier-runner tag handling is resolved."
+   "iv_cause": "IV-recovery",
+   "parity": "3/40",
+   "notes": "Wave 4 default precise ELS is elected: BBANK10P, SCUSTOMP, and SSECUREP match C under the default tier runner (Docker wave4-cobol-tier40-default-els-trailing-comment: parityMatch=3/40, trunc=29, errTree=38, diverge=37, medianRatio=2.70x, aggRatio=4.45x). Generated Cobol gates remain clean at 40/40 for both direct C parity (20260708_071502-focus-cobol) and real-corpus parity (20260708T141502Z), and BBANK10P default ELS witness matches (wave4-cobol-bbank10p-default-els). Remaining IV blockers are 29 no_stacks_alive frontier-death files around copybook/procedure recovery plus accepted C-recovery shape gaps such as SCASHDRV and SCHAR00P where Go materializes finer statements but C wraps the tail as a broad ERROR; do not ratchet Cobol CLEAN until those are resolved."
   },
   {
    "grammar": "comment",

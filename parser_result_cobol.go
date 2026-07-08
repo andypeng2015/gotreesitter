@@ -688,6 +688,10 @@ func cobolBytesAreTrailingTrivia(source []byte, start, end uint32) bool {
 			lineStart = i + 1
 			column = 0
 		default:
+			if cobolLineLooksFixedFormatComment(source, lineStart) {
+				column++
+				continue
+			}
 			if column < 6 && cobolLineLooksFixedFormat(source, lineStart) {
 				column++
 				continue

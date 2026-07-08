@@ -12,21 +12,21 @@ scanner.
 | --- | ---: |
 | grammars | 206 |
 | registered external scanners | 119 |
-| default precise ExternalLexStates tables | 89 |
-| staged precise ExternalLexStates tables | 2 |
+| default precise ExternalLexStates tables | 90 |
+| staged precise ExternalLexStates tables | 1 |
 | C recovery default opt-outs | 3 |
 
 | status | count |
 | --- | ---: |
-| default elected | 86 |
-| staged precise ELS | 5 |
+| default elected | 87 |
+| staged precise ELS | 4 |
 | blocked: missing precise ELS | 28 |
 | not applicable: no external scanner | 87 |
 
 ## Verification Receipts
 
-- `default_elected`: Docker: wave4-external-lex-election-inventory-test-v2; TestExternalLexStatesDefaultElectionInventory
-- `staged_precise_els`: Docker: wave4-javascript-precise-els-staged-test; TestJavascriptExternalLexStatesRegression (-tags javascript_precise_els); TestJavascriptExternalLexStatesRemainStagedByDefault; Docker: wave4-cobol-precise-els-staged-test; TestCobolExternalLexStatesRegression (-tags cobol_precise_els); TestCobolExternalLexStatesRemainStagedByDefault; TestExternalLexStatesRecoveryElectionOptOutInventory
+- `default_elected`: Docker: wave4-external-lex-election-inventory-test-v2; TestExternalLexStatesDefaultElectionInventory; Docker: wave4-cobol-default-precise-els; TestCobolExternalLexStatesDefaultElection
+- `staged_precise_els`: Docker: wave4-javascript-precise-els-staged-test; TestJavascriptExternalLexStatesRegression (-tags javascript_precise_els); TestJavascriptExternalLexStatesRemainStagedByDefault; TestExternalLexStatesRecoveryElectionOptOutInventory
 - `sample_c_oracle_smoke`: Docker: wave4-external-lex-smoke-20260707T1928; angular/python/yaml clean; scss/wgsl classified recovery/error-shape IV
 - `wave3_inventory`: Docker: wave3-tier-plan-206; 206 visited; 202 planned files; 4 planned-empty
 
@@ -54,6 +54,7 @@ scanner.
 | `caddy` | default elected | IV-recovery? | 11/40 | yes | yes | no | no | `.caddy,caddyfile` |
 | `cairo` | default elected | IV-recovery? | 1/40 | yes | yes | no | no | `.cairo` |
 | `cmake` | default elected | CLEAN | 40/40 | yes | yes | no | no | `.cmake,.cmake.in` |
+| `cobol` | default elected | IV-recovery | 3/40 | yes | yes | no | no | `.cbl,.cob,.cpy` |
 | `cooklang` | default elected | IV-recovery | 0/3 | yes | yes | no | no | `.cook` |
 | `crystal` | default elected | IV-shape? | unmeasured | yes | yes | no | no | `.cr` |
 | `css` | default elected | IV-unknown | 37/40 | yes | yes | no | no | `.css` |
@@ -127,7 +128,6 @@ scanner.
 | `vue` | default elected | CLEAN | 40/40 | yes | yes | no | no | `.vue` |
 | `wgsl` | default elected | IV-recovery | 21/40 | yes | yes | no | no | `.wgsl` |
 | `yaml` | default elected | CLEAN | 40/40 | yes | yes | no | no | `.yaml,.yml` |
-| `cobol` | staged precise ELS | IV-version | 0/40 | yes | no | yes | no | `.cbl,.cob,.cpy` |
 | `cpp` | staged precise ELS | IV-recovery | 9/40 | yes | yes | no | yes | `.cc,.cpp,.cxx,.h,.hh,.hpp,.hxx` |
 | `html` | staged precise ELS | IV-recovery | 0/40 | yes | yes | no | yes | `.htm,.html` |
 | `javascript` | staged precise ELS | CLEAN | 40/40 | yes | no | yes | no | `.cjs,.js,.mjs` |
