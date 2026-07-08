@@ -61,7 +61,17 @@ jobs:
   race_packages:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: cmd
+            package_filter: '/cmd/'
+          - name: grammars
+            package_filter: '/grammars$|/grammargen/|/parser_result_test$'
+          - name: support
+            package_filter: '/grep$|/taproot($|/)'
     steps:
       - uses: actions/checkout@v4
 
@@ -69,9 +79,11 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Non-root Race Tests
-        # Keep non-root packages serialized under -race so timing-sensitive
-        # tests do not contend with each other on 2-core hosted runners.
+      - name: Non-root Race Tests (${{ matrix.name }})
+        # Keep each lane serialized under -race so timing-sensitive tests do
+        # not contend with each other on 2-core hosted runners, but split the
+        # former all-non-root sweep into package groups so the wall clock stays
+        # near the target 10-minute envelope.
         # ./grammargen stays visibility-only until its enumerated backlog is
         # burned down and folded back into the blocking suite.
         run: |
@@ -79,18 +91,22 @@ jobs:
           root="$(go list -m)"
           pkgs="$(
             go list ./... |
-              awk -v root="$root" '$0 != root && $0 !~ /\/grammargen$/ { print }'
+              awk -v root="$root" -v pattern="${{ matrix.package_filter }}" '
+                $0 == root { next }
+                $0 ~ /\/grammargen$/ { next }
+                $0 ~ pattern { print }
+              '
           )"
           if [ -z "$pkgs" ]; then
-            echo "No non-root packages to test"
+            echo "No non-root packages to test for lane ${{ matrix.name }}"
             exit 0
           fi
-          go test $pkgs -race -count=1 -timeout 35m -p 1
+          go test $pkgs -race -count=1 -timeout 12m -p 1
 
   grammargen_visibility:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
 
@@ -100,11 +116,12 @@ jobs:
 
       - name: Test grammargen (non-blocking visibility)
         # Visibility-only until the enumerated pre-existing backlog is zeroed;
-        # known test failures here are SEEN but do not make the PR red. Heavy
-        # generation tests keep the same timeout discipline.
+        # known test failures or timeout exits here are SEEN but do not make
+        # the PR red. Keep this bounded so visibility cannot dominate the PR
+        # check rollup while the blocking build gate has already passed.
         run: |
           set +e
-          go test ./grammargen -race -count=1 -timeout 35m
+          go test ./grammargen -race -count=1 -timeout 10m
           status=$?
           set -e
 
@@ -113,7 +130,7 @@ jobs:
             {
               echo "### Grammargen Visibility"
               echo
-              echo "\`go test ./grammargen -race -count=1 -timeout 35m\` exited with status \`${status}\`."
+              echo "\`go test ./grammargen -race -count=1 -timeout 10m\` exited with status \`${status}\`."
               echo
               echo "This job is informational until the known grammargen backlog is zeroed."
             } >> "$GITHUB_STEP_SUMMARY"
