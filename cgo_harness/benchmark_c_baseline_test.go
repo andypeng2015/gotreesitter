@@ -4,7 +4,6 @@ package cgoharness
 
 import (
 	"bytes"
-	"context"
 	"testing"
 
 	sitter "github.com/smacker/go-tree-sitter"
@@ -31,15 +30,6 @@ func requireCompleteCTree(tb testing.TB, tree *sitter.Tree, src []byte, phase st
 		tb.Fatalf("%s parse truncated: root.EndByte=%d want=%d type=%q hasError=%v", phase, got, want, root.Type(), root.HasError())
 	}
 	return root
-}
-
-func parseCTree(tb testing.TB, parser *sitter.Parser, oldTree *sitter.Tree, src []byte, phase string) *sitter.Tree {
-	tb.Helper()
-	tree, err := parser.ParseCtx(context.Background(), oldTree, src)
-	if err != nil {
-		tb.Fatalf("%s parse error: %v", phase, err)
-	}
-	return tree
 }
 
 func newCTreeSitterParser(tb testing.TB) *sitter.Parser {

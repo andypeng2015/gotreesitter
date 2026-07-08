@@ -623,22 +623,35 @@ func textSlice(src []byte, c highlightCapture) string {
 
 // diffCaptures returns captures only in Go and only in C.
 func diffCaptures(goCaps, cCaps []highlightCapture) (onlyGo, onlyC []highlightCapture) {
-	goSet := make(map[highlightCapture]struct{}, len(goCaps))
-	for _, c := range goCaps {
-		goSet[c] = struct{}{}
+	type captureKey struct {
+		name      string
+		startByte uint32
+		endByte   uint32
 	}
-	cSet := make(map[highlightCapture]struct{}, len(cCaps))
+	key := func(c highlightCapture) captureKey {
+		return captureKey{
+			name:      c.Name,
+			startByte: c.StartByte,
+			endByte:   c.EndByte,
+		}
+	}
+
+	goSet := make(map[captureKey]struct{}, len(goCaps))
+	for _, c := range goCaps {
+		goSet[key(c)] = struct{}{}
+	}
+	cSet := make(map[captureKey]struct{}, len(cCaps))
 	for _, c := range cCaps {
-		cSet[c] = struct{}{}
+		cSet[key(c)] = struct{}{}
 	}
 
 	for _, c := range goCaps {
-		if _, ok := cSet[c]; !ok {
+		if _, ok := cSet[key(c)]; !ok {
 			onlyGo = append(onlyGo, c)
 		}
 	}
 	for _, c := range cCaps {
-		if _, ok := goSet[c]; !ok {
+		if _, ok := goSet[key(c)]; !ok {
 			onlyC = append(onlyC, c)
 		}
 	}
