@@ -589,7 +589,6 @@ func safeEditOffset(src []byte) int {
 			switch src[i] {
 			case '\n', '}', ';', ')', ']', '>', '<':
 				insertAt = i
-				break
 			}
 			if insertAt >= 0 {
 				break
@@ -600,21 +599,6 @@ func safeEditOffset(src []byte) int {
 		insertAt = len(src)
 	}
 	return insertAt
-}
-
-func insertSpaceAt(src []byte, insertAt int) []byte {
-	if insertAt < 0 {
-		insertAt = 0
-	}
-	if insertAt > len(src) {
-		insertAt = len(src)
-	}
-
-	edited := make([]byte, len(src)+1)
-	copy(edited[:insertAt], src[:insertAt])
-	edited[insertAt] = ' '
-	copy(edited[insertAt+1:], src[insertAt:])
-	return edited
 }
 
 type incrementalEditCandidate struct {

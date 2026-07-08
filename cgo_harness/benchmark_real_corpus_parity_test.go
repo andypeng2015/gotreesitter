@@ -1571,20 +1571,6 @@ func tryParseRealCorpusGoFull(tc realCorpusBenchmarkCase, parser *gotreesitter.P
 	return tree, ""
 }
 
-func parseRealCorpusGoIncremental(tb testing.TB, tc realCorpusBenchmarkCase, parser *gotreesitter.Parser, oldTree *gotreesitter.Tree) *gotreesitter.Tree {
-	tb.Helper()
-	return parseRealCorpusGoIncrementalWithPhase(tb, tc, parser, oldTree, "gotreesitter incremental")
-}
-
-func parseRealCorpusGoIncrementalWithPhase(tb testing.TB, tc realCorpusBenchmarkCase, parser *gotreesitter.Parser, oldTree *gotreesitter.Tree, phase string) *gotreesitter.Tree {
-	tb.Helper()
-	tree, ok := tryParseCompleteRealCorpusGoIncrementalWithPhase(tb, tc, parser, oldTree, phase)
-	if !ok {
-		tb.Fatalf("%s %s/%s incomplete parse", phase, tc.name, filepath.Base(tc.path))
-	}
-	return tree
-}
-
 func tryParseCompleteRealCorpusGoIncrementalWithPhase(tb testing.TB, tc realCorpusBenchmarkCase, parser *gotreesitter.Parser, oldTree *gotreesitter.Tree, phase string) (*gotreesitter.Tree, bool) {
 	tb.Helper()
 	var tree *gotreesitter.Tree
@@ -1679,14 +1665,6 @@ func parseRealCorpusCFull(tb testing.TB, parser *sitter.Parser, source []byte) *
 		tb.Fatalf("C full parse %s", failure)
 	}
 	return tree
-}
-
-func tryParseCompleteRealCorpusCFull(parser *sitter.Parser, source []byte) (*sitter.Tree, bool) {
-	tree := parser.Parse(source, nil)
-	if !isCompleteRealCorpusCTree(tree, source) {
-		return nil, false
-	}
-	return tree, true
 }
 
 func parseRealCorpusCIncremental(tb testing.TB, parser *sitter.Parser, source []byte, oldTree *sitter.Tree) *sitter.Tree {

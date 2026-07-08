@@ -737,10 +737,6 @@ func collectCandidatesWithMatchers(repoDir string, exts, names, paths []string, 
 	return collectCandidatesWithMatchersFromRoot(repoDir, repoDir, exts, names, paths, maxBytes, includeFixtures)
 }
 
-func collectCandidatesWithNamesFromRoot(sourceRoot, walkRoot string, exts, names []string, maxBytes int, includeFixtures bool) ([]corpusFile, error) {
-	return collectCandidatesWithMatchersFromRoot(sourceRoot, walkRoot, exts, names, nil, maxBytes, includeFixtures)
-}
-
 func collectCandidatesWithMatchersFromRoot(sourceRoot, walkRoot string, exts, names, paths []string, maxBytes int, includeFixtures bool) ([]corpusFile, error) {
 	seen := map[string]struct{}{}
 	out := make([]corpusFile, 0, 256)
