@@ -1166,7 +1166,7 @@ func BenchmarkPythonCorpusCTreeSitterParseFull(b *testing.B) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		tree := parser.Parse(nil, file.source)
+		tree := parseCTree(b, parser, nil, file.source, file.path)
 		root := requireCompleteCTree(b, tree, file.source, file.path)
 		if root.HasError() {
 			tree.Close()

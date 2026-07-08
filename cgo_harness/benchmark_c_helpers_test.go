@@ -4,11 +4,14 @@ package cgoharness
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
 	"testing"
+
+	sitter "github.com/smacker/go-tree-sitter"
 )
 
 func makeGoBenchmarkSource(funcCount int) []byte {
@@ -33,6 +36,15 @@ func benchmarkFuncCount(b *testing.B) int {
 		return 100
 	}
 	return 500
+}
+
+func parseCTree(tb testing.TB, parser *sitter.Parser, oldTree *sitter.Tree, src []byte, phase string) *sitter.Tree {
+	tb.Helper()
+	tree, err := parser.ParseCtx(context.Background(), oldTree, src)
+	if err != nil {
+		tb.Fatalf("%s parse error: %v", phase, err)
+	}
+	return tree
 }
 
 func makeBenchmarkEditSites(src []byte, marker string) []benchmarkEditSite {
