@@ -69,7 +69,7 @@ jobs:
           - name: cmd
             package_filter: '/cmd/'
           - name: grammars
-            package_filter: '/grammars$|/parser_result_test$'
+            package_filter: '/grammars$|/grammargen/|/parser_result_test$'
           - name: support
             package_filter: '/grep$|/taproot($|/)'
     steps:
