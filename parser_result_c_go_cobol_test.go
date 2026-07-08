@@ -782,6 +782,13 @@ func TestCobolTrailingTriviaAcceptsFixedFormatLineTails(t *testing.T) {
 	if !cobolBytesAreTrailingTrivia(source, pictureEnd, procedureStart) {
 		t.Fatalf("expected trailing identification area before procedure division to be trivia")
 	}
+
+	gobackEnd := uint32(bytes.Index(source, []byte("PROCEDURE DIVISION.")) + len("PROCEDURE DIVISION."))
+	versionComment := []byte("\n      * $ Version 5.99c sequenced on Wednesday 3 Mar 2011 at 1:00pm\n")
+	withTrailingComment := append(append([]byte(nil), source[:gobackEnd]...), versionComment...)
+	if !cobolBytesAreTrailingTrivia(withTrailingComment, gobackEnd, uint32(len(withTrailingComment))) {
+		t.Fatalf("expected trailing fixed-format comment line to be trivia")
+	}
 }
 
 func TestCobolTrailingTriviaRejectsFreeFormatCode(t *testing.T) {

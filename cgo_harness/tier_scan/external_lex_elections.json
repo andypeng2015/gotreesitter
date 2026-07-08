@@ -340,16 +340,16 @@
   },
   {
    "c_recovery_default_opt_out": false,
-   "default_external_lex_states": false,
+   "default_external_lex_states": true,
    "extensions": ".cbl,.cob,.cpy",
    "grammar": "cobol",
    "has_external_scanner": true,
-   "parity": "0/40",
-   "staged_external_lex_states": true,
-   "status": "staged_precise_els",
-   "status_label": "staged precise ELS",
-   "tier_classification": "IV-version",
-   "tier_notes": "Wave 4 precise-ELS path no longer times out and matches C on BBANK10P.cbl (Docker wave4-cobol-bbank10p-child-preserve: parityMatch=1/1, trunc=0, diverge=0); generated Cobol gates are clean at 40/40 for both direct C parity (20260708_071502-focus-cobol) and real-corpus parity (20260708T141502Z). Published tier remains IV-version because precise ELS is still staged and the default tier runner reports 0/40 with cRecoveryGateReason=external_scanner_requires_precise_externallexstates (wave4-cobol-tier40-docker: trunc=38, errTree=38, diverge=40); do not ratchet Cobol CLEAN until default election or tier-runner tag handling is resolved."
+   "parity": "3/40",
+   "staged_external_lex_states": false,
+   "status": "default_elected",
+   "status_label": "default elected",
+   "tier_classification": "IV-recovery",
+   "tier_notes": "Wave 4 default precise ELS is elected: BBANK10P, SCUSTOMP, and SSECUREP match C under the default tier runner (Docker wave4-cobol-tier40-default-els-trailing-comment: parityMatch=3/40, trunc=29, errTree=38, diverge=37, medianRatio=2.70x, aggRatio=4.45x). Generated Cobol gates remain clean at 40/40 for both direct C parity (20260708_071502-focus-cobol) and real-corpus parity (20260708T141502Z), and BBANK10P default ELS witness matches (wave4-cobol-bbank10p-default-els). Remaining IV blockers are 29 no_stacks_alive frontier-death files around copybook/procedure recovery plus accepted C-recovery shape gaps such as SCASHDRV and SCHAR00P where Go materializes finer statements but C wraps the tail as a broad ERROR; do not ratchet Cobol CLEAN until those are resolved."
   },
   {
    "c_recovery_default_opt_out": false,
@@ -2681,14 +2681,16 @@
  ],
  "histogram": {
   "blocked_missing_precise_els": 28,
-  "default_elected": 86,
+  "default_elected": 87,
   "not_applicable_no_external_scanner": 87,
-  "staged_precise_els": 5
+  "staged_precise_els": 4
  },
  "receipts": {
   "default_elected": [
    "Docker: wave4-external-lex-election-inventory-test-v2",
-   "TestExternalLexStatesDefaultElectionInventory"
+   "TestExternalLexStatesDefaultElectionInventory",
+   "Docker: wave4-cobol-default-precise-els",
+   "TestCobolExternalLexStatesDefaultElection"
   ],
   "sample_c_oracle_smoke": [
    "Docker: wave4-external-lex-smoke-20260707T1928",
@@ -2698,9 +2700,6 @@
    "Docker: wave4-javascript-precise-els-staged-test",
    "TestJavascriptExternalLexStatesRegression (-tags javascript_precise_els)",
    "TestJavascriptExternalLexStatesRemainStagedByDefault",
-   "Docker: wave4-cobol-precise-els-staged-test",
-   "TestCobolExternalLexStatesRegression (-tags cobol_precise_els)",
-   "TestCobolExternalLexStatesRemainStagedByDefault",
    "TestExternalLexStatesRecoveryElectionOptOutInventory"
   ],
   "wave3_inventory": [
@@ -2725,10 +2724,10 @@
  },
  "summary": {
   "c_recovery_default_opt_out_count": 3,
-  "default_external_lex_state_count": 89,
+  "default_external_lex_state_count": 90,
   "external_scanner_count": 119,
   "grammar_count": 206,
-  "staged_external_lex_state_count": 2
+  "staged_external_lex_state_count": 1
  },
  "wave": "wave4-external-lex-state-elections"
 }
