@@ -40,6 +40,15 @@ STATUS_LABELS = {
     "not_applicable_no_external_scanner": "not applicable: no external scanner",
 }
 
+C_RECOVERY_DEFAULT_OPT_OUT = {
+    # Precise ELS is registered by default, but C recovery election is staged
+    # because focused regressions show the faithful C recovery port changes
+    # accepted trees for these grammars.
+    "cpp",
+    "html",
+    "julia",
+}
+
 RECEIPTS = {
     "default_elected": [
         "Docker: wave4-external-lex-election-inventory-test-v2",
@@ -49,6 +58,10 @@ RECEIPTS = {
         "Docker: wave4-javascript-precise-els-staged-test",
         "TestJavascriptExternalLexStatesRegression (-tags javascript_precise_els)",
         "TestJavascriptExternalLexStatesRemainStagedByDefault",
+        "Docker: wave4-cobol-precise-els-staged-test",
+        "TestCobolExternalLexStatesRegression (-tags cobol_precise_els)",
+        "TestCobolExternalLexStatesRemainStagedByDefault",
+        "TestExternalLexStatesRecoveryElectionOptOutInventory",
     ],
     "sample_c_oracle_smoke": [
         "Docker: wave4-external-lex-smoke-20260707T1928",
@@ -153,6 +166,8 @@ def status_for(grammar, scanners, default_els, staged_els):
     if grammar not in scanners:
         return "not_applicable_no_external_scanner"
     if grammar in default_els:
+        if grammar in C_RECOVERY_DEFAULT_OPT_OUT:
+            return "staged_precise_els"
         return "default_elected"
     if grammar in staged_els:
         return "staged_precise_els"
@@ -184,6 +199,15 @@ def validate(doc, universe, scanners, default_els, staged_els):
     overlap = sorted(default_els & staged_els)
     if overlap:
         errors.append("languages both default and staged: " + ", ".join(overlap))
+    unknown_opt_out = sorted(C_RECOVERY_DEFAULT_OPT_OUT - universe)
+    if unknown_opt_out:
+        errors.append("C recovery default opt-outs outside exts.tsv: " + ", ".join(unknown_opt_out))
+    opt_out_without_default_els = sorted(C_RECOVERY_DEFAULT_OPT_OUT - default_els)
+    if opt_out_without_default_els:
+        errors.append(
+            "C recovery default opt-outs without default ExternalLexStates: "
+            + ", ".join(opt_out_without_default_els)
+        )
 
     row_names = {row["grammar"] for row in doc["grammars"]}
     if row_names != universe:
@@ -225,6 +249,7 @@ def build():
                 "has_external_scanner": grammar in scanners,
                 "default_external_lex_states": grammar in default_els,
                 "staged_external_lex_states": grammar in staged_els,
+                "c_recovery_default_opt_out": grammar in C_RECOVERY_DEFAULT_OPT_OUT,
                 "tier_classification": cls.get("tier", "IV-unassessed"),
                 "parity": cls.get("parity", "unmeasured"),
                 "tier_notes": cls.get("notes", ""),
@@ -239,6 +264,7 @@ def build():
             "external_scanner_count": len(scanners & universe),
             "default_external_lex_state_count": len(default_els & universe),
             "staged_external_lex_state_count": len(staged_els & universe),
+            "c_recovery_default_opt_out_count": len(C_RECOVERY_DEFAULT_OPT_OUT & universe),
         },
         "histogram": histogram,
         "status_definitions": {
@@ -249,7 +275,8 @@ def build():
             ),
             "staged_precise_els": (
                 "A precise ExternalLexStates table exists behind an opt-in build tag "
-                "or explicit staging policy; default election is intentionally disabled."
+                "or explicit staging policy; default C recovery election is intentionally "
+                "disabled."
             ),
             "blocked_missing_precise_els": (
                 "External scanner is registered, but no precise ExternalLexStates table "
@@ -295,6 +322,7 @@ def to_markdown(doc):
         f"| registered external scanners | {doc['summary']['external_scanner_count']} |",
         f"| default precise ExternalLexStates tables | {doc['summary']['default_external_lex_state_count']} |",
         f"| staged precise ExternalLexStates tables | {doc['summary']['staged_external_lex_state_count']} |",
+        f"| C recovery default opt-outs | {doc['summary']['c_recovery_default_opt_out_count']} |",
         "",
         "| status | count |",
         "| --- | ---: |",
@@ -322,8 +350,8 @@ def to_markdown(doc):
         "",
         "## Grammar Ledger",
         "",
-        "| grammar | status | tier row | parity | scanner | default ELS | staged ELS | extensions |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- |",
+        "| grammar | status | tier row | parity | scanner | default ELS | staged ELS | recovery opt-out | extensions |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     rows = sorted(
         doc["grammars"],
@@ -333,10 +361,11 @@ def to_markdown(doc):
         scanner = "yes" if row["has_external_scanner"] else "no"
         default = "yes" if row["default_external_lex_states"] else "no"
         staged = "yes" if row["staged_external_lex_states"] else "no"
+        opt_out = "yes" if row["c_recovery_default_opt_out"] else "no"
         lines.append(
             f"| `{row['grammar']}` | {row['status_label']} | "
             f"{row['tier_classification']} | {row['parity']} | {scanner} | "
-            f"{default} | {staged} | `{row['extensions']}` |"
+            f"{default} | {staged} | {opt_out} | `{row['extensions']}` |"
         )
     lines.append("")
     return "\n".join(lines)

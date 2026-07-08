@@ -1,6 +1,7 @@
 {
  "grammars": [
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".adb,.ads",
    "grammar": "ada",
@@ -13,6 +14,7 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 39/40, trunc=0, errTree=0, panics=0; previous CLEAN row was stale: Ada aggregate/index-constraint compatibility normalized to C oracle; Docker tier parity verified 2026-06-11"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".agda",
    "grammar": "agda",
@@ -25,6 +27,7 @@
    "tier_notes": "layout scanner, deep port needed (maple)"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": true,
    "extensions": ".html",
    "grammar": "angular",
@@ -37,6 +40,7 @@
    "tier_notes": "Angular non-null assertion and strong-text ampersand recovery normalization clear navigation-list.component.html and home.component.html; ext=.component.html,.ng.html; remaining residuals are broad root/document recovery cases (see spec)"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".cls,.trigger",
    "grammar": "apex",
@@ -49,18 +53,20 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 39/40, trunc=0, errTree=0, panics=0; previous CLEAN row was stale: Apex generic local declarations and .class literal compatibility normalized to C oracle; Docker parity verified 2026-06-11"
   },
   {
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": false,
+   "default_external_lex_states": true,
    "extensions": ".ino",
    "grammar": "arduino",
    "has_external_scanner": true,
    "parity": "40/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "CLEAN",
    "tier_notes": "in ratchet"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".asm,.s",
    "grammar": "asm",
@@ -73,18 +79,20 @@
    "tier_notes": "faithful C error-cost version competition (see spec)"
   },
   {
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": false,
+   "default_external_lex_states": true,
    "extensions": ".astro",
    "grammar": "astro",
    "has_external_scanner": true,
    "parity": "40/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "CLEAN",
    "tier_notes": "in ratchet"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".zed",
    "grammar": "authzed",
@@ -97,6 +105,7 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 36/40, trunc=27, errTree=25, panics=0; previous CLEAN row was stale: Authzed clean-root definition coalescing promoted; Docker tier-scan parity verified 2026-06-11"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": true,
    "extensions": ".auk,.awk,.gawk,.mawk,.nawk",
    "grammar": "awk",
@@ -109,6 +118,7 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 25/29, trunc=2, errTree=2, panics=0; previous CLEAN row was stale: AWK T.gawk recovered shell command compatibility normalized to C oracle; Docker tier parity verified 2026-06-12"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": true,
    "extensions": ".sh",
    "grammar": "bash",
@@ -121,6 +131,7 @@
    "tier_notes": "ext=.sh; Bash command-name concatenation normalization cleared ci/run-static-analysis.sh; split Docker C-oracle verification 2026-06-12 improved 27/34 + 3/6 to 28/34 + 3/6. Remaining divergences are recovery-shape: go ERROR root where C recovers program (lib.sh, git-prompt.sh, git-subtree.sh, git-filter-branch.sh, git-gui askpass/askyesno) plus child-count/error-shape diffs; 1 trunc (cmd-list.sh no_stacks_alive)."
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".bass",
    "grammar": "bass",
@@ -133,18 +144,20 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 39/40, trunc=1, errTree=0, panics=0; previous CLEAN row was stale: in ratchet"
   },
   {
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": false,
+   "default_external_lex_states": true,
    "extensions": ".bean,.beancount",
    "grammar": "beancount",
    "has_external_scanner": true,
    "parity": "3/3",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "CLEAN",
    "tier_notes": "latest wringer cgo_harness/harness_out/wringer_beancount_all_root_tail_20260623T192449/wringer_summary.json closed clean 3/3 with family_counts {clean:3}; resolved by generalized accepted clean-tail forest/root finalization fix, superseding prior accepted-shape/root-child materialization residual"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".bib",
    "grammar": "bibtex",
@@ -157,6 +170,7 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 38/40, trunc=2, errTree=0, panics=0; previous missing row was stale"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": true,
    "extensions": ".bicep",
    "grammar": "bicep",
@@ -169,6 +183,7 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 34/40, trunc=6, errTree=6, panics=0; previous CLEAN row was stale: C-recovery gate keeps extension samples under infrastructure roots with localized ERROR regions (verified 2026-06-12)"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": true,
    "extensions": ".bb,.bbappend,.bbclass",
    "grammar": "bitbake",
@@ -181,18 +196,20 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 35/40, trunc=5, errTree=3, panics=0; previous CLEAN row was stale: BitBake recovered shell-function/function-flag shape normalization cleared remaining 3 residuals; Docker D-tier C-oracle parity verified 2026-06-13"
   },
   {
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": false,
+   "default_external_lex_states": true,
    "extensions": ".blade.php",
    "grammar": "blade",
    "has_external_scanner": true,
    "parity": "unmeasured",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery?",
    "tier_notes": "ext=.blade.php; faithful C error-cost version competition (see spec)"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".brs",
    "grammar": "brightscript",
@@ -205,6 +222,7 @@
    "tier_notes": "ext=.brs; faithful C error-cost version competition (see spec)"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".c,.h",
    "grammar": "c",
@@ -217,6 +235,7 @@
    "tier_notes": "faithful C error-cost version competition (see spec)"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": true,
    "extensions": ".cs",
    "grammar": "c_sharp",
@@ -229,6 +248,7 @@
    "tier_notes": "C# scoped/ref type, generic invocation initializer, and identifier is-pattern normalizations lift aggressive real-corpus deep parity 15/26 to 18/26 while focused C-oracle remains 20/20; full tier row remains IV pending a 40-case tier rescan, with residuals in recovery/error-root plus switch and try/finally shapes"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": true,
    "extensions": ".caddy,caddyfile",
    "grammar": "caddy",
@@ -241,18 +261,20 @@
    "tier_notes": "ext=Caddyfile; faithful C error-cost version competition (see spec)"
   },
   {
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": false,
+   "default_external_lex_states": true,
    "extensions": ".cairo",
    "grammar": "cairo",
    "has_external_scanner": true,
    "parity": "1/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery?",
    "tier_notes": "ext=.cairo; faithful C error-cost version competition (see spec)"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".capnp",
    "grammar": "capnp",
@@ -265,6 +287,7 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 14/21, trunc=0, errTree=0, panics=0; previous CLEAN row was stale: in ratchet"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".chatito",
    "grammar": "chatito",
@@ -277,6 +300,7 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 1/5, trunc=4, errTree=0, panics=0; previous CLEAN row was stale: trailing EOF alias-body recovery normalized to C on dateBooking_large.chatito"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".circom",
    "grammar": "circom",
@@ -289,6 +313,7 @@
    "tier_notes": "ext=.circom; preliminary"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".clj,.cljc,.cljs,.edn",
    "grammar": "clojure",
@@ -301,30 +326,33 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: unmeasured (timeout external); scan metadata oom_killed=true, use as diagnostic evidence; previous CLEAN row was stale: in ratchet"
   },
   {
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": false,
+   "default_external_lex_states": true,
    "extensions": ".cmake,.cmake.in",
    "grammar": "cmake",
    "has_external_scanner": true,
    "parity": "40/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "CLEAN",
    "tier_notes": "in ratchet"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".cbl,.cob,.cpy",
    "grammar": "cobol",
    "has_external_scanner": true,
    "parity": "0/40",
-   "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "staged_external_lex_states": true,
+   "status": "staged_precise_els",
+   "status_label": "staged precise ELS",
    "tier_classification": "IV-version",
-   "tier_notes": "corpus is CICS/embedded-SQL COBOL the pinned grammar doesn't support \u2014 12/12 sampled root-ERROR in C too (maple)"
+   "tier_notes": "corpus is CICS/embedded-SQL COBOL the pinned grammar doesn't support \u2014 12/12 sampled root-ERROR in C too (maple); precise ELS is staged because default election timed out in C recovery on BBANK10P.cbl before oracle comparison (wave4-cobol-retry-smoke-20260707T204922Z); default staged smoke completes as characterized Tier IV 0/1 with no timeout (wave4-cobol-default-smoke-20260707T210009Z)"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".txt",
    "grammar": "comment",
@@ -337,6 +365,7 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: unmeasured (timeout external); scan metadata oom_killed=true, use as diagnostic evidence; previous CLEAN row was stale: full-parse stack cap=2 verified 2026-06-12; parity clean, perf floor pending"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".asd,.cl,.lisp,.lsp",
    "grammar": "commonlisp",
@@ -349,6 +378,7 @@
    "tier_notes": "ext=.lisp,.cl; faithful C error-cost version competition (see spec)"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": true,
    "extensions": ".cook",
    "grammar": "cooklang",
@@ -361,6 +391,7 @@
    "tier_notes": "ext=.cook; stackcap disproven (cap 2 not kept); Cooklang-gated C recovery plus local punctuation/fence normalization kept 2026-06-14: D-tier improves 0/3 -> 1/3, trunc 3 -> 0, panics 0. frontmatter_test_recipe now matches; residuals are complex_test_recipe root child-count 51 vs C 42 and test_recipe metadata child-shape (root[2]/root[3] metadata child counts 0 vs C 3/2) after full-span accepted recipe roots."
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".corn",
    "grammar": "corn",
@@ -373,6 +404,7 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 22/23, trunc=1, errTree=0, panics=0; previous CLEAN row was stale: C-recovery gate plus quoted whole-path path_seg normalization clears quoted_keys.corn"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".cpon",
    "grammar": "cpon",
@@ -385,30 +417,33 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 9/10, trunc=1, errTree=0, panics=0; previous CLEAN row was stale: null literal leaf child normalized to C oracle"
   },
   {
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": true,
+   "default_external_lex_states": true,
    "extensions": ".cc,.cpp,.cxx,.h,.hh,.hpp,.hxx",
    "grammar": "cpp",
    "has_external_scanner": true,
    "parity": "9/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "staged_precise_els",
+   "status_label": "staged precise ELS",
    "tier_classification": "IV-recovery",
    "tier_notes": "faithful C error-cost version competition (see spec); sampled full-integrity wringer 20260623 on args.h shows baseline/stack2 nonmatch with goStop=no_stacks_alive, Go translation_unit 0:641 vs C 0:7192, rootErr both true, lastTokenEnd 652/expectedEOF 7192, so witness includes truncation/pre-recovery overlay"
   },
   {
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": false,
+   "default_external_lex_states": true,
    "extensions": ".cr",
    "grammar": "crystal",
    "has_external_scanner": true,
    "parity": "unmeasured",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-shape?",
    "tier_notes": "cap=2 landed (was unmeasurable: markd entities.cr 111KB uniform hash literal never finishes at default cap >240s, 95% CPU in glr.go merge-equiv frontier rescans, ~2x input -> ~25x time; cap2 parses it in ~130ms); Crystal hash/named_tuple opening-brace compatibility pass cleared decode.cr, entities.cr, legacy.cr, renderer.cr, and history.cr with no new file-level divergers. MEASURE-DTIER N=40: medianRatio 5.42x aggRatio 18.34x trunc=0 panics=0; remaining 21 div not stack-budget: ERROR-root where C parses clean (spec_helper.cr go-cc=17 c-cc=7, html_entities.cr, node.cr; 18 errTree) plus tuple/inline hash span residuals and recovery shape gaps."
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": true,
    "extensions": ".css",
    "grammar": "css",
@@ -421,6 +456,7 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 37/40, trunc=3, errTree=3, panics=0; previous CLEAN row was stale: in ratchet; C-recovery gate (stage-2 redwood)"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".csv,.tsv",
    "grammar": "csv",
@@ -433,18 +469,20 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: unmeasured (timeout external); scan metadata oom_killed=true, use as diagnostic evidence; previous CLEAN row was stale: in ratchet; wringer-csv-progress-baseline-20260623T163446Z confirms forward-progress forest_reduce_parent_end timeout on co2-concentration.csv, 107 parser progress rows, last reduce_symbol=16 parent_span=0..9647 with advancing tokens and zero stacks, pointing at forest reduce parent/materialization throughput; sampled full-integrity wringer 20260623 closed the baseline/stack2/firstdiff timeout plan and latest timeout progress is forest_reduce_visit_begin at iter=tokens 1831, token 7622..7632, frontier_len=1, work_len=49, reducer_visits=82, reduce_symbol=16, child_count=2, no_extras=true"
   },
   {
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": false,
+   "default_external_lex_states": true,
    "extensions": ".cu,.cuh",
    "grammar": "cuda",
    "has_external_scanner": true,
    "parity": "21/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery?",
    "tier_notes": "ext=.cu,.cuh; faithful C error-cost version competition (see spec)"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": true,
    "extensions": ".cue",
    "grammar": "cue",
@@ -457,6 +495,7 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 39/40, trunc=0, errTree=0, panics=0; previous CLEAN row was stale: in ratchet; C-recovery gate (stage-3 redwood)"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".cylc",
    "grammar": "cylc",
@@ -469,30 +508,33 @@
    "tier_notes": "ext=.cylc; faithful C error-cost version competition (see spec)"
   },
   {
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": false,
+   "default_external_lex_states": true,
    "extensions": ".d,.di",
    "grammar": "d",
    "has_external_scanner": true,
    "parity": "unmeasured",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery?",
    "tier_notes": "ext=.d; faithful C error-cost version competition (see spec)"
   },
   {
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": false,
+   "default_external_lex_states": true,
    "extensions": ".dart",
    "grammar": "dart",
    "has_external_scanner": true,
    "parity": "0/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery?",
    "tier_notes": "ext=.dart; faithful C error-cost version competition (see spec)"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".desktop,.desktop.in,.service",
    "grammar": "desktop",
@@ -505,6 +547,7 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: unmeasured (timeout external); scan metadata oom_killed=true, use as diagnostic evidence; previous CLEAN row was stale: in ratchet"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".dts,.dtsi",
    "grammar": "devicetree",
@@ -517,6 +560,7 @@
    "tier_notes": "in ratchet"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".dhall",
    "grammar": "dhall",
@@ -529,6 +573,7 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 15/40, trunc=0, errTree=0, panics=0; previous CLEAN row was stale: in ratchet; Unicode anonymous terminal display names normalized to C oracle"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".diff,.patch",
    "grammar": "diff",
@@ -541,18 +586,20 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: unmeasured (timeout external); scan metadata oom_killed=true, use as diagnostic evidence; previous CLEAN row was stale: in ratchet"
   },
   {
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": false,
+   "default_external_lex_states": true,
    "extensions": ".dis,.dump",
    "grammar": "disassembly",
    "has_external_scanner": true,
    "parity": "0/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-version",
    "tier_notes": "German-locale riscv objdump corpus the grammar doesn't model \u2014 10/10 C-error (maple)"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".dj,.djot",
    "grammar": "djot",
@@ -565,18 +612,20 @@
    "tier_notes": "ext=.dj,.djot; 0/40 with 39 truncations (node_limit persists at stack cap 2: 8.4KB file blows the node budget); markdown-class inline ambiguity \u2014 re-port stateful external scanner from pinned upstream; also IV-perf component (maple)"
   },
   {
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": false,
+   "default_external_lex_states": true,
    "extensions": ".dockerfile,dockerfile",
    "grammar": "dockerfile",
    "has_external_scanner": true,
    "parity": "unmeasured",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery?",
    "tier_notes": "ext=Dockerfile,.dockerfile; faithful C error-cost version competition (see spec)"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".dot,.gv",
    "grammar": "dot",
@@ -589,6 +638,7 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: unmeasured (timeout external); scan metadata oom_killed=true, use as diagnostic evidence; previous missing row was stale"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".dox,.doxygen",
    "grammar": "doxygen",
@@ -601,6 +651,7 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 20/40, trunc=20, errTree=11, panics=0; previous CLEAN row was stale: Doxygen whole-block comment ERROR root compatibility; Docker C-oracle parity verified 2026-06-11"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": true,
    "extensions": ".dtd",
    "grammar": "dtd",
@@ -613,18 +664,20 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 0/3, trunc=3, errTree=2, panics=0; previous CLEAN row was stale: tiny curated DTD corpus clean after C recovery election plus `%entity;` elementdecl recovery-shape normalization (verified 2026-06-11)"
   },
   {
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": false,
+   "default_external_lex_states": true,
    "extensions": "earthfile",
    "grammar": "earthfile",
    "has_external_scanner": true,
    "parity": "0/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery?",
    "tier_notes": "ext=Earthfile; faithful C error-cost version competition (see spec)"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".ebnf",
    "grammar": "ebnf",
@@ -637,18 +690,20 @@
    "tier_notes": "ext=.ebnf; faithful C error-cost version competition (see spec)"
   },
   {
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": false,
+   "default_external_lex_states": true,
    "extensions": ".editorconfig",
    "grammar": "editorconfig",
    "has_external_scanner": true,
    "parity": "40/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "CLEAN",
    "tier_notes": "in ratchet"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".eds",
    "grammar": "eds",
@@ -661,6 +716,7 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 0/1, trunc=1, errTree=0, panics=0; previous CLEAN row was stale: in ratchet"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".eex,.heex,.html.eex,.leex",
    "grammar": "eex",
@@ -673,6 +729,7 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 21/40, trunc=0, errTree=0, panics=0; previous CLEAN row was stale: in ratchet"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".el",
    "grammar": "elisp",
@@ -685,18 +742,20 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: unmeasured (timeout external); scan metadata oom_killed=true, use as diagnostic evidence; previous CLEAN row was stale: in ratchet"
   },
   {
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": false,
+   "default_external_lex_states": true,
    "extensions": ".ex,.exs",
    "grammar": "elixir",
    "has_external_scanner": true,
    "parity": "unmeasured",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery",
    "tier_notes": "Elixir _newline_before_comment extra filtering lifted 0/40 to 9/40 (Docker C-oracle 2026-06-12); remaining 31 are dominated by Go ERROR/root fragmentation where C parses source clean (27 errTree), 3 no_stacks_alive truncations, plus one accepted span-shape residual (engine.ex body starts at 3676 vs C 3667). Representative smart_engine_test.exs: C closes fn -> body as anonymous_function while Go treats end as identifier and cascades into quoted-string recovery."
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": true,
    "extensions": ".elm",
    "grammar": "elm",
@@ -709,6 +768,7 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 0/8, trunc=0, errTree=0, panics=0; previous CLEAN row was stale: Elm external lex-state table plus repeatable zero-width _virtual_end_section close clear Deps.elm without broad C recovery (verified 2026-06-11)"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".elsa",
    "grammar": "elsa",
@@ -721,6 +781,7 @@
    "tier_notes": "ext=.lc; faithful C error-cost version competition (see spec)"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".ejs,.erb",
    "grammar": "embedded_template",
@@ -733,6 +794,7 @@
    "tier_notes": "in ratchet"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".c,.enf",
    "grammar": "enforce",
@@ -745,18 +807,20 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 28/40, trunc=0, errTree=2, panics=0; previous CLEAN row was stale: enforce const int formal-parameter compatibility normalization clears declMethod.txt (verified 2026-06-11)"
   },
   {
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": false,
+   "default_external_lex_states": true,
    "extensions": ".app,.app.src,.erl,.escript,.hrl,.xrl,.yrl",
    "grammar": "erlang",
    "has_external_scanner": true,
    "parity": "unmeasured",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery",
    "tier_notes": "binary_SUITE memory-budget trunc; bif_SUITE replacement-clause ambiguity-selection cleared 2026-06-12"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".fac,.fsd",
    "grammar": "facility",
@@ -769,6 +833,7 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 1/4, trunc=3, errTree=1, panics=0; previous CLEAN row was stale: locked real-corpus parity clean (verified 2026-06-11)"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".dsp",
    "grammar": "faust",
@@ -781,18 +846,20 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 39/40, trunc=0, errTree=0, panics=0; previous CLEAN row was stale: in ratchet"
   },
   {
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": false,
+   "default_external_lex_states": true,
    "extensions": ".fnl",
    "grammar": "fennel",
    "has_external_scanner": true,
    "parity": "15/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery?",
    "tier_notes": "ext=.fnl; faithful C error-cost version competition (see spec)"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".fidl",
    "grammar": "fidl",
@@ -805,18 +872,20 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 37/40, trunc=1, errTree=0, panics=0; previous CLEAN row was stale: versioned layout modifiers normalized to C oracle recovery shape"
   },
   {
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": false,
+   "default_external_lex_states": true,
    "extensions": ".fir",
    "grammar": "firrtl",
    "has_external_scanner": true,
    "parity": "12/27",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery?",
    "tier_notes": "ext=.fir; faithful C error-cost version competition (see spec)"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".fish",
    "grammar": "fish",
@@ -829,18 +898,20 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: unmeasured (timeout external); scan metadata oom_killed=true, use as diagnostic evidence; previous CLEAN row was stale: in ratchet"
   },
   {
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": false,
+   "default_external_lex_states": true,
    "extensions": ".foam",
    "grammar": "foam",
    "has_external_scanner": true,
    "parity": "40/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "CLEAN",
    "tier_notes": "in ratchet"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".4th,.fs,.fth",
    "grammar": "forth",
@@ -853,18 +924,20 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: unmeasured (timeout external); scan metadata oom_killed=true, use as diagnostic evidence; previous CLEAN row was stale: in ratchet; cap=2 plus root-leading-trivia normalization and missing end_definition recovery for unterminated word_definition (verified 2026-06-11)"
   },
   {
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": false,
+   "default_external_lex_states": true,
    "extensions": ".f,.f03,.f08,.f90,.f95",
    "grammar": "fortran",
    "has_external_scanner": true,
    "parity": "40/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "CLEAN",
    "tier_notes": "in ratchet"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".fs,.fsi,.fsx",
    "grammar": "fsharp",
@@ -877,18 +950,20 @@
    "tier_notes": "timeout-or-fail at 1200s canonical budget"
   },
   {
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": false,
+   "default_external_lex_states": true,
    "extensions": ".gd",
    "grammar": "gdscript",
    "has_external_scanner": true,
    "parity": "39/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-unknown",
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 39/40, trunc=0, errTree=0, panics=0; previous CLEAN row was stale: repeatable zero-width _dedent in DFA external loop guard; scanner token order aligned with upstream C (verified 2026-06-11)"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".gitconfig",
    "grammar": "git_config",
@@ -901,6 +976,7 @@
    "tier_notes": "in ratchet"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".git-rebase-todo",
    "grammar": "git_rebase",
@@ -913,6 +989,7 @@
    "tier_notes": "in ratchet"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".gitattributes",
    "grammar": "gitattributes",
@@ -925,18 +1002,20 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 9/10, trunc=0, errTree=0, panics=0; previous CLEAN row was stale: in ratchet"
   },
   {
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": false,
+   "default_external_lex_states": true,
    "extensions": "commit_editmsg",
    "grammar": "gitcommit",
    "has_external_scanner": true,
    "parity": "13/13",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "CLEAN",
    "tier_notes": "in ratchet"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".gitignore",
    "grammar": "gitignore",
@@ -949,18 +1028,20 @@
    "tier_notes": "in ratchet"
   },
   {
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": false,
+   "default_external_lex_states": true,
    "extensions": ".gleam",
    "grammar": "gleam",
    "has_external_scanner": true,
    "parity": "39/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-unknown",
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 39/40, trunc=0, errTree=0, panics=0; previous CLEAN row was stale: in ratchet"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".frag,.glsl,.vert",
    "grammar": "glsl",
@@ -973,18 +1054,20 @@
    "tier_notes": "faithful C error-cost version competition (see spec)"
   },
   {
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": false,
+   "default_external_lex_states": true,
    "extensions": ".gn,.gni",
    "grammar": "gn",
    "has_external_scanner": true,
    "parity": "40/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "CLEAN",
    "tier_notes": "in ratchet; scanner aligned with upstream C (maple)"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".go",
    "grammar": "go",
@@ -997,6 +1080,7 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 25/40, trunc=0, errTree=0, panics=0; previous CLEAN row was stale: Go top-level recovery now replaces signature-only function fragments and recursively recovers for-loop bodies (verified 2026-06-11)"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".tres,.tscn",
    "grammar": "godot_resource",
@@ -1009,6 +1093,7 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: unmeasured (timeout external); scan metadata oom_killed=true, use as diagnostic evidence; previous CLEAN row was stale: in ratchet; scanner aligned with upstream C (maple)"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".mod",
    "grammar": "gomod",
@@ -1021,6 +1106,7 @@
    "tier_notes": "in ratchet"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".gql,.graphql",
    "grammar": "graphql",
@@ -1033,6 +1119,7 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 0/1, trunc=0, errTree=1, panics=0; previous CLEAN row was stale: GraphQL C-recovery triple-quote/block-string handling verified 2026-06-11"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".groovy,.gvy",
    "grammar": "groovy",
@@ -1045,6 +1132,7 @@
    "tier_notes": "faithful C error-cost version competition (see spec)"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": true,
    "extensions": ".hack,.hh",
    "grammar": "hack",
@@ -1057,6 +1145,7 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 38/40, trunc=1, errTree=2, panics=0; previous CLEAN row was stale: in ratchet; C-recovery gate (stage-2 redwood)"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".ha",
    "grammar": "hare",
@@ -1069,6 +1158,7 @@
    "tier_notes": "faithful C error-cost version competition (see spec)"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".hs,.lhs",
    "grammar": "haskell",
@@ -1081,18 +1171,20 @@
    "tier_notes": "layout scanner, deep port needed (maple)"
   },
   {
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": false,
+   "default_external_lex_states": true,
    "extensions": ".hx",
    "grammar": "haxe",
    "has_external_scanner": true,
    "parity": "10/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery",
    "tier_notes": "pins at upstream HEAD; C at same pin parses corpus clean \u2014 runtime fidelity, not version (oak 2026-06-10)"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".hcl,.tf,.tfvars",
    "grammar": "hcl",
@@ -1105,6 +1197,7 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: unmeasured (timeout external); scan metadata oom_killed=true, use as diagnostic evidence; previous CLEAN row was stale: in ratchet"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".heex",
    "grammar": "heex",
@@ -1117,6 +1210,7 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 6/7, trunc=0, errTree=0, panics=0; previous CLEAN row was stale: in ratchet"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": true,
    "extensions": ".fx,.hlsl",
    "grammar": "hlsl",
@@ -1129,18 +1223,20 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 35/40, trunc=2, errTree=3, panics=0; previous CLEAN row was stale: C recovery election plus HLSL result-shape compatibility normalization clears default cgo oracle gate (verified 2026-06-12)"
   },
   {
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": true,
+   "default_external_lex_states": true,
    "extensions": ".htm,.html",
    "grammar": "html",
    "has_external_scanner": true,
    "parity": "0/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "staged_precise_els",
+   "status_label": "staged precise ELS",
    "tier_classification": "IV-recovery",
    "tier_notes": "faithful C error-cost version competition (see spec)"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".http",
    "grammar": "http",
@@ -1153,6 +1249,7 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 10/11, trunc=0, errTree=0, panics=0; previous CLEAN row was stale: full available HTTP corpus parity in Docker after section-fold compatibility fix (2026-06-11)"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".hurl",
    "grammar": "hurl",
@@ -1165,6 +1262,7 @@
    "tier_notes": "file, trailing error-root wrapper normalization cleared one exact C-oracle residual; remaining 26 are root recovery/child-count shape with 1 no_stacks_alive truncation"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".conf",
    "grammar": "hyprlang",
@@ -1177,6 +1275,7 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 1/2, trunc=1, errTree=1, panics=0; previous CLEAN row was stale: in ratchet; C-recovery gate keeps hyprland.conf under configuration root and hyprlang boolean assignment value normalization matches C boolean literal shape (verified 2026-06-12)"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".cfg,.conf,.ini",
    "grammar": "ini",
@@ -1189,18 +1288,20 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 9/11, trunc=1, errTree=1, panics=0; previous CLEAN row was stale: mypy-style continuation recovery normalized for both residual witnesses; bounded cgo oracle parity medianRatio=3.98x, verified 2026-06-12"
   },
   {
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": false,
+   "default_external_lex_states": true,
    "extensions": ".janet",
    "grammar": "janet",
    "has_external_scanner": true,
    "parity": "40/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "CLEAN",
    "tier_notes": "in ratchet"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".java",
    "grammar": "java",
@@ -1213,6 +1314,7 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 22/40, trunc=0, errTree=0, panics=0; previous CLEAN row was stale: in ratchet; java full-parse stack cap 14"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".cjs,.js,.mjs",
    "grammar": "javascript",
@@ -1225,6 +1327,7 @@
    "tier_notes": "in ratchet"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".j2,.jinja,.jinja2",
    "grammar": "jinja2",
@@ -1237,6 +1340,7 @@
    "tier_notes": "faithful C error-cost version competition (see spec)"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".jq",
    "grammar": "jq",
@@ -1249,6 +1353,7 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 7/8, trunc=1, errTree=0, panics=0; previous CLEAN row was stale: in ratchet"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": true,
    "extensions": ".jsdoc",
    "grammar": "jsdoc",
@@ -1261,6 +1366,7 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 13/40, trunc=27, errTree=0, panics=0; previous CLEAN row was stale: in ratchet; C-recovery gate (stage-2 redwood)"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".json",
    "grammar": "json",
@@ -1273,6 +1379,7 @@
    "tier_notes": "in ratchet"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".json5",
    "grammar": "json5",
@@ -1285,6 +1392,7 @@
    "tier_notes": "in ratchet"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": true,
    "extensions": ".jsonnet,.libsonnet",
    "grammar": "jsonnet",
@@ -1297,18 +1405,20 @@
    "tier_notes": "canonical-frame demotion (one-time reset)"
   },
   {
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": true,
+   "default_external_lex_states": true,
    "extensions": ".jl",
    "grammar": "julia",
    "has_external_scanner": true,
    "parity": "unmeasured",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "staged_precise_els",
+   "status_label": "staged precise ELS",
    "tier_classification": "IV-recovery",
    "tier_notes": "Julia macro argument juxtaposition, single-row index vector, bracket comprehension, and trailing-comma tuple recovery normalization clear reinfer.jl, verify.jl, and optimize.jl; remaining residuals are broad ERROR-root recovery divergences and 2 truncations"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": true,
    "extensions": ".just,justfile",
    "grammar": "just",
@@ -1321,6 +1431,7 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 2/8, trunc=1, errTree=1, panics=0; previous CLEAN row was stale: in ratchet; C-recovery gate plus just top-level line-break span normalization"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": true,
    "extensions": "kconfig",
    "grammar": "kconfig",
@@ -1333,30 +1444,33 @@
    "tier_notes": "ext=Kconfig; faithful C error-cost version competition (see spec)"
   },
   {
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": false,
+   "default_external_lex_states": true,
    "extensions": ".kdl",
    "grammar": "kdl",
    "has_external_scanner": true,
    "parity": "11/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery",
    "tier_notes": "pins at upstream HEAD; C at same pin parses corpus clean \u2014 runtime fidelity, not version (oak 2026-06-10)"
   },
   {
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": false,
+   "default_external_lex_states": true,
    "extensions": ".kt,.kts",
    "grammar": "kotlin",
    "has_external_scanner": true,
    "parity": "22/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-unknown",
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 22/40, trunc=7, errTree=18, panics=0; previous CLEAN row was stale: Kotlin C-recovery election preserves ReactorPlaysScrabble.kt's class/member envelope; recovered generic call suffix and direct parenthesized type-argument normalizers clear the remaining local call shapes. D-tier C-oracle parity verified 2026-06-13 with no divergences, truncation, error trees, or panics."
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".journal,.ledger",
    "grammar": "ledger",
@@ -1369,18 +1483,20 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 2/4, trunc=1, errTree=1, panics=0; previous CLEAN row was stale: in ratchet; ledger date-suffix and year-directive recovery normalization"
   },
   {
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": false,
+   "default_external_lex_states": true,
    "extensions": ".less",
    "grammar": "less",
    "has_external_scanner": true,
    "parity": "10/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery?",
    "tier_notes": "faithful C error-cost version competition (see spec)"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".ld,.lds",
    "grammar": "linkerscript",
@@ -1393,18 +1509,20 @@
    "tier_notes": "C-recovery plus Linkerscript-local result normalization lifts baseline 1/40 to 21/40 with a strict subset of divergers and no truncation/panic (Docker 2026-06-14); residuals are root/section child-count and nested ERROR-vs-call recovery shape differences."
   },
   {
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": false,
+   "default_external_lex_states": true,
    "extensions": ".liquid",
    "grammar": "liquid",
    "has_external_scanner": true,
    "parity": "11/36",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery?",
    "tier_notes": "faithful C error-cost version competition (see spec)"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".ll",
    "grammar": "llvm",
@@ -1417,6 +1535,7 @@
    "tier_notes": "in ratchet"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": true,
    "extensions": ".lua",
    "grammar": "lua",
@@ -1429,6 +1548,7 @@
    "tier_notes": "in ratchet; scanner.c port + DFA routing (maple 2026-06-10)"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": true,
    "extensions": ".luau",
    "grammar": "luau",
@@ -1441,6 +1561,7 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: unmeasured (timeout external); scan metadata oom_killed=true, use as diagnostic evidence; previous CLEAN row was stale: C-recovery gate localizes unsupported class syntax; recovered `end` identifier shape and Luau table-constructor iteration budget match C oracle (verified 2026-06-12)"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".mak,.mk,gnumakefile,makefile",
    "grammar": "make",
@@ -1453,6 +1574,7 @@
    "tier_notes": "ext=Makefile,.mk; C-recovery gate tried and REVERTED (parity-neutral 19/20, runs 20260610T090208Z/091230Z redwood-wave1/1b): witness Makefile (129KB, git's) root ERROR cc go=5029 vs makefile c=2114 \u2014 signature identical with gate on/off, so the divergence is decided before/outside the gated recover path (retry full-parse or pre-error fragmentation); needs witness-level diagnosis, not more gate work"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".md",
    "grammar": "markdown",
@@ -1465,6 +1587,7 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 0/40, trunc=0, errTree=0, panics=0; previous CLEAN row was stale: in ratchet; verified after willow shape fixes"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".md",
    "grammar": "markdown_inline",
@@ -1477,18 +1600,20 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: unmeasured (timeout external); scan metadata oom_killed=true, use as diagnostic evidence; previous CLEAN row was stale: Single-tilde link destinations stay literal so docs/src/index.md no longer truncates; Docker D-tier C-oracle parity verified 2026-06-13"
   },
   {
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": false,
+   "default_external_lex_states": true,
    "extensions": ".m,.mat",
    "grammar": "matlab",
    "has_external_scanner": true,
    "parity": "4/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery?",
    "tier_notes": "faithful C error-cost version competition (see spec)"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".mermaid,.mmd",
    "grammar": "mermaid",
@@ -1501,6 +1626,7 @@
    "tier_notes": "faithful C error-cost version competition (see spec)"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": "meson.build",
    "grammar": "meson",
@@ -1513,30 +1639,33 @@
    "tier_notes": "ext=meson.build; faithful C error-cost version competition (see spec)"
   },
   {
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": false,
+   "default_external_lex_states": true,
    "extensions": ".mojo,.\ud83d\udd25",
    "grammar": "mojo",
    "has_external_scanner": true,
    "parity": "29/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery?",
    "tier_notes": "post-repin residual"
   },
   {
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": false,
+   "default_external_lex_states": true,
    "extensions": ".move",
    "grammar": "move",
    "has_external_scanner": true,
    "parity": "14/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery?",
    "tier_notes": "post-repo-switch residual"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".nginx,.nginxconf,.vhost,nginx.conf",
    "grammar": "nginx",
@@ -1549,30 +1678,33 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 0/1, trunc=0, errTree=0, panics=0; previous CLEAN row was stale: in ratchet"
   },
   {
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": false,
+   "default_external_lex_states": true,
    "extensions": ".ncl",
    "grammar": "nickel",
    "has_external_scanner": true,
    "parity": "40/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "CLEAN",
    "tier_notes": "in ratchet"
   },
   {
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": false,
+   "default_external_lex_states": true,
    "extensions": ".nim,.nims",
    "grammar": "nim",
    "has_external_scanner": true,
    "parity": "unmeasured",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery?",
    "tier_notes": "faithful C error-cost version competition (see spec)"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".ninja",
    "grammar": "ninja",
@@ -1585,6 +1717,7 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 3/5, trunc=2, errTree=2, panics=0; previous missing row was stale"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".nix",
    "grammar": "nix",
@@ -1597,6 +1730,7 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: unmeasured (timeout external); scan metadata oom_killed=true, use as diagnostic evidence; previous CLEAN row was stale: in ratchet"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".norg",
    "grammar": "norg",
@@ -1609,18 +1743,20 @@
    "tier_notes": "mixed scanner/version, 2-file corpus (maple); sampled full-integrity wringer 20260623 on cheatsheet.norg shows nonmatch with goStop=no_stacks_alive, Go document 0:381 vs C 0:5382, no errors, high baseline maxStacks 164, stack2 lowers observed max but still nonmatches, so scanner row has truncation/node-budget overlay"
   },
   {
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": false,
+   "default_external_lex_states": true,
    "extensions": ".nu",
    "grammar": "nushell",
    "has_external_scanner": true,
    "parity": "7/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery?",
    "tier_notes": "faithful C error-cost version competition (see spec)"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".m",
    "grammar": "objc",
@@ -1633,6 +1769,7 @@
    "tier_notes": "ObjC-local struct sized_type_specifier, @encode type_identifier, and function-pointer declaration-as-expression normalizations lift default cap-2 C-oracle D-tier from 22/40 to 25/40 with trunc 0, panics 0 (Docker 2026-06-14), clearing NSArray+GNUstepBase.m, NSPropertyList+GNUstepBase.m, and GSObjCRuntime.m. Residuals are compound/root recovery shape, macro-call declaration-as-expression, cast-vs-binary expression shape, comma-expression arity, and remaining parameter_list/declaration shape contexts."
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".ml,.mli",
    "grammar": "ocaml",
@@ -1645,30 +1782,33 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 12/40, trunc=0, errTree=0, panics=0; previous CLEAN row was stale: in ratchet"
   },
   {
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": false,
+   "default_external_lex_states": true,
    "extensions": ".odin",
    "grammar": "odin",
    "has_external_scanner": true,
    "parity": "1/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery?",
    "tier_notes": "faithful C error-cost version competition (see spec)"
   },
   {
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": false,
+   "default_external_lex_states": true,
    "extensions": ".org",
    "grammar": "org",
    "has_external_scanner": true,
    "parity": "1/6",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery?",
    "tier_notes": "faithful C error-cost version competition (see spec)"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".inc,.pas,.pp",
    "grammar": "pascal",
@@ -1681,6 +1821,7 @@
    "tier_notes": "faithful C error-cost version competition (see spec)"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".pem",
    "grammar": "pem",
@@ -1693,6 +1834,7 @@
    "tier_notes": "in ratchet"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".pl,.pm",
    "grammar": "perl",
@@ -1705,42 +1847,46 @@
    "tier_notes": "faithful C error-cost version competition (see spec)"
   },
   {
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": false,
+   "default_external_lex_states": true,
    "extensions": ".php",
    "grammar": "php",
    "has_external_scanner": true,
    "parity": "36/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-unknown",
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 36/40, trunc=4, errTree=4, panics=0; previous CLEAN row was stale: in ratchet"
   },
   {
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": false,
+   "default_external_lex_states": true,
    "extensions": ".pkl",
    "grammar": "pkl",
    "has_external_scanner": true,
    "parity": "40/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "CLEAN",
    "tier_notes": "in ratchet; verified after willow shape fixes"
   },
   {
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": false,
+   "default_external_lex_states": true,
    "extensions": ".ps1,.psd1,.psm1",
    "grammar": "powershell",
    "has_external_scanner": true,
    "parity": "22/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery?",
    "tier_notes": "PowerShell invocation target path_command_name plus enum keyword span compatibility clears 4 files with zero new divergers; remaining gaps are recovery/root span and command/statement-list shape"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".prisma",
    "grammar": "prisma",
@@ -1753,6 +1899,7 @@
    "tier_notes": "in ratchet"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".pl,.pro",
    "grammar": "prolog",
@@ -1765,6 +1912,7 @@
    "tier_notes": "faithful C error-cost version competition (see spec)"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".promql",
    "grammar": "promql",
@@ -1777,6 +1925,7 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 0/4, trunc=4, errTree=4, panics=0; previous CLEAN row was stale: in ratchet; verified strict real-corpus 25/25 and direct C 20/20 after preserving PromQL query pass-through reductions"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".properties",
    "grammar": "properties",
@@ -1789,6 +1938,7 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: unmeasured (timeout external); scan metadata oom_killed=true, use as diagnostic evidence; previous CLEAN row was stale: in ratchet"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".proto",
    "grammar": "proto",
@@ -1801,18 +1951,20 @@
    "tier_notes": "faithful C error-cost version competition clears unittest_custom_options_proto3.proto with strict subset/no new divergers; remains Tier IV because residual parse-incorrect errTree files remain"
   },
   {
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": false,
+   "default_external_lex_states": true,
    "extensions": ".jade,.pug",
    "grammar": "pug",
    "has_external_scanner": true,
    "parity": "0/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery?",
    "tier_notes": "faithful C error-cost version competition (see spec)"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".pp",
    "grammar": "puppet",
@@ -1825,18 +1977,20 @@
    "tier_notes": "in ratchet"
   },
   {
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": false,
+   "default_external_lex_states": true,
    "extensions": ".purs",
    "grammar": "purescript",
    "has_external_scanner": true,
    "parity": "1/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery?",
    "tier_notes": "faithful C error-cost version competition (see spec)"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": true,
    "extensions": ".py",
    "grammar": "python",
@@ -1849,6 +2003,7 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 6/40, trunc=0, errTree=0, panics=0; previous CLEAN row was stale: in ratchet"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".ql",
    "grammar": "ql",
@@ -1861,18 +2016,20 @@
    "tier_notes": "in ratchet; verified after willow shape fixes"
   },
   {
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": false,
+   "default_external_lex_states": true,
    "extensions": ".r",
    "grammar": "r",
    "has_external_scanner": true,
    "parity": "40/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "CLEAN",
    "tier_notes": "in ratchet; verified after willow shape fixes"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".rkt",
    "grammar": "racket",
@@ -1885,6 +2042,7 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 2/40, trunc=0, errTree=36, panics=0; previous CLEAN row was stale: in ratchet"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".regex",
    "grammar": "regex",
@@ -1897,6 +2055,7 @@
    "tier_notes": "scan-clean in 20260621T035630Z-206-inventory-telemetry: parityMatch=1/1, diverge=0, trunc=0, errTree=0, panics=0; previous IV-perf row retired."
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".rego",
    "grammar": "rego",
@@ -1909,6 +2068,7 @@
    "tier_notes": "faithful C error-cost version competition (see spec)"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": "requirements.txt",
    "grammar": "requirements",
@@ -1921,18 +2081,20 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 8/9, trunc=0, errTree=0, panics=0; previous CLEAN row was stale: in ratchet; first IV-recovery clear via faithful C-recovery port (errorCostCompetitionLanguage gate)"
   },
   {
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": false,
+   "default_external_lex_states": true,
    "extensions": ".res,.resi",
    "grammar": "rescript",
    "has_external_scanner": true,
    "parity": "24/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery?",
    "tier_notes": "Rescript value_identifier_path alias normalization cleared clean-root shape residuals; remaining 11/40 are Go root ERROR vs C source_file with trunc=0/panics=0, requiring faithful C error-cost version competition"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".robot",
    "grammar": "robot",
@@ -1945,18 +2107,20 @@
    "tier_notes": "Robot escaped nested variable normalization cleared one C error-shape residual; remaining 11/40 require faithful C error-cost version competition (see spec)"
   },
   {
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": false,
+   "default_external_lex_states": true,
    "extensions": ".ron",
    "grammar": "ron",
    "has_external_scanner": true,
    "parity": "40/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "CLEAN",
    "tier_notes": "in ratchet"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".rst",
    "grammar": "rst",
@@ -1969,42 +2133,46 @@
    "tier_notes": "timeout-or-fail at 1200s canonical budget"
   },
   {
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": false,
+   "default_external_lex_states": true,
    "extensions": ".rb",
    "grammar": "ruby",
    "has_external_scanner": true,
    "parity": "40/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "CLEAN",
    "tier_notes": "in ratchet; inline Ruby when-then body StartByte normalized to C oracle"
   },
   {
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": false,
+   "default_external_lex_states": true,
    "extensions": ".rs",
    "grammar": "rust",
    "has_external_scanner": true,
    "parity": "11/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery?",
    "tier_notes": "faithful C error-cost version competition (see spec)"
   },
   {
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": false,
+   "default_external_lex_states": true,
    "extensions": ".scala",
    "grammar": "scala",
    "has_external_scanner": true,
    "parity": "5/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery?",
    "tier_notes": "faithful C error-cost version competition (see spec)"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".scm,.ss",
    "grammar": "scheme",
@@ -2017,6 +2185,7 @@
    "tier_notes": "Available Scheme gates clear 28/28 after merge cap and C recovery cost competition, but the intended .scm/.ss surface includes mats/oop.ss; Docker C-oracle diagnostic on 2026-06-12 still shows Go iteration_limit truncation at byte 3045 vs C full parse with recovery errors, so Scheme remains Tier IV under the hard parity invariant."
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": true,
    "extensions": ".scss",
    "grammar": "scss",
@@ -2029,6 +2198,7 @@
    "tier_notes": "faithful C error-cost version competition (see spec)"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".smithy",
    "grammar": "smithy",
@@ -2041,6 +2211,7 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 34/40, trunc=0, errTree=0, panics=0; previous CLEAN row was stale: in ratchet"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".sol",
    "grammar": "solidity",
@@ -2053,6 +2224,7 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 6/40, trunc=0, errTree=0, panics=0; previous CLEAN row was stale: Solidity-only call/type-cast/new-expression compatibility pass promoted; Docker real-corpus strict parity verified 2026-06-11"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".rq,.sparql",
    "grammar": "sparql",
@@ -2065,30 +2237,33 @@
    "tier_notes": "in ratchet"
   },
   {
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": false,
+   "default_external_lex_states": true,
    "extensions": ".sql",
    "grammar": "sql",
    "has_external_scanner": true,
    "parity": "8/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery?",
    "tier_notes": "faithful C error-cost version competition (see spec)"
   },
   {
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": false,
+   "default_external_lex_states": true,
    "extensions": ".nut",
    "grammar": "squirrel",
    "has_external_scanner": true,
    "parity": "40/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "CLEAN",
    "tier_notes": "in ratchet"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": "config,ssh_config,sshd_config",
    "grammar": "ssh_config",
@@ -2101,18 +2276,20 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 1/2, trunc=1, errTree=0, panics=0; previous CLEAN row was stale: C-recovery gate promoted; tiny lock-filtered corpus clean (verified 2026-06-11)"
   },
   {
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": false,
+   "default_external_lex_states": true,
    "extensions": ".bzl,.star",
    "grammar": "starlark",
    "has_external_scanner": true,
    "parity": "34/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-unknown",
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 34/40, trunc=0, errTree=1, panics=0; previous CLEAN row was stale: in ratchet"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": true,
    "extensions": ".svelte",
    "grammar": "svelte",
@@ -2125,6 +2302,7 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 8/40, trunc=2, errTree=0, panics=0; previous CLEAN row was stale: in ratchet; recovered raw-text ERROR compatibility normalized to C oracle (verified 2026-06-11)"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".swift",
    "grammar": "swift",
@@ -2137,54 +2315,59 @@
    "tier_notes": "faithful C error-cost version competition (see spec)"
   },
   {
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": false,
+   "default_external_lex_states": true,
    "extensions": ".td",
    "grammar": "tablegen",
    "has_external_scanner": true,
    "parity": "40/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "CLEAN",
    "tier_notes": "in ratchet"
   },
   {
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": false,
+   "default_external_lex_states": true,
    "extensions": ".tcl",
    "grammar": "tcl",
    "has_external_scanner": true,
    "parity": "unmeasured",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery?",
    "tier_notes": "faithful C error-cost version competition (see spec)"
   },
   {
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": false,
+   "default_external_lex_states": true,
    "extensions": ".tl",
    "grammar": "teal",
    "has_external_scanner": true,
    "parity": "8/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery?",
    "tier_notes": "faithful C error-cost version competition (see spec)"
   },
   {
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": false,
+   "default_external_lex_states": true,
    "extensions": ".templ",
    "grammar": "templ",
    "has_external_scanner": true,
    "parity": "31/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery?",
    "tier_notes": "dangling quote tag_start attribute compatibility normalization cleared the last local shape residual; remaining 5/40 are broad root ERROR recovery cases; Docker D-tier verified 2026-06-13 with trunc=0 panics=0"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".pbtxt,.textproto,.txtpb",
    "grammar": "textproto",
@@ -2197,6 +2380,7 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: unmeasured (timeout external); scan metadata oom_killed=true, use as diagnostic evidence; previous CLEAN row was stale: in ratchet"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".thrift",
    "grammar": "thrift",
@@ -2209,6 +2393,7 @@
    "tier_notes": "in ratchet"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".tla",
    "grammar": "tlaplus",
@@ -2221,6 +2406,7 @@
    "tier_notes": "ext=.tla; reproduced on origin/parity/c-oracle-clears b52df6d9: 14/40, median 201x, agg 847x, trunc 21/40, max RSS 5.9GB; cap 2 stays 14/40 (trunc 20/40), so not IV-stackcap. Dominant family is early stop under GLR churn (memory_budget, iteration_limit, node_limit, no_stacks_alive) where C parses full files; residual accepted divergences include scanner/shape-sensitive operator forms such as DOMAIN(f) bound_nonfix_op vs bound_prefix_op."
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".tmux,tmux.conf",
    "grammar": "tmux",
@@ -2233,6 +2419,7 @@
    "tier_notes": "ext=.tmux.conf,tmux.conf; faithful C error-cost version competition (see spec)"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".txt",
    "grammar": "todotxt",
@@ -2245,6 +2432,7 @@
    "tier_notes": "in ratchet"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".toml",
    "grammar": "toml",
@@ -2257,18 +2445,20 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 8/11, trunc=0, errTree=0, panics=0; previous CLEAN row was stale: in ratchet"
   },
   {
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": false,
+   "default_external_lex_states": true,
    "extensions": ".tsx",
    "grammar": "tsx",
    "has_external_scanner": true,
    "parity": "40/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "CLEAN",
    "tier_notes": "in ratchet"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".ttl",
    "grammar": "turtle",
@@ -2281,6 +2471,7 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 21/40, trunc=12, errTree=6, panics=0; previous CLEAN row was stale: in ratchet"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".twig",
    "grammar": "twig",
@@ -2293,6 +2484,7 @@
    "tier_notes": "in ratchet"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".ts",
    "grammar": "typescript",
@@ -2305,30 +2497,33 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: unmeasured (timeout external); scan metadata oom_killed=true, use as diagnostic evidence; previous CLEAN row was stale: typed-arrow merge cap selection and destructuring-pattern normalization; verified 2026-06-12"
   },
   {
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": false,
+   "default_external_lex_states": true,
    "extensions": ".typ",
    "grammar": "typst",
    "has_external_scanner": true,
    "parity": "unmeasured",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery?",
    "tier_notes": "nested list item result normalization verified 2026-06-12; zero-width group comma normalization cleared docs/components/section.typ 2026-06-13; residuals: docs/components/example.typ root ERROR vs C source_file plus 4 truncations"
   },
   {
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": false,
+   "default_external_lex_states": true,
    "extensions": ".tal",
    "grammar": "uxntal",
    "has_external_scanner": true,
    "parity": "0/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery?",
    "tier_notes": "faithful C error-cost version competition (see spec)"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".v,.vsh",
    "grammar": "v",
@@ -2341,6 +2536,7 @@
    "tier_notes": "faithful C error-cost version competition (see spec)"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".sv,.svh,.v",
    "grammar": "verilog",
@@ -2353,18 +2549,20 @@
    "tier_notes": "faithful C error-cost version competition (see spec)"
   },
   {
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": false,
+   "default_external_lex_states": true,
    "extensions": ".vhd,.vhdl",
    "grammar": "vhdl",
    "has_external_scanner": true,
    "parity": "unmeasured",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "IV-recovery?",
    "tier_notes": "faithful C error-cost version competition (see spec)"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".txt",
    "grammar": "vimdoc",
@@ -2377,18 +2575,20 @@
    "tier_notes": "ext=.txt; faithful C error-cost version competition (see spec)"
   },
   {
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": false,
+   "default_external_lex_states": true,
    "extensions": ".vue",
    "grammar": "vue",
    "has_external_scanner": true,
    "parity": "40/40",
    "staged_external_lex_states": false,
-   "status": "blocked_missing_precise_els",
-   "status_label": "blocked: missing precise ELS",
+   "status": "default_elected",
+   "status_label": "default elected",
    "tier_classification": "CLEAN",
    "tier_notes": "in ratchet"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".wast,.wat",
    "grammar": "wat",
@@ -2401,6 +2601,7 @@
    "tier_notes": "faithful C error-cost version competition (see spec)"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": true,
    "extensions": ".wgsl",
    "grammar": "wgsl",
@@ -2413,6 +2614,7 @@
    "tier_notes": "WGSL recovered-call assignment and u32 constructor argument normalizations cleared radiosity.wgsl; remaining 3/40 are blur/normalMap/particle root recovery choices, trunc=0 panics=0 (verified 2026-06-13)"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".m,.nb,.wl",
    "grammar": "wolfram",
@@ -2425,6 +2627,7 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 0/11, trunc=9, errTree=2, panics=0; previous CLEAN row was stale: Wolfram split infix compatibility pass promoted; Docker real-corpus strict parity verified 2026-06-11"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".xml",
    "grammar": "xml",
@@ -2437,6 +2640,7 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 1/40, trunc=0, errTree=0, panics=0; previous CLEAN row was stale: in ratchet"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": true,
    "extensions": ".yaml,.yml",
    "grammar": "yaml",
@@ -2449,6 +2653,7 @@
    "tier_notes": "in ratchet"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".yuck",
    "grammar": "yuck",
@@ -2461,6 +2666,7 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 1/2, trunc=0, errTree=1, panics=0; previous CLEAN row was stale: in ratchet"
   },
   {
+   "c_recovery_default_opt_out": false,
    "default_external_lex_states": false,
    "extensions": ".zig",
    "grammar": "zig",
@@ -2474,10 +2680,10 @@
   }
  ],
  "histogram": {
-  "blocked_missing_precise_els": 93,
-  "default_elected": 25,
+  "blocked_missing_precise_els": 28,
+  "default_elected": 86,
   "not_applicable_no_external_scanner": 87,
-  "staged_precise_els": 1
+  "staged_precise_els": 5
  },
  "receipts": {
   "default_elected": [
@@ -2491,7 +2697,11 @@
   "staged_precise_els": [
    "Docker: wave4-javascript-precise-els-staged-test",
    "TestJavascriptExternalLexStatesRegression (-tags javascript_precise_els)",
-   "TestJavascriptExternalLexStatesRemainStagedByDefault"
+   "TestJavascriptExternalLexStatesRemainStagedByDefault",
+   "Docker: wave4-cobol-precise-els-staged-test",
+   "TestCobolExternalLexStatesRegression (-tags cobol_precise_els)",
+   "TestCobolExternalLexStatesRemainStagedByDefault",
+   "TestExternalLexStatesRecoveryElectionOptOutInventory"
   ],
   "wave3_inventory": [
    "Docker: wave3-tier-plan-206",
@@ -2511,13 +2721,14 @@
   "blocked_missing_precise_els": "External scanner is registered, but no precise ExternalLexStates table is registered or staged yet. Wave 4 cannot default-elect C recovery for this grammar until the table is extracted and certified.",
   "default_elected": "External scanner and precise ExternalLexStates table are registered by default; DiagnoseCRecoveryGate supports the language and C recovery cost competition is default-enabled.",
   "not_applicable_no_external_scanner": "No Go external scanner is registered for this grammar, so there is no external-lex-state election to perform. Tier/parity status remains governed by the ordinary C-oracle classification.",
-  "staged_precise_els": "A precise ExternalLexStates table exists behind an opt-in build tag or explicit staging policy; default election is intentionally disabled."
+  "staged_precise_els": "A precise ExternalLexStates table exists behind an opt-in build tag or explicit staging policy; default C recovery election is intentionally disabled."
  },
  "summary": {
-  "default_external_lex_state_count": 25,
+  "c_recovery_default_opt_out_count": 3,
+  "default_external_lex_state_count": 89,
   "external_scanner_count": 119,
   "grammar_count": 206,
-  "staged_external_lex_state_count": 1
+  "staged_external_lex_state_count": 2
  },
  "wave": "wave4-external-lex-state-elections"
 }
