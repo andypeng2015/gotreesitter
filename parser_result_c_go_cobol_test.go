@@ -336,6 +336,199 @@ func TestNormalizeResultCompatibilityDispatchesUppercaseCobol(t *testing.T) {
 	}
 }
 
+func TestNormalizeCobolLeadingCommentBannerKeepsProgramStartAtFirstCode(t *testing.T) {
+	lang := &Language{
+		Name:        "cobol",
+		SymbolNames: []string{"EOF", "start", "comment", "program_definition", "identification_division"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF", Visible: false, Named: false},
+			{Name: "start", Visible: true, Named: true},
+			{Name: "comment", Visible: true, Named: true},
+			{Name: "program_definition", Visible: true, Named: true},
+			{Name: "identification_division", Visible: true, Named: true},
+		},
+	}
+	source := []byte("      *****************************************************************\n" +
+		"      * Program:     BBANK10P.CBL                                     *\n" +
+		"\n" +
+		"       IDENTIFICATION DIVISION.\n")
+	codeStart := uint32(bytes.Index(source, []byte("IDENTIFICATION DIVISION.")))
+
+	arena := newNodeArena(arenaClassFull)
+	comment := newLeafNodeInArena(arena, 2, true, 71, 71, Point{Column: 71}, Point{Column: 71})
+	id := newLeafNodeInArena(arena, 4, true, 6, uint32(len(source)-1), Point{Column: 6}, Point{Row: 3, Column: 31})
+	def := newParentNodeInArena(arena, 3, true, []*Node{id}, nil, 0)
+	def.startByte = 6
+	def.startPoint = Point{Column: 6}
+	def.endByte = uint32(len(source) - 1)
+	def.endPoint = Point{Row: 3, Column: 31}
+	root := newParentNodeInArena(arena, 1, true, []*Node{comment, def}, nil, 0)
+	root.startByte = 6
+	root.startPoint = Point{Column: 6}
+	root.endByte = uint32(len(source))
+	root.endPoint = advancePointByBytes(Point{}, source)
+
+	normalizeResultCompatibility(root, source, &Parser{language: lang})
+
+	if got, want := root.StartByte(), uint32(6); got != want {
+		t.Fatalf("root.StartByte = %d, want %d", got, want)
+	}
+	if got := def.StartByte(); got != codeStart {
+		t.Fatalf("program_definition.StartByte = %d, want first code byte %d", got, codeStart)
+	}
+	if got := id.StartByte(); got != codeStart {
+		t.Fatalf("identification_division.StartByte = %d, want first code byte %d", got, codeStart)
+	}
+}
+
+func TestNormalizeCobolRecoveredRootProgramDefinitionSplitsTailError(t *testing.T) {
+	lang := &Language{
+		Name: "cobol",
+		SymbolNames: []string{
+			"EOF",
+			"start",
+			"comment",
+			"program_definition",
+			"identification_division",
+			"environment_division",
+			"data_division",
+			"procedure_division",
+			"paragraph_header",
+			"display_statement",
+			"move_statement",
+			"comment_entry",
+		},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF", Visible: false, Named: false},
+			{Name: "start", Visible: true, Named: true},
+			{Name: "comment", Visible: true, Named: true},
+			{Name: "program_definition", Visible: true, Named: true},
+			{Name: "identification_division", Visible: true, Named: true},
+			{Name: "environment_division", Visible: true, Named: true},
+			{Name: "data_division", Visible: true, Named: true},
+			{Name: "procedure_division", Visible: true, Named: true},
+			{Name: "paragraph_header", Visible: true, Named: true},
+			{Name: "display_statement", Visible: true, Named: true},
+			{Name: "move_statement", Visible: true, Named: true},
+			{Name: "comment_entry", Visible: true, Named: true},
+		},
+	}
+	source := []byte("      * banner\n" +
+		"       IDENTIFICATION DIVISION.\n" +
+		"       PROGRAM-ID. A.\n" +
+		"       ENVIRONMENT DIVISION.\n" +
+		"       DATA DIVISION.\n" +
+		"      *COPY CENTRY.\n" +
+		"       PROCEDURE DIVISION.\n" +
+		"       PARA-1.\n" +
+		"           DISPLAY A.\n" +
+		"       BAD-PARA.\n" +
+		"           MOVE A TO B.\n" +
+		"           EXEC CICS RETURN\n" +
+		"      * trailer\n")
+	idx := func(needle string) uint32 {
+		t.Helper()
+		pos := bytes.Index(source, []byte(needle))
+		if pos < 0 {
+			t.Fatalf("missing %q in test source", needle)
+		}
+		return uint32(pos)
+	}
+	end := func(needle string) uint32 { return idx(needle) + uint32(len(needle)) }
+
+	arena := newNodeArena(arenaClassFull)
+	leadingComment := cobolTestLeaf(arena, 2, true, source, end("banner"), end("banner"))
+	id := cobolTestLeaf(arena, 4, true, source, idx("IDENTIFICATION"), end("PROGRAM-ID. A."))
+	env := cobolTestLeaf(arena, 5, true, source, idx("ENVIRONMENT"), end("ENVIRONMENT DIVISION."))
+	data := cobolTestLeaf(arena, 6, true, source, idx("DATA DIVISION."), idx("PROCEDURE DIVISION."))
+	copyComment := cobolTestLeaf(arena, 2, true, source, end("CENTRY."), end("CENTRY."))
+	para1 := cobolTestLeaf(arena, 8, true, source, idx("PARA-1."), end("PARA-1."))
+	display := cobolTestLeaf(arena, 9, true, source, idx("DISPLAY A."), end("DISPLAY A."))
+	badPara := cobolTestLeaf(arena, 8, true, source, idx("BAD-PARA."), end("BAD-PARA."))
+	tailMove := cobolTestLeaf(arena, 10, true, source, idx("MOVE A TO B."), end("MOVE A TO B."))
+	execErr := cobolTestLeaf(arena, errorSymbol, true, source, idx("EXEC CICS RETURN"), end("EXEC CICS RETURN"))
+	execErr.setHasError(true)
+	trailingComment := cobolTestLeaf(arena, 2, true, source, end("trailer"), end("trailer"))
+	recovered := newParentNodeInArena(arena, errorSymbol, true, []*Node{
+		leadingComment,
+		id,
+		env,
+		data,
+		copyComment,
+		para1,
+		display,
+		badPara,
+		tailMove,
+		execErr,
+		trailingComment,
+	}, nil, 0)
+	recovered.setHasError(true)
+	root := newParentNodeInArena(arena, 1, true, []*Node{recovered}, nil, 0)
+	root.setHasError(true)
+	root.startByte = 6
+	root.startPoint = Point{Column: 6}
+	root.endByte = uint32(len(source))
+	root.endPoint = advancePointByBytes(Point{}, source)
+
+	normalizeResultCompatibility(root, source, &Parser{language: lang})
+
+	if got, want := root.ChildCount(), 4; got != want {
+		t.Fatalf("root.ChildCount = %d, want %d; root=%s", got, want, root.SExpr(lang))
+	}
+	if got, want := root.Child(0).Type(lang), "comment"; got != want {
+		t.Fatalf("root child 0 type = %q, want %q", got, want)
+	}
+	program := root.Child(1)
+	if got, want := program.Type(lang), "program_definition"; got != want {
+		t.Fatalf("root child 1 type = %q, want %q", got, want)
+	}
+	if got, want := program.ChildCount(), 5; got != want {
+		t.Fatalf("program_definition.ChildCount = %d, want %d", got, want)
+	}
+	dataDiv := program.Child(2)
+	if got, want := dataDiv.Type(lang), "data_division"; got != want {
+		t.Fatalf("program child 2 type = %q, want %q", got, want)
+	}
+	if got, want := dataDiv.EndByte(), end("DATA DIVISION."); got != want {
+		t.Fatalf("data_division.EndByte = %d, want %d", got, want)
+	}
+	procedure := program.Child(4)
+	if got, want := procedure.Type(lang), "procedure_division"; got != want {
+		t.Fatalf("program child 4 type = %q, want %q", got, want)
+	}
+	if got, want := procedure.StartByte(), idx("PROCEDURE DIVISION."); got != want {
+		t.Fatalf("procedure_division.StartByte = %d, want %d", got, want)
+	}
+	if got, want := procedure.EndByte(), end("BAD-PARA."); got != want {
+		t.Fatalf("procedure_division.EndByte = %d, want %d", got, want)
+	}
+	tail := root.Child(2)
+	if got, want := tail.Type(lang), "ERROR"; got != want {
+		t.Fatalf("root child 2 type = %q, want %q", got, want)
+	}
+	if !tail.IsExtra() || !tail.HasError() {
+		t.Fatalf("tail ERROR flags extra=%v hasError=%v, want both true", tail.IsExtra(), tail.HasError())
+	}
+	if got, want := tail.StartByte(), idx("MOVE A TO B."); got != want {
+		t.Fatalf("tail ERROR StartByte = %d, want %d", got, want)
+	}
+	if got, want := tail.EndByte(), end("EXEC CICS RETURN"); got != want {
+		t.Fatalf("tail ERROR EndByte = %d, want %d", got, want)
+	}
+	if got, want := tail.ChildCount(), 2; got != want {
+		t.Fatalf("tail ERROR ChildCount = %d, want %d", got, want)
+	}
+	if got, want := tail.Child(1).Type(lang), "comment_entry"; got != want {
+		t.Fatalf("tail child 1 type = %q, want %q", got, want)
+	}
+	if got, want := tail.Child(1).StartByte(), end("EXEC CICS RETURN"); got != want {
+		t.Fatalf("tail comment_entry StartByte = %d, want %d", got, want)
+	}
+	if got, want := root.Child(3).Type(lang), "comment"; got != want {
+		t.Fatalf("root child 3 type = %q, want %q", got, want)
+	}
+}
+
 func TestNormalizeCobolFixedFormatProgramIDStopsBeforeTrailingJunk(t *testing.T) {
 	lang := &Language{
 		Name:        "cobol",
@@ -505,6 +698,61 @@ func TestNormalizeCobolTrimsGotoTrailingTriviaSpan(t *testing.T) {
 	}
 	if got, want := root.EndByte(), uint32(len(source)); got != want {
 		t.Fatalf("start.EndByte = %d, want unchanged %d", got, want)
+	}
+}
+
+func TestNormalizeCobolSectionSiblingEndsBeforeCopySibling(t *testing.T) {
+	lang := &Language{
+		Name:        "cobol",
+		SymbolNames: []string{"EOF", "start", "program_definition", "data_division", "working_storage_section", "copy_statement", "linkage_section"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF", Visible: false, Named: false},
+			{Name: "start", Visible: true, Named: true},
+			{Name: "program_definition", Visible: true, Named: true},
+			{Name: "data_division", Visible: true, Named: true},
+			{Name: "working_storage_section", Visible: true, Named: true},
+			{Name: "copy_statement", Visible: true, Named: true},
+			{Name: "linkage_section", Visible: true, Named: true},
+		},
+	}
+	source := []byte("       DATA DIVISION.\n" +
+		"       WORKING-STORAGE SECTION.\n" +
+		"       01  WS-SECURITY.\n" +
+		"       COPY CPSWDD01.\n" +
+		"       LINKAGE SECTION.\n" +
+		"      *COPY CENTRY.\n" +
+		"       PROCEDURE DIVISION.\n")
+
+	arena := newNodeArena(arenaClassFull)
+	dataStart := uint32(bytes.Index(source, []byte("DATA DIVISION.")))
+	workingStart := uint32(bytes.Index(source, []byte("WORKING-STORAGE SECTION.")))
+	workingEnd := uint32(bytes.Index(source, []byte("01  WS-SECURITY.")) + len("01  WS-SECURITY."))
+	copyStart := uint32(bytes.Index(source, []byte("COPY CPSWDD01.")))
+	copyEnd := copyStart + uint32(len("COPY CPSWDD01."))
+	linkageStart := uint32(bytes.Index(source, []byte("LINKAGE SECTION.")))
+	linkageEnd := linkageStart + uint32(len("LINKAGE SECTION."))
+	commentStart := uint32(bytes.Index(source, []byte("*COPY CENTRY.")) + len("*COPY CENTRY."))
+	working := cobolTestLeaf(arena, 4, true, source, workingStart, linkageStart)
+	copyStmt := cobolTestLeaf(arena, 5, true, source, copyStart, copyEnd)
+	copyStmt.setExtra(true)
+	linkage := cobolTestLeaf(arena, 6, true, source, linkageStart, commentStart)
+	data := newParentNodeInArena(arena, 3, true, []*Node{working, copyStmt, linkage}, nil, 0)
+	data.startByte = dataStart
+	data.startPoint = advancePointByBytes(Point{}, source[:dataStart])
+	data.endByte = linkageEnd
+	data.endPoint = advancePointByBytes(Point{}, source[:linkageEnd])
+	def := newParentNodeInArena(arena, 2, true, []*Node{data}, nil, 0)
+	root := newParentNodeInArena(arena, 1, true, []*Node{def}, nil, 0)
+	root.endByte = uint32(len(source))
+	root.endPoint = advancePointByBytes(Point{}, source)
+
+	normalizeResultCompatibility(root, source, &Parser{language: lang})
+
+	if got, want := working.EndByte(), workingEnd; got != want {
+		t.Fatalf("working_storage_section.EndByte = %d, want %d", got, want)
+	}
+	if got, want := linkage.EndByte(), linkageEnd; got != want {
+		t.Fatalf("linkage_section.EndByte = %d, want %d", got, want)
 	}
 }
 

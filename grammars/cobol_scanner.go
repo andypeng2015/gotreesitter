@@ -124,14 +124,6 @@ func (CobolExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer,
 	// COMMENT_ENTRY: content that doesn't start with a known keyword
 	if cobolValid(validSymbols, cobolTokCommentEntry) {
 		if !cobolStartsWithKeyword(lexer) {
-			// Never emit zero-width external tokens: they can cause scanner
-			// spin loops under repeated external-token probes.
-			if lexer.Lookahead() == 0 || lexer.Lookahead() == '\n' {
-				return false
-			}
-			for lexer.Lookahead() != '\n' && lexer.Lookahead() != 0 && lexer.Column() < 72 {
-				lexer.Advance(true)
-			}
 			lexer.MarkEnd()
 			lexer.SetResultSymbol(cobolSyms.commentEntry)
 			return true
