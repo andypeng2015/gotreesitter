@@ -280,6 +280,13 @@ func TestGeneratedRepeatBoundaryConflictAllowsMixedReduces(t *testing.T) {
 }
 
 func TestDeterministicConflictChoiceKeepsNonGeneratedShortcut(t *testing.T) {
+	// Wave-2b: the php state-2 SHIFT-preferring shortcut is retired in favor
+	// of the global C repetition-skip fold (cRepetitionSkipConflictChoice,
+	// C parser.c:1625 `if (action.shift.repetition) break;`). The contract
+	// pinned here is the fold's: an error-free lineage takes the single
+	// REDUCE deterministically (C folds and re-dispatches the same
+	// lookahead); without a stack (nil = no lineage evidence) dispatch makes
+	// no deterministic choice and the GLR fork stands.
 	lang := &Language{
 		Name:        "php",
 		SymbolNames: []string{"end", "namespace", "\\", "name", "use", "new", "program_repeat1"},
@@ -298,12 +305,20 @@ func TestDeterministicConflictChoiceKeepsNonGeneratedShortcut(t *testing.T) {
 		{Type: ParseActionShift, State: 1846, Repetition: true},
 	}
 	parser := &Parser{language: lang}
-	chosen, ok := parser.deterministicConflictChoiceForDispatch(nil, nil, Token{Symbol: 1}, 2, actions, 2, nil)
-	if !ok {
-		t.Fatal("deterministicConflictChoiceForDispatch = false, want non-generated PHP shortcut")
+	if chosen, ok := parser.deterministicConflictChoiceForDispatch(nil, nil, Token{Symbol: 1}, 2, actions, 2, nil); ok {
+		t.Fatalf("deterministicConflictChoiceForDispatch picked %+v with nil stack, want GLR fork", chosen)
 	}
-	if chosen.Type != ParseActionShift || chosen.State != 1846 || !chosen.Repetition {
-		t.Fatalf("deterministicConflictChoiceForDispatch picked %+v, want repetition shift", chosen)
+	cleanStack := &glrStack{}
+	chosen, ok := parser.deterministicConflictChoiceForDispatch(nil, cleanStack, Token{Symbol: 1}, 2, actions, 2, nil)
+	if !ok {
+		t.Fatal("deterministicConflictChoiceForDispatch = false for clean lineage, want global repetition-skip fold")
+	}
+	if chosen.Type != ParseActionReduce || chosen.Symbol != 6 {
+		t.Fatalf("deterministicConflictChoiceForDispatch picked %+v, want program_repeat1 reduce (C repetition-skip fold)", chosen)
+	}
+	erroredStack := &glrStack{cEverErrored: true}
+	if chosen, ok := parser.deterministicConflictChoiceForDispatch(nil, erroredStack, Token{Symbol: 1}, 2, actions, 2, nil); ok {
+		t.Fatalf("deterministicConflictChoiceForDispatch picked %+v on wreckage lineage, want GLR fork", chosen)
 	}
 }
 
@@ -1209,6 +1224,71 @@ func TestShouldRunInitialFullParseMergeRetry(t *testing.T) {
 	if !shouldRunInitialFullParseMergeRetry(tree) {
 		t.Fatal("shouldRunInitialFullParseMergeRetry(no_stacks_alive) = false, want true")
 	}
+	tree = &Tree{
+		language: &Language{Name: "c_sharp"},
+		root: &Node{
+			endByte: 128,
+			flags:   nodeFlagHasError,
+		},
+		parseRuntime: ParseRuntime{
+			StopReason:      ParseStopAccepted,
+			ExpectedEOFByte: 128,
+			RootEndByte:     128,
+			MaxStacksSeen:   64,
+		},
+	}
+	if shouldRunInitialFullParseMergeRetry(tree) {
+		t.Fatal("shouldRunInitialFullParseMergeRetry(c_sharp accepted error) = true, want false")
+	}
+	tree.parseRuntime.Truncated = true
+	if !shouldRunInitialFullParseMergeRetry(tree) {
+		t.Fatal("shouldRunInitialFullParseMergeRetry(c_sharp truncated accepted error) = false, want true")
+	}
+}
+
+func TestCSharpAcceptedErrorTreeCanUseNamespaceRecovery(t *testing.T) {
+	source := []byte("using X;\nnamespace N { class C { } }\n")
+	nsStart := uint32(bytes.Index(source, []byte("namespace")))
+	nsEnd := uint32(bytes.LastIndexByte(source, '}') + 1)
+	if nsStart == 0 || nsEnd == 0 {
+		t.Fatal("test source does not contain expected namespace span")
+	}
+	lang := &Language{
+		Name:        "c_sharp",
+		SymbolNames: []string{"EOF", "compilation_unit", "namespace_declaration"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF"},
+			{Name: "compilation_unit", Visible: true, Named: true},
+			{Name: "namespace_declaration", Visible: true, Named: true},
+		},
+	}
+	arena := newNodeArena(arenaClassFull)
+	namespace := newLeafNodeInArena(arena, 2, true, nsStart, nsEnd, Point{}, Point{})
+	namespace.setHasError(true)
+	root := newParentNodeInArena(arena, 1, true, []*Node{namespace}, nil, 0)
+	tree := &Tree{
+		language: lang,
+		root:     root,
+		parseRuntime: ParseRuntime{
+			StopReason:      ParseStopAccepted,
+			ExpectedEOFByte: uint32(len(source)),
+			RootEndByte:     uint32(len(source)),
+			MaxStacksSeen:   64,
+		},
+	}
+
+	if !csharpAcceptedErrorTreeCanUseNamespaceRecovery(tree, source) {
+		t.Fatal("csharpAcceptedErrorTreeCanUseNamespaceRecovery = false, want true")
+	}
+	tree.parseRuntime.Truncated = true
+	if csharpAcceptedErrorTreeCanUseNamespaceRecovery(tree, source) {
+		t.Fatal("csharpAcceptedErrorTreeCanUseNamespaceRecovery(truncated) = true, want false")
+	}
+	tree.parseRuntime.Truncated = false
+	root.ownerArena = nil
+	if csharpAcceptedErrorTreeCanUseNamespaceRecovery(tree, source) {
+		t.Fatal("csharpAcceptedErrorTreeCanUseNamespaceRecovery(no arena) = true, want false")
+	}
 }
 
 func TestCppAcceptedErrorRetrySkipsCompleteTree(t *testing.T) {
@@ -1252,6 +1332,50 @@ func TestCppAcceptedErrorRetryPreservesTruncatedMergeRetry(t *testing.T) {
 
 	if got := fullParseRetryMergePerKeyOverride(tree, 128, 18); got != fullParseRetryMaxMergePerKey {
 		t.Fatalf("fullParseRetryMergePerKeyOverride(cpp truncated accepted error) = %d, want %d", got, fullParseRetryMaxMergePerKey)
+	}
+}
+
+func TestBashAcceptedErrorRetrySkipsCompleteTree(t *testing.T) {
+	tree := &Tree{
+		language: &Language{Name: "bash"},
+		root: &Node{
+			endByte: 128,
+			flags:   nodeFlagHasError,
+		},
+		parseRuntime: ParseRuntime{
+			StopReason:      ParseStopAccepted,
+			ExpectedEOFByte: 128,
+			RootEndByte:     128,
+			MaxStacksSeen:   18,
+		},
+	}
+
+	if shouldRetryAcceptedErrorParse(tree, 128, 18) {
+		t.Fatal("shouldRetryAcceptedErrorParse(bash complete accepted error) = true, want false")
+	}
+	if got := fullParseRetryMergePerKeyOverride(tree, 128, 18); got != 0 {
+		t.Fatalf("fullParseRetryMergePerKeyOverride(bash complete accepted error) = %d, want 0", got)
+	}
+}
+
+func TestBashAcceptedErrorRetryPreservesTruncatedMergeRetry(t *testing.T) {
+	tree := &Tree{
+		language: &Language{Name: "bash"},
+		root: &Node{
+			endByte: 96,
+			flags:   nodeFlagHasError,
+		},
+		parseRuntime: ParseRuntime{
+			StopReason:      ParseStopAccepted,
+			ExpectedEOFByte: 128,
+			RootEndByte:     96,
+			Truncated:       true,
+			MaxStacksSeen:   18,
+		},
+	}
+
+	if got := fullParseRetryMergePerKeyOverride(tree, 128, 18); got != fullParseRetryMaxMergePerKey {
+		t.Fatalf("fullParseRetryMergePerKeyOverride(bash truncated accepted error) = %d, want %d", got, fullParseRetryMaxMergePerKey)
 	}
 }
 
@@ -2610,6 +2734,36 @@ func TestParseFullArenaInitialNodeCapacityScalesForLargeSources(t *testing.T) {
 	want := 1_500_000
 	if got != want {
 		t.Fatalf("parseFullArenaInitialNodeCapacity(%d) = %d, want %d", sourceLen, got, want)
+	}
+}
+
+func TestParseFullArenaNodeCapacityCapsLargeTypeScriptFourslashCommentFixture(t *testing.T) {
+	source := []byte("/// <reference path=\"fourslash.ts\" />\n////var route = [")
+	source = append(source, bytes.Repeat([]byte("[51.1,-0.2],"), 1024*1024/12)...)
+	source = append(source, []byte("];\nverify.completions({ marker: \"\", excludes: [\"\"] });\n")...)
+
+	got := parseFullArenaNodeCapacityForSource(source, &Language{Name: "typescript"}, 0)
+	if got != typeScriptFourslashLargeCommentArenaNodeCap {
+		t.Fatalf("parseFullArenaNodeCapacityForSource(fourslash) = %d, want %d", got, typeScriptFourslashLargeCommentArenaNodeCap)
+	}
+}
+
+func TestParseFullArenaNodeCapacityKeepsLargeSourceFloorForNonFourslash(t *testing.T) {
+	source := bytes.Repeat([]byte("let x = 1;\n"), 128*1024)
+	got := parseFullArenaNodeCapacityForSource(source, &Language{Name: "typescript"}, 0)
+	want := parseFullArenaNodeCapacity(len(source), 0)
+	if got != want {
+		t.Fatalf("parseFullArenaNodeCapacityForSource(non-fourslash) = %d, want %d", got, want)
+	}
+}
+
+func TestParseFullArenaNodeCapacityKeepsLargeSourceFloorForOtherLanguages(t *testing.T) {
+	source := []byte("/// <reference path=\"fourslash.ts\" />\n////var route = [")
+	source = append(source, bytes.Repeat([]byte("[51.1,-0.2],"), 1024*1024/12)...)
+	got := parseFullArenaNodeCapacityForSource(source, &Language{Name: "python"}, 0)
+	want := parseFullArenaNodeCapacity(len(source), 0)
+	if got != want {
+		t.Fatalf("parseFullArenaNodeCapacityForSource(other lang) = %d, want %d", got, want)
 	}
 }
 

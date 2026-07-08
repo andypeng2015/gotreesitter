@@ -694,8 +694,9 @@ func coalesceForestWithRaw(p *Parser, arena *nodeArena, index *gssForestIndex, s
 }
 
 type forestAlternativeIndex struct {
-	nodes map[*Node]*gssForestNode
-	slots map[forestAlternativeSlotKey]forestAlternativeSlot
+	nodes   map[*Node]*gssForestNode
+	byStart map[uint32][]*Node
+	slots   map[forestAlternativeSlotKey]forestAlternativeSlot
 }
 
 type forestAlternativeSlotKey struct {
@@ -732,8 +733,9 @@ func forestAlternativeIndexCapacityForSource(sourceLen int) int {
 
 func newForestAlternativeIndex(capacity int) *forestAlternativeIndex {
 	return &forestAlternativeIndex{
-		nodes: make(map[*Node]*gssForestNode, capacity),
-		slots: make(map[forestAlternativeSlotKey]forestAlternativeSlot, capacity),
+		nodes:   make(map[*Node]*gssForestNode, capacity),
+		byStart: make(map[uint32][]*Node, max(16, capacity/4)),
+		slots:   make(map[forestAlternativeSlotKey]forestAlternativeSlot, capacity),
 	}
 }
 
@@ -742,8 +744,29 @@ func forestRecordAlternative(alternatives *forestAlternativeIndex, entry stackEn
 		return
 	}
 	if n := stackEntryNode(entry); n != nil {
+		if _, exists := alternatives.nodes[n]; !exists {
+			if alternatives.byStart == nil {
+				alternatives.byStart = make(map[uint32][]*Node, 16)
+			}
+			alternatives.byStart[n.startByte] = append(alternatives.byStart[n.startByte], n)
+		}
 		alternatives.nodes[n] = node
 	}
+}
+
+func forestAlternativeCandidatesStartingAt(alternatives *forestAlternativeIndex, startByte uint32) []*Node {
+	if alternatives == nil {
+		return nil
+	}
+	if len(alternatives.byStart) == 0 && len(alternatives.nodes) > 0 {
+		alternatives.byStart = make(map[uint32][]*Node, max(16, len(alternatives.nodes)/4))
+		for n := range alternatives.nodes {
+			if n != nil {
+				alternatives.byStart[n.startByte] = append(alternatives.byStart[n.startByte], n)
+			}
+		}
+	}
+	return alternatives.byStart[startByte]
 }
 
 func forestRecordParentChildAlternatives(alternatives *forestAlternativeIndex, parent *Node, children []*Node, rawEntries []stackEntry) {
@@ -1575,11 +1598,8 @@ func forestRootVisibleContainerAlternativeForSlice(p *Parser, arena *nodeArena, 
 	childCount := resultChildCount(root)
 	var best *Node
 	bestEnd := 0
-	for candidate := range alternatives.nodes {
+	for _, candidate := range forestAlternativeCandidatesStartingAt(alternatives, first.startByte) {
 		if !forestVisibleNamedStructuralContainer(p, candidate) || candidate.isExtra() || candidate.isMissing() {
-			continue
-		}
-		if candidate.startByte != first.startByte {
 			continue
 		}
 		for end := childCount; end > start; end-- {
@@ -2580,6 +2600,28 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte, captureExternalChe
 
 			nodeActions := p.actionsForParseState(node.state, tok.Symbol, lang.ParseActions)
 			nodeActions = p.forestResolveConflict(node.state, tok, nodeActions)
+			// C's global repetition-skip fold, mirrored into the forest engine.
+			// Production's deterministicConflictChoiceForDispatch resolves a
+			// {1 repetition-marked SHIFT, 1 REDUCE} conflict by taking the REDUCE
+			// (C's ts_parser__advance runs `if (action.shift.repetition) break;`,
+			// parser.c) — a deterministic, lossless fold of the list spine, not a
+			// fork. forestResolveConflict did NOT carry this fold, so a long
+			// repeated list (a bash `program` is repeat($._statement)) forked at
+			// every statement boundary, building an O(n^2) GSS frontier, and
+			// reached EOF with only mid-list lineages surviving — none in a
+			// list-closed (accept) state — declining eof_no_root
+			// (medium__install.sh: forest reached EOF with 2 non-accepting stacks
+			// while tree-sitter-C parses the file clean). Applying the same fold
+			// lets the forest close the list and accept, byte-matching C. Gated to
+			// non-recover forest lineages: with error recovery the repetition-shift
+			// arm can be the branch the recovery cost competition keeps (the php
+			// comma-list wreckage lesson in conflict_policy.go), so recover-active
+			// languages keep the ordinary GLR fork.
+			if len(nodeActions) > 1 {
+				if folded, ok := p.cRepetitionSkipForestConflictChoice(recoverActive, nodeActions); ok {
+					nodeActions = p.forestSingletonActions(folded)
+				}
+			}
 			if progress.enabled {
 				reduceActions, shiftActions, acceptActions := 0, 0, 0
 				for _, act := range nodeActions {

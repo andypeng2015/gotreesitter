@@ -5916,7 +5916,7 @@ func (p *Parser) ensureParseInitialCapacity(source []byte, arenaClass arenaClass
 }
 
 func (p *Parser) ensureFullParseInitialCapacity(source []byte, arena *nodeArena, scratch *parserScratch) {
-	target := parseFullArenaNodeCapacity(len(source), p.fullArenaHintCapacity())
+	target := parseFullArenaNodeCapacityForSource(source, p.language, p.fullArenaHintCapacity())
 	checkpointCapacityTarget := target
 	switch {
 	case p.finalChildRefs:

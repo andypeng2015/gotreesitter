@@ -241,6 +241,61 @@ func TestFinalizeReturnedTreeRootSpanDoesNotExtendNonCleanTail(t *testing.T) {
 	if !tree.ParseRuntime().Truncated {
 		t.Fatal("runtime should still report truncation for non-clean tail")
 	}
+	// wave2b SILENT-TRUNCATION contract: a truncated non-clean tail must carry a
+	// consumer-visible error signal (root.HasError()), not just the internal
+	// Truncated flag. See markTruncatedTreeHasError.
+	if !root.HasError() {
+		t.Fatal("truncated non-clean tail must report root.HasError() (silent-truncation contract)")
+	}
+}
+
+// TestFinalizeReturnedTreeRootSpanFlagsSilentTruncation pins the wave2b fix: a
+// non-early-stop parse (ParseStopNoStacksAlive) whose live stack reduced to a
+// clean start symbol before the frontier died mid-file returns a prefix-only
+// root with hasError=false. finalizeReturnedTreeRootSpan must mark it HasError so
+// the returned tree is never a silent clean-looking prefix (crystal string.cr,
+// typescript checker.ts / dom.generated.d.ts class), while leaving it honestly
+// truncated (span unchanged, Truncated=true).
+func TestFinalizeReturnedTreeRootSpanFlagsSilentTruncation(t *testing.T) {
+	lang := &Language{
+		Name:        "root_silent_trunc",
+		SymbolNames: []string{"EOF", "source_file", "statement"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF"},
+			{Name: "source_file", Visible: true, Named: true},
+			{Name: "statement", Visible: true, Named: true},
+		},
+	}
+	// A cleanly-reduced source_file prefix [0,49) over a 100-byte input: the
+	// dropped tail [49,100) is real (non-trivia) source.
+	source := make([]byte, 100)
+	for i := range source {
+		source[i] = 'a'
+	}
+	child := NewLeafNode(2, true, 0, 49, Point{}, Point{Column: 49})
+	root := newParentNode(nil, 1, true, []*Node{child}, nil, 0)
+	tree := NewTree(root, source, lang)
+	t.Cleanup(tree.Release)
+	tree.setParseRuntime(ParseRuntime{
+		StopReason:      ParseStopNoStacksAlive,
+		SourceLen:       uint32(len(source)),
+		ExpectedEOFByte: uint32(len(source)),
+	})
+	if root.HasError() {
+		t.Fatal("precondition: synthetic clean prefix must start without an error")
+	}
+
+	finalizeReturnedTreeRootSpan(tree, source)
+
+	if root.HasError() != true {
+		t.Fatal("silent truncation must be flagged HasError after finalize")
+	}
+	if !tree.ParseRuntime().Truncated {
+		t.Fatal("tree must remain honestly truncated (Truncated=true)")
+	}
+	if got, want := root.EndByte(), uint32(49); got != want {
+		t.Fatalf("root span must be left truncated at %d, got %d (do not silently extend)", want, got)
+	}
 }
 
 func TestFinalizeForestRootReextendsAcceptedCleanTailAfterCompatibility(t *testing.T) {

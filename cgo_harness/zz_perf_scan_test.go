@@ -675,9 +675,42 @@ func (m *perfScanLangMeasurer) classifyGoAttempt(tree *gotreesitter.Tree, err er
 		releaseGoTree(tree)
 		return nil, att
 	}
-	if got, want := tree.RootNode().EndByte(), uint32(len(src)); got != want {
+	// Coverage + internal-consistency verdict (wave2b): status=ok must mean the
+	// result tree COVERS the input AND its runtime error signals are self-
+	// consistent — not merely "finished within wall-clock". No C oracle: these
+	// are pure internal-consistency checks on the returned tree.
+	root := tree.RootNode()
+	rt := tree.ParseRuntime()
+	got, want := root.EndByte(), uint32(len(src))
+	if got != want {
+		// The result tree does not span the input. Always a failure, but flag
+		// whether the truncation is SILENT (the wave2b class: no reliable error
+		// signal at all) vs. honestly flagged. The library contract is that a
+		// truncated returned tree carries Truncated=true OR root.HasError().
+		signal := "flagged"
+		if !rt.Truncated && !root.HasError() {
+			signal = "SILENT"
+		}
 		att.status = "go_error"
-		att.detail = fmt.Sprintf("truncated: root.EndByte=%d want=%d", got, want)
+		att.detail = fmt.Sprintf("truncated[%s]: root.EndByte=%d want=%d hasErr=%v Truncated=%v",
+			signal, got, want, root.HasError(), rt.Truncated)
+		releaseGoTree(tree)
+		return nil, att
+	}
+	// The root spans the input from here on. Enforce consistency so a covered
+	// tree cannot masquerade as clean.
+	if rt.Truncated {
+		// Coverage and the Truncated flag disagree: an internal inconsistency.
+		att.status = "go_error"
+		att.detail = fmt.Sprintf("inconsistent: root covers %d but ParseRuntime.Truncated=true", got)
+		releaseGoTree(tree)
+		return nil, att
+	}
+	if root.IsError() {
+		// A full-span ERROR root is a degenerate parse (whole input recovered as
+		// one ERROR node); 'ok' used to mask this (the webworker case).
+		att.status = "go_error"
+		att.detail = "error_root: root symbol is ERROR spanning the input"
 		releaseGoTree(tree)
 		return nil, att
 	}
@@ -1494,5 +1527,24 @@ func TestPerfScanHelpersUnit(t *testing.T) {
 	joined := strings.Join(env, " ")
 	if strings.Contains(joined, "LANG=old") || !strings.Contains(joined, "GTS_PERF_SCAN_LANG=go") {
 		t.Fatalf("mergeEnv=%v", env)
+	}
+
+	lang := &gotreesitter.Language{
+		Name: "perf_scan_synthetic",
+		SymbolNames: []string{
+			"EOF",
+			"source_file",
+		},
+		SymbolMetadata: []gotreesitter.SymbolMetadata{
+			{Name: "EOF"},
+			{Name: "source_file", Visible: true, Named: true},
+		},
+	}
+	src := []byte("abcdef")
+	root := gotreesitter.NewLeafNode(1, true, 0, 3, gotreesitter.Point{}, gotreesitter.Point{Column: 3})
+	tree := gotreesitter.NewTree(root, src, lang)
+	_, att := (&perfScanLangMeasurer{budget: 5 * time.Second}).classifyGoAttempt(tree, nil, "", src, false, perfScanAttempt{})
+	if att.status != "go_error" || !strings.Contains(att.detail, "truncated[SILENT]") {
+		t.Fatalf("silent prefix tree classified as status=%q detail=%q, want go_error truncated[SILENT]", att.status, att.detail)
 	}
 }

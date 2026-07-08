@@ -1142,6 +1142,13 @@ func normalizeCSharpRecoveredNamespaces(root *Node, source []byte, p *Parser, la
 	recoveryCount := 0
 	for i := 0; i < len(root.children); {
 		if recoveryCount < csharpMaxNamespaceRecoveries {
+			if recovered, ok := csharpRecoverErroredNamespaceDeclaration(root.children[i], source, p, lang, root.ownerArena); ok {
+				recoveredChildren = append(recoveredChildren, recovered)
+				i++
+				changed = true
+				recoveryCount++
+				continue
+			}
 			if recovered, next, ok := csharpRecoverNamespaceFromChildren(root.children, i, source, p, lang, root.ownerArena); ok {
 				recoveredChildren = append(recoveredChildren, recovered)
 				i = next
@@ -1174,6 +1181,71 @@ func normalizeCSharpRecoveredNamespaces(root *Node, source []byte, p *Parser, la
 			populateParentNode(root, root.children)
 		}
 	}
+}
+
+func csharpAcceptedErrorTreeCanUseNamespaceRecovery(tree *Tree, source []byte) bool {
+	if tree == nil || len(source) == 0 || tree.language == nil || tree.language.Name != "c_sharp" {
+		return false
+	}
+	rt := tree.ParseRuntime()
+	if rt.StopReason != ParseStopAccepted || rt.Truncated || rt.TokenSourceEOFEarly {
+		return false
+	}
+	if !retryTreeHasError(tree) {
+		return false
+	}
+	root := rawRootOrNil(tree)
+	if root == nil || root.ownerArena == nil {
+		return false
+	}
+	rootType := root.Type(tree.language)
+	if rootType != "ERROR" && rootType != "compilation_unit" {
+		return false
+	}
+	for _, child := range root.children {
+		if _, _, ok := csharpRecoverableErroredNamespaceDeclarationSpan(child, source, tree.language); ok {
+			return true
+		}
+	}
+	return false
+}
+
+func csharpRecoverErroredNamespaceDeclaration(n *Node, source []byte, p *Parser, lang *Language, arena *nodeArena) (*Node, bool) {
+	start, end, ok := csharpRecoverableErroredNamespaceDeclarationSpan(n, source, lang)
+	if !ok {
+		return nil, false
+	}
+	return csharpBuildRecoveredNamespaceDeclarationFromErrorRoot(n, source, start, end, p, lang, arena)
+}
+
+func csharpRecoverableErroredNamespaceDeclarationSpan(n *Node, source []byte, lang *Language) (uint32, uint32, bool) {
+	if n == nil || lang == nil || lang.Name != "c_sharp" || !n.HasError() || n.Type(lang) != "namespace_declaration" {
+		return 0, 0, false
+	}
+	if n.startByte >= n.endByte || int(n.endByte) > len(source) {
+		return 0, 0, false
+	}
+	nsStart := csharpSkipSpaceBytes(source, n.startByte)
+	if nsStart >= n.endByte || !csharpHasKeywordAt(source, nsStart, "namespace") {
+		return 0, 0, false
+	}
+	nameStart := csharpSkipSpaceBytes(source, nsStart+uint32(len("namespace")))
+	if nameStart >= n.endByte {
+		return 0, 0, false
+	}
+	openBrace := csharpFindTopLevelByte(source, nameStart, n.endByte, '{')
+	if openBrace >= n.endByte {
+		return 0, 0, false
+	}
+	closeBrace := csharpFindMatchingBraceByte(source, int(openBrace), int(n.endByte))
+	if closeBrace < 0 {
+		return 0, 0, false
+	}
+	nsEnd := uint32(closeBrace + 1)
+	if nsEnd > n.endByte || !bytesAreTrivia(source[nsEnd:n.endByte]) {
+		return 0, 0, false
+	}
+	return nsStart, nsEnd, true
 }
 
 func csharpRecoverNamespaceFromChildren(children []*Node, startIdx int, source []byte, p *Parser, lang *Language, arena *nodeArena) (*Node, int, bool) {

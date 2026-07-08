@@ -92,6 +92,93 @@ func singleShiftConflictChoice(actions []ParseAction) (ParseAction, bool) {
 	return shift, true
 }
 
+// cRepetitionSkipOptOut lists languages excluded from the global C
+// repetition-skip fold (cRepetitionSkipConflictChoice). The list starts
+// empty by design: C applies the rule to every grammar, so an entry here
+// requires concrete evidence (a failing shape test or a C-oracle parity
+// divergence), cited in a comment next to the entry.
+var cRepetitionSkipOptOut = map[string]bool{
+	// dart: correctness-cap language whose SELECTED trees are cap-sensitive.
+	// A/B on the dart corpus (wave-2b, 2026-07-07): with the fold on,
+	// dev/a11y_assessments/lib/use_cases/back_button.dart drops from 75/88
+	// C-oracle-matching shape chunks to 62/88 (tree-sitter CLI oracle,
+	// dart-81638dbbdb76) — pre-error fold choices reshape the downstream
+	// recovery wreckage that dart's capped branch selection depends on.
+	// dart's error-free giant-list wins (e.g.
+	// generated_material_localizations.dart 4.4s->0.9s) are forfeited until
+	// dart's selection fidelity is C-clean; re-test before removing.
+	"dart": true,
+	// c: error-dense real corpus (12/15 spot files carry ERROR) whose
+	// recovered shapes are sensitive to pre-error stack layout. A/B
+	// (wave-2b, 2026-07-07): with the fold on, archive.c drops from
+	// 1354/2040 to 1061/2040 C-oracle-matching shape chunks (tree-sitter
+	// CLI oracle, c-ae19b676b13b) even with the legacy c helper restored —
+	// eager folds before the first error leave a different stack for
+	// recovery to chew on. Clean-lineage-only wins don't outweigh the
+	// recovery-shape regression; revisit when c recovery is C-clean.
+	"c": true,
+	// haskell: the engine-wide fold KILLS a previously clean parse — A/B
+	// (wave-2b, 2026-07-07) flips SetupHooks.hs (Cabal-hooks) from
+	// accepted/error-free (151ms) to no_stacks_alive at byte ~17k: at some
+	// haskell state outside the two proven fold states (9609/10984, see
+	// haskellRepeatBoundaryConflictChoice) the repetition-marked shift is
+	// NOT re-reachable after the fold, so the fold's losslessness invariant
+	// does not hold on this table (huge external-scanner grammar; table
+	// fidelity suspect). The scoped 2-state fold helper stays as the proven
+	// subset; the memory_budget wins the global fold showed (LicenseId.hs,
+	// Licenses.hs ~1.9s->~0.1s) are forfeited until the offending state is
+	// isolated.
+	"haskell": true,
+	// c_sharp: the fold flips a clean parse to ERROR — A/B (wave-2b,
+	// 2026-07-07): DeployCommandTests.cs (Bicep) goes from accepted/clean
+	// (5.7s, legacy kind-scoped shift helper) to accepted WITH error
+	// (0.45s) under the fold. Same failure family as haskell: a fold at
+	// some state outside the helper's block/declaration_list kinds is not
+	// lossless on this table. c_sharp keeps its kind-scoped helper
+	// (csharpRepetitionShiftConflictChoice) and the forest fast path it
+	// already dispatches to by default.
+	"c_sharp": true,
+}
+
+// cRepetitionSkipConflictChoice is C tree-sitter's dispatch rule for
+// {repetition SHIFT, REDUCE} conflicts, applied engine-wide. C's action loop
+// (parser-repos/tree-sitter/lib/src/parser.c:1625, ts_parser__advance)
+// executes `if (action.shift.repetition) break;` — the repetition shift is
+// NEVER taken at a conflict entry. Every REDUCE runs (each spawning a stack
+// version), and when there is exactly one REDUCE the surviving version is
+// renumbered onto the current one and the SAME lookahead re-dispatches from
+// the folded state: a deterministic fold, no fork at all. The fold is
+// lossless because a repetition-marked shift is by construction re-reachable
+// from the post-reduce goto state — after folding, the same lookahead either
+// shifts as the list continuation or closes the list, so both futures
+// survive. Forking instead (our previous default) builds an O(n) flat spine
+// plus a per-boundary frontier refold — O(n^2) on any long repeated list.
+//
+// Scope: exactly-1 REDUCE + exactly-1 repetition SHIFT (the shape where C's
+// semantics are a deterministic fold; with 2+ REDUCEs C itself forks the
+// reduce versions, which our GLR fork approximates). Gated per-stack to
+// error-free lineages by the sticky !cEverErrored discipline established by
+// the php comma-list fold (see phpCommaListRepeatConflictChoice's doc for
+// the recovery-wreckage counterexamples): inside recovery wreckage the
+// repetition-shift arm can be the branch the recovery cost competition
+// keeps, so wreckage-descended lineages keep the ordinary GLR fork.
+func (p *Parser) cRepetitionSkipConflictChoice(s *glrStack, actions []ParseAction) (ParseAction, bool) {
+	if p == nil || p.language == nil || cRepetitionSkipOptOut[p.language.Name] {
+		return ParseAction{}, false
+	}
+	if s == nil || s.cRec != nil || s.cPaused || s.cRecoverMissingGroup != nil || s.cEverErrored {
+		return ParseAction{}, false
+	}
+	return singleReduceAgainstRepetitionShiftConflictChoice(actions)
+}
+
+func (p *Parser) cRepetitionSkipForestConflictChoice(recoverActive bool, actions []ParseAction) (ParseAction, bool) {
+	if p == nil || p.language == nil || cRepetitionSkipOptOut[p.language.Name] || recoverActive {
+		return ParseAction{}, false
+	}
+	return singleReduceAgainstRepetitionShiftConflictChoice(actions)
+}
+
 func (p *Parser) deterministicConflictChoiceForDispatch(source []byte, s *glrStack, tok Token, currentState StateID, actions []ParseAction, maxStacksSeen int, reuse *reuseCursor) (ParseAction, bool) {
 	if p == nil || p.language == nil {
 		return ParseAction{}, false
@@ -107,84 +194,94 @@ func (p *Parser) deterministicConflictChoiceForDispatch(source []byte, s *glrSta
 	if chosen, ok := conflictPolicyChoice(p.language, tok, currentState, actions); ok {
 		return chosen, true
 	}
+	// C's global repetition-skip fold. Runs after explicit generated
+	// ConflictPolicies (per-state directives outrank the default) but before
+	// the grammargen repeat-boundary veto and the per-language arms: the veto
+	// exists to keep hand-written SHIFT-preferring shortcuts away from
+	// grammars they were never tuned for, whereas this fold is C's own
+	// dispatch semantics and applies to every grammar whose tables carry
+	// repetition-marked shifts.
+	if next, ok := p.cRepetitionSkipConflictChoice(s, actions); ok {
+		return next, true
+	}
 	if generatedRepeatBoundaryConflict(p.language, actions) {
 		return ParseAction{}, false
 	}
 	if p.language.GeneratedByGrammargen {
 		return ParseAction{}, false
 	}
+	// The per-language repetition-boundary arms that used to populate this
+	// switch (java/c_sharp/c/rust/typescript/tsx/javascript/python/r/php/perl/
+	// sql/dart/hcl/haskell/make/d/clojure/awk/scheme/dot) are retired:
+	// cRepetitionSkipConflictChoice above makes the C-faithful choice for the
+	// exact {1 repetition-SHIFT + 1 REDUCE} shape those helpers were scoped
+	// to. Table-shape analysis (cmd/repskip_shapes) shows every state those
+	// helpers covered carries ONLY that exact shape (zero multi-reduce
+	// entries), so on error-free lineages the global fold fully shadows them;
+	// on wreckage lineages (cEverErrored and friends) the C-faithful behavior
+	// is the GLR fork feeding the recovery cost competition — the php
+	// TransportResponseTrait lesson — not a deterministic commitment, so the
+	// helpers' unconditional firing there was a latent recovery-shape hazard,
+	// not coverage worth keeping. The helper functions remain (with their
+	// unit tests) as documentation of the profiled states until integration
+	// deletes them. Arms that survive below are NOT repetition-boundary
+	// policies (or, for gomod above, run where the global fold does not).
 	var chosen ParseAction
 	var ok bool
 	switch p.language.Name {
 	case "java":
-		if next, ok := p.javaSwitchArrowConflictChoice(s, tok, actions); ok {
-			return next, true
-		}
-		chosen, ok = javaRepetitionShiftConflictChoiceForDispatch(p.language, source, tok, currentState, actions)
-	case "c_sharp":
-		chosen, ok = csharpRepetitionShiftConflictChoice(p.language, tok, actions)
-	case "c":
-		chosen, ok = cRepetitionShiftConflictChoice(p.language, actions)
-	case "rust":
-		if p.noTreeBenchmarkOnly {
-			return ParseAction{}, false
-		}
-		chosen, ok = rustRepetitionShiftConflictChoice(p.language, tok, currentState, actions)
-	case "typescript":
-		chosen, ok = typescriptRepetitionShiftConflictChoiceForDispatch(p.language, tok, currentState, actions)
-	case "tsx":
-		chosen, ok = tsxRepetitionReduceConflictChoice(p.language, tok, currentState, actions)
-	case "javascript":
-		chosen, ok = javascriptRepetitionShiftConflictChoiceForDispatch(p.language, tok, currentState, actions)
-	case "python":
-		chosen, ok = pythonRepetitionShiftConflictChoice(p.language, tok, currentState, actions)
-	case "r":
-		chosen, ok = rRepetitionShiftConflictChoice(p.language, currentState, actions)
-	case "php":
-		// Stack-scoped error gate: only lineages that never entered the C
-		// error state take the deterministic comma list-repeat fold. The sticky
-		// !cEverErrored bit is the airtight signal; cNodeBaseline==0 is NOT —
-		// cApplyMergedErrorGroupBaseline can write a 0 baseline (error entered at
-		// cumulative count 0), the cNodeCountSinceError clamp can rewrite a
-		// baseline back to 0 after a pop-below-everything, and cRecoverToState
-		// clears cRec on the recovered fork, so a wreckage-carrying lineage could
-		// pass the old baseline==0 gate two tokens later. The !cPaused check is
-		// still required: pausing precedes the cHandleError entry that sets
-		// cEverErrored. See phpCommaListRepeatConflictChoice for why
-		// wreckage-descended lineages must keep the ordinary GLR fork here.
-		if s != nil && s.cRec == nil && !s.cPaused && s.cRecoverMissingGroup == nil && !s.cEverErrored {
-			if next, ok := phpCommaListRepeatConflictChoice(p.language, tok, actions); ok {
-				return next, true
-			}
-		}
-		chosen, ok = phpRepetitionShiftConflictChoice(p.language, tok, currentState, actions)
-	case "perl":
-		chosen, ok = perlRepetitionShiftConflictChoice(p.language, currentState, actions)
-	case "sql":
-		chosen, ok = sqlRepetitionShiftConflictChoice(p.language, tok, currentState, actions)
+		// Non-repetition: `case A ->` switch-label disambiguation via a
+		// goto/action-table probe on the reduce's landing state.
+		chosen, ok = p.javaSwitchArrowConflictChoice(s, tok, actions)
 	case "dart":
+		// KEPT, and dart is also in cRepetitionSkipOptOut: dart's capped
+		// branch selection is tuned around this helper's deterministic
+		// repetition shift, INCLUDING on wreckage lineages where the global
+		// fold never applies. A/B evidence (wave-2b, 2026-07-07): removing
+		// the arm alone flips app_bar.dart's recovered tree and pushes
+		// generated_material_localizations.dart from accepted to
+		// memory_budget; the global fold instead of it drops
+		// back_button.dart from 75/88 to 62/88 C-oracle shape chunks. This
+		// is non-C dispatch policy papering over dart's recovery-selection
+		// gaps — revisit when dart is C-recovery-clean.
 		chosen, ok = dartRepetitionShiftConflictChoice(p.language, currentState, actions)
-	case "hcl":
-		chosen, ok = hclRepetitionShiftConflictChoice(p.language, currentState, actions)
+	case "c":
+		// KEPT, and c is also in cRepetitionSkipOptOut: the C-language
+		// corpus is error-dense and its recovered shapes depend on this
+		// helper's deterministic translation_unit_repeat1 /
+		// preproc_if_repeat1 shift on all lineages. A/B evidence (wave-2b,
+		// 2026-07-07): retiring the arm dropped archive.c from 1354/2040 to
+		// 1061/2040 C-oracle-matching shape chunks, and the fold alone kept
+		// it there (pre-error folds reshape the stack recovery chews on).
+		// Non-C dispatch policy stabilizing recovery selection; revisit
+		// when c recovery is C-clean.
+		chosen, ok = cRepetitionShiftConflictChoice(p.language, actions)
 	case "haskell":
+		// KEPT, and haskell is also in cRepetitionSkipOptOut: this is the
+		// proven-safe scoped subset of the fold (REDUCE at states
+		// 9609/10984 via singleReduceAgainstRepetitionShiftConflictChoice —
+		// the same choice the global rule would make there). The engine-wide
+		// fold dead-ends SetupHooks.hs (see the opt-out entry), so haskell
+		// keeps only these two certified states.
 		chosen, ok = haskellRepeatBoundaryConflictChoice(p.language, currentState, actions)
-	case "make":
-		chosen, ok = makeRepetitionShiftConflictChoice(p.language, currentState, actions)
+	case "c_sharp":
+		// KEPT, and c_sharp is also in cRepetitionSkipOptOut: the
+		// engine-wide fold flips DeployCommandTests.cs from clean to ERROR
+		// (see the opt-out entry), so c_sharp keeps the kind-scoped
+		// block/declaration_list repetition shift that the designer-block
+		// boundedness tests were built around.
+		chosen, ok = csharpRepetitionShiftConflictChoice(p.language, tok, actions)
 	case "swift":
+		// Non-repetition: brace/type-expression and navigable-type reduce
+		// selection between distinct nonterminal interpretations.
 		chosen, ok = swiftBraceTypeExpressionConflictChoice(p.language, tok, currentState, actions)
-	case "d":
-		chosen, ok = dRepetitionShiftConflictChoice(p.language, currentState, actions)
-	case "clojure":
-		chosen, ok = clojureRepetitionShiftConflictChoice(p.language, currentState, actions)
-	case "awk":
-		chosen, ok = awkRepetitionShiftConflictChoice(p.language, currentState, actions)
-	case "scheme":
-		chosen, ok = schemeRepetitionShiftConflictChoice(p.language, tok, currentState, actions)
-	case "dot":
-		chosen, ok = dotRepetitionShiftConflictChoice(p.language, tok, currentState, actions)
 	case "kotlin":
+		// Non-repetition: suppresses the bundled table's spurious bodiless
+		// object_literal reduction (issue #93).
 		chosen, ok = kotlinObjectLiteralConflictChoice(p.language, actions)
 	case "erlang":
+		// Non-repetition: macro invocation args shift (explicitly excludes
+		// repetition shifts).
 		chosen, ok = erlangMacroCallExprConflictChoice(p.language, actions)
 	}
 	return chosen, ok

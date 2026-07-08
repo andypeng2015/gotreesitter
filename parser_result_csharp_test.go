@@ -26,6 +26,23 @@ func TestCSharpFindQueryAssignmentSpecs(t *testing.T) {
 	}
 }
 
+func TestCSharpLargeNamespaceAltStatsCanSkipPrimary(t *testing.T) {
+	child := csharpRecoveredDeclarationStats{total: 103, methods: 93}
+	alt := csharpRecoveredDeclarationStats{total: 126, methods: 116}
+	if !csharpLargeNamespaceAltStatsCanSkipPrimary(csharpLargeNamespaceRecoveryBodyBytes, child, alt) {
+		t.Fatal("large, clear alt win should skip primary source recovery")
+	}
+	if csharpLargeNamespaceAltStatsCanSkipPrimary(csharpLargeNamespaceRecoveryBodyBytes-1, child, alt) {
+		t.Fatal("small namespace must keep primary source recovery")
+	}
+	if csharpLargeNamespaceAltStatsCanSkipPrimary(csharpLargeNamespaceRecoveryBodyBytes, child, csharpRecoveredDeclarationStats{total: 110, methods: 96}) {
+		t.Fatal("marginal alt win must keep primary source recovery")
+	}
+	if csharpLargeNamespaceAltStatsCanSkipPrimary(csharpLargeNamespaceRecoveryBodyBytes, child, csharpRecoveredDeclarationStats{total: 140, methods: 90}) {
+		t.Fatal("alt with fewer methods must keep primary source recovery")
+	}
+}
+
 func TestCSharpParseQueryExpressionSpecWithGroupIntoOrder(t *testing.T) {
 	src := []byte("from a in sourceA\n" +
 		"        join b in sourceB on a.FK equals b.PK\n" +
