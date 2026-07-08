@@ -344,12 +344,12 @@
    "extensions": ".cbl,.cob,.cpy",
    "grammar": "cobol",
    "has_external_scanner": true,
-   "parity": "3/40",
+   "parity": "11/40",
    "staged_external_lex_states": false,
    "status": "default_elected",
    "status_label": "default elected",
    "tier_classification": "IV-recovery",
-   "tier_notes": "Wave 4 default precise ELS is elected: BBANK10P, SCUSTOMP, and SSECUREP match C under the default tier runner (Docker wave4-cobol-tier40-default-els-trailing-comment: parityMatch=3/40, trunc=29, errTree=38, diverge=37, medianRatio=2.70x, aggRatio=4.45x). Generated Cobol gates remain clean at 40/40 for both direct C parity (20260708_071502-focus-cobol) and real-corpus parity (20260708T141502Z), and BBANK10P default ELS witness matches (wave4-cobol-bbank10p-default-els). Remaining IV blockers are 29 no_stacks_alive frontier-death files around copybook/procedure recovery plus accepted C-recovery shape gaps such as SCASHDRV and SCHAR00P where Go materializes finer statements but C wraps the tail as a broad ERROR; do not ratchet Cobol CLEAN until those are resolved."
+   "tier_notes": "Wave 4 Cobol recovery-frontier normalization closes the accepted C-recovery shape bucket: BBANK10P, CLOSEFIL, DFHUAINS, OPENFIL, SBANK00P, SBANK10P, SCASH00P, SCASHDRV, SCHAR00P, SCUSTOMP, and SSECUREP match C under Docker wave4-cobol-tier40-recovery-frontier-final (parityMatch=11/40, trunc=29, errTree=38, diverge=29, medianRatio=3.21x, aggRatio=4.76x). BBANK10P default ELS witness matches (wave4-cobol-bbank10p-default-els). Remaining IV blockers are the 29 no_stacks_alive frontier-death files around copybook/procedure recovery; separate grammargen focus wrappers still surface upstream evaluate-corpus generated-parser mismatches outside this C-recovery tier runner, so do not ratchet Cobol CLEAN until frontier retention and generated evaluate parity are fixed."
   },
   {
    "c_recovery_default_opt_out": false,
