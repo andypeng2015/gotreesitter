@@ -19,6 +19,10 @@ type cTreeSitterBenchmarkSpec struct {
 func newCTreeSitterParserWithLanguage(tb testing.TB, language func() *sitter.Language) *sitter.Parser {
 	tb.Helper()
 	parser := sitter.NewParser()
+	if parser == nil {
+		tb.Fatal("sitter.NewParser returned nil")
+		return nil
+	}
 	parser.SetLanguage(language())
 	return parser
 }
@@ -34,7 +38,7 @@ func benchmarkCTreeSitterParseFull(b *testing.B, spec cTreeSitterBenchmarkSpec) 
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		tree := parser.Parse(nil, src)
+		tree := parseCTree(b, parser, nil, src, "c full")
 		requireCompleteCTree(b, tree, src, "c full")
 		tree.Close()
 	}
@@ -51,7 +55,7 @@ func benchmarkCTreeSitterParseIncrementalSingleByteEdit(b *testing.B, spec cTree
 	}
 	site := sites[0]
 
-	tree := parser.Parse(nil, src)
+	tree := parseCTree(b, parser, nil, src, "initial")
 	if tree == nil || tree.RootNode() == nil {
 		b.Fatal("initial parse returned nil root")
 	}
@@ -73,7 +77,7 @@ func benchmarkCTreeSitterParseIncrementalSingleByteEdit(b *testing.B, spec cTree
 	for i := 0; i < b.N; i++ {
 		toggleDigitAt(src, site.offset)
 		tree.Edit(edit)
-		newTree := parser.Parse(tree, src)
+		newTree := parseCTree(b, parser, tree, src, "incremental")
 		if newTree == nil || newTree.RootNode() == nil {
 			b.Fatal("incremental parse returned nil root")
 		}
@@ -87,7 +91,7 @@ func benchmarkCTreeSitterParseIncrementalNoEdit(b *testing.B, spec cTreeSitterBe
 	defer parser.Close()
 
 	src := spec.source(benchmarkFuncCount(b))
-	tree := parser.Parse(nil, src)
+	tree := parseCTree(b, parser, nil, src, "initial")
 	if tree == nil || tree.RootNode() == nil {
 		b.Fatal("initial parse returned nil root")
 	}
@@ -98,7 +102,7 @@ func benchmarkCTreeSitterParseIncrementalNoEdit(b *testing.B, spec cTreeSitterBe
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		newTree := parser.Parse(tree, src)
+		newTree := parseCTree(b, parser, tree, src, "incremental")
 		if newTree == nil || newTree.RootNode() == nil {
 			b.Fatal("incremental parse returned nil root")
 		}

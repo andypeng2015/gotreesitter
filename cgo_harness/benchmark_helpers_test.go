@@ -1,3 +1,5 @@
+//go:build cgo && (treesitter_c_parity || treesitter_c_bench)
+
 package cgoharness
 
 import (

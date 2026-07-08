@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -465,7 +466,10 @@ func parseWithCGo(file replayFile) error {
 		return err
 	}
 	defer parser.Close()
-	tree := parser.Parse(nil, file.Source)
+	tree, err := parser.ParseCtx(context.Background(), nil, file.Source)
+	if err != nil {
+		return fmt.Errorf("cgo parse error: %w", err)
+	}
 	if tree == nil {
 		return fmt.Errorf("cgo parse returned nil tree")
 	}
@@ -484,8 +488,11 @@ func parseAndExtractWithCGo(file replayFile) cgoExtractResult {
 	}
 	defer parser.Close()
 	parseStart := time.Now()
-	tree := parser.Parse(nil, file.Source)
+	tree, err := parser.ParseCtx(context.Background(), nil, file.Source)
 	parseNanos := time.Since(parseStart).Nanoseconds()
+	if err != nil {
+		return cgoExtractResult{parseNanos: parseNanos, err: fmt.Errorf("cgo parse error: %w", err)}
+	}
 	if tree == nil {
 		return cgoExtractResult{parseNanos: parseNanos, err: fmt.Errorf("cgo parse returned nil tree")}
 	}

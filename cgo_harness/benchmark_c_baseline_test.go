@@ -4,6 +4,7 @@ package cgoharness
 
 import (
 	"bytes"
+	"context"
 	"testing"
 
 	sitter "github.com/smacker/go-tree-sitter"
@@ -19,10 +20,12 @@ func requireCompleteCTree(tb testing.TB, tree *sitter.Tree, src []byte, phase st
 	tb.Helper()
 	if tree == nil {
 		tb.Fatalf("%s parse returned nil tree", phase)
+		return nil
 	}
 	root := tree.RootNode()
 	if root == nil {
 		tb.Fatalf("%s parse returned nil root", phase)
+		return nil
 	}
 	if got, want := uint32(root.EndByte()), uint32(len(src)); got != want {
 		tb.Fatalf("%s parse truncated: root.EndByte=%d want=%d type=%q hasError=%v", phase, got, want, root.Type(), root.HasError())
@@ -30,9 +33,22 @@ func requireCompleteCTree(tb testing.TB, tree *sitter.Tree, src []byte, phase st
 	return root
 }
 
+func parseCTree(tb testing.TB, parser *sitter.Parser, oldTree *sitter.Tree, src []byte, phase string) *sitter.Tree {
+	tb.Helper()
+	tree, err := parser.ParseCtx(context.Background(), oldTree, src)
+	if err != nil {
+		tb.Fatalf("%s parse error: %v", phase, err)
+	}
+	return tree
+}
+
 func newCTreeSitterParser(tb testing.TB) *sitter.Parser {
 	tb.Helper()
 	parser := sitter.NewParser()
+	if parser == nil {
+		tb.Fatal("sitter.NewParser returned nil")
+		return nil
+	}
 	parser.SetLanguage(sittergo.GetLanguage())
 	return parser
 }
@@ -50,7 +66,7 @@ func BenchmarkCTreeSitterGoParseFull(b *testing.B) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		tree := parser.Parse(nil, src)
+		tree := parseCTree(b, parser, nil, src, "c full")
 		requireCompleteCTree(b, tree, src, "c full")
 		tree.Close()
 	}
@@ -70,7 +86,7 @@ func BenchmarkCTreeSitterGoParseIncrementalSingleByteEdit(b *testing.B) {
 	start := cTreeSitterPointAtOffset(src, editAt)
 	end := cTreeSitterPointAtOffset(src, editAt+1)
 
-	tree := parser.Parse(nil, src)
+	tree := parseCTree(b, parser, nil, src, "initial")
 	if tree == nil || tree.RootNode() == nil {
 		b.Fatal("initial parse returned nil root")
 	}
@@ -97,7 +113,7 @@ func BenchmarkCTreeSitterGoParseIncrementalSingleByteEdit(b *testing.B) {
 		}
 
 		tree.Edit(edit)
-		newTree := parser.Parse(tree, src)
+		newTree := parseCTree(b, parser, tree, src, "incremental")
 		if newTree == nil || newTree.RootNode() == nil {
 			b.Fatal("incremental parse returned nil root")
 		}
@@ -111,7 +127,7 @@ func BenchmarkCTreeSitterGoParseIncrementalNoEdit(b *testing.B) {
 	defer parser.Close()
 
 	src := makeGoBenchmarkSource(benchmarkFuncCount(b))
-	tree := parser.Parse(nil, src)
+	tree := parseCTree(b, parser, nil, src, "initial")
 	if tree == nil || tree.RootNode() == nil {
 		b.Fatal("initial parse returned nil root")
 	}
@@ -122,7 +138,7 @@ func BenchmarkCTreeSitterGoParseIncrementalNoEdit(b *testing.B) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		newTree := parser.Parse(tree, src)
+		newTree := parseCTree(b, parser, tree, src, "incremental")
 		if newTree == nil || newTree.RootNode() == nil {
 			b.Fatal("incremental parse returned nil root")
 		}
@@ -141,7 +157,7 @@ func BenchmarkCTreeSitterGoParseIncrementalRandomSingleByteEdit(b *testing.B) {
 		b.Fatal("could not find random edit sites")
 	}
 
-	tree := parser.Parse(nil, src)
+	tree := parseCTree(b, parser, nil, src, "initial")
 	if tree == nil || tree.RootNode() == nil {
 		b.Fatal("initial parse returned nil root")
 	}
@@ -167,7 +183,7 @@ func BenchmarkCTreeSitterGoParseIncrementalRandomSingleByteEdit(b *testing.B) {
 		}
 
 		tree.Edit(edit)
-		newTree := parser.Parse(tree, src)
+		newTree := parseCTree(b, parser, tree, src, "incremental")
 		if newTree == nil || newTree.RootNode() == nil {
 			b.Fatal("incremental parse returned nil root")
 		}

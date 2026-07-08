@@ -530,9 +530,7 @@ func loadLanguageListFile(path string) ([]string, error) {
 		if idx := strings.IndexByte(line, '#'); idx >= 0 {
 			line = strings.TrimSpace(line[:idx])
 		}
-		for _, field := range strings.Fields(line) {
-			out = append(out, field)
-		}
+		out = append(out, strings.Fields(line)...)
 	}
 	out = dedupe(out)
 	if len(out) == 0 {
