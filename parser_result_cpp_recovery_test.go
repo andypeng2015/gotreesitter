@@ -57,37 +57,60 @@ void A::b() {
 	if !root.HasError() {
 		t.Fatalf("root.HasError = false, want true")
 	}
-	// The C oracle (tree-sitter's cost-based error-recovery competition,
-	// ts_parser__recover) folds the "void" token following the malformed
-	// class body into the *next* declarator's qualified_identifier, fusing
-	// the malformed class and `void A::b() {}` into a single 2-child
-	// function_definition with a nested ERROR around the misplaced "A".
-	// That fold is an artifact of the faithful C recovery-cost port
-	// (parser_recover_c.go / errorCostCompetitionEnabled). cpp is not
-	// gated on it (its external scanner lacks precise ExternalLexStates —
-	// see DiagnoseCRecoveryGate — and, empirically, broadly enabling that
-	// port for cpp regresses oracle agreement on a 300-file LLVM corpus
-	// walk: 160/300 -> 142/299 with 26 new clean->error false positives,
-	// so it is intentionally NOT gated on here). Without that mechanism,
-	// gotreesitter's generic opportunistic top-level resync
-	// (tryResyncErrorRecoveryMode) instead localizes the damage to a single
-	// ERROR node spanning exactly the malformed class body and correctly
-	// keeps `int main() {...}` and `void A::b() {...}` as clean, separate,
-	// well-formed top-level siblings: 3 children, zero content loss, and
-	// (checked above) HasError=true.
-	if got, want := root.ChildCount(), 3; got != want {
+	// The C oracle folds the malformed class and following `void A::b() {}`
+	// into one recovered function_definition. Keep the cpp compatibility
+	// normalizer scoped to this C shape instead of enabling cpp C-recovery
+	// globally; the latter regressed corpus agreement in earlier A/B runs.
+	if got, want := root.ChildCount(), 2; got != want {
 		t.Fatalf("root child count = %d, want %d\n%s", got, want, root.SExpr(lang))
 	}
-	if errNode := root.Child(1); errNode.Type(lang) != "ERROR" {
-		t.Fatalf("root.Child(1) = %q, want ERROR\n%s", errNode.Type(lang), root.SExpr(lang))
-	} else if got, want := errNode.StartByte(), uint32(234); got != want {
-		t.Fatalf("ERROR node start = %d, want %d (start of malformed class body)", got, want)
-	} else if got, want := errNode.EndByte(), uint32(310); got != want {
-		t.Fatalf("ERROR node end = %d, want %d (end of malformed class body)", got, want)
+	recovered := root.Child(1)
+	if got, want := recovered.Type(lang), "function_definition"; got != want {
+		t.Fatalf("root.Child(1) = %q, want %q\n%s", got, want, root.SExpr(lang))
 	}
-	if got, want := root.Child(2).Type(lang), "function_definition"; got != want {
-		t.Fatalf("root.Child(2) = %q, want %q (clean void A::b() {...})\n%s", got, want, root.SExpr(lang))
-	} else if root.Child(2).HasError() {
-		t.Fatalf("root.Child(2) (void A::b() {...}) unexpectedly has an error\n%s", root.SExpr(lang))
+	if !recovered.HasError() {
+		t.Fatalf("recovered function_definition HasError = false, want true\n%s", recovered.SExpr(lang))
+	}
+	if got, want := recovered.StartByte(), uint32(234); got != want {
+		t.Fatalf("recovered function start = %d, want %d", got, want)
+	}
+	if got, want := recovered.EndByte(), uint32(346); got != want {
+		t.Fatalf("recovered function end = %d, want %d", got, want)
+	}
+	if got, want := recovered.ChildCount(), 3; got != want {
+		t.Fatalf("recovered child count = %d, want %d\n%s", got, want, recovered.SExpr(lang))
+	}
+	if got, want := recovered.Child(0).Type(lang), "class_specifier"; got != want {
+		t.Fatalf("recovered child[0] = %q, want %q\n%s", got, want, recovered.SExpr(lang))
+	}
+	declarator := recovered.Child(1)
+	if got, want := declarator.Type(lang), "function_declarator"; got != want {
+		t.Fatalf("recovered child[1] = %q, want %q\n%s", got, want, recovered.SExpr(lang))
+	}
+	qualified := declarator.Child(0)
+	if got, want := qualified.Type(lang), "qualified_identifier"; got != want {
+		t.Fatalf("declarator child[0] = %q, want %q\n%s", got, want, declarator.SExpr(lang))
+	}
+	if got, want := qualified.ChildCount(), 4; got != want {
+		t.Fatalf("qualified_identifier child count = %d, want %d\n%s", got, want, qualified.SExpr(lang))
+	}
+	if got, want := qualified.Child(0).Type(lang), "namespace_identifier"; got != want {
+		t.Fatalf("qualified child[0] = %q, want %q\n%s", got, want, qualified.SExpr(lang))
+	}
+	if got, want := qualified.Child(0).Text(src), "void"; got != want {
+		t.Fatalf("qualified child[0] text = %q, want %q", got, want)
+	}
+	errNode := qualified.Child(1)
+	if got, want := errNode.Type(lang), "ERROR"; got != want {
+		t.Fatalf("qualified child[1] = %q, want %q\n%s", got, want, qualified.SExpr(lang))
+	}
+	if !errNode.HasError() || !errNode.IsExtra() {
+		t.Fatalf("qualified ERROR flags extra=%v hasError=%v, want both true\n%s", errNode.IsExtra(), errNode.HasError(), qualified.SExpr(lang))
+	}
+	if got, want := errNode.Child(0).Type(lang), "identifier"; got != want {
+		t.Fatalf("qualified ERROR child = %q, want %q\n%s", got, want, errNode.SExpr(lang))
+	}
+	if got, want := errNode.Child(0).Text(src), "A"; got != want {
+		t.Fatalf("qualified ERROR child text = %q, want %q", got, want)
 	}
 }
