@@ -1991,24 +1991,39 @@ func (p *Parser) cCollectPotentialReductions(state StateID, lookaheadSym Symbol,
 // With anyLookahead false, dead-end versions are dropped (C removes them).
 // EOF is symbol 0, so callers must pass anyLookahead explicitly instead of
 // overloading lookaheadSym == 0.
-func (p *Parser) cDoAllPotentialReductions(source []byte, start glrStack, lookaheadSym Symbol, anyLookahead bool, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) ([]glrStack, bool) {
+func (p *Parser) cDoAllPotentialReductions(source []byte, start glrStack, lookaheadSym Symbol, anyLookahead bool, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) ([]glrStack, bool, ParseStopReason) {
 	oldDisablePostReduceForkMerge := p.disablePostReduceForkMerge
 	p.disablePostReduceForkMerge = true
 	defer func() {
 		p.disablePostReduceForkMerge = oldDisablePostReduceForkMerge
 	}()
+	checkStop := func() ParseStopReason {
+		if reason := p.resultMaterializationStopReason(arena); resultMaterializationShouldStop(reason) {
+			return reason
+		}
+		return ParseStopNone
+	}
+	if reason := checkStop(); reason != ParseStopNone {
+		return nil, false, reason
+	}
 
 	versions := []glrStack{start}
 	canShift := false
 	var reduces []ParseAction
 	v := 0
 	for iter := 0; ; iter++ {
+		if reason := checkStop(); reason != ParseStopNone {
+			return versions, canShift, reason
+		}
 		if v >= len(versions) {
 			break
 		}
 		// Merge check against earlier versions created in this call.
 		merged := false
 		for j := 0; j < v; j++ {
+			if reason := checkStop(); reason != ParseStopNone {
+				return versions, canShift, reason
+			}
 			if p.cTryMergeReductionVersion(&versions[j], &versions[v]) {
 				versions = append(versions[:v], versions[v+1:]...)
 				merged = true
@@ -2022,7 +2037,13 @@ func (p *Parser) cDoAllPotentialReductions(source []byte, start glrStack, lookah
 		hasShift := p.cCollectPotentialReductions(state, lookaheadSym, anyLookahead, &reduces)
 		lastReduction := -1
 		for _, act := range reduces {
-			actionCandidates := p.cReductionCandidatesForAction(source, versions[v], act, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
+			if reason := checkStop(); reason != ParseStopNone {
+				return versions, canShift, reason
+			}
+			actionCandidates, reason := p.cReductionCandidatesForAction(source, versions[v], act, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
+			if reason != ParseStopNone {
+				return versions, canShift, reason
+			}
 			actionReductionVersion := -1
 			if len(actionCandidates) > 0 {
 				versions, actionReductionVersion = p.cAppendActionReductionVersions(versions, actionCandidates, v, arena)
@@ -2063,26 +2084,39 @@ func (p *Parser) cDoAllPotentialReductions(source []byte, start glrStack, lookah
 			break
 		}
 	}
-	return versions, canShift
+	return versions, canShift, ParseStopNone
 }
 
-func (p *Parser) cReductionCandidatesForAction(source []byte, start glrStack, act ParseAction, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) []glrStack {
+func (p *Parser) cReductionCandidatesForAction(source []byte, start glrStack, act ParseAction, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) ([]glrStack, ParseStopReason) {
 	p.pendingForkStacks = p.pendingForkStacks[:0]
+	defer func() {
+		p.pendingForkStacks = p.pendingForkStacks[:0]
+	}()
+	if reason := p.resultMaterializationStopReason(arena); resultMaterializationShouldStop(reason) {
+		return nil, reason
+	}
 	fork := start.cloneWithScratch(gssScratch)
 	fork.cRec = start.cRec.clone()
 	var dummy bool
 	p.applyAction(source, &fork, act, tok, &dummy, nodeCount, arena, entryScratch, gssScratch, nil, false, trackChildErrors)
+	if reason := p.resultMaterializationStopReason(arena); resultMaterializationShouldStop(reason) {
+		return nil, reason
+	}
 	candidates := make([]glrStack, 0, 1+len(p.pendingForkStacks))
 	if !fork.dead {
 		candidates = append(candidates, fork)
 	}
 	for i := range p.pendingForkStacks {
+		if i&15 == 0 {
+			if reason := p.resultMaterializationStopReason(arena); resultMaterializationShouldStop(reason) {
+				return candidates, reason
+			}
+		}
 		if !p.pendingForkStacks[i].dead {
 			candidates = append(candidates, p.pendingForkStacks[i])
 		}
 	}
-	p.pendingForkStacks = p.pendingForkStacks[:0]
-	return candidates
+	return candidates, ParseStopNone
 }
 
 func (p *Parser) cAppendActionReductionVersions(versions []glrStack, candidates []glrStack, originalVersion int, arena *nodeArena) ([]glrStack, int) {
@@ -2243,7 +2277,16 @@ func (p *Parser) cTerminalNextState(state StateID, sym Symbol) (StateID, ParseAc
 // and whether any new version still needs to act on the current token (the
 // missing-token versions and strategy-1 recoveries) — the caller must force a
 // re-dispatch pass for the same token.
-func (p *Parser) cHandleError(stacks *[]glrStack, si int, source []byte, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) (cRecoverOutcome, bool) {
+func (p *Parser) cHandleError(stacks *[]glrStack, si int, source []byte, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) (cRecoverOutcome, bool, ParseStopReason) {
+	checkStop := func() ParseStopReason {
+		if reason := p.resultMaterializationStopReason(arena); resultMaterializationShouldStop(reason) {
+			return reason
+		}
+		return ParseStopNone
+	}
+	if reason := checkStop(); reason != ParseStopNone {
+		return cRecHalted, false, reason
+	}
 	s := &(*stacks)[si]
 	s.cPaused = false
 	// Sticky per-stack wreckage bit: this lineage is entering C error handling.
@@ -2288,7 +2331,10 @@ func (p *Parser) cHandleError(stacks *[]glrStack, si int, source []byte, tok Tok
 	p.crecoveryHandleErrorSingleStack = len(*stacks) == 1
 
 	// 1. Close in-progress productions: reductions reachable on any symbol.
-	versions, _ := p.cDoAllPotentialReductions(source, s.clone(), 0, true, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
+	versions, _, reason := p.cDoAllPotentialReductions(source, s.clone(), 0, true, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
+	if reason != ParseStopNone {
+		return cRecHalted, false, reason
+	}
 	group := &cRecGroup{}
 
 	// 2. Missing-token insertion (once across the version set, in order).
@@ -2297,9 +2343,17 @@ func (p *Parser) cHandleError(stacks *[]glrStack, si int, source []byte, tok Tok
 	var missingVersions []glrStack
 	if !p.isGraphQLRecoveryTripleQuote(tok.Symbol) {
 		for vi := range versions {
+			if reason := checkStop(); reason != ParseStopNone {
+				return cRecHalted, false, reason
+			}
 			state := versions[vi].top().state
 			tokenCount := Symbol(p.language.TokenCount)
 			for ms := Symbol(1); ms < tokenCount; ms++ {
+				if ms&63 == 0 {
+					if reason := checkStop(); reason != ParseStopNone {
+						return cRecHalted, false, reason
+					}
+				}
 				nextState, shiftAct, ok := p.cTerminalNextState(state, ms)
 				if !ok || nextState == 0 || nextState == state {
 					continue
@@ -2326,6 +2380,9 @@ func (p *Parser) cHandleError(stacks *[]glrStack, si int, source []byte, tok Tok
 				}
 				var dummy bool
 				p.applyAction(source, &cand, shiftAct, missingTok, &dummy, nodeCount, arena, entryScratch, gssScratch, nil, false, trackChildErrors)
+				if reason := checkStop(); reason != ParseStopNone {
+					return cRecHalted, false, reason
+				}
 				if p.rejectUndrainedPendingForkStacks(&cand) {
 					continue
 				}
@@ -2333,7 +2390,10 @@ func (p *Parser) cHandleError(stacks *[]glrStack, si int, source []byte, tok Tok
 				if cand.dead {
 					continue
 				}
-				reduced, canShift := p.cDoAllPotentialReductions(source, cand, tok.Symbol, false, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
+				reduced, canShift, reason := p.cDoAllPotentialReductions(source, cand, tok.Symbol, false, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
+				if reason != ParseStopNone {
+					return cRecHalted, false, reason
+				}
 				if !canShift || len(reduced) == 0 {
 					continue
 				}
@@ -2353,12 +2413,18 @@ func (p *Parser) cHandleError(stacks *[]glrStack, si int, source []byte, tok Tok
 	// cRecGroup — the engine equivalent of C merging them into one version
 	// before ts_stack_record_summary.
 	for vi := range versions {
+		if reason := checkStop(); reason != ParseStopNone {
+			return cRecHalted, false, reason
+		}
 		v := &versions[vi]
 		v.pushEntry(stackEntry{state: cErrorState}, entryScratch, gssScratch)
 		v.shifted = false
 	}
 	p.cApplyMergedErrorGroupBaseline(versions)
 	for vi := range versions {
+		if reason := checkStop(); reason != ParseStopNone {
+			return cRecHalted, false, reason
+		}
 		v := &versions[vi]
 		entries := cStackEntriesTopFirst(v, gssScratch)
 		if debugRecoveryCycleChecks {
@@ -2375,6 +2441,9 @@ func (p *Parser) cHandleError(stacks *[]glrStack, si int, source []byte, tok Tok
 	// The original stack becomes the first absorbing version.
 	*s = versions[0]
 	for vi := 1; vi < len(versions); vi++ {
+		if reason := checkStop(); reason != ParseStopNone {
+			return cRecHalted, false, reason
+		}
 		*stacks = append(*stacks, versions[vi])
 	}
 
@@ -2388,6 +2457,9 @@ func (p *Parser) cHandleError(stacks *[]glrStack, si int, source []byte, tok Tok
 	// the missing versions before the recover pass for the same visibility.
 	needsRedispatch := false
 	for vi := range missingVersions {
+		if reason := checkStop(); reason != ParseStopNone {
+			return cRecHalted, false, reason
+		}
 		missingVersions[vi].branchOrder = (*stacks)[si].branchOrder
 		missingVersions[vi].cRecoverMissingGroup = group
 		*stacks = append(*stacks, missingVersions[vi])
@@ -2400,11 +2472,17 @@ func (p *Parser) cHandleError(stacks *[]glrStack, si int, source []byte, tok Tok
 	outcome := cRecoverOutcome(cRecConsumed)
 	first := true
 	for i := 0; i < len(*stacks); i++ {
+		if reason := checkStop(); reason != ParseStopNone {
+			return cRecHalted, needsRedispatch, reason
+		}
 		v := &(*stacks)[i]
 		if v.dead || v.cRec == nil || v.cRec.group != group {
 			continue
 		}
-		res, forked := p.cRecover(stacks, v, source, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
+		res, forked, reason := p.cRecover(stacks, v, source, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
+		if reason != ParseStopNone {
+			return cRecHalted, needsRedispatch || forked, reason
+		}
 		v = &(*stacks)[i]
 		if forked {
 			needsRedispatch = true
@@ -2416,7 +2494,7 @@ func (p *Parser) cHandleError(stacks *[]glrStack, si int, source []byte, tok Tok
 			v.dead = true
 		}
 	}
-	return outcome, needsRedispatch
+	return outcome, needsRedispatch, ParseStopNone
 }
 
 // ---------------------------------------------------------------------------
@@ -2430,13 +2508,27 @@ func (p *Parser) cHandleError(stacks *[]glrStack, si int, source []byte, tok Tok
 // forked=true: the fork must act on the current token), absorb the token into
 // the open error region (cRecConsumed), accept at EOF (cRecConsumed), or halt
 // the member (cRecHalted).
-func (p *Parser) cRecover(stacks *[]glrStack, v *glrStack, source []byte, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) (cRecoverOutcome, bool) {
+func (p *Parser) cRecover(stacks *[]glrStack, v *glrStack, source []byte, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) (cRecoverOutcome, bool, ParseStopReason) {
+	checkStop := func() ParseStopReason {
+		if reason := p.resultMaterializationStopReason(arena); resultMaterializationShouldStop(reason) {
+			return reason
+		}
+		return ParseStopNone
+	}
+	if reason := checkStop(); reason != ParseStopNone {
+		return cRecHalted, false, reason
+	}
 	rec := v.cRec
 	if rec == nil {
-		return cRecFallthrough, false
+		return cRecFallthrough, false, ParseStopNone
 	}
 	vIndex := -1
 	for i := range *stacks {
+		if i&63 == 0 {
+			if reason := checkStop(); reason != ParseStopNone {
+				return cRecHalted, false, reason
+			}
+		}
 		if &(*stacks)[i] == v {
 			vIndex = i
 			break
@@ -2452,7 +2544,11 @@ func (p *Parser) cRecover(stacks *[]glrStack, v *glrStack, source []byte, tok To
 			g.electionDone = true
 			g.electionTokenStart = tok.StartByte
 			g.electionTokenSymbol = tok.Symbol
-			didRecover, forked = p.cRecoverStrategy1Election(stacks, g, source, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
+			var reason ParseStopReason
+			didRecover, forked, reason = p.cRecoverStrategy1Election(stacks, g, source, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
+			if reason != ParseStopNone {
+				return cRecHalted, forked, reason
+			}
 			// Re-resolve v: the fork append may have reallocated the slice.
 			if vIndex >= 0 {
 				v = &(*stacks)[vIndex]
@@ -2466,13 +2562,19 @@ func (p *Parser) cRecover(stacks *[]glrStack, v *glrStack, source []byte, tok To
 	// absorbing paths inside a single merged version).
 	if didRecover && p.cEffectiveVersionCount(*stacks, rec.group) > cRecoverMaxVersionCount {
 		v.dead = true
-		return cRecHalted, forked
+		return cRecHalted, forked, ParseStopNone
 	}
 
 	// EOF: wrap everything and accept (ts_parser__recover recover_eof).
 	if tok.Symbol == 0 && tok.StartByte == tok.EndByte {
+		if reason := checkStop(); reason != ParseStopNone {
+			return cRecHalted, forked, reason
+		}
 		p.cRecoverEOFAccept(v, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
-		return cRecConsumed, forked
+		if reason := checkStop(); reason != ParseStopNone {
+			return cRecHalted, forked, reason
+		}
+		return cRecConsumed, forked, ParseStopNone
 	}
 
 	// An unlexable-run lookahead while the region already holds content re-runs
@@ -2505,18 +2607,27 @@ func (p *Parser) cRecover(stacks *[]glrStack, v *glrStack, source []byte, tok To
 	// `static function`: C's absorber survives to EOF and its lineage
 	// provides the final `(program php_tag (ERROR ...) compound_statement)`
 	// shape).
+	if reason := checkStop(); reason != ParseStopNone {
+		return cRecHalted, forked, reason
+	}
 	if vIndex >= 0 && p.cBetterVersionExists(*stacks, vIndex, false, newCost) {
 		v.dead = true
-		return cRecHalted, forked
+		return cRecHalted, forked, ParseStopNone
 	}
 
 	// Wrap the lookahead into the open error region (strategy 2).
 	if !p.guardRealTokenAttachmentGap(source, v, tok, "c-recover") {
-		return cRecHalted, forked
+		return cRecHalted, forked, ParseStopNone
+	}
+	if reason := checkStop(); reason != ParseStopNone {
+		return cRecHalted, forked, reason
 	}
 	p.cAbsorbTokenIntoError(v, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
+	if reason := checkStop(); reason != ParseStopNone {
+		return cRecHalted, forked, reason
+	}
 	v.shifted = true
-	return cRecConsumed, forked
+	return cRecConsumed, forked, ParseStopNone
 }
 
 // cEffectiveVersionCount counts live stacks with the absorbing group folded
@@ -2622,7 +2733,16 @@ func (p *Parser) cRecoverElectionLookaheadSymbol(source []byte, member *glrStack
 //     the lookahead would have had no actions in that entry's state;
 //   - entries are deduped on (depth, state) at first encounter, mirroring
 //     ts_stack_record_summary's record-time dedup across the merged paths.
-func (p *Parser) cRecoverStrategy1Election(stacks *[]glrStack, group *cRecGroup, source []byte, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) (didRecover, forked bool) {
+func (p *Parser) cRecoverStrategy1Election(stacks *[]glrStack, group *cRecGroup, source []byte, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) (didRecover, forked bool, reason ParseStopReason) {
+	checkStop := func() ParseStopReason {
+		if reason := p.resultMaterializationStopReason(arena); resultMaterializationShouldStop(reason) {
+			return reason
+		}
+		return ParseStopNone
+	}
+	if reason := checkStop(); reason != ParseStopNone {
+		return false, false, reason
+	}
 	// C runs the summary scan for every non-error lookahead INCLUDING the EOF
 	// token (parser.c ts_parser__recover: `summary && !ts_subtree_is_error`).
 	// EOF election is what lets C pop the open error region to a state where
@@ -2631,22 +2751,27 @@ func (p *Parser) cRecoverStrategy1Election(stacks *[]glrStack, group *cRecGroup,
 	// this engine's unlexable run (C: error-subtree lookahead) — C skips
 	// strategy 1 for those.
 	if tok.Symbol == errorSymbol {
-		return false, false
+		return false, false, ParseStopNone
 	}
 	if p.isGraphQLRecoveryTripleQuote(tok.Symbol) {
-		return false, false
+		return false, false, ParseStopNone
 	}
 	if tok.Symbol == 0 && tok.StartByte != tok.EndByte {
-		return false, false
+		return false, false, ParseStopNone
 	}
 	var members []int
 	for i := range *stacks {
+		if i&63 == 0 {
+			if reason := checkStop(); reason != ParseStopNone {
+				return false, false, reason
+			}
+		}
 		if !(*stacks)[i].dead && (*stacks)[i].cRec != nil && (*stacks)[i].cRec.group == group {
 			members = append(members, i)
 		}
 	}
 	if len(members) == 0 {
-		return false, false
+		return false, false, ParseStopNone
 	}
 	cSortRecoverMembersByGroupOrder((*stacks), members)
 	// C computes position, error cost and node-count-since-error once for the
@@ -2666,7 +2791,7 @@ func (p *Parser) cRecoverStrategy1Election(stacks *[]glrStack, group *cRecGroup,
 	electionSym := p.cRecoverElectionLookaheadSymbol(source, &(*stacks)[m0], tok)
 	if electionSym == errorSymbol {
 		// C skips strategy 1 for error-subtree lookaheads.
-		return false, false
+		return false, false, ParseStopNone
 	}
 	type seenKey struct {
 		depth int
@@ -2674,8 +2799,19 @@ func (p *Parser) cRecoverStrategy1Election(stacks *[]glrStack, group *cRecGroup,
 	}
 	seen := make(map[seenKey]bool, 16)
 	for d := 0; d <= cRecoverMaxSummaryDepth+1; d++ {
+		if reason := checkStop(); reason != ParseStopNone {
+			return false, false, reason
+		}
 		for _, mi := range members {
+			if reason := checkStop(); reason != ParseStopNone {
+				return false, false, reason
+			}
 			for _, entry := range (*stacks)[mi].cRec.summary {
+				if len(seen)&63 == 0 {
+					if reason := checkStop(); reason != ParseStopNone {
+						return false, false, reason
+					}
+				}
 				if entry.depth != d {
 					continue
 				}
@@ -2714,12 +2850,18 @@ func (p *Parser) cRecoverStrategy1Election(stacks *[]glrStack, group *cRecGroup,
 					(pos-entry.posBytes)*cErrCostPerSkippedChar +
 					(curRow-entry.posRow)*cErrCostPerSkippedLine
 				if p.cBetterVersionExists(*stacks, m0, false, newCost) {
-					return false, false
+					return false, false, ParseStopNone
 				}
 				if p.lookupActionIndex(entry.state, electionSym) == 0 {
 					continue
 				}
+				if reason := checkStop(); reason != ParseStopNone {
+					return false, false, reason
+				}
 				if fork, ok := p.cRecoverToState(&(*stacks)[mi], depth, entry.state, arena, entryScratch, gssScratch, trackChildErrors); ok {
+					if reason := checkStop(); reason != ParseStopNone {
+						return false, false, reason
+					}
 					fork.branchOrder = (*stacks)[mi].branchOrder
 					*stacks = append(*stacks, fork)
 					if nodeCount != nil {
@@ -2728,12 +2870,12 @@ func (p *Parser) cRecoverStrategy1Election(stacks *[]glrStack, group *cRecGroup,
 					if p.glrTrace {
 						traceCRecoverToState(entry.state, depth)
 					}
-					return true, true
+					return true, true, ParseStopNone
 				}
 			}
 		}
 	}
-	return false, false
+	return false, false, ParseStopNone
 }
 
 func cSortRecoverMembersByGroupOrder(stacks []glrStack, members []int) {
@@ -2848,6 +2990,26 @@ func (p *Parser) cAppendVisibleSplice(dst []*Node, n *Node) []*Node {
 		dst = p.cAppendVisibleSplice(dst, c)
 	}
 	return dst
+}
+
+func (p *Parser) cAppendVisibleSpliceUntil(dst []*Node, n *Node, limit int) ([]*Node, bool) {
+	if n == nil {
+		return dst, true
+	}
+	if n.symbol == errorSymbol || n.isMissing() || p.cSymbolVisible(n.symbol) {
+		if limit >= 0 && len(dst) >= limit {
+			return dst, false
+		}
+		return append(dst, n), true
+	}
+	for _, c := range n.children {
+		var ok bool
+		dst, ok = p.cAppendVisibleSpliceUntil(dst, c, limit)
+		if !ok {
+			return dst, false
+		}
+	}
+	return dst, true
 }
 
 // cSetNodeSpan pins a recovery node's span explicitly: C error regions span
@@ -3159,12 +3321,12 @@ func (p *Parser) cAbsorbTokenIntoError(v *glrStack, tok Token, nodeCount *int, a
 // error, and non-terminal extras (e.g. requirements' linebreak) enter their
 // sub-parse via a real shift in the state-0 row. Everything else goes through
 // ts_parser__recover.
-func (p *Parser) cRecoverDispatchInError(stacks *[]glrStack, si int, source []byte, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) (cRecoverOutcome, bool) {
+func (p *Parser) cRecoverDispatchInError(stacks *[]glrStack, si int, source []byte, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) (cRecoverOutcome, bool, ParseStopReason) {
 	s := &(*stacks)[si]
 	if s.top().state != cErrorState {
 		// Mid non-terminal-extra parse: the version temporarily left
 		// ERROR_STATE; C dispatches it through the normal table rows.
-		return cRecFallthrough, false
+		return cRecFallthrough, false, ParseStopNone
 	}
 	if tok.Symbol != 0 {
 		if p.isGraphQLRecoveryTripleQuote(tok.Symbol) {
@@ -3173,7 +3335,7 @@ func (p *Parser) cRecoverDispatchInError(stacks *[]glrStack, si int, source []by
 		if idx := p.lookupActionIndex(cErrorState, tok.Symbol); idx != 0 && int(idx) < len(p.language.ParseActions) {
 			if actions := p.language.ParseActions[idx].Actions; len(actions) > 0 &&
 				actions[0].Type == ParseActionShift {
-				return cRecFallthrough, false
+				return cRecFallthrough, false, ParseStopNone
 			}
 		}
 		// Zero-width non-EOF tokens are skipped (C's error-mode lexer never
@@ -3187,7 +3349,7 @@ func (p *Parser) cRecoverDispatchInError(stacks *[]glrStack, si int, source []by
 				s.byteOffset = tok.EndByte
 			}
 			s.shifted = true
-			return cRecConsumed, false
+			return cRecConsumed, false, ParseStopNone
 		}
 	}
 	return p.cRecover(stacks, s, source, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
@@ -3211,10 +3373,20 @@ func (p *Parser) isGraphQLRecoveryTripleQuote(sym Symbol) bool {
 //
 // Returns the condensed slice, whether new versions need to re-dispatch
 // the current token (strategy-1 forks / missing-token versions created by a
-// resumed handle_error), and the possibly error-mode-relexed current token
+// resumed handle_error), the possibly error-mode-relexed current token
 // (see cRecoverResumeLookahead) which the caller must adopt so redispatched
-// versions act on the same lookahead the resumed group consumed.
-func (p *Parser) cCondenseAndResume(stacks []glrStack, source []byte, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) ([]glrStack, bool, Token) {
+// versions act on the same lookahead the resumed group consumed, and any
+// active budget/timeout stop reason encountered while condensing.
+func (p *Parser) cCondenseAndResume(stacks []glrStack, source []byte, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) ([]glrStack, bool, Token, ParseStopReason) {
+	checkStop := func() ParseStopReason {
+		if reason := p.resultMaterializationStopReason(arena); resultMaterializationShouldStop(reason) {
+			return reason
+		}
+		return ParseStopNone
+	}
+	if reason := checkStop(); reason != ParseStopNone {
+		return stacks, false, tok, reason
+	}
 	relevant := false
 	for i := range stacks {
 		if stacks[i].cPaused || stacks[i].cRec != nil || stacks[i].cRecoverMissingGroup != nil {
@@ -3224,6 +3396,9 @@ func (p *Parser) cCondenseAndResume(stacks []glrStack, source []byte, tok Token,
 	}
 	if debugRecoveryCycleChecks && relevant {
 		for i := range stacks {
+			if reason := checkStop(); reason != ParseStopNone {
+				return stacks, false, tok, reason
+			}
 			if stacks[i].dead {
 				continue
 			}
@@ -3232,7 +3407,7 @@ func (p *Parser) cCondenseAndResume(stacks []glrStack, source []byte, tok Token,
 		}
 	}
 	if !relevant {
-		return stacks, false, tok
+		return stacks, false, tok, ParseStopNone
 	}
 	// Drop dead versions first (C removes halted versions in condense).
 	// Accepted versions have left the pool in C (ts_parser__accept stashes
@@ -3242,6 +3417,9 @@ func (p *Parser) cCondenseAndResume(stacks []glrStack, source []byte, tok Token,
 	var acceptedStacks []glrStack
 	alive := stacks[:0]
 	for i := range stacks {
+		if reason := checkStop(); reason != ParseStopNone {
+			return stacks, false, tok, reason
+		}
 		if stacks[i].dead {
 			continue
 		}
@@ -3252,9 +3430,19 @@ func (p *Parser) cCondenseAndResume(stacks []glrStack, source []byte, tok Token,
 		alive = append(alive, stacks[i])
 	}
 	stacks = alive
+	statusProbe := 0
 	for i := 1; i < len(stacks); i++ {
+		if reason := checkStop(); reason != ParseStopNone {
+			return stacks, false, tok, reason
+		}
 		statusI := p.cVersionStatus(&stacks[i])
 		for j := 0; j < i; j++ {
+			statusProbe++
+			if statusProbe&63 == 0 {
+				if reason := checkStop(); reason != ParseStopNone {
+					return stacks, false, tok, reason
+				}
+			}
 			if cRecoverVersionsSameGroup(stacks[j], stacks[i]) {
 				continue
 			}
@@ -3320,6 +3508,9 @@ func (p *Parser) cCondenseAndResume(stacks []glrStack, source []byte, tok Token,
 		// discipline.
 		keyRanks := make(map[cCondenseVersionKey]int, len(stacks))
 		for i := 0; i < len(stacks); i++ {
+			if reason := checkStop(); reason != ParseStopNone {
+				return stacks, false, tok, reason
+			}
 			key := p.cCondenseVersionKeyFor(&stacks[i])
 			rank, seen := keyRanks[key]
 			if !seen {
@@ -3359,6 +3550,9 @@ func (p *Parser) cCondenseAndResume(stacks []glrStack, source []byte, tok Token,
 	needsRedispatch := false
 	hasUnpaused := false
 	for i := 0; i < len(stacks); i++ {
+		if reason := checkStop(); reason != ParseStopNone {
+			return stacks, false, tok, reason
+		}
 		if !stacks[i].cPaused {
 			hasUnpaused = true
 			continue
@@ -3378,7 +3572,16 @@ func (p *Parser) cCondenseAndResume(stacks []glrStack, source []byte, tok Token,
 				}
 				tok = replacement
 			}
-			outcome, redispatch := p.cHandleError(&stacks, i, source, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
+			if reason := checkStop(); reason != ParseStopNone {
+				return stacks, false, tok, reason
+			}
+			outcome, redispatch, reason := p.cHandleError(&stacks, i, source, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
+			if reason != ParseStopNone {
+				return stacks, false, tok, reason
+			}
+			if reason := checkStop(); reason != ParseStopNone {
+				return stacks, false, tok, reason
+			}
 			if redispatch {
 				needsRedispatch = true
 			}
@@ -3396,7 +3599,7 @@ func (p *Parser) cCondenseAndResume(stacks []glrStack, source []byte, tok Token,
 		i--
 	}
 	stacks = append(stacks, acceptedStacks...)
-	return stacks, needsRedispatch, tok
+	return stacks, needsRedispatch, tok, ParseStopNone
 }
 
 func (p *Parser) traceCCondenseDrop(reason string, dropIndex, keepIndex int, drop, keep glrStack, dropStatus, keepStatus cErrorStatus) {
@@ -3513,9 +3716,9 @@ func cRecoverVersionShouldStayBefore(a, b glrStack) bool {
 // The stack becomes [base, rebuiltRoot]. Stacks that already hold a single
 // payload node are left untouched (the no-error fast path and
 // cRecoverEOFAccept results).
-func (p *Parser) cAcceptRootRebuild(s *glrStack, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch) {
+func (p *Parser) cAcceptRootRebuild(s *glrStack, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch) ParseStopReason {
 	if p == nil || s == nil || !s.accepted {
-		return
+		return ParseStopNone
 	}
 	entries := cStackEntriesTopFirst(s, gssScratch)
 	payloads := 0
@@ -3525,7 +3728,7 @@ func (p *Parser) cAcceptRootRebuild(s *glrStack, arena *nodeArena, entryScratch 
 		}
 	}
 	if payloads <= 1 {
-		return
+		return ParseStopNone
 	}
 	// Materialize base-most first, mirroring C's popped subtree order.
 	nodes := make([]*Node, 0, payloads)
@@ -3535,7 +3738,7 @@ func (p *Parser) cAcceptRootRebuild(s *glrStack, arena *nodeArena, entryScratch 
 		}
 		n, _ := materializeStackEntryPayloadEntryWithParser(p, arena, entries[i], materializeForRecovery, materializeForRecovery)
 		if n == nil {
-			return
+			return ParseStopNone
 		}
 		nodes = append(nodes, n)
 	}
@@ -3548,17 +3751,41 @@ func (p *Parser) cAcceptRootRebuild(s *glrStack, arena *nodeArena, entryScratch 
 		}
 	}
 	if rootIdx < 0 {
-		return
+		return ParseStopNone
 	}
 	cand := nodes[rootIdx]
-	children := make([]*Node, 0, len(nodes)-1+len(cand.children))
+	childLimit := cAcceptRootRebuildChildLimit(arena)
+	initialCap := min(len(nodes)-1+len(cand.children), 1024)
+	children := make([]*Node, 0, initialCap)
 	for _, n := range nodes[:rootIdx] {
-		children = p.cAppendVisibleSplice(children, n)
+		var ok bool
+		children, ok = p.cAppendVisibleSpliceUntil(children, n, childLimit)
+		if !ok {
+			return ParseStopMemoryBudget
+		}
 	}
-	children = append(children, cand.children...)
+	var ok bool
+	children, ok = cAppendNodeSliceUntil(children, cand.children, childLimit)
+	if !ok {
+		return ParseStopMemoryBudget
+	}
 	for _, n := range nodes[rootIdx+1:] {
-		children = p.cAppendVisibleSplice(children, n)
+		var ok bool
+		children, ok = p.cAppendVisibleSpliceUntil(children, n, childLimit)
+		if !ok {
+			return ParseStopMemoryBudget
+		}
 	}
+	if arena != nil && arena.budgetBytes > 0 {
+		used := arena.allocatedBytes - arena.budgetBaselineBytes
+		if used < 0 {
+			used = 0
+		}
+		if used+childSliceBytesForCap(len(children)) >= arena.budgetBytes {
+			return ParseStopMemoryBudget
+		}
+	}
+	children = cloneNodeSliceInArena(arena, children)
 	root := p.newRecoveryParentNodeInArena(arena, cand.symbol, p.isNamedSymbol(cand.symbol), children, 0)
 	root.rawShape = captureRawShapeForNodeSlice(arena, cand.symbol, cand.productionID, children)
 	root.dynamicPrecedence = nodeSliceDynamicPrecedence(children)
@@ -3576,12 +3803,44 @@ func (p *Parser) cAcceptRootRebuild(s *glrStack, arena *nodeArena, entryScratch 
 	}
 	nodeBumpEquivVersion(root)
 	if !s.truncate(1) {
-		return
+		return ParseStopNone
 	}
 	p.pushStackNode(s, 1, root, entryScratch, gssScratch)
 	if debugRecoveryCycleChecks {
 		debugRecoveryCheckNodeAcyclic(p, arena, "accept-root-rebuild", root)
 	}
+	return ParseStopNone
+}
+
+func cAcceptRootRebuildChildLimit(arena *nodeArena) int {
+	if arena == nil || arena.budgetBytes <= 0 {
+		return -1
+	}
+	used := arena.allocatedBytes - arena.budgetBaselineBytes
+	if used < 0 {
+		used = 0
+	}
+	remaining := arena.budgetBytes - used
+	if remaining <= 0 {
+		return 0
+	}
+	perChildPeakBytes := childSliceBytesForCap(1) * 2
+	if perChildPeakBytes <= 0 {
+		return -1
+	}
+	limit := remaining / perChildPeakBytes
+	maxInt := int64(^uint(0) >> 1)
+	if limit > maxInt {
+		return -1
+	}
+	return int(limit)
+}
+
+func cAppendNodeSliceUntil(dst, src []*Node, limit int) ([]*Node, bool) {
+	if limit >= 0 && len(dst)+len(src) > limit {
+		return dst, false
+	}
+	return append(dst, src...), true
 }
 
 func nodeSliceDynamicPrecedence(children []*Node) int32 {

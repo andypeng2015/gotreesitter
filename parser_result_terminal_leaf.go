@@ -7,19 +7,33 @@ package gotreesitter
 // semantic decorations should keep the parent's symbol/flags and adopt the
 // child's token span.
 func normalizeResultTerminalLeafNodes(root *Node, lang *Language) normalizationPassCounters {
+	counters, _ := normalizeResultTerminalLeafNodesWithStop(root, lang, nil)
+	return counters
+}
+
+func normalizeResultTerminalLeafNodesWithStop(root *Node, lang *Language, stopCheck parseStopCheck) (normalizationPassCounters, ParseStopReason) {
 	var counters normalizationPassCounters
 	if root == nil || lang == nil || root.hasError() {
-		return counters
+		return counters, ParseStopNone
+	}
+	poller := parseStopPoller{check: stopCheck}
+	if reason := poller.pollNow(); parseStopReasonIsActive(reason) {
+		return counters, reason
 	}
 	aliasTargets := resultVisibleAliasTargetSet(lang)
-	walkResultTree(root, func(n *Node) {
+	var stopReason ParseStopReason
+	walkResultTreeUntil(root, func(n *Node) bool {
+		if reason := poller.poll(); parseStopReasonIsActive(reason) {
+			stopReason = reason
+			return false
+		}
 		counters.nodesVisited++
 		if !resultCanCollapseTerminalLeafNode(n, lang, aliasTargets) {
-			return
+			return true
 		}
 		child := resultChildAt(n, 0)
 		if !resultCanCollapseTerminalLeafChild(child, lang, aliasTargets) {
-			return
+			return true
 		}
 		if !resultSymbolIsVisibleTerminal(lang, n.symbol) && !resultSymbolNamesEqual(lang, n.symbol, child.symbol) {
 			// n only qualified via the alias-target set, which just records
@@ -31,7 +45,7 @@ func normalizeResultTerminalLeafNodes(root *Node, lang *Language) normalizationP
 			// splat_parameter wrapping a bare "*" token) is a real, distinct
 			// production whose child C tree-sitter keeps as a visible node --
 			// collapsing it here would silently drop a real AST child.
-			return
+			return true
 		}
 		n.startByte = child.startByte
 		n.endByte = child.endByte
@@ -44,8 +58,12 @@ func normalizeResultTerminalLeafNodes(root *Node, lang *Language) normalizationP
 			n.ownerArena.clearFinalChildRefs(n)
 		}
 		counters.nodesRewritten++
+		return true
 	})
-	return counters
+	if parseStopReasonIsActive(stopReason) {
+		return counters, stopReason
+	}
+	return counters, poller.pollNow()
 }
 
 func resultCanCollapseTerminalLeafNode(n *Node, lang *Language, aliasTargets []bool) bool {
