@@ -16,8 +16,8 @@
     "that isn't green today is worse than useless."
   ],
   "schema": "gts-perf-ratio-budgets/v1",
-  "generated_at": "2026-07-09T01:01:41Z",
-  "generated_by": "wave-3 fleet perf sweep ratchet pass, branch wave3/perf-batch7-ratchets, extending the wave-2b budget with batch-1 through batch-7 measurements",
+  "generated_at": "2026-07-09T01:17:47Z",
+  "generated_by": "wave-3 fleet perf sweep ratchet pass, branch wave3/perf-assisted-ratchets, extending the wave-2b budget with batch-1 through batch-7 plus the assisted fleet gap-close measurements",
   "measurement_basis": {
     "harness": "cgo_harness/perf_scan (TestPerfScanSweep / TestPerfScanLanguage, tags treesitter_c_parity treesitter_c_perfscan)",
     "corpus_root": "/home/draco/work/gotreesitter-corpora/corpus_sources (real upstream per-language checkouts, largest-8-files sampling -- deliberately adversarial, hunts cliffs, NOT representative of typical file size)",
@@ -47,7 +47,8 @@
     "wave3_batch6_20260708T224850Z": "sixth Wave-3 fleet batch on HEAD 42aa02f9, Docker-isolated with the ratchet basis (largest-8, reps=5, warmup=1, file_budget=10000ms, axes full/noedit), main run languages bicep/cylc/d/desktop/devicetree/dhall/diff/disassembly/djot/dockerfile plus supplemental dot and doxygen runs. bicep is intentionally not budgeted because one selected file hit a C reference timeout again; d is intentionally not budgeted because both the batch run and a one-language rerun produced child signal:killed with Docker oom_killed=true. Budgeted rows are cylc/desktop/devicetree/dhall/diff/disassembly/djot/dockerfile/dot/doxygen; disassembly retains an all-timeout budget row, and djot/doxygen retain explicit go_error budgets.",
     "wave3_batch6_dot_20260708T225933Z": "supplemental Wave-3 batch-6 dot run on HEAD 42aa02f9, Docker-isolated with the ratchet basis (largest-8, reps=5, warmup=1, file_budget=10000ms, axes full/noedit). Added as a clean replacement row after d reproduced a one-language Docker OOM.",
     "wave3_batch6_doxygen_20260708T230104Z": "supplemental Wave-3 batch-6 doxygen run on HEAD 42aa02f9, Docker-isolated with the ratchet basis (largest-8, reps=5, warmup=1, file_budget=10000ms, axes full/noedit). Added as a replacement row after bicep repeated a C-reference timeout; doxygen retains explicit go_error budgets.",
-    "wave3_batch7_20260708T232544Z": "seventh Wave-3 fleet batch, Docker-isolated with the ratchet basis (largest-8, reps=5, warmup=1, file_budget=10000ms, axes full/noedit), languages dtd/earthfile/ebnf/editorconfig/eds/eex/elisp/elsa/embedded_template/enforce. This run was harness-flagged as contended (loadavg1=7.95), so these rows are visibility ratchets with pessimistic caveats rather than authoritative near-C claims; dtd/editorconfig/eds are thin-corpus rows and enforce retains explicit timeout budgets."
+    "wave3_batch7_20260708T232544Z": "seventh Wave-3 fleet batch, Docker-isolated with the ratchet basis (largest-8, reps=5, warmup=1, file_budget=10000ms, axes full/noedit), languages dtd/earthfile/ebnf/editorconfig/eds/eex/elisp/elsa/embedded_template/enforce. This run was harness-flagged as contended (loadavg1=7.95), so these rows are visibility ratchets with pessimistic caveats rather than authoritative near-C claims; dtd/editorconfig/eds are thin-corpus rows and enforce retains explicit timeout budgets.",
+    "fleet_gap_close_assist_20260708T232019Z_to_20260709T003453Z": "assisted Wave-3 fleet gap-close pass from a detached non-colliding worktree, using the same ratchet basis (largest-8, reps=5, warmup=1, file_budget=10000ms, axes full/noedit). Adds 113 ratchetable rows across fleet_tier1_20260708T232019Z, fleet_objc_isolated_20260708T233134Z, fleet_tier1_remaining_20260708T233530Z, fleet_tier2_20260708T234810Z, fleet_tier3_20260709T002002Z, fleet_tier4_20260709T002535Z, fleet_tier5_20260709T002902Z, and fleet_tier6_20260709T003453Z. groovy and fsharp are intentionally not budgeted because repeated isolated attempts reproduced severe memory blowups; they are recorded under known_budget_class_gaps instead."
   },
   "languages": {
     "php": {
@@ -1783,6 +1784,2148 @@
         "max_ratio_by_total": 1.0,
         "observed_ratio_by_total": 0.00123249
       }
+    },
+    "facility": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 2.376,
+        "max_ratio_median_of_files": 2.376,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 1.9008,
+        "observed_ratio_median_of_files": 1.9008
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0168
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier6_20260709T003453Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 1/1 corpus files measured (1328 bytes total); full axis: 1 ok; aggregate full parse 1.90x (median 1.90x); VERDICT<=2x, comfortably in budget; THIN CORPUS (1 file(s)) -- weak-but-real ratchet row, not a language-wide claim.",
+      "status": "green_with_caveat"
+    },
+    "faust": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 10.4472,
+        "max_ratio_median_of_files": 2.8523,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 8.3578,
+        "observed_ratio_median_of_files": 2.2819
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0002
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier6_20260709T003453Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (1343749 bytes total); full axis: 8 ok; aggregate full parse 8.36x (median 2.28x); VERDICT=cliff>10x -- measured throughput backlog row, not a near-C claim.",
+      "status": "green_with_caveat"
+    },
+    "fennel": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 158.2139,
+        "max_ratio_median_of_files": 162.5026,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 126.5711,
+        "observed_ratio_median_of_files": 130.0021
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0001
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier6_20260709T003453Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (260962 bytes total); full axis: 8 ok; aggregate full parse 126.57x (median 130.00x); VERDICT=cliff>10x -- measured throughput backlog row, not a near-C claim.",
+      "status": "green_with_caveat"
+    },
+    "fidl": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 4.7572,
+        "max_ratio_median_of_files": 1.3888,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 3.8057,
+        "observed_ratio_median_of_files": 1.111
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0005
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier6_20260709T003453Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (504053 bytes total); full axis: 8 ok; aggregate full parse 3.81x (median 1.11x); VERDICT=cliff>10x -- measured throughput backlog row, not a near-C claim.",
+      "status": "green_with_caveat"
+    },
+    "firrtl": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 3.8632,
+        "max_ratio_median_of_files": 2.9512,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 3.0906,
+        "observed_ratio_median_of_files": 2.361
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0114
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier5_20260709T002902Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (2054384 bytes total); full axis: 8 ok; aggregate full parse 3.09x (median 2.36x); VERDICT=cliff>10x -- measured throughput backlog row, not a near-C claim.",
+      "status": "green_with_caveat"
+    },
+    "fish": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 34.4263,
+        "max_ratio_median_of_files": 35.6233,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 27.541,
+        "observed_ratio_median_of_files": 28.4986
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier1_remaining_20260708T233530Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (1157407 bytes total); full axis: 8 ok; aggregate full parse 27.54x (median 28.50x); VERDICT=cliff>10x -- measured throughput backlog row, not a near-C claim.",
+      "status": "green_with_caveat"
+    },
+    "foam": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 1.7028,
+        "max_ratio_median_of_files": 1.6986,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 1.3623,
+        "observed_ratio_median_of_files": 1.3589
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0002
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier6_20260709T003453Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (86309 bytes total); full axis: 8 ok; aggregate full parse 1.36x (median 1.36x); VERDICT<=2x, comfortably in budget.",
+      "status": "green"
+    },
+    "forth": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 1.7802,
+        "max_ratio_median_of_files": 1.7773,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 1.4242,
+        "observed_ratio_median_of_files": 1.4218
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier6_20260709T003453Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (550400 bytes total); full axis: 8 ok; aggregate full parse 1.42x (median 1.42x); VERDICT<=2x, comfortably in budget.",
+      "status": "green"
+    },
+    "fortran": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 1.9839,
+        "max_ratio_median_of_files": 2.0535,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 1.5871,
+        "observed_ratio_median_of_files": 1.6428
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0116
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier1_remaining_20260708T233530Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (400853 bytes total); full axis: 8 ok; aggregate full parse 1.59x (median 1.64x); VERDICT<=2x, comfortably in budget.",
+      "status": "green"
+    },
+    "gdscript": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 1.7142,
+        "max_ratio_median_of_files": 1.6932,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 1.3714,
+        "observed_ratio_median_of_files": 1.3545
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0017
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier6_20260709T003453Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (103319 bytes total); full axis: 8 ok; aggregate full parse 1.37x (median 1.35x); VERDICT<=2x, comfortably in budget.",
+      "status": "green"
+    },
+    "git_config": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 2.218,
+        "max_ratio_median_of_files": 2.218,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 1.7744,
+        "observed_ratio_median_of_files": 1.7744
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0032
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier4_20260709T002535Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 1/1 corpus files measured (397 bytes total); full axis: 1 ok; aggregate full parse 1.77x (median 1.77x); VERDICT<=2x, comfortably in budget; THIN CORPUS (1 file(s)) -- weak-but-real ratchet row, not a language-wide claim.",
+      "status": "green_with_caveat"
+    },
+    "git_rebase": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 2.5046,
+        "max_ratio_median_of_files": 2.7223,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 2.0037,
+        "observed_ratio_median_of_files": 2.1778
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0071
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier4_20260709T002535Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (983 bytes total); full axis: 8 ok; aggregate full parse 2.00x (median 2.18x); VERDICT=>2x backlog row.",
+      "status": "green_with_caveat"
+    },
+    "gitattributes": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 2.3374,
+        "max_ratio_median_of_files": 2.665,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 1.8699,
+        "observed_ratio_median_of_files": 2.132
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0014
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier4_20260709T002535Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (3227 bytes total); full axis: 8 ok; aggregate full parse 1.87x (median 2.13x); VERDICT<=2x, comfortably in budget.",
+      "status": "green"
+    },
+    "gitcommit": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 1.6957,
+        "max_ratio_median_of_files": 1.5534,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 1.3566,
+        "observed_ratio_median_of_files": 1.2428
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0002
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier4_20260709T002535Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (39317 bytes total); full axis: 8 ok; aggregate full parse 1.36x (median 1.24x); VERDICT<=2x, comfortably in budget.",
+      "status": "green"
+    },
+    "gitignore": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 2.6511,
+        "max_ratio_median_of_files": 2.8041,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 2.1209,
+        "observed_ratio_median_of_files": 2.2433
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.001
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier4_20260709T002535Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (557 bytes total); full axis: 8 ok; aggregate full parse 2.12x (median 2.24x); VERDICT=>2x backlog row.",
+      "status": "green_with_caveat"
+    },
+    "gleam": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 2.274,
+        "max_ratio_median_of_files": 2.2745,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 1.8192,
+        "observed_ratio_median_of_files": 1.8196
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0013
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier1_remaining_20260708T233530Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (39856 bytes total); full axis: 8 ok; aggregate full parse 1.82x (median 1.82x); VERDICT<=2x, comfortably in budget.",
+      "status": "green"
+    },
+    "glsl": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 159.4068,
+        "max_ratio_median_of_files": 159.4068,
+        "max_timeouts": 8,
+        "observed_ratio_by_total": 127.5254,
+        "observed_ratio_median_of_files": 127.5254
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier2_20260708T234810Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); LANGUAGE-LEVEL HARD TIMEOUT: sweep capped this language's subprocess before all files were attempted -- only 2/8 corpus files were even reached (1491907 bytes); the 6 unattempted file(s) may hide further cliffs not reflected below, so this row is a LOWER-BOUND severity estimate; full axis: 1 ok, 1 go_timeout; aggregate full parse 127.53x (median 127.53x); VERDICT=cliff>10x -- measured throughput backlog row, not a near-C claim; THIN CORPUS (2 file(s)) -- weak-but-real ratchet row, not a language-wide claim.",
+      "status": "green_with_caveat"
+    },
+    "gn": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 1.9728,
+        "max_ratio_median_of_files": 1.9978,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 1.5782,
+        "observed_ratio_median_of_files": 1.5982
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0013
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier4_20260709T002535Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (11510 bytes total); full axis: 8 ok; aggregate full parse 1.58x (median 1.60x); VERDICT<=2x, comfortably in budget.",
+      "status": "green"
+    },
+    "godot_resource": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 2.9146,
+        "max_ratio_median_of_files": 2.7269,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 2.3317,
+        "observed_ratio_median_of_files": 2.1815
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0002
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier6_20260709T003453Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (1931316 bytes total); full axis: 8 ok; aggregate full parse 2.33x (median 2.18x); VERDICT=>2x backlog row.",
+      "status": "green_with_caveat"
+    },
+    "hack": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 3.0133,
+        "max_ratio_median_of_files": 1.9517,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 2.4106,
+        "observed_ratio_median_of_files": 1.5613
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0004
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier5_20260709T002902Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (104437 bytes total); full axis: 8 ok; aggregate full parse 2.41x (median 1.56x); VERDICT=>2x backlog row.",
+      "status": "green_with_caveat"
+    },
+    "hare": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 48.8259,
+        "max_ratio_median_of_files": 1.6601,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 39.0607,
+        "observed_ratio_median_of_files": 1.3281
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0003
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier2_20260708T234810Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (718320 bytes total); full axis: 8 ok; aggregate full parse 39.06x (median 1.33x); VERDICT=cliff>10x -- measured throughput backlog row, not a near-C claim.",
+      "status": "green_with_caveat"
+    },
+    "haxe": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 234.7183,
+        "max_ratio_median_of_files": 196.9665,
+        "max_timeouts": 8,
+        "observed_ratio_by_total": 187.7747,
+        "observed_ratio_median_of_files": 157.5732
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 1,
+        "observed_ratio_by_total": 0.0
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier2_20260708T234810Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); LANGUAGE-LEVEL HARD TIMEOUT: sweep capped this language's subprocess before all files were attempted -- only 7/8 corpus files were even reached (306202 bytes); the 1 unattempted file(s) may hide further cliffs not reflected below, so this row is a LOWER-BOUND severity estimate; full axis: 5 ok, 2 go_timeout; aggregate full parse 187.77x (median 157.57x); VERDICT=cliff>10x -- measured throughput backlog row, not a near-C claim; THIN CORPUS (7 file(s)) -- weak-but-real ratchet row, not a language-wide claim.",
+      "status": "green_with_caveat"
+    },
+    "heex": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 3.2411,
+        "max_ratio_median_of_files": 3.3229,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 2.5929,
+        "observed_ratio_median_of_files": 2.6583
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0073
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier5_20260709T002902Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (763 bytes total); full axis: 8 ok; aggregate full parse 2.59x (median 2.66x); VERDICT=>2x backlog row.",
+      "status": "green_with_caveat"
+    },
+    "hlsl": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 12.3708,
+        "max_ratio_median_of_files": 4.8509,
+        "max_timeouts": 8,
+        "observed_ratio_by_total": 9.8966,
+        "observed_ratio_median_of_files": 3.8807
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 1,
+        "observed_ratio_by_total": 0.0
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier2_20260708T234810Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); LANGUAGE-LEVEL HARD TIMEOUT: sweep capped this language's subprocess before all files were attempted -- only 6/8 corpus files were even reached (1583612 bytes); the 2 unattempted file(s) may hide further cliffs not reflected below, so this row is a LOWER-BOUND severity estimate; full axis: 5 ok, 1 go_timeout; aggregate full parse 9.90x (median 3.88x); VERDICT=cliff>10x -- measured throughput backlog row, not a near-C claim; THIN CORPUS (6 file(s)) -- weak-but-real ratchet row, not a language-wide claim.",
+      "status": "green_with_caveat"
+    },
+    "http": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 4.2381,
+        "max_ratio_median_of_files": 4.4839,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 3.3905,
+        "observed_ratio_median_of_files": 3.5871
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0004
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier4_20260709T002535Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (2041 bytes total); full axis: 8 ok; aggregate full parse 3.39x (median 3.59x); VERDICT=>2x backlog row.",
+      "status": "green_with_caveat"
+    },
+    "hurl": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 5,
+        "max_ratio_by_total": 2.0857,
+        "max_ratio_median_of_files": 2.0227,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 1.6685,
+        "observed_ratio_median_of_files": 1.6182
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0001
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier4_20260709T002535Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (139938 bytes total); full axis: 3 ok, 5 go_error full-span ERROR root (honest decline, not silent); aggregate full parse 1.67x (median 1.62x); VERDICT<=2x, comfortably in budget.",
+      "status": "green_with_caveat"
+    },
+    "hyprlang": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 1.5767,
+        "max_ratio_median_of_files": 1.5767,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 1.2614,
+        "observed_ratio_median_of_files": 1.2614
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0008
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier4_20260709T002535Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 1/1 corpus files measured (2022 bytes total); full axis: 1 ok; aggregate full parse 1.26x (median 1.26x); VERDICT<=2x, comfortably in budget; THIN CORPUS (1 file(s)) -- weak-but-real ratchet row, not a language-wide claim.",
+      "status": "green_with_caveat"
+    },
+    "janet": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 11.1458,
+        "max_ratio_median_of_files": 2.5694,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 8.9167,
+        "observed_ratio_median_of_files": 2.0555
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0002
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier6_20260709T003453Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (286345 bytes total); full axis: 8 ok; aggregate full parse 8.92x (median 2.06x); VERDICT=cliff>10x -- measured throughput backlog row, not a near-C claim.",
+      "status": "green_with_caveat"
+    },
+    "jinja2": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 3.7053,
+        "max_ratio_median_of_files": 3.1912,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 2.9643,
+        "observed_ratio_median_of_files": 2.553
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0001
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier3_20260709T002002Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (20216 bytes total); full axis: 8 ok; aggregate full parse 2.96x (median 2.55x); VERDICT=>2x backlog row.",
+      "status": "green_with_caveat"
+    },
+    "jq": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 3.4318,
+        "max_ratio_median_of_files": 4.7998,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 2.7454,
+        "observed_ratio_median_of_files": 3.8398
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0102
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier5_20260709T002902Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (1059 bytes total); full axis: 8 ok; aggregate full parse 2.75x (median 3.84x); VERDICT=>2x backlog row.",
+      "status": "green_with_caveat"
+    },
+    "jsdoc": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 8,
+        "max_ratio_by_total": 1.0,
+        "max_ratio_median_of_files": 0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0,
+        "observed_ratio_median_of_files": 0
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier5_20260709T002902Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (22810 bytes total); full axis: 8 go_error truncated-tree (correctness-adjacent, same silent/flagged truncation class as the cpp/haskell/scala/crystal/typescript backlog).",
+      "status": "green_with_caveat"
+    },
+    "jsonnet": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 1.7904,
+        "max_ratio_median_of_files": 1.869,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 1.4323,
+        "observed_ratio_median_of_files": 1.4952
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.01
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier2_20260708T234810Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (859489 bytes total); full axis: 8 ok; aggregate full parse 1.43x (median 1.50x); VERDICT<=2x, comfortably in budget.",
+      "status": "green"
+    },
+    "just": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 1.6035,
+        "max_ratio_median_of_files": 1.8388,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 1.2828,
+        "observed_ratio_median_of_files": 1.4711
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0021
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier4_20260709T002535Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 2/2 corpus files measured (2548 bytes total); full axis: 2 ok; aggregate full parse 1.28x (median 1.47x); VERDICT<=2x, comfortably in budget; THIN CORPUS (2 file(s)) -- weak-but-real ratchet row, not a language-wide claim.",
+      "status": "green_with_caveat"
+    },
+    "kconfig": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 17.6339,
+        "max_ratio_median_of_files": 14.4691,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 14.1071,
+        "observed_ratio_median_of_files": 11.5753
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0008
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier4_20260709T002535Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (460236 bytes total); full axis: 8 ok; aggregate full parse 14.11x (median 11.58x); VERDICT=cliff>10x -- measured throughput backlog row, not a near-C claim.",
+      "status": "green_with_caveat"
+    },
+    "kdl": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 322.2787,
+        "max_ratio_median_of_files": 103.1411,
+        "max_timeouts": 2,
+        "observed_ratio_by_total": 257.823,
+        "observed_ratio_median_of_files": 82.5129
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 2,
+        "observed_ratio_by_total": 0.0
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier3_20260709T002002Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (30779 bytes total); full axis: 6 ok, 2 go_timeout; aggregate full parse 257.82x (median 82.51x); VERDICT=cliff>10x -- measured throughput backlog row, not a near-C claim.",
+      "status": "green_with_caveat"
+    },
+    "ledger": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 40.5961,
+        "max_ratio_median_of_files": 40.5961,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 32.4769,
+        "observed_ratio_median_of_files": 32.4769
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0035
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier6_20260709T003453Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 1/1 corpus files measured (932 bytes total); full axis: 1 ok; aggregate full parse 32.48x (median 32.48x); VERDICT=cliff>10x -- measured throughput backlog row, not a near-C claim; THIN CORPUS (1 file(s)) -- weak-but-real ratchet row, not a language-wide claim.",
+      "status": "green_with_caveat"
+    },
+    "less": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 135.9577,
+        "max_ratio_median_of_files": 48.2592,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 108.7662,
+        "observed_ratio_median_of_files": 38.6073
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier6_20260709T003453Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (149151 bytes total); full axis: 8 ok; aggregate full parse 108.77x (median 38.61x); VERDICT=cliff>10x -- measured throughput backlog row, not a near-C claim.",
+      "status": "green_with_caveat"
+    },
+    "linkerscript": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 45.4895,
+        "max_ratio_median_of_files": 47.2098,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 36.3916,
+        "observed_ratio_median_of_files": 37.7678
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0001
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier5_20260709T002902Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (28957 bytes total); full axis: 8 ok; aggregate full parse 36.39x (median 37.77x); VERDICT=cliff>10x -- measured throughput backlog row, not a near-C claim.",
+      "status": "green_with_caveat"
+    },
+    "liquid": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 2.1695,
+        "max_ratio_median_of_files": 2.24,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 1.7356,
+        "observed_ratio_median_of_files": 1.792
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0053
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier3_20260709T002002Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (8942 bytes total); full axis: 8 ok; aggregate full parse 1.74x (median 1.79x); VERDICT<=2x, comfortably in budget.",
+      "status": "green"
+    },
+    "llvm": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 10.9739,
+        "max_ratio_median_of_files": 11.626,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 8.7791,
+        "observed_ratio_median_of_files": 9.3008
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0004
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier5_20260709T002902Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (18331848 bytes total); full axis: 8 ok; aggregate full parse 8.78x (median 9.30x); VERDICT=cliff>10x -- measured throughput backlog row, not a near-C claim.",
+      "status": "green_with_caveat"
+    },
+    "luau": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 17.9554,
+        "max_ratio_median_of_files": 1.8971,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 14.3643,
+        "observed_ratio_median_of_files": 1.5177
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier2_20260708T234810Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (208500 bytes total); full axis: 8 ok; aggregate full parse 14.36x (median 1.52x); VERDICT=cliff>10x -- measured throughput backlog row, not a near-C claim.",
+      "status": "green_with_caveat"
+    },
+    "markdown_inline": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 6.4686,
+        "max_ratio_median_of_files": 5.7798,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 5.1749,
+        "observed_ratio_median_of_files": 4.6239
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier6_20260709T003453Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (11701 bytes total); full axis: 8 ok; aggregate full parse 5.17x (median 4.62x); VERDICT=>2x backlog row.",
+      "status": "green_with_caveat"
+    },
+    "matlab": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 119.0097,
+        "max_ratio_median_of_files": 99.3123,
+        "max_timeouts": 8,
+        "observed_ratio_by_total": 95.2078,
+        "observed_ratio_median_of_files": 79.4499
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier2_20260708T234810Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); LANGUAGE-LEVEL HARD TIMEOUT: sweep capped this language's subprocess before all files were attempted -- only 5/8 corpus files were even reached (421752 bytes); the 3 unattempted file(s) may hide further cliffs not reflected below, so this row is a LOWER-BOUND severity estimate; full axis: 5 ok; aggregate full parse 95.21x (median 79.45x); VERDICT=cliff>10x -- measured throughput backlog row, not a near-C claim; THIN CORPUS (5 file(s)) -- weak-but-real ratchet row, not a language-wide claim.",
+      "status": "green_with_caveat"
+    },
+    "mermaid": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 119.7908,
+        "max_ratio_median_of_files": 47.36,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 95.8326,
+        "observed_ratio_median_of_files": 37.888
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier3_20260709T002002Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (54713 bytes total); full axis: 8 ok; aggregate full parse 95.83x (median 37.89x); VERDICT=cliff>10x -- measured throughput backlog row, not a near-C claim.",
+      "status": "green_with_caveat"
+    },
+    "meson": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 95.0102,
+        "max_ratio_median_of_files": 79.1996,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 76.0082,
+        "observed_ratio_median_of_files": 63.3597
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier4_20260709T002535Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (58990 bytes total); full axis: 8 ok; aggregate full parse 76.01x (median 63.36x); VERDICT=cliff>10x -- measured throughput backlog row, not a near-C claim.",
+      "status": "green_with_caveat"
+    },
+    "mojo": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 15.5261,
+        "max_ratio_median_of_files": 3.6414,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 12.4208,
+        "observed_ratio_median_of_files": 2.9131
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0002
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier6_20260709T003453Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (2899039 bytes total); full axis: 8 ok; aggregate full parse 12.42x (median 2.91x); VERDICT=cliff>10x -- measured throughput backlog row, not a near-C claim.",
+      "status": "green_with_caveat"
+    },
+    "move": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 33.3872,
+        "max_ratio_median_of_files": 9.7996,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 26.7097,
+        "observed_ratio_median_of_files": 7.8397
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.011
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier2_20260708T234810Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (553294 bytes total); full axis: 8 ok; aggregate full parse 26.71x (median 7.84x); VERDICT=cliff>10x -- measured throughput backlog row, not a near-C claim.",
+      "status": "green_with_caveat"
+    },
+    "nginx": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 1.821,
+        "max_ratio_median_of_files": 1.821,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 1.4568,
+        "observed_ratio_median_of_files": 1.4568
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0147
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier4_20260709T002535Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 1/1 corpus files measured (567 bytes total); full axis: 1 ok; aggregate full parse 1.46x (median 1.46x); VERDICT<=2x, comfortably in budget; THIN CORPUS (1 file(s)) -- weak-but-real ratchet row, not a language-wide claim.",
+      "status": "green_with_caveat"
+    },
+    "nickel": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 2.1697,
+        "max_ratio_median_of_files": 1.7874,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 1.7357,
+        "observed_ratio_median_of_files": 1.4299
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0077
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier3_20260709T002002Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (1137864 bytes total); full axis: 8 ok; aggregate full parse 1.74x (median 1.43x); VERDICT<=2x, comfortably in budget.",
+      "status": "green"
+    },
+    "nim": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 6,
+        "max_ratio_by_total": 3.0,
+        "max_ratio_median_of_files": 3.0,
+        "max_timeouts": 1,
+        "observed_ratio_by_total": 1.5161,
+        "observed_ratio_median_of_files": 1.5161
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0001
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier1_20260708T232019Z(partial-killed-run,sql/ocaml/nim/r/perl-only), non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (1143219 bytes total); full axis: 1 ok, 1 go_timeout, 5 go_error truncated-tree (correctness-adjacent, same silent/flagged truncation class as the cpp/haskell/scala/crystal/typescript backlog), 1 go_error full-span ERROR root (honest decline, not silent); aggregate full parse 1.52x (median 1.52x); CAUTION survivorship-optics: ratio_by_total looks near-parity only because timeout/error files are excluded from the ratio sum -- the timeout/error counts above are the real signal, budget widened rather than seeded tight from this ratio; VERDICT=cliff>10x -- measured throughput backlog row, not a near-C claim.",
+      "status": "green_with_caveat"
+    },
+    "ninja": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 2.3018,
+        "max_ratio_median_of_files": 2.3558,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 1.8414,
+        "observed_ratio_median_of_files": 1.8846
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0017
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier4_20260709T002535Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 3/3 corpus files measured (1442 bytes total); full axis: 3 ok; aggregate full parse 1.84x (median 1.88x); VERDICT<=2x, comfortably in budget; THIN CORPUS (3 file(s)) -- weak-but-real ratchet row, not a language-wide claim.",
+      "status": "green_with_caveat"
+    },
+    "norg": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 1,
+        "max_ratio_by_total": 7.099,
+        "max_ratio_median_of_files": 7.099,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 5.6792,
+        "observed_ratio_median_of_files": 5.6792
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0002
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier3_20260709T002002Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 2/2 corpus files measured (16068 bytes total); full axis: 1 ok, 1 go_error truncated-tree (correctness-adjacent, same silent/flagged truncation class as the cpp/haskell/scala/crystal/typescript backlog); aggregate full parse 5.68x (median 5.68x); VERDICT=>2x backlog row; THIN CORPUS (2 file(s)) -- weak-but-real ratchet row, not a language-wide claim.",
+      "status": "green_with_caveat"
+    },
+    "nushell": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 3.3693,
+        "max_ratio_median_of_files": 2.7102,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 2.6954,
+        "observed_ratio_median_of_files": 2.1682
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier1_remaining_20260708T233530Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (148538 bytes total); full axis: 8 ok; aggregate full parse 2.70x (median 2.17x); VERDICT=>2x backlog row.",
+      "status": "green_with_caveat"
+    },
+    "objc": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 97.4839,
+        "max_ratio_median_of_files": 97.7578,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 77.9872,
+        "observed_ratio_median_of_files": 78.2062
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_objc_isolated_20260708T233134Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (1211492 bytes total); full axis: 8 ok; aggregate full parse 77.99x (median 78.21x); VERDICT=cliff>10x -- measured throughput backlog row, not a near-C claim; box was CONTENDED at measurement time (concurrent load) -- treat ratio as pessimistic, re-measure on a quiet box before tightening.",
+      "status": "green_with_caveat"
+    },
+    "ocaml": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 3.0,
+        "max_ratio_median_of_files": 3.0,
+        "max_timeouts": 1,
+        "observed_ratio_by_total": 1.9383,
+        "observed_ratio_median_of_files": 1.7487
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 1,
+        "observed_ratio_by_total": 0.0027
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier1_20260708T232019Z(partial-killed-run,sql/ocaml/nim/r/perl-only), non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (4466758 bytes total); full axis: 7 ok, 1 go_timeout; aggregate full parse 1.94x (median 1.75x); CAUTION survivorship-optics: ratio_by_total looks near-parity only because timeout/error files are excluded from the ratio sum -- the timeout/error counts above are the real signal, budget widened rather than seeded tight from this ratio; VERDICT=cliff>10x -- measured throughput backlog row, not a near-C claim.",
+      "status": "green_with_caveat"
+    },
+    "odin": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 3.2194,
+        "max_ratio_median_of_files": 2.6946,
+        "max_timeouts": 2,
+        "observed_ratio_by_total": 2.5755,
+        "observed_ratio_median_of_files": 2.1557
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 2,
+        "observed_ratio_by_total": 0.0
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier2_20260708T234810Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (3136297 bytes total); full axis: 6 ok, 2 go_timeout; aggregate full parse 2.58x (median 2.16x); VERDICT=cliff>10x -- measured throughput backlog row, not a near-C claim.",
+      "status": "green_with_caveat"
+    },
+    "org": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 119.4099,
+        "max_ratio_median_of_files": 43.6497,
+        "max_timeouts": 1,
+        "observed_ratio_by_total": 95.5279,
+        "observed_ratio_median_of_files": 34.9198
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 1,
+        "observed_ratio_by_total": 0.0001
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier3_20260709T002002Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (1011917 bytes total); full axis: 7 ok, 1 go_timeout; aggregate full parse 95.53x (median 34.92x); VERDICT=cliff>10x -- measured throughput backlog row, not a near-C claim.",
+      "status": "green_with_caveat"
+    },
+    "pascal": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 3.8445,
+        "max_ratio_median_of_files": 3.8445,
+        "max_timeouts": 8,
+        "observed_ratio_by_total": 3.0756,
+        "observed_ratio_median_of_files": 3.0756
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 1,
+        "observed_ratio_by_total": 0.0065
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier2_20260708T234810Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); LANGUAGE-LEVEL HARD TIMEOUT: sweep capped this language's subprocess before all files were attempted -- only 2/8 corpus files were even reached (5017319 bytes); the 6 unattempted file(s) may hide further cliffs not reflected below, so this row is a LOWER-BOUND severity estimate; full axis: 1 ok, 1 go_timeout; aggregate full parse 3.08x (median 3.08x); VERDICT=cliff>10x -- measured throughput backlog row, not a near-C claim; THIN CORPUS (2 file(s)) -- weak-but-real ratchet row, not a language-wide claim.",
+      "status": "green_with_caveat"
+    },
+    "pem": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 1.5384,
+        "max_ratio_median_of_files": 1.3063,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 1.2307,
+        "observed_ratio_median_of_files": 1.045
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0061
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier6_20260709T003453Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (165496 bytes total); full axis: 8 ok; aggregate full parse 1.23x (median 1.05x); VERDICT<=2x, comfortably in budget.",
+      "status": "green"
+    },
+    "perl": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 4,
+        "max_ratio_by_total": 3.0,
+        "max_ratio_median_of_files": 3.0,
+        "max_timeouts": 1,
+        "observed_ratio_by_total": 0.4843,
+        "observed_ratio_median_of_files": 0.4843
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 1,
+        "observed_ratio_by_total": 0.0089
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier1_20260708T232019Z(partial-killed-run,sql/ocaml/nim/r/perl-only), non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (4047294 bytes total); full axis: 1 ok, 1 go_timeout, 2 c_timeout (C reference itself exceeded the file budget -- not a Go-specific asymmetry), 3 go_error truncated-tree (correctness-adjacent, same silent/flagged truncation class as the cpp/haskell/scala/crystal/typescript backlog), 1 go_error full-span ERROR root (honest decline, not silent); aggregate full parse 0.48x (median 0.48x); CAUTION survivorship-optics: ratio_by_total looks near-parity only because timeout/error files are excluded from the ratio sum -- the timeout/error counts above are the real signal, budget widened rather than seeded tight from this ratio; VERDICT=cliff>10x -- measured throughput backlog row, not a near-C claim.",
+      "status": "green_with_caveat"
+    },
+    "pkl": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 1,
+        "max_ratio_by_total": 1.9034,
+        "max_ratio_median_of_files": 1.8064,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 1.5227,
+        "observed_ratio_median_of_files": 1.4451
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0011
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier3_20260709T002002Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (218151 bytes total); full axis: 7 ok, 1 go_error truncated-tree (correctness-adjacent, same silent/flagged truncation class as the cpp/haskell/scala/crystal/typescript backlog); aggregate full parse 1.52x (median 1.45x); VERDICT<=2x, comfortably in budget.",
+      "status": "green_with_caveat"
+    },
+    "powershell": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 3,
+        "max_ratio_by_total": 55.3827,
+        "max_ratio_median_of_files": 31.5754,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 44.3062,
+        "observed_ratio_median_of_files": 25.2603
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0002
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier1_remaining_20260708T233530Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (1235959 bytes total); full axis: 5 ok, 2 go_error truncated-tree (correctness-adjacent, same silent/flagged truncation class as the cpp/haskell/scala/crystal/typescript backlog), 1 go_error full-span ERROR root (honest decline, not silent); aggregate full parse 44.31x (median 25.26x); VERDICT=cliff>10x -- measured throughput backlog row, not a near-C claim.",
+      "status": "green_with_caveat"
+    },
+    "prisma": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 2.3236,
+        "max_ratio_median_of_files": 2.2205,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 1.8589,
+        "observed_ratio_median_of_files": 1.7764
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0067
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier6_20260709T003453Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (9802 bytes total); full axis: 8 ok; aggregate full parse 1.86x (median 1.78x); VERDICT<=2x, comfortably in budget.",
+      "status": "green"
+    },
+    "prolog": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 62.549,
+        "max_ratio_median_of_files": 40.4397,
+        "max_timeouts": 8,
+        "observed_ratio_by_total": 50.0392,
+        "observed_ratio_median_of_files": 32.3518
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier2_20260708T234810Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); LANGUAGE-LEVEL HARD TIMEOUT: sweep capped this language's subprocess before all files were attempted -- only 6/8 corpus files were even reached (752929 bytes); the 2 unattempted file(s) may hide further cliffs not reflected below, so this row is a LOWER-BOUND severity estimate; full axis: 6 ok; aggregate full parse 50.04x (median 32.35x); VERDICT=cliff>10x -- measured throughput backlog row, not a near-C claim; THIN CORPUS (6 file(s)) -- weak-but-real ratchet row, not a language-wide claim.",
+      "status": "green_with_caveat"
+    },
+    "promql": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 7.2506,
+        "max_ratio_median_of_files": 7.8429,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 5.8005,
+        "observed_ratio_median_of_files": 6.2743
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier5_20260709T002902Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 4/4 corpus files measured (19789 bytes total); full axis: 4 ok; aggregate full parse 5.80x (median 6.27x); VERDICT=cliff>10x -- measured throughput backlog row, not a near-C claim; THIN CORPUS (4 file(s)) -- weak-but-real ratchet row, not a language-wide claim.",
+      "status": "green_with_caveat"
+    },
+    "properties": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 1.7982,
+        "max_ratio_median_of_files": 1.7973,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 1.4385,
+        "observed_ratio_median_of_files": 1.4378
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier3_20260709T002002Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (296173 bytes total); full axis: 8 ok; aggregate full parse 1.44x (median 1.44x); VERDICT<=2x, comfortably in budget.",
+      "status": "green"
+    },
+    "proto": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 143.863,
+        "max_ratio_median_of_files": 168.4981,
+        "max_timeouts": 2,
+        "observed_ratio_by_total": 115.0904,
+        "observed_ratio_median_of_files": 134.7985
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 2,
+        "observed_ratio_by_total": 0.0
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier1_remaining_20260708T233530Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (637619 bytes total); full axis: 6 ok, 2 go_timeout; aggregate full parse 115.09x (median 134.80x); VERDICT=cliff>10x -- measured throughput backlog row, not a near-C claim.",
+      "status": "green_with_caveat"
+    },
+    "pug": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 51.58,
+        "max_ratio_median_of_files": 48.107,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 41.264,
+        "observed_ratio_median_of_files": 38.4856
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0001
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier6_20260709T003453Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (7923 bytes total); full axis: 8 ok; aggregate full parse 41.26x (median 38.49x); VERDICT=cliff>10x -- measured throughput backlog row, not a near-C claim.",
+      "status": "green_with_caveat"
+    },
+    "puppet": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 2.195,
+        "max_ratio_median_of_files": 2.0994,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 1.756,
+        "observed_ratio_median_of_files": 1.6795
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0045
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier4_20260709T002535Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (26170 bytes total); full axis: 8 ok; aggregate full parse 1.76x (median 1.68x); VERDICT<=2x, comfortably in budget.",
+      "status": "green"
+    },
+    "purescript": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 27.663,
+        "max_ratio_median_of_files": 4.4873,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 22.1304,
+        "observed_ratio_median_of_files": 3.5899
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0001
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier1_remaining_20260708T233530Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (43292 bytes total); full axis: 8 ok; aggregate full parse 22.13x (median 3.59x); VERDICT=cliff>10x -- measured throughput backlog row, not a near-C claim.",
+      "status": "green_with_caveat"
+    },
+    "ql": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 2.4444,
+        "max_ratio_median_of_files": 2.218,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 1.9555,
+        "observed_ratio_median_of_files": 1.7744
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0004
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier5_20260709T002902Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (151695 bytes total); full axis: 8 ok; aggregate full parse 1.96x (median 1.77x); VERDICT<=2x, comfortably in budget.",
+      "status": "green"
+    },
+    "r": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 1.9838,
+        "max_ratio_median_of_files": 1.9437,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 1.5871,
+        "observed_ratio_median_of_files": 1.5549
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0001
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier1_20260708T232019Z(partial-killed-run,sql/ocaml/nim/r/perl-only), non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (233468 bytes total); full axis: 8 ok; aggregate full parse 1.59x (median 1.55x); VERDICT<=2x, comfortably in budget.",
+      "status": "green"
+    },
+    "racket": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 49.1672,
+        "max_ratio_median_of_files": 45.9404,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 39.3337,
+        "observed_ratio_median_of_files": 36.7523
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0001
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier2_20260708T234810Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (1165435 bytes total); full axis: 8 ok; aggregate full parse 39.33x (median 36.75x); VERDICT=cliff>10x -- measured throughput backlog row, not a near-C claim.",
+      "status": "green_with_caveat"
+    },
+    "regex": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 1.9308,
+        "max_ratio_median_of_files": 1.9308,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 1.5446,
+        "observed_ratio_median_of_files": 1.5446
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier6_20260709T003453Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 1/1 corpus files measured (2255 bytes total); full axis: 1 ok; aggregate full parse 1.54x (median 1.54x); VERDICT<=2x, comfortably in budget; THIN CORPUS (1 file(s)) -- weak-but-real ratchet row, not a language-wide claim.",
+      "status": "green_with_caveat"
+    },
+    "rego": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 110.1562,
+        "max_ratio_median_of_files": 100.0856,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 88.125,
+        "observed_ratio_median_of_files": 80.0684
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0001
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier5_20260709T002902Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (98359 bytes total); full axis: 8 ok; aggregate full parse 88.12x (median 80.07x); VERDICT=cliff>10x -- measured throughput backlog row, not a near-C claim.",
+      "status": "green_with_caveat"
+    },
+    "requirements": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 2.6616,
+        "max_ratio_median_of_files": 5.3479,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 2.1293,
+        "observed_ratio_median_of_files": 4.2783
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.002
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier6_20260709T003453Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 3/3 corpus files measured (902 bytes total); full axis: 3 ok; aggregate full parse 2.13x (median 4.28x); VERDICT=>2x backlog row; THIN CORPUS (3 file(s)) -- weak-but-real ratchet row, not a language-wide claim.",
+      "status": "green_with_caveat"
+    },
+    "rescript": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 2.7573,
+        "max_ratio_median_of_files": 2.4253,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 2.2058,
+        "observed_ratio_median_of_files": 1.9402
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier5_20260709T002902Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (1236840 bytes total); full axis: 8 ok; aggregate full parse 2.21x (median 1.94x); VERDICT=cliff>10x -- measured throughput backlog row, not a near-C claim.",
+      "status": "green_with_caveat"
+    },
+    "robot": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 22.387,
+        "max_ratio_median_of_files": 28.7073,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 17.9096,
+        "observed_ratio_median_of_files": 22.9659
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier4_20260709T002535Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (222040 bytes total); full axis: 8 ok; aggregate full parse 17.91x (median 22.97x); VERDICT=cliff>10x -- measured throughput backlog row, not a near-C claim.",
+      "status": "green_with_caveat"
+    },
+    "ron": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 3.1481,
+        "max_ratio_median_of_files": 3.2013,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 2.5185,
+        "observed_ratio_median_of_files": 2.561
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0128
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier3_20260709T002002Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 3/3 corpus files measured (788 bytes total); full axis: 3 ok; aggregate full parse 2.52x (median 2.56x); VERDICT=>2x backlog row; THIN CORPUS (3 file(s)) -- weak-but-real ratchet row, not a language-wide claim.",
+      "status": "green_with_caveat"
+    },
+    "rst": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 8,
+        "max_ratio_by_total": 1.0,
+        "max_ratio_median_of_files": 0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0,
+        "observed_ratio_median_of_files": 0
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier3_20260709T002002Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (1434270 bytes total); full axis: 1 go_error truncated-tree (correctness-adjacent, same silent/flagged truncation class as the cpp/haskell/scala/crystal/typescript backlog), 7 go_error full-span ERROR root (honest decline, not silent).",
+      "status": "green_with_caveat"
+    },
+    "scheme": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 104.8224,
+        "max_ratio_median_of_files": 105.4393,
+        "max_timeouts": 8,
+        "observed_ratio_by_total": 83.8579,
+        "observed_ratio_median_of_files": 84.3515
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0001
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier2_20260708T234810Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); LANGUAGE-LEVEL HARD TIMEOUT: sweep capped this language's subprocess before all files were attempted -- only 4/8 corpus files were even reached (1633849 bytes); the 4 unattempted file(s) may hide further cliffs not reflected below, so this row is a LOWER-BOUND severity estimate; full axis: 4 ok; aggregate full parse 83.86x (median 84.35x); VERDICT=cliff>10x -- measured throughput backlog row, not a near-C claim; THIN CORPUS (4 file(s)) -- weak-but-real ratchet row, not a language-wide claim.",
+      "status": "green_with_caveat"
+    },
+    "scss": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 135.6778,
+        "max_ratio_median_of_files": 66.5702,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 108.5423,
+        "observed_ratio_median_of_files": 53.2562
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier1_remaining_20260708T233530Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (156548 bytes total); full axis: 8 ok; aggregate full parse 108.54x (median 53.26x); VERDICT=cliff>10x -- measured throughput backlog row, not a near-C claim.",
+      "status": "green_with_caveat"
+    },
+    "smithy": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 1.914,
+        "max_ratio_median_of_files": 1.6877,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 1.5312,
+        "observed_ratio_median_of_files": 1.3501
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.012
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier5_20260709T002902Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (304306 bytes total); full axis: 8 ok; aggregate full parse 1.53x (median 1.35x); VERDICT<=2x, comfortably in budget.",
+      "status": "green"
+    },
+    "solidity": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 20.2958,
+        "max_ratio_median_of_files": 16.5819,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 16.2366,
+        "observed_ratio_median_of_files": 13.2655
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0078
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier1_remaining_20260708T233530Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (331513 bytes total); full axis: 8 ok; aggregate full parse 16.24x (median 13.27x); VERDICT=cliff>10x -- measured throughput backlog row, not a near-C claim.",
+      "status": "green_with_caveat"
+    },
+    "sparql": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 2.2055,
+        "max_ratio_median_of_files": 2.0291,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 1.7644,
+        "observed_ratio_median_of_files": 1.6233
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0115
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier5_20260709T002902Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (6767 bytes total); full axis: 8 ok; aggregate full parse 1.76x (median 1.62x); VERDICT<=2x, comfortably in budget.",
+      "status": "green"
+    },
+    "sql": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 123.1452,
+        "max_ratio_median_of_files": 61.8914,
+        "max_timeouts": 4,
+        "observed_ratio_by_total": 98.5162,
+        "observed_ratio_median_of_files": 49.5131
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 3,
+        "observed_ratio_by_total": 0.0
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier1_20260708T232019Z(partial-killed-run,sql/ocaml/nim/r/perl-only), non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (1182587 bytes total); full axis: 4 ok, 4 go_timeout; aggregate full parse 98.52x (median 49.51x); VERDICT=cliff>10x -- measured throughput backlog row, not a near-C claim.",
+      "status": "green_with_caveat"
+    },
+    "squirrel": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 2.2271,
+        "max_ratio_median_of_files": 2.222,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 1.7816,
+        "observed_ratio_median_of_files": 1.7776
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.002
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier5_20260709T002902Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (6354 bytes total); full axis: 8 ok; aggregate full parse 1.78x (median 1.78x); VERDICT<=2x, comfortably in budget.",
+      "status": "green"
+    },
+    "ssh_config": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 2.0885,
+        "max_ratio_median_of_files": 2.0885,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 1.6708,
+        "observed_ratio_median_of_files": 1.6708
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0013
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier4_20260709T002535Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 1/1 corpus files measured (1495 bytes total); full axis: 1 ok; aggregate full parse 1.67x (median 1.67x); VERDICT<=2x, comfortably in budget; THIN CORPUS (1 file(s)) -- weak-but-real ratchet row, not a language-wide claim.",
+      "status": "green_with_caveat"
+    },
+    "starlark": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 2.7655,
+        "max_ratio_median_of_files": 2.2641,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 2.2124,
+        "observed_ratio_median_of_files": 1.8113
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0006
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier2_20260708T234810Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (136797 bytes total); full axis: 8 ok; aggregate full parse 2.21x (median 1.81x); VERDICT=>2x backlog row.",
+      "status": "green_with_caveat"
+    },
+    "svelte": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 2.3671,
+        "max_ratio_median_of_files": 2.3075,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 1.8937,
+        "observed_ratio_median_of_files": 1.846
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0002
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier1_remaining_20260708T233530Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (56963 bytes total); full axis: 8 ok; aggregate full parse 1.89x (median 1.85x); VERDICT<=2x, comfortably in budget.",
+      "status": "green"
+    },
+    "tablegen": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 2.1349,
+        "max_ratio_median_of_files": 2.1001,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 1.7079,
+        "observed_ratio_median_of_files": 1.6801
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0003
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier5_20260709T002902Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (489648 bytes total); full axis: 8 ok; aggregate full parse 1.71x (median 1.68x); VERDICT<=2x, comfortably in budget.",
+      "status": "green"
+    },
+    "tcl": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 3,
+        "max_ratio_by_total": 313.6131,
+        "max_ratio_median_of_files": 208.7189,
+        "max_timeouts": 2,
+        "observed_ratio_by_total": 250.8904,
+        "observed_ratio_median_of_files": 166.9751
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 2,
+        "observed_ratio_by_total": 0.0001
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier2_20260708T234810Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (688255 bytes total); full axis: 3 ok, 2 go_timeout, 3 go_error full-span ERROR root (honest decline, not silent); aggregate full parse 250.89x (median 166.98x); VERDICT=cliff>10x -- measured throughput backlog row, not a near-C claim.",
+      "status": "green_with_caveat"
+    },
+    "teal": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 428.3416,
+        "max_ratio_median_of_files": 436.5296,
+        "max_timeouts": 8,
+        "observed_ratio_by_total": 342.6733,
+        "observed_ratio_median_of_files": 349.2237
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier6_20260709T003453Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); LANGUAGE-LEVEL HARD TIMEOUT: sweep capped this language's subprocess before all files were attempted -- only 4/8 corpus files were even reached (217800 bytes); the 4 unattempted file(s) may hide further cliffs not reflected below, so this row is a LOWER-BOUND severity estimate; full axis: 4 ok; aggregate full parse 342.67x (median 349.22x); VERDICT=cliff>10x -- measured throughput backlog row, not a near-C claim; THIN CORPUS (4 file(s)) -- weak-but-real ratchet row, not a language-wide claim.",
+      "status": "green_with_caveat"
+    },
+    "templ": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 15.7881,
+        "max_ratio_median_of_files": 6.6731,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 12.6305,
+        "observed_ratio_median_of_files": 5.3385
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0018
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier1_remaining_20260708T233530Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (15758 bytes total); full axis: 8 ok; aggregate full parse 12.63x (median 5.34x); VERDICT=cliff>10x -- measured throughput backlog row, not a near-C claim.",
+      "status": "green_with_caveat"
+    },
+    "textproto": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 2.0845,
+        "max_ratio_median_of_files": 1.9127,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 1.6676,
+        "observed_ratio_median_of_files": 1.5301
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0001
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier3_20260709T002002Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (332015 bytes total); full axis: 8 ok; aggregate full parse 1.67x (median 1.53x); VERDICT<=2x, comfortably in budget.",
+      "status": "green"
+    },
+    "thrift": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 2.7243,
+        "max_ratio_median_of_files": 2.5899,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 2.1794,
+        "observed_ratio_median_of_files": 2.0719
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.001
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier3_20260709T002002Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (94241 bytes total); full axis: 8 ok; aggregate full parse 2.18x (median 2.07x); VERDICT=>2x backlog row.",
+      "status": "green_with_caveat"
+    },
+    "tlaplus": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 5,
+        "max_ratio_by_total": 3.2119,
+        "max_ratio_median_of_files": 3.1011,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 2.5695,
+        "observed_ratio_median_of_files": 2.4809
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0092
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier5_20260709T002902Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (828559 bytes total); full axis: 2 ok, 1 c_timeout (C reference itself exceeded the file budget -- not a Go-specific asymmetry), 5 go_error truncated-tree (correctness-adjacent, same silent/flagged truncation class as the cpp/haskell/scala/crystal/typescript backlog); aggregate full parse 2.57x (median 2.48x); VERDICT=>2x backlog row.",
+      "status": "green_with_caveat"
+    },
+    "tmux": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 1.0,
+        "max_ratio_median_of_files": 0,
+        "max_timeouts": 1,
+        "observed_ratio_by_total": 0,
+        "observed_ratio_median_of_files": 0
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 1
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier4_20260709T002535Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 1/1 corpus files measured (99777 bytes total); full axis: 1 go_timeout; VERDICT=cliff>10x -- measured throughput backlog row, not a near-C claim; THIN CORPUS (1 file(s)) -- weak-but-real ratchet row, not a language-wide claim.",
+      "status": "green_with_caveat"
+    },
+    "todotxt": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 2.103,
+        "max_ratio_median_of_files": 2.103,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 1.6824,
+        "observed_ratio_median_of_files": 1.6824
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0009
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier3_20260709T002002Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 1/1 corpus files measured (337 bytes total); full axis: 1 ok; aggregate full parse 1.68x (median 1.68x); VERDICT<=2x, comfortably in budget; THIN CORPUS (1 file(s)) -- weak-but-real ratchet row, not a language-wide claim.",
+      "status": "green_with_caveat"
+    },
+    "turtle": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 2.5122,
+        "max_ratio_median_of_files": 2.4744,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 2.0098,
+        "observed_ratio_median_of_files": 1.9795
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier6_20260709T003453Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (3522994 bytes total); full axis: 8 ok; aggregate full parse 2.01x (median 1.98x); VERDICT=>2x backlog row.",
+      "status": "green_with_caveat"
+    },
+    "twig": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 2.4078,
+        "max_ratio_median_of_files": 2.5,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 1.9262,
+        "observed_ratio_median_of_files": 2.0
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0066
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier3_20260709T002002Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (641 bytes total); full axis: 8 ok; aggregate full parse 1.93x (median 2.00x); VERDICT<=2x, comfortably in budget.",
+      "status": "green"
+    },
+    "typst": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 1.3367,
+        "max_ratio_median_of_files": 1.2717,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 1.0694,
+        "observed_ratio_median_of_files": 1.0174
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier3_20260709T002002Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (243356 bytes total); full axis: 8 ok; aggregate full parse 1.07x (median 1.02x).",
+      "status": "green"
+    },
+    "uxntal": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 822.324,
+        "max_ratio_median_of_files": 659.5535,
+        "max_timeouts": 8,
+        "observed_ratio_by_total": 657.8592,
+        "observed_ratio_median_of_files": 527.6428
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 2,
+        "observed_ratio_by_total": 0.0
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier6_20260709T003453Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); LANGUAGE-LEVEL HARD TIMEOUT: sweep capped this language's subprocess before all files were attempted -- only 7/8 corpus files were even reached (108230 bytes); the 1 unattempted file(s) may hide further cliffs not reflected below, so this row is a LOWER-BOUND severity estimate; full axis: 5 ok, 2 go_timeout; aggregate full parse 657.86x (median 527.64x); VERDICT=cliff>10x -- measured throughput backlog row, not a near-C claim; THIN CORPUS (7 file(s)) -- weak-but-real ratchet row, not a language-wide claim.",
+      "status": "green_with_caveat"
+    },
+    "v": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 4.1366,
+        "max_ratio_median_of_files": 4.1366,
+        "max_timeouts": 8,
+        "observed_ratio_by_total": 3.3093,
+        "observed_ratio_median_of_files": 3.3093
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 5,
+        "observed_ratio_by_total": 0.0097
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier2_20260708T234810Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); LANGUAGE-LEVEL HARD TIMEOUT: sweep capped this language's subprocess before all files were attempted -- only 6/8 corpus files were even reached (2638892 bytes); the 2 unattempted file(s) may hide further cliffs not reflected below, so this row is a LOWER-BOUND severity estimate; full axis: 1 ok, 5 go_timeout; aggregate full parse 3.31x (median 3.31x); VERDICT=cliff>10x -- measured throughput backlog row, not a near-C claim; THIN CORPUS (6 file(s)) -- weak-but-real ratchet row, not a language-wide claim.",
+      "status": "green_with_caveat"
+    },
+    "verilog": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 1.0,
+        "max_ratio_median_of_files": 0,
+        "max_timeouts": 8,
+        "observed_ratio_by_total": 0,
+        "observed_ratio_median_of_files": 0
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 2
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier2_20260708T234810Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); LANGUAGE-LEVEL HARD TIMEOUT: sweep capped this language's subprocess before all files were attempted -- only 2/8 corpus files were even reached (4892196 bytes); the 6 unattempted file(s) may hide further cliffs not reflected below, so this row is a LOWER-BOUND severity estimate; full axis: 2 go_timeout; VERDICT=cliff>10x -- measured throughput backlog row, not a near-C claim; THIN CORPUS (2 file(s)) -- weak-but-real ratchet row, not a language-wide claim.",
+      "status": "green_with_caveat"
+    },
+    "vhdl": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 132.3731,
+        "max_ratio_median_of_files": 132.3731,
+        "max_timeouts": 8,
+        "observed_ratio_by_total": 105.8985,
+        "observed_ratio_median_of_files": 105.8985
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0002
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier2_20260708T234810Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); LANGUAGE-LEVEL HARD TIMEOUT: sweep capped this language's subprocess before all files were attempted -- only 2/8 corpus files were even reached (447088 bytes); the 6 unattempted file(s) may hide further cliffs not reflected below, so this row is a LOWER-BOUND severity estimate; full axis: 1 ok, 1 go_timeout; aggregate full parse 105.90x (median 105.90x); VERDICT=cliff>10x -- measured throughput backlog row, not a near-C claim; THIN CORPUS (2 file(s)) -- weak-but-real ratchet row, not a language-wide claim.",
+      "status": "green_with_caveat"
+    },
+    "vimdoc": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 26.3802,
+        "max_ratio_median_of_files": 34.4187,
+        "max_timeouts": 8,
+        "observed_ratio_by_total": 21.1042,
+        "observed_ratio_median_of_files": 27.535
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 2,
+        "observed_ratio_by_total": 0.0
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier2_20260708T234810Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); LANGUAGE-LEVEL HARD TIMEOUT: sweep capped this language's subprocess before all files were attempted -- only 7/8 corpus files were even reached (3353915 bytes); the 1 unattempted file(s) may hide further cliffs not reflected below, so this row is a LOWER-BOUND severity estimate; full axis: 5 ok, 2 go_timeout; aggregate full parse 21.10x (median 27.53x); VERDICT=cliff>10x -- measured throughput backlog row, not a near-C claim; THIN CORPUS (7 file(s)) -- weak-but-real ratchet row, not a language-wide claim.",
+      "status": "green_with_caveat"
+    },
+    "vue": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 1.9793,
+        "max_ratio_median_of_files": 1.9809,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 1.5834,
+        "observed_ratio_median_of_files": 1.5848
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0088
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier1_remaining_20260708T233530Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (47236 bytes total); full axis: 8 ok; aggregate full parse 1.58x (median 1.58x); VERDICT<=2x, comfortably in budget.",
+      "status": "green"
+    },
+    "wat": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 22.4093,
+        "max_ratio_median_of_files": 19.6494,
+        "max_timeouts": 8,
+        "observed_ratio_by_total": 17.9274,
+        "observed_ratio_median_of_files": 15.7195
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 1,
+        "observed_ratio_by_total": 0.0
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier6_20260709T003453Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); LANGUAGE-LEVEL HARD TIMEOUT: sweep capped this language's subprocess before all files were attempted -- only 7/8 corpus files were even reached (1076415 bytes); the 1 unattempted file(s) may hide further cliffs not reflected below, so this row is a LOWER-BOUND severity estimate; full axis: 6 ok, 1 go_timeout; aggregate full parse 17.93x (median 15.72x); VERDICT=cliff>10x -- measured throughput backlog row, not a near-C claim; THIN CORPUS (7 file(s)) -- weak-but-real ratchet row, not a language-wide claim.",
+      "status": "green_with_caveat"
+    },
+    "wgsl": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 56.9872,
+        "max_ratio_median_of_files": 52.2208,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 45.5898,
+        "observed_ratio_median_of_files": 41.7766
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0001
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier2_20260708T234810Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (32386 bytes total); full axis: 8 ok; aggregate full parse 45.59x (median 41.78x); VERDICT=cliff>10x -- measured throughput backlog row, not a near-C claim.",
+      "status": "green_with_caveat"
+    },
+    "wolfram": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 8,
+        "max_ratio_by_total": 1.0,
+        "max_ratio_median_of_files": 0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0,
+        "observed_ratio_median_of_files": 0
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier5_20260709T002902Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (86857 bytes total); full axis: 8 go_error truncated-tree (correctness-adjacent, same silent/flagged truncation class as the cpp/haskell/scala/crystal/typescript backlog).",
+      "status": "green_with_caveat"
+    },
+    "xml": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 1.7154,
+        "max_ratio_median_of_files": 1.6127,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 1.3723,
+        "observed_ratio_median_of_files": 1.2902
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.0109
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier3_20260709T002002Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 8/8 corpus files measured (246098 bytes total); full axis: 8 ok; aggregate full parse 1.37x (median 1.29x); VERDICT<=2x, comfortably in budget.",
+      "status": "green"
+    },
+    "yuck": {
+      "fleet_gap_close_pass": true,
+      "full_axis": {
+        "max_errors": 0,
+        "max_ratio_by_total": 12.7642,
+        "max_ratio_median_of_files": 11.5184,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 10.2113,
+        "observed_ratio_median_of_files": 9.2147
+      },
+      "measured_today": true,
+      "noedit_axis": {
+        "max_ratio_by_total": 1.0,
+        "max_timeouts": 0,
+        "observed_ratio_by_total": 0.004
+      },
+      "note": "Fleet-gap-close assist sweep (fleet_tier5_20260709T002902Z, non-alphabetical value-tiered selection, non-colliding with concurrent wave3_batchN alphabetical sweeps); 2/2 corpus files measured (3163 bytes total); full axis: 2 ok; aggregate full parse 10.21x (median 9.21x); VERDICT=cliff>10x -- measured throughput backlog row, not a near-C claim; THIN CORPUS (2 file(s)) -- weak-but-real ratchet row, not a language-wide claim.",
+      "status": "green_with_caveat"
     }
   },
   "known_budget_class_gaps": {
@@ -1799,6 +3942,50 @@
       },
       "perf_scan_sweep_caveat": "perf_scan's own scoreboards report 'status=ok' for this file (e.g. after_cliffs: go_median=10.47s, ratio=165.5x, verdict=cliff>10x) at whatever ambient GOT_PARSE_MEMORY_BUDGET_MB was in effect for that run. This is TIMING-GRADE ONLY per the harness's own README ('the scan is timing-grade, not correctness-grade'): perf_scan's status=ok means 'produced a tree spanning the full input inside the wall-clock file budget', not 'structurally correct'. Do not read a perf_scan 'ok' verdict on this file (or its siblings dom.generated.d.ts/checker.ts, which show the identical silent-truncation shape) as a correctness signal -- always cross-check the byte-shape oracle (BenchmarkParityRealCorpusParseFull's pre-benchmark verify step, or forest_oracle_parity_test.go) for giants in this class.",
       "action": "typescript's full_axis budget above is intentionally NOT tightened to reflect a 'fixed' webworker.generated.d.ts; GOT_FAITHFUL_CONDENSE (or an equivalent default-budget-aware condense path) remains a real wave-2b item."
+    },
+    "groovy_pleac11_15_memory_blowup": {
+      "file": "groovy/subprojects/performance/src/files/pleac11_15.groovy (102960 bytes, largest-file selection hit during the assisted fleet pass)",
+      "backlog_ref": "assisted Wave-3 fleet gap-close pass, reported in /tmp/gts_scratch/FLEET_SCOREBOARD.md; intentionally not added to languages because it is not a ratchetable row",
+      "observed": {
+        "partial_progress": "7/8 selected files completed before the same final file reproduced the blowup; completing files still showed severe measured ratios, including one go_timeout lower-bound row",
+        "host_gomemlimit_4gib": "killed while climbing past roughly 15GiB RSS",
+        "host_gomemlimit_3gib": "killed around roughly 8GiB RSS",
+        "docker_cgroup_6gib": "Docker wrapper reported oom_killed=true"
+      },
+      "suspected_class": "candidate severe memory variant of repetition-shift fork cascade or population explosion; distinct from ordinary 10s go_timeout and from clean internal memory_budget stops",
+      "action": "dedicated RCA on pleac11_15.groovy in an isolated hard-bounded container; do not sweep this file again as part of broad fleet runs until containment is understood"
+    },
+    "fsharp_comparers_regression_memory_blowup": {
+      "file": "fsharp/ComparersRegression.fs candidate largest-file selection from the assisted fleet pass",
+      "backlog_ref": "assisted Wave-3 fleet gap-close pass, reported in /tmp/gts_scratch/FLEET_SCOREBOARD.md; intentionally not added to languages because it is not a ratchetable row",
+      "observed": {
+        "partial_progress": "0/8 selected files completed; blowup occurred on the first attempted file before a per-file fragment checkpoint could be written",
+        "host_gomemlimit_4gib": "reproduced severe memory blowup",
+        "host_gomemlimit_3gib": "reproduced severe memory blowup",
+        "docker_cgroup_6gib": "Docker wrapper reported oom_killed=true"
+      },
+      "suspected_class": "candidate severe memory variant of population explosion or repetition-shift fork cascade; severity is higher than ordinary timeout backlog because it escapes a 6GiB hard cgroup",
+      "action": "dedicated isolated single-file RCA, first confirming the exact selected file; do not rerun fsharp broad sweeps without a disposable hard memory bound and process-level watchdog"
+    },
+    "bicep_c_reference_timeout": {
+      "file": "bicep corpus largest-file selection from wave3_batch4 and wave3_batch6",
+      "backlog_ref": "wave3_batch4_20260708T215550Z and wave3_batch6_20260708T224850Z seed notes; intentionally not added to languages because the selected workload hit a C reference timeout",
+      "observed": {
+        "wave3_batch4": "one selected file hit a C reference timeout",
+        "wave3_batch6": "supplemental bicep rerun repeated a C reference timeout"
+      },
+      "suspected_class": "C oracle/workload issue rather than a Go-vs-C ratio budget row",
+      "action": "rerun bicep with a narrowed or replacement corpus selection, or add explicit C-reference failure policy before ratcheting"
+    },
+    "d_docker_oom": {
+      "file": "d corpus largest-file selection from wave3_batch6",
+      "backlog_ref": "wave3_batch6_20260708T224850Z seed note; intentionally not added to languages because both the batch run and one-language rerun ended with Docker oom_killed=true",
+      "observed": {
+        "wave3_batch6": "child process exited signal:killed with Docker oom_killed=true",
+        "one_language_rerun": "reproduced the Docker OOM"
+      },
+      "suspected_class": "severe memory blowup or containment failure requiring isolated RCA before broad sweeps",
+      "action": "dedicated one-language D RCA under a hard disposable memory limit before creating any budget row"
     }
   }
 }
