@@ -2,16 +2,34 @@ package gotreesitter
 
 import "runtime"
 
-const parseRuntimeMemoryPollMask = 15
+const (
+	parseRuntimeMemoryPollMask       = 15
+	parseRuntimeMemoryMinSourceBytes = 64 * 1024
+)
 
-func (p *Parser) enterRuntimeMemoryBudget(bytes int64) func() {
-	if p == nil || bytes <= 0 {
-		return func() {}
+type runtimeMemoryBudgetRestore struct {
+	parser      *Parser
+	budget      int64
+	baseline    uint64
+	baselineSys uint64
+	poll        uint64
+}
+
+func runtimeMemoryBudgetEnabled(p *Parser, bytes int64, sourceLen int) bool {
+	return p != nil && bytes > 0 && sourceLen >= parseRuntimeMemoryMinSourceBytes
+}
+
+func (p *Parser) enterRuntimeMemoryBudget(bytes int64, sourceLen int) runtimeMemoryBudgetRestore {
+	if !runtimeMemoryBudgetEnabled(p, bytes, sourceLen) {
+		return runtimeMemoryBudgetRestore{}
 	}
-	prevBudget := p.parseRuntimeMemoryBudgetBytes
-	prevBaseline := p.parseRuntimeMemoryBaselineBytes
-	prevBaselineSys := p.parseRuntimeMemoryBaselineSys
-	prevPoll := p.parseRuntimeMemoryPoll
+	restore := runtimeMemoryBudgetRestore{
+		parser:      p,
+		budget:      p.parseRuntimeMemoryBudgetBytes,
+		baseline:    p.parseRuntimeMemoryBaselineBytes,
+		baselineSys: p.parseRuntimeMemoryBaselineSys,
+		poll:        p.parseRuntimeMemoryPoll,
+	}
 
 	var stats runtime.MemStats
 	runtime.ReadMemStats(&stats)
@@ -20,12 +38,17 @@ func (p *Parser) enterRuntimeMemoryBudget(bytes int64) func() {
 	p.parseRuntimeMemoryBaselineSys = stats.Sys
 	p.parseRuntimeMemoryPoll = 0
 
-	return func() {
-		p.parseRuntimeMemoryBudgetBytes = prevBudget
-		p.parseRuntimeMemoryBaselineBytes = prevBaseline
-		p.parseRuntimeMemoryBaselineSys = prevBaselineSys
-		p.parseRuntimeMemoryPoll = prevPoll
+	return restore
+}
+
+func (r runtimeMemoryBudgetRestore) restore() {
+	if r.parser == nil {
+		return
 	}
+	r.parser.parseRuntimeMemoryBudgetBytes = r.budget
+	r.parser.parseRuntimeMemoryBaselineBytes = r.baseline
+	r.parser.parseRuntimeMemoryBaselineSys = r.baselineSys
+	r.parser.parseRuntimeMemoryPoll = r.poll
 }
 
 func (p *Parser) runtimeMemoryBudgetStopReason() ParseStopReason {

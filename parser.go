@@ -3857,8 +3857,10 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	memoryBudget := parseMemoryBudgetForParser(p, len(source))
 	arena.setBudget(memoryBudget)
 	scratch.setBudget(memoryBudget)
-	restoreRuntimeMemoryBudget := p.enterRuntimeMemoryBudget(memoryBudget)
-	defer restoreRuntimeMemoryBudget()
+	restoreRuntimeMemoryBudget := p.enterRuntimeMemoryBudget(memoryBudget, len(source))
+	if restoreRuntimeMemoryBudget.parser != nil {
+		defer restoreRuntimeMemoryBudget.restore()
+	}
 	var reuseState parseReuseState
 	nodeCount := 0
 	iterationsUsed := 0
