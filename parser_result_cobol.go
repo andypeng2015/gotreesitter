@@ -1086,8 +1086,12 @@ func normalizeCobolIfHeaderExecCICSClassErrors(root *Node, source []byte, lang *
 	if !changed {
 		return
 	}
-	if proc := cobolLastChildOfType(program, lang, "procedure_division"); proc != nil && proc.endByte > program.endByte {
-		setCobolNodeEnd(program, source, proc.endByte)
+	if proc := cobolLastChildOfType(program, lang, "procedure_division"); proc != nil {
+		cobolTrimNodeEndToLastRecoveredSpanChild(proc, source)
+		if proc.endByte > program.endByte {
+			setCobolNodeEnd(program, source, proc.endByte)
+		}
+		cobolTrimProgramEndToLastProcedure(program, source, lang)
 	}
 	cobolRefreshHasErrorFromChildren(program)
 	cobolRefreshHasErrorFromChildren(root)
@@ -1105,6 +1109,7 @@ func normalizeCobolIfHeaderExecCICSProgramEnd(root *Node, source []byte, lang *L
 	if proc == nil || proc.endByte <= program.endByte || !cobolProcedureHasIfHeaderExecCICSClassError(proc, source, lang) {
 		return
 	}
+	cobolTrimNodeEndToLastRecoveredSpanChild(proc, source)
 	setCobolNodeEnd(program, source, proc.endByte)
 	cobolRefreshHasErrorFromChildren(program)
 	cobolRefreshHasErrorFromChildren(root)
@@ -1396,6 +1401,33 @@ func cobolTrimProgramEndToLastProcedure(program *Node, source []byte, lang *Lang
 	if last != nil && last.endByte < program.endByte {
 		setCobolNodeEnd(program, source, last.endByte)
 	}
+}
+
+func cobolTrimNodeEndToLastRecoveredSpanChild(n *Node, source []byte) {
+	if n == nil || n.endByte <= n.startByte || int(n.endByte) > len(source) {
+		return
+	}
+	last := cobolLastRecoveredSpanChild(n)
+	if last != nil && last.endByte > n.startByte && last.endByte < n.endByte {
+		setCobolNodeEnd(n, source, last.endByte)
+	}
+}
+
+func cobolLastRecoveredSpanChild(parent *Node) *Node {
+	if parent == nil {
+		return nil
+	}
+	for i := resultChildCount(parent) - 1; i >= 0; i-- {
+		child := resultChildAt(parent, i)
+		if child == nil || child.IsMissing() {
+			continue
+		}
+		if child.IsExtra() && !child.IsError() && !child.HasError() {
+			continue
+		}
+		return child
+	}
+	return nil
 }
 
 func cobolProcedureDivisionHeaderEnd(proc *Node, lang *Language) (int, uint32, bool) {
