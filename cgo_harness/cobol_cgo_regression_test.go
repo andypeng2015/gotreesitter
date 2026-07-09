@@ -109,7 +109,91 @@ func TestCobolCGOTrailingTriviaSpans(t *testing.T) {
 			var errs []string
 			compareNodes(goRoot, goLang, cRoot, "root", &errs)
 			if len(errs) > 0 {
-				t.Fatalf("go-vs-C divergences:\n%s\n\ngo:\n%s\n\nc:\n%s", joinTopErrors(errs), goRoot.SExpr(goLang), dumpCTree(cRoot, 0))
+				t.Fatalf("go-vs-C divergences:\n%s\n\ngo:\n%s\n\ngo spans:\n%s\n\nc:\n%s", joinTopErrors(errs), goRoot.SExpr(goLang), dumpGoTree(goRoot, goLang, 0), dumpCTree(cRoot, 0))
+			}
+		})
+	}
+}
+
+func TestCobolCGOErrorOracleParity(t *testing.T) {
+	goLang := grammars.CobolLanguage()
+	cLang, err := ParityCLanguage("cobol")
+	if err != nil {
+		t.Skipf("C parser unavailable: %v", err)
+	}
+	cParser := sitter.NewParser()
+	defer cParser.Close()
+	if err := cParser.SetLanguage(cLang); err != nil {
+		t.Fatalf("C SetLanguage: %v", err)
+	}
+	goParser := gotreesitter.NewParser(goLang)
+
+	cases := []struct {
+		name string
+		src  string
+	}{
+		{
+			name: "exec_cics_tail_after_clean_prefix",
+			src: "       identification division.\n" +
+				"       program-id. a.\n" +
+				"       procedure division.\n" +
+				"      * Procedure comment\n" +
+				"           MOVE SPACES TO ABEND-REASON\n" +
+				"           COPY CABENDPO.\n" +
+				"           IF BANK-MAP-FUNCTION-GET\n" +
+				"              EXEC CICS LINK PROGRAM(X)\n",
+		},
+		{
+			name: "move_led_exec_tail_retains_error",
+			src: "       identification division.\n" +
+				"       program-id. a.\n" +
+				"       procedure division.\n" +
+				"      * Procedure comment\n" +
+				"           MOVE A TO B\n" +
+				"           IF FLAG\n" +
+				"              EXEC CICS RETURN\n",
+		},
+		{
+			name: "z_literal_data_root_recovery_retains_error",
+			src: "       data division.\n" +
+				"       working-storage section.\n" +
+				"       01  OK PIC X.\n" +
+				"       01  BAD PIC X(120)\n" +
+				"           VALUE Z'HELLO'.\n" +
+				"      * banner\n" +
+				"       procedure division.\n",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			src := []byte(tc.src)
+			goTree, err := goParser.Parse(src)
+			if err != nil {
+				t.Fatalf("go parse: %v", err)
+			}
+			goRoot := goTree.RootNode()
+			if goRoot == nil {
+				t.Fatal("go nil root")
+			}
+
+			cTree := cParser.Parse(src, nil)
+			if cTree == nil || cTree.RootNode() == nil {
+				t.Fatal("C nil tree")
+			}
+			defer cTree.Close()
+			cRoot := cTree.RootNode()
+			if !cRoot.HasError() {
+				t.Fatalf("C root has no error; adversarial fixture no longer exercises error parity:\n%s", dumpCTree(cRoot, 0))
+			}
+			if !goRoot.HasError() {
+				t.Fatalf("go root swallowed C error signal:\n\ngo:\n%s\n\nc:\n%s", goRoot.SExpr(goLang), dumpCTree(cRoot, 0))
+			}
+
+			var errs []string
+			compareNodes(goRoot, goLang, cRoot, "root", &errs)
+			if len(errs) > 0 {
+				t.Fatalf("go-vs-C divergences:\n%s\n\ngo:\n%s\n\ngo spans:\n%s\n\nc:\n%s", joinTopErrors(errs), goRoot.SExpr(goLang), dumpGoTree(goRoot, goLang, 0), dumpCTree(cRoot, 0))
 			}
 		})
 	}
