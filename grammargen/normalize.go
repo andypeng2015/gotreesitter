@@ -3373,18 +3373,24 @@ func isPlainVisibleNamedLeafStringLiteral(g *Grammar, s string) bool {
 	// and the value never appears bare elsewhere in the grammar (both
 	// already enforced by this function's caller, plainVisibleStringTokenRules,
 	// via candidatesByValue/anonymousSources). The punctuation and
-	// lowercase-identifier buckets above only special-case the two shapes
-	// most commonly seen in practice. CSS's `!important` (punctuation
+	// lowercase-identifier buckets above are not the real rule — they only
+	// approximate that real, shape-irrelevant ownership rule for the two
+	// shapes most commonly seen in practice. CSS's `!important` (punctuation
 	// prefix + identifier-like tail: neither pure punctuation nor a
 	// lowercase identifier) falls through both but still collapses under
 	// tree-sitter's C compiler — confirmed against the C oracle, where
 	// `important: $ => '!important'` produces a 0-child named leaf, not a
 	// wrapper. Extend eligibility to that specific shape — a run of safe
 	// punctuation immediately followed by a lowercase-identifier-like tail
-	// — without widening the bar for other shapes (e.g. a rule whose value
-	// merely differs from an all-lowercase identifier by case, like "True",
-	// deliberately keeps its wrapper; see
-	// TestCapitalizedPlainStringRuleStaysWrapper).
+	// — without widening the bar for other shapes. This is still only a
+	// minimal, targeted extension, not the full ownership rule: a
+	// uniquely-owned rule whose value differs from an identifier only by
+	// case, like "True" (see TestCapitalizedPlainStringRuleStaysWrapper),
+	// would also collapse under real tree-sitter's shape-irrelevant
+	// ownership rule, but grammargen still keeps it wrapped — a
+	// pre-existing gap, predating this change and not fixed by it, tracked
+	// separately from the punctuation/identifier shape buckets extended
+	// here.
 	return isPunctuationPrefixedLowercaseIdentifierLiteral(s)
 }
 
@@ -3917,15 +3923,35 @@ func enumerateAlternatives(r *Rule) [][]*rhsElement {
 		if len(r.Children) == 0 {
 			return [][]*rhsElement{{}}
 		}
-		// A direct chain of alias() wrappers with nothing else in between
-		// collapses to a single alias: the outermost name/named wins and any
-		// intermediate alias name is discarded entirely, exactly like
-		// tree-sitter's C compiler merges consecutive alias-metadata
-		// wrappers rather than representing them as two separate steps.
+		// A direct chain of alias() wrappers -- or an outer alias() whose
+		// content reaches an inner alias() through nothing but
+		// alias-metadata wrappers (prec/prec_left/prec_right/prec_dynamic/
+		// field) -- collapses to a single alias: the outermost name/named
+		// wins and any intermediate alias name is discarded entirely,
+		// exactly like tree-sitter's C compiler merges consecutive
+		// alias-metadata wrappers rather than representing them as separate
+		// production steps.
 		//
-		//   alias(alias(x, "a"), "b")  ==  alias(x, "b")
+		//   alias(alias(x, "a"), "b")             ==  alias(x, "b")
+		//   alias(prec(N, alias(x, "a")), "b")     ==  prec(N, alias(x, "b"))
+		//   alias(field("f", alias(x, "a")), "b")  ==  field("f", alias(x, "b"))
 		//
-		// Grammars occasionally write this directly. It is also the shape
+		// prec/prec_left/prec_right/prec_dynamic/field wrappers carry no
+		// naming of their own and never introduce a separate production
+		// step, so tree-sitter's compiler treats them as transparent when
+		// deciding which alias a production step actually displays --
+		// unlike choice/seq/repeat/optional, which DO introduce separate
+		// steps and so make the inner alias win on its own step instead
+		// (see the generic path below). metadataOnlyAliasChain finds the
+		// terminal alias() reachable through metadata wrappers alone (it
+		// also matches the direct chain above, as the zero-wrapper case);
+		// rewriteAliasChainTarget rebuilds the same wrapper chain with that
+		// terminal alias's name/named replaced by this alias's, so any
+		// prec/field metadata on the intermediate wrappers is preserved on
+		// the resulting element exactly as if this alias had wrapped the
+		// content directly.
+		//
+		// Grammars occasionally write the direct form. It is also the shape
 		// substituteInlineRefsDepth deliberately normalizes SetInline'd
 		// hidden-rule references down to (via stripAliases) before this
 		// case ever sees them, so alias(_jsx_identifier-style,
@@ -3934,9 +3960,11 @@ func enumerateAlternatives(r *Rule) [][]*rhsElement {
 		// the generic path below (a symbol reference flattens to a single
 		// untagged element here; its own internal aliasing lives on its own
 		// productions, not on this element).
-		if content := r.Children[0]; content.Kind == RuleAlias {
-			collapsed := &Rule{Kind: RuleAlias, Value: r.Value, Named: r.Named, Children: content.Children}
-			return enumerateAlternatives(collapsed)
+		if content := r.Children[0]; content != nil {
+			if _, ok := metadataOnlyAliasChain(content); ok {
+				collapsed := rewriteAliasChainTarget(content, r.Value, r.Named)
+				return enumerateAlternatives(collapsed)
+			}
 		}
 
 		// Enumerate alternatives inside the content, tagging each resulting
@@ -4008,6 +4036,52 @@ func enumerateAlternatives(r *Rule) [][]*rhsElement {
 	default:
 		// Leaf node (String, Symbol, etc.) — single element.
 		return [][]*rhsElement{{&rhsElement{rule: r}}}
+	}
+}
+
+// metadataOnlyAliasChain walks a chain of pure alias-metadata wrappers
+// (prec, prec_left, prec_right, prec_dynamic, field) starting at r, looking
+// for a terminal alias() node reachable through metadata alone -- never
+// through seq/choice/repeat/optional, which introduce separate production
+// steps rather than merely annotating the one step beneath them. It reports
+// the terminal alias rule and true if one is found; r itself may already be
+// that terminal alias (the zero-wrapper / direct-chain case).
+func metadataOnlyAliasChain(r *Rule) (*Rule, bool) {
+	for r != nil {
+		switch r.Kind {
+		case RuleAlias:
+			return r, true
+		case RulePrec, RulePrecLeft, RulePrecRight, RulePrecDynamic, RuleField:
+			if len(r.Children) == 0 {
+				return nil, false
+			}
+			r = r.Children[0]
+		default:
+			return nil, false
+		}
+	}
+	return nil, false
+}
+
+// rewriteAliasChainTarget returns a copy of r with the terminal alias()
+// node at the bottom of a metadataOnlyAliasChain renamed to (value, named).
+// Only the wrapper nodes on the path (prec/prec_left/prec_right/
+// prec_dynamic/field) are copied; everything else, including the aliased
+// content itself, is shared with the original tree. Call only when
+// metadataOnlyAliasChain(r) reports true.
+func rewriteAliasChainTarget(r *Rule, value string, named bool) *Rule {
+	switch r.Kind {
+	case RuleAlias:
+		return &Rule{Kind: RuleAlias, Value: value, Named: named, Children: r.Children}
+	case RulePrec, RulePrecLeft, RulePrecRight, RulePrecDynamic, RuleField:
+		if len(r.Children) == 0 {
+			return r
+		}
+		cp := *r
+		cp.Children = []*Rule{rewriteAliasChainTarget(r.Children[0], value, named)}
+		return &cp
+	default:
+		return r
 	}
 }
 

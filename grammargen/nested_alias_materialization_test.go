@@ -18,7 +18,13 @@ import (
 //
 //   - A direct alias-of-alias chain with nothing else in between collapses:
 //     alias(alias(x, "a"), "b") == alias(x, "b") — the outermost name wins,
-//     any intermediate name is discarded.
+//     any intermediate name is discarded. The same collapse applies when the
+//     inner alias() is reachable through nothing but alias-metadata
+//     wrappers — prec/prec_left/prec_right/prec_dynamic/field — which carry
+//     no naming of their own: alias(prec(N, alias(x, "a")), "b") ==
+//     prec(N, alias(x, "b")), and likewise for field(). This does NOT apply
+//     once a seq/choice/repeat/optional sits in between; those introduce
+//     separate production steps, so the per-step rule below applies instead.
 //   - An alias() wrapping a choice/seq collapses PER PRODUCTION STEP: a step
 //     that is already aliased by an explicit nested alias() reachable
 //     through that choice/seq structure keeps its own (inner) alias, and
@@ -198,6 +204,59 @@ func TestDirectAliasChainCollapsesToOutermostName(t *testing.T) {
 	}
 	if types["order"] != 1 {
 		t.Fatalf("expected outermost \"order\" alias to win: %s", root.SExpr(lang))
+	}
+}
+
+// TestAliasChainThroughPrecCollapsesToOutermostName covers a
+// metadata-mediated alias chain: alias(prec(N, alias(x, "ASC")), "order").
+// Unlike the choice/seq-mediated cases above, a prec/prec_left/prec_right/
+// prec_dynamic wrapper carries no naming of its own and never introduces a
+// separate production step -- tree-sitter's compiler merges it together
+// with any alias() it wraps exactly like the direct alias-of-alias chain,
+// so the OUTERMOST alias wins here too, through the prec wrapper.
+func TestAliasChainThroughPrecCollapsesToOutermostName(t *testing.T) {
+	g := NewGrammar("test_alias_chain_through_prec")
+	g.Define("source_file", Seq(
+		Sym("ident"),
+		Optional(Alias(Prec(1, Alias(Pat("[Aa][Ss][Cc]"), "ASC", true)), "order", true)),
+	))
+	g.Define("ident", Pat("[A-Z][a-zA-Z0-9]*"))
+	g.Extras = testWhitespaceExtras
+
+	lang := mustGenerate(t, g)
+	root := mustParseClean(t, lang, "Foo asc")
+	types := map[string]int{}
+	collectNodeTypes(root, lang, types)
+	if types["ASC"] != 0 {
+		t.Fatalf("expected inner \"ASC\" alias to be fully discarded through the prec wrapper: %s", root.SExpr(lang))
+	}
+	if types["order"] != 1 {
+		t.Fatalf("expected outermost \"order\" alias to win through the prec wrapper: %s", root.SExpr(lang))
+	}
+}
+
+// TestAliasChainThroughFieldCollapsesToOutermostName is the field-wrapper
+// analogue of TestAliasChainThroughPrecCollapsesToOutermostName:
+// alias(field("f", alias(x, "ASC")), "order") also collapses to the
+// outermost alias, through the field wrapper.
+func TestAliasChainThroughFieldCollapsesToOutermostName(t *testing.T) {
+	g := NewGrammar("test_alias_chain_through_field")
+	g.Define("source_file", Seq(
+		Sym("ident"),
+		Optional(Alias(Field("f", Alias(Pat("[Aa][Ss][Cc]"), "ASC", true)), "order", true)),
+	))
+	g.Define("ident", Pat("[A-Z][a-zA-Z0-9]*"))
+	g.Extras = testWhitespaceExtras
+
+	lang := mustGenerate(t, g)
+	root := mustParseClean(t, lang, "Foo asc")
+	types := map[string]int{}
+	collectNodeTypes(root, lang, types)
+	if types["ASC"] != 0 {
+		t.Fatalf("expected inner \"ASC\" alias to be fully discarded through the field wrapper: %s", root.SExpr(lang))
+	}
+	if types["order"] != 1 {
+		t.Fatalf("expected outermost \"order\" alias to win through the field wrapper: %s", root.SExpr(lang))
 	}
 }
 
