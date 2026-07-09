@@ -52,8 +52,21 @@ func LoadLanguage(data []byte) (*Language, error) {
 	}
 
 	var lang Language
-	if err := gob.NewDecoder(bytes.NewReader(raw)).Decode(&lang); err != nil {
+	br := bytes.NewReader(raw)
+	if err := gob.NewDecoder(br).Decode(&lang); err != nil {
 		return nil, fmt.Errorf("decode language: %w", err)
+	}
+	// LargeStateGotos (when non-empty) is never gob-encoded directly -- see
+	// large_state_gotos_trailer.go for why -- so restore it from the trailer
+	// appended after the gob message, if the encoder wrote one. This is a
+	// cheap no-op (returns immediately) for every blob without a trailer,
+	// including all blobs encoded before this trailer mechanism existed.
+	trailer, err := DecodeLargeStateGotosTrailer(br)
+	if err != nil {
+		return nil, fmt.Errorf("decode language: %w", err)
+	}
+	if trailer != nil {
+		lang.LargeStateGotos = trailer
 	}
 
 	InferGeneratedRepeatAuxMetadata(&lang)
