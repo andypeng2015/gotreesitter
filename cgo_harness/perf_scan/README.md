@@ -133,6 +133,12 @@ Also honored: `GTS_PARITY_ALLOW_HOST`, `GTS_PARITY_SKIP_LANGS`,
 config, a `contended` flag, per-language per-axis aggregates, and per-file
 medians/ratios/statuses.
 
+If a language child process is killed while measuring a file, the latest
+partial fragment includes `active_file`, `active_file_index`, and
+`active_file_bytes`. These fields are omitted on completed language rows; they
+exist so OOM and hard-kill rows still identify the file being measured even
+when no per-file result could be checkpointed.
+
 ## Ratio budget ratchet
 
 Wave 3 seeds a checked-in ratio budget at
