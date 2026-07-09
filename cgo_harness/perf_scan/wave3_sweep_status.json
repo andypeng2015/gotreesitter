@@ -1,10 +1,10 @@
 {
   "schema": "gts-wave3-perf-sweep-status/v1",
-  "generated_at": "2026-07-09T14:43:47Z",
+  "generated_at": "2026-07-09T15:05:20Z",
   "budget_path": "perf_scan/perf_ratio_budgets.json",
   "fleet_path": "tier_scan/exts.tsv",
-  "budget_generated_at": "2026-07-09T14:38:55Z",
-  "budget_generated_by": "wave-3 fleet perf sweep ratchet pass, branch wave3/javascript-pending-resweep, tightening the JavaScript pending row after strict-basis timing evidence reduced Go timeouts to the remaining poppler.js cliff",
+  "budget_generated_at": "2026-07-09T15:05:20Z",
+  "budget_generated_by": "wave-3 fleet perf sweep ledger correction, branch wave3/javascript-poppler-cliff, naming the JavaScript Poppler default-budget gap after exact oracle probes",
   "measurement_basis": {
     "reps": 5,
     "warmup": 1,
@@ -23,7 +23,7 @@
     "fleet_languages": 206,
     "budgeted_languages": 204,
     "held_out_languages": 2,
-    "known_budget_class_gaps": 4,
+    "known_budget_class_gaps": 5,
     "wave2b_pending_budgets": 11,
     "scoped_heldout_budgets": 1,
     "measured_today_budgets": 203,
@@ -47,6 +47,8 @@
     "fsharp_providedtypes_exact_full30s_20260709T094341Z",
     "fsharp_providedtypes_exact_scale3_rss4096_20260709T094500Z",
     "groovy_ceiling_exact_20260709T075435Z",
+    "javascript_poppler_exact_1024mb_20260709T1515Z",
+    "javascript_poppler_exact_default_20260709T145958Z",
     "pr142_evidence_and_wave2a_closeout_spore",
     "wave2b_green_20260707T0100Z",
     "wave2b_js_20260707T0000Z",
@@ -63,6 +65,7 @@
     "wave3_pending_crystal_strict_20260709T135653Z",
     "wave3_pending_csharp_strict_20260709T122931Z",
     "wave3_pending_java_strict_20260709T121147Z",
+    "wave3_pending_javascript_strict_20260709T143849Z",
     "wave3_pending_kotlin_strict_20260709T121258Z",
     "wave3_pending_lua_strict_20260709T122826Z",
     "wave3_pending_rust_strict_20260709T133345Z",
@@ -93,6 +96,12 @@
       "file": "groovy/subprojects/performance/src/files/pleac11_15.groovy (102960 bytes, largest-file selection hit during the assisted fleet pass)",
       "backlog_ref": "assisted Wave-3 fleet gap-close pass, reported in /tmp/gts_scratch/FLEET_SCOREBOARD.md; intentionally not added to languages because it is not a ratchetable row",
       "action": "Groovy is now budgeted only under a scoped measurement basis that excludes the named pleac11_15.groovy witness. The exact witness remains a tracked correctness/perf gap: default policy contains the OOM, but the file is still C-shape divergent and ~60x C on full parse."
+    },
+    {
+      "key": "javascript_poppler_memory_budget",
+      "file": "javascript/deps/v8/test/mjsunit/asm/poppler/poppler.js (3447275 bytes; largest JavaScript corpus file selected by the strict Wave-3 basis)",
+      "backlog_ref": "wave3_pending_javascript_strict_20260709T143849Z narrowed JavaScript to one remaining full-axis timeout; exact parse-gap probes on branch wave3/javascript-poppler-cliff reclassified that timeout as a memory-budget correctness/perf witness",
+      "action": "Keep JavaScript wave2b_pending. The strict row remains ratchetable via max_timeouts=1, but Poppler should be treated as a named Wave-2c/Wave-3 memory-economy and C-faithful materialization backlog item, not as a pure throughput-only timeout."
     },
     {
       "key": "webworker_generated_d_ts",
