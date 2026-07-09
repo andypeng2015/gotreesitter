@@ -145,18 +145,23 @@ type perfScanLangAxis struct {
 }
 
 type perfScanLanguage struct {
-	Language      string                       `json:"language"`
-	Status        string                       `json:"status"`
-	Detail        string                       `json:"detail,omitempty"`
-	Backend       string                       `json:"backend,omitempty"`
-	FilesSelected int                          `json:"files_selected"`
-	FilesMeasured int                          `json:"files_measured"`
-	BytesMeasured int64                        `json:"bytes_measured"`
-	ElapsedMS     int64                        `json:"elapsed_ms"`
-	Verdict       string                       `json:"verdict"`
-	Axes          map[string]*perfScanLangAxis `json:"axes,omitempty"`
-	Notes         []string                     `json:"notes,omitempty"`
-	Files         []*perfScanFile              `json:"files,omitempty"`
+	Language      string `json:"language"`
+	Status        string `json:"status"`
+	Detail        string `json:"detail,omitempty"`
+	Backend       string `json:"backend,omitempty"`
+	FilesSelected int    `json:"files_selected"`
+	FilesMeasured int    `json:"files_measured"`
+	BytesMeasured int64  `json:"bytes_measured"`
+	ElapsedMS     int64  `json:"elapsed_ms"`
+	Verdict       string `json:"verdict"`
+	// ActiveFile is the canonical active-measurement signal. The numeric
+	// fields are pointers so active zero-byte files still serialize bytes=0.
+	ActiveFile      string                       `json:"active_file,omitempty"`
+	ActiveFileIndex *int                         `json:"active_file_index,omitempty"`
+	ActiveFileBytes *int64                       `json:"active_file_bytes,omitempty"`
+	Axes            map[string]*perfScanLangAxis `json:"axes,omitempty"`
+	Notes           []string                     `json:"notes,omitempty"`
+	Files           []*perfScanFile              `json:"files,omitempty"`
 }
 
 type perfScanScoreboard struct {
@@ -396,6 +401,24 @@ func perfScanWriteLangFragment(outDir string, row *perfScanLanguage) error {
 	return os.Rename(tmp, final)
 }
 
+func perfScanSetActiveFile(row *perfScanLanguage, file perfScanCorpusFile, index, total int) {
+	activeFileIndex := index
+	activeFileBytes := file.size
+	row.ActiveFile = file.rel
+	row.ActiveFileIndex = &activeFileIndex
+	row.ActiveFileBytes = &activeFileBytes
+	row.Detail = fmt.Sprintf("measuring file %d/%d: %s (%d bytes)", index, total, file.rel, file.size)
+}
+
+// perfScanClearActiveFile resets active-file tracking and its file-progress
+// detail message.
+func perfScanClearActiveFile(row *perfScanLanguage) {
+	row.ActiveFile = ""
+	row.ActiveFileIndex = nil
+	row.ActiveFileBytes = nil
+	row.Detail = ""
+}
+
 func perfScanMeasureLanguage(t *testing.T, lang string, cfg perfScanConfig, flush func(*perfScanLanguage)) *perfScanLanguage {
 	start := time.Now()
 	row := &perfScanLanguage{
@@ -436,6 +459,10 @@ func perfScanMeasureLanguage(t *testing.T, lang string, cfg perfScanConfig, flus
 		return finish("no_corpus_files", err.Error())
 	}
 	row.FilesSelected = len(files)
+	if flush != nil {
+		row.ElapsedMS = time.Since(start).Milliseconds()
+		flush(row)
+	}
 
 	cLang, err := ParityCLanguage(lang)
 	if err != nil {
@@ -471,10 +498,21 @@ func perfScanMeasureLanguage(t *testing.T, lang string, cfg perfScanConfig, flus
 	m.cPsr = cParser
 	defer cParser.Close()
 
-	for _, file := range files {
+	for i, file := range files {
+		perfScanSetActiveFile(row, file, i+1, len(files))
+		if flush != nil {
+			row.ElapsedMS = time.Since(start).Milliseconds()
+			flush(row)
+		}
 		src, err := os.ReadFile(file.path)
 		if err != nil {
 			row.Notes = append(row.Notes, fmt.Sprintf("read %s: %v", file.rel, err))
+			perfScanClearActiveFile(row)
+			row.Detail = fmt.Sprintf("read error on file %d/%d: %s: %v", i+1, len(files), file.rel, err)
+			if flush != nil {
+				row.ElapsedMS = time.Since(start).Milliseconds()
+				flush(row)
+			}
 			continue
 		}
 		fileRow := &perfScanFile{
@@ -488,6 +526,7 @@ func perfScanMeasureLanguage(t *testing.T, lang string, cfg perfScanConfig, flus
 		row.Files = append(row.Files, fileRow)
 		row.FilesMeasured++
 		row.BytesMeasured += int64(len(src))
+		perfScanClearActiveFile(row)
 		if flush != nil {
 			row.ElapsedMS = time.Since(start).Milliseconds()
 			flush(row)
@@ -1527,6 +1566,44 @@ func TestPerfScanHelpersUnit(t *testing.T) {
 	joined := strings.Join(env, " ")
 	if strings.Contains(joined, "LANG=old") || !strings.Contains(joined, "GTS_PERF_SCAN_LANG=go") {
 		t.Fatalf("mergeEnv=%v", env)
+	}
+
+	fragDir := t.TempDir()
+	frag := &perfScanLanguage{
+		Language: "perf_scan_synthetic",
+		Status:   perfScanStatusRunning,
+		Verdict:  perfScanBucketNoData,
+	}
+	perfScanSetActiveFile(frag, perfScanCorpusFile{rel: "src/synthetic.go", size: 0}, 2, 3)
+	if err := perfScanWriteLangFragment(fragDir, frag); err != nil {
+		t.Fatalf("write active fragment: %v", err)
+	}
+	fragData, err := os.ReadFile(filepath.Join(fragDir, "langs", "perf_scan_synthetic.json"))
+	if err != nil {
+		t.Fatalf("read active fragment: %v", err)
+	}
+	fragText := string(fragData)
+	for _, want := range []string{
+		`"active_file": "src/synthetic.go"`,
+		`"active_file_index": 2`,
+		`"active_file_bytes": 0`,
+		`"detail": "measuring file 2/3: src/synthetic.go (0 bytes)"`,
+	} {
+		if !strings.Contains(fragText, want) {
+			t.Fatalf("active fragment missing %s:\n%s", want, fragText)
+		}
+	}
+	perfScanClearActiveFile(frag)
+	if err := perfScanWriteLangFragment(fragDir, frag); err != nil {
+		t.Fatalf("write cleared fragment: %v", err)
+	}
+	fragData, err = os.ReadFile(filepath.Join(fragDir, "langs", "perf_scan_synthetic.json"))
+	if err != nil {
+		t.Fatalf("read cleared fragment: %v", err)
+	}
+	fragText = string(fragData)
+	if strings.Contains(fragText, "active_file") || strings.Contains(fragText, `"detail":`) {
+		t.Fatalf("cleared fragment retained active fields:\n%s", fragText)
 	}
 
 	lang := &gotreesitter.Language{
