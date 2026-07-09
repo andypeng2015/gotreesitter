@@ -156,12 +156,17 @@ type perfScanLanguage struct {
 	Verdict       string `json:"verdict"`
 	// ActiveFile is the canonical active-measurement signal. The numeric
 	// fields are pointers so active zero-byte files still serialize bytes=0.
-	ActiveFile      string                       `json:"active_file,omitempty"`
-	ActiveFileIndex *int                         `json:"active_file_index,omitempty"`
-	ActiveFileBytes *int64                       `json:"active_file_bytes,omitempty"`
-	Axes            map[string]*perfScanLangAxis `json:"axes,omitempty"`
-	Notes           []string                     `json:"notes,omitempty"`
-	Files           []*perfScanFile              `json:"files,omitempty"`
+	ActiveFile       string                       `json:"active_file,omitempty"`
+	ActiveFileIndex  *int                         `json:"active_file_index,omitempty"`
+	ActiveFileBytes  *int64                       `json:"active_file_bytes,omitempty"`
+	ActiveAxis       string                       `json:"active_axis,omitempty"`
+	ActiveImpl       string                       `json:"active_impl,omitempty"`
+	ActivePhase      string                       `json:"active_phase,omitempty"`
+	ActiveAttempt    *int                         `json:"active_attempt,omitempty"`
+	Axes             map[string]*perfScanLangAxis `json:"axes,omitempty"`
+	Notes            []string                     `json:"notes,omitempty"`
+	Files            []*perfScanFile              `json:"files,omitempty"`
+	activeFileDetail string
 }
 
 type perfScanScoreboard struct {
@@ -407,15 +412,52 @@ func perfScanSetActiveFile(row *perfScanLanguage, file perfScanCorpusFile, index
 	row.ActiveFile = file.rel
 	row.ActiveFileIndex = &activeFileIndex
 	row.ActiveFileBytes = &activeFileBytes
-	row.Detail = fmt.Sprintf("measuring file %d/%d: %s (%d bytes)", index, total, file.rel, file.size)
+	row.activeFileDetail = fmt.Sprintf("measuring file %d/%d: %s (%d bytes)", index, total, file.rel, file.size)
+	row.Detail = row.activeFileDetail
+}
+
+func perfScanSetActiveAttempt(row *perfScanLanguage, axis, impl, phase string, attempt int) {
+	row.ActiveAxis = axis
+	row.ActiveImpl = impl
+	row.ActivePhase = phase
+	if attempt > 0 {
+		activeAttempt := attempt
+		row.ActiveAttempt = &activeAttempt
+	} else {
+		row.ActiveAttempt = nil
+	}
+
+	attemptDetail := fmt.Sprintf("%s/%s/%s", axis, impl, phase)
+	if attempt > 0 {
+		attemptDetail = fmt.Sprintf("%s attempt %d", attemptDetail, attempt)
+	}
+	if row.activeFileDetail != "" {
+		row.Detail = row.activeFileDetail + "; " + attemptDetail
+	} else if row.Detail != "" {
+		row.Detail += "; " + attemptDetail
+	} else {
+		row.Detail = "measuring " + attemptDetail
+	}
+}
+
+func perfScanClearActiveAttempt(row *perfScanLanguage) {
+	row.ActiveAxis = ""
+	row.ActiveImpl = ""
+	row.ActivePhase = ""
+	row.ActiveAttempt = nil
+	if row.activeFileDetail != "" {
+		row.Detail = row.activeFileDetail
+	}
 }
 
 // perfScanClearActiveFile resets active-file tracking and its file-progress
 // detail message.
 func perfScanClearActiveFile(row *perfScanLanguage) {
+	perfScanClearActiveAttempt(row)
 	row.ActiveFile = ""
 	row.ActiveFileIndex = nil
 	row.ActiveFileBytes = nil
+	row.activeFileDetail = ""
 	row.Detail = ""
 }
 
@@ -520,6 +562,18 @@ func perfScanMeasureLanguage(t *testing.T, lang string, cfg perfScanConfig, flus
 			Bytes: len(src),
 			Axes:  map[string]*perfScanFileAxis{},
 		}
+		m.progress = nil
+		if flush != nil {
+			fileIndex := i + 1
+			fileTotal := len(files)
+			activeFile := file
+			m.progress = func(axis, impl, phase string, attempt int) {
+				perfScanSetActiveFile(row, activeFile, fileIndex, fileTotal)
+				perfScanSetActiveAttempt(row, axis, impl, phase, attempt)
+				row.ElapsedMS = time.Since(start).Milliseconds()
+				flush(row)
+			}
+		}
 		for _, axis := range cfg.Axes {
 			fileRow.Axes[axis] = m.measureFileAxis(axis, src)
 		}
@@ -615,16 +669,17 @@ func perfScanSelectFiles(t *testing.T, lang string, cfg perfScanConfig, langRoot
 // ---------------------------------------------------------------------------
 
 type perfScanLangMeasurer struct {
-	cfg     perfScanConfig
-	lang    string
-	entry   grammars.LangEntry
-	report  grammars.ParseSupport
-	goLang  *gotreesitter.Language
-	cLang   *sitter.Language
-	goPsr   *gotreesitter.Parser
-	cPsr    *sitter.Parser
-	budget  time.Duration
-	editMax int
+	cfg      perfScanConfig
+	lang     string
+	entry    grammars.LangEntry
+	report   grammars.ParseSupport
+	goLang   *gotreesitter.Language
+	cLang    *sitter.Language
+	goPsr    *gotreesitter.Parser
+	cPsr     *sitter.Parser
+	budget   time.Duration
+	editMax  int
+	progress func(axis, impl, phase string, attempt int)
 }
 
 type perfScanAttempt struct {
@@ -642,6 +697,12 @@ func (m *perfScanLangMeasurer) benchCase(src []byte) realCorpusBenchmarkCase {
 		report: m.report,
 		goLang: m.goLang,
 		cLang:  m.cLang,
+	}
+}
+
+func (m *perfScanLangMeasurer) checkpoint(axis, impl, phase string, attempt int) {
+	if m.progress != nil {
+		m.progress(axis, impl, phase, attempt)
 	}
 }
 
@@ -815,6 +876,7 @@ func (m *perfScanLangMeasurer) measureFull(src []byte) *perfScanFileAxis {
 	goOK := true
 	var goDetail string
 	for i := 0; i < m.cfg.Warmup; i++ {
+		m.checkpoint(perfScanAxisFull, "go", "warmup", i+1)
 		_, att := m.goAttemptFull(src, false)
 		if att.status != "" {
 			goOK = false
@@ -825,6 +887,7 @@ func (m *perfScanLangMeasurer) measureFull(src []byte) *perfScanFileAxis {
 	}
 	cOK := true
 	for i := 0; i < m.cfg.Warmup; i++ {
+		m.checkpoint(perfScanAxisFull, "c", "warmup", i+1)
 		_, att := m.cAttempt(src, nil, false)
 		if att.status != "" {
 			cOK = false
@@ -839,6 +902,7 @@ func (m *perfScanLangMeasurer) measureFull(src []byte) *perfScanFileAxis {
 	var goSamples, cSamples []int64
 	for i := 0; i < m.cfg.Reps; i++ {
 		if goOK {
+			m.checkpoint(perfScanAxisFull, "go", "rep", i+1)
 			_, att := m.goAttemptFull(src, false)
 			if att.status != "" {
 				goOK = false
@@ -849,6 +913,7 @@ func (m *perfScanLangMeasurer) measureFull(src []byte) *perfScanFileAxis {
 			}
 		}
 		if cOK {
+			m.checkpoint(perfScanAxisFull, "c", "rep", i+1)
 			_, att := m.cAttempt(src, nil, false)
 			if att.status != "" {
 				cOK = false
@@ -872,6 +937,7 @@ func (m *perfScanLangMeasurer) measureNoEdit(src []byte) *perfScanFileAxis {
 	out := &perfScanFileAxis{Status: perfScanStatusOK}
 
 	// Go side: base full parse (untimed sample), then timed no-edit reparses.
+	m.checkpoint(perfScanAxisNoEdit, "go", "base", 1)
 	goTree, baseAtt := m.goAttemptFull(src, true)
 	goOK := baseAtt.status == ""
 	var goSamples []int64
@@ -880,6 +946,7 @@ func (m *perfScanLangMeasurer) measureNoEdit(src []byte) *perfScanFileAxis {
 		out.Detail = "base full parse: " + baseAtt.detail
 	} else {
 		for i := 0; i < m.cfg.Reps; i++ {
+			m.checkpoint(perfScanAxisNoEdit, "go", "rep", i+1)
 			newTree, att := m.goAttemptIncremental(src, goTree, true)
 			if att.status != "" {
 				goOK = false
@@ -897,6 +964,7 @@ func (m *perfScanLangMeasurer) measureNoEdit(src []byte) *perfScanFileAxis {
 	releaseGoTree(goTree)
 
 	// C side: base full parse, then timed no-edit reparses with the old tree.
+	m.checkpoint(perfScanAxisNoEdit, "c", "base", 1)
 	cTree, cBaseAtt := m.cAttempt(src, nil, true)
 	cOK := cBaseAtt.status == ""
 	var cSamples []int64
@@ -907,6 +975,7 @@ func (m *perfScanLangMeasurer) measureNoEdit(src []byte) *perfScanFileAxis {
 		out.Detail = strings.TrimSpace(out.Detail + " C base: " + cBaseAtt.detail)
 	} else {
 		for i := 0; i < m.cfg.Reps; i++ {
+			m.checkpoint(perfScanAxisNoEdit, "c", "rep", i+1)
 			newTree, att := m.cAttempt(src, cTree, true)
 			if att.status != "" {
 				cOK = false
@@ -944,6 +1013,7 @@ func (m *perfScanLangMeasurer) measureEdit(src []byte) *perfScanFileAxis {
 
 	// Go side.
 	goSrc := append([]byte(nil), src...)
+	m.checkpoint(perfScanAxisEdit, "go", "base", 1)
 	goTree, baseAtt := m.goAttemptFull(goSrc, true)
 	goOK := baseAtt.status == ""
 	var goSamples []int64
@@ -952,8 +1022,10 @@ func (m *perfScanLangMeasurer) measureEdit(src []byte) *perfScanFileAxis {
 		out.Detail = "base full parse: " + baseAtt.detail
 	} else {
 		for i := 0; i < m.cfg.Reps; i++ {
+			m.checkpoint(perfScanAxisEdit, "go", "tree_edit", i+1)
 			toggleRealCorpusEditByte(goSrc, editCase)
 			goTree.Edit(editCase.goEdit)
+			m.checkpoint(perfScanAxisEdit, "go", "rep", i+1)
 			newTree, att := m.goAttemptIncremental(goSrc, goTree, true)
 			if att.status != "" {
 				goOK = false
@@ -972,6 +1044,7 @@ func (m *perfScanLangMeasurer) measureEdit(src []byte) *perfScanFileAxis {
 
 	// C side.
 	cSrc := append([]byte(nil), src...)
+	m.checkpoint(perfScanAxisEdit, "c", "base", 1)
 	cTree, cBaseAtt := m.cAttempt(cSrc, nil, true)
 	cOK := cBaseAtt.status == ""
 	var cSamples []int64
@@ -983,8 +1056,10 @@ func (m *perfScanLangMeasurer) measureEdit(src []byte) *perfScanFileAxis {
 	} else {
 		cState := realCorpusCIncrementalState{tc: editCase, src: cSrc, tree: cTree}
 		for i := 0; i < m.cfg.Reps; i++ {
+			m.checkpoint(perfScanAxisEdit, "c", "tree_edit", i+1)
 			toggleRealCorpusEditByte(cState.src, cState.tc)
 			cState.tree.Edit(&cState.tc.cEdit)
+			m.checkpoint(perfScanAxisEdit, "c", "rep", i+1)
 			newTree, att := m.cAttempt(cState.src, cState.tree, true)
 			if att.status != "" {
 				cOK = false
@@ -1030,21 +1105,27 @@ func (m *perfScanLangMeasurer) findEditCase(tc realCorpusBenchmarkCase) (realCor
 		editCase := makeRealCorpusIncrementalCase(tc, candidate)
 		edited := applyEditCandidate(tc.source, candidate)
 
+		m.checkpoint(perfScanAxisEdit, "go", "select_base", tried)
 		goTree, baseAtt := m.goAttemptFull(tc.source, true)
 		if baseAtt.status != "" {
 			return realCorpusIncrementalCase{}, false
 		}
+		m.checkpoint(perfScanAxisEdit, "go", "select_tree_edit", tried)
 		goTree.Edit(editCase.goEdit)
+		m.checkpoint(perfScanAxisEdit, "go", "select_incremental", tried)
 		goIncr, goAtt := m.goAttemptIncremental(edited, goTree, true)
 		releaseGoTree(goTree)
 		goOK := goAtt.status == ""
 		releaseGoTree(goIncr)
 
+		m.checkpoint(perfScanAxisEdit, "c", "select_base", tried)
 		cTree, cBaseAtt := m.cAttempt(tc.source, nil, true)
 		if cBaseAtt.status != "" {
 			return realCorpusIncrementalCase{}, false
 		}
+		m.checkpoint(perfScanAxisEdit, "c", "select_tree_edit", tried)
 		cTree.Edit(&editCase.cEdit)
+		m.checkpoint(perfScanAxisEdit, "c", "select_incremental", tried)
 		cIncr, cAtt := m.cAttempt(edited, cTree, true)
 		cTree.Close()
 		cOK := cAtt.status == ""
@@ -1593,6 +1674,26 @@ func TestPerfScanHelpersUnit(t *testing.T) {
 			t.Fatalf("active fragment missing %s:\n%s", want, fragText)
 		}
 	}
+	perfScanSetActiveAttempt(frag, perfScanAxisFull, "go", "rep", 1)
+	if err := perfScanWriteLangFragment(fragDir, frag); err != nil {
+		t.Fatalf("write active attempt fragment: %v", err)
+	}
+	fragData, err = os.ReadFile(filepath.Join(fragDir, "langs", "perf_scan_synthetic.json"))
+	if err != nil {
+		t.Fatalf("read active attempt fragment: %v", err)
+	}
+	fragText = string(fragData)
+	for _, want := range []string{
+		`"active_axis": "full"`,
+		`"active_impl": "go"`,
+		`"active_phase": "rep"`,
+		`"active_attempt": 1`,
+		`"detail": "measuring file 2/3: src/synthetic.go (0 bytes); full/go/rep attempt 1"`,
+	} {
+		if !strings.Contains(fragText, want) {
+			t.Fatalf("active attempt fragment missing %s:\n%s", want, fragText)
+		}
+	}
 	perfScanClearActiveFile(frag)
 	if err := perfScanWriteLangFragment(fragDir, frag); err != nil {
 		t.Fatalf("write cleared fragment: %v", err)
@@ -1602,7 +1703,7 @@ func TestPerfScanHelpersUnit(t *testing.T) {
 		t.Fatalf("read cleared fragment: %v", err)
 	}
 	fragText = string(fragData)
-	if strings.Contains(fragText, "active_file") || strings.Contains(fragText, `"detail":`) {
+	if strings.Contains(fragText, "active_") || strings.Contains(fragText, `"detail":`) {
 		t.Fatalf("cleared fragment retained active fields:\n%s", fragText)
 	}
 
