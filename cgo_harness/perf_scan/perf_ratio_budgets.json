@@ -19,8 +19,8 @@
     "removing exclusions is a tightening operation."
   ],
   "schema": "gts-perf-ratio-budgets/v1",
-  "generated_at": "2026-07-09T10:38:34Z",
-  "generated_by": "wave-3 fleet perf sweep ratchet pass, branch wave3/scoped-heldout-ratchets, extending the wave-2b budget with batch-1 through batch-7, assisted fleet gap-close measurements, held-out exact-file RCA probes, and the scoped Groovy heldout ratchet",
+  "generated_at": "2026-07-09T12:14:40Z",
+  "generated_by": "wave-3 fleet perf sweep ratchet pass, branch wave3/pending-perf-resweep, extending the scoped-heldout ratchet with strict-basis cmake/java/kotlin pending-row refreshes",
   "measurement_basis": {
     "harness": "cgo_harness/perf_scan (TestPerfScanSweep / TestPerfScanLanguage, tags treesitter_c_parity treesitter_c_perfscan)",
     "corpus_root": "/home/draco/work/gotreesitter-corpora/corpus_sources (real upstream per-language checkouts, largest-8-files sampling -- deliberately adversarial, hunts cliffs, NOT representative of typical file size)",
@@ -62,7 +62,10 @@
     "fsharp_providedtypes_exact_scale3_rss4096_20260709T094500Z": "same exact F# ProvidedTypes row with GOT_PARSE_NODE_LIMIT_SCALE=3, full axis only, Docker 8GiB/GOMEMLIMIT=6GiB, file_budget=30000ms,RSS watchdog 4096. The child stopped cleanly before cgroup OOM at rss=4101MiB while active_file was ProvidedTypes.fs and active_axis=full active_impl=c active_phase=rep active_attempt=1. This isolates a separate C-reference RSS cliff once the Go diagnostic node budget is raised.",
     "wave3_scoped_d_exclude_expressionsem_20260709T103336Z": "scoped D heldout probe on branch wave3/scoped-heldout-ratchets, Docker 8GiB/GOMEMLIMIT=6GiB, largest-8 ratchet basis, GTS_PERF_SCAN_EXCLUDE_PATHS=d/compiler/src/dmd/expressionsem.d, RSS watchdog 6144. Result stayed non-ratchetable: two files completed only as C-reference timeouts, then compiler/src/dmd/dsymbolsem.d crossed the RSS watchdog during noedit/c/base attempt 1.",
     "wave3_scoped_groovy_exclude_pleac11_20260709T103612Z": "scoped Groovy heldout ratchet on branch wave3/scoped-heldout-ratchets, Docker 8GiB/GOMEMLIMIT=6GiB, largest-8 ratchet basis, GTS_PERF_SCAN_EXCLUDE_PATHS=groovy/subprojects/performance/src/files/pleac11_15.groovy, RSS watchdog 6144. Completed 8/8 with no timeouts/errors; full axis remained a measured cliff backlog row at ratio_by_total=22.01x and median=25.81x, noedit ratio_by_total=0.000275x. The run was harness-flagged contended (loadavg1=6.68), so the row is a visibility/scoped ratchet rather than a near-C claim.",
-    "wave3_scoped_fsharp_exclude_providedtypes_20260709T103723Z": "scoped F# heldout probe on branch wave3/scoped-heldout-ratchets, Docker 8GiB/GOMEMLIMIT=6GiB, largest-8 ratchet basis, GTS_PERF_SCAN_EXCLUDE_PATHS=fsharp/examples/FSharp.Compiler/tests/EndToEndBuildTests/ProvidedTypes/ProvidedTypes.fs, RSS watchdog 6144. Result stayed non-ratchetable: the first selected file, examples/FSharp.Compiler/tests/FSharp.Core.UnitTests/FSharp.Core/ComparersRegression.fs (3,587,873 bytes), crossed the RSS watchdog during full/c/warmup attempt 1 before any file completed."
+    "wave3_scoped_fsharp_exclude_providedtypes_20260709T103723Z": "scoped F# heldout probe on branch wave3/scoped-heldout-ratchets, Docker 8GiB/GOMEMLIMIT=6GiB, largest-8 ratchet basis, GTS_PERF_SCAN_EXCLUDE_PATHS=fsharp/examples/FSharp.Compiler/tests/EndToEndBuildTests/ProvidedTypes/ProvidedTypes.fs, RSS watchdog 6144. Result stayed non-ratchetable: the first selected file, examples/FSharp.Compiler/tests/FSharp.Core.UnitTests/FSharp.Core/ComparersRegression.fs (3,587,873 bytes), crossed the RSS watchdog during full/c/warmup attempt 1 before any file completed.",
+    "wave3_pending_cmake_strict_20260709T121109Z": "pending-row refresh on branch wave3/pending-perf-resweep, Docker 8GiB/GOMEMLIMIT=6GiB, largest-8 ratchet basis with the checked-in Groovy heldout exclusion in GTS_PERF_SCAN_EXCLUDE_PATHS. Completed 8/8 with 0 timeouts/errors; full parse is a measured >2x backlog row (ratio_by_total=3.09x, median=2.85x), noedit ratio_by_total=0.00134x. Harness marked the run contended (loadavg1=10.19), so this is a visibility ratchet rather than a quiet-box near-C claim.",
+    "wave3_pending_java_strict_20260709T121147Z": "pending-row refresh on branch wave3/pending-perf-resweep, Docker 8GiB/GOMEMLIMIT=6GiB, largest-8 ratchet basis with the checked-in Groovy heldout exclusion in GTS_PERF_SCAN_EXCLUDE_PATHS. Completed 8/8 with 0 timeouts/errors; full parse remains a measured cliff throughput row (ratio_by_total=21.56x, median=17.66x, 8 cliff files), noedit ratio_by_total=0.122x. Harness marked the run contended (loadavg1=8.49), so this tightens stale completion evidence without making a quiet-box near-C claim.",
+    "wave3_pending_kotlin_strict_20260709T121258Z": "pending-row refresh on branch wave3/pending-perf-resweep, Docker 8GiB/GOMEMLIMIT=6GiB, largest-8 ratchet basis with the checked-in Groovy heldout exclusion in GTS_PERF_SCAN_EXCLUDE_PATHS. Completed 8/8 with 0 timeouts/errors; full parse remains a measured cliff throughput row (ratio_by_total=31.26x, median=4.89x, 3 cliff files), noedit ratio_by_total=0.00145x. Harness marked the run contended (loadavg1=8.74), so this tightens stale completion evidence without making a quiet-box near-C claim."
   },
   "languages": {
     "php": {
@@ -248,39 +251,41 @@
       }
     },
     "kotlin": {
-      "status": "wave2b_pending",
-      "wave2b_pending": true,
-      "measured_today": false,
-      "note": "Documented from after_cliffs (post-wave-1, pre-wave-2a; STALE). 7/8 ok, 1 go_timeout (BufferedChannel.kt). Wave-2a fixed the safe-navigation ('?.') external-scanner mislex (display-name vs rule-name binding bug -> spurious ERROR -> O(n^2)) fleet-generally via positional-primary binding; per pr142-evidence.md this took JobSupport.kt from 5,036ms to 74ms (node-for-node C parity) -- but that is a single-file data point, not a re-swept aggregate, so the budget below is seeded from the stale after_cliffs aggregate (109.3x by-total / 51.0x median) rather than fabricating a post-fix aggregate. Expect this to tighten substantially at the next full re-sweep.",
+      "status": "green_with_caveat",
+      "wave2b_pending": false,
+      "measured_today": true,
+      "note": "Pending-row refresh (wave3_pending_kotlin_strict_20260709T121258Z): 8/8 files completed with 0 timeouts and 0 truncations under the checked-in ratchet basis, replacing the stale after_cliffs row that had 1 timeout. Full parse remains a measured throughput cliff (31.26x aggregate, 4.89x median, 3 cliff files), so this is a perf-backlog ratchet, not a near-C claim. Harness marked the run contended (loadavg1=8.74), so keep the budget loose until a quiet-box refresh tightens it.",
       "full_axis": {
-        "max_timeouts": 1,
+        "max_timeouts": 0,
         "max_errors": 0,
-        "max_ratio_by_total": 140,
-        "observed_ratio_by_total": 109.275,
-        "observed_ratio_median_of_files": 51.019
+        "max_ratio_by_total": 40,
+        "max_ratio_median_of_files": 7,
+        "observed_ratio_by_total": 31.260,
+        "observed_ratio_median_of_files": 4.889
       },
       "noedit_axis": {
-        "max_timeouts": 1,
+        "max_timeouts": 0,
         "max_ratio_by_total": 1.0,
-        "observed_ratio_by_total": 0.0000928
+        "observed_ratio_by_total": 0.00145
       }
     },
     "java": {
-      "status": "wave2b_pending",
-      "wave2b_pending": true,
-      "measured_today": false,
-      "note": "Documented from after_cliffs (post-wave-1, pre-wave-2a; STALE). 8/8 ok, 0 timeouts already (best completion rate among the 'pending' set). Wave-2a's java-ratio lane took DefaultListableBeanFactory.java from 5.19s to 521ms (14.8x) per pr142-evidence.md, a single-file data point not yet folded into a re-swept aggregate -- budget below seeded from the stale 46.4x by-total / 32.6x median aggregate. Expect substantial tightening at re-sweep given 0 timeouts today.",
+      "status": "green_with_caveat",
+      "wave2b_pending": false,
+      "measured_today": true,
+      "note": "Pending-row refresh (wave3_pending_java_strict_20260709T121147Z): 8/8 files completed with 0 timeouts and 0 truncations under the checked-in ratchet basis, replacing the stale after_cliffs row with a fresh aggregate. Full parse remains a measured throughput cliff (21.56x aggregate, 17.66x median, all 8 files over the cliff threshold), so this is a perf-backlog ratchet, not a near-C claim. Harness marked the run contended (loadavg1=8.49), so keep the budget loose until a quiet-box refresh tightens it.",
       "full_axis": {
         "max_timeouts": 0,
         "max_errors": 0,
-        "max_ratio_by_total": 60,
-        "observed_ratio_by_total": 46.370,
-        "observed_ratio_median_of_files": 32.613
+        "max_ratio_by_total": 28,
+        "max_ratio_median_of_files": 23,
+        "observed_ratio_by_total": 21.563,
+        "observed_ratio_median_of_files": 17.658
       },
       "noedit_axis": {
         "max_timeouts": 0,
         "max_ratio_by_total": 1.0,
-        "observed_ratio_by_total": 0.0147
+        "observed_ratio_by_total": 0.122
       }
     },
     "c_sharp": {
@@ -321,21 +326,22 @@
       }
     },
     "cmake": {
-      "status": "wave2b_pending",
-      "wave2b_pending": true,
-      "measured_today": false,
-      "note": "Documented from after_cliffs (post-wave-1; not touched by any named wave-2a lane, so likely still current, but not re-swept this pass). 4/8 ok, 4 go_timeout, 0 truncation.",
+      "status": "green_with_caveat",
+      "wave2b_pending": false,
+      "measured_today": true,
+      "note": "Pending-row refresh (wave3_pending_cmake_strict_20260709T121109Z): 8/8 files completed with 0 timeouts and 0 truncations under the checked-in ratchet basis, replacing the stale after_cliffs row that had 4 timeouts. Full parse is now a measured >2x backlog row (3.09x aggregate, 2.85x median), not a near-C claim. Harness marked the run contended (loadavg1=10.19), so keep the budget loose until a quiet-box refresh tightens it.",
       "full_axis": {
-        "max_timeouts": 4,
+        "max_timeouts": 0,
         "max_errors": 0,
-        "max_ratio_by_total": 90,
-        "observed_ratio_by_total": 71.709,
-        "observed_ratio_median_of_files": 29.652
+        "max_ratio_by_total": 4,
+        "max_ratio_median_of_files": 4,
+        "observed_ratio_by_total": 3.086,
+        "observed_ratio_median_of_files": 2.853
       },
       "noedit_axis": {
-        "max_timeouts": 4,
+        "max_timeouts": 0,
         "max_ratio_by_total": 1.0,
-        "observed_ratio_by_total": 0.000217
+        "observed_ratio_by_total": 0.00134
       }
     },
     "lua": {
