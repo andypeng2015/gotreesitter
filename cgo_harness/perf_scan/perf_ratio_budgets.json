@@ -1768,7 +1768,7 @@
       "status": "green_with_caveat",
       "wave3_batch7": true,
       "measured_today": true,
-      "note": "Wave-3 batch-7 contended sweep (wave3_batch7_20260708T232544Z): 8/8 files measured, 2 full-axis timeouts, 0 truncations/errors, severe measured cliff row with 2 full-axis timeouts. Contended run (loadavg1=7.95), so this is a pessimistic visibility ratchet rather than an authoritative near-C claim.",
+      "note": "Wave-3 batch-7 contended sweep (wave3_batch7_20260708T232544Z): 8/8 files measured, 2 full-axis timeouts, 2 noedit-axis timeouts, 0 truncations/errors, severe measured cliff row with explicit timeout budgets on both axes. Contended run (loadavg1=7.95), so this is a pessimistic visibility ratchet rather than an authoritative near-C claim.",
       "full_axis": {
         "max_timeouts": 2,
         "max_errors": 0,
