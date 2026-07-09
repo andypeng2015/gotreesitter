@@ -1,10 +1,10 @@
 # Wave 3 Perf Sweep Status
 
-- generated_at: `2026-07-09T13:44:36Z`
+- generated_at: `2026-07-09T14:04:01Z`
 - budget: `perf_scan/perf_ratio_budgets.json`
 - fleet catalog: `tier_scan/exts.tsv`
-- budget_generated_at: `2026-07-09T13:43:36Z`
-- budget_generated_by: `wave-3 fleet perf sweep ratchet pass, branch wave3/rust-swift-pending-resweep, extending pending-row refreshes with strict-basis rust and swift measurements`
+- budget_generated_at: `2026-07-09T14:03:03Z`
+- budget_generated_by: `wave-3 fleet perf sweep ratchet pass, branch wave3/crystal-scala-pending-resweep, extending pending-row refreshes with strict-basis crystal evidence and scoped scala OOM attribution`
 
 ## Coverage
 
@@ -16,8 +16,8 @@
 | known budget class gaps | 4 |
 | wave2b pending budget rows | 11 |
 | scoped heldout budget rows | 1 |
-| measured-today budget rows | 201 |
-| partial measured-today notes | 1 |
+| measured-today budget rows | 202 |
+| partial measured-today notes | 2 |
 
 Measurement basis: `reps=5`, `warmup=1`, `file_budget_ms=10000`, `max_files=8`, `order=largest`, `axes=full,noedit`.
 
@@ -65,11 +65,14 @@ Held out of the ratchet: `d`, `fsharp`.
 - `wave3_batch6_doxygen_20260708T230104Z`
 - `wave3_batch7_20260708T232544Z`
 - `wave3_pending_cmake_strict_20260709T121109Z`
+- `wave3_pending_crystal_strict_20260709T135653Z`
 - `wave3_pending_csharp_strict_20260709T122931Z`
 - `wave3_pending_java_strict_20260709T121147Z`
 - `wave3_pending_kotlin_strict_20260709T121258Z`
 - `wave3_pending_lua_strict_20260709T122826Z`
 - `wave3_pending_rust_strict_20260709T133345Z`
+- `wave3_pending_scala_implicits_strict_20260709T140125Z`
+- `wave3_pending_scala_strict_20260709T135935Z`
 - `wave3_pending_swift_strict_20260709T133944Z`
 - `wave3_scoped_d_exclude_expressionsem_20260709T103336Z`
 - `wave3_scoped_fsharp_exclude_providedtypes_20260709T103723Z`
