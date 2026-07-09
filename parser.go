@@ -218,6 +218,10 @@ type Parser struct {
 	parseBudgetDepth                 int
 	parseDeadline                    time.Time
 	parseStoppedReason               ParseStopReason
+	parseRuntimeMemoryBudgetBytes    int64
+	parseRuntimeMemoryBaselineBytes  uint64
+	parseRuntimeMemoryBaselineSys    uint64
+	parseRuntimeMemoryPoll           uint64
 	denseLimit                       int
 	smallBase                        int
 	smallLookup                      [][]smallActionPair
@@ -1421,6 +1425,10 @@ func resetSnippetParser(parser *Parser) {
 	parser.parseBudgetDepth = 0
 	parser.parseDeadline = time.Time{}
 	parser.parseStoppedReason = ParseStopNone
+	parser.parseRuntimeMemoryBudgetBytes = 0
+	parser.parseRuntimeMemoryBaselineBytes = 0
+	parser.parseRuntimeMemoryBaselineSys = 0
+	parser.parseRuntimeMemoryPoll = 0
 	// Release *Node refs so the arenas from the last incremental parse can be
 	// collected by the GC. Without this, a Parser sitting in a sync.Pool keeps
 	// its reuseCursor.topLevel/*Node alive, preventing arena reclamation.
@@ -3849,6 +3857,10 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	memoryBudget := parseMemoryBudgetForParser(p, len(source))
 	arena.setBudget(memoryBudget)
 	scratch.setBudget(memoryBudget)
+	restoreRuntimeMemoryBudget := p.enterRuntimeMemoryBudget(memoryBudget, len(source))
+	if restoreRuntimeMemoryBudget.parser != nil {
+		defer restoreRuntimeMemoryBudget.restore()
+	}
 	var reuseState parseReuseState
 	nodeCount := 0
 	iterationsUsed := 0
@@ -4148,13 +4160,13 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		if phaseTiming && parserLoopNanos == 0 {
 			parserLoopNanos = time.Since(parseStart).Nanoseconds()
 		}
-		if !parseStopReasonIsTerminal(stopReason) {
-			if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
+		if !resultMaterializationShouldStop(stopReason) {
+			if reason := p.resultMaterializationStopReason(arena); resultMaterializationShouldStop(reason) {
 				stopReason = reason
 			}
 		}
 		if p.transientReduceChildren && tree != nil {
-			if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
+			if reason := p.resultMaterializationStopReason(arena); resultMaterializationShouldStop(reason) {
 				stopReason = reason
 				tree = replaceWithOwnedErrorTree(tree, reason)
 			} else {
@@ -4162,7 +4174,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				if materializationTimingRef != nil {
 					materializeStart = time.Now()
 				}
-				if reason := p.materializeTransientChildrenForReturnedTree(tree, arena, scratch); parseStopReasonIsTerminal(reason) {
+				if reason := p.materializeTransientChildrenForReturnedTree(tree, arena, scratch); resultMaterializationShouldStop(reason) {
 					stopReason = reason
 					tree = replaceWithOwnedErrorTree(tree, reason)
 				}
@@ -4293,13 +4305,13 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		if phaseTiming && parserLoopNanos == 0 {
 			parserLoopNanos = time.Since(parseStart).Nanoseconds()
 		}
-		if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
+		if reason := p.resultMaterializationStopReason(arena); resultMaterializationShouldStop(reason) {
 			return finalizeTree(errorTreeWithOwnedArena(reason), reason)
 		}
-		if reason := materializeTransientParentNodes(nodes, arena, scratch.reduce.transientParents, scratch.reduce.transientChildren, p); parseStopReasonIsTerminal(reason) {
+		if reason := materializeTransientParentNodes(nodes, arena, scratch.reduce.transientParents, scratch.reduce.transientChildren, p); resultMaterializationShouldStop(reason) {
 			return finalizeTree(errorTreeWithOwnedArena(reason), reason)
 		}
-		if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
+		if reason := p.resultMaterializationStopReason(arena); resultMaterializationShouldStop(reason) {
 			return finalizeTree(errorTreeWithOwnedArena(reason), reason)
 		}
 		for _, n := range nodes {
@@ -4433,8 +4445,8 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		if nodeCount > maxNodes {
 			return finalize(stacks, ParseStopNodeLimit)
 		}
-		if arena.budgetExhausted() {
-			return finalize(stacks, ParseStopMemoryBudget)
+		if reason := p.resultMaterializationStopReason(arena); resultMaterializationShouldStop(reason) {
+			return finalize(stacks, reason)
 		}
 		if scratch.budgetExhausted() {
 			return finalize(stacks, ParseStopMemoryBudget)
@@ -4770,7 +4782,10 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			// in the C error state dispatches through ts_parser__recover
 			// instead of the parse table, except for shiftable tokens.
 			if s.cRec != nil && p.errorCostCompetitionEnabled() {
-				outcome, redispatch := p.cRecoverDispatchInError(&stacks, si, source, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors)
+				outcome, redispatch, reason := p.cRecoverDispatchInError(&stacks, si, source, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors)
+				if resultMaterializationShouldStop(reason) {
+					return finalize(stacks, reason)
+				}
 				s = &stacks[si]
 				if redispatch {
 					anyReduced = true
@@ -5421,6 +5436,12 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		if progress.enabled {
 			progress.emit(time.Now(), "dispatch_end", iterationsUsed, perfTokensConsumed, tok, true, stacks, maxStacksSeen, nodeCount, peakStackDepth, needToken, singleStackIterations, multiStackIterations, fmt.Sprintf("any_reduced=%t consumed_token=%t", anyReduced, dispatchConsumedCurrentToken))
 		}
+		if reason := p.resultMaterializationStopReason(arena); resultMaterializationShouldStop(reason) {
+			return finalize(stacks, reason)
+		}
+		if scratch.budgetExhausted() {
+			return finalize(stacks, ParseStopMemoryBudget)
+		}
 
 		if numStacks > 1 && retryPass && allParseStacksDead(stacks) {
 			bestIdx := bestRetryRecoveryStack(stacks)
@@ -5479,7 +5500,11 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		if condenseErrorCostEnabled && (!anyReduced || condenseEOFRecovery || condenseShiftedRecovery) {
 			var resumed bool
 			condenseRan = true
-			stacks, resumed, tok = p.cCondenseAndResume(stacks, source, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors)
+			var reason ParseStopReason
+			stacks, resumed, tok, reason = p.cCondenseAndResume(stacks, source, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors)
+			if resultMaterializationShouldStop(reason) {
+				return finalize(stacks, reason)
+			}
 			condenseResumed = resumed
 			if resumed {
 				anyReduced = true
@@ -5641,7 +5666,11 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			allLiveUnacceptedStacksShifted(stacks) {
 			var resumed bool
 			condenseRan = true
-			stacks, resumed, tok = p.cCondenseAndResume(stacks, source, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors)
+			var reason ParseStopReason
+			stacks, resumed, tok, reason = p.cCondenseAndResume(stacks, source, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors)
+			if resultMaterializationShouldStop(reason) {
+				return finalize(stacks, reason)
+			}
 			condenseResumed = resumed
 			if resumed {
 				anyReduced = true
@@ -5805,10 +5834,18 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					accepted = selectable
 				}
 				if p.errorCostCompetitionEnabled() {
+					if reason := p.resultMaterializationStopReason(arena); resultMaterializationShouldStop(reason) {
+						return finalize(accepted, reason)
+					}
+					if scratch.budgetExhausted() {
+						return finalize(accepted, ParseStopMemoryBudget)
+					}
 					// Faithful C recovery port: ts_parser__accept rebuilds the
 					// root around trailing extras before the tree competes.
 					for i := range accepted {
-						p.cAcceptRootRebuild(&accepted[i], arena, &scratch.entries, &scratch.gss)
+						if reason := p.cAcceptRootRebuild(&accepted[i], arena, &scratch.entries, &scratch.gss); resultMaterializationShouldStop(reason) {
+							return finalize(accepted, reason)
+						}
 					}
 				}
 				return finalize(accepted, ParseStopAccepted)
@@ -6077,7 +6114,11 @@ func (p *Parser) prepareParseStacksForIteration(stacks []glrStack, scratch *pars
 		clearParseStackEntryCaches(stacks)
 		return result
 	}
-	if arena.budgetExhausted() || scratch.budgetExhausted() {
+	if reason := p.resultMaterializationStopReason(arena); resultMaterializationShouldStop(reason) {
+		result.stop(reason, false)
+		return result
+	}
+	if scratch.budgetExhausted() {
 		result.stop(ParseStopMemoryBudget, false)
 		return result
 	}

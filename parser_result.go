@@ -145,6 +145,27 @@ func (p *Parser) currentMaterializationTiming() *parseMaterializationTiming {
 	return p.materializationTiming
 }
 
+func (p *Parser) resultMaterializationStopReason(arena *nodeArena) ParseStopReason {
+	if p != nil {
+		if reason := p.parseStopReasonNow(); parseStopReasonIsActive(reason) {
+			return reason
+		}
+	}
+	if arena != nil && arena.budgetExhausted() {
+		return ParseStopMemoryBudget
+	}
+	if p != nil {
+		if reason := p.runtimeMemoryBudgetStopReason(); reason == ParseStopMemoryBudget {
+			return reason
+		}
+	}
+	return ParseStopNone
+}
+
+func resultMaterializationShouldStop(reason ParseStopReason) bool {
+	return parseStopReasonIsActive(reason) || reason == ParseStopMemoryBudget
+}
+
 // hasCleanSiblingAtSamePosition reports whether some other live (non-dead)
 // stack in stacks, besides self, reaches the same final byte position as
 // stacks[self] without itself carrying an unvalidated C-recovery marker. Used
@@ -183,7 +204,7 @@ func (p *Parser) buildResultFromGLR(stacks []glrStack, source []byte, arena *nod
 		tree.setParseStopReason(reason)
 		return tree
 	}
-	if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
+	if reason := p.resultMaterializationStopReason(arena); resultMaterializationShouldStop(reason) {
 		return errorTreeWithStopReason(reason)
 	}
 	if len(stacks) == 0 {
@@ -198,7 +219,7 @@ func (p *Parser) buildResultFromGLR(stacks []glrStack, source []byte, arena *nod
 	best := 0
 	for i := 1; i < len(stacks); i++ {
 		if i&63 == 0 {
-			if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
+			if reason := p.resultMaterializationStopReason(arena); resultMaterializationShouldStop(reason) {
 				return errorTreeWithStopReason(reason)
 			}
 		}
@@ -237,7 +258,7 @@ func (p *Parser) buildResultFromGLR(stacks []glrStack, source []byte, arena *nod
 	if p.glrTrace && p.errorCostCompetitionEnabled() {
 		p.traceCResultSelectionSelected(best, &selected, arena)
 	}
-	if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
+	if reason := p.resultMaterializationStopReason(arena); resultMaterializationShouldStop(reason) {
 		return errorTreeWithStopReason(reason)
 	}
 	if len(selected.entries) > 0 {
@@ -245,7 +266,7 @@ func (p *Parser) buildResultFromGLR(stacks []glrStack, source []byte, arena *nod
 		if materializationTiming != nil {
 			materializeStart = time.Now()
 		}
-		if reason := materializeTransientParentEntries(selected.entries, arena, transientParents, transientChildren, p); parseStopReasonIsTerminal(reason) {
+		if reason := materializeTransientParentEntries(selected.entries, arena, transientParents, transientChildren, p); resultMaterializationShouldStop(reason) {
 			return errorTreeWithStopReason(reason)
 		}
 		if materializationTiming != nil {
@@ -272,12 +293,15 @@ func (p *Parser) buildResultFromGLR(stacks []glrStack, source []byte, arena *nod
 		}
 		return tree
 	}
-	nodes := nodesFromGSSMaterializingCompactFullLeaves(p, selected.gss, arena)
+	nodes, reason := nodesFromGSSMaterializingCompactFullLeaves(p, selected.gss, arena)
+	if resultMaterializationShouldStop(reason) {
+		return errorTreeWithStopReason(reason)
+	}
 	materializeStart := time.Time{}
 	if materializationTiming != nil {
 		materializeStart = time.Now()
 	}
-	if reason := materializeTransientParentNodes(nodes, arena, transientParents, transientChildren, p); parseStopReasonIsTerminal(reason) {
+	if reason := materializeTransientParentNodes(nodes, arena, transientParents, transientChildren, p); resultMaterializationShouldStop(reason) {
 		return errorTreeWithStopReason(reason)
 	}
 	if materializationTiming != nil {
@@ -1313,9 +1337,9 @@ func nodesFromGSS(stack gssStack) []*Node {
 	return nodes
 }
 
-func nodesFromGSSMaterializingCompactFullLeaves(p *Parser, stack gssStack, arena *nodeArena) []*Node {
+func nodesFromGSSMaterializingCompactFullLeaves(p *Parser, stack gssStack, arena *nodeArena) ([]*Node, ParseStopReason) {
 	if stack.head == nil {
-		return nil
+		return nil, ParseStopNone
 	}
 	count := 0
 	for n := stack.head; n != nil; n = n.prev {
@@ -1324,17 +1348,25 @@ func nodesFromGSSMaterializingCompactFullLeaves(p *Parser, stack gssStack, arena
 		}
 	}
 	if count == 0 {
-		return nil
+		return nil, ParseStopNone
 	}
 	nodes := make([]*Node, count)
 	i := count - 1
 	for n := stack.head; n != nil; n = n.prev {
+		if i&255 == 0 {
+			if reason := p.resultMaterializationStopReason(arena); resultMaterializationShouldStop(reason) {
+				return nil, reason
+			}
+		}
 		if node := materializeStackEntryPayloadWithParser(p, arena, &n.entry, compactFullLeafMaterializeForFinalTree, pendingParentMaterializeForFinalTree); node != nil {
 			nodes[i] = node
 			i--
 		}
 	}
-	return nodes
+	if reason := p.resultMaterializationStopReason(arena); resultMaterializationShouldStop(reason) {
+		return nil, reason
+	}
+	return nodes, ParseStopNone
 }
 
 func filterZeroWidthExtras(nodes []*Node, arena *nodeArena) []*Node {
@@ -1367,7 +1399,7 @@ func filterZeroWidthExtras(nodes []*Node, arena *nodeArena) []*Node {
 
 // buildResult constructs the final Tree from a stack of entries.
 func (p *Parser) buildResult(stack []stackEntry, source []byte, arena *nodeArena, oldTree *Tree, reuseState *parseReuseState, linkScratch *[]*Node) *Tree {
-	if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
+	if reason := p.resultMaterializationStopReason(arena); resultMaterializationShouldStop(reason) {
 		tree := parseErrorTreeWithArena(source, p.language, arena)
 		tree.setParseStopReason(reason)
 		return tree
@@ -1375,7 +1407,7 @@ func (p *Parser) buildResult(stack []stackEntry, source []byte, arena *nodeArena
 	var nodes []*Node
 	for i := range stack {
 		if i&255 == 0 {
-			if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
+			if reason := p.resultMaterializationStopReason(arena); resultMaterializationShouldStop(reason) {
 				tree := parseErrorTreeWithArena(source, p.language, arena)
 				tree.setParseStopReason(reason)
 				return tree
@@ -1389,7 +1421,7 @@ func (p *Parser) buildResult(stack []stackEntry, source []byte, arena *nodeArena
 }
 
 func (p *Parser) buildResultFromNodes(nodes []*Node, source []byte, arena *nodeArena, oldTree *Tree, reuseState *parseReuseState, linkScratch *[]*Node) *Tree {
-	if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
+	if reason := p.resultMaterializationStopReason(arena); resultMaterializationShouldStop(reason) {
 		tree := parseErrorTreeWithArena(source, p.language, arena)
 		tree.setParseStopReason(reason)
 		return tree

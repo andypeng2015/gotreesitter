@@ -49,6 +49,56 @@ func TestNormalizeResultTerminalLeafNodesCollapsesRedundantAnonymousTokenChild(t
 	}
 }
 
+func TestNormalizeResultTerminalLeafNodesStopsOnActiveParseBudget(t *testing.T) {
+	lang := &Language{
+		TokenCount: 3,
+		SymbolNames: []string{
+			"EOF",
+			".",
+			"token",
+			"root",
+		},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF"},
+			{Name: ".", Visible: true, Named: false},
+			{Name: "token", Visible: true, Named: true},
+			{Name: "root", Visible: true, Named: true},
+		},
+	}
+	arena := newNodeArena(arenaClassFull)
+	children := make([]*Node, 0, parseStopPollMask*2)
+	for i := 0; i < parseStopPollMask*2; i++ {
+		start := uint32(i)
+		leaf := newLeafNodeInArena(arena, 1, false, start, start+1, Point{Column: start}, Point{Column: start + 1})
+		parent := newParentNodeInArena(arena, 2, true, []*Node{leaf}, nil, 0)
+		children = append(children, parent)
+	}
+	root := newParentNodeInArena(arena, 3, true, children, nil, 0)
+	checks := 0
+	stopCheck := func() ParseStopReason {
+		checks++
+		if checks >= 2 {
+			return ParseStopTimeout
+		}
+		return ParseStopNone
+	}
+
+	counters, reason := normalizeResultTerminalLeafNodesWithStop(root, lang, stopCheck)
+
+	if reason != ParseStopTimeout {
+		t.Fatalf("stop reason = %q, want %q", reason, ParseStopTimeout)
+	}
+	if counters.nodesVisited == 0 {
+		t.Fatal("nodesVisited = 0, want partial traversal before stop")
+	}
+	if counters.nodesVisited >= uint64(len(children)+1) {
+		t.Fatalf("nodesVisited = %d, want traversal to stop before full tree", counters.nodesVisited)
+	}
+	if counters.nodesRewritten >= uint64(len(children)) {
+		t.Fatalf("nodesRewritten = %d, want partial rewrite before stop", counters.nodesRewritten)
+	}
+}
+
 func TestNormalizeResultTerminalLeafNodesPreservesNonterminalWrapper(t *testing.T) {
 	lang := &Language{
 		TokenCount: 2,

@@ -96,6 +96,36 @@ func walkResultTree(root *Node, visit func(*Node)) {
 	walk(root)
 }
 
+func walkResultTreeUntil(root *Node, visit func(*Node) bool) bool {
+	if visit == nil {
+		return true
+	}
+	var walk func(*Node) bool
+	walk = func(n *Node) bool {
+		if n == nil {
+			return true
+		}
+		if !visit(n) {
+			return false
+		}
+		if n.ownerArena == nil || n.childIndex > finalChildSidecarIndexBase {
+			for _, child := range n.children {
+				if !walk(child) {
+					return false
+				}
+			}
+			return true
+		}
+		for i := 0; i < resultChildCount(n); i++ {
+			if !walk(resultChildAt(n, i)) {
+				return false
+			}
+		}
+		return true
+	}
+	return walk(root)
+}
+
 func walkResultTreeDenseFirst(root *Node, visit func(*Node)) {
 	if visit == nil {
 		return

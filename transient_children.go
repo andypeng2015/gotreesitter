@@ -91,7 +91,7 @@ func (s *transientChildScratch) materializeNodeUntil(root *Node, arena *nodeAren
 	visited := 0
 	for len(stack) > 0 {
 		if visited&63 == 0 {
-			if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
+			if reason := p.resultMaterializationStopReason(arena); resultMaterializationShouldStop(reason) {
 				return reason
 			}
 		}

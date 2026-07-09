@@ -116,7 +116,7 @@ func (s *transientParentScratch) materializeEntriesUntil(entries []stackEntry, a
 	roots := make([]*Node, 0, len(entries))
 	for i := range entries {
 		if i&63 == 0 {
-			if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
+			if reason := p.resultMaterializationStopReason(arena); resultMaterializationShouldStop(reason) {
 				return reason
 			}
 		}
@@ -124,12 +124,12 @@ func (s *transientParentScratch) materializeEntriesUntil(entries []stackEntry, a
 			roots = append(roots, node)
 		}
 	}
-	if reason := s.materializeNodesUntil(roots, arena, childScratch, p); parseStopReasonIsTerminal(reason) {
+	if reason := s.materializeNodesUntil(roots, arena, childScratch, p); resultMaterializationShouldStop(reason) {
 		return reason
 	}
 	for i := range entries {
 		if i&63 == 0 {
-			if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
+			if reason := p.resultMaterializationStopReason(arena); resultMaterializationShouldStop(reason) {
 				return reason
 			}
 		}
@@ -153,12 +153,12 @@ func (s *transientParentScratch) materializeNodeSliceUntil(nodes []*Node, arena 
 		return ParseStopNone
 	}
 	defer s.clearMaterializeScratch()
-	if reason := s.materializeNodesUntil(nodes, arena, childScratch, p); parseStopReasonIsTerminal(reason) {
+	if reason := s.materializeNodesUntil(nodes, arena, childScratch, p); resultMaterializationShouldStop(reason) {
 		return reason
 	}
 	for i := range nodes {
 		if i&63 == 0 {
-			if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
+			if reason := p.resultMaterializationStopReason(arena); resultMaterializationShouldStop(reason) {
 				return reason
 			}
 		}
@@ -184,7 +184,7 @@ func (s *transientParentScratch) materializeNodesUntil(nodes []*Node, arena *nod
 	}()
 	for i := range nodes {
 		if i&63 == 0 {
-			if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
+			if reason := p.resultMaterializationStopReason(arena); resultMaterializationShouldStop(reason) {
 				return reason
 			}
 		}
@@ -195,7 +195,7 @@ func (s *transientParentScratch) materializeNodesUntil(nodes []*Node, arena *nod
 	visited := 0
 	for len(frames) > 0 {
 		if visited&63 == 0 {
-			if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
+			if reason := p.resultMaterializationStopReason(arena); resultMaterializationShouldStop(reason) {
 				return reason
 			}
 		}
@@ -207,7 +207,7 @@ func (s *transientParentScratch) materializeNodesUntil(nodes []*Node, arena *nod
 			continue
 		}
 		if frame.visited {
-			if reason := s.materializeVisitedNodeUntil(n, arena, childScratch, p); parseStopReasonIsTerminal(reason) {
+			if reason := s.materializeVisitedNodeUntil(n, arena, childScratch, p); resultMaterializationShouldStop(reason) {
 				return reason
 			}
 			continue
@@ -254,7 +254,7 @@ func (s *transientParentScratch) materializeVisitedNodeUntil(n *Node, arena *nod
 		}
 		for i, child := range out {
 			if i&63 == 0 {
-				if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
+				if reason := p.resultMaterializationStopReason(arena); resultMaterializationShouldStop(reason) {
 					return reason
 				}
 			}

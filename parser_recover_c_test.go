@@ -68,7 +68,7 @@ func TestCRecoverDispatchInErrorAdvancesZeroWidthSkippedToken(t *testing.T) {
 	stacks := []glrStack{stack}
 	nodeCount := 0
 
-	outcome, forked := parser.cRecoverDispatchInError(
+	outcome, forked, reason := parser.cRecoverDispatchInError(
 		&stacks,
 		0,
 		[]byte("012345678901234567890"),
@@ -80,6 +80,9 @@ func TestCRecoverDispatchInErrorAdvancesZeroWidthSkippedToken(t *testing.T) {
 		nil,
 	)
 
+	if reason != ParseStopNone {
+		t.Fatalf("cRecoverDispatchInError stop reason = %v, want none", reason)
+	}
 	if outcome != cRecConsumed || forked {
 		t.Fatalf("outcome/forked = %v/%t, want %v/false", outcome, forked, cRecConsumed)
 	}
@@ -114,7 +117,7 @@ func TestCRecoverDispatchInErrorAbsorbsZeroWidthSkippedTokenAtCurrentOffset(t *t
 	stacks := []glrStack{stack}
 	nodeCount := 0
 
-	outcome, forked := parser.cRecoverDispatchInError(
+	outcome, forked, reason := parser.cRecoverDispatchInError(
 		&stacks,
 		0,
 		[]byte("012345678901234567890"),
@@ -126,6 +129,9 @@ func TestCRecoverDispatchInErrorAbsorbsZeroWidthSkippedTokenAtCurrentOffset(t *t
 		nil,
 	)
 
+	if reason != ParseStopNone {
+		t.Fatalf("cRecoverDispatchInError stop reason = %v, want none", reason)
+	}
 	if outcome != cRecConsumed || forked {
 		t.Fatalf("outcome/forked = %v/%t, want %v/false", outcome, forked, cRecConsumed)
 	}
@@ -338,7 +344,10 @@ func TestCRecoverStrategy1ElectionDedupesDuplicateEntryAcrossMembers(t *testing.
 		cRecoveryElectionStack(arena, 2, 3, 10, group, 1, []cStackSummaryEntry{entry}),
 	}
 	nodeCount := 0
-	didRecover, forked := parser.cRecoverStrategy1Election(&stacks, group, nil, Token{Symbol: 1}, &nodeCount, arena, nil, nil, nil)
+	didRecover, forked, reason := parser.cRecoverStrategy1Election(&stacks, group, nil, Token{Symbol: 1}, &nodeCount, arena, nil, nil, nil)
+	if reason != ParseStopNone {
+		t.Fatalf("cRecoverStrategy1Election stop reason = %v, want none", reason)
+	}
 	if didRecover || forked {
 		t.Fatalf("strategy 1 election = didRecover %v forked %v, want false/false (entry position equals the merged version position; duplicate entries dedupe at first encounter)", didRecover, forked)
 	}
@@ -361,7 +370,10 @@ func TestCRecoverStrategy1ElectionIgnoresBetterVersionForNoActionEntry(t *testin
 		cRecoveryElectionPlainStack(arena, 4, 4, 2500),
 	}
 	nodeCount := 0
-	didRecover, forked := parser.cRecoverStrategy1Election(&stacks, group, nil, Token{Symbol: 1}, &nodeCount, arena, nil, nil, nil)
+	didRecover, forked, reason := parser.cRecoverStrategy1Election(&stacks, group, nil, Token{Symbol: 1}, &nodeCount, arena, nil, nil, nil)
+	if reason != ParseStopNone {
+		t.Fatalf("cRecoverStrategy1Election stop reason = %v, want none", reason)
+	}
 	if !didRecover || !forked {
 		t.Fatalf("strategy 1 election = didRecover %v forked %v, want true/true", didRecover, forked)
 	}
@@ -393,7 +405,10 @@ func TestCRecoverStrategy1ElectionUsesMergedVersionCostBasis(t *testing.T) {
 		cRecoveryElectionPlainStack(arena, 4, 4, 2500),
 	}
 	nodeCount := 0
-	didRecover, forked := parser.cRecoverStrategy1Election(&stacks, group, nil, Token{Symbol: 1}, &nodeCount, arena, nil, nil, nil)
+	didRecover, forked, reason := parser.cRecoverStrategy1Election(&stacks, group, nil, Token{Symbol: 1}, &nodeCount, arena, nil, nil, nil)
+	if reason != ParseStopNone {
+		t.Fatalf("cRecoverStrategy1Election stop reason = %v, want none", reason)
+	}
 	if didRecover || forked {
 		t.Fatalf("strategy 1 election = didRecover %v forked %v, want false/false (merged-version cost makes the entry clearly worse than the clean sibling, aborting the scan)", didRecover, forked)
 	}
@@ -480,7 +495,10 @@ func TestCDoAllPotentialReductionsCollapsesSamePopTargetSlicesByCParentSelection
 	start := glrStack{gss: gssStack{head: rightNode}, byteOffset: 2}
 
 	nodeCount := 0
-	versions, canShift := parser.cDoAllPotentialReductions(nil, start, 0, true, Token{}, &nodeCount, arena, nil, &scratch, nil)
+	versions, canShift, reason := parser.cDoAllPotentialReductions(nil, start, 0, true, Token{}, &nodeCount, arena, nil, &scratch, nil)
+	if reason != ParseStopNone {
+		t.Fatalf("cDoAllPotentialReductions stop reason = %v, want none", reason)
+	}
 	if canShift {
 		t.Fatal("canShift = true, want false")
 	}
@@ -543,7 +561,10 @@ func TestCDoAllPotentialReductionsCollapsesSamePopWithTrailingExtra(t *testing.T
 	start := glrStack{gss: gssStack{head: head}, byteOffset: 3}
 
 	nodeCount := 0
-	versions, canShift := parser.cDoAllPotentialReductions(nil, start, 0, true, Token{}, &nodeCount, arena, nil, &scratch, nil)
+	versions, canShift, reason := parser.cDoAllPotentialReductions(nil, start, 0, true, Token{}, &nodeCount, arena, nil, &scratch, nil)
+	if reason != ParseStopNone {
+		t.Fatalf("cDoAllPotentialReductions stop reason = %v, want none", reason)
+	}
 	if canShift {
 		t.Fatal("canShift = true, want false")
 	}
@@ -699,7 +720,10 @@ func TestCDoAllPotentialReductionsKeepsShiftableOriginalWithReductionFork(t *tes
 	start.pushEntry(newStackEntryNode(3, leaf), nil, nil)
 
 	nodeCount := 0
-	versions, canShift := parser.cDoAllPotentialReductions(nil, start, 0, true, Token{}, &nodeCount, arena, nil, nil, nil)
+	versions, canShift, reason := parser.cDoAllPotentialReductions(nil, start, 0, true, Token{}, &nodeCount, arena, nil, nil, nil)
+	if reason != ParseStopNone {
+		t.Fatalf("cDoAllPotentialReductions stop reason = %v, want none", reason)
+	}
 	if !canShift {
 		t.Fatal("canShift = false, want true from the shiftable original state")
 	}
@@ -742,17 +766,26 @@ func TestCDoAllPotentialReductionsDistinguishesEOFFromAnyLookahead(t *testing.T)
 	defer arena.Release()
 
 	nodeCount := 0
-	versions, canShift := parser.cDoAllPotentialReductions(nil, newGLRStack(1), 0, true, Token{}, &nodeCount, arena, nil, nil, nil)
+	versions, canShift, reason := parser.cDoAllPotentialReductions(nil, newGLRStack(1), 0, true, Token{}, &nodeCount, arena, nil, nil, nil)
+	if reason != ParseStopNone {
+		t.Fatalf("cDoAllPotentialReductions stop reason = %v, want none", reason)
+	}
 	if !canShift || len(versions) != 1 {
 		t.Fatalf("any-lookahead reductions: canShift=%v versions=%d, want true/1", canShift, len(versions))
 	}
 
-	versions, canShift = parser.cDoAllPotentialReductions(nil, newGLRStack(1), 0, false, Token{}, &nodeCount, arena, nil, nil, nil)
+	versions, canShift, reason = parser.cDoAllPotentialReductions(nil, newGLRStack(1), 0, false, Token{}, &nodeCount, arena, nil, nil, nil)
+	if reason != ParseStopNone {
+		t.Fatalf("cDoAllPotentialReductions stop reason = %v, want none", reason)
+	}
 	if canShift || len(versions) != 0 {
 		t.Fatalf("exact EOF reductions on non-EOF state: canShift=%v versions=%d, want false/0", canShift, len(versions))
 	}
 
-	versions, canShift = parser.cDoAllPotentialReductions(nil, newGLRStack(2), 0, false, Token{}, &nodeCount, arena, nil, nil, nil)
+	versions, canShift, reason = parser.cDoAllPotentialReductions(nil, newGLRStack(2), 0, false, Token{}, &nodeCount, arena, nil, nil, nil)
+	if reason != ParseStopNone {
+		t.Fatalf("cDoAllPotentialReductions stop reason = %v, want none", reason)
+	}
 	if !canShift || len(versions) != 1 {
 		t.Fatalf("exact EOF accept reductions: canShift=%v versions=%d, want true/1", canShift, len(versions))
 	}
@@ -850,7 +883,10 @@ func TestCCondenseAndResumeComparesMissingGroupStacks(t *testing.T) {
 	}
 
 	var nodeCount int
-	condensed, resumed, _ := parser.cCondenseAndResume([]glrStack{missing, clean}, nil, Token{Symbol: 1}, &nodeCount, nil, nil, nil, nil)
+	condensed, resumed, _, reason := parser.cCondenseAndResume([]glrStack{missing, clean}, nil, Token{Symbol: 1}, &nodeCount, nil, nil, nil, nil)
+	if reason != ParseStopNone {
+		t.Fatalf("cCondenseAndResume stop reason = %v, want none", reason)
+	}
 	if resumed {
 		t.Fatal("cCondenseAndResume resumed without paused/error-state versions")
 	}

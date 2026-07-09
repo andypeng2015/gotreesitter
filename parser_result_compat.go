@@ -45,7 +45,12 @@ func normalizeResultCompatibility(root *Node, source []byte, p *Parser) resultCo
 		return result
 	}
 	normalizeRootTrailingExtraTriviaCompatibility(root, source, lang)
-	normalizeResultTerminalLeafNodes(root, lang)
+	var terminalReason ParseStopReason
+	_, terminalReason = normalizeResultTerminalLeafNodesWithStop(root, lang, ctx.stopCheck)
+	if parseStopReasonIsActive(terminalReason) {
+		result.stopReason = terminalReason
+		return result
+	}
 	normalizeResultCollapsedNamedLeafChildren(root, lang)
 	result.stopReason = ctx.stopReason()
 	return result

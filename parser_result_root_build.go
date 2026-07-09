@@ -648,7 +648,7 @@ func (b *resultRootBuild) finalizeRoot(root *Node, wireParentLinks, extendTraili
 // trivia. The compatibility guard mirrors finalizeResultRoot exactly.
 func (b *resultRootBuild) finalizeWrappedSubtree(root *Node) {
 	p := b.parser
-	if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
+	if reason := p.resultMaterializationStopReason(root.ownerArena); resultMaterializationShouldStop(reason) {
 		return
 	}
 	if p == nil || (!p.noResultCompatibilityBenchmarkOnly && !p.shouldDeferResultCompatibility(root)) {
@@ -817,14 +817,14 @@ func (p *Parser) finalizeResultRoot(root *Node, source []byte, linkScratch *[]*N
 	timing := p.currentMaterializationTiming()
 	finalizeStart := materializationTimingStart(timing)
 	defer timing.addResultFinalizeRoot(finalizeStart)
-	if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
+	if reason := p.resultMaterializationStopReason(root.ownerArena); resultMaterializationShouldStop(reason) {
 		return
 	}
 	if p != nil {
 		root = flattenInvisibleRootChildren(root, root.ownerArena, p.language)
 	}
 	widenNodeSpanToRetainedChildren(root)
-	if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
+	if reason := p.resultMaterializationStopReason(root.ownerArena); resultMaterializationShouldStop(reason) {
 		return
 	}
 	if extendTrailing {
@@ -832,13 +832,13 @@ func (p *Parser) finalizeResultRoot(root *Node, source []byte, linkScratch *[]*N
 		extendNodeToTrailingWhitespace(root, source)
 		timing.addResultExtendTrailing(start)
 	}
-	if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
+	if reason := p.resultMaterializationStopReason(root.ownerArena); resultMaterializationShouldStop(reason) {
 		return
 	}
 	start := materializationTimingStart(timing)
 	p.normalizeRootSourceStart(root, source)
 	timing.addResultNormalizeRootStart(start)
-	if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
+	if reason := p.resultMaterializationStopReason(root.ownerArena); resultMaterializationShouldStop(reason) {
 		return
 	}
 	if p == nil || (!p.noResultCompatibilityBenchmarkOnly && !p.shouldDeferResultCompatibility(root)) {
@@ -856,7 +856,7 @@ func (p *Parser) finalizeResultRoot(root *Node, source []byte, linkScratch *[]*N
 			extendNodeToTrailingWhitespace(root, source)
 		}
 	}
-	if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
+	if reason := p.resultMaterializationStopReason(root.ownerArena); resultMaterializationShouldStop(reason) {
 		return
 	}
 	if wireParentLinks {
