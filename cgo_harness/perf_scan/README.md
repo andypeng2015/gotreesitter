@@ -135,9 +135,11 @@ medians/ratios/statuses.
 
 If a language child process is killed while measuring a file, the latest
 partial fragment includes `active_file`, 1-based `active_file_index`, and
-`active_file_bytes`. `active_file` is the canonical active-measurement signal;
-these fields are omitted on completed language rows. They exist so OOM and
-hard-kill rows still identify the file being measured even when no per-file
+`active_file_bytes`. Once measurement starts, it also includes `active_axis`,
+`active_impl`, `active_phase`, and 1-based `active_attempt` when an attempt
+number applies. `active_file` is the canonical active-measurement signal; these
+fields are omitted on completed language rows. They exist so OOM and hard-kill
+rows still identify the exact file and measurement phase even when no per-file
 result could be checkpointed.
 
 ## Ratio budget ratchet
