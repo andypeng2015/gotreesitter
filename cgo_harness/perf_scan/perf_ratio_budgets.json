@@ -16,8 +16,8 @@
     "that isn't green today is worse than useless."
   ],
   "schema": "gts-perf-ratio-budgets/v1",
-  "generated_at": "2026-07-08T23:03:00Z",
-  "generated_by": "wave-3 fleet perf sweep ratchet pass, branch wave3/fleet-perf-batch6, extending the wave-2b budget with batch-1 through batch-6 measurements through HEAD 42aa02f9",
+  "generated_at": "2026-07-09T01:01:41Z",
+  "generated_by": "wave-3 fleet perf sweep ratchet pass, branch wave3/perf-batch7-ratchets, extending the wave-2b budget with batch-1 through batch-7 measurements",
   "measurement_basis": {
     "harness": "cgo_harness/perf_scan (TestPerfScanSweep / TestPerfScanLanguage, tags treesitter_c_parity treesitter_c_perfscan)",
     "corpus_root": "/home/draco/work/gotreesitter-corpora/corpus_sources (real upstream per-language checkouts, largest-8-files sampling -- deliberately adversarial, hunts cliffs, NOT representative of typical file size)",
@@ -46,7 +46,8 @@
     "wave3_batch5_20260708T222227Z": "fifth Wave-3 fleet batch on HEAD 2f5c82f2, Docker-isolated with the ratchet basis (largest-8, reps=5, warmup=1, file_budget=10000ms, axes full/noedit), languages circom/clojure/comment/commonlisp/cooklang/corn/cpon/csv/cuda/cue. All ten language subprocesses completed with no C-reference failures; circom/commonlisp/cooklang retain explicit timeout budgets, cooklang is an all-timeout/node-limit row, comment is clean <=2x, and the remaining rows are measured >2x or cliff throughput backlog rows.",
     "wave3_batch6_20260708T224850Z": "sixth Wave-3 fleet batch on HEAD 42aa02f9, Docker-isolated with the ratchet basis (largest-8, reps=5, warmup=1, file_budget=10000ms, axes full/noedit), main run languages bicep/cylc/d/desktop/devicetree/dhall/diff/disassembly/djot/dockerfile plus supplemental dot and doxygen runs. bicep is intentionally not budgeted because one selected file hit a C reference timeout again; d is intentionally not budgeted because both the batch run and a one-language rerun produced child signal:killed with Docker oom_killed=true. Budgeted rows are cylc/desktop/devicetree/dhall/diff/disassembly/djot/dockerfile/dot/doxygen; disassembly retains an all-timeout budget row, and djot/doxygen retain explicit go_error budgets.",
     "wave3_batch6_dot_20260708T225933Z": "supplemental Wave-3 batch-6 dot run on HEAD 42aa02f9, Docker-isolated with the ratchet basis (largest-8, reps=5, warmup=1, file_budget=10000ms, axes full/noedit). Added as a clean replacement row after d reproduced a one-language Docker OOM.",
-    "wave3_batch6_doxygen_20260708T230104Z": "supplemental Wave-3 batch-6 doxygen run on HEAD 42aa02f9, Docker-isolated with the ratchet basis (largest-8, reps=5, warmup=1, file_budget=10000ms, axes full/noedit). Added as a replacement row after bicep repeated a C-reference timeout; doxygen retains explicit go_error budgets."
+    "wave3_batch6_doxygen_20260708T230104Z": "supplemental Wave-3 batch-6 doxygen run on HEAD 42aa02f9, Docker-isolated with the ratchet basis (largest-8, reps=5, warmup=1, file_budget=10000ms, axes full/noedit). Added as a replacement row after bicep repeated a C-reference timeout; doxygen retains explicit go_error budgets.",
+    "wave3_batch7_20260708T232544Z": "seventh Wave-3 fleet batch, Docker-isolated with the ratchet basis (largest-8, reps=5, warmup=1, file_budget=10000ms, axes full/noedit), languages dtd/earthfile/ebnf/editorconfig/eds/eex/elisp/elsa/embedded_template/enforce. This run was harness-flagged as contended (loadavg1=7.95), so these rows are visibility ratchets with pessimistic caveats rather than authoritative near-C claims; dtd/editorconfig/eds are thin-corpus rows and enforce retains explicit timeout budgets."
   },
   "languages": {
     "php": {
@@ -1581,6 +1582,206 @@
         "max_errors": 7,
         "max_ratio_by_total": 1.0,
         "observed_ratio_by_total": 0.0000214
+      }
+    },
+    "dtd": {
+      "status": "green_with_caveat",
+      "wave3_batch7": true,
+      "measured_today": true,
+      "note": "Wave-3 batch-7 contended sweep (wave3_batch7_20260708T232544Z): only 6 files selected by the corpus lock, 0 full-axis timeouts, 0 truncations/errors, measured cliff throughput row (31.93x aggregate). Contended run (loadavg1=7.95), so this is a pessimistic visibility ratchet rather than an authoritative near-C claim.",
+      "full_axis": {
+        "max_timeouts": 0,
+        "max_errors": 0,
+        "max_ratio_by_total": 40,
+        "max_ratio_median_of_files": 110,
+        "observed_ratio_by_total": 31.9276,
+        "observed_ratio_median_of_files": 86.6046
+      },
+      "noedit_axis": {
+        "max_timeouts": 0,
+        "max_errors": 0,
+        "max_ratio_by_total": 1.0,
+        "observed_ratio_by_total": 2.38364e-05
+      }
+    },
+    "earthfile": {
+      "status": "green_with_caveat",
+      "wave3_batch7": true,
+      "measured_today": true,
+      "note": "Wave-3 batch-7 contended sweep (wave3_batch7_20260708T232544Z): 8/8 files measured, 0 full-axis timeouts, 0 truncations/errors, measured cliff throughput row (36.90x aggregate). Contended run (loadavg1=7.95), so this is a pessimistic visibility ratchet rather than an authoritative near-C claim.",
+      "full_axis": {
+        "max_timeouts": 0,
+        "max_errors": 0,
+        "max_ratio_by_total": 47,
+        "max_ratio_median_of_files": 6.8,
+        "observed_ratio_by_total": 36.9022,
+        "observed_ratio_median_of_files": 5.41073
+      },
+      "noedit_axis": {
+        "max_timeouts": 0,
+        "max_errors": 0,
+        "max_ratio_by_total": 1.0,
+        "observed_ratio_by_total": 0.000148796
+      }
+    },
+    "ebnf": {
+      "status": "green_with_caveat",
+      "wave3_batch7": true,
+      "measured_today": true,
+      "note": "Wave-3 batch-7 contended sweep (wave3_batch7_20260708T232544Z): 8/8 files measured, 0 full-axis timeouts, 0 truncations/errors, measured >2x throughput row (2.63x aggregate). Contended run (loadavg1=7.95), so this is a pessimistic visibility ratchet rather than an authoritative near-C claim.",
+      "full_axis": {
+        "max_timeouts": 0,
+        "max_errors": 0,
+        "max_ratio_by_total": 3.3,
+        "max_ratio_median_of_files": 2.8,
+        "observed_ratio_by_total": 2.62963,
+        "observed_ratio_median_of_files": 2.16817
+      },
+      "noedit_axis": {
+        "max_timeouts": 0,
+        "max_errors": 0,
+        "max_ratio_by_total": 1.0,
+        "observed_ratio_by_total": 3.70695e-06
+      }
+    },
+    "editorconfig": {
+      "status": "green_with_caveat",
+      "wave3_batch7": true,
+      "measured_today": true,
+      "note": "Wave-3 batch-7 contended sweep (wave3_batch7_20260708T232544Z): only 1 file selected by the corpus lock, 0 full-axis timeouts, 0 truncations/errors, measured >2x throughput row (2.22x aggregate). Contended run (loadavg1=7.95), so this is a pessimistic visibility ratchet rather than an authoritative near-C claim.",
+      "full_axis": {
+        "max_timeouts": 0,
+        "max_errors": 0,
+        "max_ratio_by_total": 2.8,
+        "max_ratio_median_of_files": 2.8,
+        "observed_ratio_by_total": 2.21512,
+        "observed_ratio_median_of_files": 2.21512
+      },
+      "noedit_axis": {
+        "max_timeouts": 0,
+        "max_errors": 0,
+        "max_ratio_by_total": 1.0,
+        "observed_ratio_by_total": 0.0101954
+      }
+    },
+    "eds": {
+      "status": "green_with_caveat",
+      "wave3_batch7": true,
+      "measured_today": true,
+      "note": "Wave-3 batch-7 contended sweep (wave3_batch7_20260708T232544Z): only 1 file selected by the corpus lock, 0 full-axis timeouts, 0 truncations/errors, measured cliff throughput row (12.46x aggregate). Contended run (loadavg1=7.95), so this is a pessimistic visibility ratchet rather than an authoritative near-C claim.",
+      "full_axis": {
+        "max_timeouts": 0,
+        "max_errors": 0,
+        "max_ratio_by_total": 16,
+        "max_ratio_median_of_files": 16,
+        "observed_ratio_by_total": 12.4579,
+        "observed_ratio_median_of_files": 12.4579
+      },
+      "noedit_axis": {
+        "max_timeouts": 0,
+        "max_errors": 0,
+        "max_ratio_by_total": 1.0,
+        "observed_ratio_by_total": 5.7217e-06
+      }
+    },
+    "eex": {
+      "status": "green",
+      "wave3_batch7": true,
+      "measured_today": true,
+      "note": "Wave-3 batch-7 contended sweep (wave3_batch7_20260708T232544Z): 8/8 files measured, 0 full-axis timeouts, 0 truncations/errors, full parse within <=2x. Contended run (loadavg1=7.95), so this is a pessimistic visibility ratchet rather than an authoritative near-C claim.",
+      "full_axis": {
+        "max_timeouts": 0,
+        "max_errors": 0,
+        "max_ratio_by_total": 1.6,
+        "max_ratio_median_of_files": 1.8,
+        "observed_ratio_by_total": 1.20447,
+        "observed_ratio_median_of_files": 1.431
+      },
+      "noedit_axis": {
+        "max_timeouts": 0,
+        "max_errors": 0,
+        "max_ratio_by_total": 1.0,
+        "observed_ratio_by_total": 0.000171748
+      }
+    },
+    "elisp": {
+      "status": "green_with_caveat",
+      "wave3_batch7": true,
+      "measured_today": true,
+      "note": "Wave-3 batch-7 contended sweep (wave3_batch7_20260708T232544Z): 8/8 files measured, 0 full-axis timeouts, 0 truncations/errors, measured >2x throughput row (3.87x aggregate). Contended run (loadavg1=7.95), so this is a pessimistic visibility ratchet rather than an authoritative near-C claim.",
+      "full_axis": {
+        "max_timeouts": 0,
+        "max_errors": 0,
+        "max_ratio_by_total": 5.0,
+        "max_ratio_median_of_files": 2.3,
+        "observed_ratio_by_total": 3.87346,
+        "observed_ratio_median_of_files": 1.80715
+      },
+      "noedit_axis": {
+        "max_timeouts": 0,
+        "max_errors": 0,
+        "max_ratio_by_total": 1.0,
+        "observed_ratio_by_total": 2.7667e-05
+      }
+    },
+    "elsa": {
+      "status": "green_with_caveat",
+      "wave3_batch7": true,
+      "measured_today": true,
+      "note": "Wave-3 batch-7 contended sweep (wave3_batch7_20260708T232544Z): 8/8 files measured, 0 full-axis timeouts, 0 truncations/errors, measured cliff throughput row (11.39x aggregate). Contended run (loadavg1=7.95), so this is a pessimistic visibility ratchet rather than an authoritative near-C claim.",
+      "full_axis": {
+        "max_timeouts": 0,
+        "max_errors": 0,
+        "max_ratio_by_total": 15,
+        "max_ratio_median_of_files": 2.5,
+        "observed_ratio_by_total": 11.3879,
+        "observed_ratio_median_of_files": 1.93767
+      },
+      "noedit_axis": {
+        "max_timeouts": 0,
+        "max_errors": 0,
+        "max_ratio_by_total": 1.0,
+        "observed_ratio_by_total": 0.000241602
+      }
+    },
+    "embedded_template": {
+      "status": "green",
+      "wave3_batch7": true,
+      "measured_today": true,
+      "note": "Wave-3 batch-7 contended sweep (wave3_batch7_20260708T232544Z): 8/8 files measured, 0 full-axis timeouts, 0 truncations/errors, full parse within <=2x. Contended run (loadavg1=7.95), so this is a pessimistic visibility ratchet rather than an authoritative near-C claim.",
+      "full_axis": {
+        "max_timeouts": 0,
+        "max_errors": 0,
+        "max_ratio_by_total": 1.6,
+        "max_ratio_median_of_files": 1.7,
+        "observed_ratio_by_total": 1.25422,
+        "observed_ratio_median_of_files": 1.32337
+      },
+      "noedit_axis": {
+        "max_timeouts": 0,
+        "max_errors": 0,
+        "max_ratio_by_total": 1.0,
+        "observed_ratio_by_total": 0.000337905
+      }
+    },
+    "enforce": {
+      "status": "green_with_caveat",
+      "wave3_batch7": true,
+      "measured_today": true,
+      "note": "Wave-3 batch-7 contended sweep (wave3_batch7_20260708T232544Z): 8/8 files measured, 2 full-axis timeouts, 0 truncations/errors, severe measured cliff row with 2 full-axis timeouts. Contended run (loadavg1=7.95), so this is a pessimistic visibility ratchet rather than an authoritative near-C claim.",
+      "full_axis": {
+        "max_timeouts": 2,
+        "max_errors": 0,
+        "max_ratio_by_total": 57,
+        "max_ratio_median_of_files": 23,
+        "observed_ratio_by_total": 45.1071,
+        "observed_ratio_median_of_files": 17.9307
+      },
+      "noedit_axis": {
+        "max_timeouts": 2,
+        "max_errors": 0,
+        "max_ratio_by_total": 1.0,
+        "observed_ratio_by_total": 0.00123249
       }
     }
   },
