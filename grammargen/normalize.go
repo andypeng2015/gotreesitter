@@ -3363,7 +3363,64 @@ func isPlainVisibleNamedLeafStringLiteral(g *Grammar, s string) bool {
 	if g != nil && g.Word != "" {
 		return false
 	}
-	return isLowercaseIdentifierLikeKeywordLiteral(s)
+	if isLowercaseIdentifierLikeKeywordLiteral(s) {
+		return true
+	}
+	// Whether a visible bare-string rule collapses into a plain named
+	// terminal (vs. wrapping the anonymous string token in a nonterminal
+	// production) is actually decided by ownership, not shape: it collapses
+	// when this rule is the only named rule with this exact string value
+	// and the value never appears bare elsewhere in the grammar (both
+	// already enforced by this function's caller, plainVisibleStringTokenRules,
+	// via candidatesByValue/anonymousSources). The punctuation and
+	// lowercase-identifier buckets above only special-case the two shapes
+	// most commonly seen in practice. CSS's `!important` (punctuation
+	// prefix + identifier-like tail: neither pure punctuation nor a
+	// lowercase identifier) falls through both but still collapses under
+	// tree-sitter's C compiler — confirmed against the C oracle, where
+	// `important: $ => '!important'` produces a 0-child named leaf, not a
+	// wrapper. Extend eligibility to that specific shape — a run of safe
+	// punctuation immediately followed by a lowercase-identifier-like tail
+	// — without widening the bar for other shapes (e.g. a rule whose value
+	// merely differs from an all-lowercase identifier by case, like "True",
+	// deliberately keeps its wrapper; see
+	// TestCapitalizedPlainStringRuleStaysWrapper).
+	return isPunctuationPrefixedLowercaseIdentifierLiteral(s)
+}
+
+// isPunctuationPrefixedLowercaseIdentifierLiteral reports whether s is a
+// non-empty run of "safe" punctuation runes (see isSafePlainPunctuationLiteral)
+// immediately followed by a non-empty lowercase-identifier-like tail (see
+// isLowercaseIdentifierLikeKeywordLiteral) — e.g. CSS's "!important".
+func isPunctuationPrefixedLowercaseIdentifierLiteral(s string) bool {
+	i := 0
+	for i < len(s) {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if r == utf8.RuneError && size <= 1 {
+			return false
+		}
+		if !isSafePunctuationRune(r) {
+			break
+		}
+		i += size
+	}
+	if i == 0 || i >= len(s) {
+		return false
+	}
+	return isLowercaseIdentifierLikeKeywordLiteral(s[i:])
+}
+
+// isSafePunctuationRune reports whether r is safe to use as (part of) a bare
+// literal name, mirroring isSafePlainPunctuationLiteral's character class.
+func isSafePunctuationRune(r rune) bool {
+	if r > unicode.MaxASCII || unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' || unicode.IsSpace(r) || unicode.IsControl(r) {
+		return false
+	}
+	switch r {
+	case '"', '\'', '`', '\\':
+		return false
+	}
+	return true
 }
 
 func isBackslashEscapedNamedLeafLiteral(s string) bool {
@@ -3860,19 +3917,55 @@ func enumerateAlternatives(r *Rule) [][]*rhsElement {
 		if len(r.Children) == 0 {
 			return [][]*rhsElement{{}}
 		}
-		// Enumerate alternatives inside the alias, tagging each with the alias name.
-		// The outer alias must override any inner alias metadata; otherwise nested
-		// alias forms like alias(_jsx_identifier, "property_identifier") let the
-		// inner alias on _jsx_identifier shadow the outer one and lose the
-		// intended surface node type after default-alias cleanup.
+		// A direct chain of alias() wrappers with nothing else in between
+		// collapses to a single alias: the outermost name/named wins and any
+		// intermediate alias name is discarded entirely, exactly like
+		// tree-sitter's C compiler merges consecutive alias-metadata
+		// wrappers rather than representing them as two separate steps.
+		//
+		//   alias(alias(x, "a"), "b")  ==  alias(x, "b")
+		//
+		// Grammars occasionally write this directly. It is also the shape
+		// substituteInlineRefsDepth deliberately normalizes SetInline'd
+		// hidden-rule references down to (via stripAliases) before this
+		// case ever sees them, so alias(_jsx_identifier-style,
+		// "property_identifier") — where _jsx_identifier is itself a bare
+		// rule/symbol reference, not an inline alias() — keeps working via
+		// the generic path below (a symbol reference flattens to a single
+		// untagged element here; its own internal aliasing lives on its own
+		// productions, not on this element).
+		if content := r.Children[0]; content.Kind == RuleAlias {
+			collapsed := &Rule{Kind: RuleAlias, Value: r.Value, Named: r.Named, Children: content.Children}
+			return enumerateAlternatives(collapsed)
+		}
+
+		// Enumerate alternatives inside the content, tagging each resulting
+		// element with this alias's name/named — but only when the element
+		// doesn't already carry an alias of its own. tree-sitter's compiler
+		// attaches alias() to each production step produced by flattening
+		// its content; where flattening reaches a step that's already
+		// aliased by an explicit nested alias() reachable through
+		// choice/seq structure, that inner alias is what actually displays
+		// and the outer alias is dropped for that step entirely (not
+		// merged, not overridden by the outer one) — a single alias() call
+		// cannot rename a step that already names itself without
+		// synthesizing a new hidden wrapper symbol, which tree-sitter does
+		// not do for plain choice/seq content. This is why, for example,
+		// SQL's alias(choice(alias(/asc/i,"ASC"), alias(/desc/i,"DESC")),
+		// $.order) never produces an "order" wrapper node: both choice arms
+		// already name themselves, so "order" has nothing left to attach
+		// to. Steps with no alias of their own still receive this alias
+		// normally.
 		innerAlts := enumerateAlternatives(r.Children[0])
 		var result [][]*rhsElement
 		for _, alt := range innerAlts {
 			tagged := make([]*rhsElement, len(alt))
 			for i, elem := range alt {
 				cp := *elem
-				cp.aliasName = r.Value
-				cp.aliasNamed = r.Named
+				if cp.aliasName == "" {
+					cp.aliasName = r.Value
+					cp.aliasNamed = r.Named
+				}
 				tagged[i] = &cp
 			}
 			result = append(result, tagged)
@@ -5092,12 +5185,37 @@ func choiceWidth(r *Rule) int {
 // prevent Cartesian product explosion in grammars with deep inline chains
 // (e.g. Haskell with 17 nested chains across 51 inline rules).
 func substituteInlineRefs(r *Rule, inlineBodies map[string]*Rule) *Rule {
-	return substituteInlineRefsDepth(r, inlineBodies, 0)
+	return substituteInlineRefsDepth(r, inlineBodies, 0, false)
 }
 
 const maxInlineSubstDepth = 2
 
-func substituteInlineRefsDepth(r *Rule, inlineBodies map[string]*Rule, depth int) *Rule {
+// substituteInlineRefsDepth replaces RuleSymbol references to inline rules
+// with (a clone of) the referenced rule's body.
+//
+// insideAlias tracks whether this call is processing content reachable
+// (through any amount of Choice/Seq/Field/Prec/etc. wrapping) from inside an
+// Alias node's content, within the current rule body. When a symbol
+// reference is substituted in that context, any ALIAS nodes inside the
+// substituted clone are stripped (see stripAliases): grammargen's SetInline
+// mechanism eagerly splices a hidden rule's body into every call site
+// *before* alias resolution runs, but real tree-sitter never does this —
+// hidden nonterminals stay distinct grammar symbols all the way through
+// table construction, so an enclosing alias() cleanly renames that one
+// symbol occurrence regardless of the referenced rule's own internal
+// structure or aliasing (see e.g. real-world
+// alias($._jsx_identifier, $.property_identifier), where _jsx_identifier's
+// own choice aliases one of its two arms to "identifier" — that inner alias
+// must never be allowed to compete with the outer "property_identifier").
+// Without this stripping, inlining artificially recreates the exact
+// "alias(choice(alias(...), ...), outer)" shape that a genuinely
+// hand-written nested alias() would use — and that shape intentionally lets
+// an inner alias win over the outer one (see enumerateAlternatives's
+// RuleAlias case). Stripping keeps the two cases distinguishable: real
+// nested alias() syntax collapses per tree-sitter's own rule, while
+// SetInline-introduced structure stays fully transparent to the enclosing
+// alias, exactly as an un-inlined symbol reference would have been.
+func substituteInlineRefsDepth(r *Rule, inlineBodies map[string]*Rule, depth int, insideAlias bool) *Rule {
 	if r == nil {
 		return nil
 	}
@@ -5107,7 +5225,10 @@ func substituteInlineRefsDepth(r *Rule, inlineBodies map[string]*Rule, depth int
 			// Recursively substitute nested inline refs up to a bounded
 			// depth to avoid exponential production explosion.
 			if depth < maxInlineSubstDepth {
-				return substituteInlineRefsDepth(clone, inlineBodies, depth+1)
+				clone = substituteInlineRefsDepth(clone, inlineBodies, depth+1, insideAlias)
+			}
+			if insideAlias {
+				clone = stripAliases(clone)
 			}
 			return clone
 		}
@@ -5118,8 +5239,36 @@ func substituteInlineRefsDepth(r *Rule, inlineBodies map[string]*Rule, depth int
 	}
 	out := *r
 	out.Children = make([]*Rule, len(r.Children))
+	childInsideAlias := insideAlias || r.Kind == RuleAlias
 	for i, c := range r.Children {
-		out.Children[i] = substituteInlineRefsDepth(c, inlineBodies, depth)
+		out.Children[i] = substituteInlineRefsDepth(c, inlineBodies, depth, childInsideAlias)
+	}
+	return &out
+}
+
+// stripAliases recursively removes ALIAS wrapping from r, keeping the
+// aliased content but discarding the alias name/named annotation. Used when
+// inline-substituting a symbol reference that sits inside an enclosing
+// alias()'s content, so the referenced rule's own internal aliasing can't
+// compete with the enclosing alias for the same production step (see
+// substituteInlineRefsDepth).
+func stripAliases(r *Rule) *Rule {
+	if r == nil {
+		return nil
+	}
+	if r.Kind == RuleAlias {
+		if len(r.Children) == 0 {
+			return r
+		}
+		return stripAliases(r.Children[0])
+	}
+	if len(r.Children) == 0 {
+		return r
+	}
+	out := *r
+	out.Children = make([]*Rule, len(r.Children))
+	for i, c := range r.Children {
+		out.Children[i] = stripAliases(c)
 	}
 	return &out
 }
