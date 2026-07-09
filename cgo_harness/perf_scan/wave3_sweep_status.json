@@ -1,10 +1,10 @@
 {
   "schema": "gts-wave3-perf-sweep-status/v1",
-  "generated_at": "2026-07-09T12:34:02Z",
+  "generated_at": "2026-07-09T13:44:36Z",
   "budget_path": "perf_scan/perf_ratio_budgets.json",
   "fleet_path": "tier_scan/exts.tsv",
-  "budget_generated_at": "2026-07-09T12:32:58Z",
-  "budget_generated_by": "wave-3 fleet perf sweep ratchet pass, branch wave3/lua-csharp-pending-resweep, extending pending-row refreshes with strict-basis lua and c_sharp measurements",
+  "budget_generated_at": "2026-07-09T13:43:36Z",
+  "budget_generated_by": "wave-3 fleet perf sweep ratchet pass, branch wave3/rust-swift-pending-resweep, extending pending-row refreshes with strict-basis rust and swift measurements",
   "measurement_basis": {
     "reps": 5,
     "warmup": 1,
@@ -26,7 +26,7 @@
     "known_budget_class_gaps": 4,
     "wave2b_pending_budgets": 11,
     "scoped_heldout_budgets": 1,
-    "measured_today_budgets": 199,
+    "measured_today_budgets": 201,
     "partial_measured_today_budgets": 1
   },
   "held_out_languages": [
@@ -64,6 +64,8 @@
     "wave3_pending_java_strict_20260709T121147Z",
     "wave3_pending_kotlin_strict_20260709T121258Z",
     "wave3_pending_lua_strict_20260709T122826Z",
+    "wave3_pending_rust_strict_20260709T133345Z",
+    "wave3_pending_swift_strict_20260709T133944Z",
     "wave3_scoped_d_exclude_expressionsem_20260709T103336Z",
     "wave3_scoped_fsharp_exclude_providedtypes_20260709T103723Z",
     "wave3_scoped_groovy_exclude_pleac11_20260709T103612Z",
