@@ -36,14 +36,19 @@ var paritySkips = map[string]parityMeta{
 
 // knownDegradedStructural tracks currently non-parity structural languages
 // within the full-coverage gate. Keep this list shrinking over time.
+//
+// Every entry here MUST still actually diverge from the C reference parser.
+// TestParityKnownDegradedStructuralStillDiverges (parity_gate_ratchet_test.go)
+// re-parses each entry's smoke sample against the C oracle in the exhaustive
+// lane and fails the build if a listed language unexpectedly passes, so this
+// map can only shrink truthfully going forward.
 var knownDegradedStructural = map[string]string{
-	"agda":    "named wrapper/runtime alias shape still diverges from C reference",
-	"apex":    "named wrapper/runtime alias shape still diverges from C reference",
-	"doxygen": "tier row IV-unknown: whole-block comment/error-root compatibility remains non-clean",
-	"hare":    "fresh parse structural parity still diverges from C reference",
-	"jsdoc":   "tier row IV-unknown: C-recovery/default ELS smoke sample still diverges from C reference",
-	"norg":    "tier row IV-scanner: scanner/version structural shape still diverges from C reference",
-	"rst":     "fresh parse structural parity still diverges from C reference",
+	// norg: fresh parse diverges from the C reference by 4 nodes — the Go
+	// parser collapses `_word` hidden wrapper nodes to ChildCount=0 where the
+	// C reference keeps a single child (see TestParityFreshParse/norg for the
+	// live divergence dump). Tracked as a genuine, unfixed scanner/version
+	// structural-shape gap; not yet assigned a fix owner.
+	"norg": "fresh parse structural parity still diverges from C reference (4 node divergences: _word hidden-wrapper ChildCount go=0 c=1)",
 }
 
 // knownDegradedNoErrorClean preserves no-error coverage for structural backlog
