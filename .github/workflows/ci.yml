@@ -493,39 +493,59 @@ jobs:
 
       - name: CGo Structural Parity Exhaustive (Fresh + No Errors + Issue3)
         run: |
-          cd cgo_harness
           GTS_PARITY_MODE=exhaustive \
-          go test . -tags treesitter_c_parity \
-            -run '^TestParityFreshParse$|^TestParityHasNoErrors$|^TestParityIssue3Repros$' \
-            -timeout=30m \
-            -count=1 -v
+          bash cgo_harness/docker/run_parity_in_docker.sh \
+            --label ci-parity-cgo-exhaustive-fresh \
+            --memory 8g \
+            --cpus 2 \
+            --pids 4096 \
+            --gomemlimit 6GiB \
+            --goflags -p=1 \
+            --test-parallel 1 \
+            --timeout 30m \
+            --run '^TestParityFreshParse$|^TestParityHasNoErrors$|^TestParityIssue3Repros$'
 
       - name: CGo Structural Parity Exhaustive (Incremental + GLR)
         run: |
-          cd cgo_harness
           GTS_PARITY_MODE=exhaustive \
-          go test . -tags treesitter_c_parity \
-            -run '^TestParityIncrementalParse$|^TestParityGLRCanaryGo$|^TestParityGLRCanarySet$|^TestParityGLRCapPressureTopLanguages$|^TestParityGateCoverageRatchet$' \
-            -timeout=30m \
-            -count=1 -v
+          bash cgo_harness/docker/run_parity_in_docker.sh \
+            --label ci-parity-cgo-exhaustive-incremental \
+            --memory 8g \
+            --cpus 2 \
+            --pids 4096 \
+            --gomemlimit 6GiB \
+            --goflags -p=1 \
+            --test-parallel 1 \
+            --timeout 30m \
+            --run '^TestParityIncrementalParse$|^TestParityGLRCanaryGo$|^TestParityGLRCanarySet$|^TestParityGLRCapPressureTopLanguages$|^TestParityGateCoverageRatchet$'
 
       - name: CGo Structural Parity Exhaustive (Corpus)
         run: |
-          cd cgo_harness
           GTS_PARITY_MODE=exhaustive \
-          go test . -tags treesitter_c_parity \
-            -run '^TestParityCorpusFreshParse$' \
-            -timeout=30m \
-            -count=1 -v
+          bash cgo_harness/docker/run_parity_in_docker.sh \
+            --label ci-parity-cgo-exhaustive-corpus \
+            --memory 8g \
+            --cpus 2 \
+            --pids 4096 \
+            --gomemlimit 6GiB \
+            --goflags -p=1 \
+            --test-parallel 1 \
+            --timeout 30m \
+            --run '^TestParityCorpusFreshParse$'
 
       - name: CGo Highlight + YAML Parity Exhaustive
         run: |
-          cd cgo_harness
           GTS_PARITY_MODE=exhaustive \
-          go test . -tags treesitter_c_parity \
-            -run '^TestParityHighlight$|^TestParityHighlightAllGrammars$|^TestParityYAMLCorpus$|^TestParityYAMLCorpusStructural$|^TestParityYAMLCorpusSummary$' \
-            -timeout=30m \
-            -count=1 -v
+          bash cgo_harness/docker/run_parity_in_docker.sh \
+            --label ci-parity-cgo-exhaustive-highlight-yaml \
+            --memory 8g \
+            --cpus 2 \
+            --pids 4096 \
+            --gomemlimit 6GiB \
+            --goflags -p=1 \
+            --test-parallel 1 \
+            --timeout 30m \
+            --run '^TestParityHighlight$|^TestParityHighlightAllGrammars$|^TestParityYAMLCorpus$|^TestParityYAMLCorpusStructural$|^TestParityYAMLCorpusSummary$'
 
   perf-regression:
     if: github.event_name == 'pull_request'
