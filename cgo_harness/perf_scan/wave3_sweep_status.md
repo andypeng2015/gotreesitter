@@ -1,10 +1,10 @@
 # Wave 3 Perf Sweep Status
 
-- generated_at: `2026-07-09T12:16:49Z`
+- generated_at: `2026-07-09T12:34:02Z`
 - budget: `perf_scan/perf_ratio_budgets.json`
 - fleet catalog: `tier_scan/exts.tsv`
-- budget_generated_at: `2026-07-09T12:14:40Z`
-- budget_generated_by: `wave-3 fleet perf sweep ratchet pass, branch wave3/pending-perf-resweep, extending the scoped-heldout ratchet with strict-basis cmake/java/kotlin pending-row refreshes`
+- budget_generated_at: `2026-07-09T12:32:58Z`
+- budget_generated_by: `wave-3 fleet perf sweep ratchet pass, branch wave3/lua-csharp-pending-resweep, extending pending-row refreshes with strict-basis lua and c_sharp measurements`
 
 ## Coverage
 
@@ -14,9 +14,9 @@
 | budgeted languages | 204 |
 | held out languages | 2 |
 | known budget class gaps | 4 |
-| wave2b pending budget rows | 12 |
+| wave2b pending budget rows | 11 |
 | scoped heldout budget rows | 1 |
-| measured-today budget rows | 197 |
+| measured-today budget rows | 199 |
 | partial measured-today notes | 1 |
 
 Measurement basis: `reps=5`, `warmup=1`, `file_budget_ms=10000`, `max_files=8`, `order=largest`, `axes=full,noedit`.
@@ -30,8 +30,8 @@ Held out of the ratchet: `d`, `fsharp`.
 | status | languages |
 |---|---:|
 | `green` | 50 |
-| `green_with_caveat` | 146 |
-| `wave2b_pending` | 8 |
+| `green_with_caveat` | 148 |
+| `wave2b_pending` | 6 |
 
 ## Known Gap Ledger
 
@@ -65,8 +65,10 @@ Held out of the ratchet: `d`, `fsharp`.
 - `wave3_batch6_doxygen_20260708T230104Z`
 - `wave3_batch7_20260708T232544Z`
 - `wave3_pending_cmake_strict_20260709T121109Z`
+- `wave3_pending_csharp_strict_20260709T122931Z`
 - `wave3_pending_java_strict_20260709T121147Z`
 - `wave3_pending_kotlin_strict_20260709T121258Z`
+- `wave3_pending_lua_strict_20260709T122826Z`
 - `wave3_scoped_d_exclude_expressionsem_20260709T103336Z`
 - `wave3_scoped_fsharp_exclude_providedtypes_20260709T103723Z`
 - `wave3_scoped_groovy_exclude_pleac11_20260709T103612Z`
