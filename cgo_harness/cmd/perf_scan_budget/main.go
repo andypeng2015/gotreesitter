@@ -41,8 +41,10 @@ type budgetLang struct {
 }
 
 type budgetAxis struct {
-	MaxTimeouts           int     `json:"max_timeouts"`
-	MaxErrors             *int    `json:"max_errors"`
+	MaxTimeouts           int  `json:"max_timeouts"`
+	MaxErrors             *int `json:"max_errors"`
+	MaxCReferenceFailures *int `json:"max_c_reference_failures,omitempty"`
+
 	MaxRatioByTotal       float64 `json:"max_ratio_by_total"`
 	MaxRatioMedianOfFiles float64 `json:"max_ratio_median_of_files"`
 }
@@ -203,6 +205,9 @@ func validateBudgetAxis(lang, axis string, b budgetAxis) []evalFinding {
 	if b.MaxErrors != nil && *b.MaxErrors < 0 {
 		out = append(out, evalFinding{Language: lang, Axis: axis, Metric: "max_errors", Got: fmt.Sprint(*b.MaxErrors), Want: ">=0"})
 	}
+	if b.MaxCReferenceFailures != nil && *b.MaxCReferenceFailures < 0 {
+		out = append(out, evalFinding{Language: lang, Axis: axis, Metric: "max_c_reference_failures", Got: fmt.Sprint(*b.MaxCReferenceFailures), Want: ">=0"})
+	}
 	if b.MaxRatioByTotal <= 0 {
 		out = append(out, evalFinding{Language: lang, Axis: axis, Metric: "max_ratio_by_total", Got: fmt.Sprintf("%.6g", b.MaxRatioByTotal), Want: ">0"})
 	}
@@ -305,8 +310,12 @@ func compareAxis(lang, axis string, budget budgetAxis, row scoreboardLang) []eva
 		out = append(out, evalFinding{Language: lang, Axis: axis, Metric: "go_errors", Got: fmt.Sprint(errors), Want: fmt.Sprintf("<=%d", *budget.MaxErrors)})
 	}
 	cProblems := countCProblems(row, axis)
-	if cProblems > 0 {
-		out = append(out, evalFinding{Language: lang, Axis: axis, Metric: "c_reference_failures", Got: fmt.Sprint(cProblems), Want: "0"})
+	maxCProblems := 0
+	if budget.MaxCReferenceFailures != nil {
+		maxCProblems = *budget.MaxCReferenceFailures
+	}
+	if cProblems > maxCProblems {
+		out = append(out, evalFinding{Language: lang, Axis: axis, Metric: "c_reference_failures", Got: fmt.Sprint(cProblems), Want: fmt.Sprintf("<=%d", maxCProblems)})
 	}
 	if budget.MaxRatioByTotal > 0 && actual.RatioByTotal > budget.MaxRatioByTotal {
 		out = append(out, evalFinding{Language: lang, Axis: axis, Metric: "ratio_by_total", Got: fmt.Sprintf("%.4fx", actual.RatioByTotal), Want: fmt.Sprintf("<=%.4fx", budget.MaxRatioByTotal)})

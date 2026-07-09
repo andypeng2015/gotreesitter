@@ -42,9 +42,9 @@
     "wave3_batch1_20260708T202820Z": "first Wave-3 fleet batch on HEAD edf04d84, Docker-isolated with the ratchet basis (largest-8, reps=5, warmup=1, file_budget=10000ms, axes full/noedit), languages c/css/html/sql/toml/yaml/zig/elixir/graphql/hcl. SQL is intentionally NOT budgeted from this run because its child exited early with signal:killed after 4/8 files and the Docker wrapper reported oom_killed=true; keep it as a measured ledger item until a complete row or an explicit language-status budget policy exists.",
     "wave3_batch2_20260708T211248Z": "second Wave-3 fleet batch on HEAD 3426d5f9, Docker-isolated with the ratchet basis (largest-8, reps=5, warmup=1, file_budget=10000ms, axes full/noedit), languages nix/dart/elm/erlang/gomod/ini/json5/julia/make/markdown. All ten language subprocesses completed; dart and julia retain explicit timeout budgets, julia also retains flagged truncation/error budgets, and json5/ini are thin-corpus rows rather than broad coverage claims.",
     "wave3_batch3_20260708T213644Z": "third Wave-3 fleet batch on HEAD 06e2b8e9, Docker-isolated with the ratchet basis (largest-8, reps=5, warmup=1, file_budget=10000ms, axes full/noedit), languages ada/agda/angular/apex/arduino/asm/astro/authzed/awk/cobol. All ten language subprocesses completed; angular and asm retain explicit timeout budgets, ada/angular/asm/awk are measured cliff backlog rows, and cobol is now cleanly budgeted at <=2x.",
-    "wave3_batch4_20260708T215550Z": "fourth Wave-3 fleet batch on HEAD 60098b81, Docker-isolated with the ratchet basis (largest-8, reps=5, warmup=1, file_budget=10000ms, axes full/noedit), languages bass/beancount/bibtex/bicep/bitbake/blade/brightscript/caddy/cairo/capnp, plus supplemental chatito run wave3_batch4_chatito_20260708T220456Z. All subprocesses completed; bicep is intentionally not budgeted because one selected file hit a C reference timeout, bass retains one flagged truncation/error budget, bitbake retains explicit timeout budgets, and chatito is a thin-corpus one-file row.",
+    "wave3_batch4_20260708T215550Z": "fourth Wave-3 fleet batch on HEAD 60098b81, Docker-isolated with the ratchet basis (largest-8, reps=5, warmup=1, file_budget=10000ms, axes full/noedit), languages bass/beancount/bibtex/bicep/bitbake/blade/brightscript/caddy/cairo/capnp, plus supplemental chatito run wave3_batch4_chatito_20260708T220456Z. All subprocesses completed; bicep had one selected file hit a C reference timeout and is now budgeted with an explicit max_c_reference_failures allowance, bass retains one flagged truncation/error budget, bitbake retains explicit timeout budgets, and chatito is a thin-corpus one-file row.",
     "wave3_batch5_20260708T222227Z": "fifth Wave-3 fleet batch on HEAD 2f5c82f2, Docker-isolated with the ratchet basis (largest-8, reps=5, warmup=1, file_budget=10000ms, axes full/noedit), languages circom/clojure/comment/commonlisp/cooklang/corn/cpon/csv/cuda/cue. All ten language subprocesses completed with no C-reference failures; circom/commonlisp/cooklang retain explicit timeout budgets, cooklang is an all-timeout/node-limit row, comment is clean <=2x, and the remaining rows are measured >2x or cliff throughput backlog rows.",
-    "wave3_batch6_20260708T224850Z": "sixth Wave-3 fleet batch on HEAD 42aa02f9, Docker-isolated with the ratchet basis (largest-8, reps=5, warmup=1, file_budget=10000ms, axes full/noedit), main run languages bicep/cylc/d/desktop/devicetree/dhall/diff/disassembly/djot/dockerfile plus supplemental dot and doxygen runs. bicep is intentionally not budgeted because one selected file hit a C reference timeout again; d is intentionally not budgeted because both the batch run and a one-language rerun produced child signal:killed with Docker oom_killed=true. Budgeted rows are cylc/desktop/devicetree/dhall/diff/disassembly/djot/dockerfile/dot/doxygen; disassembly retains an all-timeout budget row, and djot/doxygen retain explicit go_error budgets.",
+    "wave3_batch6_20260708T224850Z": "sixth Wave-3 fleet batch on HEAD 42aa02f9, Docker-isolated with the ratchet basis (largest-8, reps=5, warmup=1, file_budget=10000ms, axes full/noedit), main run languages bicep/cylc/d/desktop/devicetree/dhall/diff/disassembly/djot/dockerfile plus supplemental dot and doxygen runs. bicep is budgeted from this run with one explicit C-reference timeout allowance; d is intentionally not budgeted because both the batch run and a one-language rerun produced child signal:killed with Docker oom_killed=true. Budgeted rows are bicep/cylc/desktop/devicetree/dhall/diff/disassembly/djot/dockerfile/dot/doxygen; disassembly retains an all-timeout budget row, and djot/doxygen retain explicit go_error budgets.",
     "wave3_batch6_dot_20260708T225933Z": "supplemental Wave-3 batch-6 dot run on HEAD 42aa02f9, Docker-isolated with the ratchet basis (largest-8, reps=5, warmup=1, file_budget=10000ms, axes full/noedit). Added as a clean replacement row after d reproduced a one-language Docker OOM.",
     "wave3_batch6_doxygen_20260708T230104Z": "supplemental Wave-3 batch-6 doxygen run on HEAD 42aa02f9, Docker-isolated with the ratchet basis (largest-8, reps=5, warmup=1, file_budget=10000ms, axes full/noedit). Added as a replacement row after bicep repeated a C-reference timeout; doxygen retains explicit go_error budgets.",
     "wave3_batch7_20260708T232544Z": "seventh Wave-3 fleet batch, Docker-isolated with the ratchet basis (largest-8, reps=5, warmup=1, file_budget=10000ms, axes full/noedit), languages dtd/earthfile/ebnf/editorconfig/eds/eex/elisp/elsa/embedded_template/enforce. This run was harness-flagged as contended (loadavg1=7.95), so these rows are visibility ratchets with pessimistic caveats rather than authoritative near-C claims; dtd/editorconfig/eds are thin-corpus rows and enforce retains explicit timeout budgets.",
@@ -1043,6 +1043,29 @@
         "max_errors": 0,
         "max_ratio_by_total": 1.0,
         "observed_ratio_by_total": 0.000659
+      }
+    },
+    "bicep": {
+      "status": "green_with_caveat",
+      "wave3_batch6": true,
+      "measured_today": true,
+      "note": "Wave-3 batch-6 authoritative sweep (wave3_batch6_20260708T224850Z): 8 files selected; 7 files completed cleanly and one invalid-resource fixture, src/Bicep.Core.Samples/Files/baselines/InvalidResources_CRLF/main.syntax.bicep, hit a C reference timeout on both full and noedit base parse. This row ratchets the Go-side result and keeps the C oracle/workload failure explicit via max_c_reference_failures instead of leaving bicep unbudgeted.",
+      "full_axis": {
+        "max_timeouts": 0,
+        "max_errors": 0,
+        "max_c_reference_failures": 1,
+        "max_ratio_by_total": 1.0,
+        "max_ratio_median_of_files": 2.1,
+        "observed_ratio_by_total": 0.513,
+        "observed_ratio_median_of_files": 1.601
+      },
+      "noedit_axis": {
+        "max_timeouts": 0,
+        "max_errors": 0,
+        "max_c_reference_failures": 1,
+        "max_ratio_by_total": 1.0,
+        "observed_ratio_by_total": 0.0000000204,
+        "observed_ratio_median_of_files": 0.00904
       }
     },
     "bitbake": {
@@ -3966,16 +3989,6 @@
       },
       "suspected_class": "candidate severe memory variant of population explosion or repetition-shift fork cascade; severity is higher than ordinary timeout backlog because it escapes a 6GiB hard cgroup",
       "action": "dedicated isolated single-file RCA, first confirming the exact selected file; do not rerun fsharp broad sweeps without a disposable hard memory bound and process-level watchdog"
-    },
-    "bicep_c_reference_timeout": {
-      "file": "bicep corpus largest-file selection from wave3_batch4 and wave3_batch6",
-      "backlog_ref": "wave3_batch4_20260708T215550Z and wave3_batch6_20260708T224850Z seed notes; intentionally not added to languages because the selected workload hit a C reference timeout",
-      "observed": {
-        "wave3_batch4": "one selected file hit a C reference timeout",
-        "wave3_batch6": "supplemental bicep rerun repeated a C reference timeout"
-      },
-      "suspected_class": "C oracle/workload issue rather than a Go-vs-C ratio budget row",
-      "action": "rerun bicep with a narrowed or replacement corpus selection, or add explicit C-reference failure policy before ratcheting"
     },
     "d_docker_oom": {
       "file": "d corpus largest-file selection from wave3_batch6",

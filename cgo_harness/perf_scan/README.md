@@ -195,10 +195,12 @@ GOWORK=off go run ./cmd/perf_scan_budget \
 ```
 
 The checker gates `ratio_by_total`, optional `ratio_median_of_files`,
-`go_timeout` counts, and Go-side error/truncation counts. It also rejects C
-reference failures and, by default, requires the scoreboard's structured
-measurement knobs (`reps`, `warmup`, `file_budget_ms`, `max_files`, `order`,
-and axes) to match the budget metadata.
+`go_timeout` counts, and Go-side error/truncation counts. It rejects C
+reference failures by default; a language row can opt into an explicit
+`max_c_reference_failures` allowance when the workload's C oracle itself is
+the known failure being ratcheted. By default, the checker also requires the
+scoreboard's structured measurement knobs (`reps`, `warmup`, `file_budget_ms`,
+`max_files`, `order`, and axes) to match the budget metadata.
 
 ## Phase 2 (documented, not built)
 
