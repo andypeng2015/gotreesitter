@@ -93,6 +93,21 @@ func TestCompareScoreboardReportsCReferenceFailure(t *testing.T) {
 	}
 }
 
+func TestCompareScoreboardAllowsExplicitCReferenceFailureBudget(t *testing.T) {
+	b := testBudget()
+	lang := b.Languages["go"]
+	lang.FullAxis.MaxCReferenceFailures = intPtr(1)
+	b.Languages["go"] = lang
+
+	s := testScoreboard(2.5, 0, 0)
+	s.Languages[0].Files[0].Axes[axisFull] = scoreboardFileAxis{Status: "c_timeout"}
+
+	findings := compareScoreboard(b, s, compareOptions{StrictConfig: true})
+	if len(findings) != 0 {
+		t.Fatalf("explicit C-reference failure budget should pass: %#v", findings)
+	}
+}
+
 func TestCompareScoreboardCountsDefensiveTruncationStatus(t *testing.T) {
 	b := testBudget()
 	s := testScoreboard(2.5, 0, 0)
