@@ -1,10 +1,10 @@
 # Wave 3 Perf Sweep Status
 
-- generated_at: `2026-07-09T14:21:00Z`
+- generated_at: `2026-07-09T14:43:47Z`
 - budget: `perf_scan/perf_ratio_budgets.json`
 - fleet catalog: `tier_scan/exts.tsv`
-- budget_generated_at: `2026-07-09T14:20:11Z`
-- budget_generated_by: `wave-3 fleet perf sweep ratchet pass, branch wave3/typescript-pending-resweep, extending pending-row refreshes with strict-basis typescript timing evidence while preserving the known webworker oracle caveat`
+- budget_generated_at: `2026-07-09T14:38:55Z`
+- budget_generated_by: `wave-3 fleet perf sweep ratchet pass, branch wave3/javascript-pending-resweep, tightening the JavaScript pending row after strict-basis timing evidence reduced Go timeouts to the remaining poppler.js cliff`
 
 ## Coverage
 

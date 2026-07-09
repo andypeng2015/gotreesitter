@@ -19,8 +19,8 @@
     "removing exclusions is a tightening operation."
   ],
   "schema": "gts-perf-ratio-budgets/v1",
-  "generated_at": "2026-07-09T14:20:11Z",
-  "generated_by": "wave-3 fleet perf sweep ratchet pass, branch wave3/typescript-pending-resweep, extending pending-row refreshes with strict-basis typescript timing evidence while preserving the known webworker oracle caveat",
+  "generated_at": "2026-07-09T14:38:55Z",
+  "generated_by": "wave-3 fleet perf sweep ratchet pass, branch wave3/javascript-pending-resweep, tightening the JavaScript pending row after strict-basis timing evidence reduced Go timeouts to the remaining poppler.js cliff",
   "measurement_basis": {
     "harness": "cgo_harness/perf_scan (TestPerfScanSweep / TestPerfScanLanguage, tags treesitter_c_parity treesitter_c_perfscan)",
     "corpus_root": "/home/draco/work/gotreesitter-corpora/corpus_sources (real upstream per-language checkouts, largest-8-files sampling -- deliberately adversarial, hunts cliffs, NOT representative of typical file size)",
@@ -433,18 +433,18 @@
       "status": "wave2b_pending",
       "wave2b_pending": true,
       "measured_today": true,
-      "note": "FRESH re-sweep this pass (clean/uncontended box, post-arena-fix): 3/8 ok, 5 go_timeout, 0 truncation. deps/undici/undici.js (774KB) now reliably completes (18.0x this run) -- a genuine, reproducible transition, unchanged from the wave-1 snapshot. deps/v8/test/mjsunit/{asm,wasm}/embenchen/box2d.js and lua_binarytrees.js STILL hit go_timeout with reason=memory_budget on every rep despite the wave-2a arena fix (-27% arena bytes); deps/v8/test/mjsunit/asm/poppler/poppler.js still hits a raw wall-clock timeout (reason=timeout, not memory) -- C itself takes ~2s on this file, so it is a genuine throughput cliff, not a budget cliff. The wave-2a arena fix's own validation (pr142-evidence.md: 'javascript asm.js memory_budget ... 120k-stmt witness completes at default budget') was against a synthetic stress witness plus jquery, not these specific real-corpus giants -- this pass's finding is that the real-corpus worst files are NOT yet resolved by that fix and remain a distinct wave-2b item.",
+      "note": "Strict Wave-3 re-sweep (wave3_pending_javascript_strict_20260709T143849Z; Docker artifact 20260709T143850Z-wave3-pending-javascript-strict-ratchet): 8/8 selected, 7/8 full-axis completions, 1 Go timeout, 0 errors/truncations. deps/v8/test/mjsunit/asm/poppler/poppler.js still hits the 10s raw wall-clock budget while C takes about 2.05s, so it remains a genuine throughput cliff. deps/v8/test/mjsunit/{asm,wasm}/embenchen/{box2d,lua_binarytrees}.js now complete under the strict budget, replacing the old memory-budget timeout class, but wasm box2d (13.86x) and wasm lua_binarytrees (12.49x) keep the language in wave2b_pending. This row is now a narrowed performance-cliff ledger, not a silent truncation/OOM row.",
       "full_axis": {
-        "max_timeouts": 5,
+        "max_timeouts": 1,
         "max_errors": 0,
-        "max_ratio_by_total": 18,
-        "observed_ratio_by_total": 14.402,
-        "observed_ratio_median_of_files": 12.521
+        "max_ratio_by_total": 12,
+        "observed_ratio_by_total": 10.464,
+        "observed_ratio_median_of_files": 9.262
       },
       "noedit_axis": {
-        "max_timeouts": 5,
+        "max_timeouts": 1,
         "max_ratio_by_total": 1.0,
-        "observed_ratio_by_total": 0.000034
+        "observed_ratio_by_total": 0.000508
       }
     },
     "c": {
