@@ -19,8 +19,8 @@
     "removing exclusions is a tightening operation."
   ],
   "schema": "gts-perf-ratio-budgets/v1",
-  "generated_at": "2026-07-09T13:43:36Z",
-  "generated_by": "wave-3 fleet perf sweep ratchet pass, branch wave3/rust-swift-pending-resweep, extending pending-row refreshes with strict-basis rust and swift measurements",
+  "generated_at": "2026-07-09T14:03:03Z",
+  "generated_by": "wave-3 fleet perf sweep ratchet pass, branch wave3/crystal-scala-pending-resweep, extending pending-row refreshes with strict-basis crystal evidence and scoped scala OOM attribution",
   "measurement_basis": {
     "harness": "cgo_harness/perf_scan (TestPerfScanSweep / TestPerfScanLanguage, tags treesitter_c_parity treesitter_c_perfscan)",
     "corpus_root": "/home/draco/work/gotreesitter-corpora/corpus_sources (real upstream per-language checkouts, largest-8-files sampling -- deliberately adversarial, hunts cliffs, NOT representative of typical file size)",
@@ -69,7 +69,10 @@
     "wave3_pending_lua_strict_20260709T122826Z": "pending-row refresh on branch wave3/lua-csharp-pending-resweep, Docker 8GiB/GOMEMLIMIT=6GiB, largest-8 ratchet basis with the checked-in Groovy heldout exclusion in GTS_PERF_SCAN_EXCLUDE_PATHS. Completed 8/8 with 0 timeouts/errors, replacing the stale after_cliffs row that had 7 timeouts. Full parse remains a measured cliff row (ratio_by_total=9.51x, median=9.12x, 3 cliff files), noedit ratio_by_total=0.000168x. Harness marked the run contended (loadavg1=6.72), so this is a visibility ratchet rather than a quiet-box near-C claim.",
     "wave3_pending_csharp_strict_20260709T122931Z": "pending-row refresh on branch wave3/lua-csharp-pending-resweep, Docker 8GiB/GOMEMLIMIT=6GiB, largest-8 ratchet basis with the checked-in Groovy heldout exclusion in GTS_PERF_SCAN_EXCLUDE_PATHS. This replaces the stale after_cliffs C# survivor row: full-axis timeouts improved from 7 to 4, but the ratio budget must loosen because the old 3.66x aggregate represented a single completing survivor while the fresh aggregate includes four completing Bicep files at 56.20x/57.11x median plus four explicit timeout cliffs. This is completion evidence plus a named open-region throughput backlog, not a near-C claim. Harness marked the run contended (loadavg1=6.20).",
     "wave3_pending_rust_strict_20260709T133345Z": "pending-row refresh on branch wave3/rust-swift-pending-resweep, Docker 8GiB/GOMEMLIMIT=6GiB, largest-8 ratchet basis with the checked-in Groovy heldout exclusion in GTS_PERF_SCAN_EXCLUDE_PATHS. Completed 8/8 selected files with 4/8 full-axis timeouts, tightening the stale after_cliffs timeout ceiling from 5 to 4. All selected full-axis files remain cliff rows: four stdarch generated files still hit memory_budget/timeout stops, while four completing files measure ratio_by_total=10.96x and median=11.12x. Noedit ratio_by_total=0.0000398x with the same four base-full timeout cliffs. This is a measured generated-code backlog row, not a near-C claim.",
-    "wave3_pending_swift_strict_20260709T133944Z": "pending-row refresh on branch wave3/rust-swift-pending-resweep, Docker 8GiB/GOMEMLIMIT=6GiB, largest-8 ratchet basis with the checked-in Groovy heldout exclusion in GTS_PERF_SCAN_EXCLUDE_PATHS. Completed 8/8 selected files but remains 1/8 full-axis completions and 7/8 timeouts on SwiftSyntax generated files. RCA for the apparent ratio loosening: the old 7.41x aggregate came from the stale after_cliffs survivor row, while the fresh strict survivor measures 10.69x under a harness-flagged contended run (loadavg1=5.31). This row remains a timeout-dominated generated-code backlog, not a near-C claim."
+    "wave3_pending_swift_strict_20260709T133944Z": "pending-row refresh on branch wave3/rust-swift-pending-resweep, Docker 8GiB/GOMEMLIMIT=6GiB, largest-8 ratchet basis with the checked-in Groovy heldout exclusion in GTS_PERF_SCAN_EXCLUDE_PATHS. Completed 8/8 selected files but remains 1/8 full-axis completions and 7/8 timeouts on SwiftSyntax generated files. RCA for the apparent ratio loosening: the old 7.41x aggregate came from the stale after_cliffs survivor row, while the fresh strict survivor measures 10.69x under a harness-flagged contended run (loadavg1=5.31). This row remains a timeout-dominated generated-code backlog, not a near-C claim.",
+    "wave3_pending_crystal_strict_20260709T135653Z": "pending-row refresh on branch wave3/crystal-scala-pending-resweep, Docker 8GiB/GOMEMLIMIT=6GiB, largest-8 ratchet basis with the checked-in Groovy heldout exclusion in GTS_PERF_SCAN_EXCLUDE_PATHS. Completed 8/8 selected files and did not reproduce the stale after_cliffs silent-truncation row: max_errors tightens from 3 to 0. Full axis remains a severe timeout/throughput backlog with 5/8 timeouts and 3 completing files at ratio_by_total=66.37x, median=7.90x; src/string.cr alone completed at 193.6x. Harness marked the run contended (loadavg1=4.75 start, 5.64 end), so this is a visibility ratchet, not a quiet-box near-C claim.",
+    "wave3_pending_scala_strict_20260709T135935Z": "scoped pending-row probe on branch wave3/crystal-scala-pending-resweep, Docker 8GiB/GOMEMLIMIT=6GiB, largest-8 ratchet basis with the checked-in Groovy heldout exclusion. The full 8-file Scala row remains non-ratchetable: the child was killed after 1/8 files while measuring src/compiler/scala/tools/nsc/typechecker/Implicits.scala full/c/warmup attempt 1; Docker reported oom_killed=true. Preserve the old after_cliffs budget row until a complete basis or explicit scoped-exclusion policy exists.",
+    "wave3_pending_scala_implicits_strict_20260709T140125Z": "narrowed Scala attribution probe on branch wave3/crystal-scala-pending-resweep, Docker 8GiB/GOMEMLIMIT=6GiB, max_files=1/max_file_bytes=103233 to select src/compiler/scala/tools/nsc/typechecker/Implicits.scala. The isolated witness completed without cgroup OOM but both axes hit Go timeout/memory-budget stops (full C median ~1.01s, full lower-bound ratio >=9.94x; noedit lower-bound ratio >=150770x). This points at cumulative pressure across the largest-8 Scala row plus per-file Go timeout cliffs, not an isolated C-reference OOM."
   },
   "languages": {
     "php": {
@@ -239,8 +242,8 @@
     "scala": {
       "status": "wave2b_pending",
       "wave2b_pending": true,
-      "measured_today": false,
-      "note": "Documented from after_cliffs (post-wave-1, pre-wave-2a; STALE, not re-swept this pass). 1/8 ok; the completing file's 1.24x is not representative (survivorship of a single easy file). 5 go_timeout + 2 go_error/truncated (RefChecks.scala 115487/115488 -- 1 byte short, likely a boundary/trailing-token bug rather than a budget cliff; bridges.scala 11744/701402 -- severe, ~1.7% span). Known pre-existing gap per wave-1 notes: 'scala PathResolver recovery gap (machine-local gitignored fixture; byte-identical failure on main)'. Prime candidate for wave-2b's proposed 'global repetition-skip rule' (repetition-shift fork cascade, same mechanism class as the php fix, called out in spore-wave2a.md as 'wave-2b #0').",
+      "measured_today": "partial (wave3_pending_scala_strict_20260709T135935Z full 8-file attempt OOM-killed after 1/8; wave3_pending_scala_implicits_strict_20260709T140125Z isolated witness completed without cgroup OOM)",
+      "note": "Partial pending-row refresh: a strict largest-8 rerun did not produce a complete ratchet row. It completed only Parsers.scala, then the child was killed while measuring Implicits.scala full/c/warmup attempt 1 and Docker reported oom_killed=true. A narrowed isolated Implicits.scala run (max_files=1/max_file_bytes=103233) completed without cgroup OOM but both axes hit Go timeout/memory-budget stops, which points at cumulative pressure across the largest-8 row plus per-file Go timeout cliffs. Retain the stale after_cliffs budget ceilings until Scala has a complete 8-file row or an explicit scoped-exclusion policy; the old RefChecks.scala/bridges.scala truncation evidence remains unrefreshed.",
       "full_axis": {
         "max_timeouts": 5,
         "max_errors": 2,
@@ -371,19 +374,20 @@
     "crystal": {
       "status": "wave2b_pending",
       "wave2b_pending": true,
-      "measured_today": false,
-      "note": "Documented from after_cliffs (post-wave-1; not re-swept this pass). 1/8 ok, 3 go_timeout, 3 go_error/truncated -- and the truncations here are severe and suspicious (src/string.cr 49/180451 bytes; src/winerror.cr 19/174453 bytes; src/float/printer/ryu_printf_table.cr 53/345473 bytes -- all stop within the first ~50 bytes). Same silent-truncation shape as cpp/haskell/typescript above; likely a shared root cause worth a dedicated wave-2b investigation rather than five separate ones.",
+      "measured_today": true,
+      "note": "Pending-row refresh (wave3_pending_crystal_strict_20260709T135653Z): replaces the stale after_cliffs row. The severe early-truncation shape was not reproduced under the checked-in ratchet basis, so max_errors tightens from 3 to 0. The row remains a timeout/throughput backlog: 8/8 files selected, 3/8 full-axis files completed, 5/8 full-axis and noedit base-full runs hit Go timeout or memory-budget stops, and the completing full-axis files measured ratio_by_total=66.37x with median=7.90x. RCA for the apparent ratio/timeout loosening: the old row classified three files as truncation errors and had only one completing survivor; the fresh row reclassifies the open risk as five explicit timeout cliffs plus one very slow completing file (src/string.cr 193.6x). Harness was load-contended by the end of the run, so this is visibility evidence, not a near-C claim.",
       "full_axis": {
-        "max_timeouts": 3,
-        "max_errors": 3,
-        "max_ratio_by_total": 20,
-        "observed_ratio_by_total": 15.875,
-        "observed_ratio_median_of_files": 15.875
+        "max_timeouts": 5,
+        "max_errors": 0,
+        "max_ratio_by_total": 83,
+        "max_ratio_median_of_files": 10,
+        "observed_ratio_by_total": 66.372,
+        "observed_ratio_median_of_files": 7.900
       },
       "noedit_axis": {
-        "max_timeouts": 3,
+        "max_timeouts": 5,
         "max_ratio_by_total": 1.0,
-        "observed_ratio_by_total": 0.01059
+        "observed_ratio_by_total": 0.000156
       }
     },
     "swift": {
