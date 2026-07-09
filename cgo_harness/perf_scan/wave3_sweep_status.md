@@ -1,10 +1,10 @@
 # Wave 3 Perf Sweep Status
 
-- generated_at: `2026-07-09T14:04:01Z`
+- generated_at: `2026-07-09T14:21:00Z`
 - budget: `perf_scan/perf_ratio_budgets.json`
 - fleet catalog: `tier_scan/exts.tsv`
-- budget_generated_at: `2026-07-09T14:03:03Z`
-- budget_generated_by: `wave-3 fleet perf sweep ratchet pass, branch wave3/crystal-scala-pending-resweep, extending pending-row refreshes with strict-basis crystal evidence and scoped scala OOM attribution`
+- budget_generated_at: `2026-07-09T14:20:11Z`
+- budget_generated_by: `wave-3 fleet perf sweep ratchet pass, branch wave3/typescript-pending-resweep, extending pending-row refreshes with strict-basis typescript timing evidence while preserving the known webworker oracle caveat`
 
 ## Coverage
 
@@ -16,8 +16,8 @@
 | known budget class gaps | 4 |
 | wave2b pending budget rows | 11 |
 | scoped heldout budget rows | 1 |
-| measured-today budget rows | 202 |
-| partial measured-today notes | 2 |
+| measured-today budget rows | 203 |
+| partial measured-today notes | 1 |
 
 Measurement basis: `reps=5`, `warmup=1`, `file_budget_ms=10000`, `max_files=8`, `order=largest`, `axes=full,noedit`.
 
@@ -30,8 +30,8 @@ Held out of the ratchet: `d`, `fsharp`.
 | status | languages |
 |---|---:|
 | `green` | 50 |
-| `green_with_caveat` | 148 |
-| `wave2b_pending` | 6 |
+| `green_with_caveat` | 149 |
+| `wave2b_pending` | 5 |
 
 ## Known Gap Ledger
 
@@ -74,6 +74,7 @@ Held out of the ratchet: `d`, `fsharp`.
 - `wave3_pending_scala_implicits_strict_20260709T140125Z`
 - `wave3_pending_scala_strict_20260709T135935Z`
 - `wave3_pending_swift_strict_20260709T133944Z`
+- `wave3_pending_typescript_strict_20260709T141748Z`
 - `wave3_scoped_d_exclude_expressionsem_20260709T103336Z`
 - `wave3_scoped_fsharp_exclude_providedtypes_20260709T103723Z`
 - `wave3_scoped_groovy_exclude_pleac11_20260709T103612Z`
