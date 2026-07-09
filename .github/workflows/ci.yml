@@ -503,7 +503,7 @@ jobs:
             --goflags -p=1 \
             --test-parallel 1 \
             --timeout 30m \
-            --run '^TestParityFreshParse$|^TestParityHasNoErrors$|^TestParityIssue3Repros$'
+            --run '^TestParityFreshParse$|^TestParityHasNoErrors$|^TestParityIssue3Repros$|^TestParityKnownDegradedStructuralStillDiverges$'
 
       - name: CGo Structural Parity Exhaustive (Incremental + GLR)
         run: |
