@@ -23,6 +23,12 @@ const (
 	javaFullParseRetryMaxGLRStacks   = 64
 	javaFullParseRetryMaxMergePerKey = 16
 	javaTightMergeCapSourceLen       = 256 * 1024
+	// D's tuned default starts at cap 2, then fullParseInitialMaxStacks raises
+	// the effective parse cap to this conflict floor. Large D accepted-error
+	// retries must not widen beyond it, or expressionsem.d re-enters the
+	// survivor-population RSS cliff.
+	dLargeFileRetryStackCeiling = 3
+	dLargeFileRetryMinBytes     = 64 * 1024
 	// goAcceptedErrorMergePerKeyRetry widens Go's merge-per-key survivor
 	// budget only on the retry rung, when a fresh full parse at the
 	// steady-state cap (3, see the "go" case in effectiveParseMergePerKeyCap)
@@ -490,6 +496,16 @@ func effectiveFullParseInitialMaxStacks(lang *Language, initialMaxStacks int) in
 		// the same exact file bounded (about 1.7s in the contended Docker probe);
 		// the file remains a C-shape known gap, not a parity-clean ratchet row.
 		// Explicit overrides stay available for diagnosis.
+		if initialMaxStacks == maxGLRStacks {
+			initialMaxStacks = 2
+		}
+	case "d":
+		// D's large dmd expressionsem.d witness can grow past the 1536MiB RSS
+		// watchdog before the first full-parse checkpoint at the global default.
+		// Starting tight keeps the Go parse bounded on that file (the grammar's
+		// conflict floor raises the effective parse cap to 3) while explicit
+		// overrides remain available for diagnosis. The exact witness is still a
+		// scoped perf-ledger row because the C oracle itself is high-RSS there.
 		if initialMaxStacks == maxGLRStacks {
 			initialMaxStacks = 2
 		}
@@ -1153,6 +1169,12 @@ func fullParseRetryUsesInitialStackCeiling(tree *Tree, sourceLen int, initialMax
 		// overrides are handled above as diagnostic ceilings. This contains the
 		// timeout/OOM class only; the exact witness remains a tracked C-shape gap.
 		return sourceLen >= 64*1024 && initialMaxStacks <= 2
+	case "d":
+		// D's expressionsem.d accepts under the tuned cap (raised to 3 by the
+		// grammar conflict floor) and stays below the prior Go-side RSS cliff.
+		// Widening accepted-error retry stacks reintroduces the survivor
+		// population blowup, so keep large D retries at the initial ceiling.
+		return sourceLen >= dLargeFileRetryMinBytes && initialMaxStacks <= dLargeFileRetryStackCeiling
 	default:
 		return false
 	}
