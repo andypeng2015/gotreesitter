@@ -305,6 +305,12 @@ type Language struct {
 	// LargeStateGotos stores nonterminal GOTO targets that do not fit in the
 	// uint16 parse-table cells used by tree-sitter C tables. Keys are
 	// uint64(state)<<32 | uint64(symbol). Terminal actions must never live here.
+	//
+	// This is the only exported map field on Language, which matters for blob
+	// serialization: gob's map codec iterates via reflect's randomized
+	// MapRange, so blob encoders never gob-encode this field directly when
+	// it's non-empty (today, only c_sharp populates it). See
+	// large_state_gotos_trailer.go for the deterministic encode/decode path.
 	LargeStateGotos map[uint64]StateID
 
 	// ReduceChainHints are optional generated hot-path hints for deterministic

@@ -6,6 +6,7 @@ import (
 	"container/list"
 	"encoding/gob"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -517,16 +518,44 @@ func decodeEmbeddedLanguage(blobName string) (*gotreesitter.Language, error) {
 }
 
 func decodeLanguageBlobData(blobName string, data []byte) (*gotreesitter.Language, error) {
-	gzr, err := gzip.NewReader(bytes.NewReader(data))
+	compressed, expectsTrailer, err := gotreesitter.UnwrapLanguageBlobEnvelope(data)
+	if err != nil {
+		return nil, fmt.Errorf("decode grammar blob %q: %w", blobName, err)
+	}
+	gzr, err := gzip.NewReader(bytes.NewReader(compressed))
 	if err != nil {
 		return nil, fmt.Errorf("open gzip grammar blob %q: %w", blobName, err)
 	}
 	defer gzr.Close()
 
-	dec := gob.NewDecoder(gzr)
+	// Decode from a fully-buffered *bytes.Reader, not gzr directly: gob's
+	// Decoder can read ahead past its own message boundary on a streaming
+	// reader, which would silently swallow the optional LargeStateGotos
+	// trailer (see gotreesitter.DecodeLargeStateGotosTrailer) before we get a
+	// chance to read it.
+	raw, err := io.ReadAll(gzr)
+	if err != nil {
+		return nil, fmt.Errorf("read gzip grammar blob %q: %w", blobName, err)
+	}
+
+	br := bytes.NewReader(raw)
+	dec := gob.NewDecoder(br)
 	var lang gotreesitter.Language
 	if err := dec.Decode(&lang); err != nil {
 		return nil, fmt.Errorf("decode grammar blob %q: %w", blobName, err)
+	}
+	trailer, err := gotreesitter.DecodeLargeStateGotosTrailer(br)
+	if err != nil {
+		return nil, fmt.Errorf("decode grammar blob %q: %w", blobName, err)
+	}
+	if expectsTrailer && len(trailer) == 0 {
+		return nil, fmt.Errorf("decode grammar blob %q: envelope requires a non-empty large-state-gotos trailer", blobName)
+	}
+	if !expectsTrailer && len(trailer) != 0 {
+		return nil, fmt.Errorf("decode grammar blob %q: large-state-gotos trailer requires a versioned envelope", blobName)
+	}
+	if trailer != nil {
+		lang.LargeStateGotos = trailer
 	}
 
 	gotreesitter.InferGeneratedRepeatAuxMetadata(&lang)
