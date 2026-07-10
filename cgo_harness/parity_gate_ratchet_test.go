@@ -19,6 +19,16 @@ const (
 	maxParitySkips                = 0
 )
 
+// allowedKnownDegradedStructural is the membership half of the structural
+// skip-list ratchet. The numeric ceiling above prevents growth, while this
+// allow-list prevents replacing an approved exemption with a newly degraded
+// language at the same count. When a verified fix removes an exemption, the
+// same tightening change must remove it here too; additions or renames require
+// an explicit policy change in both places.
+var allowedKnownDegradedStructural = map[string]struct{}{
+	"norg": {},
+}
+
 // TestParityGateCoverageRatchet prevents silent narrowing of correctness gates.
 // Update these thresholds only when intentionally tightening/loosening policy.
 func TestParityGateCoverageRatchet(t *testing.T) {
@@ -30,6 +40,16 @@ func TestParityGateCoverageRatchet(t *testing.T) {
 	}
 	if got := len(knownDegradedStructural); got > maxKnownDegradedStructural {
 		t.Fatalf("knownDegradedStructural grew: got=%d max=%d", got, maxKnownDegradedStructural)
+	}
+	for name := range knownDegradedStructural {
+		if _, ok := allowedKnownDegradedStructural[name]; !ok {
+			t.Fatalf("knownDegradedStructural added or renamed unapproved entry %q; this ratchet permits removals only", name)
+		}
+	}
+	for name := range allowedKnownDegradedStructural {
+		if _, ok := knownDegradedStructural[name]; !ok {
+			t.Fatalf("allowedKnownDegradedStructural contains stale entry %q; remove it with the verified skip-list tightening", name)
+		}
 	}
 	if got := len(knownDegradedNoErrorClean); got > maxKnownDegradedNoErrorClean {
 		t.Fatalf("knownDegradedNoErrorClean grew: got=%d max=%d", got, maxKnownDegradedNoErrorClean)
@@ -130,13 +150,17 @@ func TestParityKnownDegradedStructuralStillDiverges(t *testing.T) {
 				t.Fatalf("[%s] C parser SetLanguage error: %v", tc.name, err)
 			}
 			cTree := cParser.Parse(src, nil)
-			if cTree == nil || cTree.RootNode() == nil {
+			if cTree == nil {
 				t.Fatalf("[%s] C reference parser returned nil tree", tc.name)
 			}
 			defer cTree.Close()
+			cRoot := cTree.RootNode()
+			if cRoot == nil {
+				t.Fatalf("[%s] C reference parser returned nil root node", tc.name)
+			}
 
 			var errs []string
-			compareNodes(goTree.RootNode(), goLang, cTree.RootNode(), "root", &errs)
+			compareNodes(goTree.RootNode(), goLang, cRoot, "root", &errs)
 			if len(errs) == 0 {
 				t.Fatalf("stale skip: %q is listed in knownDegradedStructural but its fresh parse now matches the C reference exactly (0 node divergences) — remove %q from knownDegradedStructural", name, name)
 			}
