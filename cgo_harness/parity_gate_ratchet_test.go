@@ -26,7 +26,8 @@ const (
 // same tightening change must remove it here too; additions or renames require
 // an explicit policy change in both places.
 var allowedKnownDegradedStructural = map[string]struct{}{
-	"norg": {},
+	// Empty: Norg's alias-target divergence was the final approved structural
+	// exemption, and PR #214 removed it from knownDegradedStructural.
 }
 
 // TestParityGateCoverageRatchet prevents silent narrowing of correctness gates.
