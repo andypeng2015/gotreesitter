@@ -62,3 +62,79 @@ func TestApplyImportGrammarPostShapeHintsPerlHeredocContent(t *testing.T) {
 		t.Fatalf("compact heredoc alternatives = %v, want [_heredoc_middle escape_sequence]", got)
 	}
 }
+
+// TestImportGrammarJSONRubyHeredocBodyPreservesInterpolation guards the
+// public import path against silently trading Ruby semantics for bounded
+// generation. Ruby's heredoc_body is a nonterminal extra whose interpolation
+// alternative re-enters _statements. The LALR extra-chain builder must preserve
+// that path and still finish within a bounded state graph.
+func TestImportGrammarJSONRubyHeredocBodyPreservesInterpolation(t *testing.T) {
+	data := []byte(`{
+		"name": "ruby",
+		"rules": {
+			"source_file": {"type": "SYMBOL", "name": "heredoc_body"},
+			"_statements": {"type": "REPEAT", "content": {"type": "SYMBOL", "name": "statement"}},
+			"statement": {"type": "PATTERN", "value": "[a-z]+"},
+			"interpolation": {"type": "SEQ", "members": [
+				{"type": "STRING", "value": "#{"},
+				{"type": "SYMBOL", "name": "_statements"},
+				{"type": "STRING", "value": "}"}
+			]},
+			"heredoc_body": {"type": "SEQ", "members": [
+				{"type": "SYMBOL", "name": "_heredoc_body_start"},
+				{"type": "REPEAT", "content": {"type": "CHOICE", "members": [
+					{"type": "SYMBOL", "name": "heredoc_content"},
+					{"type": "SYMBOL", "name": "interpolation"},
+					{"type": "SYMBOL", "name": "escape_sequence"}
+				]}},
+				{"type": "SYMBOL", "name": "heredoc_end"}
+			]},
+			"_heredoc_body_start": {"type": "STRING", "value": "<<X"},
+			"heredoc_content": {"type": "PATTERN", "value": "[^#]+"},
+			"escape_sequence": {"type": "TOKEN", "content": {"type": "PATTERN", "value": "\\\\."}},
+			"heredoc_end": {"type": "STRING", "value": "X"}
+		},
+		"extras": [{"type": "SYMBOL", "name": "heredoc_body"}],
+		"conflicts": [],
+		"externals": [],
+		"inline": [],
+		"supertypes": [],
+		"precedences": []
+	}`)
+
+	g, err := ImportGrammarJSON(data)
+	if err != nil {
+		t.Fatalf("ImportGrammarJSON: %v", err)
+	}
+
+	rule := g.Rules["heredoc_body"]
+	if rule == nil || rule.Kind != RuleSeq || len(rule.Children) != 3 {
+		t.Fatalf("heredoc_body rule = %#v, want original three-part sequence", rule)
+	}
+	repeat := rule.Children[1]
+	if repeat == nil || repeat.Kind != RuleRepeat || len(repeat.Children) != 1 {
+		t.Fatalf("heredoc_body middle = %#v, want repeat", repeat)
+	}
+	choice := repeat.Children[0]
+	if choice == nil || choice.Kind != RuleChoice || len(choice.Children) != 3 {
+		t.Fatalf("heredoc_body content = %#v, want original three-way choice", choice)
+	}
+	got := []string{choice.Children[0].Value, choice.Children[1].Value, choice.Children[2].Value}
+	want := []string{"heredoc_content", "interpolation", "escape_sequence"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("heredoc alternatives = %v, want %v", got, want)
+	}
+
+	interpolation := g.Rules["interpolation"]
+	if interpolation == nil || interpolation.Kind != RuleSeq || len(interpolation.Children) != 3 || interpolation.Children[1].Value != "_statements" {
+		t.Fatalf("interpolation rule = %#v, want path through _statements", interpolation)
+	}
+
+	lang, err := GenerateLanguage(g)
+	if err != nil {
+		t.Fatalf("GenerateLanguage(imported Ruby heredoc grammar): %v", err)
+	}
+	if lang.StateCount == 0 || lang.StateCount > 1000 {
+		t.Fatalf("generated state count = %d, want a bounded non-zero automaton", lang.StateCount)
+	}
+}

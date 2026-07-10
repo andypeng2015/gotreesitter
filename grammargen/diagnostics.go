@@ -1227,7 +1227,10 @@ func generateWithReportCtx(bgCtx context.Context, g *Grammar, opts reportBuildOp
 	}
 
 	endPhase = trace.start("add_nonterminal_extra_chains", trace.lrCounters(tables))
-	addNonterminalExtraChains(tables, ng, lrCtx)
+	if err := addNonterminalExtraChainsGuarded(tables, ng, lrCtx); err != nil {
+		endPhase(map[string]any{"error": true})
+		return nil, fmt.Errorf("add nonterminal extra chains: %w", err)
+	}
 	endFields := trace.lrCounters(tables)
 	if trace.enabled {
 		endFields["extra_chain_start"] = tables.ExtraChainStateStart

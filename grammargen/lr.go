@@ -1457,273 +1457,114 @@ func (ctx *lrContext) ensureRepeatWrapperLHS() {
 	}
 }
 
-type extraChainBuilder struct {
-	tables          *LRTables
-	ng              *NormalizedGrammar
-	ctx             *lrContext
-	tokenCount      int
-	syntheticStart  int
-	terminalExtras  []int
-	chainStateCache map[string]int
-	entryStateCache map[string]int
-	entrySeen       map[string]bool
-	unionStateCache map[string]int
+// extraChainStateBudgetEnv overrides the computed synthetic-state budget
+// (see extraChainSyntheticStateBudget) for testing and diagnosis.
+const extraChainStateBudgetEnv = "GOT_LR_EXTRA_CHAIN_STATE_BUDGET"
+
+// extraChainSyntheticStateFloor and extraChainSyntheticStateMultiplier define
+// the fleet-wide default synthetic-state budget enforced by nonterminal-extra
+// construction:
+// max(multiplier * mainStateCount, floor).
+//
+// GEN_COST_RCA (wave7, "ruby - memory in add_nonterminal_extra_chains")
+// documents a pathology class: a nonterminal extra whose body imports
+// unbounded recursive grammar structure (ruby's heredoc_body -> interpolation
+// -> _statements, i.e. the entire statement grammar) makes this construction
+// non-convergent - observed >13.6GB RSS, monotonic, GC reclaiming nothing.
+// newState had no cap, so that growth ran unbounded until the host OOMed.
+//
+// This budget was sized by measuring every currently-shipped grammar whose
+// extras actually reach this function's nontrivial path via
+// GTS_GRAMMARGEN_TRACE_PHASES=1 (most grammars' extras are token()-shaped
+// comments that never reach it at all - java/go/python/javascript mint zero
+// synthetic states). Observed (mainStateCount -> synthetic states minted),
+// largest ratio first:
+//
+//	cobol   22027 -> 171240 (7.8x)   c_sharp  19564 -> 60926 (3.1x)
+//	scala   37345 ->   7862 (0.2x)   rust     11345 ->  6756 (0.6x)
+//	vhdl     9659 ->    804          enforce   1097 ->   512
+//	requirements 2744 -> 477         dhall     1039 ->   260
+//	foam     1872 ->    108          perl (already shape-hint rewritten) 3170 -> 20
+//
+// cobol's copy_statement extra is the highest observed ratio (~7.8x
+// mainStateCount, the largest legitimate nonterminal-extra chain in the
+// fleet). multiplier=24 keeps >=3x headroom over cobol and >=7.7x over
+// c_sharp, while every other measured grammar clears the budget by one to
+// three orders of magnitude. floor=50000 covers small grammars whose
+// mainStateCount alone would otherwise undercut a modest but legitimate
+// extra chain. (multiplier was 12 - >=1.5x cobol headroom - until an
+// adversarial review of PR #212 asked for more margin; doubling it costs
+// nothing against the pathological cases below, since those are
+// non-convergent at every scale and blow through any finite cap almost
+// immediately regardless of multiplier.)
+//
+// The LALR item-set construction now bounds recursive extras such as Ruby's
+// heredoc_body without deleting semantic alternatives. The guard remains
+// defense in depth for future grammars whose reachable LR(0) core graph is
+// genuinely too large or for regressions that accidentally restore
+// merge-history-dependent state growth.
+const (
+	extraChainSyntheticStateFloor      = 50000
+	extraChainSyntheticStateMultiplier = 24
+)
+
+func extraChainSyntheticStateBudget(mainStateCount int) int {
+	if raw := os.Getenv(extraChainStateBudgetEnv); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			return n
+		}
+	}
+	budget := mainStateCount * extraChainSyntheticStateMultiplier
+	if budget < extraChainSyntheticStateFloor {
+		budget = extraChainSyntheticStateFloor
+	}
+	return budget
+}
+
+// ExtraChainSyntheticStateBudgetError is panicked when the nonterminal-extra
+// item-set builder reaches the configured synthetic parser-state budget.
+// GEN_COST_RCA documents the unbounded merge-history pathology this guards
+// against. Panicking at the state-allocation boundary keeps the hot builder
+// signature compact while addNonterminalExtraChainsGuarded converts this one
+// scoped condition into a normal public generation error.
+//
+// The panic does not escape the public generation API: it is scoped by
+// construction. addNonterminalExtraChainsGuarded recovers exactly this type
+// at the addNonterminalExtraChains call site in generateWithReportCtx and
+// converts it into a normal returned error (checkable via errors.As), which
+// propagates through Generate/GenerateLanguage/GenerateLanguageAndBlob like
+// any other generation error. Any other panic type is not this guard's to
+// interpret and is re-raised unchanged.
+type ExtraChainSyntheticStateBudgetError struct {
+	Grammar        string // grammar name, if known
+	Symbol         string // offending nonterminal-extra symbol name(s)
+	SyntheticCount int    // synthetic states minted at the point the cap tripped
+	Budget         int    // the cap that was exceeded
+	MainStateCount int    // main (non-extra) state count the budget was derived from
+}
+
+func (e *ExtraChainSyntheticStateBudgetError) Error() string {
+	grammar := e.Grammar
+	if grammar == "" {
+		grammar = "<unknown>"
+	}
+	symbol := e.Symbol
+	if symbol == "" {
+		symbol = "<unknown>"
+	}
+	return fmt.Sprintf(
+		"grammargen: building %q, nonterminal-extra chain for %q exceeded the synthetic-state "+
+			"budget (%d synthetic states >= cap %d, derived from %d main states); this rule likely "+
+			"imports unbounded recursive grammar structure (e.g. a nested expression/statement rule) "+
+			"into an extra chain; preserve the grammar's semantic alternatives and implement a bounded "+
+			"scanner-aware representation - see GEN_COST_RCA (override the cap for diagnosis via %s)",
+		grammar, symbol, e.SyntheticCount, e.Budget, e.MainStateCount, extraChainStateBudgetEnv,
+	)
 }
 
 type terminalStartMatcher struct {
 	any   bool
 	runes map[rune]struct{}
-}
-
-func newExtraChainBuilder(tables *LRTables, ng *NormalizedGrammar, ctx *lrContext, terminalExtras []int) *extraChainBuilder {
-	return &extraChainBuilder{
-		tables:          tables,
-		ng:              ng,
-		ctx:             ctx,
-		tokenCount:      ng.TokenCount(),
-		syntheticStart:  tables.StateCount,
-		terminalExtras:  terminalExtras,
-		chainStateCache: make(map[string]int),
-		entryStateCache: make(map[string]int),
-		entrySeen:       make(map[string]bool),
-		unionStateCache: make(map[string]int),
-	}
-}
-
-func (b *extraChainBuilder) newState() int {
-	stateIdx := b.tables.StateCount
-	b.tables.StateCount++
-	b.tables.ActionTable[stateIdx] = make(map[int][]lrAction)
-	b.tables.GotoTable[stateIdx] = make(map[int]int)
-	return stateIdx
-}
-
-func (b *extraChainBuilder) finalizeState(stateIdx int) {
-	// Synthetic states for nonterminal extras model the interior of that extra
-	// production. Do not inject the grammar's terminal extras here: allowing
-	// unrelated extras mid-chain lets zero-width/layout extras interrupt
-	// constructs like block comments immediately after their opener.
-	_ = stateIdx
-}
-
-func (b *extraChainBuilder) mergeSyntheticTerminalShift(stateIdx, sym int, action lrAction) {
-	acts := b.tables.ActionTable[stateIdx][sym]
-	mergedTarget := action.state
-	mergeIdx := -1
-	for i, act := range acts {
-		if act.kind != lrShift || !act.isExtra || act.lhsSym != action.lhsSym {
-			continue
-		}
-		if act.state == action.state {
-			acts[i].addRepeatLHSFrom(action)
-			b.tables.ActionTable[stateIdx][sym] = acts
-			return
-		}
-		if act.state >= b.syntheticStart && action.state >= b.syntheticStart {
-			mergedTarget = b.unionSyntheticStates(act.state, mergedTarget)
-			if mergeIdx < 0 {
-				mergeIdx = i
-			}
-		}
-	}
-	if mergeIdx >= 0 {
-		acts[mergeIdx].state = mergedTarget
-		acts[mergeIdx].addRepeatLHSFrom(action)
-		b.tables.ActionTable[stateIdx][sym] = acts
-		return
-	}
-	b.tables.addAction(stateIdx, sym, action)
-}
-
-func extraChainStateKey(a, b int, lookaheads *bitset) string {
-	var sb strings.Builder
-	sb.Grow(32 + len(lookaheads.words)*17)
-	fmt.Fprintf(&sb, "%d:%d", a, b)
-	for _, w := range lookaheads.words {
-		fmt.Fprintf(&sb, ":%x", w)
-	}
-	return sb.String()
-}
-
-func (b *extraChainBuilder) buildProdChain(prodIdx, pos int, follow bitset) int {
-	key := extraChainStateKey(prodIdx, pos, &follow)
-	if stateIdx, ok := b.chainStateCache[key]; ok {
-		return stateIdx
-	}
-
-	stateIdx := b.newState()
-	b.chainStateCache[key] = stateIdx
-	b.addProdContinuation(stateIdx, prodIdx, pos, follow)
-	b.finalizeState(stateIdx)
-	return stateIdx
-}
-
-func (b *extraChainBuilder) buildEntryState(firstSym int, prodIdxs []int, follow bitset) int {
-	key := extraChainStateKey(-(firstSym + 1), 0, &follow)
-	if stateIdx, ok := b.entryStateCache[key]; ok {
-		return stateIdx
-	}
-
-	stateIdx := b.newState()
-	b.entryStateCache[key] = stateIdx
-	for _, prodIdx := range prodIdxs {
-		b.addProdContinuation(stateIdx, prodIdx, 1, follow)
-	}
-	b.finalizeState(stateIdx)
-	return stateIdx
-}
-
-func (b *extraChainBuilder) unionSyntheticStates(a, c int) int {
-	if a == c || a < b.syntheticStart || c < b.syntheticStart {
-		return a
-	}
-	if a > c {
-		a, c = c, a
-	}
-	key := fmt.Sprintf("%d:%d", a, c)
-	if stateIdx, ok := b.unionStateCache[key]; ok {
-		return stateIdx
-	}
-
-	stateIdx := b.newState()
-	b.unionStateCache[key] = stateIdx
-	for _, src := range []int{a, c} {
-		if srcActions, ok := b.tables.ActionTable[src]; ok {
-			syms := make([]int, 0, len(srcActions))
-			for sym := range srcActions {
-				syms = append(syms, sym)
-			}
-			sort.Ints(syms)
-			for _, sym := range syms {
-				for _, act := range srcActions[sym] {
-					if act.kind == lrShift && act.isExtra && sym < b.tokenCount {
-						b.mergeSyntheticTerminalShift(stateIdx, sym, act)
-						continue
-					}
-					b.tables.addAction(stateIdx, sym, act)
-				}
-			}
-		}
-		if srcGotos, ok := b.tables.GotoTable[src]; ok {
-			for sym, target := range srcGotos {
-				existing, ok := b.tables.GotoTable[stateIdx][sym]
-				if !ok || existing == target {
-					b.tables.GotoTable[stateIdx][sym] = target
-					continue
-				}
-				if existing >= b.syntheticStart && target >= b.syntheticStart {
-					b.tables.GotoTable[stateIdx][sym] = b.unionSyntheticStates(existing, target)
-					continue
-				}
-			}
-		}
-	}
-	b.finalizeState(stateIdx)
-	return stateIdx
-}
-
-func (b *extraChainBuilder) addProdContinuation(stateIdx, prodIdx, pos int, follow bitset) {
-	prod := &b.ng.Productions[prodIdx]
-	if pos >= len(prod.RHS) {
-		follow.forEach(func(la int) {
-			b.tables.addAction(stateIdx, la, lrAction{
-				kind:    lrReduce,
-				prodIdx: prodIdx,
-				prec:    prod.Prec,
-				hasPrec: prod.HasExplicitPrec,
-				assoc:   prod.Assoc,
-				lhsSym:  prod.LHS,
-				isExtra: prod.IsExtra,
-			})
-		})
-		return
-	}
-
-	nextSym := prod.RHS[pos]
-	if nextSym < b.tokenCount {
-		targetState := b.buildProdChain(prodIdx, pos+1, follow)
-		repeatLHSs := b.ctx.repetitionShiftHelperLHSSyms(stateIdx, nextSym, targetState)
-		action := lrAction{
-			kind:    lrShift,
-			state:   targetState,
-			prec:    prod.Prec,
-			hasPrec: prod.HasExplicitPrec,
-			assoc:   prod.Assoc,
-			lhsSym:  prod.LHS,
-			isExtra: false,
-		}
-		for _, lhs := range repeatLHSs {
-			action.addRepeatLHS(lhs)
-		}
-		b.mergeSyntheticTerminalShift(stateIdx, nextSym, action)
-		return
-	}
-
-	targetState := b.buildProdChain(prodIdx, pos+1, follow)
-	existing, ok := b.tables.GotoTable[stateIdx][nextSym]
-	if !ok || existing == targetState {
-		b.tables.GotoTable[stateIdx][nextSym] = targetState
-	} else if existing >= b.syntheticStart && targetState >= b.syntheticStart {
-		b.tables.GotoTable[stateIdx][nextSym] = b.unionSyntheticStates(existing, targetState)
-	}
-	nextFollow := b.ctx.firstOfSequenceWithFallback(prod.RHS[pos+1:], &follow)
-	b.addNonterminalEntries(stateIdx, nextSym, nextFollow)
-}
-
-func (b *extraChainBuilder) addNonterminalEntries(stateIdx, sym int, follow bitset) {
-	key := extraChainStateKey(stateIdx, sym, &follow)
-	if b.entrySeen[key] {
-		return
-	}
-	b.entrySeen[key] = true
-
-	for _, prodIdx := range b.ctx.prodsByLHS[sym] {
-		prod := &b.ng.Productions[prodIdx]
-		if len(prod.RHS) == 0 {
-			follow.forEach(func(la int) {
-				b.tables.addAction(stateIdx, la, lrAction{
-					kind:    lrReduce,
-					prodIdx: prodIdx,
-					prec:    prod.Prec,
-					hasPrec: prod.HasExplicitPrec,
-					assoc:   prod.Assoc,
-					lhsSym:  prod.LHS,
-					isExtra: prod.IsExtra,
-				})
-			})
-			continue
-		}
-
-		firstSym := prod.RHS[0]
-		if firstSym < b.tokenCount {
-			targetState := b.buildProdChain(prodIdx, 1, follow)
-			repeatLHSs := b.ctx.repetitionShiftHelperLHSSyms(stateIdx, firstSym, targetState)
-			action := lrAction{
-				kind:    lrShift,
-				state:   targetState,
-				prec:    prod.Prec,
-				hasPrec: prod.HasExplicitPrec,
-				assoc:   prod.Assoc,
-				lhsSym:  prod.LHS,
-				isExtra: false,
-			}
-			for _, lhs := range repeatLHSs {
-				action.addRepeatLHS(lhs)
-			}
-			b.mergeSyntheticTerminalShift(stateIdx, firstSym, action)
-			continue
-		}
-
-		targetState := b.buildProdChain(prodIdx, 1, follow)
-		existing, ok := b.tables.GotoTable[stateIdx][firstSym]
-		if !ok || existing == targetState {
-			b.tables.GotoTable[stateIdx][firstSym] = targetState
-		} else if existing >= b.syntheticStart && targetState >= b.syntheticStart {
-			b.tables.GotoTable[stateIdx][firstSym] = b.unionSyntheticStates(existing, targetState)
-		}
-		nextFollow := b.ctx.firstOfSequenceWithFallback(prod.RHS[1:], &follow)
-		b.addNonterminalEntries(stateIdx, firstSym, nextFollow)
-	}
 }
 
 func buildTerminalStartMatchers(patterns []TerminalPattern) map[int]terminalStartMatcher {
@@ -1933,6 +1774,10 @@ func augmentSingleReduceLookaheadsForNonterminalExtraStarts(tables *LRTables, ng
 // addNonterminalExtraChains creates dedicated parse state chains for nonterminal
 // extra productions and adds shift actions from every main state.
 func addNonterminalExtraChains(tables *LRTables, ng *NormalizedGrammar, ctx *lrContext) {
+	if !useLALRNonterminalExtraStates(ng) {
+		addLegacyNonterminalExtraChains(tables, ng, ctx)
+		return
+	}
 	tokenCount := ng.TokenCount()
 	if len(ng.ExtraSymbols) == 0 {
 		return
@@ -1953,13 +1798,9 @@ func addNonterminalExtraChains(tables *LRTables, ng *NormalizedGrammar, ctx *lrC
 		tables.ExtraChainStateStart = mainStateCount
 	}
 
-	var terminalExtras []int
 	extraSymbolSet := make(map[int]struct{}, len(ng.ExtraSymbols))
 	for _, e := range ng.ExtraSymbols {
 		extraSymbolSet[e] = struct{}{}
-		if e > 0 && e < tokenCount {
-			terminalExtras = append(terminalExtras, e)
-		}
 	}
 	externalSymbolSet := make(map[int]struct{}, len(ng.ExternalSymbols))
 	for _, sym := range ng.ExternalSymbols {
@@ -1968,19 +1809,12 @@ func addNonterminalExtraChains(tables *LRTables, ng *NormalizedGrammar, ctx *lrC
 
 	extraStartsByFirstSym := make(map[int][]int)
 	var extraFirstSyms []int
-	hasExternalExtraStart := false
-	hasNonExternalExtraStart := false
 	for _, prodIdx := range extraProds {
 		prod := &ng.Productions[prodIdx]
 		if len(prod.RHS) > 0 && prod.RHS[0] < tokenCount {
 			firstSym := prod.RHS[0]
 			if _, ok := extraStartsByFirstSym[firstSym]; !ok {
 				extraFirstSyms = append(extraFirstSyms, firstSym)
-				if _, ok := externalSymbolSet[firstSym]; ok {
-					hasExternalExtraStart = true
-				} else {
-					hasNonExternalExtraStart = true
-				}
 			}
 			extraStartsByFirstSym[firstSym] = append(extraStartsByFirstSym[firstSym], prodIdx)
 		}
@@ -2005,34 +1839,9 @@ func addNonterminalExtraChains(tables *LRTables, ng *NormalizedGrammar, ctx *lrC
 	}
 	startMatchers := buildTerminalStartMatchers(ng.Terminals)
 
-	builder := newExtraChainBuilder(tables, ng, ctx, terminalExtras)
-	stateFollowSet := func(state int) bitset {
-		follow := newBitset(tokenCount)
-		follow.add(0)
-		if acts, ok := tables.ActionTable[state]; ok {
-			for sym, actionList := range acts {
-				if sym < tokenCount && len(actionList) > 0 {
-					follow.add(sym)
-				}
-			}
-		}
-		for _, extraSym := range terminalExtras {
-			follow.add(extraSym)
-		}
-		for _, firstSym := range extraFirstSyms {
-			follow.add(firstSym)
-		}
-		return follow
-	}
-	var externalExtraFollow bitset
-	if hasExternalExtraStart {
-		externalExtraFollow = newBitset(tokenCount)
-		for state := 0; state < mainStateCount; state++ {
-			follow := stateFollowSet(state)
-			follow.forEach(func(sym int) {
-				externalExtraFollow.add(sym)
-			})
-		}
+	entryStates := buildLALRNonterminalExtraStates(tables, ng, ctx, extraStartsByFirstSym, extraFirstSyms)
+	if len(entryStates) == 0 {
+		return
 	}
 	stateHasContinuation := func(state int) bool {
 		if acts, ok := tables.ActionTable[state]; ok {
@@ -2135,10 +1944,6 @@ func addNonterminalExtraChains(tables *LRTables, ng *NormalizedGrammar, ctx *lrC
 		if state >= mainStateCount && stateOnlyReducesCompletedExtra(state) {
 			continue
 		}
-		var follow bitset
-		if hasNonExternalExtraStart {
-			follow = stateFollowSet(state)
-		}
 		for _, firstSym := range extraFirstSyms {
 			if !syntheticStateMayInjectExtraStart(state, firstSym) {
 				continue
@@ -2153,14 +1958,10 @@ func addNonterminalExtraChains(tables *LRTables, ng *NormalizedGrammar, ctx *lrC
 			if hasNonExtraAction {
 				continue
 			}
-			entryFollow := follow
-			if _, ok := externalSymbolSet[firstSym]; ok {
-				entryFollow = externalExtraFollow
-			} else if len(entryFollow.words) == 0 {
-				entryFollow = stateFollowSet(state)
+			entryState, ok := entryStates[firstSym]
+			if !ok {
+				continue
 			}
-			prodIdxs := extraStartsByFirstSym[firstSym]
-			entryState := builder.buildEntryState(firstSym, prodIdxs, entryFollow)
 			tables.addAction(state, firstSym, lrAction{
 				kind:    lrShift,
 				state:   entryState,
@@ -2169,6 +1970,35 @@ func addNonterminalExtraChains(tables *LRTables, ng *NormalizedGrammar, ctx *lrC
 			})
 		}
 	}
+}
+
+// addNonterminalExtraChainsGuarded runs addNonterminalExtraChains and
+// converts an *ExtraChainSyntheticStateBudgetError panic (raised at the
+// synthetic item-set allocation boundary) into a normal
+// returned error, so the synthetic-state budget guard hard-fails generation
+// through the public API's ordinary error-return path instead of crashing
+// the process. This is the sole recover point for that panic type; callers
+// of addNonterminalExtraChains itself (e.g. tests exercising the raw
+// construction) still see the panic directly.
+//
+// The recover is intentionally narrow: only *ExtraChainSyntheticStateBudgetError
+// is caught here. Any other panic - a real bug elsewhere in the chain
+// construction - is re-raised unchanged rather than swallowed, so it still
+// fails loudly with its original stack trace.
+func addNonterminalExtraChainsGuarded(tables *LRTables, ng *NormalizedGrammar, ctx *lrContext) (err error) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			return
+		}
+		if budgetErr, ok := r.(*ExtraChainSyntheticStateBudgetError); ok {
+			err = budgetErr
+			return
+		}
+		panic(r)
+	}()
+	addNonterminalExtraChains(tables, ng, ctx)
+	return nil
 }
 
 // computeFirstSets computes FIRST sets for all symbols using bitsets.
