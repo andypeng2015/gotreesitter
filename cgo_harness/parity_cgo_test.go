@@ -43,19 +43,17 @@ var paritySkips = map[string]parityMeta{
 // lane and fails the build if a listed language unexpectedly passes, so this
 // map can only shrink truthfully going forward.
 var knownDegradedStructural = map[string]string{
-	// norg: fresh parse diverges from the C reference by 4 nodes — the Go
-	// parser collapses `_word` hidden wrapper nodes to ChildCount=0 where the
-	// C reference keeps a single child (see TestParityFreshParse/norg for the
-	// live divergence dump). Tracked as a genuine, unfixed scanner/version
-	// structural-shape gap; not yet assigned a fix owner.
-	"norg": "fresh parse structural parity still diverges from C reference (4 node divergences: _word hidden-wrapper ChildCount go=0 c=1)",
+	// Empty: the last known structural divergence (norg's `_word` alias
+	// hidden-wrapper collapse) was fixed by extending
+	// normalizeResultTerminalLeafNodes's visible-terminal guard to also
+	// preserve distinct-named children under reused alias-target symbol IDs
+	// (see parser_result_terminal_leaf.go). Fresh-parse structural parity is
+	// now 206/206 across the curated fleet.
 }
 
 // knownDegradedNoErrorClean preserves no-error coverage for structural backlog
 // entries whose current failure is tree shape, not error-node production.
-var knownDegradedNoErrorClean = map[string]struct{}{
-	"norg": {},
-}
+var knownDegradedNoErrorClean = map[string]struct{}{}
 
 type parityCase struct {
 	name   string
