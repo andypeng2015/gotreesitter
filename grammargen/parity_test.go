@@ -2418,7 +2418,10 @@ func init() {
 		// Popular scanner languages
 		{name: "bash", blobFunc: grammars.BashLanguage, timeout: 5 * time.Minute, expectNoErrors: 1},
 		{name: "python", blobFunc: grammars.PythonLanguage, timeout: 300 * time.Second, expectNoErrors: 1, expectParity: 1},
-		{name: "ruby", blobFunc: grammars.RubyLanguage, timeout: 90 * time.Second, expectNoErrors: 1, expectParity: 1},
+		// Ruby's heredoc extra re-enters the full statement grammar. The bounded
+		// LALR construction is deterministic but builds roughly 12K parser states,
+		// so retain CI headroom around the locked no-error/parity witness.
+		{name: "ruby", blobFunc: grammars.RubyLanguage, timeout: 180 * time.Second, expectNoErrors: 1, expectParity: 1},
 		{name: "rust", blobFunc: grammars.RustLanguage, timeout: 90 * time.Second, expectNoErrors: 1, expectParity: 1},
 		{name: "cpp", blobFunc: grammars.CppLanguage, timeout: 150 * time.Second, expectNoErrors: 1, expectParity: 1},
 		{name: "javascript", blobFunc: grammars.JavascriptLanguage, timeout: 90 * time.Second, expectNoErrors: 1, expectParity: 1},

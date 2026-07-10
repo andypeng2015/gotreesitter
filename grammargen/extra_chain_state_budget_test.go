@@ -64,24 +64,65 @@ func TestExtraChainSyntheticStateBudgetFormula(t *testing.T) {
 	})
 }
 
+func TestUseLALRNonterminalExtraStatesDispatch(t *testing.T) {
+	t.Run("recursive heredoc interpolation uses bounded item sets", func(t *testing.T) {
+		ng := &NormalizedGrammar{
+			Symbols: []SymbolInfo{
+				{Name: "end", Kind: SymbolTerminal},
+				{Name: "heredoc_start", Kind: SymbolTerminal},
+				{Name: "heredoc_body", Kind: SymbolNonterminal, IsExtra: true},
+				{Name: "heredoc_parts", Kind: SymbolNonterminal},
+				{Name: "interpolation", Kind: SymbolNonterminal},
+			},
+			ExtraSymbols: []int{2},
+			Productions: []Production{
+				{LHS: 2, RHS: []int{1, 3}, IsExtra: true},
+				{LHS: 3, RHS: []int{4}},
+			},
+		}
+		if !useLALRNonterminalExtraStates(ng) {
+			t.Fatal("recursive heredoc_body -> interpolation shape must use bounded LALR item sets")
+		}
+	})
+
+	t.Run("unrelated directive extra keeps legacy builder", func(t *testing.T) {
+		ng := &NormalizedGrammar{
+			Symbols: []SymbolInfo{
+				{Name: "end", Kind: SymbolTerminal},
+				{Name: "hash", Kind: SymbolTerminal},
+				{Name: "directive", Kind: SymbolNonterminal, IsExtra: true},
+				{Name: "heredoc_body", Kind: SymbolNonterminal},
+				{Name: "interpolation", Kind: SymbolNonterminal},
+			},
+			ExtraSymbols: []int{2},
+			Productions: []Production{
+				{LHS: 2, RHS: []int{1}, IsExtra: true},
+				{LHS: 3, RHS: []int{4}},
+			},
+		}
+		if useLALRNonterminalExtraStates(ng) {
+			t.Fatal("a non-extra heredoc_body must not move unrelated directive grammars off the legacy path")
+		}
+	})
+}
+
 // TestNonterminalExtraChainSyntheticStateBudgetTripsFast is the regression
 // test requested alongside the ruby heredoc_body fix: a synthetic grammar
-// with the same pathological shape as ruby's pre-rewrite heredoc_body (a
+// with the same pathological shape as ruby's preserved heredoc_body (a
 // nonterminal grammar extra whose body embeds a statement-embedding
 // alternative - "interpolation" re-entering the full statement grammar, the
 // same relationship as ruby's interpolation -> _statements) must hard-fail
 // fast and clearly once an artificially tiny synthetic-state budget is
 // exceeded, instead of growing unboundedly.
 //
-// This grammar is small enough that it fully converges on its own (339
-// synthetic states from 20 main states - see the "natural" subtest), so this
+// This grammar is small enough that it fully converges on its own (32
+// synthetic states after core merging - see the "natural" subtest), so this
 // test stays fast even if the budget guard were ever disabled; the budget
-// override just makes it fail long before reaching that natural size.
+// override still proves the guard trips before reaching that natural size.
 //
-// The guard still panics from deep inside extraChainBuilder.newState (see
-// ExtraChainSyntheticStateBudgetError) - that part of the design is
-// unchanged, and the raw-construction subtest below still exercises it
-// directly. But an adversarial review of PR #212 found that panic escaped
+// The guard still panics at the exact state-allocation boundary (see
+// ExtraChainSyntheticStateBudgetError), and the raw-construction subtest below
+// exercises it directly. But an adversarial review of PR #212 found that panic escaped
 // every public entry point (Generate/GenerateLanguage/GenerateLanguageAndBlob)
 // uncaught, crashing real consumers (taproot's runtime fallback, the wasm and
 // CLI generation commands, the grammar registry) instead of returning an
@@ -92,8 +133,10 @@ func TestExtraChainSyntheticStateBudgetFormula(t *testing.T) {
 // *ExtraChainSyntheticStateBudgetError to a normal returned error while
 // re-panicking anything else unchanged.
 func TestNonterminalExtraChainSyntheticStateBudgetTripsFast(t *testing.T) {
+	const tinyBudget = 8
+
 	newBudgetGrammar := func() *Grammar {
-		g := NewGrammar("extra_chain_budget_synthetic")
+		g := NewGrammar("ruby")
 		g.Define("source_file", Repeat(Sym("statement")))
 		g.Define("statement", Choice(
 			Sym("if_statement"),
@@ -105,12 +148,12 @@ func TestNonterminalExtraChainSyntheticStateBudgetTripsFast(t *testing.T) {
 		g.Define("if_statement", Seq(Str("if"), Sym("word"), Str("then"), Sym("statement")))
 		g.Define("while_statement", Seq(Str("while"), Sym("word"), Str("do"), Sym("statement")))
 		g.Define("assign_statement", Seq(Sym("word"), Str("="), Sym("statement")))
-		// interpolation mirrors ruby's pre-rewrite interpolation -> _statements:
+		// interpolation mirrors ruby's interpolation -> _statements:
 		// a nonterminal-extra alternative that re-enters the entire statement
 		// grammar rather than staying scanner-delimited.
 		g.Define("interpolation", Seq(Str("#{"), Optional(Sym("statement")), Str("}")))
 		g.Define("heredoc_content", Pat(`[^#}]+`))
-		// heredoc_body mirrors ruby's exact pre-rewrite shape:
+		// heredoc_body mirrors ruby's exact shape:
 		// SEQ(start, REPEAT(CHOICE(content, interpolation)), end), declared as a
 		// nonterminal grammar extra (see GEN_COST_RCA).
 		g.Define("heredoc_body", Seq(
@@ -119,6 +162,9 @@ func TestNonterminalExtraChainSyntheticStateBudgetTripsFast(t *testing.T) {
 			Str("X_END"),
 		))
 		g.SetExtras(Pat(`\s`), Sym("heredoc_body"))
+		// Exercise the same post-import hook as ImportGrammarJSON. A Ruby shape
+		// hint must never make generation fit by deleting interpolation.
+		applyImportGrammarPostShapeHints(g)
 		return g
 	}
 
@@ -153,8 +199,8 @@ func TestNonterminalExtraChainSyntheticStateBudgetTripsFast(t *testing.T) {
 		if budgetErr.SyntheticCount < budgetErr.Budget {
 			t.Errorf("SyntheticCount (%d) should be >= Budget (%d) at the point of failure", budgetErr.SyntheticCount, budgetErr.Budget)
 		}
-		if budgetErr.Grammar != "extra_chain_budget_synthetic" {
-			t.Errorf("Grammar = %q, want %q", budgetErr.Grammar, "extra_chain_budget_synthetic")
+		if budgetErr.Grammar != "ruby" {
+			t.Errorf("Grammar = %q, want %q", budgetErr.Grammar, "ruby")
 		}
 		if budgetErr.Symbol == "" || budgetErr.Symbol == "<unknown>" {
 			t.Errorf("expected the error to name the offending nonterminal-extra symbol, got %q", budgetErr.Symbol)
@@ -163,7 +209,7 @@ func TestNonterminalExtraChainSyntheticStateBudgetTripsFast(t *testing.T) {
 			t.Errorf("expected the offending symbol to mention heredoc_body, got %q", budgetErr.Symbol)
 		}
 		msg := err.Error()
-		for _, want := range []string{"synthetic-state", "budget", "heredoc_body", "extra_chain_budget_synthetic"} {
+		for _, want := range []string{"synthetic-state", "budget", "heredoc_body", "ruby"} {
 			if !strings.Contains(msg, want) {
 				t.Errorf("error message %q missing expected substring %q", msg, want)
 			}
@@ -175,14 +221,20 @@ func TestNonterminalExtraChainSyntheticStateBudgetTripsFast(t *testing.T) {
 		ng, tables, ctx := buildBudgetGrammar()
 		addNonterminalExtraChains(tables, ng, ctx)
 		synthetic := tables.StateCount - tables.ExtraChainStateStart
-		if synthetic < 100 {
-			t.Fatalf("expected the statement-embedding extra to mint a nontrivial number of synthetic states, got %d - budget-trip subtest below would not be meaningful", synthetic)
+		if synthetic <= tinyBudget {
+			t.Fatalf("expected the statement-embedding extra to exceed the tiny test budget %d, got %d synthetic states", tinyBudget, synthetic)
+		}
+		// The LALR item-set construction currently converges at 32 states. Keep
+		// slack for harmless grammar-normalization changes while preventing the
+		// old 339-state merge-history graph (and its real-world unbounded form)
+		// from silently returning.
+		if synthetic > 64 {
+			t.Fatalf("statement-embedding extra expanded to %d synthetic states, want <= 64 after LR(0)-core merging", synthetic)
 		}
 		t.Logf("natural synthetic-state count: %d (main=%d)", synthetic, tables.ExtraChainStateStart)
 	})
 
 	t.Run("tiny budget trips fast with a clear, named panic (raw construction)", func(t *testing.T) {
-		const tinyBudget = 8
 		t.Setenv(extraChainStateBudgetEnv, "8")
 		ng, tables, ctx := buildBudgetGrammar()
 
@@ -206,7 +258,6 @@ func TestNonterminalExtraChainSyntheticStateBudgetTripsFast(t *testing.T) {
 	})
 
 	t.Run("guarded wrapper converts the panic to a returned error", func(t *testing.T) {
-		const tinyBudget = 8
 		t.Setenv(extraChainStateBudgetEnv, "8")
 		ng, tables, ctx := buildBudgetGrammar()
 
@@ -237,7 +288,6 @@ func TestNonterminalExtraChainSyntheticStateBudgetTripsFast(t *testing.T) {
 	})
 
 	t.Run("public API returns the named error instead of panicking", func(t *testing.T) {
-		const tinyBudget = 8
 		t.Setenv(extraChainStateBudgetEnv, "8")
 
 		t.Run("GenerateLanguage", func(t *testing.T) {
