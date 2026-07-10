@@ -264,6 +264,66 @@ func TestPlainVisibleIdentifierStringRuleWithWordRemainsNonterminal(t *testing.T
 	}
 }
 
+func TestPlainVisiblePunctuationPrefixedStringRuleWithWordBecomesNamedLeafToken(t *testing.T) {
+	g := NewGrammar("plain_visible_punctuation_prefixed_string_rule_with_word_named_leaf_token")
+	g.Define("source_file", Seq(Sym("identifier"), Sym("important")))
+	g.Define("identifier", Pat(`[a-z]+`))
+	g.Define("important", Str("!important"))
+	g.Define("match", Str("match"))
+	g.SetWord("identifier")
+	g.Extras = []*Rule{Pat(`[ \t]+`)}
+
+	ng, err := Normalize(g)
+	if err != nil {
+		t.Fatalf("Normalize: %v", err)
+	}
+	if got := symbolKind(t, ng, "important"); got != SymbolNamedToken {
+		t.Fatalf("important kind = %v, want SymbolNamedToken", got)
+	}
+	foundMatchNonterminal := false
+	for _, sym := range ng.Symbols {
+		if sym.Name != "match" {
+			continue
+		}
+		if sym.Kind == SymbolNamedToken {
+			t.Fatal("match was promoted to SymbolNamedToken")
+		}
+		if sym.Kind == SymbolNonterminal {
+			foundMatchNonterminal = true
+		}
+	}
+	if !foundMatchNonterminal {
+		t.Fatal("match nonterminal not found")
+	}
+
+	lang, err := GenerateLanguage(g)
+	if err != nil {
+		t.Fatalf("GenerateLanguage: %v", err)
+	}
+	tree, err := gotreesitter.NewParser(lang).Parse([]byte("selector !important"))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	defer tree.Release()
+	root := tree.RootNode()
+	if root == nil {
+		t.Fatal("parse missing root node")
+	}
+	if root.HasError() || root.ChildCount() != 2 {
+		t.Fatalf("root = %v, child count = %d; tree=%s", root, root.ChildCount(), root.SExpr(lang))
+	}
+	important := root.Child(1)
+	if got := important.Type(lang); got != "important" {
+		t.Fatalf("child type = %q, want important; tree=%s", got, root.SExpr(lang))
+	}
+	if !important.IsNamed() {
+		t.Fatal("important IsNamed = false")
+	}
+	if got := important.ChildCount(); got != 0 {
+		t.Fatalf("important child count = %d, want 0; tree=%s", got, root.SExpr(lang))
+	}
+}
+
 func TestPlainVisiblePunctuationStringRuleBecomesNamedLeafToken(t *testing.T) {
 	g := NewGrammar("plain_visible_punctuation_string_rule_named_leaf_token")
 	g.Define("source_file", Sym("optional_chain"))
