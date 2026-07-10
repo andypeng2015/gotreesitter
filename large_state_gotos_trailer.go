@@ -46,16 +46,20 @@ import (
 // (grammargen's encodeLanguageBlob) clear it on a shallow copy of Language
 // before gob-encoding and, only when the map was non-empty, append the bytes
 // from EncodeLargeStateGotosTrailer after the gob payload, inside the same
-// decompressed stream. Blob decoders (gotreesitter.LoadLanguage,
+// decompressed stream, then wrap that gzip payload in the fail-closed envelope
+// from language_blob_envelope.go. Blob decoders (gotreesitter.LoadLanguage,
 // grammargen's decodeLanguageBlob, and the grammars package loader)
-// gob-decode the Language exactly as before -- which already exactly
+// first unwrap that envelope and then gob-decode the Language exactly as before
+// -- which already exactly
 // reproduces the pre-trailer behavior for every blob that has no trailer,
 // including all 206 blobs checked in as of this change -- and then call
 // DecodeLargeStateGotosTrailer on whatever bytes remain, merging the result
 // into LargeStateGotos. A slice like []largeStateGotoPair always gob-encodes
 // in index order (see encoding/gob's encodeArray, which walks indices
 // 0..N-1 with no randomization), so sorting by Key before encoding makes the
-// trailer -- and therefore the whole blob -- byte-identical across runs.
+// trailer -- and therefore the whole blob -- byte-identical across runs. The
+// envelope deliberately makes older gzip-first runtimes reject a new
+// trailer-bearing blob instead of accepting it with the map silently missing.
 type largeStateGotoPair struct {
 	Key    uint64
 	Target StateID
@@ -112,6 +116,9 @@ func DecodeLargeStateGotosTrailer(r *bytes.Reader) (map[uint64]StateID, error) {
 	var pairs []largeStateGotoPair
 	if err := gob.NewDecoder(r).Decode(&pairs); err != nil {
 		return nil, fmt.Errorf("decode large-state-gotos trailer: %w", err)
+	}
+	if r.Len() != 0 {
+		return nil, fmt.Errorf("decode large-state-gotos trailer: %d trailing bytes", r.Len())
 	}
 	if len(pairs) == 0 {
 		return nil, nil

@@ -46,9 +46,51 @@ func TestLoadLanguageDecodesOldFormatLargeStateGotos(t *testing.T) {
 	}
 }
 
+func TestLoadLanguageRejectsUnenvelopedLargeStateGotosTrailer(t *testing.T) {
+	trailer, err := EncodeLargeStateGotosTrailer(buildSyntheticLargeStateGotos(4))
+	if err != nil {
+		t.Fatalf("EncodeLargeStateGotosTrailer: %v", err)
+	}
+	var buf bytes.Buffer
+	gzw := gzip.NewWriter(&buf)
+	if err := gob.NewEncoder(gzw).Encode(&Language{Name: "unenveloped"}); err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	if _, err := gzw.Write(trailer); err != nil {
+		t.Fatalf("write trailer: %v", err)
+	}
+	if err := gzw.Close(); err != nil {
+		t.Fatalf("gzip Close: %v", err)
+	}
+
+	if _, err := LoadLanguage(buf.Bytes()); err == nil {
+		t.Fatal("LoadLanguage accepted a trailer without its versioned envelope")
+	}
+}
+
+func TestLoadLanguageRejectsEnvelopeWithoutLargeStateGotosTrailer(t *testing.T) {
+	var buf bytes.Buffer
+	gzw := gzip.NewWriter(&buf)
+	if err := gob.NewEncoder(gzw).Encode(&Language{Name: "missing_trailer"}); err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	if err := gzw.Close(); err != nil {
+		t.Fatalf("gzip Close: %v", err)
+	}
+	enveloped, err := WrapLanguageBlobEnvelope(buf.Bytes())
+	if err != nil {
+		t.Fatalf("WrapLanguageBlobEnvelope: %v", err)
+	}
+
+	if _, err := LoadLanguage(enveloped); err == nil {
+		t.Fatal("LoadLanguage accepted an envelope without its required trailer")
+	}
+}
+
 // TestLoadLanguageDecodesNewFormatTrailer simulates a blob produced by the
 // fixed encoder: LargeStateGotos cleared before the gob message, with a
-// deterministic trailer appended inside the same compressed stream.
+// deterministic trailer appended inside the same compressed stream and a
+// fail-closed version envelope outside gzip.
 // LoadLanguage must reconstruct LargeStateGotos from the trailer.
 func TestLoadLanguageDecodesNewFormatTrailer(t *testing.T) {
 	want := buildSyntheticLargeStateGotos(300)
@@ -78,8 +120,15 @@ func TestLoadLanguageDecodesNewFormatTrailer(t *testing.T) {
 	if err := gzw.Close(); err != nil {
 		t.Fatalf("gzip Close: %v", err)
 	}
+	enveloped, err := WrapLanguageBlobEnvelope(buf.Bytes())
+	if err != nil {
+		t.Fatalf("WrapLanguageBlobEnvelope: %v", err)
+	}
+	if _, err := gzip.NewReader(bytes.NewReader(enveloped)); err == nil {
+		t.Fatal("pre-envelope gzip-first runtime accepted a trailer-bearing blob")
+	}
 
-	loaded, err := LoadLanguage(buf.Bytes())
+	loaded, err := LoadLanguage(enveloped)
 	if err != nil {
 		t.Fatalf("LoadLanguage: %v", err)
 	}

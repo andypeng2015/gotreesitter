@@ -518,7 +518,11 @@ func decodeEmbeddedLanguage(blobName string) (*gotreesitter.Language, error) {
 }
 
 func decodeLanguageBlobData(blobName string, data []byte) (*gotreesitter.Language, error) {
-	gzr, err := gzip.NewReader(bytes.NewReader(data))
+	compressed, expectsTrailer, err := gotreesitter.UnwrapLanguageBlobEnvelope(data)
+	if err != nil {
+		return nil, fmt.Errorf("decode grammar blob %q: %w", blobName, err)
+	}
+	gzr, err := gzip.NewReader(bytes.NewReader(compressed))
 	if err != nil {
 		return nil, fmt.Errorf("open gzip grammar blob %q: %w", blobName, err)
 	}
@@ -543,6 +547,12 @@ func decodeLanguageBlobData(blobName string, data []byte) (*gotreesitter.Languag
 	trailer, err := gotreesitter.DecodeLargeStateGotosTrailer(br)
 	if err != nil {
 		return nil, fmt.Errorf("decode grammar blob %q: %w", blobName, err)
+	}
+	if expectsTrailer && len(trailer) == 0 {
+		return nil, fmt.Errorf("decode grammar blob %q: envelope requires a non-empty large-state-gotos trailer", blobName)
+	}
+	if !expectsTrailer && len(trailer) != 0 {
+		return nil, fmt.Errorf("decode grammar blob %q: large-state-gotos trailer requires a versioned envelope", blobName)
 	}
 	if trailer != nil {
 		lang.LargeStateGotos = trailer

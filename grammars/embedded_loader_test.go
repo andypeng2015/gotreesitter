@@ -1,6 +1,9 @@
 package grammars
 
 import (
+	"bytes"
+	"compress/gzip"
+	"encoding/gob"
 	"testing"
 
 	"github.com/odvcencio/gotreesitter"
@@ -48,6 +51,55 @@ func TestRepairNoLookaheadLexModes(t *testing.T) {
 				t.Fatalf("LexModes[%d].LexStateIndex = %d, want %d", idx, got, ^uint32(0))
 			}
 		})
+	}
+}
+
+func TestDecodeLanguageBlobDataDecodesEnvelopedLargeStateGotosTrailer(t *testing.T) {
+	want := map[uint64]gotreesitter.StateID{
+		uint64(70000)<<32 | 3: 80001,
+		uint64(70001)<<32 | 9: 80007,
+		uint64(70002)<<32 | 5: 80011,
+	}
+	trailer, err := gotreesitter.EncodeLargeStateGotosTrailer(want)
+	if err != nil {
+		t.Fatalf("EncodeLargeStateGotosTrailer: %v", err)
+	}
+
+	lang := &gotreesitter.Language{
+		Name:        "embedded_c_sharp_like",
+		SymbolNames: []string{"end", "identifier"},
+		// The deterministic encoder clears this field from the gob payload.
+	}
+	var buf bytes.Buffer
+	gzw := gzip.NewWriter(&buf)
+	if err := gob.NewEncoder(gzw).Encode(lang); err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	if _, err := gzw.Write(trailer); err != nil {
+		t.Fatalf("write trailer: %v", err)
+	}
+	if err := gzw.Close(); err != nil {
+		t.Fatalf("gzip Close: %v", err)
+	}
+	enveloped, err := gotreesitter.WrapLanguageBlobEnvelope(buf.Bytes())
+	if err != nil {
+		t.Fatalf("WrapLanguageBlobEnvelope: %v", err)
+	}
+	if _, err := gzip.NewReader(bytes.NewReader(enveloped)); err == nil {
+		t.Fatal("legacy gzip-first embedded loader accepted an enveloped blob")
+	}
+
+	decoded, err := decodeLanguageBlobData("c_sharp_like.bin", enveloped)
+	if err != nil {
+		t.Fatalf("decodeLanguageBlobData: %v", err)
+	}
+	if len(decoded.LargeStateGotos) != len(want) {
+		t.Fatalf("LargeStateGotos has %d entries, want %d", len(decoded.LargeStateGotos), len(want))
+	}
+	for key, target := range want {
+		if got := decoded.LargeStateGotos[key]; got != target {
+			t.Fatalf("LargeStateGotos[%d] = %d, want %d", key, got, target)
+		}
 	}
 }
 

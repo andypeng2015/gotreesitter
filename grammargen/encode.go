@@ -91,7 +91,9 @@ func computeSkipExtras(ng *NormalizedGrammar) map[int]bool {
 // -- don't preserve blob compatibility). When lang.LargeStateGotos is
 // non-empty, this instead gob-encodes a shallow copy with the map cleared
 // (lang itself is never mutated) and appends a deterministic sorted-pairs
-// trailer after the gob payload, inside the same compressed stream.
+// trailer after the gob payload, inside the same compressed stream. That gzip
+// payload is wrapped in a versioned outer envelope so older gzip-first runtimes
+// reject it instead of silently losing the trailer.
 // decodeLanguageBlob reads that trailer back and repopulates LargeStateGotos
 // after the gob decode. When LargeStateGotos is empty -- every language but
 // c_sharp today -- this is byte-identical to a plain gob.Encode: no clone,
@@ -125,7 +127,14 @@ func encodeLanguageBlob(lang *gotreesitter.Language) ([]byte, error) {
 	if err := gzw.Close(); err != nil {
 		return nil, fmt.Errorf("finalize language blob: %w", err)
 	}
-	return out.Bytes(), nil
+	if len(trailer) == 0 {
+		return out.Bytes(), nil
+	}
+	enveloped, err := gotreesitter.WrapLanguageBlobEnvelope(out.Bytes())
+	if err != nil {
+		return nil, fmt.Errorf("finalize language blob: %w", err)
+	}
+	return enveloped, nil
 }
 
 // shallowCopyExportedLanguageFields returns a new *gotreesitter.Language with
@@ -164,12 +173,16 @@ func shallowCopyExportedLanguageFields(lang *gotreesitter.Language) *gotreesitte
 	return dstPtr.Interface().(*gotreesitter.Language)
 }
 
-// decodeLanguageBlob deserializes a gob+gzip Language blob, including the
-// optional LargeStateGotos trailer written by encodeLanguageBlob (a cheap
-// no-op for every blob that doesn't have one -- see
-// gotreesitter.DecodeLargeStateGotosTrailer).
+// decodeLanguageBlob deserializes a legacy gob+gzip Language blob or a
+// version-enveloped blob containing the LargeStateGotos trailer written by
+// encodeLanguageBlob. Envelope detection is a cheap no-op for every legacy
+// blob that doesn't have one.
 func decodeLanguageBlob(data []byte) (*gotreesitter.Language, error) {
-	gzr, err := gzip.NewReader(bytes.NewReader(data))
+	compressed, expectsTrailer, err := gotreesitter.UnwrapLanguageBlobEnvelope(data)
+	if err != nil {
+		return nil, fmt.Errorf("decode language blob: %w", err)
+	}
+	gzr, err := gzip.NewReader(bytes.NewReader(compressed))
 	if err != nil {
 		return nil, fmt.Errorf("open gzip: %w", err)
 	}
@@ -192,6 +205,12 @@ func decodeLanguageBlob(data []byte) (*gotreesitter.Language, error) {
 	trailer, err := gotreesitter.DecodeLargeStateGotosTrailer(br)
 	if err != nil {
 		return nil, fmt.Errorf("decode language blob: %w", err)
+	}
+	if expectsTrailer && len(trailer) == 0 {
+		return nil, fmt.Errorf("decode language blob: envelope requires a non-empty large-state-gotos trailer")
+	}
+	if !expectsTrailer && len(trailer) != 0 {
+		return nil, fmt.Errorf("decode language blob: large-state-gotos trailer requires a versioned envelope")
 	}
 	if trailer != nil {
 		lang.LargeStateGotos = trailer

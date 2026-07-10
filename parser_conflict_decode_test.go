@@ -209,7 +209,11 @@ func loadBlobForDecode(t *testing.T, name string) *Language {
 	if err != nil {
 		t.Skipf("blob %s not present: %v", name, err)
 	}
-	gzr, err := gzip.NewReader(bytes.NewReader(data))
+	compressed, expectsTrailer, err := UnwrapLanguageBlobEnvelope(data)
+	if err != nil {
+		t.Fatalf("%s: envelope: %v", name, err)
+	}
+	gzr, err := gzip.NewReader(bytes.NewReader(compressed))
 	if err != nil {
 		t.Fatalf("%s: gzip: %v", name, err)
 	}
@@ -230,6 +234,12 @@ func loadBlobForDecode(t *testing.T, name string) *Language {
 	trailer, err := DecodeLargeStateGotosTrailer(br)
 	if err != nil {
 		t.Fatalf("%s: trailer: %v", name, err)
+	}
+	if expectsTrailer && len(trailer) == 0 {
+		t.Fatalf("%s: envelope requires a non-empty trailer", name)
+	}
+	if !expectsTrailer && len(trailer) != 0 {
+		t.Fatalf("%s: trailer requires an envelope", name)
 	}
 	if trailer != nil {
 		lang.LargeStateGotos = trailer

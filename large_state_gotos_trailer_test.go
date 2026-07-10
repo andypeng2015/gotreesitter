@@ -129,3 +129,14 @@ func TestDecodeLargeStateGotosTrailerRejectsGarbage(t *testing.T) {
 		t.Fatal("expected an error decoding non-gob garbage bytes, got nil")
 	}
 }
+
+func TestDecodeLargeStateGotosTrailerRejectsTrailingBytes(t *testing.T) {
+	encoded, err := EncodeLargeStateGotosTrailer(buildSyntheticLargeStateGotos(3))
+	if err != nil {
+		t.Fatalf("EncodeLargeStateGotosTrailer: %v", err)
+	}
+	encoded = append(encoded, 0xde, 0xad, 0xbe, 0xef)
+	if _, err := DecodeLargeStateGotosTrailer(bytes.NewReader(encoded)); err == nil {
+		t.Fatal("expected bytes after the trailer gob to be rejected")
+	}
+}

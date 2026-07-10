@@ -12,9 +12,14 @@ import (
 // LoadLanguage deserializes a compressed grammar blob into a Language.
 // Blobs are produced by grammargen's GenerateLanguage or the grammar
 // build toolchain. This is the only function needed at runtime to load
-// pre-compiled grammars — no grammargen import required.
+// pre-compiled grammars — no grammargen import required. It accepts legacy
+// gzip blobs and version-enveloped trailer-bearing blobs.
 func LoadLanguage(data []byte) (*Language, error) {
-	gzr, err := gzip.NewReader(bytes.NewReader(data))
+	compressed, expectsTrailer, err := UnwrapLanguageBlobEnvelope(data)
+	if err != nil {
+		return nil, fmt.Errorf("decode language: %w", err)
+	}
+	gzr, err := gzip.NewReader(bytes.NewReader(compressed))
 	if err != nil {
 		return nil, fmt.Errorf("open gzip: %w", err)
 	}
@@ -25,8 +30,8 @@ func LoadLanguage(data []byte) (*Language, error) {
 	// ISIZE is uncompressed size mod 2^32; for grammar blobs (well under 4 GB)
 	// it is exact. Fall back to io.ReadAll if the hint is implausible.
 	var raw []byte
-	if len(data) >= 4 {
-		isize := binary.LittleEndian.Uint32(data[len(data)-4:])
+	if len(compressed) >= 4 {
+		isize := binary.LittleEndian.Uint32(compressed[len(compressed)-4:])
 		if isize > 0 && isize < 256*1024*1024 { // sanity cap at 256 MB
 			raw = make([]byte, 0, isize)
 			var buf [32 * 1024]byte
@@ -64,6 +69,12 @@ func LoadLanguage(data []byte) (*Language, error) {
 	trailer, err := DecodeLargeStateGotosTrailer(br)
 	if err != nil {
 		return nil, fmt.Errorf("decode language: %w", err)
+	}
+	if expectsTrailer && len(trailer) == 0 {
+		return nil, fmt.Errorf("decode language: envelope requires a non-empty large-state-gotos trailer")
+	}
+	if !expectsTrailer && len(trailer) != 0 {
+		return nil, fmt.Errorf("decode language: large-state-gotos trailer requires a versioned envelope")
 	}
 	if trailer != nil {
 		lang.LargeStateGotos = trailer

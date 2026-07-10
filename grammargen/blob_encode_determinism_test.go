@@ -110,6 +110,19 @@ func TestEncodeDecodeLanguageBlobRoundTripWithLargeStateGotos(t *testing.T) {
 	}
 }
 
+// A runtime from before the envelope change calls gzip.NewReader on the blob
+// directly. Trailer-bearing blobs must fail there rather than decode a
+// Language whose LargeStateGotos map was cleared from the gob payload.
+func TestEncodeLanguageBlobWithLargeStateGotosRejectedByLegacyGzipLoader(t *testing.T) {
+	blob, err := encodeLanguageBlob(csharpLikeLanguage())
+	if err != nil {
+		t.Fatalf("encodeLanguageBlob: %v", err)
+	}
+	if _, err := gzip.NewReader(bytes.NewReader(blob)); err == nil {
+		t.Fatal("legacy gzip-first loader accepted a trailer-bearing blob")
+	}
+}
+
 // oldEncodeLanguageBlob is a frozen copy of encodeLanguageBlob exactly as it
 // existed before the LargeStateGotos determinism fix: a single unconditional
 // gob.Encode of lang, with no clone and no trailer. It exists only to prove
