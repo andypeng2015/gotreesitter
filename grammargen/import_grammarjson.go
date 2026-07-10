@@ -122,6 +122,32 @@ func applyImportGrammarPostShapeHints(g *Grammar) {
 				Sym("heredoc_end"),
 			)
 		}
+	case "ruby":
+		if _, ok := g.Rules["heredoc_body"]; ok {
+			// Ruby has the same pathology as perl's heredoc_content above (see
+			// GEN_COST_RCA "ruby — memory in add_nonterminal_extra_chains"):
+			// heredoc_body is a grammar extra shaped
+			// SEQ(_heredoc_body_start, REPEAT(CHOICE(heredoc_content, interpolation,
+			// escape_sequence)), heredoc_end), and `interpolation` pulls in
+			// `_statements` — the entire statement grammar — as a nonterminal
+			// extra chain. Table generation over that chain never converges
+			// (observed >13.6GB RSS, monotonic non-terminating). Mirror the perl
+			// rewrite: drop the recursive `interpolation` alternative and keep
+			// only the scanner-delimited content/escape path, so heredoc bodies
+			// stay a bounded extra. `interpolation` itself is untouched and still
+			// reachable from regular string literals (_literal_contents); only
+			// heredoc bodies lose real interpolation-node structure, the same
+			// parity trade perl already accepted, pending a scanner-aware
+			// follow-up.
+			g.Rules["heredoc_body"] = Seq(
+				Sym("_heredoc_body_start"),
+				Repeat(Choice(
+					Sym("heredoc_content"),
+					Sym("escape_sequence"),
+				)),
+				Sym("heredoc_end"),
+			)
+		}
 	}
 }
 

@@ -1457,6 +1457,108 @@ func (ctx *lrContext) ensureRepeatWrapperLHS() {
 	}
 }
 
+// extraChainStateBudgetEnv overrides the computed synthetic-state budget
+// (see extraChainSyntheticStateBudget) for testing and diagnosis.
+const extraChainStateBudgetEnv = "GOT_LR_EXTRA_CHAIN_STATE_BUDGET"
+
+// extraChainSyntheticStateFloor and extraChainSyntheticStateMultiplier define
+// the default synthetic-state budget newState enforces:
+// max(multiplier * mainStateCount, floor).
+//
+// GEN_COST_RCA (wave7, "ruby - memory in add_nonterminal_extra_chains")
+// documents a pathology class: a nonterminal extra whose body imports
+// unbounded recursive grammar structure (ruby's heredoc_body -> interpolation
+// -> _statements, i.e. the entire statement grammar) makes this construction
+// non-convergent - observed >13.6GB RSS, monotonic, GC reclaiming nothing.
+// newState had no cap, so that growth ran unbounded until the host OOMed.
+//
+// This budget was sized by measuring every currently-shipped grammar whose
+// extras actually reach this function's nontrivial path via
+// GTS_GRAMMARGEN_TRACE_PHASES=1 (most grammars' extras are token()-shaped
+// comments that never reach it at all - java/go/python/javascript mint zero
+// synthetic states). Observed (mainStateCount -> synthetic states minted),
+// largest ratio first:
+//
+//	cobol   22027 -> 171240 (7.8x)   c_sharp  19564 -> 60926 (3.1x)
+//	scala   37345 ->   7862 (0.2x)   rust     11345 ->  6756 (0.6x)
+//	vhdl     9659 ->    804          enforce   1097 ->   512
+//	requirements 2744 -> 477         dhall     1039 ->   260
+//	foam     1872 ->    108          perl (already shape-hint rewritten) 3170 -> 20
+//
+// cobol's copy_statement extra is the highest observed ratio (~7.8x
+// mainStateCount, the largest legitimate nonterminal-extra chain in the
+// fleet). multiplier=12 keeps >=1.5x headroom over cobol and >=3.8x over
+// c_sharp, while every other measured grammar clears the budget by one to
+// three orders of magnitude. floor=50000 covers small grammars whose
+// mainStateCount alone would otherwise undercut a modest but legitimate
+// extra chain.
+//
+// By contrast, grammars whose nonterminal extra imports recursive
+// expression/statement structure the way ruby's did do not converge at all
+// under the current construction: the same heredoc_body shape independently
+// reproduces in crystal, and the same "extra -> ... -> full
+// expression/statement rule" shape reproduces in tlaplus (block_comment) and
+// rescript (decorator -> decorator_arguments -> expression), confirmed here
+// by RSS climbing past 3-4GB with no add_nonterminal_extra_chains
+// event=end trace line. Any of those blow through this budget almost
+// immediately, converting a silent multi-GB OOM into a clean, fast, named
+// error instead. Fixing those grammars' shapes is out of scope for this
+// change (see applyImportGrammarPostShapeHints for the ruby/perl fix
+// pattern); this guard exists so they - and the next unknown grammar with
+// this shape - hard-fail cleanly instead.
+const (
+	extraChainSyntheticStateFloor      = 50000
+	extraChainSyntheticStateMultiplier = 12
+)
+
+func extraChainSyntheticStateBudget(mainStateCount int) int {
+	if raw := os.Getenv(extraChainStateBudgetEnv); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			return n
+		}
+	}
+	budget := mainStateCount * extraChainSyntheticStateMultiplier
+	if budget < extraChainSyntheticStateFloor {
+		budget = extraChainSyntheticStateFloor
+	}
+	return budget
+}
+
+// ExtraChainSyntheticStateBudgetError is panicked by extraChainBuilder.newState
+// when a nonterminal-extra chain mints more synthetic parser states than
+// extraChainSyntheticStateBudget allows. See that function's doc comment and
+// GEN_COST_RCA for the pathology this guards against. Panicking (rather than
+// threading an error return through addNonterminalExtraChains's caller) lets
+// this defense-in-depth guard hard-fail generation immediately from deep
+// inside the growing-state-space construction without changing that
+// function's signature or its caller's control flow.
+type ExtraChainSyntheticStateBudgetError struct {
+	Grammar        string // grammar name, if known
+	Symbol         string // offending nonterminal-extra symbol name(s)
+	SyntheticCount int    // synthetic states minted at the point the cap tripped
+	Budget         int    // the cap that was exceeded
+	MainStateCount int    // main (non-extra) state count the budget was derived from
+}
+
+func (e *ExtraChainSyntheticStateBudgetError) Error() string {
+	grammar := e.Grammar
+	if grammar == "" {
+		grammar = "<unknown>"
+	}
+	symbol := e.Symbol
+	if symbol == "" {
+		symbol = "<unknown>"
+	}
+	return fmt.Sprintf(
+		"grammargen: building %q, nonterminal-extra chain for %q exceeded the synthetic-state "+
+			"budget (%d synthetic states >= cap %d, derived from %d main states); this rule likely "+
+			"imports unbounded recursive grammar structure (e.g. a nested expression/statement rule) "+
+			"into an extra chain - see GEN_COST_RCA and the perl/ruby heredoc rewrites in "+
+			"applyImportGrammarPostShapeHints for the fix pattern (override the cap for diagnosis via %s)",
+		grammar, symbol, e.SyntheticCount, e.Budget, e.MainStateCount, extraChainStateBudgetEnv,
+	)
+}
+
 type extraChainBuilder struct {
 	tables          *LRTables
 	ng              *NormalizedGrammar
@@ -1468,6 +1570,11 @@ type extraChainBuilder struct {
 	entryStateCache map[string]int
 	entrySeen       map[string]bool
 	unionStateCache map[string]int
+
+	// syntheticStateBudget and currentEntryLabel back the defense-in-depth
+	// hard-fail in newState; see ExtraChainSyntheticStateBudgetError.
+	syntheticStateBudget int
+	currentEntryLabel    string
 }
 
 type terminalStartMatcher struct {
@@ -1477,20 +1584,61 @@ type terminalStartMatcher struct {
 
 func newExtraChainBuilder(tables *LRTables, ng *NormalizedGrammar, ctx *lrContext, terminalExtras []int) *extraChainBuilder {
 	return &extraChainBuilder{
-		tables:          tables,
-		ng:              ng,
-		ctx:             ctx,
-		tokenCount:      ng.TokenCount(),
-		syntheticStart:  tables.StateCount,
-		terminalExtras:  terminalExtras,
-		chainStateCache: make(map[string]int),
-		entryStateCache: make(map[string]int),
-		entrySeen:       make(map[string]bool),
-		unionStateCache: make(map[string]int),
+		tables:               tables,
+		ng:                   ng,
+		ctx:                  ctx,
+		tokenCount:           ng.TokenCount(),
+		syntheticStart:       tables.StateCount,
+		terminalExtras:       terminalExtras,
+		chainStateCache:      make(map[string]int),
+		entryStateCache:      make(map[string]int),
+		entrySeen:            make(map[string]bool),
+		unionStateCache:      make(map[string]int),
+		syntheticStateBudget: extraChainSyntheticStateBudget(tables.StateCount),
 	}
 }
 
+// extraEntryLabel returns a human-readable name for the nonterminal-extra
+// symbol(s) whose chain construction begins with the productions in
+// prodIdxs, for ExtraChainSyntheticStateBudgetError diagnostics.
+func (b *extraChainBuilder) extraEntryLabel(prodIdxs []int) string {
+	seen := make(map[string]struct{}, len(prodIdxs))
+	var names []string
+	for _, prodIdx := range prodIdxs {
+		if prodIdx < 0 || prodIdx >= len(b.ng.Productions) {
+			continue
+		}
+		lhs := b.ng.Productions[prodIdx].LHS
+		name := ""
+		if lhs >= 0 && lhs < len(b.ng.Symbols) {
+			name = b.ng.Symbols[lhs].Name
+		}
+		if name == "" {
+			name = fmt.Sprintf("<symbol %d>", lhs)
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		names = append(names, name)
+	}
+	if len(names) == 0 {
+		return "<unknown>"
+	}
+	sort.Strings(names)
+	return strings.Join(names, "|")
+}
+
 func (b *extraChainBuilder) newState() int {
+	if syntheticCount := b.tables.StateCount - b.syntheticStart; syntheticCount >= b.syntheticStateBudget {
+		panic(&ExtraChainSyntheticStateBudgetError{
+			Grammar:        b.ng.GrammarName,
+			Symbol:         b.currentEntryLabel,
+			SyntheticCount: syntheticCount,
+			Budget:         b.syntheticStateBudget,
+			MainStateCount: b.syntheticStart,
+		})
+	}
 	stateIdx := b.tables.StateCount
 	b.tables.StateCount++
 	b.tables.ActionTable[stateIdx] = make(map[int][]lrAction)
@@ -1564,6 +1712,13 @@ func (b *extraChainBuilder) buildEntryState(firstSym int, prodIdxs []int, follow
 		return stateIdx
 	}
 
+	// Track the nonterminal-extra symbol(s) this entry expands, so a budget
+	// hard-fail deep in the recursive chain construction below can name the
+	// offending extra (see ExtraChainSyntheticStateBudgetError). Every state
+	// minted until the next buildEntryState call belongs to this entry's
+	// closure - buildProdChain/addNonterminalEntries/unionSyntheticStates only
+	// recurse synchronously from here.
+	b.currentEntryLabel = b.extraEntryLabel(prodIdxs)
 	stateIdx := b.newState()
 	b.entryStateCache[key] = stateIdx
 	for _, prodIdx := range prodIdxs {
