@@ -3357,15 +3357,6 @@ func isLowercaseIdentifierLikeKeywordLiteral(s string) bool {
 }
 
 func isPlainVisibleNamedLeafStringLiteral(g *Grammar, s string) bool {
-	if isSafePlainPunctuationLiteral(s) || isBackslashEscapedNamedLeafLiteral(s) {
-		return true
-	}
-	if g != nil && g.Word != "" {
-		return false
-	}
-	if isLowercaseIdentifierLikeKeywordLiteral(s) {
-		return true
-	}
 	// Whether a visible bare-string rule collapses into a plain named
 	// terminal (vs. wrapping the anonymous string token in a nonterminal
 	// production) is actually decided by ownership, not shape: it collapses
@@ -3373,7 +3364,7 @@ func isPlainVisibleNamedLeafStringLiteral(g *Grammar, s string) bool {
 	// and the value never appears bare elsewhere in the grammar (both
 	// already enforced by this function's caller, plainVisibleStringTokenRules,
 	// via candidatesByValue/anonymousSources). The punctuation and
-	// lowercase-identifier buckets above are not the real rule — they only
+	// lowercase-identifier buckets described here are not the real rule — they only
 	// approximate that real, shape-irrelevant ownership rule for the two
 	// shapes most commonly seen in practice. CSS's `!important` (punctuation
 	// prefix + identifier-like tail: neither pure punctuation nor a
@@ -3391,7 +3382,20 @@ func isPlainVisibleNamedLeafStringLiteral(g *Grammar, s string) bool {
 	// pre-existing gap, predating this change and not fixed by it, tracked
 	// separately from the punctuation/identifier shape buckets extended
 	// here.
-	return isPunctuationPrefixedLowercaseIdentifierLiteral(s)
+	if isSafePlainPunctuationLiteral(s) || isBackslashEscapedNamedLeafLiteral(s) {
+		return true
+	}
+	if isPunctuationPrefixedLowercaseIdentifierLiteral(s) {
+		return true
+	}
+	// A pure lowercase identifier literal participates in word-token keyword
+	// handling, so preserve its nonterminal wrapper when a word symbol exists.
+	// Punctuation-prefixed literals cannot be word tokens and must be
+	// classified before this guard.
+	if g != nil && g.Word != "" {
+		return false
+	}
+	return isLowercaseIdentifierLikeKeywordLiteral(s)
 }
 
 // isPunctuationPrefixedLowercaseIdentifierLiteral reports whether s is a
