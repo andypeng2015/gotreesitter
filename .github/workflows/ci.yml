@@ -244,20 +244,21 @@ jobs:
             run_exhaustive=true
           elif [ "$EVENT_NAME" = "pull_request" ]; then
             git diff --name-only "${PR_BASE_SHA}...HEAD" > /tmp/changed-files.txt
-            if grep -Eq '^(parser_result_.*\.go|parser_recover_c.*\.go|parser_result_test/.*\.go)$' /tmp/changed-files.txt; then
+            exhaustive_pattern='^(parser_result_.*\.go|parser_recover_c.*\.go|parser_result_test/.*\.go|cgo_harness/(parity_cgo_test|parity_gate_ratchet_test)\.go)$'
+            if grep -Eq "$exhaustive_pattern" /tmp/changed-files.txt; then
               run_exhaustive=true
               {
                 echo "### Exhaustive parity trigger"
                 echo
-                echo "Running exhaustive CGo parity because this PR touches parser-result or C-recovery files:"
+                echo "Running exhaustive CGo parity because this PR touches parser-result, C-recovery, or parity-degradation gate files:"
                 echo
-                grep -E '^(parser_result_.*\.go|parser_recover_c.*\.go|parser_result_test/.*\.go)$' /tmp/changed-files.txt | sed 's/^/- `/' | sed 's/$/`/'
+                grep -E "$exhaustive_pattern" /tmp/changed-files.txt | sed 's/^/- `/' | sed 's/$/`/'
               } >> "$GITHUB_STEP_SUMMARY"
             else
               {
                 echo "### Exhaustive parity trigger"
                 echo
-                echo "No parser-result or C-recovery files changed; exhaustive CGo parity is skipped."
+                echo "No parser-result, C-recovery, or parity-degradation gate files changed; exhaustive CGo parity is skipped."
               } >> "$GITHUB_STEP_SUMMARY"
             fi
           fi
@@ -503,7 +504,7 @@ jobs:
             --goflags -p=1 \
             --test-parallel 1 \
             --timeout 30m \
-            --run '^TestParityFreshParse$|^TestParityHasNoErrors$|^TestParityIssue3Repros$'
+            --run '^TestParityFreshParse$|^TestParityHasNoErrors$|^TestParityIssue3Repros$|^TestParityKnownDegradedStructuralStillDiverges$'
 
       - name: CGo Structural Parity Exhaustive (Incremental + GLR)
         run: |
