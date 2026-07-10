@@ -7,6 +7,31 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-07-10
+
+Exhaustive parity closure release. The curated structural matrix is now
+206/206 pass with no known-degraded skips: the stale-skip ratchet landed first,
+then the final Norg alias-target divergence was fixed and its exemption removed.
+This cut also banks the parser, recovery, scanner, and Wave 3 measurement work
+that landed after v0.22.5. It does not claim that every measured grammar is
+near-C on performance; the remaining JavaScript, Scala, and other cliffs stay
+explicit in the perf ledger rather than being hidden by the release milestone.
+
+### Added
+
+- An exhaustive-parity assertion that reparses every remaining
+  known-degraded language and fails CI when an exemption has gone stale.
+- CI wiring and ratchets for a zero-entry known-degraded structural list, so a
+  future exemption requires an explicit, reviewable policy change.
+
+### Changed
+
+- Wave 3 perf metadata and budgets were refreshed for CMake, Java, Kotlin,
+  Lua, C#, Rust, Swift, Crystal, Scala, TypeScript, and JavaScript.
+- JavaScript's Poppler memory cliff and Scala's incomplete largest-corpus run
+  are recorded as attribution evidence instead of being presented as ordinary
+  green measurements.
+
 ### Fixed
 
 - COBOL `EXEC CICS` error normalization now trims recovered
@@ -14,6 +39,19 @@ for tags and release notes while still in `0.x`.
   when C stops before trailing trivia, while preserving C's zero-width EOF
   recovery shape. A cgo-backed adversarial fixture now guards the recovered
   error signal and byte spans against the C oracle.
+- Nested terminal aliases now collapse through metadata-mediated chains, and
+  punctuation-prefixed literals in word-declaring grammars retain the same
+  leaf structure as tree-sitter C.
+- Visible alias targets preserve distinct-named children, closing Norg's final
+  four structural divergences and removing the last exhaustive-parity skip.
+- External-scanner tokens now retain whether they were shifted exclusively as
+  extras, preventing literal trailing whitespace inside Python string content
+  from selecting an after-whitespace lex mode and suppressing an immediate
+  escape token.
+- Doxygen and JSDoc recovered trees now match the C oracle through scoped
+  result normalizers.
+- HCL external scanner symbols are bound positionally, preserving scanner ABI
+  behavior when generated symbol names differ from the shipped language.
 
 ## [0.22.5] - 2026-07-09
 
@@ -1371,7 +1409,8 @@ Warm-reuse throughput ~10 % higher. 206-grammar parity green under `GTS_PARITY_M
 - Initial standalone pure-Go runtime module.
 - External scanner VM foundation and base parser/lexer/tree infrastructure.
 
-[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.22.5...HEAD
+[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.23.0...HEAD
+[0.23.0]: https://github.com/odvcencio/gotreesitter/compare/v0.22.5...v0.23.0
 [0.22.5]: https://github.com/odvcencio/gotreesitter/compare/v0.22.4...v0.22.5
 [0.22.4]: https://github.com/odvcencio/gotreesitter/compare/v0.22.3...v0.22.4
 [0.22.3]: https://github.com/odvcencio/gotreesitter/compare/v0.22.2...v0.22.3
