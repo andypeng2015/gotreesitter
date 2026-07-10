@@ -35,7 +35,7 @@ func normalizeResultTerminalLeafNodesWithStop(root *Node, lang *Language, stopCh
 		if !resultCanCollapseTerminalLeafChild(child, lang, aliasTargets) {
 			return true
 		}
-		if !resultSymbolIsVisibleTerminal(lang, n.symbol) && !resultSymbolNamesEqual(lang, n.symbol, child.symbol) {
+		if (!resultSymbolIsVisibleTerminal(lang, n.symbol) || resultSymbolIsVisibleAliasTarget(lang, n.symbol, aliasTargets)) && !resultSymbolNamesEqual(lang, n.symbol, child.symbol) {
 			// n only qualified via the alias-target set, which just records
 			// "this symbol is SOME production's alias somewhere in the
 			// grammar" -- it is not scoped to this specific reduction. A
@@ -45,6 +45,16 @@ func normalizeResultTerminalLeafNodesWithStop(root *Node, lang *Language, stopCh
 			// splat_parameter wrapping a bare "*" token) is a real, distinct
 			// production whose child C tree-sitter keeps as a visible node --
 			// collapsing it here would silently drop a real AST child.
+			//
+			// Grammars can also reuse a genuine visible-terminal symbol ID as
+			// an alias target elsewhere (e.g. norg's "_word" alias reuses a
+			// symbol ID that also denotes a real terminal). In that case
+			// resultSymbolIsVisibleTerminal(n.symbol) alone is true and used
+			// to short-circuit this guard, even though -- for this specific
+			// reduction -- n is standing in for the alias, not the terminal.
+			// Treat "also a visible alias target" the same as "not a visible
+			// terminal": require matching names before collapsing so a
+			// distinct-named child under a reused ID is preserved too.
 			return true
 		}
 		n.startByte = child.startByte

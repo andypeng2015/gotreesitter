@@ -180,6 +180,59 @@ func TestNormalizeResultTerminalLeafNodesCollapsesTerminalAliasTarget(t *testing
 	}
 }
 
+// TestNormalizeResultTerminalLeafNodesPreservesDistinctChildUnderReusedAliasTargetID
+// mirrors norg's "_word" alias: a symbol ID can simultaneously be a genuine
+// visible terminal (ID within TokenCount) AND a visible alias target
+// registered by some other production's AliasSequences entry. When that
+// reused-ID node wraps a DIFFERENT-named visible child (e.g. "_uppercase"),
+// the child is a real, distinct AST node C tree-sitter keeps -- it must not
+// be collapsed away just because the parent's ID happens to also denote a
+// plain terminal. Pre-fix, resultSymbolIsVisibleTerminal(n.symbol) alone
+// short-circuited the name-equality guard and dropped the child.
+func TestNormalizeResultTerminalLeafNodesPreservesDistinctChildUnderReusedAliasTargetID(t *testing.T) {
+	lang := &Language{
+		TokenCount: 3,
+		SymbolNames: []string{
+			"EOF",
+			"_lowercase_word",
+			"_word",
+			"root",
+		},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF"},
+			{Name: "_lowercase_word", Visible: true, Named: false},
+			{Name: "_word", Visible: true, Named: false},
+			{Name: "root", Visible: true, Named: true},
+		},
+		AliasSequences: [][]Symbol{
+			// Some other production aliases target symbol 2 ("_word"), which
+			// is ALSO a genuine visible terminal ID (< TokenCount) -- the
+			// reused-ID scenario that trips the pre-fix guard.
+			{2},
+		},
+	}
+	arena := newNodeArena(arenaClassFull)
+	child := newLeafNodeInArena(arena, 1, false, 20, 25, Point{Row: 0, Column: 20}, Point{Row: 0, Column: 25})
+	parent := newParentNodeInArena(arena, 2, false, []*Node{child}, nil, 0)
+	parent.startByte = 20
+	parent.endByte = 25
+	parent.startPoint = Point{Row: 0, Column: 20}
+	parent.endPoint = Point{Row: 0, Column: 25}
+	root := newParentNodeInArena(arena, 3, true, []*Node{parent}, nil, 0)
+
+	counters := normalizeResultTerminalLeafNodes(root, lang)
+
+	if got, want := counters.nodesRewritten, uint64(0); got != want {
+		t.Fatalf("nodesRewritten = %d, want %d", got, want)
+	}
+	if got, want := parent.ChildCount(), 1; got != want {
+		t.Fatalf("parent.ChildCount() = %d, want %d", got, want)
+	}
+	if got := parent.Child(0); got != child {
+		t.Fatalf("parent.Child(0) = %p, want original child %p", got, child)
+	}
+}
+
 func TestNormalizeResultTerminalLeafNodesPreservesFieldedTerminal(t *testing.T) {
 	lang := &Language{
 		TokenCount: 3,
