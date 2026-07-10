@@ -14,7 +14,7 @@ const (
 	minCuratedStructuralLanguages = 206
 	minCuratedHighlightLanguages  = 200
 	maxKnownDegradedStructural    = 0
-	maxKnownDegradedNoErrorClean  = 1
+	maxKnownDegradedNoErrorClean  = 0
 	maxKnownDegradedHighlight     = 49
 	maxParitySkips                = 0
 )
