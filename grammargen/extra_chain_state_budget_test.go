@@ -1,6 +1,7 @@
 package grammargen
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -33,6 +34,14 @@ func TestExtraChainSyntheticStateBudgetFormula(t *testing.T) {
 		const cobolObservedSynthetic = 171240
 		if got <= cobolObservedSynthetic {
 			t.Fatalf("computed budget %d does not clear cobol's observed synthetic-state count %d", got, cobolObservedSynthetic)
+		}
+		// Headroom regression: an adversarial review of PR #212 asked the
+		// multiplier to be raised from 12x to 24x for more margin over cobol's
+		// legitimate 7.8x ratio. Guard against silently drifting back down.
+		const wantHeadroomMultiple = 3
+		if got < cobolObservedSynthetic*wantHeadroomMultiple {
+			t.Errorf("computed budget %d clears cobol's observed count %d by less than %dx headroom (got %.2fx)",
+				got, cobolObservedSynthetic, wantHeadroomMultiple, float64(got)/float64(cobolObservedSynthetic))
 		}
 	})
 
@@ -68,8 +77,22 @@ func TestExtraChainSyntheticStateBudgetFormula(t *testing.T) {
 // synthetic states from 20 main states - see the "natural" subtest), so this
 // test stays fast even if the budget guard were ever disabled; the budget
 // override just makes it fail long before reaching that natural size.
+//
+// The guard still panics from deep inside extraChainBuilder.newState (see
+// ExtraChainSyntheticStateBudgetError) - that part of the design is
+// unchanged, and the raw-construction subtest below still exercises it
+// directly. But an adversarial review of PR #212 found that panic escaped
+// every public entry point (Generate/GenerateLanguage/GenerateLanguageAndBlob)
+// uncaught, crashing real consumers (taproot's runtime fallback, the wasm and
+// CLI generation commands, the grammar registry) instead of returning an
+// error like every sibling budget guard in this package does. The
+// "guarded wrapper" and "public API" subtests below are the regression
+// coverage for that fix: addNonterminalExtraChainsGuarded is now the sole
+// recover point, called from generateWithReportCtx, and it must convert only
+// *ExtraChainSyntheticStateBudgetError to a normal returned error while
+// re-panicking anything else unchanged.
 func TestNonterminalExtraChainSyntheticStateBudgetTripsFast(t *testing.T) {
-	buildBudgetGrammar := func() (*NormalizedGrammar, *LRTables, *lrContext) {
+	newBudgetGrammar := func() *Grammar {
 		g := NewGrammar("extra_chain_budget_synthetic")
 		g.Define("source_file", Repeat(Sym("statement")))
 		g.Define("statement", Choice(
@@ -96,8 +119,11 @@ func TestNonterminalExtraChainSyntheticStateBudgetTripsFast(t *testing.T) {
 			Str("X_END"),
 		))
 		g.SetExtras(Pat(`\s`), Sym("heredoc_body"))
+		return g
+	}
 
-		ng, err := Normalize(g)
+	buildBudgetGrammar := func() (*NormalizedGrammar, *LRTables, *lrContext) {
+		ng, err := Normalize(newBudgetGrammar())
 		if err != nil {
 			t.Fatalf("normalize: %v", err)
 		}
@@ -106,6 +132,43 @@ func TestNonterminalExtraChainSyntheticStateBudgetTripsFast(t *testing.T) {
 			t.Fatalf("build LR tables: %v", err)
 		}
 		return ng, tables, ctx
+	}
+
+	// checkBudgetErr asserts the common shape every path below should
+	// eventually surface, whether recovered from a panic or returned as an
+	// ordinary error: the named type, unwrappable via errors.As, naming the
+	// offending symbol/grammar/counts.
+	checkBudgetErr := func(t *testing.T, err error, tinyBudget int) {
+		t.Helper()
+		if err == nil {
+			t.Fatal("expected an error once the synthetic-state budget was exceeded, got nil")
+		}
+		var budgetErr *ExtraChainSyntheticStateBudgetError
+		if !errors.As(err, &budgetErr) {
+			t.Fatalf("expected err to wrap *ExtraChainSyntheticStateBudgetError (via errors.As), got %v (%T)", err, err)
+		}
+		if budgetErr.Budget != tinyBudget {
+			t.Errorf("Budget = %d, want %d", budgetErr.Budget, tinyBudget)
+		}
+		if budgetErr.SyntheticCount < budgetErr.Budget {
+			t.Errorf("SyntheticCount (%d) should be >= Budget (%d) at the point of failure", budgetErr.SyntheticCount, budgetErr.Budget)
+		}
+		if budgetErr.Grammar != "extra_chain_budget_synthetic" {
+			t.Errorf("Grammar = %q, want %q", budgetErr.Grammar, "extra_chain_budget_synthetic")
+		}
+		if budgetErr.Symbol == "" || budgetErr.Symbol == "<unknown>" {
+			t.Errorf("expected the error to name the offending nonterminal-extra symbol, got %q", budgetErr.Symbol)
+		}
+		if !strings.Contains(budgetErr.Symbol, "heredoc_body") {
+			t.Errorf("expected the offending symbol to mention heredoc_body, got %q", budgetErr.Symbol)
+		}
+		msg := err.Error()
+		for _, want := range []string{"synthetic-state", "budget", "heredoc_body", "extra_chain_budget_synthetic"} {
+			if !strings.Contains(msg, want) {
+				t.Errorf("error message %q missing expected substring %q", msg, want)
+			}
+		}
+		t.Logf("got expected budget error: %v", err)
 	}
 
 	t.Run("natural size converges (sanity, no override)", func(t *testing.T) {
@@ -118,7 +181,7 @@ func TestNonterminalExtraChainSyntheticStateBudgetTripsFast(t *testing.T) {
 		t.Logf("natural synthetic-state count: %d (main=%d)", synthetic, tables.ExtraChainStateStart)
 	})
 
-	t.Run("tiny budget trips fast with a clear, named error", func(t *testing.T) {
+	t.Run("tiny budget trips fast with a clear, named panic (raw construction)", func(t *testing.T) {
 		const tinyBudget = 8
 		t.Setenv(extraChainStateBudgetEnv, "8")
 		ng, tables, ctx := buildBudgetGrammar()
@@ -135,31 +198,61 @@ func TestNonterminalExtraChainSyntheticStateBudgetTripsFast(t *testing.T) {
 				// the test fails loudly with the real panic and stack trace.
 				panic(r)
 			}
-			if budgetErr.Budget != tinyBudget {
-				t.Errorf("Budget = %d, want %d", budgetErr.Budget, tinyBudget)
-			}
-			if budgetErr.SyntheticCount < budgetErr.Budget {
-				t.Errorf("SyntheticCount (%d) should be >= Budget (%d) at the point of failure", budgetErr.SyntheticCount, budgetErr.Budget)
-			}
-			if budgetErr.Grammar != "extra_chain_budget_synthetic" {
-				t.Errorf("Grammar = %q, want %q", budgetErr.Grammar, "extra_chain_budget_synthetic")
-			}
-			if budgetErr.Symbol == "" || budgetErr.Symbol == "<unknown>" {
-				t.Errorf("expected the error to name the offending nonterminal-extra symbol, got %q", budgetErr.Symbol)
-			}
-			if !strings.Contains(budgetErr.Symbol, "heredoc_body") {
-				t.Errorf("expected the offending symbol to mention heredoc_body, got %q", budgetErr.Symbol)
-			}
-			msg := budgetErr.Error()
-			for _, want := range []string{"synthetic-state", "budget", "heredoc_body", "extra_chain_budget_synthetic"} {
-				if !strings.Contains(msg, want) {
-					t.Errorf("error message %q missing expected substring %q", msg, want)
-				}
-			}
-			t.Logf("got expected budget error: %v", budgetErr)
+			checkBudgetErr(t, budgetErr, tinyBudget)
 		}()
 
 		addNonterminalExtraChains(tables, ng, ctx)
 		t.Fatalf("unreachable: addNonterminalExtraChains should have panicked (states=%d, main=%d)", tables.StateCount, tables.ExtraChainStateStart)
+	})
+
+	t.Run("guarded wrapper converts the panic to a returned error", func(t *testing.T) {
+		const tinyBudget = 8
+		t.Setenv(extraChainStateBudgetEnv, "8")
+		ng, tables, ctx := buildBudgetGrammar()
+
+		err := addNonterminalExtraChainsGuarded(tables, ng, ctx)
+		checkBudgetErr(t, err, tinyBudget)
+	})
+
+	t.Run("guarded wrapper re-panics anything that is not the budget error", func(t *testing.T) {
+		// A nil NormalizedGrammar makes addNonterminalExtraChains's very first
+		// statement (ng.TokenCount()) panic with a nil-pointer dereference -
+		// some other failure entirely, nothing to do with the synthetic-state
+		// budget. addNonterminalExtraChainsGuarded's recover must not swallow
+		// this: it should re-panic it unchanged rather than misreport it as a
+		// budget error (or silently return nil).
+		defer func() {
+			r := recover()
+			if r == nil {
+				t.Fatal("expected addNonterminalExtraChainsGuarded to re-panic an unrelated failure (nil grammar), but it returned normally")
+			}
+			if budgetErr, ok := r.(*ExtraChainSyntheticStateBudgetError); ok {
+				t.Fatalf("re-panicked value must not be *ExtraChainSyntheticStateBudgetError, got %v - the guard must not misreport an unrelated failure as the budget error", budgetErr)
+			}
+			t.Logf("guarded wrapper correctly re-panicked a non-budget failure: %v", r)
+		}()
+
+		_ = addNonterminalExtraChainsGuarded(&LRTables{}, nil, nil)
+		t.Fatal("unreachable: addNonterminalExtraChainsGuarded should have re-panicked the nil-grammar failure")
+	})
+
+	t.Run("public API returns the named error instead of panicking", func(t *testing.T) {
+		const tinyBudget = 8
+		t.Setenv(extraChainStateBudgetEnv, "8")
+
+		t.Run("GenerateLanguage", func(t *testing.T) {
+			_, err := GenerateLanguage(newBudgetGrammar())
+			checkBudgetErr(t, err, tinyBudget)
+		})
+
+		t.Run("Generate", func(t *testing.T) {
+			_, err := Generate(newBudgetGrammar())
+			checkBudgetErr(t, err, tinyBudget)
+		})
+
+		t.Run("GenerateLanguageAndBlob", func(t *testing.T) {
+			_, _, err := GenerateLanguageAndBlob(newBudgetGrammar())
+			checkBudgetErr(t, err, tinyBudget)
+		})
 	})
 }

@@ -1487,11 +1487,15 @@ const extraChainStateBudgetEnv = "GOT_LR_EXTRA_CHAIN_STATE_BUDGET"
 //
 // cobol's copy_statement extra is the highest observed ratio (~7.8x
 // mainStateCount, the largest legitimate nonterminal-extra chain in the
-// fleet). multiplier=12 keeps >=1.5x headroom over cobol and >=3.8x over
+// fleet). multiplier=24 keeps >=3x headroom over cobol and >=7.7x over
 // c_sharp, while every other measured grammar clears the budget by one to
 // three orders of magnitude. floor=50000 covers small grammars whose
 // mainStateCount alone would otherwise undercut a modest but legitimate
-// extra chain.
+// extra chain. (multiplier was 12 - >=1.5x cobol headroom - until an
+// adversarial review of PR #212 asked for more margin; doubling it costs
+// nothing against the pathological cases below, since those are
+// non-convergent at every scale and blow through any finite cap almost
+// immediately regardless of multiplier.)
 //
 // By contrast, grammars whose nonterminal extra imports recursive
 // expression/statement structure the way ruby's did do not converge at all
@@ -1508,7 +1512,7 @@ const extraChainStateBudgetEnv = "GOT_LR_EXTRA_CHAIN_STATE_BUDGET"
 // this shape - hard-fail cleanly instead.
 const (
 	extraChainSyntheticStateFloor      = 50000
-	extraChainSyntheticStateMultiplier = 12
+	extraChainSyntheticStateMultiplier = 24
 )
 
 func extraChainSyntheticStateBudget(mainStateCount int) int {
@@ -1527,11 +1531,19 @@ func extraChainSyntheticStateBudget(mainStateCount int) int {
 // ExtraChainSyntheticStateBudgetError is panicked by extraChainBuilder.newState
 // when a nonterminal-extra chain mints more synthetic parser states than
 // extraChainSyntheticStateBudget allows. See that function's doc comment and
-// GEN_COST_RCA for the pathology this guards against. Panicking (rather than
-// threading an error return through addNonterminalExtraChains's caller) lets
-// this defense-in-depth guard hard-fail generation immediately from deep
-// inside the growing-state-space construction without changing that
-// function's signature or its caller's control flow.
+// GEN_COST_RCA for the pathology this guards against. Panicking from deep
+// inside newState (rather than threading an error return through every frame
+// of addNonterminalExtraChains's recursive chain construction) lets this
+// defense-in-depth guard hard-fail immediately without changing that
+// function's signature or its many internal call sites.
+//
+// The panic does not escape the public generation API: it is scoped by
+// construction. addNonterminalExtraChainsGuarded recovers exactly this type
+// at the addNonterminalExtraChains call site in generateWithReportCtx and
+// converts it into a normal returned error (checkable via errors.As), which
+// propagates through Generate/GenerateLanguage/GenerateLanguageAndBlob like
+// any other generation error. Any other panic type is not this guard's to
+// interpret and is re-raised unchanged.
 type ExtraChainSyntheticStateBudgetError struct {
 	Grammar        string // grammar name, if known
 	Symbol         string // offending nonterminal-extra symbol name(s)
@@ -2324,6 +2336,35 @@ func addNonterminalExtraChains(tables *LRTables, ng *NormalizedGrammar, ctx *lrC
 			})
 		}
 	}
+}
+
+// addNonterminalExtraChainsGuarded runs addNonterminalExtraChains and
+// converts an *ExtraChainSyntheticStateBudgetError panic (raised deep inside
+// extraChainBuilder.newState; see that type's doc comment) into a normal
+// returned error, so the synthetic-state budget guard hard-fails generation
+// through the public API's ordinary error-return path instead of crashing
+// the process. This is the sole recover point for that panic type; callers
+// of addNonterminalExtraChains itself (e.g. tests exercising the raw
+// construction) still see the panic directly.
+//
+// The recover is intentionally narrow: only *ExtraChainSyntheticStateBudgetError
+// is caught here. Any other panic - a real bug elsewhere in the chain
+// construction - is re-raised unchanged rather than swallowed, so it still
+// fails loudly with its original stack trace.
+func addNonterminalExtraChainsGuarded(tables *LRTables, ng *NormalizedGrammar, ctx *lrContext) (err error) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			return
+		}
+		if budgetErr, ok := r.(*ExtraChainSyntheticStateBudgetError); ok {
+			err = budgetErr
+			return
+		}
+		panic(r)
+	}()
+	addNonterminalExtraChains(tables, ng, ctx)
+	return nil
 }
 
 // computeFirstSets computes FIRST sets for all symbols using bitsets.

@@ -115,10 +115,24 @@ func TestApplyImportGrammarPostShapeHintsRubyHeredocBody(t *testing.T) {
 }
 
 // TestApplyImportGrammarPostShapeHintsRubyHeredocBodyIsGatedToRuby confirms
-// the rewrite is scoped to lang name "ruby" only, as required: crystal's
-// heredoc_body has the identical shape (same rule and symbol names,
-// independently confirmed against tree-sitter-crystal's grammar.json) but is
-// out of scope for this change and must be left untouched. It remains
+// the rewrite is scoped to lang name "ruby" only, as required. crystal
+// shares the same pathology class as ruby's pre-rewrite heredoc_body (a
+// nonterminal-extra heredoc_body whose CHOICE includes an `interpolation`
+// alternative that re-enters the recursive statement/expression grammar),
+// but not the same concrete shape: per tree-sitter-crystal's grammar.json,
+// crystal's real heredoc_body is a 4-way
+// CHOICE(heredoc_content, interpolation, string_escape_sequence,
+// ignored_backslash), not ruby's 3-way
+// CHOICE(heredoc_content, interpolation, escape_sequence).
+//
+// The fixture below deliberately reuses ruby's exact shape under the grammar
+// name "crystal" rather than reproducing crystal's real 4-way shape: the
+// rewrite's gate (applyImportGrammarPostShapeHints, g.Name == "ruby") is
+// name-based, not shape-based, so shape is irrelevant to what this test is
+// proving - applying ruby's identical shape under a different grammar name
+// and confirming it is left untouched is precisely how to prove the gate
+// keys off the name, and that conclusion holds regardless of what crystal's
+// actual shape is. crystal is out of scope for this change and remains
 // protected only by the defense-in-depth synthetic-state budget guard in
 // addNonterminalExtraChains.
 func TestApplyImportGrammarPostShapeHintsRubyHeredocBodyIsGatedToRuby(t *testing.T) {
