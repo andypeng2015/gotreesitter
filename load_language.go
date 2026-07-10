@@ -10,8 +10,8 @@ import (
 )
 
 // LoadLanguage deserializes a compressed grammar blob into a Language.
-// Blobs are produced by grammargen's GenerateLanguage or the grammar
-// build toolchain. This is the only function needed at runtime to load
+// Blobs are produced by EncodeLanguageBlob, grammargen.Generate, or the
+// grammar build toolchain. This is the only function needed at runtime to load
 // pre-compiled grammars — no grammargen import required. It accepts legacy
 // gzip blobs and version-enveloped trailer-bearing blobs.
 func LoadLanguage(data []byte) (*Language, error) {

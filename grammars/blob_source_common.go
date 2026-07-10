@@ -11,10 +11,12 @@ func (b grammarBlob) close() {
 	}
 }
 
-// BlobByName returns the raw compressed grammar blob for the named language
+// BlobByName returns the raw grammar blob for the named language
 // (e.g. "go", "python"). Returns nil if the language blob is not found.
-// The returned bytes are the gzip+gob encoded grammar data suitable for
-// serving to browser-side WASM modules that decode grammars on demand.
+// Returned bytes are either legacy gzip+gob data or a versioned language-blob
+// envelope. Consumers must load them with gotreesitter.LoadLanguage (or the
+// equivalent grammars loader) rather than assuming a gzip header. The bytes
+// remain suitable for browser-side WASM modules that use that runtime decoder.
 func BlobByName(name string) []byte {
 	// Resolve aliases and normalize case the same way DetectLanguageByName does.
 	entry := DetectLanguageByName(name)

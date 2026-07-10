@@ -1,9 +1,6 @@
 package main
 
 import (
-	"bytes"
-	"compress/gzip"
-	"encoding/gob"
 	"fmt"
 	"strings"
 
@@ -308,18 +305,10 @@ func convertLexStates(src []LexStateEntry) []gotreesitter.LexState {
 	return dst
 }
 
-// EncodeLanguageBlob serializes a language using gob+gzip.
+// EncodeLanguageBlob serializes a language using the shared deterministic
+// runtime format, including the versioned LargeStateGotos trailer when needed.
 func EncodeLanguageBlob(lang *gotreesitter.Language) ([]byte, error) {
-	var out bytes.Buffer
-	gzw := gzip.NewWriter(&out)
-	if err := gob.NewEncoder(gzw).Encode(lang); err != nil {
-		_ = gzw.Close()
-		return nil, fmt.Errorf("encode language blob: %w", err)
-	}
-	if err := gzw.Close(); err != nil {
-		return nil, fmt.Errorf("finalize language blob: %w", err)
-	}
-	return out.Bytes(), nil
+	return gotreesitter.EncodeLanguageBlob(lang)
 }
 
 // GenerateEmbeddedGo produces a small wrapper that lazy-loads an embedded blob.

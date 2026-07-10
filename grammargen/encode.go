@@ -7,7 +7,6 @@ import (
 	"encoding/gob"
 	"fmt"
 	"io"
-	"reflect"
 
 	"github.com/odvcencio/gotreesitter"
 )
@@ -81,96 +80,10 @@ func computeSkipExtras(ng *NormalizedGrammar) map[int]bool {
 	return skip
 }
 
-// encodeLanguageBlob serializes a Language using gob+gzip.
-//
-// Language.LargeStateGotos is a map, and gob's map codec iterates via
-// reflect's randomized MapRange, so gob-encoding it directly would make two
-// encodes of the same Language produce different bytes (see
-// large_state_gotos_trailer.go in the root package for the full mechanism
-// and why simpler fixes -- GobEncoder on the field, or a new Language field
-// -- don't preserve blob compatibility). When lang.LargeStateGotos is
-// non-empty, this instead gob-encodes a shallow copy with the map cleared
-// (lang itself is never mutated) and appends a deterministic sorted-pairs
-// trailer after the gob payload, inside the same compressed stream. That gzip
-// payload is wrapped in a versioned outer envelope so older gzip-first runtimes
-// reject it instead of silently losing the trailer.
-// decodeLanguageBlob reads that trailer back and repopulates LargeStateGotos
-// after the gob decode. When LargeStateGotos is empty -- every language but
-// c_sharp today -- this is byte-identical to a plain gob.Encode: no clone,
-// no trailer.
+// encodeLanguageBlob keeps grammargen's internal call sites stable while the
+// root package owns the single blob-format encoder shared with ts2go.
 func encodeLanguageBlob(lang *gotreesitter.Language) ([]byte, error) {
-	toEncode := lang
-	var trailer []byte
-	if lang != nil && len(lang.LargeStateGotos) > 0 {
-		var err error
-		trailer, err = gotreesitter.EncodeLargeStateGotosTrailer(lang.LargeStateGotos)
-		if err != nil {
-			return nil, fmt.Errorf("encode language blob: %w", err)
-		}
-		clone := shallowCopyExportedLanguageFields(lang)
-		clone.LargeStateGotos = nil
-		toEncode = clone
-	}
-
-	var out bytes.Buffer
-	gzw := gzip.NewWriter(&out)
-	if err := gob.NewEncoder(gzw).Encode(toEncode); err != nil {
-		_ = gzw.Close()
-		return nil, fmt.Errorf("encode language blob: %w", err)
-	}
-	if len(trailer) > 0 {
-		if _, err := gzw.Write(trailer); err != nil {
-			_ = gzw.Close()
-			return nil, fmt.Errorf("encode language blob: %w", err)
-		}
-	}
-	if err := gzw.Close(); err != nil {
-		return nil, fmt.Errorf("finalize language blob: %w", err)
-	}
-	if len(trailer) == 0 {
-		return out.Bytes(), nil
-	}
-	enveloped, err := gotreesitter.WrapLanguageBlobEnvelope(out.Bytes())
-	if err != nil {
-		return nil, fmt.Errorf("finalize language blob: %w", err)
-	}
-	return enveloped, nil
-}
-
-// shallowCopyExportedLanguageFields returns a new *gotreesitter.Language with
-// every exported field copied by value from lang, for callers (like
-// encodeLanguageBlob) that need to hand gob a modified-but-independent copy
-// without disturbing the original.
-//
-// This deliberately does not use `clone := *lang`. Language embeds several
-// sync.Once and atomic.Pointer hot-path caches (symbolMapOnce,
-// cRecoveryGateCache, etc.) as unexported fields, so a plain struct copy (a)
-// trips `go vet`'s copylocks check, and (b) is not what we want anyway: gob
-// only ever transmits exported fields, so the unexported caches have no
-// business being duplicated.
-//
-// This also deliberately does not mutate lang in place (e.g. temporarily
-// nil-ing LargeStateGotos and restoring it after encoding) even though
-// encodeLanguageBlob's current callers happen not to share lang with another
-// goroutine while it runs: Language.LargeStateGotos is read on the parser's
-// hot path (parser_tables.go), and a future caller that re-encodes a
-// Language that's already in concurrent use elsewhere would otherwise hit an
-// unsynchronized "concurrent map read and map write". Copying only the
-// exported fields sidesteps both problems: the copy is independent (so
-// mutating its LargeStateGotos can never race with a reader of lang's), and
-// it never touches the lock-bearing fields at all.
-func shallowCopyExportedLanguageFields(lang *gotreesitter.Language) *gotreesitter.Language {
-	src := reflect.ValueOf(lang).Elem()
-	t := src.Type()
-	dstPtr := reflect.New(t)
-	dst := dstPtr.Elem()
-	for i := 0; i < t.NumField(); i++ {
-		if !t.Field(i).IsExported() {
-			continue
-		}
-		dst.Field(i).Set(src.Field(i))
-	}
-	return dstPtr.Interface().(*gotreesitter.Language)
+	return gotreesitter.EncodeLanguageBlob(lang)
 }
 
 // decodeLanguageBlob deserializes a legacy gob+gzip Language blob or a

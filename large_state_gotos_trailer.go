@@ -42,9 +42,9 @@ import (
 // two structs whose only difference is an added, always-nil slice field gob
 // encode to different byte sequences.)
 //
-// So LargeStateGotos is never handed to gob directly. Blob encoders
-// (grammargen's encodeLanguageBlob) clear it on a shallow copy of Language
-// before gob-encoding and, only when the map was non-empty, append the bytes
+// So LargeStateGotos is never handed to gob directly. EncodeLanguageBlob
+// clears it on a shallow copy of Language
+// before gob-encoding and, only when the map was non-empty, appends the bytes
 // from EncodeLargeStateGotosTrailer after the gob payload, inside the same
 // decompressed stream, then wrap that gzip payload in the fail-closed envelope
 // from language_blob_envelope.go. Blob decoders (gotreesitter.LoadLanguage,

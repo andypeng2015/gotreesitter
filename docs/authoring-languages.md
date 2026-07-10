@@ -39,7 +39,7 @@ The relevant functions, all public:
 |---|---|---|
 | `grammargen.ImportGrammarJSON(data []byte) (*Grammar, error)` | `grammargen/import_grammarjson.go` | Parse a resolved `grammar.json` (the output of `tree-sitter generate`) into the grammar IR. Rules, extras, conflicts, externals, inline, word, precedences, reserved sets, supertypes are all imported. |
 | `grammargen.GenerateLanguage(g *Grammar) (*gotreesitter.Language, error)` | `grammargen/encode.go` | Compile the IR into runtime parse tables. |
-| `grammargen.GenerateLanguageAndBlob(g *Grammar) (*gotreesitter.Language, []byte, error)` | `grammargen/encode.go` | Same, plus the serialized gob+gzip blob in one pass. `...WithContext` variants exist for cancellation. |
+| `grammargen.GenerateLanguageAndBlob(g *Grammar) (*gotreesitter.Language, []byte, error)` | `grammargen/encode.go` | Same, plus a serialized language blob in one pass. Blobs without `LargeStateGotos` retain the legacy gob+gzip format; map-bearing blobs use a deterministic versioned envelope. Load either form with `gotreesitter.LoadLanguage`. `...WithContext` variants exist for cancellation. |
 | `grammargen.EmitGrammarGo(g *Grammar, pkgName, funcName string) ([]byte, error)` | `grammargen/emit_grammar_go.go` | Emit Go DSL source that reconstructs the grammar (useful for vendoring the grammar as reviewable Go code instead of JSON). |
 | `gotreesitter.LoadLanguage(data []byte) (*Language, error)` | `load_language.go` | Deserialize a blob at runtime. The only function needed to load a pre-compiled grammar — no grammargen import, no registry. |
 | `grammars.LoadLanguage(name string, data []byte)` | `grammars/embedded_loader.go` | Like the above, but also attaches any external scanner / external lex-state tables registered for `name` in the `grammars` registry. |
@@ -437,11 +437,16 @@ above. You need a COBOL-class grammar before state budgets are your problem.
 
 Hard-learned; treat as policy.
 
-- A blob is `gob`+`gzip` of the `Language` struct. Gob tolerates field drift
-  silently: fields added since the blob was written decode as zero values,
-  removed fields are skipped. A stale blob usually still *loads* — and then
-  misparses or loses features (a pre-0.20.8 blob has `WantsForest == false`
-  forever, older blobs lack `ZeroWidthTokens`, `ConflictPolicies`, ...).
+- A blob without `LargeStateGotos` uses the legacy gob+gzip format. A blob with
+  a non-empty `LargeStateGotos` map uses a deterministic versioned envelope
+  containing the gzip payload and a sorted map trailer. Always load either
+  form with `gotreesitter.LoadLanguage` (or `grammars.LoadLanguage`) instead of
+  assuming the bytes begin with a gzip header. The underlying gob data
+  tolerates field drift silently: fields added since the blob was written
+  decode as zero values, and removed fields are skipped. A stale blob usually
+  still *loads* — and then misparses or loses features (a pre-0.20.8 blob has
+  `WantsForest == false` forever, older blobs lack `ZeroWidthTokens`,
+  `ConflictPolicies`, ...).
   `Language.CompatibleWithRuntime()` only checks the tree-sitter ABI version
   (`LanguageVersion`, 0 = unknown = compatible); it does **not** detect
   engine/blob skew.
