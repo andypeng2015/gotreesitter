@@ -2,8 +2,32 @@ package gotreesitter
 
 import (
 	"bytes"
+	"reflect"
 	"testing"
 )
+
+// TestLanguageHasExactlyOneExportedMapField guards the trailer mechanism's
+// core assumption: LargeStateGotos is the ONLY exported map field on Language.
+// gob encodes map iteration in randomized order, so any exported map field
+// that is gob-encoded directly reintroduces blob nondeterminism. If this test
+// fails because a new exported map field was added, route that field through
+// a sorted trailer too (see large_state_gotos_trailer.go) or use a
+// deterministic slice representation instead.
+func TestLanguageHasExactlyOneExportedMapField(t *testing.T) {
+	lt := reflect.TypeOf(Language{})
+	var mapFields []string
+	for i := 0; i < lt.NumField(); i++ {
+		f := lt.Field(i)
+		if f.IsExported() && f.Type.Kind() == reflect.Map {
+			mapFields = append(mapFields, f.Name)
+		}
+	}
+	if len(mapFields) != 1 || mapFields[0] != "LargeStateGotos" {
+		t.Fatalf("Language exported map fields = %v, want exactly [LargeStateGotos]; "+
+			"a directly gob-encoded map field makes blob encoding nondeterministic "+
+			"(see large_state_gotos_trailer.go)", mapFields)
+	}
+}
 
 // buildSyntheticLargeStateGotos returns a map shaped like what
 // grammargen/assemble.go's recordLargeGoto populates: keys are
