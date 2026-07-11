@@ -451,3 +451,82 @@ func TestMissingRecoveryTokensStillAddSameFirstRuneNonPreemptingLookahead(t *tes
 		t.Fatalf("missing recovery tokens for same-first-rune non-preempting lookahead = %v, want %v", got, want)
 	}
 }
+
+// TestMissingRecoveryTokensSkippedExtraPreemptionCacheConsistentAcrossStates
+// guards the skip-extra preemption memoization added to
+// buildMissingRecoveryTokensFuncWithContext (a map in the same closure scope
+// as preemptionCache, keyed by lookahead alone since preemptsSkippedTerminalExtra
+// depends only on lookahead for a fixed patternsBySymbol/skipExtras). The
+// cache is shared across every state queried from the returned closure, so
+// this test builds TWO independent "missing token" origins (state 0 and
+// state 20) that both resolve the SAME two lookaheads — one skip-extra-
+// preempted (newline, shadowed by the whitespace extra exactly like
+// TestMissingRecoveryTokensDoNotAddLookaheadOverSkippedExtra above) and one
+// not preempted (comma) — and checks both origins agree with the correct,
+// uncached answer regardless of which state's query populates the cache
+// first. A cache keyed or scoped incorrectly (e.g. accidentally reused
+// across distinct lookaheads, or not actually shared and silently
+// re-deriving a stale/wrong answer) would make one of the two origins
+// diverge from the other.
+func TestMissingRecoveryTokensSkippedExtraPreemptionCacheConsistentAcrossStates(t *testing.T) {
+	const (
+		tokenCount = 6
+		missingA   = 1
+		missingB   = 2
+		whitespace = 3
+		newline    = 4
+		comma      = 5
+	)
+
+	tables := &LRTables{
+		StateCount: 24,
+		ActionTable: map[int]map[int][]lrAction{
+			// Origin A: state 0 --missingA--> state 1, which directly shifts
+			// both lookaheads.
+			0: {
+				missingA: {{kind: lrShift, state: 1}},
+			},
+			1: {
+				newline: {{kind: lrShift, state: 2}},
+				comma:   {{kind: lrShift, state: 3}},
+			},
+			// Origin B: an independent copy rooted at state 20.
+			20: {
+				missingB: {{kind: lrShift, state: 21}},
+			},
+			21: {
+				newline: {{kind: lrShift, state: 22}},
+				comma:   {{kind: lrShift, state: 23}},
+			},
+		},
+		ExtraChainStateStart: -1,
+	}
+	patterns := []TerminalPattern{
+		{SymbolID: whitespace, Rule: Pat(`\s`), Priority: 2000},
+		{SymbolID: newline, Rule: Pat(`\r?\n`), Priority: -500, Immediate: true},
+		{SymbolID: comma, Rule: Str(",")},
+	}
+	skipExtras := map[int]bool{whitespace: true}
+	want := []int{comma}
+
+	// Populate the shared skip-extra preemption cache from origin A first,
+	// then reuse it from origin B.
+	fnAB := buildMissingRecoveryTokensFunc(tables, tokenCount, patterns, skipExtras)
+	if got := fnAB(0); !reflect.DeepEqual(got, want) {
+		t.Fatalf("origin A (populates cache) missing recovery tokens = %v, want %v", got, want)
+	}
+	if got := fnAB(20); !reflect.DeepEqual(got, want) {
+		t.Fatalf("origin B (reuses cache) missing recovery tokens = %v, want %v", got, want)
+	}
+
+	// Reverse the query order with a fresh function/cache so the memoized
+	// skip-extra preemption result cannot depend on which state populates it
+	// first.
+	fnBA := buildMissingRecoveryTokensFunc(tables, tokenCount, patterns, skipExtras)
+	if got := fnBA(20); !reflect.DeepEqual(got, want) {
+		t.Fatalf("origin B (populates cache) missing recovery tokens = %v, want %v", got, want)
+	}
+	if got := fnBA(0); !reflect.DeepEqual(got, want) {
+		t.Fatalf("origin A (reuses cache) missing recovery tokens = %v, want %v", got, want)
+	}
+}

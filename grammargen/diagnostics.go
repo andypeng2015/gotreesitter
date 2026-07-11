@@ -320,11 +320,34 @@ func buildMissingRecoveryTokensFuncWithContext(ctx context.Context, tables *LRTa
 		}
 		return false
 	}
+	// preemptsSkippedTerminalExtra depends only on `lookahead` (patternsBySymbol
+	// and skipExtras are fixed for the lifetime of this closure), so its result
+	// is identical for every state that queries the same lookahead. Without
+	// this cache, addSeen re-invokes preemptsSkippedTerminalExtra (and the NFA
+	// + lex DFA rebuild inside recoveryLookaheadPreemptsDirectTerminal it
+	// performs per skipExtras entry) once per state per lookahead, which
+	// dominates compute_lex_modes on large grammars (e.g. c_sharp: 19564
+	// states x up to tokenCount-1 lookaheads). Memoizing by lookahead alone
+	// mirrors preemptionCache above and is safe here for the same reason:
+	// callers of the returned closure run sequentially within a single
+	// buildMissingRecoveryTokensFuncWithContext invocation (computeLexModes
+	// iterates states in a plain for-loop, no goroutines), and this map is
+	// local to that invocation, so there is no cross-invocation or concurrent
+	// access to guard against.
+	skipExtraPreemptionCache := make(map[int]bool)
+	preemptsSkippedTerminalExtraCached := func(lookahead int) bool {
+		if preempts, ok := skipExtraPreemptionCache[lookahead]; ok {
+			return preempts
+		}
+		preempts := preemptsSkippedTerminalExtra(ctx, patternsBySymbol, skipExtras, lookahead)
+		skipExtraPreemptionCache[lookahead] = preempts
+		return preempts
+	}
 	addSeen := func(state int, seen map[int]bool, lookahead int) {
 		if preemptsDirectTerminalShift(state, lookahead) {
 			return
 		}
-		if preemptsSkippedTerminalExtra(ctx, patternsBySymbol, skipExtras, lookahead) {
+		if preemptsSkippedTerminalExtraCached(lookahead) {
 			return
 		}
 		seen[lookahead] = true
