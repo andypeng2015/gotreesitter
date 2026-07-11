@@ -121,6 +121,7 @@ var grammargenCGOGrammars = []grammargenCGOGrammar{
 	{name: "java", jsonPath: "/tmp/grammar_parity/java/src/grammar.json", blobFunc: grammars.JavaLanguage, genTimeout: 180 * time.Second},
 	{name: "python", jsonPath: "/tmp/grammar_parity/python/src/grammar.json", blobFunc: grammars.PythonLanguage, genTimeout: 300 * time.Second},
 	{name: "ruby", jsonPath: "/tmp/grammar_parity/ruby/src/grammar.json", blobFunc: grammars.RubyLanguage, genTimeout: 300 * time.Second},
+	{name: "crystal", jsonPath: "/tmp/grammar_parity/crystal/src/grammar.json", blobFunc: grammars.CrystalLanguage, genTimeout: 300 * time.Second},
 	{name: "javascript", jsonPath: "/tmp/grammar_parity/javascript/src/grammar.json", blobFunc: grammars.JavascriptLanguage, genTimeout: 90 * time.Second},
 	{name: "typescript", jsonPath: "/tmp/grammar_parity/typescript/typescript/src/grammar.json", blobFunc: grammars.TypescriptLanguage, genTimeout: 180 * time.Second},
 	{name: "tsx", jsonPath: "/tmp/grammar_parity/typescript/tsx/src/grammar.json", blobFunc: grammars.TsxLanguage, genTimeout: 180 * time.Second},
