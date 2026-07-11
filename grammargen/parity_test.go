@@ -2468,7 +2468,10 @@ func init() {
 		{name: "fennel", blobFunc: grammars.FennelLanguage, expectNoErrors: 1},
 		{name: "teal", blobFunc: grammars.TealLanguage, expectNoErrors: 1, expectParity: 1},
 		{name: "cobol", blobFunc: grammars.CobolLanguage, timeout: 300 * time.Second, expectNoErrors: 1, expectParity: 1},
-		{name: "crystal", blobFunc: grammars.CrystalLanguage, timeout: 90 * time.Second, expectNoErrors: 1, expectParity: 1},
+		// Crystal's recursive heredoc interpolation now uses the bounded LALR
+		// extra-state builder. The locked grammar converges in roughly two
+		// minutes in the isolated parity container, so retain CI headroom.
+		{name: "crystal", blobFunc: grammars.CrystalLanguage, timeout: 180 * time.Second, expectNoErrors: 1, expectParity: 1},
 		{name: "perl", blobFunc: grammars.PerlLanguage, timeout: 90 * time.Second, expectNoErrors: 1, expectParity: 1},
 
 		// ── Batch 6: remaining grammars (all have external scanners) ──

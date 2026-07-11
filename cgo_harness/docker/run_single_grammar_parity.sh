@@ -71,7 +71,7 @@ ALL_GRAMMARS=(
   properties proto python regex requirements ron scala scheme sql ssh_config
   swift todotxt toml yaml
   # Large grammars (previously skipped):
-  rust c_sharp java ruby cpp kotlin cuda
+  rust c_sharp java ruby crystal cpp kotlin cuda
   # TypeScript family:
   typescript tsx
   # Legacy/enterprise languages:
@@ -85,7 +85,7 @@ FAILING_GRAMMARS=(
   jsdoc lua make nix ocaml php promql python regex requirements scala
   sql swift yaml
   # Large grammars (no baseline yet):
-  rust c_sharp java ruby cpp kotlin
+  rust c_sharp java ruby crystal cpp kotlin
 )
 
 usage() {

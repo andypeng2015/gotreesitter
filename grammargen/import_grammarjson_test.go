@@ -138,3 +138,87 @@ func TestImportGrammarJSONRubyHeredocBodyPreservesInterpolation(t *testing.T) {
 		t.Fatalf("generated state count = %d, want a bounded non-zero automaton", lang.StateCount)
 	}
 }
+
+// TestImportGrammarJSONCrystalHeredocBodyPreservesInterpolation protects the
+// Crystal import path from the semantic shortcut that the original #213 used:
+// deleting interpolation from heredoc_body. The bounded LALR extra-state
+// builder must make the original grammar shape finite without changing it.
+func TestImportGrammarJSONCrystalHeredocBodyPreservesInterpolation(t *testing.T) {
+	data := []byte(`{
+		"name": "crystal",
+		"rules": {
+			"source_file": {"type": "SYMBOL", "name": "heredoc_body"},
+			"_expression": {"type": "CHOICE", "members": [
+				{"type": "SYMBOL", "name": "identifier"},
+				{"type": "SEQ", "members": [
+					{"type": "SYMBOL", "name": "identifier"},
+					{"type": "STRING", "value": "+"},
+					{"type": "SYMBOL", "name": "_expression"}
+				]}
+			]},
+			"identifier": {"type": "PATTERN", "value": "[a-z]+"},
+			"interpolation": {"type": "SEQ", "members": [
+				{"type": "STRING", "value": "#{"},
+				{"type": "SYMBOL", "name": "_expression"},
+				{"type": "STRING", "value": "}"}
+			]},
+			"heredoc_body": {"type": "SEQ", "members": [
+				{"type": "SYMBOL", "name": "_heredoc_body_start"},
+				{"type": "REPEAT", "content": {"type": "CHOICE", "members": [
+					{"type": "SYMBOL", "name": "heredoc_content"},
+					{"type": "SYMBOL", "name": "interpolation"},
+					{"type": "SYMBOL", "name": "string_escape_sequence"},
+					{"type": "SYMBOL", "name": "ignored_backslash"}
+				]}},
+				{"type": "SYMBOL", "name": "heredoc_end"}
+			]},
+			"_heredoc_body_start": {"type": "STRING", "value": "<<X"},
+			"heredoc_content": {"type": "PATTERN", "value": "[^#\\\\]+"},
+			"string_escape_sequence": {"type": "TOKEN", "content": {"type": "PATTERN", "value": "\\\\\\\\."}},
+			"ignored_backslash": {"type": "STRING", "value": "\\\\"},
+			"heredoc_end": {"type": "STRING", "value": "X"}
+		},
+		"extras": [{"type": "SYMBOL", "name": "heredoc_body"}],
+		"conflicts": [],
+		"externals": [],
+		"inline": [],
+		"supertypes": [],
+		"precedences": []
+	}`)
+
+	g, err := ImportGrammarJSON(data)
+	if err != nil {
+		t.Fatalf("ImportGrammarJSON: %v", err)
+	}
+
+	rule := g.Rules["heredoc_body"]
+	if rule == nil || rule.Kind != RuleSeq || len(rule.Children) != 3 {
+		t.Fatalf("heredoc_body rule = %#v, want original three-part sequence", rule)
+	}
+	repeat := rule.Children[1]
+	if repeat == nil || repeat.Kind != RuleRepeat || len(repeat.Children) != 1 {
+		t.Fatalf("heredoc_body middle = %#v, want repeat", repeat)
+	}
+	choice := repeat.Children[0]
+	if choice == nil || choice.Kind != RuleChoice || len(choice.Children) != 4 {
+		t.Fatalf("heredoc_body content = %#v, want original four-way choice", choice)
+	}
+	got := []string{choice.Children[0].Value, choice.Children[1].Value, choice.Children[2].Value, choice.Children[3].Value}
+	want := []string{"heredoc_content", "interpolation", "string_escape_sequence", "ignored_backslash"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("heredoc alternatives = %v, want %v", got, want)
+	}
+
+	interpolation := g.Rules["interpolation"]
+	if interpolation == nil || interpolation.Kind != RuleSeq || len(interpolation.Children) != 3 || interpolation.Children[1].Value != "_expression" {
+		t.Fatalf("interpolation rule = %#v, want path through _expression", interpolation)
+	}
+
+	lang, err := GenerateLanguage(g)
+	if err != nil {
+		t.Fatalf("GenerateLanguage(imported Crystal heredoc grammar): %v", err)
+	}
+	if lang.StateCount == 0 || lang.StateCount > 1000 {
+		t.Fatalf("generated state count = %d, want a bounded non-zero automaton", lang.StateCount)
+	}
+}

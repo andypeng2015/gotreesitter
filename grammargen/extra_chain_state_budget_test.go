@@ -85,6 +85,29 @@ func TestUseLALRNonterminalExtraStatesDispatch(t *testing.T) {
 		}
 	})
 
+	t.Run("crystal heredoc interpolation uses bounded item sets", func(t *testing.T) {
+		ng := &NormalizedGrammar{
+			GrammarName: "crystal",
+			Symbols: []SymbolInfo{
+				{Name: "end", Kind: SymbolTerminal},
+				{Name: "heredoc_start", Kind: SymbolTerminal},
+				{Name: "heredoc_body", Kind: SymbolNonterminal, IsExtra: true},
+				{Name: "heredoc_parts", Kind: SymbolNonterminal},
+				{Name: "interpolation", Kind: SymbolNonterminal},
+				{Name: "_expression", Kind: SymbolNonterminal},
+			},
+			ExtraSymbols: []int{2},
+			Productions: []Production{
+				{LHS: 2, RHS: []int{1, 3}, IsExtra: true},
+				{LHS: 3, RHS: []int{4}},
+				{LHS: 4, RHS: []int{5}},
+			},
+		}
+		if !useLALRNonterminalExtraStates(ng) {
+			t.Fatal("crystal heredoc_body -> interpolation -> _expression must use bounded LALR item sets")
+		}
+	})
+
 	t.Run("unrelated directive extra keeps legacy builder", func(t *testing.T) {
 		ng := &NormalizedGrammar{
 			Symbols: []SymbolInfo{
