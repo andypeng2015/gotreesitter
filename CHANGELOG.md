@@ -7,6 +7,42 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+## [0.23.1] - 2026-07-10
+
+Generator throughput and certification follow-up. This cut banks the shared,
+deterministic blob encoder and the bounded recursive-extra construction that
+landed immediately after the exhaustive-parity release. It also removes the
+C# generation cliff caused by repeatedly rebuilding the same skipped-extra
+lex-preemption analysis. The release does not claim that Crystal's broader
+real-corpus parity tail is closed; the newly visible floors remain explicit.
+
+### Added
+
+- Crystal-specific regression coverage proving that the bounded LALR item-set
+  path preserves heredoc interpolation and completes the locked generation
+  pipeline at 14,471 states with 1/1 exact parity.
+- Direct-C Crystal visibility in the grammargen harness. The current measured
+  floor is 16/20 no-error and 11/20 tree parity, while the aggressive corpus
+  remains 10/26 exact and tracked for follow-up.
+
+### Changed
+
+- Runtime, grammargen, and `cmd/ts2go` blob production now share one
+  deterministic encoder, including stable ordering for map-bearing trailer
+  data and preservation of large-state GOTO metadata.
+- Recursive heredoc extras are constructed with bounded on-the-fly LALR
+  item-set core merging instead of merge-history expansion. Ruby's locked
+  pipeline completes at 11,915 states with exact parity, and unrelated
+  grammars stay on the legacy construction path.
+
+### Fixed
+
+- Skip-extra lex-preemption results are memoized by lookahead during lex-mode
+  construction. On the pinned C# witness, generation plus the real-corpus
+  test now completes in 39.38 seconds where the exact base still times out
+  after five minutes; CGo parity remains 20/20 with zero divergences and the
+  existing 24/25 no-error, 20/25 deep-parity corpus floor is preserved.
+
 ## [0.23.0] - 2026-07-10
 
 Exhaustive parity closure release. The curated structural matrix is now
@@ -1409,7 +1445,8 @@ Warm-reuse throughput ~10 % higher. 206-grammar parity green under `GTS_PARITY_M
 - Initial standalone pure-Go runtime module.
 - External scanner VM foundation and base parser/lexer/tree infrastructure.
 
-[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.23.0...HEAD
+[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.23.1...HEAD
+[0.23.1]: https://github.com/odvcencio/gotreesitter/compare/v0.23.0...v0.23.1
 [0.23.0]: https://github.com/odvcencio/gotreesitter/compare/v0.22.5...v0.23.0
 [0.22.5]: https://github.com/odvcencio/gotreesitter/compare/v0.22.4...v0.22.5
 [0.22.4]: https://github.com/odvcencio/gotreesitter/compare/v0.22.3...v0.22.4
